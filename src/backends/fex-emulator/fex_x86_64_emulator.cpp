@@ -822,7 +822,9 @@ namespace sogen::fex
         };
 
         // A chunk of tracked memory is write-protected until its first write, which marks it written, and inaccessible
-        // while stale, until its first access brings its cache lines up to date.
+        // while stale, until its first access brings its cache lines up to date. Guest code and the emulator only access
+        // tracked memory on the thread running the guest, which also changes the tracking, and the faults recording those
+        // accesses arrive as signals on that thread; the state is atomic for those signals, not for other threads.
         struct tracked_chunk
         {
             std::atomic<bool> written{};
@@ -2241,7 +2243,7 @@ namespace sogen::fex
 
             const size_t chunk_count = (size + tracking_chunk_size - 1) / tracking_chunk_size;
             this->tracked_ranges_.emplace(address, tracked_range{.size = size, .chunks = std::vector<tracked_chunk>(chunk_count)});
-            this->restrict_protection(address, size, tracked_access::read_only);
+            this->require_protection(address, size, tracked_access::read_only);
             return true;
         }
 
@@ -2267,7 +2269,7 @@ namespace sogen::fex
 
                 if (!chunk.stale)
                 {
-                    this->restrict_protection(chunk_address, chunk_size, tracked_access::read_only);
+                    this->require_protection(chunk_address, chunk_size, tracked_access::read_only);
                 }
 
                 if (run_size == 0 || run_address + run_size != chunk_address)
@@ -2287,14 +2289,13 @@ namespace sogen::fex
             const auto finish_run = [&] {
                 if (run_size != 0)
                 {
-                    this->restrict_protection(run_address, run_size, tracked_access::none);
+                    this->require_protection(run_address, run_size, tracked_access::none);
                     run_size = 0;
                 }
             };
 
             this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
-                // Bringing a chunk up to date needs read access to it.
-                if (!this->range_has_permission(chunk_address, chunk_size, memory_permission::read) || chunk.stale.exchange(true))
+                if (chunk.stale.exchange(true))
                 {
                     finish_run();
                     return;
@@ -2341,7 +2342,7 @@ namespace sogen::fex
         {
             // Tracked chunks take the new protection as it is, so writes to them go unnoticed until they are tracked again.
             this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
-                this->bring_up_to_date(chunk, chunk_address, chunk_size);
+                this->require_up_to_date(chunk, chunk_address, chunk_size);
                 chunk.written = true;
             });
 
@@ -2395,8 +2396,9 @@ namespace sogen::fex
             }
         }
 
-        // Applies the guest's protection to the mapped parts of a range, limited to access.
-        void restrict_protection(const uint64_t address, const size_t size, const tracked_access access)
+        // Calls f(address, size, permissions) for each part of a range that one mapped region covers.
+        template <typename F>
+        void for_each_mapped_piece(const uint64_t address, const size_t size, F&& f) const
         {
             const uint64_t end = address + size;
             uint64_t cursor = address;
@@ -2411,59 +2413,93 @@ namespace sogen::fex
                 }
 
                 const uint64_t piece_end = std::min(end, region->first + region->second.size);
-                int prot = to_prot(region->second.permissions);
-                if (access == tracked_access::none)
-                {
-                    prot = PROT_NONE;
-                }
-                else if (access == tracked_access::read_only)
-                {
-                    prot &= ~PROT_WRITE;
-                }
-
-                this->for_each_host_span(cursor, static_cast<size_t>(piece_end - cursor),
-                                         [&](const uint64_t host_address, const size_t span_size, size_t) {
-                                             ::mprotect(reinterpret_cast<void*>(host_address), span_size, prot);
-                                         });
+                f(cursor, static_cast<size_t>(piece_end - cursor), region->second.permissions);
                 cursor = piece_end;
             }
         }
 
-        // Cleans and invalidates a stale chunk's cache lines, which also makes any unflushed writes to it visible, and
-        // leaves it write-protected so that a write still marks it written.
+        // Applies the guest's protection to the mapped parts of a range, limited to access.
+        bool restrict_protection(const uint64_t address, const size_t size, const tracked_access access)
+        {
+            bool restricted = true;
+            this->for_each_mapped_piece(
+                address, size, [&](const uint64_t piece_address, const size_t piece_size, const memory_permission permissions) {
+                    int prot = to_prot(permissions);
+                    if (access == tracked_access::none)
+                    {
+                        prot = PROT_NONE;
+                    }
+                    else if (access == tracked_access::read_only)
+                    {
+                        prot &= ~PROT_WRITE;
+                    }
+
+                    this->for_each_host_span(piece_address, piece_size, [&](const uint64_t host_address, const size_t span_size, size_t) {
+                        restricted = ::mprotect(reinterpret_cast<void*>(host_address), span_size, prot) == 0 && restricted;
+                    });
+                });
+            return restricted;
+        }
+
+        void require_protection(const uint64_t address, const size_t size, const tracked_access access)
+        {
+            if (!this->restrict_protection(address, size, access))
+            {
+                throw std::runtime_error("FEX backend failed to change the protection of tracked memory");
+            }
+        }
+
+        // Cleans and invalidates a stale chunk's cache lines, and leaves it write-protected so that a write still marks it
+        // written. Cleaning makes the guest's unflushed writes visible as well, but the chunk keeps counting as written so
+        // that they are still flushed through the device.
         bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
         {
-            if (!chunk.stale.exchange(false))
+            chunk.stale = false;
+            if (!this->restrict_protection(chunk_address, chunk_size, tracked_access::read_only))
             {
                 return false;
             }
 
-            this->restrict_protection(chunk_address, chunk_size, tracked_access::read_only);
-            this->for_each_host_span(chunk_address, chunk_size, [&](const uint64_t host_address, const size_t span_size, size_t) {
-                this->flush_host_memory_cache(reinterpret_cast<const void*>(host_address), span_size);
-            });
-            chunk.written = false;
+            // dc civac needs read access, which the guest may have taken away from parts of the chunk.
+            this->for_each_mapped_piece(
+                chunk_address, chunk_size, [&](const uint64_t piece_address, const size_t piece_size, const memory_permission permissions) {
+                    if ((permissions & memory_permission::read) != memory_permission::none)
+                    {
+                        this->for_each_host_span(piece_address, piece_size,
+                                                 [&](const uint64_t host_address, const size_t span_size, size_t) {
+                                                     this->flush_host_memory_cache(reinterpret_cast<const void*>(host_address), span_size);
+                                                 });
+                    }
+                });
             return true;
         }
 
+        void require_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
+        {
+            if (chunk.stale && !this->bring_up_to_date(chunk, chunk_address, chunk_size))
+            {
+                throw std::runtime_error("FEX backend failed to change the protection of tracked memory");
+            }
+        }
+
         // The first access to a stale chunk of tracked memory, or the first write to a clean one: brings the chunk up to
-        // date or records the write, and lets the access through.
+        // date or records the write, and lets the access through. Only the faulting page's protection decides whether a
+        // write is allowed, since the guest can change the protection of parts of a chunk.
         bool handle_tracked_memory_fault(const uint64_t host_fault_address)
         {
+            const uint64_t address = this->to_guest_address(host_fault_address);
             bool handled = false;
-            this->for_each_tracked_chunk(this->to_guest_address(host_fault_address), 1,
-                                         [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
-                                             if (this->bring_up_to_date(chunk, chunk_address, chunk_size))
-                                             {
-                                                 handled = true;
-                                             }
-                                             else if (this->range_has_permission(chunk_address, chunk_size, memory_permission::write) &&
-                                                      !chunk.written.exchange(true))
-                                             {
-                                                 this->restrict_protection(chunk_address, chunk_size, tracked_access::full);
-                                                 handled = true;
-                                             }
-                                         });
+            this->for_each_tracked_chunk(address, 1, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                if (chunk.stale)
+                {
+                    handled = this->bring_up_to_date(chunk, chunk_address, chunk_size);
+                }
+                else if (this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write) &&
+                         !chunk.written.exchange(true))
+                {
+                    handled = this->restrict_protection(chunk_address, chunk_size, tracked_access::full);
+                }
+            });
             return handled;
         }
 
@@ -2488,10 +2524,10 @@ namespace sogen::fex
                 const size_t range_size = it->second.size;
                 this->for_each_tracked_chunk(range_address, range_size,
                                              [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
-                                                 this->bring_up_to_date(chunk, chunk_address, chunk_size);
+                                                 this->require_up_to_date(chunk, chunk_address, chunk_size);
                                              });
                 it = this->tracked_ranges_.erase(it);
-                this->restrict_protection(range_address, range_size, tracked_access::full);
+                this->require_protection(range_address, range_size, tracked_access::full);
             }
         }
 

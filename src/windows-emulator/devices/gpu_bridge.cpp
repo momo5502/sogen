@@ -302,7 +302,6 @@ namespace sogen
             // imported memory when it shows new work completed.
             std::unordered_map<uint64_t, observed_semaphore> observed_semaphores_{};
 
-            // Makes the guest's writes to imported memory visible to the device.
             void flush_imported_memory(windows_emulator& win_emu)
             {
                 std::vector<vulkan_host::memory_range> ranges{};
@@ -326,7 +325,6 @@ namespace sogen
                 }
             }
 
-            // Makes the device's writes to imported memory visible to the guest.
             void invalidate_imported_memory(windows_emulator& win_emu)
             {
                 std::vector<vulkan_host::memory_range> untracked{};
