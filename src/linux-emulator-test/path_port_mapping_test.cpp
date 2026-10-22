@@ -3,11 +3,11 @@
 #include <linux_emulator.hpp>
 #include <backend_selection.hpp>
 
-#include <chrono>
 #include <filesystem>
 #include <array>
 #include <fstream>
 #include <iterator>
+#include <random>
 #include <string_view>
 
 namespace sogen
@@ -19,8 +19,8 @@ namespace sogen
           public:
             temp_tree()
             {
-                const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-                this->path_ = std::filesystem::temp_directory_path() / ("sogen-linux-fs-test-" + std::to_string(suffix));
+                this->path_ = std::filesystem::temp_directory_path() /
+                              ("sogen-linux-fs-test-" + std::to_string(std::random_device{}()) + std::to_string(std::random_device{}()));
                 std::filesystem::create_directories(this->path_);
             }
 
