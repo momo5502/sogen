@@ -923,6 +923,11 @@ namespace sogen::fex
         // must reach the same host-fault dispatcher as SIGSEGV/SIGBUS.
         constexpr std::array<int, 4> fault_signals = {SIGSEGV, SIGBUS, SIGILL, SIGTRAP};
 
+        // The handlers installed before the first emulator's, which get the faults this backend does not handle. On
+        // Android that is the crash reporter writing a tombstone.
+        std::array<struct sigaction, fault_signals.size()> g_previous_fault_actions{};
+        bool g_previous_fault_actions_saved = false;
+
         void install_fault_signal_handlers(fex_x86_64_emulator& emulator)
         {
             // Fault routing is process-global (one sigaction handler set, one active-instance
@@ -953,10 +958,11 @@ namespace sogen::fex
             // SIGTRAP. INT3 (DebugBreak()) goes through the SIGTRAP stub, so without a handler here that
             // BRK is an unhandled hardware trap terminating the process, instead of reaching the vector
             // dispatch below, which handles vector 3 correctly.
-            for (const int signal : fault_signals)
+            for (size_t i = 0; i < fault_signals.size(); ++i)
             {
-                ::sigaction(signal, &action, nullptr);
+                ::sigaction(fault_signals[i], &action, g_previous_fault_actions_saved ? nullptr : &g_previous_fault_actions[i]);
             }
+            g_previous_fault_actions_saved = true;
         }
 
 #ifdef __APPLE__
@@ -3960,10 +3966,15 @@ namespace sogen::fex
 
             log_unhandled_signal(sig, info, uctx);
 
-            struct sigaction default_action{};
-            default_action.sa_handler = SIG_DFL;
-            ::sigaction(sig, &default_action, nullptr);
-            ::raise(sig);
+            const auto signal = std::ranges::find(fault_signals, sig);
+            ::sigaction(sig, &g_previous_fault_actions[static_cast<size_t>(signal - fault_signals.begin())], nullptr);
+
+            // Returning re-executes the faulting instruction, which raises the signal again for the previous handler. A
+            // signal that was sent rather than caused by an instruction has to be raised explicitly.
+            if (info->si_code <= 0)
+            {
+                ::raise(sig);
+            }
         }
     } // namespace
 
