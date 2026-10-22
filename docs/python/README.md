@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/momo5502/sogen"><img src="https://momo5502.com/sogen/banner.png" height="220" alt="Sogen" /></a>
+  <a href="https://github.com/momo5502/sogen"><img src="https://momo5502.com/sogen/sogen.svg" height="200" alt="Sogen" /></a>
 </p>
 
 Sogen exposes Python bindings for Windows and Linux userspace emulation. The Python API is meant for scripting runs, building small analysis helpers, and quickly iterating on callbacks; Windows bindings also expose hooks for deeper analysis.
