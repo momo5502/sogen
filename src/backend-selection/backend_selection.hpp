@@ -24,8 +24,8 @@ namespace sogen
     backend_type get_x86_64_emulator_backend_from_environment();
 
     // The host's hardware backend where one is usable (WHP on Windows ARM64; Hypervisor.framework on Apple
-    // Silicon when the process holds the hypervisor entitlement), Unicorn otherwise. EMULATOR_UNICORN=1 and
-    // EMULATOR_HVF=1 override the choice.
+    // Silicon when the process holds the hypervisor entitlement), Unicorn otherwise. Outside Windows ARM64,
+    // EMULATOR_UNICORN=1 selects Unicorn.
     backend_type get_arm64_emulator_backend_from_environment();
     std::unique_ptr<arm64_emulator> create_arm64_emulator_from_environment(size_t vcpu_count = 1);
 

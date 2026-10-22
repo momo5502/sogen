@@ -149,14 +149,9 @@ namespace sogen
             return backend_type::unicorn;
         }
 #if defined(SOGEN_ENABLE_HVF)
-        if (enabled("EMULATOR_HVF") || hvf::is_available())
+        if (hvf::is_available())
         {
-            if (hvf::is_available())
-            {
-                return backend_type::hvf;
-            }
-            // EMULATOR_HVF was requested but the hypervisor is unavailable: fall back to Unicorn
-            // instead of failing.
+            return backend_type::hvf;
         }
 #endif
         return backend_type::unicorn;
