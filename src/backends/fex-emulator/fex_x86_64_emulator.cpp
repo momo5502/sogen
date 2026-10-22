@@ -923,6 +923,11 @@ namespace sogen::fex
         // must reach the same host-fault dispatcher as SIGSEGV/SIGBUS.
         constexpr std::array<int, 4> fault_signals = {SIGSEGV, SIGBUS, SIGILL, SIGTRAP};
 
+        // The handlers installed before the first emulator's, which get the faults this backend does not handle. On
+        // Android that is the crash reporter writing a tombstone.
+        std::array<struct sigaction, fault_signals.size()> g_previous_fault_actions{};
+        bool g_previous_fault_actions_saved = false;
+
         void install_fault_signal_handlers(fex_x86_64_emulator& emulator)
         {
             // Fault routing is process-global (one sigaction handler set, one active-instance
@@ -953,10 +958,11 @@ namespace sogen::fex
             // SIGTRAP. INT3 (DebugBreak()) goes through the SIGTRAP stub, so without a handler here that
             // BRK is an unhandled hardware trap terminating the process, instead of reaching the vector
             // dispatch below, which handles vector 3 correctly.
-            for (const int signal : fault_signals)
+            for (size_t i = 0; i < fault_signals.size(); ++i)
             {
-                ::sigaction(signal, &action, nullptr);
+                ::sigaction(fault_signals[i], &action, g_previous_fault_actions_saved ? nullptr : &g_previous_fault_actions[i]);
             }
+            g_previous_fault_actions_saved = true;
         }
 
 #ifdef __APPLE__
@@ -3948,9 +3954,49 @@ namespace sogen::fex
             errno = saved_errno;
         }
 
+        bool is_sent_signal(const siginfo_t& info)
+        {
+#ifdef __APPLE__
+            // Darwin reports some hardware traps, like the SIGTRAP of a BRK, with si_code 0, and sent signals with
+            // SI_USER/SI_QUEUE, which are positive there.
+            return info.si_code == SI_USER || info.si_code == SI_QUEUE;
+#else
+            return info.si_code <= 0;
+#endif
+        }
+
+        void forward_sent_signal(const struct sigaction& previous, const int sig, siginfo_t* info, void* raw_ucontext)
+        {
+            if ((previous.sa_flags & SA_SIGINFO) != 0)
+            {
+                previous.sa_sigaction(sig, info, raw_ucontext);
+            }
+            else if (previous.sa_handler == SIG_DFL)
+            {
+                struct sigaction default_action{};
+                default_action.sa_handler = SIG_DFL;
+                ::sigaction(sig, &default_action, nullptr);
+                ::raise(sig);
+            }
+            else if (previous.sa_handler != SIG_IGN)
+            {
+                previous.sa_handler(sig);
+            }
+        }
+
         void fault_signal_handler(int sig, siginfo_t* info, void* raw_ucontext)
         {
             auto* uctx = static_cast<ucontext_t*>(raw_ucontext);
+            const auto& previous =
+                g_previous_fault_actions[static_cast<size_t>(std::ranges::find(fault_signals, sig) - fault_signals.begin())];
+
+            // A signal that was sent rather than caused by an instruction is no fault. It goes to the previous handler without
+            // uninstalling this one, since that handler may return and later faults still need handling here.
+            if (is_sent_signal(*info))
+            {
+                forward_sent_signal(previous, sig, info, raw_ucontext);
+                return;
+            }
 
             const bool handled = g_active_emulator != nullptr && g_active_emulator->handle_fault_signal(sig, info, raw_ucontext);
             if (handled)
@@ -3960,10 +4006,8 @@ namespace sogen::fex
 
             log_unhandled_signal(sig, info, uctx);
 
-            struct sigaction default_action{};
-            default_action.sa_handler = SIG_DFL;
-            ::sigaction(sig, &default_action, nullptr);
-            ::raise(sig);
+            // Returning re-executes the faulting instruction, which raises the signal again for the previous handler.
+            ::sigaction(sig, &previous, nullptr);
         }
     } // namespace
 
