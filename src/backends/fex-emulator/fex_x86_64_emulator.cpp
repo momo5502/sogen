@@ -2494,9 +2494,9 @@ namespace sogen::fex
                 {
                     handled = this->bring_up_to_date(chunk, chunk_address, chunk_size);
                 }
-                else if (this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write) &&
-                         !chunk.written.exchange(true))
+                else if (this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write))
                 {
+                    chunk.written = true;
                     handled = this->restrict_protection(chunk_address, chunk_size, tracked_access::full);
                 }
             });
