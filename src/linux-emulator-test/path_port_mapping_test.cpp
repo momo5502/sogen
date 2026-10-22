@@ -3,12 +3,20 @@
 #include <linux_emulator.hpp>
 #include <backend_selection.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <array>
 #include <fstream>
+#include <functional>
 #include <iterator>
-#include <random>
 #include <string_view>
+#include <thread>
+
+#if defined(_WIN32) && !defined(__MINGW64__)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace sogen
 {
@@ -19,8 +27,10 @@ namespace sogen
           public:
             temp_tree()
             {
-                this->path_ = std::filesystem::temp_directory_path() /
-                              ("sogen-linux-fs-test-" + std::to_string(std::random_device{}()) + std::to_string(std::random_device{}()));
+                const auto thread_id = std::hash<std::thread::id>{}(std::this_thread::get_id());
+                const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+                this->path_ = std::filesystem::temp_directory_path() / ("sogen-linux-fs-test-" + std::to_string(getpid()) + "-" +
+                                                                        std::to_string(thread_id) + "-" + std::to_string(timestamp));
                 std::filesystem::create_directories(this->path_);
             }
 
