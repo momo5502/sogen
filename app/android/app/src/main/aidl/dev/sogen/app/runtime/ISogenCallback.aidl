@@ -7,5 +7,6 @@ oneway interface ISogenCallback {
     void onWindowResized(long window, int width, int height);
     void onWindowVisibilityChanged(long window, boolean visible);
     void onWindowTitleChanged(long window, String title);
+    void onCursorMoved(long window, int x, int y);
     void onExit(int exitCode);
 }

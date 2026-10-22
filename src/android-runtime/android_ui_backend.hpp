@@ -25,6 +25,8 @@ namespace sogen::android
         virtual void on_window_resized(hwnd window, int32_t width, int32_t height) = 0;
         virtual void on_window_visibility_changed(hwnd window, bool visible) = 0;
         virtual void on_window_title_changed(hwnd window, std::u16string_view title) = 0;
+        // The guest moved the cursor itself, e.g. with SetCursorPos; x and y are in the window's client coordinates.
+        virtual void on_cursor_moved(hwnd window, int32_t x, int32_t y) = 0;
     };
 
     enum class mouse_button : uint8_t
@@ -65,6 +67,7 @@ namespace sogen::android
         void set_window_visible(hwnd window, bool visible) override;
         void set_window_title(hwnd window, std::u16string_view title) override;
         void present_surface(hwnd window, const ui_surface_desc& surface) override;
+        void set_cursor_position(hwnd window, int32_t screen_x, int32_t screen_y) override;
 
         std::vector<std::string> vulkan_instance_extensions() override;
         uint64_t create_vulkan_surface(hwnd window, uint64_t instance) override;

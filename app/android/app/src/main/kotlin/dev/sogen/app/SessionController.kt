@@ -141,6 +141,10 @@ class SessionController(
             emit(mapOf("event" to "windowTitle", "window" to window, "title" to title))
         }
 
+        override fun onCursorMoved(window: Long, x: Int, y: Int) = post {
+            emit(mapOf("event" to "cursorMoved", "window" to window, "x" to x, "y" to y))
+        }
+
         override fun onExit(exitCode: Int) = post { this@SessionController.onExit(exitCode) }
     }
 

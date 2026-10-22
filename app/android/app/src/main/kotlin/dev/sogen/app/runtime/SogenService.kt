@@ -118,6 +118,8 @@ class SogenService : Service() {
         override fun onWindowTitleChanged(window: Long, title: String) =
             deliver { callback.onWindowTitleChanged(window, title) }
 
+        override fun onCursorMoved(window: Long, x: Int, y: Int) = deliver { callback.onCursorMoved(window, x, y) }
+
         private inline fun deliver(action: () -> Unit) {
             try {
                 action()
