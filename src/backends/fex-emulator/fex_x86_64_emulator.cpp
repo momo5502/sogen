@@ -2147,7 +2147,7 @@ namespace sogen::fex
 
         uint64_t host_placement_address(const uint64_t address) const override
         {
-            return address;
+            return this->to_host_address(address);
         }
 
         bool host_memory_aliasing_is_coherent() const override
