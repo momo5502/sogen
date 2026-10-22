@@ -19,6 +19,8 @@ const _keyCodeDelete = 67;
 // observable even when the guest-side text is empty.
 const _keyboardSentinel = '​';
 
+const _orientation = MethodChannel('dev.sogen.app/orientation');
+
 class GamePage extends StatefulWidget {
   const GamePage({super.key, required this.game, required this.emulationRoot});
 
@@ -42,6 +44,7 @@ class _GamePageState extends State<GamePage> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _orientation.invokeMethod('followSensor', {'enabled': true});
     _session.addListener(_onSessionChanged);
     _session.start(widget.game, emulationRoot: widget.emulationRoot).then((started) {
       if (!started && mounted) {
@@ -61,6 +64,7 @@ class _GamePageState extends State<GamePage> {
     _keyboard.dispose();
     _keyboardFocus.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    _orientation.invokeMethod('followSensor', {'enabled': false});
     super.dispose();
   }
 
