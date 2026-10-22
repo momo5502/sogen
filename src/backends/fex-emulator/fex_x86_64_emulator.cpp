@@ -3954,6 +3954,17 @@ namespace sogen::fex
             errno = saved_errno;
         }
 
+        bool is_sent_signal(const siginfo_t& info)
+        {
+#ifdef __APPLE__
+            // Darwin reports some hardware traps, like the SIGTRAP of a BRK, with si_code 0, and sent signals with
+            // SI_USER/SI_QUEUE, which are positive there.
+            return info.si_code == SI_USER || info.si_code == SI_QUEUE;
+#else
+            return info.si_code <= 0;
+#endif
+        }
+
         void forward_sent_signal(const struct sigaction& previous, const int sig, siginfo_t* info, void* raw_ucontext)
         {
             if ((previous.sa_flags & SA_SIGINFO) != 0)
@@ -3981,7 +3992,7 @@ namespace sogen::fex
 
             // A signal that was sent rather than caused by an instruction is no fault. It goes to the previous handler without
             // uninstalling this one, since that handler may return and later faults still need handling here.
-            if (info->si_code <= 0)
+            if (is_sent_signal(*info))
             {
                 forward_sent_signal(previous, sig, info, raw_ucontext);
                 return;
