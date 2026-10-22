@@ -131,6 +131,10 @@ namespace sogen
         // alias host memory into the guest non-coherently.
         bool host_memory_aliasing_is_coherent() const override;
         void flush_host_memory_cache(const void* host_pointer, size_t size) override;
+        bool track_access(uint64_t address, size_t size) override;
+        void take_written_ranges(uint64_t address, size_t size,
+                                 const std::function<void(uint64_t written_address, size_t written_size)>& f) override;
+        void invalidate_cache_on_access(uint64_t address, size_t size) override;
         bool allocate_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only = false,
                              memory_region_kind kind = memory_region_kind::private_allocation);
 

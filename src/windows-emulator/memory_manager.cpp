@@ -1472,6 +1472,22 @@ namespace sogen
         this->memory_->flush_host_memory_cache(host_pointer, size);
     }
 
+    bool memory_manager::track_access(const uint64_t address, const size_t size)
+    {
+        return this->memory_->track_access(address, size);
+    }
+
+    void memory_manager::take_written_ranges(const uint64_t address, const size_t size,
+                                             const std::function<void(uint64_t written_address, size_t written_size)>& f)
+    {
+        this->memory_->take_written_ranges(address, size, f);
+    }
+
+    void memory_manager::invalidate_cache_on_access(const uint64_t address, const size_t size)
+    {
+        this->memory_->invalidate_cache_on_access(address, size);
+    }
+
     void memory_manager::unmap_memory(const uint64_t address, const size_t size)
     {
         this->memory_->unmap_memory(address, size);

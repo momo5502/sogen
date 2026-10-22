@@ -103,6 +103,10 @@ namespace sogen::fex
     {
         constexpr size_t page_size = 0x1000;
 
+        // Coarse enough that streaming accesses to tracked memory fault rarely, fine enough that flushing or invalidating a
+        // chunk stays cheap.
+        constexpr size_t tracking_chunk_size = 0x10000;
+
         // The part of the guest address space a WoW64 process's 32-bit code can address.
         constexpr uint64_t low_guest_window_size = 0x100000000ULL;
 
@@ -815,6 +819,27 @@ namespace sogen::fex
             size_t size = 0;
             memory_permission permissions = memory_permission::none;
             bool owned = true; // false for map_host_memory aliases we must not munmap
+        };
+
+        // A chunk of tracked memory is write-protected until its first write, which marks it written, and inaccessible
+        // while stale, until its first access brings its cache lines up to date.
+        struct tracked_chunk
+        {
+            std::atomic<bool> written{};
+            std::atomic<bool> stale{};
+        };
+
+        struct tracked_range
+        {
+            size_t size = 0;
+            std::vector<tracked_chunk> chunks;
+        };
+
+        enum class tracked_access : uint8_t
+        {
+            none,
+            read_only,
+            full,
         };
 
         // The guest runs natively with guest VA == host VA, so there is no per-instruction hook to
@@ -2198,6 +2223,94 @@ namespace sogen::fex
 #endif
         }
 
+#ifndef __APPLE__
+        bool track_access(const uint64_t address, const size_t size) override
+        {
+            if (size == 0 || address % page_size != 0 || size % page_size != 0 || !this->is_range_mapped(address, size) ||
+                !this->range_has_permission(address, size, memory_permission::read_write))
+            {
+                return false;
+            }
+
+            bool overlaps = false;
+            this->for_each_tracked_chunk(address, size, [&](tracked_chunk&, uint64_t, size_t) { overlaps = true; });
+            if (overlaps)
+            {
+                return false;
+            }
+
+            const size_t chunk_count = (size + tracking_chunk_size - 1) / tracking_chunk_size;
+            this->tracked_ranges_.emplace(address, tracked_range{.size = size, .chunks = std::vector<tracked_chunk>(chunk_count)});
+            this->restrict_protection(address, size, tracked_access::read_only);
+            return true;
+        }
+
+        void take_written_ranges(const uint64_t address, const size_t size,
+                                 const std::function<void(uint64_t written_address, size_t written_size)>& f) override
+        {
+            uint64_t run_address = 0;
+            size_t run_size = 0;
+            const auto finish_run = [&] {
+                if (run_size != 0)
+                {
+                    f(run_address, run_size);
+                    run_size = 0;
+                }
+            };
+
+            this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                if (!chunk.written.exchange(false))
+                {
+                    finish_run();
+                    return;
+                }
+
+                if (!chunk.stale)
+                {
+                    this->restrict_protection(chunk_address, chunk_size, tracked_access::read_only);
+                }
+
+                if (run_size == 0 || run_address + run_size != chunk_address)
+                {
+                    finish_run();
+                    run_address = chunk_address;
+                }
+                run_size += chunk_size;
+            });
+            finish_run();
+        }
+
+        void invalidate_cache_on_access(const uint64_t address, const size_t size) override
+        {
+            uint64_t run_address = 0;
+            size_t run_size = 0;
+            const auto finish_run = [&] {
+                if (run_size != 0)
+                {
+                    this->restrict_protection(run_address, run_size, tracked_access::none);
+                    run_size = 0;
+                }
+            };
+
+            this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                // Bringing a chunk up to date needs read access to it.
+                if (!this->range_has_permission(chunk_address, chunk_size, memory_permission::read) || chunk.stale.exchange(true))
+                {
+                    finish_run();
+                    return;
+                }
+
+                if (run_size == 0 || run_address + run_size != chunk_address)
+                {
+                    finish_run();
+                    run_address = chunk_address;
+                }
+                run_size += chunk_size;
+            });
+            finish_run();
+        }
+#endif
+
         void unmap_memory(uint64_t address, size_t size) override
         {
             // MMIO regions (see mmio_region's doc comment) were never really mapped at the host level.
@@ -2205,6 +2318,8 @@ namespace sogen::fex
             {
                 return;
             }
+
+            this->stop_access_tracking(address, size);
 
 #ifdef __APPLE__
             this->set_shadow_range_apple(address, size, std::nullopt);
@@ -2224,6 +2339,12 @@ namespace sogen::fex
 
         void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) override
         {
+            // Tracked chunks take the new protection as it is, so writes to them go unnoticed until they are tracked again.
+            this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                this->bring_up_to_date(chunk, chunk_address, chunk_size);
+                chunk.written = true;
+            });
+
 #ifdef __APPLE__
             this->set_shadow_range_apple(address, size, permissions);
             this->sync_host_pages_covering_apple(address, size);
@@ -2241,6 +2362,137 @@ namespace sogen::fex
             // Permission changes can expose/retract executable code; keep FEX's translation cache honest.
             this->invalidate_code_range(address, size);
             this->mark_executable_range(address, size, permissions);
+        }
+
+        // access tracking
+
+        template <typename F>
+        void for_each_tracked_chunk(const uint64_t address, const size_t size, F&& f)
+        {
+            const uint64_t end = address + size;
+            auto it = this->tracked_ranges_.upper_bound(address);
+            if (it != this->tracked_ranges_.begin())
+            {
+                --it;
+            }
+
+            for (; it != this->tracked_ranges_.end() && it->first < end; ++it)
+            {
+                const uint64_t range_end = it->first + it->second.size;
+                if (range_end <= address)
+                {
+                    continue;
+                }
+
+                const uint64_t last = std::min(end, range_end);
+                for (size_t index = (std::max(address, it->first) - it->first) / tracking_chunk_size;
+                     it->first + (index * tracking_chunk_size) < last; ++index)
+                {
+                    const uint64_t chunk_address = it->first + (index * tracking_chunk_size);
+                    f(it->second.chunks[index], chunk_address,
+                      static_cast<size_t>(std::min<uint64_t>(tracking_chunk_size, range_end - chunk_address)));
+                }
+            }
+        }
+
+        // Applies the guest's protection to the mapped parts of a range, limited to access.
+        void restrict_protection(const uint64_t address, const size_t size, const tracked_access access)
+        {
+            const uint64_t end = address + size;
+            uint64_t cursor = address;
+            while (cursor < end)
+            {
+                const auto region = this->find_region_containing(cursor);
+                if (region == this->regions_.end())
+                {
+                    const auto next = this->regions_.upper_bound(cursor);
+                    cursor = next == this->regions_.end() ? end : next->first;
+                    continue;
+                }
+
+                const uint64_t piece_end = std::min(end, region->first + region->second.size);
+                int prot = to_prot(region->second.permissions);
+                if (access == tracked_access::none)
+                {
+                    prot = PROT_NONE;
+                }
+                else if (access == tracked_access::read_only)
+                {
+                    prot &= ~PROT_WRITE;
+                }
+
+                this->for_each_host_span(cursor, static_cast<size_t>(piece_end - cursor),
+                                         [&](const uint64_t host_address, const size_t span_size, size_t) {
+                                             ::mprotect(reinterpret_cast<void*>(host_address), span_size, prot);
+                                         });
+                cursor = piece_end;
+            }
+        }
+
+        // Cleans and invalidates a stale chunk's cache lines, which also makes any unflushed writes to it visible, and
+        // leaves it write-protected so that a write still marks it written.
+        bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
+        {
+            if (!chunk.stale.exchange(false))
+            {
+                return false;
+            }
+
+            this->restrict_protection(chunk_address, chunk_size, tracked_access::read_only);
+            this->for_each_host_span(chunk_address, chunk_size, [&](const uint64_t host_address, const size_t span_size, size_t) {
+                this->flush_host_memory_cache(reinterpret_cast<const void*>(host_address), span_size);
+            });
+            chunk.written = false;
+            return true;
+        }
+
+        // The first access to a stale chunk of tracked memory, or the first write to a clean one: brings the chunk up to
+        // date or records the write, and lets the access through.
+        bool handle_tracked_memory_fault(const uint64_t host_fault_address)
+        {
+            bool handled = false;
+            this->for_each_tracked_chunk(this->to_guest_address(host_fault_address), 1,
+                                         [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                                             if (this->bring_up_to_date(chunk, chunk_address, chunk_size))
+                                             {
+                                                 handled = true;
+                                             }
+                                             else if (this->range_has_permission(chunk_address, chunk_size, memory_permission::write) &&
+                                                      !chunk.written.exchange(true))
+                                             {
+                                                 this->restrict_protection(chunk_address, chunk_size, tracked_access::full);
+                                                 handled = true;
+                                             }
+                                         });
+            return handled;
+        }
+
+        void stop_access_tracking(const uint64_t address, const size_t size)
+        {
+            const uint64_t end = address + size;
+            auto it = this->tracked_ranges_.upper_bound(address);
+            if (it != this->tracked_ranges_.begin())
+            {
+                --it;
+            }
+
+            while (it != this->tracked_ranges_.end() && it->first < end)
+            {
+                if (it->first + it->second.size <= address)
+                {
+                    ++it;
+                    continue;
+                }
+
+                const uint64_t range_address = it->first;
+                const size_t range_size = it->second.size;
+                this->for_each_tracked_chunk(range_address, range_size,
+                                             [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                                                 this->bring_up_to_date(chunk, chunk_address, chunk_size);
+                                             });
+                it = this->tracked_ranges_.erase(it);
+                this->restrict_protection(range_address, range_size, tracked_access::full);
+            }
         }
 
         // region bookkeeping
@@ -2459,13 +2711,18 @@ namespace sogen::fex
         // Callers are expected to have checked is_range_mapped already.
         bool range_is_writable(uint64_t address, size_t size) const
         {
+            return this->range_has_permission(address, size, memory_permission::write);
+        }
+
+        bool range_has_permission(uint64_t address, size_t size, const memory_permission permissions) const
+        {
             uint64_t cursor = address;
             const uint64_t end = address + size;
 
             while (cursor < end)
             {
                 const auto it = this->find_region_containing(cursor);
-                if (it == this->regions_.end() || (it->second.permissions & memory_permission::write) == memory_permission::none)
+                if (it == this->regions_.end() || (it->second.permissions & permissions) != permissions)
                 {
                     return false;
                 }
@@ -3336,6 +3593,13 @@ namespace sogen::fex
                     return true;
                 }
 
+#ifndef __APPLE__
+                if (sig == SIGSEGV && info->si_code == SEGV_ACCERR && this->handle_tracked_memory_fault(fault_addr))
+                {
+                    return true;
+                }
+#endif
+
 #ifdef __APPLE__
                 // A W^X instruction-fetch fault on FEXCore's dispatcher trampoline: it is host MAP_JIT
                 // code like a CodeBuffer, but IsAddressInCodeBuffer does not recognize it, so the
@@ -3819,6 +4083,7 @@ namespace sogen::fex
 
         std::map<uint64_t, mapped_region> regions_;
         std::vector<mmio_region> mmio_regions_;
+        std::map<uint64_t, tracked_range> tracked_ranges_;
 
         // Every per-logical-thread call-ret buffer ever allocated by ensure_callret_buffer, so the
         // destructor can release them - these live outside regions_ (host allocator space, not the

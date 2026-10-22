@@ -24,6 +24,13 @@ namespace sogen
     class vulkan_host
     {
       public:
+        struct memory_range
+        {
+            uint64_t memory{};
+            uint64_t offset{};
+            uint64_t size{};
+        };
+
         vulkan_host();
         ~vulkan_host();
 
@@ -203,9 +210,11 @@ namespace sogen
         int32_t import_host_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint32_t flags, uint32_t device_mask,
                                    void* host_pointer, uint64_t& out_memory);
         // Imported memory may only be importable as a non-coherent type, while the guest asked for coherent memory and never
-        // flushes. These make guest writes visible to the device and device writes visible to the guest.
-        void flush_imported_memory();
-        void invalidate_imported_memory();
+        // flushes. These make guest writes visible to the device and device writes visible to the guest. Ranges of coherent
+        // memory are skipped, and ranges the host wrote must be flushed before invalidating.
+        bool is_non_coherent_import(uint64_t memory) const;
+        void flush_imported_memory(std::span<const memory_range> ranges);
+        void invalidate_imported_memory(std::span<const memory_range> ranges);
         uint64_t allocation_size(uint64_t memory) const;
         // Maps the whole memory object at address, a range the caller has reserved. Unmapping leaves the range reserved
         // unless the driver fails to, in which case it is unmapped.
