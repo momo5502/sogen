@@ -56,7 +56,7 @@ namespace sogen
         constexpr size_t SEGMENT_PAGE_STARTS_OFFSET = 22;
         constexpr uint32_t MAX_REGION_COUNT = 5;
         constexpr uint32_t MAX_LINK_INFO_SIZE = 0x4000000;
-        constexpr uint64_t PAGE_SIZE = 0x1000;
+        constexpr uint64_t MACOS_PAGE_SIZE = 0x1000;
 
         constexpr uint16_t DYLD_CHAINED_PTR_64 = 2;
         constexpr uint16_t DYLD_CHAINED_PTR_64_OFFSET = 6;
@@ -162,7 +162,7 @@ namespace sogen
             std::vector<std::byte> data(size);
             file->read_at(region.file_offset, data);
 
-            for (uint64_t page_offset = 0; page_offset < size; page_offset += PAGE_SIZE)
+            for (uint64_t page_offset = 0; page_offset < size; page_offset += MACOS_PAGE_SIZE)
             {
                 const auto address = region.address + page_offset;
                 const auto segment = find_segment(blob, hdr, address);
@@ -171,14 +171,14 @@ namespace sogen
                     continue;
                 }
 
-                const auto page_index = (address - hdr.image_address - segment->header.segment_offset) / PAGE_SIZE;
+                const auto page_index = (address - hdr.image_address - segment->header.segment_offset) / MACOS_PAGE_SIZE;
                 if (page_index >= segment->header.page_count)
                 {
                     throw std::runtime_error("Page-in linking page index out of range");
                 }
 
                 const auto first_start = read_blob<uint16_t>(blob, segment->page_starts_offset + (page_index * sizeof(uint16_t)));
-                fixup_page64(std::span{data}.subspan(static_cast<size_t>(page_offset), PAGE_SIZE), blob, hdr, first_start);
+                fixup_page64(std::span{data}.subspan(static_cast<size_t>(page_offset), MACOS_PAGE_SIZE), blob, hdr, first_start);
             }
 
             auto& memory = emu.memory;
@@ -216,7 +216,8 @@ namespace sogen
         }
 
         const auto hdr = read_blob<mwl_info_hdr>(blob, 0);
-        if (hdr.page_size != PAGE_SIZE || (hdr.pointer_format != DYLD_CHAINED_PTR_64 && hdr.pointer_format != DYLD_CHAINED_PTR_64_OFFSET))
+        if (hdr.page_size != MACOS_PAGE_SIZE ||
+            (hdr.pointer_format != DYLD_CHAINED_PTR_64 && hdr.pointer_format != DYLD_CHAINED_PTR_64_OFFSET))
         {
             c.emu_ref.log.error("Unsupported page-in linking info (page size 0x%x, pointer format %u)\n", hdr.page_size,
                                 hdr.pointer_format);

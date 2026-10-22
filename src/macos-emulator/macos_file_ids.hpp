@@ -1,10 +1,10 @@
 #pragma once
 
 #include <array>
-#include <compare>
 #include <cstdint>
 #include <map>
 #include <string>
+#include <tuple>
 
 namespace sogen
 {
@@ -15,7 +15,11 @@ namespace sogen
         std::array<int32_t, 2> fsid{};
         uint64_t object_id{};
 
-        auto operator<=>(const macos_file_id&) const = default;
+        // Not a defaulted operator<=>: libc++ before 17 (Android NDK r26) has no three-way comparison for std::array.
+        bool operator<(const macos_file_id& other) const
+        {
+            return std::tie(this->fsid, this->object_id) < std::tie(other.fsid, other.object_id);
+        }
     };
 
     static_assert(sizeof(macos_file_id) == 16);

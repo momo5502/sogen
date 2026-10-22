@@ -30,86 +30,86 @@ namespace sogen
         constexpr uint64_t MACH_MSG2_TRAP = 47;
         constexpr uint64_t MACH_HOST_SELF_TRAP = 29;
 
-        constexpr uint64_t SYS_EXIT = 1;
-        constexpr uint64_t SYS_WRITE = 4;
-        constexpr uint64_t SYS_OPEN = 5;
-        constexpr uint64_t SYS_CLOSE = 6;
-        constexpr uint64_t SYS_GETPID = 20;
-        constexpr uint64_t SYS_ACCESS = 33;
-        constexpr uint64_t SYS_SIGPROCMASK = 48;
-        constexpr uint64_t SYS_IOCTL = 54;
-        constexpr uint64_t SYS_MUNMAP = 73;
-        constexpr uint64_t SYS_MPROTECT = 74;
-        constexpr uint64_t SYS_FCNTL = 92;
-        constexpr uint64_t SYS_SOCKET = 97;
-        constexpr uint64_t SYS_CONNECT = 98;
-        constexpr uint64_t SYS_GETTIMEOFDAY = 116;
-        constexpr uint64_t SYS_SENDTO = 133;
-        constexpr uint64_t SYS_CSOPS = 169;
-        constexpr uint64_t SYS_CSOPS_AUDITTOKEN = 170;
-        constexpr uint64_t SYS_MMAP = 197;
-        constexpr uint64_t SYS_SYSCTL = 202;
-        constexpr uint64_t SYS_GETATTRLIST = 220;
-        constexpr uint64_t SYS_SHM_OPEN = 266;
-        constexpr uint64_t SYS_SHARED_REGION_CHECK_NP = 294;
-        constexpr uint64_t SYS_ISSETUGID = 327;
-        constexpr uint64_t SYS_PROC_INFO = 336;
-        constexpr uint64_t SYS_STAT64 = 338;
-        constexpr uint64_t SYS_FSTAT64 = 339;
-        constexpr uint64_t SYS_LSTAT64 = 340;
-        constexpr uint64_t SYS_GETFSSTAT64 = 347;
-        constexpr uint64_t SYS_BSDTHREAD_REGISTER = 366;
-        constexpr uint64_t SYS_WRITE_NOCANCEL = 397;
-        constexpr uint64_t SYS_OPEN_NOCANCEL = 398;
-        constexpr uint64_t SYS_THREAD_SELFID = 372;
-        constexpr uint64_t SYS_FSGETPATH = 427;
-        constexpr uint64_t SYS_MAC_SYSCALL = 381;
-        constexpr uint64_t SYS_CSRCTL = 483;
-        constexpr uint64_t SYS_GETENTROPY = 500;
-        constexpr uint64_t SYS_ABORT_WITH_PAYLOAD = 521;
-        constexpr uint64_t SYS_MAP_WITH_LINKING_NP = 550;
+        constexpr uint64_t MACOS_SYS_exit = 1;
+        constexpr uint64_t MACOS_SYS_write = 4;
+        constexpr uint64_t MACOS_SYS_open = 5;
+        constexpr uint64_t MACOS_SYS_close = 6;
+        constexpr uint64_t MACOS_SYS_getpid = 20;
+        constexpr uint64_t MACOS_SYS_access = 33;
+        constexpr uint64_t MACOS_SYS_sigprocmask = 48;
+        constexpr uint64_t MACOS_SYS_ioctl = 54;
+        constexpr uint64_t MACOS_SYS_munmap = 73;
+        constexpr uint64_t MACOS_SYS_mprotect = 74;
+        constexpr uint64_t MACOS_SYS_fcntl = 92;
+        constexpr uint64_t MACOS_SYS_socket = 97;
+        constexpr uint64_t MACOS_SYS_connect = 98;
+        constexpr uint64_t MACOS_SYS_gettimeofday = 116;
+        constexpr uint64_t MACOS_SYS_sendto = 133;
+        constexpr uint64_t MACOS_SYS_csops = 169;
+        constexpr uint64_t MACOS_SYS_csops_audittoken = 170;
+        constexpr uint64_t MACOS_SYS_mmap = 197;
+        constexpr uint64_t MACOS_SYS_sysctl = 202;
+        constexpr uint64_t MACOS_SYS_getattrlist = 220;
+        constexpr uint64_t MACOS_SYS_shm_open = 266;
+        constexpr uint64_t MACOS_SYS_shared_region_check_np = 294;
+        constexpr uint64_t MACOS_SYS_issetugid = 327;
+        constexpr uint64_t MACOS_SYS_proc_info = 336;
+        constexpr uint64_t MACOS_SYS_stat64 = 338;
+        constexpr uint64_t MACOS_SYS_fstat64 = 339;
+        constexpr uint64_t MACOS_SYS_lstat64 = 340;
+        constexpr uint64_t MACOS_SYS_getfsstat64 = 347;
+        constexpr uint64_t MACOS_SYS_bsdthread_register = 366;
+        constexpr uint64_t MACOS_SYS_write_nocancel = 397;
+        constexpr uint64_t MACOS_SYS_open_nocancel = 398;
+        constexpr uint64_t MACOS_SYS_thread_selfid = 372;
+        constexpr uint64_t MACOS_SYS_fsgetpath = 427;
+        constexpr uint64_t MACOS_SYS_mac_syscall = 381;
+        constexpr uint64_t MACOS_SYS_csrctl = 483;
+        constexpr uint64_t MACOS_SYS_getentropy = 500;
+        constexpr uint64_t MACOS_SYS_abort_with_payload = 521;
+        constexpr uint64_t MACOS_SYS_map_with_linking_np = 550;
     }
 
     macos_syscall_dispatcher::macos_syscall_dispatcher()
     {
-        this->register_unix_handler(SYS_EXIT, sys_exit, "exit");
-        this->register_unix_handler(SYS_WRITE, sys_write, "write");
-        this->register_unix_handler(SYS_OPEN, sys_open, "open");
-        this->register_unix_handler(SYS_CLOSE, sys_close, "close");
-        this->register_unix_handler(SYS_GETPID, sys_getpid, "getpid");
-        this->register_unix_handler(SYS_ACCESS, sys_access, "access");
-        this->register_unix_handler(SYS_SIGPROCMASK, sys_sigprocmask, "sigprocmask");
-        this->register_unix_handler(SYS_IOCTL, sys_ioctl, "ioctl");
-        this->register_unix_handler(SYS_MUNMAP, sys_munmap, "munmap");
-        this->register_unix_handler(SYS_MPROTECT, sys_mprotect, "mprotect");
-        this->register_unix_handler(SYS_FCNTL, sys_fcntl, "fcntl");
-        this->register_unix_handler(SYS_SOCKET, sys_socket, "socket");
-        this->register_unix_handler(SYS_CONNECT, sys_connect, "connect");
-        this->register_unix_handler(SYS_SENDTO, sys_sendto, "sendto");
-        this->register_unix_handler(SYS_GETTIMEOFDAY, sys_gettimeofday, "gettimeofday");
-        this->register_unix_handler(SYS_CSOPS, sys_csops, "csops");
-        this->register_unix_handler(SYS_CSOPS_AUDITTOKEN, sys_csops_audittoken, "csops_audittoken");
-        this->register_unix_handler(SYS_MMAP, sys_mmap, "mmap");
-        this->register_unix_handler(SYS_SYSCTL, sys_sysctl, "sysctl");
-        this->register_unix_handler(SYS_GETATTRLIST, sys_getattrlist, "getattrlist");
-        this->register_unix_handler(SYS_SHM_OPEN, sys_shm_open, "shm_open");
-        this->register_unix_handler(SYS_SHARED_REGION_CHECK_NP, sys_shared_region_check_np, "shared_region_check_np");
-        this->register_unix_handler(SYS_ISSETUGID, sys_issetugid, "issetugid");
-        this->register_unix_handler(SYS_PROC_INFO, sys_proc_info, "proc_info");
-        this->register_unix_handler(SYS_STAT64, sys_stat64, "stat64");
-        this->register_unix_handler(SYS_FSTAT64, sys_fstat64, "fstat64");
-        this->register_unix_handler(SYS_LSTAT64, sys_lstat64, "lstat64");
-        this->register_unix_handler(SYS_GETFSSTAT64, sys_getfsstat64, "getfsstat64");
-        this->register_unix_handler(SYS_BSDTHREAD_REGISTER, sys_bsdthread_register, "bsdthread_register");
-        this->register_unix_handler(SYS_WRITE_NOCANCEL, sys_write, "write_nocancel");
-        this->register_unix_handler(SYS_OPEN_NOCANCEL, sys_open, "open_nocancel");
-        this->register_unix_handler(SYS_THREAD_SELFID, sys_thread_selfid, "thread_selfid");
-        this->register_unix_handler(SYS_MAC_SYSCALL, sys_mac_syscall, "__mac_syscall");
-        this->register_unix_handler(SYS_FSGETPATH, sys_fsgetpath, "fsgetpath");
-        this->register_unix_handler(SYS_CSRCTL, sys_csrctl, "csrctl");
-        this->register_unix_handler(SYS_GETENTROPY, sys_getentropy, "getentropy");
-        this->register_unix_handler(SYS_ABORT_WITH_PAYLOAD, sys_abort_with_payload, "abort_with_payload");
-        this->register_unix_handler(SYS_MAP_WITH_LINKING_NP, sys_map_with_linking_np, "map_with_linking_np");
+        this->register_unix_handler(MACOS_SYS_exit, sys_exit, "exit");
+        this->register_unix_handler(MACOS_SYS_write, sys_write, "write");
+        this->register_unix_handler(MACOS_SYS_open, sys_open, "open");
+        this->register_unix_handler(MACOS_SYS_close, sys_close, "close");
+        this->register_unix_handler(MACOS_SYS_getpid, sys_getpid, "getpid");
+        this->register_unix_handler(MACOS_SYS_access, sys_access, "access");
+        this->register_unix_handler(MACOS_SYS_sigprocmask, sys_sigprocmask, "sigprocmask");
+        this->register_unix_handler(MACOS_SYS_ioctl, sys_ioctl, "ioctl");
+        this->register_unix_handler(MACOS_SYS_munmap, sys_munmap, "munmap");
+        this->register_unix_handler(MACOS_SYS_mprotect, sys_mprotect, "mprotect");
+        this->register_unix_handler(MACOS_SYS_fcntl, sys_fcntl, "fcntl");
+        this->register_unix_handler(MACOS_SYS_socket, sys_socket, "socket");
+        this->register_unix_handler(MACOS_SYS_connect, sys_connect, "connect");
+        this->register_unix_handler(MACOS_SYS_sendto, sys_sendto, "sendto");
+        this->register_unix_handler(MACOS_SYS_gettimeofday, sys_gettimeofday, "gettimeofday");
+        this->register_unix_handler(MACOS_SYS_csops, sys_csops, "csops");
+        this->register_unix_handler(MACOS_SYS_csops_audittoken, sys_csops_audittoken, "csops_audittoken");
+        this->register_unix_handler(MACOS_SYS_mmap, sys_mmap, "mmap");
+        this->register_unix_handler(MACOS_SYS_sysctl, sys_sysctl, "sysctl");
+        this->register_unix_handler(MACOS_SYS_getattrlist, sys_getattrlist, "getattrlist");
+        this->register_unix_handler(MACOS_SYS_shm_open, sys_shm_open, "shm_open");
+        this->register_unix_handler(MACOS_SYS_shared_region_check_np, sys_shared_region_check_np, "shared_region_check_np");
+        this->register_unix_handler(MACOS_SYS_issetugid, sys_issetugid, "issetugid");
+        this->register_unix_handler(MACOS_SYS_proc_info, sys_proc_info, "proc_info");
+        this->register_unix_handler(MACOS_SYS_stat64, sys_stat64, "stat64");
+        this->register_unix_handler(MACOS_SYS_fstat64, sys_fstat64, "fstat64");
+        this->register_unix_handler(MACOS_SYS_lstat64, sys_lstat64, "lstat64");
+        this->register_unix_handler(MACOS_SYS_getfsstat64, sys_getfsstat64, "getfsstat64");
+        this->register_unix_handler(MACOS_SYS_bsdthread_register, sys_bsdthread_register, "bsdthread_register");
+        this->register_unix_handler(MACOS_SYS_write_nocancel, sys_write, "write_nocancel");
+        this->register_unix_handler(MACOS_SYS_open_nocancel, sys_open, "open_nocancel");
+        this->register_unix_handler(MACOS_SYS_thread_selfid, sys_thread_selfid, "thread_selfid");
+        this->register_unix_handler(MACOS_SYS_mac_syscall, sys_mac_syscall, "__mac_syscall");
+        this->register_unix_handler(MACOS_SYS_fsgetpath, sys_fsgetpath, "fsgetpath");
+        this->register_unix_handler(MACOS_SYS_csrctl, sys_csrctl, "csrctl");
+        this->register_unix_handler(MACOS_SYS_getentropy, sys_getentropy, "getentropy");
+        this->register_unix_handler(MACOS_SYS_abort_with_payload, sys_abort_with_payload, "abort_with_payload");
+        this->register_unix_handler(MACOS_SYS_map_with_linking_np, sys_map_with_linking_np, "map_with_linking_np");
 
         this->register_machdep_handler(MACHDEP_THREAD_FAST_SET_CTHREAD_SELF, machdep_thread_fast_set_cthread_self,
                                        "thread_fast_set_cthread_self");
@@ -131,36 +131,36 @@ namespace sogen
     void macos_syscall_dispatcher::register_unix_handler(const uint64_t number, const macos_syscall_handler handler,
                                                          const std::string_view name)
     {
-        this->unix_handlers_.at(number) = {.handler = handler, .name = std::string{name}};
+        this->unix_handlers_.at(static_cast<size_t>(number)) = {.handler = handler, .name = std::string{name}};
     }
 
     void macos_syscall_dispatcher::register_mach_handler(const uint64_t number, const macos_syscall_handler handler,
                                                          const std::string_view name)
     {
-        this->mach_handlers_.at(number) = {.handler = handler, .name = std::string{name}};
+        this->mach_handlers_.at(static_cast<size_t>(number)) = {.handler = handler, .name = std::string{name}};
     }
 
     void macos_syscall_dispatcher::register_machdep_handler(const uint64_t number, const macos_syscall_handler handler,
                                                             const std::string_view name)
     {
-        this->machdep_handlers_.at(number) = {.handler = handler, .name = std::string{name}};
+        this->machdep_handlers_.at(static_cast<size_t>(number)) = {.handler = handler, .name = std::string{name}};
     }
 
     const macos_syscall_entry* macos_syscall_dispatcher::find_entry(const uint64_t syscall_class, const uint64_t number) const
     {
         if (syscall_class == SYSCALL_CLASS_UNIX && number < this->unix_handlers_.size())
         {
-            return &this->unix_handlers_.at(number);
+            return &this->unix_handlers_.at(static_cast<size_t>(number));
         }
 
         if (syscall_class == SYSCALL_CLASS_MACH && number < this->mach_handlers_.size())
         {
-            return &this->mach_handlers_.at(number);
+            return &this->mach_handlers_.at(static_cast<size_t>(number));
         }
 
         if (syscall_class == SYSCALL_CLASS_MACHDEP && number < this->machdep_handlers_.size())
         {
-            return &this->machdep_handlers_.at(number);
+            return &this->machdep_handlers_.at(static_cast<size_t>(number));
         }
 
         return nullptr;

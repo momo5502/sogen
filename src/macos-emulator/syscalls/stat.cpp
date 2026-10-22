@@ -47,10 +47,10 @@ namespace sogen
         static_assert(offsetof(macos_stat64, st_size) == 96);
         static_assert(offsetof(macos_stat64, st_blksize) == 112);
 
-        constexpr uint16_t S_IFIFO = 0010000;
-        constexpr uint16_t S_IFDIR = 0040000;
-        constexpr uint16_t S_IFREG = 0100000;
-        constexpr uint16_t S_IFLNK = 0120000;
+        constexpr uint16_t MACOS_S_IFIFO = 0010000;
+        constexpr uint16_t MACOS_S_IFDIR = 0040000;
+        constexpr uint16_t MACOS_S_IFREG = 0100000;
+        constexpr uint16_t MACOS_S_IFLNK = 0120000;
         constexpr uint16_t PIPE_PERMISSIONS = 0600;
         constexpr int32_t BLOCK_SIZE = 4096;
         constexpr int64_t STAT_BLOCK_UNIT = 512;
@@ -73,14 +73,14 @@ namespace sogen
             switch (status.type())
             {
             case std::filesystem::file_type::regular:
-                type = S_IFREG;
+                type = MACOS_S_IFREG;
                 size = static_cast<int64_t>(std::filesystem::file_size(host_path, ec));
                 break;
             case std::filesystem::file_type::directory:
-                type = S_IFDIR;
+                type = MACOS_S_IFDIR;
                 break;
             case std::filesystem::file_type::symlink:
-                type = S_IFLNK;
+                type = MACOS_S_IFLNK;
                 break;
             default:
                 return std::nullopt;
@@ -155,7 +155,7 @@ namespace sogen
         if (fd >= 0 && fd <= 2)
         {
             macos_stat64 pipe{};
-            pipe.st_mode = S_IFIFO | PIPE_PERMISSIONS;
+            pipe.st_mode = MACOS_S_IFIFO | PIPE_PERMISSIONS;
             pipe.st_nlink = 1;
             pipe.st_blksize = BLOCK_SIZE;
             write_stat_result(c, pipe, buffer);

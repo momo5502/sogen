@@ -7,8 +7,11 @@
 #include <macos_memory_protection.hpp>
 #include <utils/io.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -24,7 +27,7 @@ namespace sogen::macos_test
         constexpr uint64_t IMAGE_SIZE = 0x1000;
         constexpr uint32_t CPU_TYPE_ARM64 = 0x0100000C;
 
-        const std::vector<uint8_t> HELLO_CODE{
+        constexpr auto HELLO_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02,             // mov eax, 0x2000004 (write)
             0xBF, 0x01, 0x00, 0x00, 0x00,             // mov edi, 1
             0x48, 0x8D, 0x35, 0x13, 0x00, 0x00, 0x00, // lea rsi, [rip + message]
@@ -34,9 +37,9 @@ namespace sogen::macos_test
             0xBF, 0x07, 0x00, 0x00, 0x00,             // mov edi, 7
             0x0F, 0x05,                               // syscall
             'h',  'e',  'l',  'l',  'o',  '\n',       // message
-        };
+        });
 
-        const std::vector<uint8_t> BAD_FD_WRITE_CODE{
+        constexpr auto BAD_FD_WRITE_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02, // mov eax, 0x2000004 (write)
             0xBF, 0x05, 0x00, 0x00, 0x00, // mov edi, 5
             0x31, 0xF6,                   // xor esi, esi
@@ -46,27 +49,40 @@ namespace sogen::macos_test
             0x11, 0xFF,                   // adc edi, edi
             0xB8, 0x01, 0x00, 0x00, 0x02, // mov eax, 0x2000001 (exit)
             0x0F, 0x05,                   // syscall
-        };
+        });
 
-        const std::vector<uint8_t> EXIT_WITH_ARGC_CODE{
-            0x48, 0x8B, 0x3C, 0x24,       // mov rdi, [rsp]
-            0xB8, 0x01, 0x00, 0x00, 0x02, // mov eax, 0x2000001 (exit)
-            0x0F, 0x05,                   // syscall
-        };
+        constexpr auto EXIT_WITH_ARGC_CODE = std::to_array<uint8_t>({
+            0x48,
+            0x8B,
+            0x3C,
+            0x24, // mov rdi, [rsp]
+            0xB8,
+            0x01,
+            0x00,
+            0x00,
+            0x02, // mov eax, 0x2000001 (exit)
+            0x0F,
+            0x05, // syscall
+        });
 
-        const std::vector<uint8_t> INVALID_MACH_TRAP_CODE{
-            0xB8, 0x00, 0x00, 0x00, 0x01, // mov eax, 0x1000000 (Mach trap 0, kern_invalid)
-            0x0F, 0x05,                   // syscall
-        };
+        constexpr auto INVALID_MACH_TRAP_CODE = std::to_array<uint8_t>({
+            0xB8,
+            0x00,
+            0x00,
+            0x00,
+            0x01, // mov eax, 0x1000000 (Mach trap 0, kern_invalid)
+            0x0F,
+            0x05, // syscall
+        });
 
-        const std::vector<uint8_t> READ_COMMPAGE_PAGE_SHIFT_CODE{
+        constexpr auto READ_COMMPAGE_PAGE_SHIFT_CODE = std::to_array<uint8_t>({
             0xA0, 0x4E, 0x00, 0xE0, 0xFF, 0xFF, 0x7F, 0x00, 0x00, // mov al, [0x7FFFFFE0004E] (user page shift)
             0x0F, 0xB6, 0xF8,                                     // movzx edi, al
             0xB8, 0x01, 0x00, 0x00, 0x02,                         // mov eax, 0x2000001 (exit)
             0x0F, 0x05,                                           // syscall
-        };
+        });
 
-        const std::vector<uint8_t> FAKE_DYLD_CODE{
+        constexpr auto FAKE_DYLD_CODE = std::to_array<uint8_t>({
             0x48, 0x8B, 0x04, 0x24,                                     // mov rax, [rsp]
             0x48, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // mov rcx, 0x100000000
             0x31, 0xFF,                                                 // xor edi, edi
@@ -76,9 +92,9 @@ namespace sogen::macos_test
             0x48, 0x03, 0x7C, 0x24, 0x08,                               // add rdi, [rsp + 8]
             0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
             0x0F, 0x05,                                                 // syscall
-        };
+        });
 
-        const std::vector<uint8_t> CHECK_REBASED_CACHE_POINTERS_CODE{
+        constexpr auto CHECK_REBASED_CACHE_POINTERS_CODE = std::to_array<uint8_t>({
             0x48, 0xA1, 0x00, 0x10, 0x00, 0x00, 0xF8, 0x7F, 0x00, 0x00, // mov rax, [0x7FF800001000]
             0x48, 0xB9, 0x34, 0x12, 0x00, 0x00, 0xF8, 0x7F, 0x00, 0x00, // mov rcx, 0x7FF800001234
             0x31, 0xFF,                                                 // xor edi, edi
@@ -92,7 +108,7 @@ namespace sogen::macos_test
             0x8D, 0x3C, 0x47,                                           // lea edi, [rdi + 2 * rax]
             0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
             0x0F, 0x05,                                                 // syscall
-        };
+        });
 
         constexpr uint64_t SHARED_REGION_BASE = 0x7FF800000000;
 
@@ -169,8 +185,7 @@ namespace sogen::macos_test
             {
                 std::vector<std::byte> data{};
                 const auto append = [&data](const void* value, const size_t size) {
-                    const auto* bytes = static_cast<const std::byte*>(value);
-                    data.insert(data.end(), bytes, bytes + size);
+                    std::ranges::copy(std::span{static_cast<const std::byte*>(value), size}, std::back_inserter(data));
                 };
 
                 auto final_header = this->header;
@@ -202,10 +217,10 @@ namespace sogen::macos_test
             std::vector<std::vector<std::byte>> extra_commands{};
         };
 
-        test_image make_test_image(std::vector<uint8_t> code, image_options options = {})
+        test_image make_test_image(const std::span<const uint8_t> code, image_options options = {})
         {
             test_image image{};
-            image.code = std::move(code);
+            image.code.assign(code.begin(), code.end());
             image.extra_commands = std::move(options.extra_commands);
 
             auto code_offset = sizeof(image.header) + sizeof(image.text) + sizeof(image.thread) + sizeof(image.thread_state);

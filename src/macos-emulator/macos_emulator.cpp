@@ -12,6 +12,7 @@
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <span>
 #include <string_view>
 #include <stdexcept>
@@ -70,7 +71,7 @@ namespace sogen
             }
 
             uint64_t value = 0;
-            for (const auto byte : image.subspan(offset, size))
+            for (const auto byte : image.subspan(static_cast<size_t>(offset), size))
             {
                 value = (value << 8) | static_cast<uint8_t>(byte);
             }
@@ -111,7 +112,7 @@ namespace sogen
                     throw std::runtime_error("Universal binary slice exceeds file bounds");
                 }
 
-                return image.subspan(slice_offset, slice_size);
+                return image.subspan(static_cast<size_t>(slice_offset), static_cast<size_t>(slice_size));
             }
 
             throw std::runtime_error("Universal binary has no x86-64 slice");
@@ -141,13 +142,13 @@ namespace sogen
 
             const auto address = segment.vmaddr + slide;
             const auto size = page_align_up(segment.vmsize);
-            if (!memory.allocate_memory(address, size, memory_permission::read_write))
+            if (!memory.allocate_memory(address, static_cast<size_t>(size), memory_permission::read_write))
             {
                 throw std::runtime_error("Mach-O segment overlaps existing memory");
             }
 
-            memory.write_memory(address, image.data() + segment.fileoff, segment.filesize);
-            memory.protect_memory(address, size, to_memory_permission(segment.initprot));
+            memory.write_memory(address, image.data() + static_cast<size_t>(segment.fileoff), static_cast<size_t>(segment.filesize));
+            memory.protect_memory(address, static_cast<size_t>(size), to_memory_permission(segment.initprot));
         }
 
         uint64_t read_unixthread_entry_point(const std::span<const std::byte> image, const uint64_t offset)
@@ -228,7 +229,7 @@ namespace sogen
                     result.uuid = read_struct<std::array<uint8_t, 16>>(image, offset + sizeof(command));
                     break;
                 case macho::LC_LOAD_DYLINKER:
-                    result.dylinker_path = read_dylinker_path(image.subspan(offset, command.cmdsize));
+                    result.dylinker_path = read_dylinker_path(image.subspan(static_cast<size_t>(offset), command.cmdsize));
                     break;
                 default:
                     break;
@@ -318,12 +319,12 @@ namespace sogen
             }
 
             words.push_back(argv.size());
-            words.insert(words.end(), argv_addresses.begin(), argv_addresses.end());
+            std::ranges::copy(argv_addresses, std::back_inserter(words));
             words.push_back(0);
-            words.insert(words.end(), envp_addresses.begin(), envp_addresses.end());
+            std::ranges::copy(envp_addresses, std::back_inserter(words));
             words.push_back(0);
             words.push_back(string_addresses.front());
-            words.insert(words.end(), string_addresses.end() - static_cast<ptrdiff_t>(apple.size() - 1), string_addresses.end());
+            std::ranges::copy(std::span{string_addresses}.last(apple.size() - 1), std::back_inserter(words));
             words.push_back(0);
 
             const auto stack_pointer = strings_start - (words.size() * sizeof(uint64_t));

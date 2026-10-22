@@ -14,7 +14,7 @@ namespace sogen
 {
     namespace
     {
-        constexpr uint64_t PAGE_SIZE = 0x1000;
+        constexpr uint64_t MACOS_PAGE_SIZE = 0x1000;
         constexpr std::string_view CACHE_MAGIC = "dyld_v1  x86_64";
         constexpr std::string_view DYNAMIC_REGION_MAGIC = "dyld_data    v3";
         constexpr size_t DYNAMIC_REGION_FILE_ID_OFFSET = 0x10;
@@ -130,18 +130,18 @@ namespace sogen
             const auto info =
                 read_value<dyld_cache::mapping_and_slide_info>(file, mapping_offset + (i * sizeof(dyld_cache::mapping_and_slide_info)));
 
-            mapping entry{
+            auto& entry = this->mappings_.emplace_back(mapping{
                 .address = info.address,
                 .size = info.size,
                 .file_offset = info.file_offset,
                 .permissions = to_memory_permission(info.init_prot),
                 .file_index = file_index,
-            };
+            });
 
             if (info.slide_info_file_size != 0)
             {
                 const auto header = read_value<dyld_cache::slide_info_v2>(file, info.slide_info_file_offset);
-                if (header.version != 2 || header.page_size != PAGE_SIZE)
+                if (header.version != 2 || header.page_size != MACOS_PAGE_SIZE)
                 {
                     throw std::runtime_error("Unsupported dyld shared cache slide info");
                 }
@@ -153,8 +153,6 @@ namespace sogen
                     .page_extras = read_u16_array(file, info.slide_info_file_offset + header.page_extras_offset, header.page_extras_count),
                 };
             }
-
-            this->mappings_.push_back(std::move(entry));
         }
     }
 
@@ -192,7 +190,7 @@ namespace sogen
 
         const auto last_address = address + std::max(size, max_instruction_length) - 1;
         bool mapped_any = false;
-        for (auto page = page_align_down(address); page <= page_align_down(last_address); page += PAGE_SIZE)
+        for (auto page = page_align_down(address); page <= page_align_down(last_address); page += MACOS_PAGE_SIZE)
         {
             mapped_any |= this->map_page(page);
         }
@@ -217,13 +215,13 @@ namespace sogen
         const auto page_address = page_align_down(address);
         const auto offset_in_mapping = page_address - it->address;
 
-        std::vector<std::byte> page(PAGE_SIZE);
+        std::vector<std::byte> page(MACOS_PAGE_SIZE);
         read_exact(this->files_.at(it->file_index), it->file_offset + offset_in_mapping, page.data(),
-                   static_cast<size_t>(std::min(PAGE_SIZE, it->size - offset_in_mapping)));
+                   static_cast<size_t>(std::min(MACOS_PAGE_SIZE, it->size - offset_in_mapping)));
 
         if (it->slide)
         {
-            rebase_page(*it->slide, static_cast<size_t>(offset_in_mapping / PAGE_SIZE), page);
+            rebase_page(*it->slide, static_cast<size_t>(offset_in_mapping / MACOS_PAGE_SIZE), page);
         }
 
         if (!this->memory_->allocate_memory(page_address, page.size(), memory_permission::read_write))

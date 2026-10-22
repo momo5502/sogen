@@ -10,9 +10,9 @@ namespace sogen
 {
     namespace
     {
-        constexpr size_t CTL_MAXNAME = 12;
-        constexpr int32_t CTL_UNSPEC = 0;
-        constexpr int32_t CTL_UNSPEC_NAME2OID = 3;
+        constexpr size_t MACOS_CTL_MAXNAME = 12;
+        constexpr int32_t MACOS_CTL_UNSPEC = 0;
+        constexpr int32_t MACOS_CTL_UNSPEC_NAME2OID = 3;
         constexpr size_t MAX_NAME_LENGTH = 256;
 
         struct named_sysctl
@@ -138,7 +138,7 @@ namespace sogen
         const auto name = get_macos_syscall_argument(c.emu, 0);
         const auto name_length = static_cast<size_t>(get_macos_syscall_argument(c.emu, 1));
 
-        if (name_length == 0 || name_length > CTL_MAXNAME)
+        if (name_length == 0 || name_length > MACOS_CTL_MAXNAME)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
             return;
@@ -151,7 +151,7 @@ namespace sogen
             return;
         }
 
-        if (mib.size() == 2 && mib[0] == CTL_UNSPEC && mib[1] == CTL_UNSPEC_NAME2OID)
+        if (mib.size() == 2 && mib[0] == MACOS_CTL_UNSPEC && mib[1] == MACOS_CTL_UNSPEC_NAME2OID)
         {
             name_to_oid(c, get_macos_syscall_argument(c.emu, 2), get_macos_syscall_argument(c.emu, 3), get_macos_syscall_argument(c.emu, 4),
                         static_cast<size_t>(get_macos_syscall_argument(c.emu, 5)));

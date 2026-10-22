@@ -12,14 +12,14 @@ namespace sogen
 {
     namespace
     {
-        constexpr uint64_t O_ACCMODE = 0x3;
-        constexpr uint64_t O_RDONLY = 0x0;
+        constexpr uint64_t MACOS_O_ACCMODE = 0x3;
+        constexpr uint64_t MACOS_O_RDONLY = 0x0;
 
-        constexpr uint64_t F_GETFD = 1;
-        constexpr uint64_t F_SETFD = 2;
-        constexpr uint64_t F_NOCACHE = 48;
-        constexpr uint64_t F_GETPATH = 50;
-        constexpr size_t MAXPATHLEN = 1024;
+        constexpr uint64_t MACOS_F_GETFD = 1;
+        constexpr uint64_t MACOS_F_SETFD = 2;
+        constexpr uint64_t MACOS_F_NOCACHE = 48;
+        constexpr uint64_t MACOS_F_GETPATH = 50;
+        constexpr size_t MACOS_MAXPATHLEN = 1024;
     }
 
     void sys_write(const macos_syscall_context& c)
@@ -67,7 +67,7 @@ namespace sogen
             return;
         }
 
-        if ((flags & O_ACCMODE) != O_RDONLY)
+        if ((flags & MACOS_O_ACCMODE) != MACOS_O_RDONLY)
         {
             c.emu_ref.log.log("open(%s, 0x%llx) -> EROFS\n", guest_path->c_str(), static_cast<unsigned long long>(flags));
             write_macos_syscall_error(c, macos_errno::MACOS_EROFS);
@@ -118,13 +118,13 @@ namespace sogen
 
         switch (command)
         {
-        case F_GETFD:
-        case F_SETFD:
-        case F_NOCACHE:
+        case MACOS_F_GETFD:
+        case MACOS_F_SETFD:
+        case MACOS_F_NOCACHE:
             write_macos_syscall_success(c, 0);
             return;
-        case F_GETPATH:
-            if (file->guest_path.size() + 1 > MAXPATHLEN ||
+        case MACOS_F_GETPATH:
+            if (file->guest_path.size() + 1 > MACOS_MAXPATHLEN ||
                 !c.emu.try_write_memory(argument, file->guest_path.c_str(), file->guest_path.size() + 1))
             {
                 write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
