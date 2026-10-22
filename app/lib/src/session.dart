@@ -26,6 +26,15 @@ class GuestWindow {
 
 enum MouseButton { left, right, middle }
 
+/// Where the guest put the cursor itself, in client coordinates of [window].
+class GuestCursor {
+  const GuestCursor(this.window, this.x, this.y);
+
+  final int window;
+  final int x;
+  final int y;
+}
+
 class OutputLine {
   const OutputLine(this.text, this.color);
 
@@ -68,6 +77,9 @@ class GameSession extends ChangeNotifier {
   GuestWindow? get primaryWindow => _windows.values.where((window) => window.visible).lastOrNull;
 
   List<OutputLine> get output => List.unmodifiable(_output);
+
+  /// Updated separately from the other session state, since games may move the cursor every frame.
+  final ValueNotifier<GuestCursor?> guestCursor = ValueNotifier(null);
 
   /// Returns false if another game is still running. Any other failure ends the session with [error] set.
   Future<bool> start(Game game, {required String emulationRoot}) async {
@@ -157,6 +169,11 @@ class GameSession extends ChangeNotifier {
   void _handle(Map<Object?, Object?> event) {
     final window = (event['window'] as num?)?.toInt();
 
+    if (event['event'] == 'cursorMoved') {
+      guestCursor.value = GuestCursor(window!, event['x'] as int, event['y'] as int);
+      return;
+    }
+
     switch (event['event']) {
       case 'output':
         final color = (event['color'] as num?)?.toInt() ?? -1;
@@ -196,6 +213,7 @@ class GameSession extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _subscription.cancel();
+    guestCursor.dispose();
     super.dispose();
   }
 }

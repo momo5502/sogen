@@ -101,6 +101,7 @@ namespace sogen::android
             .on_window_resized = env.GetMethodID(listener_class, "onWindowResized", "(JII)V"),
             .on_window_visibility_changed = env.GetMethodID(listener_class, "onWindowVisibilityChanged", "(JZ)V"),
             .on_window_title_changed = env.GetMethodID(listener_class, "onWindowTitleChanged", "(JLjava/lang/String;)V"),
+            .on_cursor_moved = env.GetMethodID(listener_class, "onCursorMoved", "(JII)V"),
         };
         env.DeleteLocalRef(listener_class);
     }
@@ -221,6 +222,13 @@ namespace sogen::android
     {
         this->dispatcher_.post([this, window, width, height](JNIEnv& env) {
             env.CallVoidMethod(this->listener_, this->methods_.on_window_resized, static_cast<jlong>(window), width, height);
+        });
+    }
+
+    void session::on_cursor_moved(const hwnd window, const int32_t x, const int32_t y)
+    {
+        this->dispatcher_.post([this, window, x, y](JNIEnv& env) {
+            env.CallVoidMethod(this->listener_, this->methods_.on_cursor_moved, static_cast<jlong>(window), x, y);
         });
     }
 

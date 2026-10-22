@@ -38,6 +38,7 @@ class _GamePageState extends State<GamePage> {
 
   GuestWindow? _inputWindow;
   MouseButton _touchButton = MouseButton.left;
+  bool _trackpad = false;
   bool _showControls = true;
 
   @override
@@ -176,7 +177,12 @@ class _GamePageState extends State<GamePage> {
             if (window != null)
               Padding(
                 padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-                child: GuestWindowView(session: _session, window: window, touchButton: _touchButton),
+                child: GuestWindowView(
+                  session: _session,
+                  window: window,
+                  touchButton: _touchButton,
+                  trackpad: _trackpad,
+                ),
               )
             else
               _StatusView(session: _session, game: widget.game),
@@ -206,12 +212,14 @@ class _GamePageState extends State<GamePage> {
                 child: _Toolbar(
                   running: _session.state == SessionState.running,
                   rightClick: _touchButton == MouseButton.right,
+                  trackpad: _trackpad,
                   controls: _showControls,
                   onKeyboard: _toggleKeyboard,
                   onControls: () => setState(() => _showControls = !_showControls),
                   onRightClick: () => setState(() {
                     _touchButton = _touchButton == MouseButton.right ? MouseButton.left : MouseButton.right;
                   }),
+                  onTrackpad: () => setState(() => _trackpad = !_trackpad),
                   onLog: _showLog,
                   onStop: _confirmStop,
                 ),
@@ -228,20 +236,24 @@ class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.running,
     required this.rightClick,
+    required this.trackpad,
     required this.controls,
     required this.onKeyboard,
     required this.onControls,
     required this.onRightClick,
+    required this.onTrackpad,
     required this.onLog,
     required this.onStop,
   });
 
   final bool running;
   final bool rightClick;
+  final bool trackpad;
   final bool controls;
   final VoidCallback onKeyboard;
   final VoidCallback onControls;
   final VoidCallback onRightClick;
+  final VoidCallback onTrackpad;
   final VoidCallback onLog;
   final VoidCallback onStop;
 
@@ -273,6 +285,12 @@ class _Toolbar extends StatelessWidget {
                   icon: rightClick ? LucideIcons.mousePointerClick : LucideIcons.mouse,
                   color: rightClick ? SogenColors.accents[0] : null,
                   onPressed: onRightClick,
+                ),
+                _ToolbarButton(
+                  tooltip: trackpad ? 'Touch moves the cursor like a trackpad' : 'Touch clicks where you tap',
+                  icon: LucideIcons.touchpad,
+                  color: trackpad ? SogenColors.accents[0] : null,
+                  onPressed: onTrackpad,
                 ),
               ],
               _ToolbarButton(tooltip: 'Log', icon: LucideIcons.squareTerminal, onPressed: onLog),

@@ -10,6 +10,9 @@ interface NativeListener {
     fun onWindowResized(window: Long, width: Int, height: Int)
     fun onWindowVisibilityChanged(window: Long, visible: Boolean)
     fun onWindowTitleChanged(window: Long, title: String)
+
+    /** The guest moved the cursor itself, e.g. with SetCursorPos; [x] and [y] are window client coordinates. */
+    fun onCursorMoved(window: Long, x: Int, y: Int)
 }
 
 /** Owns one native emulation session. Only used inside the `:sogen` process. */

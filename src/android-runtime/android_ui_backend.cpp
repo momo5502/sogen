@@ -424,6 +424,29 @@ namespace sogen::android
         this->host_->on_window_resized(window, client_width(desc), client_height(desc));
     }
 
+    void android_ui_backend::set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y)
+    {
+        hwnd top_level{};
+        int32_t x{};
+        int32_t y{};
+
+        {
+            const std::lock_guard lock{this->mutex_};
+
+            const auto* state = this->find_top_level(window);
+            if (state == nullptr)
+            {
+                return;
+            }
+
+            top_level = state->desc.handle;
+            x = screen_x - (state->desc.rect.left + state->desc.client_insets.left);
+            y = screen_y - (state->desc.rect.top + state->desc.client_insets.top);
+        }
+
+        this->host_->on_cursor_moved(top_level, x, y);
+    }
+
     void android_ui_backend::set_window_visible(const hwnd window, const bool visible)
     {
         {
