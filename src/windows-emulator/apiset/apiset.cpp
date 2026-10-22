@@ -56,6 +56,67 @@ namespace sogen
                 return buffer;
             }
 
+            std::filesystem::path schema_dll_path(const std::filesystem::path& root)
+            {
+                return root / "filesys" / "c" / "windows" / "system32" / "apisetschema.dll";
+            }
+
+            template <typename T>
+            T read_schema_value(const std::vector<std::byte>& file, const uint64_t offset)
+            {
+                if (offset > file.size() || file.size() - offset < sizeof(T))
+                {
+                    throw std::runtime_error("Truncated apisetschema.dll");
+                }
+
+                T value{};
+                memcpy(&value, file.data() + offset, sizeof(value));
+                return value;
+            }
+
+            // Windows maps the .apiset section of apisetschema.dll as the process API set map, so a root
+            // containing the DLL needs no separately dumped api-set.bin.
+            std::vector<std::byte> read_schema_dll(const std::filesystem::path& root)
+            {
+                const auto file = utils::io::read_file(schema_dll_path(root));
+                if (file.empty())
+                {
+                    throw std::runtime_error("Failed to read apisetschema.dll");
+                }
+
+                const auto dos = read_schema_value<PEDosHeader_t>(file, 0);
+                if (dos.e_magic != PEDosHeader_t::k_Magic ||
+                    read_schema_value<uint32_t>(file, dos.e_lfanew) != PENTHeaders_t<uint64_t>::k_Signature)
+                {
+                    throw std::runtime_error("apisetschema.dll is not a PE image");
+                }
+
+                const uint64_t file_header_offset = dos.e_lfanew + sizeof(uint32_t);
+                const auto file_header = read_schema_value<PEFileHeader_t>(file, file_header_offset);
+                const auto first_section = file_header_offset + sizeof(PEFileHeader_t) + file_header.SizeOfOptionalHeader;
+
+                for (uint16_t i = 0; i < file_header.NumberOfSections; ++i)
+                {
+                    const auto section = read_schema_value<IMAGE_SECTION_HEADER>(file, first_section + i * sizeof(IMAGE_SECTION_HEADER));
+                    if (memcmp(section.Name, ".apiset", 8) != 0)
+                    {
+                        continue;
+                    }
+
+                    const auto api_set = read_schema_value<API_SET_NAMESPACE>(file, section.PointerToRawData);
+                    if (api_set.Size < sizeof(API_SET_NAMESPACE) || api_set.Size > section.SizeOfRawData ||
+                        section.PointerToRawData + static_cast<uint64_t>(api_set.Size) > file.size())
+                    {
+                        throw std::runtime_error("Invalid API set in apisetschema.dll");
+                    }
+
+                    const auto* begin = file.data() + section.PointerToRawData;
+                    return {begin, begin + api_set.Size};
+                }
+
+                throw std::runtime_error("apisetschema.dll has no .apiset section");
+            }
+
             std::vector<std::byte> obtain_data(const location location, const std::filesystem::path& root)
             {
                 switch (location)
@@ -81,6 +142,8 @@ namespace sogen
 
                     return decompress_apiset(apiset);
                 }
+                case location::schema_dll:
+                    return read_schema_dll(root);
                 case location::default_windows_10: {
                     const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w10);
                     const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w10)};
@@ -113,6 +176,10 @@ namespace sogen
 #else
                 apiset_loc = location::default_windows_11;
 #endif
+            }
+            else if (!utils::io::file_exists(root / "api-set.bin") && utils::io::file_exists(schema_dll_path(root)))
+            {
+                apiset_loc = location::schema_dll;
             }
 
             return obtain(apiset_loc, root);

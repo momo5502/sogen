@@ -17,6 +17,7 @@ namespace sogen
         {
             host,
             file,
+            schema_dll,
             default_windows_10,
             default_windows_11
         };
