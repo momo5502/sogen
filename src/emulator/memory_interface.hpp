@@ -73,6 +73,26 @@ namespace sogen
         {
         }
 
+        // For backends that can notice accesses by protecting memory: tracks [address, address + size) until it is unmapped,
+        // for take_written_ranges and invalidate_cache_on_access. Returns false if this backend cannot.
+        virtual bool track_access(uint64_t /*address*/, size_t /*size*/)
+        {
+            return false;
+        }
+
+        // Calls f for each part of tracked memory in [address, address + size) written since tracking began or since the
+        // last call, and tracks writes to those parts again.
+        virtual void take_written_ranges(uint64_t /*address*/, size_t /*size*/,
+                                         const std::function<void(uint64_t written_address, size_t written_size)>& /*f*/)
+        {
+        }
+
+        // For tracked memory whose CPU cache lines may be stale, e.g. after a non-coherent device wrote it: the next access
+        // to each part of [address, address + size) first cleans and invalidates its cache lines.
+        virtual void invalidate_cache_on_access(uint64_t /*address*/, size_t /*size*/)
+        {
+        }
+
         // Ranges of the host process's own address space (its image, dyld, shared libraries) that the
         // guest must avoid, for backends where guest VA == host VA. Best-effort snapshot: host
         // allocations made after the query are not covered. Backends with an independent guest

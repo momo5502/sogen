@@ -325,7 +325,6 @@ namespace sogen
             uint64_t placed_map_alignment{};
             PFN_vkGetMemoryHostPointerPropertiesEXT get_memory_host_pointer_properties{};
             uint64_t host_import_alignment{};
-            std::vector<VkMappedMemoryRange> non_coherent_imports{};
             PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges{};
             PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges{};
             PFN_vkCreateBuffer create_buffer{};
@@ -508,6 +507,7 @@ namespace sogen
             uint64_t allocation_size{};
             bool placed{};
             bool imported{};
+            bool non_coherent{};
         };
 
         struct buffer_data
@@ -754,6 +754,31 @@ namespace sogen
             }
             instance->second.get_physical_device_memory_properties(dev.physical_device, &props);
             return true;
+        }
+
+        std::unordered_map<uint64_t, std::vector<VkMappedMemoryRange>> to_mapped_ranges(
+            const std::span<const vulkan_host::memory_range> ranges) const
+        {
+            std::unordered_map<uint64_t, std::vector<VkMappedMemoryRange>> device_ranges{};
+            for (const auto& range : ranges)
+            {
+                const auto mem = this->memories.find(range.memory);
+                if (mem == this->memories.end() || !mem->second.imported || !mem->second.non_coherent ||
+                    range.offset >= mem->second.allocation_size)
+                {
+                    continue;
+                }
+
+                // A size that is not a multiple of nonCoherentAtomSize is only valid when it reaches the end of the memory.
+                const bool reaches_end = range.size >= mem->second.allocation_size - range.offset;
+                device_ranges[mem->second.device_id].push_back(VkMappedMemoryRange{.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                                                                                   .pNext = nullptr,
+                                                                                   .memory = mem->second.handle,
+                                                                                   .offset = range.offset,
+                                                                                   .size = reaches_end ? VK_WHOLE_SIZE : range.size});
+            }
+
+            return device_ranges;
         }
 
         bool buffer_supports_host_import(const device_data& dev, const VkBufferCreateFlags flags, const VkBufferUsageFlags usage)
@@ -3512,8 +3537,6 @@ namespace sogen
 
         if (dev != this->impl_->devices.end())
         {
-            std::erase_if(dev->second.non_coherent_imports,
-                          [&](const VkMappedMemoryRange& range) { return range.memory == it->second.handle; });
             if (it->second.handle && dev->second.free_memory)
             {
                 dev->second.free_memory(dev->second.handle, it->second.handle, nullptr);
@@ -3926,9 +3949,6 @@ namespace sogen
                 dev->second.free_memory(dev->second.handle, memory, nullptr);
                 return VK_ERROR_MEMORY_MAP_FAILED;
             }
-
-            dev->second.non_coherent_imports.push_back(VkMappedMemoryRange{
-                .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, .pNext = nullptr, .memory = memory, .offset = 0, .size = VK_WHOLE_SIZE});
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -3937,34 +3957,40 @@ namespace sogen
                                                             .persistent_host_pointer = host_pointer,
                                                             .mapped_size = size,
                                                             .allocation_size = size,
-                                                            .imported = true});
+                                                            .imported = true,
+                                                            .non_coherent = non_coherent});
         out_memory = id;
         return VK_SUCCESS;
     }
 
-    void vulkan_host::flush_imported_memory()
+    bool vulkan_host::is_non_coherent_import(const uint64_t memory) const
     {
-        for (const auto& [id, dev] : this->impl_->devices)
+        const auto mem = this->impl_->memories.find(memory);
+        return mem != this->impl_->memories.end() && mem->second.imported && mem->second.non_coherent;
+    }
+
+    void vulkan_host::flush_imported_memory(const std::span<const memory_range> ranges)
+    {
+        for (const auto& [device_id, mapped_ranges] : this->impl_->to_mapped_ranges(ranges))
         {
-            if (!dev.non_coherent_imports.empty())
+            const auto dev = this->impl_->devices.find(device_id);
+            if (dev != this->impl_->devices.end() && dev->second.flush_mapped_memory_ranges)
             {
-                dev.flush_mapped_memory_ranges(dev.handle, static_cast<uint32_t>(dev.non_coherent_imports.size()),
-                                               dev.non_coherent_imports.data());
+                dev->second.flush_mapped_memory_ranges(dev->second.handle, static_cast<uint32_t>(mapped_ranges.size()),
+                                                       mapped_ranges.data());
             }
         }
     }
 
-    void vulkan_host::invalidate_imported_memory()
+    void vulkan_host::invalidate_imported_memory(const std::span<const memory_range> ranges)
     {
-        // Invalidating a range the host wrote without flushing it first leaves its contents undefined, and the guest
-        // may have written since the last submission.
-        this->flush_imported_memory();
-        for (const auto& [id, dev] : this->impl_->devices)
+        for (const auto& [device_id, mapped_ranges] : this->impl_->to_mapped_ranges(ranges))
         {
-            if (!dev.non_coherent_imports.empty())
+            const auto dev = this->impl_->devices.find(device_id);
+            if (dev != this->impl_->devices.end() && dev->second.invalidate_mapped_memory_ranges)
             {
-                dev.invalidate_mapped_memory_ranges(dev.handle, static_cast<uint32_t>(dev.non_coherent_imports.size()),
-                                                    dev.non_coherent_imports.data());
+                dev->second.invalidate_mapped_memory_ranges(dev->second.handle, static_cast<uint32_t>(mapped_ranges.size()),
+                                                            mapped_ranges.data());
             }
         }
     }

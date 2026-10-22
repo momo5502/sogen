@@ -285,6 +285,9 @@ namespace sogen
                 uint64_t guest_address{};
                 uint64_t size{};
                 uint64_t device{};
+                // Whether the backend tracks accesses to it, so that only parts the guest wrote are flushed and only parts it
+                // accesses are invalidated.
+                bool access_tracked{};
             };
 
             std::unordered_map<uint64_t, imported_memory> imported_memory_{};
@@ -298,6 +301,52 @@ namespace sogen
             // The last counter value the guest read of each timeline semaphore, so that polling one only invalidates
             // imported memory when it shows new work completed.
             std::unordered_map<uint64_t, observed_semaphore> observed_semaphores_{};
+
+            void flush_imported_memory(windows_emulator& win_emu)
+            {
+                std::vector<vulkan_host::memory_range> ranges{};
+                for (const auto& [memory, imported] : this->imported_memory_)
+                {
+                    if (!imported.access_tracked)
+                    {
+                        ranges.push_back({.memory = memory, .offset = 0, .size = imported.size});
+                        continue;
+                    }
+
+                    win_emu.memory.take_written_ranges(
+                        imported.guest_address, static_cast<size_t>(imported.size), [&](const uint64_t address, const size_t size) {
+                            ranges.push_back({.memory = memory, .offset = address - imported.guest_address, .size = size});
+                        });
+                }
+
+                if (!ranges.empty())
+                {
+                    this->vulkan_.flush_imported_memory(ranges);
+                }
+            }
+
+            void invalidate_imported_memory(windows_emulator& win_emu)
+            {
+                std::vector<vulkan_host::memory_range> untracked{};
+                for (const auto& [memory, imported] : this->imported_memory_)
+                {
+                    if (imported.access_tracked)
+                    {
+                        win_emu.memory.invalidate_cache_on_access(imported.guest_address, static_cast<size_t>(imported.size));
+                    }
+                    else
+                    {
+                        untracked.push_back({.memory = memory, .offset = 0, .size = imported.size});
+                    }
+                }
+
+                if (!untracked.empty())
+                {
+                    // Invalidating a range the guest wrote without flushing it first leaves its contents undefined.
+                    this->vulkan_.flush_imported_memory(untracked);
+                    this->vulkan_.invalidate_imported_memory(untracked);
+                }
+            }
 
             template <typename Predicate>
             void release_imported_memory(windows_emulator& win_emu, const Predicate& released)
@@ -1142,7 +1191,7 @@ namespace sogen
                     if (value > observed.value)
                     {
                         observed = {.device = request.device, .value = value};
-                        this->vulkan_.invalidate_imported_memory();
+                        this->invalidate_imported_memory(win_emu);
                     }
                 }
                 return write_output(win_emu, context,
@@ -1191,7 +1240,7 @@ namespace sogen
                         (poll == vk_timeout) ? this->vulkan_.wait_semaphores(device, flags, entries.data(), count, request.timeout) : poll;
                     if (result == vk_success)
                     {
-                        this->vulkan_.invalidate_imported_memory();
+                        this->invalidate_imported_memory(win_emu);
                     }
                     return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
                 }
@@ -1205,16 +1254,15 @@ namespace sogen
                     return out_status;
                 }
 
-                auto* vulkan = &this->vulkan_;
-                context.thread().await_host_condition = [vulkan, &win_emu, context, device, flags, entries = std::move(entries), count]() {
-                    const int32_t result = vulkan->wait_semaphores(device, flags, entries.data(), count, 0);
+                context.thread().await_host_condition = [this, &win_emu, context, device, flags, entries = std::move(entries), count]() {
+                    const int32_t result = this->vulkan_.wait_semaphores(device, flags, entries.data(), count, 0);
                     if (result == vk_timeout)
                     {
                         return false;
                     }
                     if (result == vk_success)
                     {
-                        vulkan->invalidate_imported_memory();
+                        this->invalidate_imported_memory(win_emu);
                     }
                     // Propagate the real result so an error (e.g. device loss) reaches the guest instead of hanging.
                     write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
@@ -1278,7 +1326,7 @@ namespace sogen
                 }
 
                 this->flush_aliased_memory_for_device(win_emu);
-                this->vulkan_.flush_imported_memory();
+                this->flush_imported_memory(win_emu);
 
                 const int32_t result =
                     this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(),
@@ -1423,7 +1471,7 @@ namespace sogen
                 const int32_t result = this->vulkan_.get_fence_status(request.fence);
                 if (result == vk_success)
                 {
-                    this->vulkan_.invalidate_imported_memory();
+                    this->invalidate_imported_memory(win_emu);
                 }
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
@@ -1451,7 +1499,7 @@ namespace sogen
                 }
 
                 this->flush_aliased_memory_for_device(win_emu);
-                this->vulkan_.flush_imported_memory();
+                this->flush_imported_memory(win_emu);
 
                 const int32_t result = this->vulkan_.queue_submit(request.queue, request.fence, waits.data(), request.wait_count,
                                                                   command_buffers.data(), request.command_buffer_count, signals.data(),
@@ -1468,7 +1516,7 @@ namespace sogen
                 }
 
                 const int32_t result = this->vulkan_.queue_wait_idle(request.queue);
-                this->vulkan_.invalidate_imported_memory();
+                this->invalidate_imported_memory(win_emu);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -1481,7 +1529,7 @@ namespace sogen
                 }
 
                 const int32_t result = this->vulkan_.device_wait_idle(request.device);
-                this->vulkan_.invalidate_imported_memory();
+                this->invalidate_imported_memory(win_emu);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -1623,7 +1671,10 @@ namespace sogen
                     return false;
                 }
 
-                this->imported_memory_[memory] = imported_memory{.guest_address = guest_address, .size = size, .device = request.device};
+                const bool access_tracked =
+                    this->vulkan_.is_non_coherent_import(memory) && win_emu.memory.track_access(guest_address, static_cast<size_t>(size));
+                this->imported_memory_[memory] = imported_memory{
+                    .guest_address = guest_address, .size = size, .device = request.device, .access_tracked = access_tracked};
                 return true;
             }
 
