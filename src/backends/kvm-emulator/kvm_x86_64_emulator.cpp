@@ -1238,7 +1238,7 @@ namespace sogen::kvm
                 this->rebuild_mappings();
             }
 
-            void map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) override
+            bool map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) override
             {
                 if (!is_page_aligned(address) || !is_page_aligned(size))
                 {
@@ -1269,6 +1269,7 @@ namespace sogen::kvm
                 }
 
                 this->rebuild_mappings();
+                return true;
             }
 
             bool host_memory_aliasing_is_coherent() const override
