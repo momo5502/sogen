@@ -233,6 +233,7 @@ namespace sogen
 
         void reserve_host_range_gaps(uint64_t address, size_t size);
         void carve_host_reserved_hole(uint64_t address, size_t size);
+        bool register_host_memory(uint64_t address, size_t size, void* host_pointer, nt_memory_permission permissions);
         void release_host_claims(uint64_t released_end);
     };
 
