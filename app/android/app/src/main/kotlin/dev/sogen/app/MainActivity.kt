@@ -1,6 +1,7 @@
 package dev.sogen.app
 
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -36,6 +37,22 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(messenger, "dev.sogen.app/session").setMethodCallHandler { call, result ->
             handleSessionCall(call, result)
+        }
+
+        // Flutter's preferred orientations respect the system rotation lock, which a game should not.
+        MethodChannel(messenger, "dev.sogen.app/orientation").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "followSensor" -> {
+                    requestedOrientation = if (call.argument<Boolean>("enabled") == true) {
+                        ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                    } else {
+                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
+                    result.success(null)
+                }
+
+                else -> result.notImplemented()
+            }
         }
 
         MethodChannel(messenger, "dev.sogen.app/storage").setMethodCallHandler { call, result ->
