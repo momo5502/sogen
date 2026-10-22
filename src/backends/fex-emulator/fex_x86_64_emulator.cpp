@@ -2851,6 +2851,9 @@ namespace sogen::fex
             }
 
             FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
+            // FEX defaults to exact 80-bit x87 math, which it emulates in software. 32-bit games that do their
+            // floating point on x87 then spend a large part of their time in softfloat, so host doubles are used instead.
+            FEXCore::Config::Set(FEXCore::Config::CONFIG_X87REDUCEDPRECISION, "1");
 
             // Piggybacks on FEXCore's GdbServer flag, whose only effect inside FEXCore (ContextImpl::
             // InitCore) is setting Config.NeedsPendingInterruptFaultCheck, making the JIT emit a
