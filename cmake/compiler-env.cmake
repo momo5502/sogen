@@ -174,6 +174,13 @@ int main() { return 0; }
   endif()
 endif()
 
+if(ANDROID)
+  # CMake emits no rpaths on Android, since the app loads its libraries through its own linker namespace. Executables
+  # the app starts from its native library directory, like the sandbox, only find the libraries next to them, and
+  # those libraries' dependencies, through an rpath in each of them.
+  add_link_options("LINKER:-rpath,$ORIGIN")
+endif()
+
 ##########################################
 
 if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")

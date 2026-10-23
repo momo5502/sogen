@@ -129,6 +129,13 @@ android {
         getByName("main").jniLibs.srcDir("src/main/jniLibs")
     }
 
+    // The session runs child processes from libsandbox.so, which only works when the libraries are extracted.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
     // CI writes key.properties when the release key is available. Without it, e.g. in forks and local builds,
     // release builds are signed with the debug key and cannot update an installed official build.
     val keystoreProperties = Properties()

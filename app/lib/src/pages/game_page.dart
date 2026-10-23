@@ -6,6 +6,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../game_library.dart';
 import '../session.dart';
 import '../theme.dart';
+import '../widgets/console_view.dart';
 import '../widgets/guest_window_view.dart';
 import '../widgets/sogen_widgets.dart';
 import '../widgets/terminal_log.dart';
@@ -157,10 +158,7 @@ class _GamePageState extends State<GamePage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final window = _inputWindow;
-
+  Widget _confirmingStop(Widget child) {
     return PopScope(
       canPop: _session.state != SessionState.running,
       onPopInvokedWithResult: (didPop, _) {
@@ -168,7 +166,42 @@ class _GamePageState extends State<GamePage> {
           _confirmStop();
         }
       },
-      child: Scaffold(
+      child: child,
+    );
+  }
+
+  Widget _buildConsole() {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      resizeToAvoidBottomInset: false,
+      body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+              child: ConsoleView(session: _session),
+            ),
+            Align(
+              alignment: Alignment.topRight,
+              child: _Toolbar(running: _session.state == SessionState.running, onLog: _showLog, onStop: _confirmStop),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.game.console) {
+      return _confirmingStop(_buildConsole());
+    }
+
+    final window = _inputWindow;
+
+    return _confirmingStop(
+      Scaffold(
         backgroundColor: window != null ? Colors.black : SogenColors.background,
         resizeToAvoidBottomInset: false,
         body: Stack(
@@ -235,25 +268,27 @@ class _GamePageState extends State<GamePage> {
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.running,
-    required this.rightClick,
-    required this.trackpad,
-    required this.controls,
-    required this.onKeyboard,
-    required this.onControls,
-    required this.onRightClick,
-    required this.onTrackpad,
     required this.onLog,
     required this.onStop,
+    this.rightClick = false,
+    this.trackpad = false,
+    this.controls = false,
+    this.onKeyboard,
+    this.onControls,
+    this.onRightClick,
+    this.onTrackpad,
   });
 
   final bool running;
   final bool rightClick;
   final bool trackpad;
   final bool controls;
-  final VoidCallback onKeyboard;
-  final VoidCallback onControls;
-  final VoidCallback onRightClick;
-  final VoidCallback onTrackpad;
+
+  /// The window controls are shown while running when these are set, which consoles leave out.
+  final VoidCallback? onKeyboard;
+  final VoidCallback? onControls;
+  final VoidCallback? onRightClick;
+  final VoidCallback? onTrackpad;
   final VoidCallback onLog;
   final VoidCallback onStop;
 
@@ -272,7 +307,7 @@ class _Toolbar extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (running) ...[
+              if (running && onControls != null) ...[
                 _ToolbarButton(
                   tooltip: controls ? 'Hide controls' : 'Show controls',
                   icon: LucideIcons.gamepad2,
@@ -312,7 +347,7 @@ class _ToolbarButton extends StatelessWidget {
 
   final String tooltip;
   final IconData icon;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
   final Color? color;
 
   @override

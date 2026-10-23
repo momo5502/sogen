@@ -2,6 +2,7 @@ package dev.sogen.app.runtime;
 
 oneway interface ISogenCallback {
     void onOutput(String text, int color);
+    void onConsoleOutput(in byte[] data);
     void onWindowCreated(long window, int width, int height, String title, boolean visible);
     void onWindowDestroyed(long window);
     void onWindowResized(long window, int width, int height);

@@ -2,12 +2,14 @@
 
 #include "android_ui_backend.hpp"
 #include "java_dispatcher.hpp"
+#include "pseudo_terminal.hpp"
 
 #include <jni.h>
 
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,6 +31,7 @@ namespace sogen::android
         std::string working_directory{};
         std::string backend{};
         bool live_network{};
+        std::filesystem::path sandbox_executable{};
     };
 
     class session final : public ui_host
@@ -47,6 +50,9 @@ namespace sogen::android
 
         void with_ui(const std::function<void(android_ui_backend&)>& action);
 
+        void console_input(std::string_view data) const;
+        void console_resize(uint16_t columns, uint16_t rows) const;
+
         void on_window_created(hwnd window, int32_t width, int32_t height, std::u16string_view title, bool visible) override;
         void on_window_destroyed(hwnd window) override;
         void on_window_resized(hwnd window, int32_t width, int32_t height) override;
@@ -60,6 +66,7 @@ namespace sogen::android
         struct listener_methods
         {
             jmethodID on_output{};
+            jmethodID on_console_output{};
             jmethodID on_window_created{};
             jmethodID on_window_destroyed{};
             jmethodID on_window_resized{};
@@ -77,7 +84,8 @@ namespace sogen::android
         android_ui_backend* ui_{};
         bool stop_requested_{};
 
-        // [color] is a logger color, or -1 for the guest's own stdout.
+        std::optional<pseudo_terminal> terminal_{};
+
         void output(std::string text, int32_t color);
     };
 }

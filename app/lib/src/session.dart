@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:xterm/xterm.dart';
 
 import 'game_library.dart';
 
@@ -50,16 +52,23 @@ enum SessionState { idle, starting, running, exited }
 class GameSession extends ChangeNotifier {
   GameSession() {
     _subscription = _events.receiveBroadcastStream().listen((event) => _handle(event as Map<Object?, Object?>));
+    terminal
+      ..onOutput = consoleInput
+      ..onResize = (columns, rows, _, _) => _methods.invokeMethod('consoleResize', {'columns': columns, 'rows': rows});
   }
 
   static const _methods = MethodChannel('dev.sogen.app/session');
   static const _events = EventChannel('dev.sogen.app/session/events');
   static const _maxOutputLines = 2000;
+  static const _maxTerminalLines = 10000;
   static const _loggerColorRed = 1;
+  static const _stdoutColor = -1;
 
   late final StreamSubscription<dynamic> _subscription;
   final Map<int, GuestWindow> _windows = {};
   final List<OutputLine> _output = [];
+  late final ByteConversionSink _console = const Utf8Decoder(allowMalformed: true)
+      .startChunkedConversion(_ConsoleSink(this));
   bool _stopRequested = false;
   bool _disposed = false;
 
@@ -77,6 +86,9 @@ class GameSession extends ChangeNotifier {
   GuestWindow? get primaryWindow => _windows.values.where((window) => window.visible).lastOrNull;
 
   List<OutputLine> get output => List.unmodifiable(_output);
+
+  /// What the guest and its child processes write to their console, and where the user types into it.
+  final Terminal terminal = Terminal(maxLines: _maxTerminalLines);
 
   /// Updated separately from the other session state, since games may move the cursor every frame.
   final ValueNotifier<GuestCursor?> guestCursor = ValueNotifier(null);
@@ -132,10 +144,13 @@ class GameSession extends ChangeNotifier {
     return _methods.invokeMethod('stop');
   }
 
+  void consoleInput(String data) => _methods.invokeMethod('consoleInput', {'data': utf8.encode(data)});
+
   void _fail(String message) {
     error = message;
     state = SessionState.exited;
     _output.add(OutputLine(message, _loggerColorRed));
+    terminal.write('$message\r\n');
     if (!_disposed) {
       notifyListeners();
     }
@@ -176,11 +191,9 @@ class GameSession extends ChangeNotifier {
 
     switch (event['event']) {
       case 'output':
-        final color = (event['color'] as num?)?.toInt() ?? -1;
-        _output.addAll((event['text'] as String).trimRight().split('\n').map((line) => OutputLine(line, color)));
-        if (_output.length > _maxOutputLines) {
-          _output.removeRange(0, _output.length - _maxOutputLines);
-        }
+        _addOutput(event['text'] as String, (event['color'] as num).toInt());
+      case 'console':
+        _console.add(event['data'] as Uint8List);
       case 'windowCreated':
         _windows[window!] = GuestWindow(
           handle: window,
@@ -204,16 +217,42 @@ class GameSession extends ChangeNotifier {
         _windows.clear();
         exitCode = event['exitCode'] as int?;
         state = SessionState.exited;
+        terminal.write(exitCode == null ? '\r\n[Crashed]\r\n' : '\r\n[Exited with code $exitCode]\r\n');
     }
 
     notifyListeners();
+  }
+
+  void _addOutput(String text, int color) {
+    _output.addAll(text.trimRight().split('\n').map((line) => OutputLine(line, color)));
+    if (_output.length > _maxOutputLines) {
+      _output.removeRange(0, _output.length - _maxOutputLines);
+    }
+  }
+
+  void _addConsoleText(String text) {
+    terminal.write(text);
+    _addOutput(text, _stdoutColor);
   }
 
   @override
   void dispose() {
     _disposed = true;
     _subscription.cancel();
+    _console.close();
     guestCursor.dispose();
     super.dispose();
   }
+}
+
+class _ConsoleSink implements Sink<String> {
+  _ConsoleSink(this._session);
+
+  final GameSession _session;
+
+  @override
+  void add(String data) => _session._addConsoleText(data);
+
+  @override
+  void close() {}
 }

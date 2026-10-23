@@ -31,6 +31,7 @@ class _AddGamePageState extends State<AddGamePage> {
   String? _executable;
   bool _liveNetwork = false;
   CpuBackend _backend = CpuBackend.automatic;
+  bool _console = false;
   bool _scanning = false;
 
   @override
@@ -133,6 +134,7 @@ class _AddGamePageState extends State<AddGamePage> {
         arguments: arguments.isEmpty ? const [] : arguments.split(RegExp(r'\s+')),
         liveNetwork: _liveNetwork,
         backend: _backend,
+        console: _console,
       ),
     );
   }
@@ -224,6 +226,16 @@ class _AddGamePageState extends State<AddGamePage> {
               ),
               value: _liveNetwork,
               onChanged: (value) => setState(() => _liveNetwork = value),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Console application'),
+              subtitle: Text(
+                'Show a terminal instead of a window, for command-line programs',
+                style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+              ),
+              value: _console,
+              onChanged: (value) => setState(() => _console = value),
             ),
             const SizedBox(height: 8),
             DropdownButtonFormField<CpuBackend>(

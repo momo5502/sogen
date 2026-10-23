@@ -3,8 +3,11 @@ package dev.sogen.app.runtime
 import android.view.Surface
 
 interface NativeListener {
-    /** [color] is the emulator's logger color index, or -1 for the guest's own stdout. */
+    /** [color] is the emulator's logger color index. */
     fun onOutput(text: String, color: Int)
+
+    /** Bytes the guest and its child processes wrote to their console, as a terminal would receive them. */
+    fun onConsoleOutput(data: ByteArray)
     fun onWindowCreated(window: Long, width: Int, height: Int, title: String, visible: Boolean)
     fun onWindowDestroyed(window: Long)
     fun onWindowResized(window: Long, width: Int, height: Int)
@@ -19,7 +22,8 @@ interface NativeListener {
 class SogenNative(listener: NativeListener) : AutoCloseable {
     private val handle: Long = nativeCreate(listener)
 
-    fun run(config: RunConfig): Int = nativeRun(
+    /** Child processes run in [sandboxExecutable]; an empty path leaves the guest unable to create them. */
+    fun run(config: RunConfig, sandboxExecutable: String): Int = nativeRun(
         handle,
         config.emulationRoot,
         config.application,
@@ -29,9 +33,12 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         config.workingDirectory,
         config.backend,
         config.liveNetwork,
+        sandboxExecutable,
     )
 
     fun stop() = nativeStop(handle)
+    fun consoleInput(data: ByteArray) = nativeConsoleInput(handle, data)
+    fun consoleResize(columns: Int, rows: Int) = nativeConsoleResize(handle, columns, rows)
     fun attachSurface(window: Long, surface: Surface) = nativeAttachSurface(handle, window, surface)
     fun detachSurface(window: Long) = nativeDetachSurface(handle, window)
     fun mouseMove(window: Long, x: Int, y: Int) = nativeMouseMove(handle, window, x, y)
@@ -57,9 +64,12 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         workingDirectory: String,
         backend: String,
         liveNetwork: Boolean,
+        sandboxExecutable: String,
     ): Int
 
     private external fun nativeStop(handle: Long)
+    private external fun nativeConsoleInput(handle: Long, data: ByteArray)
+    private external fun nativeConsoleResize(handle: Long, columns: Int, rows: Int)
     private external fun nativeAttachSurface(handle: Long, window: Long, surface: Surface)
     private external fun nativeDetachSurface(handle: Long, window: Long)
     private external fun nativeMouseMove(handle: Long, window: Long, x: Int, y: Int)
