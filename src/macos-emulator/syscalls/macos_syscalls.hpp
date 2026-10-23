@@ -2,6 +2,11 @@
 
 #include "../macos_syscall_context.hpp"
 
+#include <memory_permission.hpp>
+
+#include <cstdint>
+#include <optional>
+
 namespace sogen
 {
     void sys_exit(const macos_syscall_context& c);
@@ -40,6 +45,9 @@ namespace sogen
     void sys_mprotect(const macos_syscall_context& c);
     void sys_sysctl(const macos_syscall_context& c);
     void sys_shared_region_check_np(const macos_syscall_context& c);
+
+    std::optional<uint64_t> allocate_virtual_memory(macos_emulator& emu, uint64_t address, uint64_t size, uint64_t mask, uint64_t flags,
+                                                    memory_permission permissions, bool honor_hint);
 
     void mach_vm_allocate_trap(const macos_syscall_context& c);
     void mach_vm_deallocate_trap(const macos_syscall_context& c);

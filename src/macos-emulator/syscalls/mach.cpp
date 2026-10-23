@@ -6,6 +6,7 @@
 #include <address_utils.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <vector>
 
 namespace sogen
@@ -44,15 +45,45 @@ namespace sogen
         write_trap_result(c, protected_memory ? macos_kern_return::KERN_SUCCESS : macos_kern_return::KERN_INVALID_ADDRESS);
     }
 
+    // With VM_FLAGS_ANYWHERE, mach_vm_map treats the incoming address as a placement hint and falls back to the
+    // whole map, while mach_vm_allocate ignores it.
+    std::optional<uint64_t> allocate_virtual_memory(macos_emulator& emu, const uint64_t address, const uint64_t size, const uint64_t mask,
+                                                    const uint64_t flags, const memory_permission permissions, const bool honor_hint)
+    {
+        constexpr uint64_t vm_flags_anywhere = 0x1;
+
+        auto& memory = emu.memory;
+        auto allocation_address = address;
+        if (flags & vm_flags_anywhere)
+        {
+            const auto alignment = std::max<uint64_t>(mask + 1, 0x1000);
+            const auto search_size = static_cast<size_t>(size + alignment - 0x1000);
+            auto search_base = honor_hint ? memory.find_free_allocation_base(search_size, address) : 0;
+            if (search_base == 0)
+            {
+                search_base = memory.find_free_allocation_base(search_size);
+            }
+
+            allocation_address = search_base ? align_up(search_base, alignment) : 0;
+        }
+
+        emu.log.log("  allocate 0x%llx bytes, flags 0x%llx, mask 0x%llx -> 0x%llx\n", static_cast<unsigned long long>(size),
+                    static_cast<unsigned long long>(flags), static_cast<unsigned long long>(mask),
+                    static_cast<unsigned long long>(allocation_address));
+
+        if (allocation_address == 0 || !memory.allocate_memory(allocation_address, static_cast<size_t>(size), permissions))
+        {
+            return std::nullopt;
+        }
+
+        return allocation_address;
+    }
+
     namespace
     {
-        // With VM_FLAGS_ANYWHERE, mach_vm_map treats the incoming address as a placement hint and falls back to the
-        // whole map, while mach_vm_allocate ignores it.
         void allocate_virtual_memory(const macos_syscall_context& c, const uint64_t address_pointer, const uint64_t requested_size,
                                      const uint64_t mask, const uint64_t flags, const memory_permission permissions, const bool honor_hint)
         {
-            constexpr uint64_t vm_flags_anywhere = 0x1;
-
             const auto size = page_align_up(requested_size);
 
             uint64_t address{};
@@ -62,31 +93,14 @@ namespace sogen
                 return;
             }
 
-            auto& memory = c.emu_ref.memory;
-            if (flags & vm_flags_anywhere)
-            {
-                const auto alignment = std::max<uint64_t>(mask + 1, 0x1000);
-                const auto search_size = static_cast<size_t>(size + alignment - 0x1000);
-                auto search_base = honor_hint ? memory.find_free_allocation_base(search_size, address) : 0;
-                if (search_base == 0)
-                {
-                    search_base = memory.find_free_allocation_base(search_size);
-                }
-
-                address = search_base ? align_up(search_base, alignment) : 0;
-            }
-
-            c.emu_ref.log.log("  allocate 0x%llx bytes, flags 0x%llx, mask 0x%llx -> 0x%llx\n", static_cast<unsigned long long>(size),
-                              static_cast<unsigned long long>(flags), static_cast<unsigned long long>(mask),
-                              static_cast<unsigned long long>(address));
-
-            if (address == 0 || !memory.allocate_memory(address, static_cast<size_t>(size), permissions))
+            const auto allocated = allocate_virtual_memory(c.emu_ref, address, size, mask, flags, permissions, honor_hint);
+            if (!allocated)
             {
                 write_trap_result(c, macos_kern_return::KERN_NO_SPACE);
                 return;
             }
 
-            c.emu.write_memory(address_pointer, &address, sizeof(address));
+            c.emu.write_memory(address_pointer, &*allocated, sizeof(*allocated));
             write_trap_result(c, macos_kern_return::KERN_SUCCESS);
         }
     }
