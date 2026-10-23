@@ -21,7 +21,8 @@ namespace sogen
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 4));
         const auto offset = get_macos_syscall_argument(c.emu, 5);
 
-        if (length == 0 || page_align_down(offset) != offset)
+        if (length == 0 || page_align_down(offset) != offset ||
+            ((flags & map_fixed) && page_align_down(requested_address) != requested_address))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
             return;

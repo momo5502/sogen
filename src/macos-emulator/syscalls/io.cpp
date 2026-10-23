@@ -263,7 +263,12 @@ namespace sogen
         const auto buffer = get_macos_syscall_argument(c.emu, 1);
         const auto size = std::min<uint64_t>(get_macos_syscall_argument(c.emu, 2), 512);
         std::string message(static_cast<size_t>(size), '\0');
-        c.emu.try_read_memory(buffer, message.data(), message.size());
+        if (!c.emu.try_read_memory(buffer, message.data(), message.size()))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
         c.emu_ref.log.log("sendto: %s\n", message.c_str());
 
         const auto address = get_macos_syscall_argument(c.emu, 4);

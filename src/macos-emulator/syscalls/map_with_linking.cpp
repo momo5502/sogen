@@ -86,7 +86,8 @@ namespace sogen
             const auto segment_count = read_blob<uint32_t>(blob, hdr.chains_offset);
             for (uint32_t i = 0; i < segment_count; ++i)
             {
-                const auto segment_offset = hdr.chains_offset + read_blob<uint32_t>(blob, hdr.chains_offset + sizeof(uint32_t) * (1 + i));
+                const uint64_t chains_offset = hdr.chains_offset;
+                const auto segment_offset = chains_offset + read_blob<uint32_t>(blob, chains_offset + (sizeof(uint32_t) * (1 + i)));
                 const auto segment = read_blob<chained_starts_in_segment>(blob, segment_offset);
 
                 const auto start = hdr.image_address + segment.segment_offset;
