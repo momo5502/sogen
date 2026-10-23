@@ -44,7 +44,6 @@ class SessionController(
 
         exited = false
         stopRequested = false
-        consoleSize = null
         val serviceConnection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, binder: IBinder) {
                 val remote = ISogenSession.Stub.asInterface(binder)
@@ -172,6 +171,7 @@ class SessionController(
         windows.clear()
         session = null
         inputWindow = 0
+        consoleSize = null
 
         connection?.let { context.unbindService(it) }
         connection = null

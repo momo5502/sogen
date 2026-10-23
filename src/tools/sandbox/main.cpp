@@ -9,7 +9,7 @@
 #include <whp_x86_64_emulator.hpp>
 #include <utils/win.hpp>
 #elif defined(__ANDROID__)
-#include <fex_x86_64_emulator.hpp>
+#include <backend_selection.hpp>
 #else
 #include <kvm_x86_64_emulator.hpp>
 #endif
@@ -158,8 +158,10 @@ namespace sogen::sandbox
 
 #ifdef _WIN32
             auto emulator = whp::create_x86_64_emulator(vcpu_count);
+#elif defined(__ANDROID__) && defined(__aarch64__)
+            auto emulator = create_x86_64_emulator(backend_type::fex);
 #elif defined(__ANDROID__)
-            auto emulator = fex::create_x86_64_emulator();
+            auto emulator = create_x86_64_emulator(backend_type::unicorn);
 #else
             auto emulator = kvm::create_x86_64_emulator();
 #endif
