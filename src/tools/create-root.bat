@@ -58,6 +58,9 @@ CALL :collect cabinet.dll
 CALL :collect cfgmgr32.dll
 CALL :collect ci.dll
 CALL :collect clbcatq.dll
+CALL :collect cmd.exe
+CALL :collect_file "%WINDIR%\System32\en-US", cmd.exe.mui, %EMU_SYSDIR%\en-us
+CALL :collect_file "%WINDIR%\SysWOW64\en-US", cmd.exe.mui, %EMU_SYSDIR_WOW64%\en-us
 CALL :collect coloradapterclient.dll
 CALL :collect combase.dll
 CALL :collect comctl32.dll
@@ -161,6 +164,7 @@ CALL :collect rpcrt4.dll
 CALL :collect rpcss.dll
 CALL :collect rstrtmgr.dll
 CALL :collect rsaenh.dll
+CALL :collect samcli.dll
 CALL :collect samlib.dll
 CALL :collect schannel.dll
 CALL :collect sechost.dll
@@ -175,6 +179,7 @@ CALL :collect slwga.dll
 CALL :collect sppc.dll
 CALL :collect srvcli.dll
 CALL :collect sspicli.dll
+CALL :collect tdh.dll
 CALL :collect textshaping.dll
 CALL :collect twinapi.appcore.dll
 CALL :collect ucrtbase.dll
@@ -203,8 +208,10 @@ CALL :collect winmmbase.dll
 CALL :collect winnlsres.dll
 CALL :collect wintrust.dll
 CALL :collect wintypes.dll
+CALL :collect wkscli.dll
 CALL :collect wlanapi.dll
 CALL :collect wldap32.dll
+CALL :collect wldp.dll
 CALL :collect wmasf.dll
 CALL :collect wmvcore.dll
 CALL :collect wow64.dll
