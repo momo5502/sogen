@@ -882,6 +882,32 @@ namespace sogen
         }
     };
 
+    struct view : public ref_counted_object
+    {
+        uint64_t backing_address{};
+        uint64_t size{};
+
+        view() = default;
+
+        view(uint64_t address, uint64_t size)
+            : backing_address(address),
+              size(size)
+        {
+        }
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->backing_address);
+            buffer.write(this->size);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->backing_address);
+            buffer.read(this->size);
+        }
+    };
+
     struct semaphore : ref_counted_object
     {
         std::u16string name{};
