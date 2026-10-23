@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <vector>
 #include <functional>
+#include <limits>
 #include <stdexcept>
 
 #include "memory_permission.hpp"
@@ -109,6 +110,14 @@ namespace sogen
         virtual std::vector<host_reserved_range> reserved_host_ranges_in(uint64_t /*address*/, size_t /*size*/) const
         {
             return this->reserved_host_ranges();
+        }
+
+        // The end of the guest addresses the backend can map. Backends sharing the address space with the
+        // guest are bound by the host's user address space, which can be far smaller than Windows' (512 GB
+        // on Android kernels built with 39-bit virtual addresses).
+        virtual uint64_t guest_address_end() const
+        {
+            return std::numeric_limits<uint64_t>::max();
         }
 
         // Called whenever the memory manager claims a guest range, including a bare MEM_RESERVE that is
