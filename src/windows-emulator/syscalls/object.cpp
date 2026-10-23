@@ -729,7 +729,7 @@ namespace sogen
 
             if (wake_mask != 0)
             {
-                t.remember_message_wait(c.emu);
+                t.remember_message_wait(c.emu, c.win_emu.abi());
             }
 
             c.win_emu.yield_thread(c.vcpu, false);

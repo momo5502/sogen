@@ -67,6 +67,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -837,6 +838,36 @@ namespace sogen::fex
             std::vector<tracked_chunk> chunks;
         };
 
+        struct chunk_run
+        {
+            uint64_t address = 0;
+            size_t size = 0;
+
+            template <typename F>
+            void add(const uint64_t chunk_address, const size_t chunk_size, F&& f)
+            {
+                if (this->size != 0 && this->address + this->size != chunk_address)
+                {
+                    this->finish(f);
+                }
+                if (this->size == 0)
+                {
+                    this->address = chunk_address;
+                }
+                this->size += chunk_size;
+            }
+
+            template <typename F>
+            void finish(F&& f)
+            {
+                if (this->size != 0)
+                {
+                    f(this->address, this->size);
+                    this->size = 0;
+                }
+            }
+        };
+
         enum class tracked_access : uint8_t
         {
             none,
@@ -1240,6 +1271,36 @@ namespace sogen::fex
             }
             return nullptr;
         }
+
+        bool is_write_fault(ucontext_t* context)
+        {
+            constexpr uint64_t esr_write_not_read = 1ULL << 6;
+            const auto* esr = find_aarch64_context<esr_context>(context, ESR_MAGIC);
+            return esr != nullptr && (esr->esr & esr_write_not_read) != 0;
+        }
+
+        // arm64 kernels with 4KB pages have 39 or 48 virtual address bits, and ones with 64KB pages 42 or 52, but
+        // mmap hands out nothing above 47 bits unless asked to.
+        uint64_t find_host_address_end()
+        {
+            for (const int bits : {47, 42})
+            {
+                const uint64_t end = uint64_t{1} << bits;
+                auto* probe = reinterpret_cast<void*>(end - page_size);
+                void* result =
+                    ::mmap(probe, page_size, PROT_NONE, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+                if (result != MAP_FAILED)
+                {
+                    ::munmap(result, page_size);
+                }
+                if (result == probe || (result == MAP_FAILED && errno == EEXIST))
+                {
+                    return end;
+                }
+            }
+
+            return uint64_t{1} << 39;
+        }
 #endif
 
     }
@@ -1261,6 +1322,7 @@ namespace sogen::fex
 
         uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* frame, FEXCore::HLE::SyscallArguments* args) override;
         FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* thread, uint64_t address) override;
+        void MarkGuestExecutableRange(FEXCore::Core::InternalThreadState* thread, uint64_t start, uint64_t length) override;
         std::optional<FEXCore::ExecutableFileSectionInfo> LookupExecutableFileSection(FEXCore::Core::InternalThreadState* thread,
                                                                                       uint64_t guest_addr) override;
 
@@ -1753,8 +1815,10 @@ namespace sogen::fex
                 this->set_temporary_write_access(address, size, false);
             }
 
-            // Writing to a mapped region may overwrite already-translated code; drop FEX's cache for it.
-            this->invalidate_code_range(address, size);
+            if (this->range_has_code(address, size))
+            {
+                this->invalidate_code_range(address, size);
+            }
             return true;
         }
 
@@ -2045,8 +2109,14 @@ namespace sogen::fex
 
             this->erase_region_range(address, size);
             this->regions_[address] = mapped_region{.size = size, .permissions = permissions, .owned = true};
-            this->mark_executable_range(address, size, permissions);
         }
+
+#ifdef __linux__
+        uint64_t guest_address_end() const override
+        {
+            return this->host_address_end_;
+        }
+#endif
 
         void reserve_guest_address_range(uint64_t address, size_t size) override
         {
@@ -2174,7 +2244,6 @@ namespace sogen::fex
             // owned=false: the memory belongs to the caller; we must not munmap it on teardown.
             this->erase_region_range(address, size);
             this->regions_[address] = mapped_region{.size = size, .permissions = permissions, .owned = false};
-            this->mark_executable_range(address, size, permissions);
             return true;
         }
 
@@ -2256,65 +2325,52 @@ namespace sogen::fex
         void take_written_ranges(const uint64_t address, const size_t size,
                                  const std::function<void(uint64_t written_address, size_t written_size)>& f) override
         {
-            uint64_t run_address = 0;
-            size_t run_size = 0;
-            const auto finish_run = [&] {
-                if (run_size != 0)
-                {
-                    f(run_address, run_size);
-                    run_size = 0;
-                }
+            chunk_run written_run{};
+            chunk_run protect_run{};
+            const auto protect = [&](const uint64_t run_address, const size_t run_size) {
+                this->require_protection(run_address, run_size, tracked_access::read_only);
             };
 
             this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
                 if (!chunk.written.exchange(false))
                 {
-                    finish_run();
+                    written_run.finish(f);
+                    protect_run.finish(protect);
                     return;
                 }
 
-                if (!chunk.stale)
+                written_run.add(chunk_address, chunk_size, f);
+                if (chunk.stale)
                 {
-                    this->require_protection(chunk_address, chunk_size, tracked_access::read_only);
+                    protect_run.finish(protect);
                 }
-
-                if (run_size == 0 || run_address + run_size != chunk_address)
+                else
                 {
-                    finish_run();
-                    run_address = chunk_address;
+                    protect_run.add(chunk_address, chunk_size, protect);
                 }
-                run_size += chunk_size;
             });
-            finish_run();
+            written_run.finish(f);
+            protect_run.finish(protect);
         }
 
         void invalidate_cache_on_access(const uint64_t address, const size_t size) override
         {
-            uint64_t run_address = 0;
-            size_t run_size = 0;
-            const auto finish_run = [&] {
-                if (run_size != 0)
-                {
-                    this->require_protection(run_address, run_size, tracked_access::none);
-                    run_size = 0;
-                }
+            chunk_run run{};
+            const auto protect = [&](const uint64_t run_address, const size_t run_size) {
+                this->require_protection(run_address, run_size, tracked_access::none);
             };
 
             this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
                 if (chunk.stale.exchange(true))
                 {
-                    finish_run();
-                    return;
+                    run.finish(protect);
                 }
-
-                if (run_size == 0 || run_address + run_size != chunk_address)
+                else
                 {
-                    finish_run();
-                    run_address = chunk_address;
+                    run.add(chunk_address, chunk_size, protect);
                 }
-                run_size += chunk_size;
             });
-            finish_run();
+            run.finish(protect);
         }
 #endif
 
@@ -2368,7 +2424,6 @@ namespace sogen::fex
 
             // Permission changes can expose/retract executable code; keep FEX's translation cache honest.
             this->invalidate_code_range(address, size);
-            this->mark_executable_range(address, size, permissions);
         }
 
         // access tracking
@@ -2455,13 +2510,14 @@ namespace sogen::fex
             }
         }
 
-        // Cleans and invalidates a stale chunk's cache lines, and leaves it write-protected so that a write still marks it
-        // written. Cleaning makes the guest's unflushed writes visible as well, but the chunk keeps counting as written so
-        // that they are still flushed through the device.
+        // Cleans and invalidates a stale chunk's cache lines, and leaves it write-protected unless the chunk is written
+        // already, so that a write still marks it written. Cleaning makes the guest's unflushed writes visible as well,
+        // but the chunk keeps counting as written so that they are still flushed through the device.
         bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
         {
             chunk.stale = false;
-            if (!this->restrict_protection(chunk_address, chunk_size, tracked_access::read_only))
+            const auto access = chunk.written ? tracked_access::full : tracked_access::read_only;
+            if (!this->restrict_protection(chunk_address, chunk_size, access))
             {
                 return false;
             }
@@ -2491,16 +2547,23 @@ namespace sogen::fex
         // The first access to a stale chunk of tracked memory, or the first write to a clean one: brings the chunk up to
         // date or records the write, and lets the access through. Only the faulting page's protection decides whether a
         // write is allowed, since the guest can change the protection of parts of a chunk.
-        bool handle_tracked_memory_fault(const uint64_t host_fault_address)
+        bool handle_tracked_memory_fault(const uint64_t host_fault_address, const bool is_write)
         {
             const uint64_t address = this->to_guest_address(host_fault_address);
             bool handled = false;
             this->for_each_tracked_chunk(address, 1, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                const auto writable = [&] {
+                    return this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write);
+                };
                 if (chunk.stale)
                 {
+                    if (is_write && writable())
+                    {
+                        chunk.written = true;
+                    }
                     handled = this->bring_up_to_date(chunk, chunk_address, chunk_size);
                 }
-                else if (this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write))
+                else if (writable())
                 {
                     chunk.written = true;
                     handled = this->restrict_protection(chunk_address, chunk_size, tracked_access::full);
@@ -3636,7 +3699,7 @@ namespace sogen::fex
                 }
 
 #ifndef __APPLE__
-                if (sig == SIGSEGV && info->si_code == SEGV_ACCERR && this->handle_tracked_memory_fault(fault_addr))
+                if (sig == SIGSEGV && info->si_code == SEGV_ACCERR && this->handle_tracked_memory_fault(fault_addr, is_write_fault(uctx)))
                 {
                     return true;
                 }
@@ -4036,14 +4099,6 @@ namespace sogen::fex
             }
         }
 
-        void mark_executable_range(uint64_t address, size_t size, memory_permission permissions)
-        {
-            if (this->thread_ != nullptr && (permissions & memory_permission::exec) != memory_permission::none)
-            {
-                this->syscall_handler_->MarkGuestExecutableRange(this->thread_, address, size);
-            }
-        }
-
         void invalidate_code_range_in(FEXCore::Context::Context* context, FEXCore::Core::InternalThreadState* thread, uint64_t address,
                                       size_t size) const
         {
@@ -4074,9 +4129,17 @@ namespace sogen::fex
 #endif
         }
 
-        void invalidate_code_range(uint64_t address, size_t size) const
+        void invalidate_code_range(uint64_t address, size_t size)
         {
             this->invalidate_code_range_in(this->context_.get(), this->thread_, address, size);
+            this->code_pages_.erase(this->code_pages_.lower_bound(address & ~(page_size - 1)),
+                                    this->code_pages_.lower_bound(address + size));
+        }
+
+        bool range_has_code(uint64_t address, size_t size) const
+        {
+            const auto page = this->code_pages_.lower_bound(address & ~(page_size - 1));
+            return page != this->code_pages_.end() && *page < address + size;
         }
 
         void request_thread_stop()
@@ -4124,6 +4187,14 @@ namespace sogen::fex
         std::atomic<bool> interrupt_page_unwind_{false};
 
         std::map<uint64_t, mapped_region> regions_;
+        // The pages FEX has translated code from since they were last invalidated, as it reports them. Only writes to
+        // these need to invalidate code; FEX only reports a page again once its code has been invalidated.
+        std::set<uint64_t> code_pages_;
+
+#ifdef __linux__
+        uint64_t host_address_end_{find_host_address_end()};
+#endif
+
         std::vector<mmio_region> mmio_regions_;
         std::map<uint64_t, tracked_range> tracked_ranges_;
 
@@ -4371,6 +4442,15 @@ namespace sogen::fex
             .Size = region_end - it->first,
             .Writable = (perms & memory_permission::write) != memory_permission::none,
         };
+    }
+
+    void fex_syscall_handler::MarkGuestExecutableRange(FEXCore::Core::InternalThreadState* /*thread*/, const uint64_t start,
+                                                       const uint64_t length)
+    {
+        for (uint64_t page = start & ~(page_size - 1); page < start + length; page += page_size)
+        {
+            this->emulator_.code_pages_.insert(page);
+        }
     }
 
     std::optional<FEXCore::ExecutableFileSectionInfo> fex_syscall_handler::LookupExecutableFileSection(

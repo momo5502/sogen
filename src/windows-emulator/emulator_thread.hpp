@@ -8,12 +8,14 @@
 
 #include "process_manager.hpp"
 #include <utils/moved_marker.hpp>
+#include <platform/arm64_context.hpp>
 
 namespace sogen
 {
 
     struct completion_state;
     struct process_context;
+    struct windows_arch_abi;
 
     struct user_timer_key
     {
@@ -267,6 +269,7 @@ namespace sogen
         uint16_t es{};
         uint16_t fs{};
         uint16_t gs{};
+        std::optional<arm64_context> arm64_registers{};
         std::unique_ptr<completion_state> state{};
 
         callback_frame();
@@ -280,8 +283,8 @@ namespace sogen
 
         ~callback_frame();
 
-        void save_registers(x86_64_cpu& emu);
-        void restore_registers(x86_64_cpu& emu) const;
+        void save_registers(guest_cpu& cpu);
+        void restore_registers(guest_cpu& cpu) const;
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
@@ -443,7 +446,7 @@ namespace sogen
         std::optional<user_cbt_hook> cbt_hook{};
         std::vector<user_low_level_hook> low_level_hooks{};
 
-        std::optional<uint64_t> message_wait_syscall_id{};
+        std::optional<uint64_t> message_wait_return_register{};
         std::optional<std::chrono::steady_clock::time_point> message_wait_deadline{};
         std::vector<uint64_t> running_low_level_inputs{};
 
@@ -457,8 +460,8 @@ namespace sogen
         uint32_t queue_status_changed_bits{};
 
         void mark_as_ready(NTSTATUS status);
-        void remember_message_wait(x86_64_cpu& emu);
-        void restart_message_wait(x86_64_cpu& emu);
+        void remember_message_wait(cpu_interface& emu, const windows_arch_abi& abi);
+        void restart_message_wait(cpu_interface& emu, const windows_arch_abi& abi);
 
         bool is_await_time_over(utils::clock& clock) const
         {
@@ -502,40 +505,25 @@ namespace sogen
 
         bool is_thread_ready(windows_emulator& win_emu);
 
-        void save(x86_64_cpu& emu)
+        void save(cpu_interface& emu)
         {
             this->last_registers = emu.save_registers();
         }
 
-        void restore(x86_64_cpu& emu) const
+        void restore(cpu_interface& emu) const
         {
             this->load_registers(emu);
             this->refresh_execution_context(emu);
         }
 
-        void load_registers(x86_64_cpu& emu) const
+        void load_registers(cpu_interface& emu) const
         {
             emu.restore_registers(this->last_registers);
         }
 
-        void refresh_execution_context(x86_64_cpu& emu) const;
+        void refresh_execution_context(cpu_interface& cpu) const;
 
-        void setup_if_necessary(x86_64_cpu& emu, const process_context& context)
-        {
-            if (!this->setup_done)
-            {
-                this->setup_done = true;
-                this->setup_registers(emu, context);
-            }
-
-            if (this->pending_status.has_value())
-            {
-                const auto status = *this->pending_status;
-                this->pending_status = {};
-
-                emu.reg<uint64_t>(x86_register::rax, static_cast<uint64_t>(status));
-            }
-        }
+        void setup_if_necessary(cpu_interface& emu, const process_context& context);
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -601,7 +589,7 @@ namespace sogen
             buffer.write_optional(this->callback_return_rax);
             buffer.write_optional(this->cbt_hook);
             buffer.write_vector(this->low_level_hooks);
-            buffer.write_optional(this->message_wait_syscall_id);
+            buffer.write_optional(this->message_wait_return_register);
             buffer.write_optional(this->message_wait_deadline);
             buffer.write_vector(this->running_low_level_inputs);
 
@@ -681,7 +669,7 @@ namespace sogen
             buffer.read_optional(this->callback_return_rax);
             buffer.read_optional(this->cbt_hook);
             buffer.read_vector(this->low_level_hooks);
-            buffer.read_optional(this->message_wait_syscall_id);
+            buffer.read_optional(this->message_wait_return_register);
             buffer.read_optional(this->message_wait_deadline);
             buffer.read_vector(this->running_low_level_inputs);
 
@@ -710,7 +698,8 @@ namespace sogen
         std::optional<msg> peek_queued_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
                                                bool remove);
 
-        void setup_registers(x86_64_cpu& emu, const process_context& context) const;
+        void setup_registers(cpu_interface& emu, const process_context& context) const;
+        void setup_wow64_registers(x86_64_cpu& emu, const process_context& context) const;
 
         void release()
         {

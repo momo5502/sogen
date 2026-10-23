@@ -1,4 +1,5 @@
 #pragma once
+#include "arch/windows_abi.hpp"
 
 #include "emulator_utils.hpp"
 #include "handles.hpp"
@@ -384,7 +385,8 @@ namespace sogen
             }
         };
 
-        process_context(x86_64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
+        process_context(memory_interface& emu, memory_manager& memory, utils::clock& clock, callbacks& cb,
+                        const windows_guest_architecture architecture = windows_guest_architecture::x86_64)
             : callbacks_(&cb),
               base_allocator(emu),
               peb64(emu),
@@ -392,6 +394,8 @@ namespace sogen
               kusd(memory, clock),
               user_handles(memory)
         {
+            (void)windows_abi_for(architecture);
+            this->native_architecture = architecture;
             emulator_process current_process{};
             current_process.id = process_id;
             [[maybe_unused]] const auto process_handle = this->processes.store(std::move(current_process));
@@ -441,6 +445,12 @@ namespace sogen
 
         // WOW64 support flag - set during process setup based on executable architecture
         bool is_wow64_process{false};
+        windows_guest_architecture native_architecture{windows_guest_architecture::x86_64};
+
+        const windows_arch_abi& abi() const
+        {
+            return windows_abi_for(this->native_architecture);
+        }
 
         uint32_t hard_error_mode{0};
 

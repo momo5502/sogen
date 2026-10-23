@@ -1,6 +1,7 @@
 #pragma once
 
 #include "cpu_interface.hpp"
+#include "interface.hpp"
 #include "memory_interface.hpp"
 #include "serialization.hpp"
 
@@ -202,8 +203,7 @@ namespace sogen
         }
 
       private:
-        template <typename>
-        friend class typed_cpu;
+        friend class guest_cpu;
 
         static constexpr uint64_t stack_alignment = 16;
 
@@ -226,18 +226,12 @@ namespace sogen
         std::source_location origin_{};
     };
 
-    // A single virtual CPU's view of the machine: typed register and stack access
-    // native to this CPU, memory access delegated to the shared machine.
-    template <typename Traits>
-    class typed_cpu : public cpu_interface
+    class EMULATOR_INTERFACE guest_cpu : public cpu_interface
     {
       public:
-        using registers = Traits::register_type;
-        using pointer_type = Traits::pointer_type;
+        using pointer_type = uint64_t;
 
         static constexpr size_t pointer_size = sizeof(pointer_type);
-        static constexpr registers stack_pointer = Traits::stack_pointer;
-        static constexpr registers instruction_pointer = Traits::instruction_pointer;
 
         virtual memory_interface& memory() = 0;
         virtual const memory_interface& memory() const = 0;
@@ -255,39 +249,14 @@ namespace sogen
             return this->memory();
         }
 
-        size_t write_register(registers reg, const void* value, const size_t size)
-        {
-            return this->write_raw_register(static_cast<int>(reg), value, size);
-        }
-
-        size_t read_register(registers reg, void* value, const size_t size)
-        {
-            return this->read_raw_register(static_cast<int>(reg), value, size);
-        }
-
-        template <typename T = pointer_type>
-        T reg(const registers regid)
-        {
-            T value{};
-            this->read_register(regid, &value, sizeof(value));
-            return value;
-        }
-
-        template <typename T = pointer_type, typename S>
-        void reg(const registers regid, const S& maybe_value)
-        {
-            T value = static_cast<T>(maybe_value);
-            this->write_register(regid, &value, sizeof(value));
-        }
-
         pointer_type read_instruction_pointer()
         {
-            return this->reg(instruction_pointer);
+            return this->read_pointer_register(this->instruction_pointer_register());
         }
 
         pointer_type read_stack_pointer()
         {
-            return this->reg(stack_pointer);
+            return this->read_pointer_register(this->stack_pointer_register());
         }
 
         void read_memory(const uint64_t address, void* data, const size_t size) const
@@ -378,7 +347,7 @@ namespace sogen
         void push_stack(const pointer_type& value)
         {
             const auto sp = this->read_stack_pointer() - pointer_size;
-            this->reg(stack_pointer, sp);
+            this->write_stack_pointer(sp);
             this->write_memory(sp, &value, sizeof(value));
         }
 
@@ -387,7 +356,7 @@ namespace sogen
             pointer_type result{};
             const auto sp = this->read_stack_pointer();
             this->read_memory(sp, &result, sizeof(result));
-            this->reg(stack_pointer, sp + pointer_size);
+            this->write_stack_pointer(sp + pointer_size);
 
             return result;
         }
@@ -405,7 +374,7 @@ namespace sogen
 
             const auto new_rsp = static_cast<pointer_type>((old_rsp - sizeof(T)) & ~(emulator_stack_allocation::stack_alignment - 1));
             write_memory(new_rsp, &data, sizeof(T));
-            reg(stack_pointer, new_rsp);
+            write_stack_pointer(new_rsp);
 
             return emulator_stack_allocation{new_rsp, old_rsp, origin};
         }
@@ -418,17 +387,80 @@ namespace sogen
             }
 
             const auto current_rsp = read_stack_pointer();
-            if (current_rsp != allocation.address_ || allocation.previous_stack_pointer_ <= allocation.address_ ||
-                allocation.previous_stack_pointer_ > std::numeric_limits<pointer_type>::max())
+            if (current_rsp != allocation.address_ || allocation.previous_stack_pointer_ <= allocation.address_)
             {
                 throw std::runtime_error("Invalid emulator stack deallocation order");
             }
 
-            reg(stack_pointer, allocation.previous_stack_pointer_);
+            write_stack_pointer(allocation.previous_stack_pointer_);
             allocation.release();
         }
 
       private:
+        virtual int instruction_pointer_register() const = 0;
+        virtual int stack_pointer_register() const = 0;
+
+        pointer_type read_pointer_register(const int reg)
+        {
+            pointer_type value{};
+            this->read_raw_register(reg, &value, sizeof(value));
+            return value;
+        }
+
+        void write_stack_pointer(const pointer_type value)
+        {
+            this->write_raw_register(this->stack_pointer_register(), &value, sizeof(value));
+        }
+    };
+
+    template <typename Traits>
+    class EMULATOR_INTERFACE typed_cpu : public guest_cpu
+    {
+      public:
+        using registers = Traits::register_type;
+        using pointer_type = Traits::pointer_type;
+
+        static_assert(std::is_same_v<pointer_type, guest_cpu::pointer_type>);
+
+        static constexpr registers stack_pointer = Traits::stack_pointer;
+        static constexpr registers instruction_pointer = Traits::instruction_pointer;
+
+        size_t write_register(registers reg, const void* value, const size_t size)
+        {
+            return this->write_raw_register(static_cast<int>(reg), value, size);
+        }
+
+        size_t read_register(registers reg, void* value, const size_t size)
+        {
+            return this->read_raw_register(static_cast<int>(reg), value, size);
+        }
+
+        template <typename T = pointer_type>
+        T reg(const registers regid)
+        {
+            T value{};
+            this->read_register(regid, &value, sizeof(value));
+            return value;
+        }
+
+        template <typename T = pointer_type, typename S>
+        void reg(const registers regid, const S& maybe_value)
+        {
+            T value = static_cast<T>(maybe_value);
+            this->write_register(regid, &value, sizeof(value));
+        }
+
+      private:
+        int instruction_pointer_register() const final
+        {
+            return static_cast<int>(instruction_pointer);
+        }
+
+        int stack_pointer_register() const final
+        {
+            return static_cast<int>(stack_pointer);
+        }
+
         size_t read_raw_register(int reg, void* value, size_t size) override = 0;
         size_t write_raw_register(int reg, const void* value, size_t size) override = 0;
     };

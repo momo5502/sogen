@@ -632,7 +632,8 @@ namespace sogen
         ULONGLONG Reserved[3];
     };
 
-#if !defined(OS_WINDOWS) || !defined(_WIN64)
+// The Windows SDK supplies XMM_SAVE_AREA32 only for x64 targets; on ARM64 it must be defined here.
+#if !defined(OS_WINDOWS) || !defined(_WIN64) || defined(_M_ARM64) || defined(__aarch64__)
 
 #if !defined(OS_WINDOWS)
     typedef struct _M128A
@@ -664,11 +665,14 @@ namespace sogen
 
 #endif
 
+// The ARM64 Windows SDK already defines NEON128 (as a union of the same size).
+#if !defined(OS_WINDOWS) || !(defined(_M_ARM64) || defined(__aarch64__))
     using NEON128 = struct _NEON128
     {
         ULONGLONG Low;
         LONGLONG High;
     };
+#endif
 
     typedef struct
 #if !defined(__MINGW64__)

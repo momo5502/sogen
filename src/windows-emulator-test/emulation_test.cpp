@@ -1,7 +1,36 @@
 #include "emulation_test_utils.hpp"
 
+#include <array>
+
 namespace sogen::test
 {
+#if !defined(_M_ARM64)
+    TEST(EmulationTest, IntegerDivideErrorsReachTheInterruptHook)
+    {
+        auto machine = create_x86_64_emulator_from_environment();
+        constexpr uint64_t address = 0x10000;
+        constexpr std::array<uint8_t, 2> code{0xF7, 0xF1};
+        memory_manager memory{*machine};
+        ASSERT_TRUE(memory.allocate_memory(address, 0x1000, memory_permission::all));
+        machine->write_memory(address, code.data(), code.size());
+        auto& cpu = machine->get_cpu(0);
+        cpu.reg(x86_register::rip, address);
+        cpu.reg(x86_register::rax, uint64_t{10});
+        cpu.reg(x86_register::rdx, uint64_t{0});
+        cpu.reg(x86_register::rcx, uint64_t{0});
+        int interrupt = -1;
+        machine->hook_interrupt([&](cpu_interface& acting, const int vector) {
+            interrupt = vector;
+            acting.stop();
+        });
+
+        cpu.start(1);
+
+        EXPECT_EQ(interrupt, 0);
+        EXPECT_EQ(cpu.reg<uint64_t>(x86_register::rip), address);
+    }
+#endif
+
     TEST(EmulationTest, BasicEmulationWorks)
     {
         auto emu = create_sample_emulator();
@@ -65,5 +94,32 @@ namespace sogen::test
 
         EXPECT_TRUE(contains(network::socket_activity::bind, "127.0.0.1:28970"));
         EXPECT_TRUE(contains(network::socket_activity::sendto, "127.0.0.1:28970"));
+    }
+
+    TEST(EmulationTest, RelativeApplicationMachineResolvesAgainstTheWorkingDirectory)
+    {
+        const emulator_settings settings{.emulation_root = get_emulator_root()};
+        const application_settings app_settings{.application = "test-sample.exe", .working_directory = "C:\\"};
+
+        EXPECT_EQ(get_application_machine(settings, app_settings), PEMachineType::AMD64);
+    }
+
+    TEST(EmulationTest, ApplicationMachineUsesFileAndDirectoryMountsForRelativePaths)
+    {
+        const auto root = get_emulator_root();
+        emulator_settings settings{.emulation_root = root};
+        const auto expected = get_application_machine(settings, application_settings{.application = "C:\\test-sample.exe"});
+        const auto sample = root / "filesys" / "c" / "test-sample.exe";
+        const std::array mounts{
+            mount_spec{.host_path = sample, .guest_path = windows_path{"Z:\\mounted\\test-sample.exe"}},
+            mount_spec{.host_path = sample.parent_path(), .guest_path = windows_path{"Z:\\mounted"}},
+        };
+        const application_settings app_settings{.application = "test-sample.exe", .working_directory = "Z:\\mounted"};
+
+        for (const auto& mount : mounts)
+        {
+            settings.mounts = {mount};
+            EXPECT_EQ(get_application_machine(settings, app_settings), expected);
+        }
     }
 } // namespace sogen::test

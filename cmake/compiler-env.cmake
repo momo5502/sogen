@@ -58,6 +58,14 @@ endif()
 
 ##########################################
 
+# Unicorn's MSVC build only targets x86 and x86-64 hosts.
+set(SOGEN_ENABLE_UNICORN ON)
+if(MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+  set(SOGEN_ENABLE_UNICORN OFF)
+endif()
+
+##########################################
+
 if(SOGEN_ENABLE_RUST)
   add_compile_definitions(SOGEN_ENABLE_RUST_CODE=1)
 else()
@@ -164,6 +172,13 @@ int main() { return 0; }
     set(CMAKE_BUILD_RPATH "$ORIGIN")
     set(CMAKE_INSTALL_RPATH "$ORIGIN")
   endif()
+endif()
+
+if(ANDROID)
+  # CMake emits no rpaths on Android, since the app loads its libraries through its own linker namespace. Executables
+  # the app starts from its native library directory, like the sandbox, only find the libraries next to them, and
+  # those libraries' dependencies, through an rpath in each of them.
+  add_link_options("LINKER:-rpath,$ORIGIN")
 endif()
 
 ##########################################

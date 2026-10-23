@@ -39,7 +39,7 @@ namespace sogen::test
                 base.write(address);
                 bytes.write(size);
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 const auto result = syscalls::handle_NtAllocateVirtualMemoryEx(context, CURRENT_PROCESS, base, bytes, flags, protection,
                                                                                {this->emu->memory}, 0);
                 address = base.read();
@@ -53,7 +53,7 @@ namespace sogen::test
                 base.write(address);
                 bytes.write(size);
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 return syscalls::handle_NtFreeVirtualMemory(context, CURRENT_PROCESS, base, bytes, flags);
             }
 

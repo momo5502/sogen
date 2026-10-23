@@ -20,9 +20,11 @@ real per-vCPU objects (docs/multi-vcpu-design.md).
 */
 
 #pragma once
+#include "interface.hpp"
 #include "typed_emulator.hpp"
 #include "typed_cpu.hpp"
 #include "x86_register.hpp"
+#include "arm64_register.hpp"
 
 #include <stdexcept>
 
@@ -31,56 +33,30 @@ namespace sogen
 
     // --[Core]--------------------------------------------------------------------------
 
-    template <typename Traits>
-    struct arch_emulator : typed_emulator<Traits>
-    {
-    };
-
-    template <typename Traits>
-    struct x86_cpu : typed_cpu<Traits>
-    {
-        using register_type = Traits::register_type;
-        using pointer_type = Traits::pointer_type;
-
-        virtual void set_segment_base(register_type base, pointer_type value) = 0;
-        virtual pointer_type get_segment_base(register_type base) = 0;
-        virtual void load_gdt(pointer_type address, uint32_t limit) = 0;
-
-        // Called once before any module is mapped, so a backend that cannot host a WoW64 process
-        // can reject it up front instead of failing once compatibility-mode code runs.
-        virtual void notify_process_bitness(bool /*is_wow64_process*/)
-        {
-        }
-    };
-
-    template <typename Traits>
-    struct x86_emulator : arch_emulator<Traits>, x86_cpu<Traits>
+    template <typename Traits, typename CpuType>
+    struct EMULATOR_INTERFACE arch_emulator : typed_emulator<Traits>, CpuType
     {
         using registers = Traits::register_type;
         using register_type = Traits::register_type;
         using pointer_type = Traits::pointer_type;
         using hookable_instructions = Traits::hookable_instructions;
+        using cpu_type = CpuType;
 
         // Both bases expose a memory surface (the machine's own and the CPU's
         // delegating one); they resolve to the same backend implementation.
-        using arch_emulator<Traits>::read_memory;
-        using arch_emulator<Traits>::try_read_memory;
-        using arch_emulator<Traits>::write_memory;
-        using arch_emulator<Traits>::try_write_memory;
-        using arch_emulator<Traits>::move_memory;
-        using arch_emulator<Traits>::set_memory;
+        using typed_emulator<Traits>::read_memory;
+        using typed_emulator<Traits>::try_read_memory;
+        using typed_emulator<Traits>::write_memory;
+        using typed_emulator<Traits>::try_write_memory;
+        using typed_emulator<Traits>::move_memory;
+        using typed_emulator<Traits>::set_memory;
 
-        virtual size_t vcpu_count() const
+        size_t vcpu_count() const override
         {
             return 1;
         }
 
-        virtual bool supports_native_timestamp_counter() const
-        {
-            return false;
-        }
-
-        virtual x86_cpu<Traits>& get_cpu(const size_t index)
+        virtual CpuType& get_cpu(const size_t index)
         {
             if (index >= this->vcpu_count())
             {
@@ -88,6 +64,11 @@ namespace sogen
             }
 
             return *this;
+        }
+
+        guest_cpu& get_guest_cpu(size_t index) final
+        {
+            return this->get_cpu(index);
         }
 
         size_t index() const override
@@ -107,7 +88,44 @@ namespace sogen
     };
 
     template <typename Traits>
-    struct arm_emulator : arch_emulator<Traits>
+    struct EMULATOR_INTERFACE x86_cpu : typed_cpu<Traits>
+    {
+        using register_type = Traits::register_type;
+        using pointer_type = Traits::pointer_type;
+
+        struct descriptor_table_register
+        {
+            uint64_t base{};
+            uint32_t limit{};
+        };
+
+        virtual bool read_descriptor_table(int reg, descriptor_table_register& table) = 0;
+
+        virtual void set_segment_base(register_type base, pointer_type value) = 0;
+        virtual pointer_type get_segment_base(register_type base) = 0;
+        virtual void load_gdt(pointer_type address, uint32_t limit) = 0;
+
+        // Called once before any module is mapped, so a backend that cannot host a WoW64 process
+        // can reject it up front instead of failing once compatibility-mode code runs.
+        virtual void notify_process_bitness(bool /*is_wow64_process*/)
+        {
+        }
+    };
+
+    template <typename Traits>
+    struct EMULATOR_INTERFACE x86_emulator : arch_emulator<Traits, x86_cpu<Traits>>
+    {
+    };
+
+    template <typename Traits>
+    struct EMULATOR_INTERFACE arm_cpu : typed_cpu<Traits>
+    {
+        using register_type = Traits::register_type;
+        using pointer_type = Traits::pointer_type;
+    };
+
+    template <typename Traits>
+    struct EMULATOR_INTERFACE arm_emulator : arch_emulator<Traits, arm_cpu<Traits>>
     {
     };
 
@@ -122,7 +140,7 @@ namespace sogen
 
     // --[x86_64]-------------------------------------------------------------------------
 
-    struct x86_64_traits
+    struct EMULATOR_INTERFACE x86_64_traits
     {
         using pointer_type = uint64_t;
         using register_type = x86_register;
@@ -133,5 +151,36 @@ namespace sogen
 
     using x86_64_cpu = x86_cpu<x86_64_traits>;
     using x86_64_emulator = x86_emulator<x86_64_traits>;
+
+    enum class arm64_hookable_instructions
+    {
+        svc,
+        // MRS of CNTVCT_EL0 or PMCCNTR_EL0, which Windows exposes to EL0. The hook receives the destination
+        // arm64_register and writes the result itself.
+        read_counter,
+    };
+
+    // ARM64 interrupt hooks receive the ESR_ELx exception class of a synchronous guest exception,
+    // with PC at the faulting instruction.
+    enum class arm64_exception_class : int
+    {
+        undefined_instruction = 0x00,
+        // A user PSTATE.SS lets exactly one instruction run; the step is reported with PC at the next one and
+        // SS cleared. A step whose instruction raises another exception is dropped.
+        software_step = 0x32,
+        breakpoint_instruction = 0x3C,
+    };
+
+    struct EMULATOR_INTERFACE arm64_traits
+    {
+        using pointer_type = uint64_t;
+        using register_type = arm64_register;
+        static constexpr register_type instruction_pointer = arm64_register::pc;
+        static constexpr register_type stack_pointer = arm64_register::sp;
+        using hookable_instructions = arm64_hookable_instructions;
+    };
+
+    using arm64_cpu = arm_cpu<arm64_traits>;
+    using arm64_emulator = arm_emulator<arm64_traits>;
 
 } // namespace sogen

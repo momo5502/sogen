@@ -262,6 +262,34 @@ jobs:
           working-directory: root
           retention-days: 1
 
+  create-arm64-emulation-root:
+    name: Create ARM64 Emulation Root
+    runs-on: windows-11-arm
+    needs: [build-root-tools]
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+
+      - name: Download Root Build Tools
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Temp Root Build Tools
+          path: build/release/artifacts
+
+      - name: Create Emulation Root
+        run: src/tools/create-root.bat
+
+      - name: Dump API Set
+        run: cd root && ../build/release/artifacts/dump-apiset.exe
+
+      - name: Upload Artifacts
+        uses: pyTooling/upload-artifact@v7
+        with:
+          name: Windows 11 arm64 Emulation Root
+          path: "*"
+          working-directory: root
+          retention-days: 1
+
   build:
     name: Build
     runs-on: ${{ matrix.runner }}
@@ -271,6 +299,7 @@ jobs:
         platform:
           - Windows x86
           - Windows x86_64
+          - Windows arm64
           - MinGW x86_64
           #- Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
@@ -298,6 +327,9 @@ jobs:
           - platform: Windows x86_64
             runner: windows-latest
             devcmd_arch: x64
+          - platform: Windows arm64
+            runner: windows-11-arm
+            devcmd_arch: arm64
           - platform: MinGW x86_64
             runner: ubuntu-24.04
             rust-target: x86_64-pc-windows-gnu
@@ -596,6 +628,12 @@ jobs:
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
 
+      - name: Configure fast APT mirror
+        uses: vegardit/fast-apt-mirror.sh@1.4.5
+        if: "${{ matrix.gcc-version }}"
+        with:
+          exclude-current: true
+
       # The sanitizer binaries need the runtime of the GCC that built them.
       - name: Install GCC
         uses: nick-fields/retry@v4.0.0
@@ -737,6 +775,101 @@ jobs:
             build/${{ matrix.preset }}/artifacts/*.b.bin
           if-no-files-found: ignore
           retention-days: 7
+
+  test-arm64-guest:
+    name: Test ARM64 Guest
+    runs-on: ${{ matrix.runner }}
+    needs: [create-arm64-emulation-root, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - Linux x86_64 GCC Sanitizer
+          - Linux x86_64 Clang
+          - macOS arm64
+        include:
+          - platform: Linux x86_64 GCC Sanitizer
+            runner: ubuntu-26.04
+            gcc-version: 16
+          - platform: Linux x86_64 Clang
+            runner: ubuntu-24.04
+          - platform: macOS arm64
+            runner: macos-latest
+    steps:
+      - name: Setup Environment Variables
+        shell: bash
+        run: echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
+
+      - name: Configure fast APT mirror
+        uses: vegardit/fast-apt-mirror.sh@1.4.5
+        if: "${{ matrix.gcc-version }}"
+        with:
+          exclude-current: true
+
+      # The sanitizer binaries need the runtime of the GCC that built them.
+      - name: Install GCC
+        uses: nick-fields/retry@v4.0.0
+        if: "${{ matrix.gcc-version }}"
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gcc-${{ matrix.gcc-version }} g++-${{ matrix.gcc-version }}
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: ${{ matrix.platform }} Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Windows arm64 Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows arm64 Release Artifacts
+          path: arm64-artifacts
+
+      - name: Download ARM64 Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 11 arm64 Emulation Root
+          path: arm64-root
+
+      - name: Copy ARM64 Samples
+        run: cp arm64-artifacts/test-sample.exe arm64-artifacts/hello_world.exe arm64-artifacts/hello_crt.exe arm64-artifacts/crt_static.exe arm64-artifacts/instrumentation_callback.exe arm64-root/filesys/c/
+
+      - name: Test
+        working-directory: build/release/artifacts
+        run: |
+          chmod +x ./analyzer ./windows-emulator-test ./windows-architecture-test ./arm64-backend-test
+          ./arm64-backend-test
+          ./windows-architecture-test
+          ./windows-emulator-test --gtest_filter='Arm64*'
+          ./analyzer --network live --root-mode rw -e "$EMULATOR_ARM64_ROOT" c:/test-sample.exe
+        env:
+          EMULATOR_ARM64_ROOT: ${{github.workspace}}/arm64-root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+  test-arm64-native:
+    name: Test ARM64 Samples Natively
+    runs-on: windows-11-arm
+    needs: [build]
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows arm64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Run Samples
+        working-directory: build/release/artifacts
+        shell: pwsh
+        run: |
+          foreach ($sample in 'hello_world.exe', 'hello_crt.exe', 'crt_static.exe', 'instrumentation_callback.exe') {
+            & ".\$sample"
+            if ($LASTEXITCODE -ne 0) { throw "$sample exited with $LASTEXITCODE" }
+          }
 
   smoke-test-node:
     name: Smoke Test Node.js
@@ -1375,7 +1508,7 @@ jobs:
   test-python-wheel:
     name: Test Python Wheel (${{ matrix.display }})
     runs-on: ${{ matrix.runner }}
-    needs: [build-python-wheel, build-isolate, create-emulation-root]
+    needs: [build-python-wheel, build-isolate, create-emulation-root, create-arm64-emulation-root, build]
     strategy:
       fail-fast: false
       matrix:
@@ -1434,6 +1567,27 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/test-sample.exe
+
+      - name: Download Windows arm64 Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows arm64 Release Artifacts
+          path: arm64-artifacts
+
+      - name: Download ARM64 Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 11 arm64 Emulation Root
+          path: arm64-root
+
+      - name: Copy ARM64 Sample
+        run: cp arm64-artifacts/hello_crt.exe arm64-root/filesys/c/
+
+      - name: Run Python ARM64 Test Script
+        run: python src/python-bindings/test_arm64.py
+        env:
+          EMULATOR_ARM64_ROOT: ${{github.workspace}}/arm64-root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
       - name: Run Python Linux Unicorn Test Script
         if: ${{ startsWith(matrix.runner, 'ubuntu') }}
@@ -1545,9 +1699,12 @@ jobs:
         smoke-test-win32,
         smoke-test-android,
         create-emulation-root,
+        create-arm64-emulation-root,
         build,
         build-isolate,
         test,
+        test-arm64-guest,
+        test-arm64-native,
         win-test,
         verify-formatting,
         workflow_metadata,

@@ -29,6 +29,7 @@ class SessionController(
     private var connection: ServiceConnection? = null
     private var exited = false
     private var stopRequested = false
+    private var consoleSize: Pair<Int, Int>? = null
 
     /** Window that receives hardware key events, set by the game view. */
     var inputWindow: Long = 0
@@ -50,6 +51,7 @@ class SessionController(
                 binder.linkToDeath({ mainHandler.post { onExit(null) } }, 0)
                 call {
                     remote.start(config.toBundle(), callback)
+                    consoleSize?.let { (columns, rows) -> remote.consoleResize(columns, rows) }
                     // The service creates the session synchronously in start, and a stopped session exits as soon
                     // as it runs, reporting its exit code as usual.
                     if (stopRequested) {
@@ -76,6 +78,14 @@ class SessionController(
         call { session?.stop() }
     }
 
+    fun consoleInput(data: ByteArray) = call { session?.consoleInput(data) }
+
+    /** Takes effect once the session starts when it is not running yet. */
+    fun consoleResize(columns: Int, rows: Int) {
+        consoleSize = columns to rows
+        call { session?.consoleResize(columns, rows) }
+    }
+
     fun mouseMove(window: Long, x: Int, y: Int) = call { session?.mouseMove(window, x, y) }
 
     fun mouseButton(window: Long, button: Int, down: Boolean, x: Int, y: Int) =
@@ -92,6 +102,8 @@ class SessionController(
     private val callback = object : ISogenCallback.Stub() {
         override fun onOutput(text: String, color: Int) =
             post { emit(mapOf("event" to "output", "text" to text, "color" to color)) }
+
+        override fun onConsoleOutput(data: ByteArray) = post { emit(mapOf("event" to "console", "data" to data)) }
 
         override fun onWindowCreated(window: Long, width: Int, height: Int, title: String, visible: Boolean) = post {
             val producer = textures.createSurfaceProducer()
@@ -159,6 +171,7 @@ class SessionController(
         windows.clear()
         session = null
         inputWindow = 0
+        consoleSize = null
 
         connection?.let { context.unbindService(it) }
         connection = null

@@ -31,12 +31,13 @@ namespace sogen
     }
 
     void syscall_dispatcher::setup(const exported_symbols& ntdll_exports, const std::span<const std::byte> ntdll_data,
-                                   const exported_symbols& win32u_exports, const std::span<const std::byte> win32u_data)
+                                   const exported_symbols& win32u_exports, const std::span<const std::byte> win32u_data,
+                                   const arch_syscall_abi& abi)
     {
         this->handlers_ = {};
 
-        const auto ntdll_syscalls = find_syscalls(ntdll_exports, ntdll_data);
-        const auto win32u_syscalls = find_syscalls(win32u_exports, win32u_data);
+        const auto ntdll_syscalls = find_syscalls(ntdll_exports, ntdll_data, abi);
+        const auto win32u_syscalls = find_syscalls(win32u_exports, win32u_data, abi);
 
         map_syscalls(this->handlers_, ntdll_syscalls);
         map_syscalls(this->handlers_, win32u_syscalls);
@@ -73,8 +74,9 @@ namespace sogen
         auto& context = win_emu.process;
 
         const auto address = emu.read_instruction_pointer();
-        const auto raw_syscall_id = emu.reg<uint32_t>(x86_register::eax);
-        const auto syscall_id = raw_syscall_id & 0x3FFF; // Only take low bits for WOW64 compatibility, match windoows wraparound
+        const auto& abi = win_emu.abi();
+        const auto raw_syscall_id = abi.raw_syscall_id(emu);
+        const auto syscall_id = abi.syscall_id(raw_syscall_id);
 
         const auto entry = this->handlers_.find(syscall_id);
         const auto* syscall_name = (entry != this->handlers_.end()) ? entry->second.name.c_str() : "<unknown>";
@@ -93,7 +95,7 @@ namespace sogen
             {
                 win_emu.log.error("Unknown syscall: 0x%X (raw: 0x%X)\n", syscall_id, raw_syscall_id);
                 win_emu.record_stop(stop_reason::unknown_syscall, "0x" + utils::string::to_hex_number(syscall_id));
-                c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
+                abi.return_value(c.emu, STATUS_NOT_SUPPORTED);
                 win_emu.stop();
                 return;
             }
@@ -108,7 +110,7 @@ namespace sogen
             {
                 win_emu.log.error("Unimplemented syscall: %s - 0x%X (raw: 0x%X)\n", entry->second.name.c_str(), syscall_id, raw_syscall_id);
                 win_emu.record_stop(stop_reason::unimplemented_syscall, entry->second.name);
-                c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
+                abi.return_value(c.emu, STATUS_NOT_SUPPORTED);
                 win_emu.stop();
                 return;
             }
@@ -122,7 +124,7 @@ namespace sogen
             win_emu.log.error("Syscall %s threw an exception: 0x%X (raw: 0x%X) (0x%" PRIx64 ") - %s\n", syscall_name, syscall_id,
                               raw_syscall_id, address, e.what());
             win_emu.record_stop(stop_reason::syscall_exception, std::string(syscall_name) + ": " + e.what());
-            emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
+            abi.return_value(emu, STATUS_UNSUCCESSFUL);
             win_emu.stop();
         }
         catch (...)
@@ -130,7 +132,7 @@ namespace sogen
             win_emu.log.error("Syscall %s threw an unknown exception: 0x%X (raw: 0x%X) (0x%" PRIx64 ")\n", syscall_name, syscall_id,
                               raw_syscall_id, address);
             win_emu.record_stop(stop_reason::syscall_exception, std::string(syscall_name) + ": <unknown exception>");
-            emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
+            abi.return_value(emu, STATUS_UNSUCCESSFUL);
             win_emu.stop();
         }
     }
@@ -144,14 +146,7 @@ namespace sogen
 
         if (context.instrumentation_callback != 0 && syscall_name != "NtContinue")
         {
-            auto rip_old = emu.reg<uint64_t>(x86_register::rip);
-
-            // The increase in RIP caused by executing the syscall here has not yet occurred.
-            // If RIP is set directly, it will lead to an incorrect address, so the length of
-            // the syscall instruction needs to be subtracted.
-            emu.reg<uint64_t>(x86_register::rip, context.instrumentation_callback - 2);
-
-            emu.reg<uint64_t>(x86_register::r10, rip_old);
+            win_emu.abi().redirect_instrumentation_callback(emu, context.instrumentation_callback);
         }
     }
 

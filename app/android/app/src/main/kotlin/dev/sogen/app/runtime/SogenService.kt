@@ -8,6 +8,7 @@ import android.os.Process
 import android.os.RemoteException
 import android.util.Log
 import android.view.Surface
+import java.io.File
 import kotlin.concurrent.thread
 
 /**
@@ -45,6 +46,14 @@ class SogenService : Service() {
 
         override fun stop() {
             native?.stop()
+        }
+
+        override fun consoleInput(data: ByteArray) {
+            native?.consoleInput(data)
+        }
+
+        override fun consoleResize(columns: Int, rows: Int) {
+            native?.consoleResize(columns, rows)
         }
 
         override fun attachSurface(window: Long, surface: Surface) {
@@ -92,7 +101,8 @@ class SogenService : Service() {
 
     private fun runSession(config: RunConfig, callback: ISogenCallback) {
         val session = native ?: return
-        val exitCode = session.run(config)
+        val sandbox = File(applicationInfo.nativeLibraryDir, SANDBOX_LIBRARY)
+        val exitCode = session.run(config, if (sandbox.exists()) sandbox.path else "")
 
         try {
             callback.onExit(exitCode)
@@ -103,6 +113,8 @@ class SogenService : Service() {
 
     private class CallbackListener(private val callback: ISogenCallback) : NativeListener {
         override fun onOutput(text: String, color: Int) = deliver { callback.onOutput(text, color) }
+
+        override fun onConsoleOutput(data: ByteArray) = deliver { callback.onConsoleOutput(data) }
 
         override fun onWindowCreated(window: Long, width: Int, height: Int, title: String, visible: Boolean) =
             deliver { callback.onWindowCreated(window, width, height, title, visible) }
@@ -132,5 +144,8 @@ class SogenService : Service() {
     private companion object {
         const val TAG = "SogenService"
         const val LOGGER_COLOR_RED = 1
+
+        /** The sandbox executable, packaged as a library so that it is extracted to a directory apps may execute from. */
+        const val SANDBOX_LIBRARY = "libsandbox.so"
     }
 }

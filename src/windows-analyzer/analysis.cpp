@@ -18,7 +18,6 @@ namespace sogen
     namespace
     {
         constexpr size_t MAX_INSTRUCTION_BYTES = 15;
-        constexpr uint64_t SYSCALL_INSTRUCTION_SIZE = 2;
 
         template <typename Return, typename... Args>
         std::function<Return(Args...)> make_callback(analysis_context& c, Return (*callback)(analysis_context&, Args...))
@@ -36,7 +35,7 @@ namespace sogen
             };
         }
 
-        std::string get_instruction_string(const disassembler& d, x86_64_cpu& emu, const uint64_t address)
+        std::string get_instruction_string(const disassembler& d, guest_cpu& emu, const uint64_t address)
         {
             std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
             const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
@@ -45,8 +44,7 @@ namespace sogen
                 return {};
             }
 
-            const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
-            const auto instructions = d.disassemble(emu, reg_cs, instruction_bytes, 1, address);
+            const auto instructions = d.disassemble(emu, instruction_bytes, 1, address);
             if (instructions.empty())
             {
                 return {};
@@ -61,10 +59,21 @@ namespace sogen
             return (address >> 0x10) == 0;
         }
 
+        uint64_t get_traced_argument(windows_emulator& win_emu, const size_t index)
+        {
+            auto& cpu = win_emu.active_cpu();
+            if (auto* x64 = dynamic_cast<x86_64_cpu*>(&cpu))
+            {
+                return get_function_argument(*x64, index);
+            }
+
+            return win_emu.abi().function_argument(cpu, index);
+        }
+
         template <typename CharType = char>
         std::string read_arg_as_string(windows_emulator& win_emu, const size_t index)
         {
-            const auto var_ptr = get_function_argument(win_emu.emu(), index);
+            const auto var_ptr = get_traced_argument(win_emu, index);
             if (!var_ptr || is_int_resource(var_ptr))
             {
                 return {};
@@ -90,7 +99,7 @@ namespace sogen
 
         std::string read_module_name(windows_emulator& win_emu, const size_t index)
         {
-            const auto var_ptr = get_function_argument(win_emu.emu(), index);
+            const auto var_ptr = get_traced_argument(win_emu, index);
             if (!var_ptr)
             {
                 return {};
@@ -137,10 +146,18 @@ namespace sogen
             }
             else if (function == "WinVerifyTrust")
             {
-                auto& emu = c.win_emu->emu();
-                emu.reg(x86_register::rip, emu.read_stack(0));
-                emu.reg(x86_register::rsp, emu.reg(x86_register::rsp) + 8);
-                emu.reg(x86_register::rax, 0);
+                auto& cpu = c.win_emu->active_cpu();
+                const auto& abi = c.win_emu->abi();
+                if (auto* arm64 = dynamic_cast<arm64_cpu*>(&cpu))
+                {
+                    abi.instruction_pointer(cpu, arm64->reg(arm64_register::lr));
+                }
+                else
+                {
+                    abi.instruction_pointer(cpu, cpu.read_stack(0));
+                    abi.stack_pointer(cpu, abi.stack_pointer(cpu) + 8);
+                }
+                abi.return_value(cpu, 0);
             }
             else if (function == "lstrcmp" || function == "lstrcmpi")
             {
@@ -154,11 +171,11 @@ namespace sogen
         void handle_suspicious_activity(const analysis_context& c, const std::string_view details)
         {
             std::string decoded_instruction{};
-            const auto rip = c.win_emu->emu().read_instruction_pointer();
+            const auto rip = c.win_emu->active_cpu().read_instruction_pointer();
 
             if (details == "Illegal instruction")
             {
-                decoded_instruction = get_instruction_string(c.d, c.win_emu->emu(), rip);
+                decoded_instruction = get_instruction_string(c.d, c.win_emu->active_cpu(), rip);
             }
 
             c.emit_observation<suspicious_activity_event>([&](auto& event) {
@@ -408,7 +425,7 @@ namespace sogen
             }
         }
 
-        bool is_return(const disassembler& d, x86_64_cpu& emu, const uint64_t address)
+        bool is_return(const disassembler& d, guest_cpu& emu, const uint64_t address)
         {
             std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
             const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
@@ -417,20 +434,19 @@ namespace sogen
                 return false;
             }
 
-            const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
-            const auto instructions = d.disassemble(emu, reg_cs, instruction_bytes, 1, address);
+            const auto instructions = d.disassemble(emu, instruction_bytes, 1, address);
             if (instructions.empty())
             {
                 return false;
             }
 
-            const auto handle = d.resolve_handle(emu, reg_cs);
+            const auto handle = d.resolve_handle(emu);
             return cs_insn_group(handle, instructions.data(), CS_GRP_RET);
         }
 
         void record_instruction(analysis_context& c, const uint64_t address)
         {
-            auto& emu = c.win_emu->emu();
+            auto& emu = c.win_emu->active_cpu();
             std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
             const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
             if (!result)
@@ -438,9 +454,8 @@ namespace sogen
                 return;
             }
 
-            const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
             disassembler disasm{};
-            const auto instructions = disasm.disassemble(emu, reg_cs, instruction_bytes, 1, address);
+            const auto instructions = disasm.disassemble(emu, instruction_bytes, 1, address);
             if (instructions.empty())
             {
                 return;
@@ -474,7 +489,7 @@ namespace sogen
             }
 
             c.syscall_to_resume_after_break = address;
-            c.win_emu->emu().reg<uint64_t>(x86_register::rip, address - SYSCALL_INSTRUCTION_SIZE);
+            c.win_emu->abi().rewind_syscall(c.win_emu->active_cpu(), address);
             return true;
         }
 
@@ -584,7 +599,7 @@ namespace sogen
             {
                 c.emit_observation<entry_point_execution_event>([&](auto& event) { event.interesting = is_interesting_call; });
             }
-            else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->emu(), previous_ip))
+            else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->active_cpu(), previous_ip))
             {
                 auto nearest_entry = binary->address_names.upper_bound(address);
                 if (nearest_entry == binary->address_names.begin())
@@ -642,6 +657,7 @@ namespace sogen
 
             auto& win_emu = *c.win_emu;
             auto& emu = win_emu.active_cpu();
+            auto* arm64 = dynamic_cast<arm64_cpu*>(&emu);
 
             const auto address = emu.read_instruction_pointer();
             if (c.syscall_to_resume_after_break)
@@ -677,14 +693,20 @@ namespace sogen
                     return instruction_hook_continuation::skip_instruction;
                 }
             }
-            else if (!previous_ip || mod->contains(previous_ip))
+            // ARM64 stubs begin with their SVC, so a regular call arrives at the export from the caller.
+            else if (!previous_ip || mod->contains(previous_ip) || (arm64 && mod->address_names.contains(address)))
             {
                 if (!c.settings->skip_syscalls)
                 {
-                    const auto rsp = emu.read_stack_pointer();
-
                     uint64_t return_address{};
-                    emu.try_read_memory(rsp, &return_address, sizeof(return_address));
+                    if (arm64)
+                    {
+                        return_address = arm64->reg(arm64_register::lr);
+                    }
+                    else
+                    {
+                        emu.try_read_memory(emu.read_stack_pointer(), &return_address, sizeof(return_address));
+                    }
 
                     const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
                     const auto call_count = next_traced_call_count(c);
@@ -781,7 +803,7 @@ namespace sogen
                                                });
 
             c.win_emu->emu().hook_memory_read(min, max - min, [&c](cpu_interface&, const uint64_t address, const void*, size_t) {
-                const auto rip = c.win_emu->emu().read_instruction_pointer();
+                const auto rip = c.win_emu->active_cpu().read_instruction_pointer();
                 const auto& watched_module = *c.win_emu->mod_manager.executable;
                 const auto accessor_module = get_module_if_interesting(c.win_emu->mod_manager, c.settings->modules, rip);
 
@@ -797,7 +819,7 @@ namespace sogen
                 }
 
                 accessed_import access{};
-                access.address = c.win_emu->emu().read_memory<uint64_t>(address);
+                access.address = c.win_emu->memory.read_memory<uint64_t>(address);
                 access.access_context = c.make_execution_context();
                 access.import_name = sym->second.name;
                 access.import_module = watched_module.imported_modules.at(sym->second.module_index);

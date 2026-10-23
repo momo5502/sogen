@@ -19,7 +19,7 @@ namespace sogen::test
                              emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
                              emulator_callbacks{}, std::move(interfaces));
         const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
-        const syscall_context context{.win_emu = emu, .emu = emu.emu(), .vcpu = emu.vcpu(0), .proc = emu.process};
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
         for (const auto size : {0u, 4u, 8u, 16u})
         {
             emulator_object<uint64_t>{emu.memory, storage + 0x100}.write(0x1122334455667788);

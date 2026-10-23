@@ -16,6 +16,10 @@ namespace sogen
     class windows_emulator;
     class windows_version_manager;
 
+    // Describes an ARM64 machine the way Windows on ARM does: ARM64 image numbers and architecture, no
+    // XState, and processor features derived from the CPU's identification registers.
+    void apply_arm64_processor(KUSER_SHARED_DATA64& kusd, uint64_t isar0, uint64_t isar1);
+
     class kusd_mmio
     {
       public:

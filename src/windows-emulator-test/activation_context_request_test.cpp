@@ -98,6 +98,20 @@ namespace sogen::test
         EXPECT_TRUE(this->emu->memory.release_memory(address, 0));
     }
 
+    TEST_F(ActivationContextRequestTest, AcceptsArm64ProcessorArchitecture)
+    {
+        this->write<uint32_t>(0x1c, PROCESSOR_ARCHITECTURE_ARM64);
+        constexpr std::string_view manifest =
+            "<assembly manifestVersion=\"1.0\"><assemblyIdentity name=\"Sogen.Arm64.Test\" version=\"1.0.0.0\" "
+            "processorArchitecture=\"arm64\"/></assembly>";
+        this->emu->memory.write_memory(this->storage + 0x2000, manifest.data(), manifest.size());
+        this->write<uint64_t>(0x60, manifest.size());
+        ASSERT_EQ(STATUS_SUCCESS, this->port->handle_request(*this->emu, this->request).status);
+        const auto address = emulator_object<uint64_t>{this->emu->memory, this->storage + 0x3000}.read();
+        EXPECT_NE(0, address);
+        EXPECT_TRUE(this->emu->memory.release_memory(address, 0));
+    }
+
     TEST_F(ActivationContextRequestTest, MissingRequiredDependencyReturnsSxsFailureWithoutAllocating)
     {
         constexpr std::string_view manifest =

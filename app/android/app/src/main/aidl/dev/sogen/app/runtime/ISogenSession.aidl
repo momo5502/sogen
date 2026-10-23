@@ -8,6 +8,9 @@ oneway interface ISogenSession {
     void start(in Bundle config, ISogenCallback callback);
     void stop();
 
+    void consoleInput(in byte[] data);
+    void consoleResize(int columns, int rows);
+
     void attachSurface(long window, in Surface surface);
     void detachSurface(long window);
 

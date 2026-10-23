@@ -42,7 +42,7 @@ export default defineConfig({
       workbox: {
         skipWaiting: true,
         clientsClaim: true,
-        maximumFileSizeToCacheInBytes: 128 * mb,
+        maximumFileSizeToCacheInBytes: 256 * mb,
         cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,woff,woff2,wasm}"],
         globIgnores: ["root.zip"],

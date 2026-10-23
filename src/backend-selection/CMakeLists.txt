@@ -12,9 +12,9 @@ sogen_assign_source_group(${SRC_FILES})
 
 target_include_directories(backend-selection INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 
-target_link_libraries(backend-selection PRIVATE
-  unicorn-emulator
-)
+if(SOGEN_ENABLE_UNICORN)
+  target_link_libraries(backend-selection PRIVATE unicorn-emulator)
+endif()
 
 if (SOGEN_ENABLE_RUST)
   target_link_libraries(backend-selection PRIVATE
@@ -23,9 +23,11 @@ if (SOGEN_ENABLE_RUST)
 endif()
 
 if (NOT MINGW AND MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-  target_link_libraries(backend-selection PRIVATE
-    whp-emulator
-  )
+  if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+    target_link_libraries(backend-selection PRIVATE whp-arm64-emulator)
+  else()
+    target_link_libraries(backend-selection PRIVATE whp-emulator)
+  endif()
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
@@ -39,4 +41,9 @@ if (SOGEN_ENABLE_FEX)
   target_link_libraries(backend-selection PRIVATE
     fex-emulator
   )
+endif()
+
+if (SOGEN_ENABLE_HVF)
+  target_compile_definitions(backend-selection PRIVATE SOGEN_ENABLE_HVF=1)
+  target_link_libraries(backend-selection PRIVATE hvf-arm64-emulator)
 endif()

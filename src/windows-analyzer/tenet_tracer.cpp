@@ -60,7 +60,7 @@ namespace sogen
             throw std::runtime_error("TenetTracer: Failed to open log file -> " + log_filename.string());
         }
 
-        auto& emu = win_emu_.emu();
+        auto& emu = win_emu_.x64_emu();
 
         auto* read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](cpu_interface&, uint64_t a, const void* d, size_t s) {
             this->log_memory_read(a, d, s); //
@@ -206,7 +206,7 @@ namespace sogen
 
     void tenet_tracer::process_instruction(const uint64_t address)
     {
-        auto& emu = win_emu_.emu();
+        auto& emu = win_emu_.x64_emu();
         std::stringstream trace_line;
 
         std::array<uint64_t, GPRs_TO_TRACE.size()> current_regs{};

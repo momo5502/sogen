@@ -139,7 +139,7 @@ namespace sogen
 
     pe_detection_result pe_architecture_detector::detect_from_file(const std::filesystem::path& file)
     {
-        auto variant_result = winpe::get_pe_arch(file);
+        const auto variant_result = winpe::get_pe_format(file);
 
         if (std::holds_alternative<std::error_code>(variant_result))
         {
@@ -149,19 +149,21 @@ namespace sogen
             return result;
         }
 
-        auto arch = std::get<winpe::pe_arch>(variant_result);
+        const auto format = std::get<winpe::pe_format>(variant_result);
         pe_detection_result result;
-        result.architecture = arch;
-        result.suggested_mode = determine_execution_mode(arch);
+        result.architecture = format.architecture;
+        result.machine = format.machine;
+        result.suggested_mode = determine_execution_mode(format);
         return result;
     }
 
     pe_detection_result pe_architecture_detector::detect_from_memory(const memory_interface& memory, uint64_t base_address,
                                                                      uint64_t image_size)
     {
-        auto variant_result = winpe::get_pe_arch([&](const uint64_t address, void* destination,
-                                                     const size_t size) { return memory.try_read_memory(address, destination, size); },
-                                                 base_address, image_size);
+        const auto variant_result =
+            winpe::get_pe_format([&](const uint64_t address, void* destination,
+                                     const size_t size) { return memory.try_read_memory(address, destination, size); },
+                                 base_address, image_size);
 
         if (std::holds_alternative<std::error_code>(variant_result))
         {
@@ -170,21 +172,24 @@ namespace sogen
             return result;
         }
 
-        auto arch = std::get<winpe::pe_arch>(variant_result);
+        const auto format = std::get<winpe::pe_format>(variant_result);
         pe_detection_result result;
-        result.architecture = arch;
-        result.suggested_mode = determine_execution_mode(arch);
+        result.architecture = format.architecture;
+        result.machine = format.machine;
+        result.suggested_mode = determine_execution_mode(format);
         return result;
     }
 
-    execution_mode pe_architecture_detector::determine_execution_mode(winpe::pe_arch executable_arch)
+    execution_mode pe_architecture_detector::determine_execution_mode(const winpe::pe_format format)
     {
-        switch (executable_arch)
+        switch (format.machine)
         {
-        case winpe::pe_arch::pe32:
-            return execution_mode::wow64_32bit;
-        case winpe::pe_arch::pe64:
-            return execution_mode::native_64bit;
+        case PEMachineType::I386:
+            return format.architecture == winpe::pe_arch::pe32 ? execution_mode::wow64_32bit : execution_mode::unknown;
+        case PEMachineType::AMD64:
+        case PEMachineType::ARM64EC:
+        case PEMachineType::ARM64:
+            return format.architecture == winpe::pe_arch::pe64 ? execution_mode::native_64bit : execution_mode::unknown;
         default:
             return execution_mode::unknown;
         }
@@ -235,11 +240,28 @@ namespace sogen
         }
     }
 
-    module_manager::module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb)
+    module_manager::module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb,
+                                   const windows_guest_architecture architecture)
         : memory_(&memory),
           file_sys_(&file_sys),
-          callbacks_(&cb)
+          callbacks_(&cb),
+          native_architecture_(architecture)
     {
+        (void)windows_abi_for(architecture);
+    }
+
+    bool module_manager::supports_image(const pe_detection_result& detection_result) const
+    {
+        if (!detection_result.is_valid() || detection_result.suggested_mode == execution_mode::unknown)
+        {
+            return false;
+        }
+        if (this->native_architecture_ == windows_guest_architecture::arm64)
+        {
+            return detection_result.machine == PEMachineType::ARM64;
+        }
+        return detection_result.machine == PEMachineType::I386 || detection_result.machine == PEMachineType::AMD64 ||
+               detection_result.machine == PEMachineType::ARM64EC;
     }
 
     mapped_module* module_manager::map_module_core(const pe_detection_result& detection_result,
@@ -248,6 +270,13 @@ namespace sogen
         if (!detection_result.is_valid())
         {
             logger.error("Cannot map module: %s\n", detection_result.error_message.c_str());
+            return nullptr;
+        }
+
+        if (!this->supports_image(detection_result))
+        {
+            logger.error("Cannot map PE machine 0x%04x into guest architecture %u\n", static_cast<unsigned>(detection_result.machine),
+                         static_cast<unsigned>(this->native_architecture_));
             return nullptr;
         }
 
@@ -284,6 +313,13 @@ namespace sogen
         {
             logger.error("Failed to detect executable architecture of file %s: %s\n", local_file.string().c_str(),
                          detection_result.error_message.c_str());
+            return execution_mode::unknown;
+        }
+
+        if (!this->supports_image(detection_result))
+        {
+            logger.error("Executable PE machine 0x%04x is incompatible with guest architecture %u\n",
+                         static_cast<unsigned>(detection_result.machine), static_cast<unsigned>(this->native_architecture_));
             return execution_mode::unknown;
         }
 
@@ -460,20 +496,33 @@ namespace sogen
         }
     }
 
-    void module_manager::map_main_modules(x86_64_emulator& emu, const windows_path& executable_path, windows_version_manager& version,
+    void module_manager::map_main_modules(cpu_interface& cpu, const windows_path& executable_path, windows_version_manager& version,
                                           process_context& context, const logger& logger)
     {
+        if (context.native_architecture != this->native_architecture_)
+        {
+            throw std::invalid_argument("Module manager and process architectures differ");
+        }
+        (void)context.abi().instruction_pointer(cpu);
+
         const auto& system_root = version.get_system_root();
         const auto system32_path = system_root / "System32";
         const auto syswow64_path = system_root / "SysWOW64";
 
         current_execution_mode_ = detect_execution_mode(executable_path, logger);
+        if (current_execution_mode_ == execution_mode::unknown)
+        {
+            throw std::runtime_error("Unknown or unsupported execution mode detected");
+        }
         context.is_wow64_process = (current_execution_mode_ == execution_mode::wow64_32bit);
 
         // Must precede any module mapping: a fixed-bitness JIT backend rejects unsupported execution
         // modes here, before its first block would be mis-decoded. Host-range reservations are
         // re-derived afterwards so mapping starts from a fresh view of the backend's host layout.
-        emu.notify_process_bitness(context.is_wow64_process);
+        if (auto* x64_cpu = dynamic_cast<x86_64_cpu*>(&cpu))
+        {
+            x64_cpu->notify_process_bitness(context.is_wow64_process);
+        }
         this->memory_->reset_host_memory_ranges();
 
         switch (current_execution_mode_)
@@ -595,6 +644,7 @@ namespace sogen
 
     void module_manager::serialize(utils::buffer_serializer& buffer) const
     {
+        buffer.write(this->native_architecture_);
         buffer.write_map(this->modules_);
         buffer.write_map(this->modules_load_count);
 
@@ -613,6 +663,10 @@ namespace sogen
 
     void module_manager::deserialize(utils::buffer_deserializer& buffer)
     {
+        if (buffer.read<windows_guest_architecture>() != this->native_architecture_)
+        {
+            throw std::runtime_error("Module snapshot architecture does not match the guest");
+        }
         buffer.read_map(this->modules_);
         buffer.read_map(this->modules_load_count);
         this->last_module_cache_ = this->modules_.end();

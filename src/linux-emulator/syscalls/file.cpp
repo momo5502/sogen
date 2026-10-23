@@ -1893,7 +1893,7 @@ namespace sogen
 
             linux_dirent64_header hdr{};
             hdr.d_ino = entry.ino;
-            hdr.d_off = static_cast<int64_t>(offset + 1);
+            hdr.d_off = static_cast<int64_t>(offset) + 1;
             hdr.d_reclen = static_cast<uint16_t>(reclen);
             hdr.d_type = entry.d_type;
 

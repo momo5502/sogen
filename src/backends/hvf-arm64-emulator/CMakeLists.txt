@@ -1,0 +1,10 @@
+if(SOGEN_BUILD_STATIC)
+  add_library(hvf-arm64-emulator STATIC hvf_arm64_emulator.cpp hvf_arm64_emulator.hpp)
+else()
+  add_library(hvf-arm64-emulator SHARED hvf_arm64_emulator.cpp hvf_arm64_emulator.hpp)
+endif()
+
+target_include_directories(hvf-arm64-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
+target_link_libraries(hvf-arm64-emulator PUBLIC emulator)
+target_link_libraries(hvf-arm64-emulator PRIVATE "-framework Hypervisor" "-framework Security" "-framework CoreFoundation")
+sogen_strip_target(hvf-arm64-emulator)

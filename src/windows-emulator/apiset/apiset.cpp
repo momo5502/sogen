@@ -17,7 +17,7 @@ namespace sogen
     {
         namespace
         {
-            uint64_t copy_string(x86_64_emulator& emu, emulator_allocator& allocator, const void* base_ptr, const uint64_t offset,
+            uint64_t copy_string(memory_interface& emu, emulator_allocator& allocator, const void* base_ptr, const uint64_t offset,
                                  const size_t length)
             {
                 if (!length)
@@ -32,7 +32,7 @@ namespace sogen
                 return str_obj;
             }
 
-            ULONG copy_string_as_relative(x86_64_emulator& emu, emulator_allocator& allocator, const uint64_t result_base,
+            ULONG copy_string_as_relative(memory_interface& emu, emulator_allocator& allocator, const uint64_t result_base,
                                           const void* base_ptr, const uint64_t offset, const size_t length)
             {
                 const auto address = copy_string(emu, allocator, base_ptr, offset, length);
@@ -178,12 +178,12 @@ namespace sogen
             return obtain(apiset_loc, root);
         }
 
-        emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const container& container)
+        emulator_object<API_SET_NAMESPACE> clone(memory_interface& emu, emulator_allocator& allocator, const container& container)
         {
             return clone(emu, allocator, container.get());
         }
 
-        emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
+        emulator_object<API_SET_NAMESPACE> clone(memory_interface& emu, emulator_allocator& allocator,
                                                  const API_SET_NAMESPACE& orig_api_set_map)
         {
             const auto api_set_map_obj = allocator.reserve<API_SET_NAMESPACE>();

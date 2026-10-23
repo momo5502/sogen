@@ -34,6 +34,7 @@ class Game {
     this.arguments = const [],
     this.liveNetwork = false,
     this.backend = CpuBackend.automatic,
+    this.console = false,
   });
 
   factory Game.fromJson(Map<String, dynamic> json) => Game(
@@ -44,6 +45,7 @@ class Game {
     arguments: (json['arguments'] as List<dynamic>? ?? const []).cast<String>(),
     liveNetwork: json['liveNetwork'] as bool? ?? false,
     backend: CpuBackend.fromId(json['backend'] as String?),
+    console: json['console'] as bool? ?? false,
   );
 
   final String id;
@@ -58,6 +60,9 @@ class Game {
   final List<String> arguments;
   final bool liveNetwork;
   final CpuBackend backend;
+
+  /// Command-line programs show a terminal instead of a window.
+  final bool console;
 
   String get guestExecutable => _toGuestPath(executable);
 
@@ -104,6 +109,7 @@ class Game {
     'arguments': arguments,
     'liveNetwork': liveNetwork,
     'backend': backend.id,
+    'console': console,
   };
 }
 

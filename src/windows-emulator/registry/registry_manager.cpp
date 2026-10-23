@@ -52,7 +52,7 @@ namespace sogen
                     return {mapping.second, true};
                 }
 
-                if (is_subpath(mapping.first.get(), path.get()))
+                if (is_subpath(mapping.first, path))
                 {
                     return {mapping.second.get() / path.get().lexically_relative(mapping.first.get()), true};
                 }
@@ -84,11 +84,13 @@ namespace sogen
         const std::filesystem::path user = root / "user";
 
         register_hive(this->hives_, machine / "system", this->hive_path_ / "SYSTEM");
-        register_hive(this->hives_, machine / "security", this->hive_path_ / "SECURITY");
-        register_hive(this->hives_, machine / "sam", this->hive_path_ / "SAM");
         register_hive(this->hives_, machine / "software", this->hive_path_ / "SOFTWARE");
-        register_hive(this->hives_, machine / "system", this->hive_path_ / "SYSTEM");
         register_optional_hive(this->hives_, machine / "hardware", this->hive_path_ / "HARDWARE");
+
+        // SYSTEM-only hives that applications cannot open. Newer Windows builds refuse REG SAVE for them,
+        // even from SYSTEM, so a root grabbed there has none.
+        register_optional_hive(this->hives_, machine / "security", this->hive_path_ / "SECURITY");
+        register_optional_hive(this->hives_, machine / "sam", this->hive_path_ / "SAM");
 
         register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.DAT");
 
@@ -274,9 +276,12 @@ namespace sogen
 
     std::optional<registry_key> registry_manager::get_key(const utils::path_key& key)
     {
+        static const utils::path_key machine_root{"\\registry\\machine"};
+        static const utils::path_key user_root{"\\registry\\user"};
+
         const auto normal_key = this->normalize_path(key);
 
-        if (is_subpath(normal_key, utils::path_key{"\\registry\\machine"}) || is_subpath(normal_key, utils::path_key{"\\registry\\user"}))
+        if (is_subpath(normal_key, machine_root) || is_subpath(normal_key, user_root))
         {
             registry_key reg_key{};
             reg_key.hive = normal_key;
