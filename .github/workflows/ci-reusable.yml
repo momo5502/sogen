@@ -628,6 +628,12 @@ jobs:
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
 
+      - name: Configure fast APT mirror
+        uses: vegardit/fast-apt-mirror.sh@1.4.5
+        if: "${{ matrix.gcc-version }}"
+        with:
+          exclude-current: true
+
       # The sanitizer binaries need the runtime of the GCC that built them.
       - name: Install GCC
         uses: nick-fields/retry@v4.0.0
@@ -794,6 +800,12 @@ jobs:
         shell: bash
         run: echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
 
+      - name: Configure fast APT mirror
+        uses: vegardit/fast-apt-mirror.sh@1.4.5
+        if: "${{ matrix.gcc-version }}"
+        with:
+          exclude-current: true
+
       # The sanitizer binaries need the runtime of the GCC that built them.
       - name: Install GCC
         uses: nick-fields/retry@v4.0.0
@@ -804,8 +816,7 @@ jobs:
           retry_wait_seconds: 60
           command: |
             sudo apt-get update
-            sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=60 -o Acquire::Retries=5 \
-              gcc-${{ matrix.gcc-version }} g++-${{ matrix.gcc-version }}
+            sudo apt-get install -y --no-install-recommends gcc-${{ matrix.gcc-version }} g++-${{ matrix.gcc-version }}
 
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v8
