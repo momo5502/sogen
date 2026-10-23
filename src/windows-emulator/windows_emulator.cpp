@@ -1236,8 +1236,7 @@ namespace sogen
             const std::scoped_lock lock(this->kernel_lock_);
             auto& vcpu = this->vcpu(cpu.index());
             const scoped_dispatch dispatch(*this, vcpu);
-            this->dispatcher.dispatch(*this, vcpu);
-            return instruction_hook_continuation::skip_instruction;
+            return this->dispatcher.dispatch(*this, vcpu);
         });
 
         // rdtsc/rdtscp are intercepted only when timing must stay exact (the analyzer). Otherwise the
