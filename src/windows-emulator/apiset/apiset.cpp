@@ -56,11 +56,6 @@ namespace sogen
                 return buffer;
             }
 
-            std::filesystem::path schema_dll_path(const std::filesystem::path& root)
-            {
-                return root / "filesys" / "c" / "windows" / "system32" / "apisetschema.dll";
-            }
-
             template <typename T>
             T read_schema_value(const std::vector<std::byte>& file, const uint64_t offset)
             {
@@ -76,9 +71,9 @@ namespace sogen
 
             // Windows maps the .apiset section of apisetschema.dll as the process API set map, so a root
             // containing the DLL needs no separately dumped api-set.bin.
-            std::vector<std::byte> read_schema_dll(const std::filesystem::path& root)
+            std::vector<std::byte> read_schema_dll(const std::filesystem::path& schema_dll)
             {
-                const auto file = utils::io::read_file(schema_dll_path(root));
+                const auto file = utils::io::read_file(schema_dll);
                 if (file.empty())
                 {
                     throw std::runtime_error("Failed to read apisetschema.dll");
@@ -142,8 +137,6 @@ namespace sogen
 
                     return decompress_apiset(apiset);
                 }
-                case location::schema_dll:
-                    return read_schema_dll(root);
                 case location::default_windows_10: {
                     const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w10);
                     const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w10)};
@@ -165,7 +158,7 @@ namespace sogen
             return {.data = obtain_data(location, root)};
         }
 
-        container obtain(const std::filesystem::path& root)
+        container obtain(const std::filesystem::path& root, const std::filesystem::path& schema_dll)
         {
             auto apiset_loc = location::file;
 
@@ -177,9 +170,9 @@ namespace sogen
                 apiset_loc = location::default_windows_11;
 #endif
             }
-            else if (!utils::io::file_exists(root / "api-set.bin") && utils::io::file_exists(schema_dll_path(root)))
+            else if (!utils::io::file_exists(root / "api-set.bin") && utils::io::file_exists(schema_dll))
             {
-                apiset_loc = location::schema_dll;
+                return {.data = read_schema_dll(schema_dll)};
             }
 
             return obtain(apiset_loc, root);

@@ -864,7 +864,8 @@ namespace sogen
         const auto* ntdll = this->mod_manager.ntdll;
         const auto* win32u = this->mod_manager.win32u;
 
-        const auto apiset_data = apiset::obtain(this->emulation_root);
+        const auto apiset_data = apiset::obtain(
+            this->emulation_root, this->file_sys.translate(this->version.get_system_root() / "System32" / "apisetschema.dll"));
 
         this->process.setup(*this, this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32,
                             this->intercept_kusd_);
