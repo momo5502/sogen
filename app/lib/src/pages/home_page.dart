@@ -111,10 +111,7 @@ class _HomePageState extends State<HomePage> {
                     ),
                   ),
                 ),
-                const SliverPadding(
-                  padding: EdgeInsets.fromLTRB(24, 32, 24, 32),
-                  sliver: SliverToBoxAdapter(child: _Hero()),
-                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 24)),
                 if (!installed || _installing || _error != null)
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -178,30 +175,6 @@ class _HomePageState extends State<HomePage> {
           },
         ),
       ),
-    );
-  }
-}
-
-class _Hero extends StatelessWidget {
-  const _Hero();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headline = theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700, height: 1.15);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Run any Windows game.', style: headline),
-        Text('On Android.', style: headline?.copyWith(color: SogenColors.neutral300)),
-        const SizedBox(height: 16),
-        Text(
-          'Sogen emulates Windows in user space, running the real system DLLs. '
-          'Point it at a game folder and play.',
-          style: theme.textTheme.bodyLarge?.copyWith(color: SogenColors.neutral400, height: 1.5),
-        ),
-      ],
     );
   }
 }
