@@ -13,14 +13,6 @@ namespace sogen
 
     namespace apiset
     {
-        enum class location : uint8_t
-        {
-            host,
-            file,
-            default_windows_10,
-            default_windows_11
-        };
-
         struct container
         {
             std::vector<std::byte> data{};
@@ -31,8 +23,7 @@ namespace sogen
             }
         };
 
-        container obtain(location location, const std::filesystem::path& root);
-        container obtain(const std::filesystem::path& root, const std::filesystem::path& schema_dll);
+        container obtain(const std::filesystem::path& schema_dll);
 
         emulator_object<API_SET_NAMESPACE> clone(memory_interface& emu, emulator_allocator& allocator,
                                                  const API_SET_NAMESPACE& orig_api_set_map);

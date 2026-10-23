@@ -49,6 +49,7 @@ REM (which writes SYSTEM/SECURITY/SOFTWARE/HARDWARE/SAM + NTUSER.DAT into the gi
 CALL "%~dp0grab-registry.bat" "%EMU_REGDIR%"
 
 CALL :collect advapi32.dll
+CALL :collect apisetschema.dll
 CALL :collect audioeng.dll
 CALL :collect audiokse.dll
 CALL :collect avifil32.dll
