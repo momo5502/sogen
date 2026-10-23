@@ -1279,27 +1279,20 @@ namespace sogen::fex
             return esr != nullptr && (esr->esr & esr_write_not_read) != 0;
         }
 
-        // arm64 kernels with 4KB pages have 39 or 48 virtual address bits, and ones with 64KB pages 42 or 52, but
-        // mmap hands out nothing above 47 bits unless asked to.
+        // arm64 kernels with 4KB pages, which this backend requires, have 39 or 48 virtual address bits, and mmap hands
+        // out nothing above 47 bits unless asked to.
         uint64_t find_host_address_end()
         {
-            for (const int bits : {47, 42})
+            constexpr uint64_t large_end = uint64_t{1} << 47;
+            auto* probe = reinterpret_cast<void*>(large_end - page_size);
+            void* result = ::mmap(probe, page_size, PROT_NONE, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (result != MAP_FAILED)
             {
-                const uint64_t end = uint64_t{1} << bits;
-                auto* probe = reinterpret_cast<void*>(end - page_size);
-                void* result =
-                    ::mmap(probe, page_size, PROT_NONE, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-                if (result != MAP_FAILED)
-                {
-                    ::munmap(result, page_size);
-                }
-                if (result == probe || (result == MAP_FAILED && errno == EEXIST))
-                {
-                    return end;
-                }
+                ::munmap(result, page_size);
             }
 
-            return uint64_t{1} << 39;
+            const bool mappable = result == probe || (result == MAP_FAILED && errno == EEXIST);
+            return mappable ? large_end : uint64_t{1} << 39;
         }
 #endif
 
