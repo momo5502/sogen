@@ -837,7 +837,6 @@ namespace sogen::fex
             std::vector<tracked_chunk> chunks;
         };
 
-        // Joins adjacent chunks into one range, so that each range takes a single call.
         struct chunk_run
         {
             uint64_t address = 0;
@@ -2296,7 +2295,6 @@ namespace sogen::fex
         {
             chunk_run written_run{};
             chunk_run protect_run{};
-            const auto report = [&](const uint64_t run_address, const size_t run_size) { f(run_address, run_size); };
             const auto protect = [&](const uint64_t run_address, const size_t run_size) {
                 this->require_protection(run_address, run_size, tracked_access::read_only);
             };
@@ -2304,12 +2302,12 @@ namespace sogen::fex
             this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
                 if (!chunk.written.exchange(false))
                 {
-                    written_run.finish(report);
+                    written_run.finish(f);
                     protect_run.finish(protect);
                     return;
                 }
 
-                written_run.add(chunk_address, chunk_size, report);
+                written_run.add(chunk_address, chunk_size, f);
                 if (chunk.stale)
                 {
                     protect_run.finish(protect);
@@ -2319,7 +2317,7 @@ namespace sogen::fex
                     protect_run.add(chunk_address, chunk_size, protect);
                 }
             });
-            written_run.finish(report);
+            written_run.finish(f);
             protect_run.finish(protect);
         }
 
@@ -2523,16 +2521,18 @@ namespace sogen::fex
             const uint64_t address = this->to_guest_address(host_fault_address);
             bool handled = false;
             this->for_each_tracked_chunk(address, 1, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
-                const bool writable = this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write);
+                const auto writable = [&] {
+                    return this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write);
+                };
                 if (chunk.stale)
                 {
-                    if (is_write && writable)
+                    if (is_write && writable())
                     {
                         chunk.written = true;
                     }
                     handled = this->bring_up_to_date(chunk, chunk_address, chunk_size);
                 }
-                else if (writable)
+                else if (writable())
                 {
                     chunk.written = true;
                     handled = this->restrict_protection(chunk_address, chunk_size, tracked_access::full);
