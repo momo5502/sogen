@@ -67,6 +67,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -1261,6 +1262,7 @@ namespace sogen::fex
 
         uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* frame, FEXCore::HLE::SyscallArguments* args) override;
         FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* thread, uint64_t address) override;
+        void MarkGuestExecutableRange(FEXCore::Core::InternalThreadState* thread, uint64_t start, uint64_t length) override;
         std::optional<FEXCore::ExecutableFileSectionInfo> LookupExecutableFileSection(FEXCore::Core::InternalThreadState* thread,
                                                                                       uint64_t guest_addr) override;
 
@@ -1753,8 +1755,10 @@ namespace sogen::fex
                 this->set_temporary_write_access(address, size, false);
             }
 
-            // Writing to a mapped region may overwrite already-translated code; drop FEX's cache for it.
-            this->invalidate_code_range(address, size);
+            if (this->range_has_code(address, size))
+            {
+                this->invalidate_code_range(address, size);
+            }
             return true;
         }
 
@@ -2045,7 +2049,6 @@ namespace sogen::fex
 
             this->erase_region_range(address, size);
             this->regions_[address] = mapped_region{.size = size, .permissions = permissions, .owned = true};
-            this->mark_executable_range(address, size, permissions);
         }
 
         void reserve_guest_address_range(uint64_t address, size_t size) override
@@ -2174,7 +2177,6 @@ namespace sogen::fex
             // owned=false: the memory belongs to the caller; we must not munmap it on teardown.
             this->erase_region_range(address, size);
             this->regions_[address] = mapped_region{.size = size, .permissions = permissions, .owned = false};
-            this->mark_executable_range(address, size, permissions);
             return true;
         }
 
@@ -2368,7 +2370,6 @@ namespace sogen::fex
 
             // Permission changes can expose/retract executable code; keep FEX's translation cache honest.
             this->invalidate_code_range(address, size);
-            this->mark_executable_range(address, size, permissions);
         }
 
         // access tracking
@@ -4036,14 +4037,6 @@ namespace sogen::fex
             }
         }
 
-        void mark_executable_range(uint64_t address, size_t size, memory_permission permissions)
-        {
-            if (this->thread_ != nullptr && (permissions & memory_permission::exec) != memory_permission::none)
-            {
-                this->syscall_handler_->MarkGuestExecutableRange(this->thread_, address, size);
-            }
-        }
-
         void invalidate_code_range_in(FEXCore::Context::Context* context, FEXCore::Core::InternalThreadState* thread, uint64_t address,
                                       size_t size) const
         {
@@ -4074,9 +4067,17 @@ namespace sogen::fex
 #endif
         }
 
-        void invalidate_code_range(uint64_t address, size_t size) const
+        void invalidate_code_range(uint64_t address, size_t size)
         {
             this->invalidate_code_range_in(this->context_.get(), this->thread_, address, size);
+            this->code_pages_.erase(this->code_pages_.lower_bound(address & ~(page_size - 1)),
+                                    this->code_pages_.lower_bound(address + size));
+        }
+
+        bool range_has_code(uint64_t address, size_t size) const
+        {
+            const auto page = this->code_pages_.lower_bound(address & ~(page_size - 1));
+            return page != this->code_pages_.end() && *page < address + size;
         }
 
         void request_thread_stop()
@@ -4124,6 +4125,9 @@ namespace sogen::fex
         std::atomic<bool> interrupt_page_unwind_{false};
 
         std::map<uint64_t, mapped_region> regions_;
+        // The pages FEX has translated code from since they were last invalidated, as it reports them. Only writes to
+        // these need to invalidate code; FEX only reports a page again once its code has been invalidated.
+        std::set<uint64_t> code_pages_;
         std::vector<mmio_region> mmio_regions_;
         std::map<uint64_t, tracked_range> tracked_ranges_;
 
@@ -4371,6 +4375,15 @@ namespace sogen::fex
             .Size = region_end - it->first,
             .Writable = (perms & memory_permission::write) != memory_permission::none,
         };
+    }
+
+    void fex_syscall_handler::MarkGuestExecutableRange(FEXCore::Core::InternalThreadState* /*thread*/, const uint64_t start,
+                                                       const uint64_t length)
+    {
+        for (uint64_t page = start & ~(page_size - 1); page < start + length; page += page_size)
+        {
+            this->emulator_.code_pages_.insert(page);
+        }
     }
 
     std::optional<FEXCore::ExecutableFileSectionInfo> fex_syscall_handler::LookupExecutableFileSection(
