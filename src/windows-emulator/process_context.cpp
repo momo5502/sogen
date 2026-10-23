@@ -309,9 +309,19 @@ namespace sogen
 
         this->sid = get_sid(win_emu.registry);
 
-        setup_gdt(emu, win_emu.memory);
+        if (this->native_architecture == windows_guest_architecture::x86_64)
+        {
+            setup_gdt(win_emu.x64_emu(), win_emu.memory);
+        }
 
         this->kusd.setup(version, fake_env, intercept_kusd);
+
+        if (auto* arm64 = dynamic_cast<arm64_cpu*>(&emu.get_guest_cpu(0)))
+        {
+            const auto isar0 = arm64->reg(arm64_register::id_aa64isar0_el1);
+            const auto isar1 = arm64->reg(arm64_register::id_aa64isar1_el1);
+            this->kusd.access([&](KUSER_SHARED_DATA64& kusd) { apply_arm64_processor(kusd, isar0, isar1); });
+        }
 
         this->base_allocator = create_allocator(win_emu.memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
         auto& allocator = this->base_allocator;
@@ -583,7 +593,7 @@ namespace sogen
             });
         }
 
-        this->default_register_set = emu.save_registers();
+        this->default_register_set = emu.get_guest_cpu(0).save_registers();
 
         this->user_handles.setup(is_wow64_process);
         initialize_user_code_page_tables(win_emu);
@@ -762,6 +772,7 @@ namespace sogen
 
         buffer.write(this->is_wow64_process);
         buffer.write(this->hard_error_mode);
+        buffer.write(this->native_architecture);
         buffer.write(this->ntdll_image_base);
         buffer.write(this->ldr_initialize_thunk);
         buffer.write(this->rtl_user_thread_start);
@@ -877,6 +888,12 @@ namespace sogen
 
         buffer.read(this->is_wow64_process);
         buffer.read(this->hard_error_mode);
+        buffer.read(this->native_architecture);
+        (void)windows_abi_for(this->native_architecture);
+        if (this->is_wow64_process && this->native_architecture != windows_guest_architecture::x86_64)
+        {
+            throw std::invalid_argument("Serialized WoW64 process does not have an x86-64 guest architecture");
+        }
         buffer.read(this->ntdll_image_base);
         buffer.read(this->ldr_initialize_thunk);
         buffer.read(this->rtl_user_thread_start);

@@ -1,4 +1,6 @@
 #pragma once
+#include "interface.hpp"
+
 #include <array>
 #include <algorithm>
 #include <cstddef>
@@ -24,7 +26,7 @@ namespace sogen
     class memory_manager;
     class linux_memory_manager;
 
-    class memory_interface
+    class EMULATOR_INTERFACE memory_interface
     {
       public:
         friend memory_manager;

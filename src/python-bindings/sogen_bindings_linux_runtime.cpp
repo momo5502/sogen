@@ -272,6 +272,17 @@ namespace sogen::py
 
         nb::setattr(m, "LinuxEmulator", m.attr("Emulator"));
 
+#if defined(_M_ARM64) && !SOGEN_ENABLE_RUST_CODE
+        m.def("create_empty", [](const nb::kwargs&) -> sogen_linux_emulator {
+            throw std::runtime_error("The Linux x86-64 personality is unavailable in this ARM64 build");
+        });
+        m.def("create_application", [](const nb::object&, const nb::kwargs&) -> sogen_linux_emulator {
+            throw std::runtime_error("The Linux x86-64 personality is unavailable in this ARM64 build");
+        });
+        m.def("create_application", [](const nb::object&, const nb::object&, const nb::kwargs&) -> sogen_linux_emulator {
+            throw std::runtime_error("The Linux x86-64 personality is unavailable in this ARM64 build");
+        });
+#else
         m.def("create_empty", [](nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
             return sogen_linux_emulator(create_empty_linux_emulator(kwargs));
         });
@@ -282,5 +293,6 @@ namespace sogen::py
         m.def("create_application", [](const nb::object& application, const nb::object& application_args, const nb::kwargs& kwargs) {
             return sogen_linux_emulator(create_linux_application_emulator(application, application_args, kwargs));
         });
+#endif
     }
 }

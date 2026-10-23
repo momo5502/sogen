@@ -6,6 +6,12 @@ IF %ERRORLEVEL% NEQ 0 (
 	EXIT /B 1
 )
 
+REM WinSxS names the native architecture: amd64 on x64 hosts, arm64 on ARM64 hosts. SysWOW64 is x86 on both.
+SET NATIVE_ARCH=%PROCESSOR_ARCHITECTURE%
+IF DEFINED PROCESSOR_ARCHITEW6432 SET NATIVE_ARCH=%PROCESSOR_ARCHITEW6432%
+SET SXS_NATIVE=amd64
+IF /I "%NATIVE_ARCH%"=="ARM64" SET SXS_NATIVE=arm64
+
 SET SYSDIR="%WINDIR%\System32"
 SET SYSDIR_WOW64="%WINDIR%\SysWOW64"
 
@@ -81,6 +87,7 @@ CALL :collect dinput8.dll
 CALL :collect dnsapi.dll
 CALL :collect dpapi.dll
 CALL :collect dsound.dll
+CALL :collect dsparse.dll
 CALL :collect dwmapi.dll
 CALL :collect dxcore.dll
 CALL :collect dxgi.dll
@@ -95,6 +102,7 @@ CALL :collect hid.dll
 CALL :collect imm32.dll
 CALL :collect imagehlp.dll
 CALL :collect inputhost.dll
+CALL :collect iertutil.dll
 CALL :collect iphlpapi.dll
 CALL :collect kdcom.dll
 CALL :collect kernel.appcore.dll
@@ -236,21 +244,21 @@ CALL :collect wdmaud.drv
 
 CALL :collect_file "%WINDIR%\Cursors", aero_arrow.cur, %EMU_CURSORDIR%
 
-CALL :collect_winsxs_directories amd64_microsoft.windows.common-controls_*
+CALL :collect_winsxs_directories %SXS_NATIVE%_microsoft.windows.common-controls_*
 CALL :collect_winsxs_directories x86_microsoft.windows.common-controls_*
-CALL :collect_winsxs_directories amd64_microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_directories %SXS_NATIVE%_microsoft.windows.c..-controls.resources_*
 CALL :collect_winsxs_directories x86_microsoft.windows.c..-controls.resources_*
-CALL :collect_winsxs_policy_directories amd64_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_policy_directories %SXS_NATIVE%_policy.*.microsoft.windows.common-controls_*
 CALL :collect_winsxs_policy_directories x86_policy.*.microsoft.windows.common-controls_*
-CALL :collect_winsxs_policy_directories amd64_policy.*.microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_policy_directories %SXS_NATIVE%_policy.*.microsoft.windows.c..-controls.resources_*
 CALL :collect_winsxs_policy_directories x86_policy.*.microsoft.windows.c..-controls.resources_*
-CALL :collect_winsxs_manifests amd64_microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests %SXS_NATIVE%_microsoft.windows.common-controls_*
 CALL :collect_winsxs_manifests x86_microsoft.windows.common-controls_*
-CALL :collect_winsxs_manifests amd64_microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_manifests %SXS_NATIVE%_microsoft.windows.c..-controls.resources_*
 CALL :collect_winsxs_manifests x86_microsoft.windows.c..-controls.resources_*
-CALL :collect_winsxs_manifests amd64_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests %SXS_NATIVE%_policy.*.microsoft.windows.common-controls_*
 CALL :collect_winsxs_manifests x86_policy.*.microsoft.windows.common-controls_*
-CALL :collect_winsxs_manifests amd64_policy.*.microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_manifests %SXS_NATIVE%_policy.*.microsoft.windows.c..-controls.resources_*
 CALL :collect_winsxs_manifests x86_policy.*.microsoft.windows.c..-controls.resources_*
 
 REM Visual C++ 2005/2008 runtimes (CRT, MFC, ATL), present only when the host has them installed.

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "interface.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -8,20 +10,12 @@
 namespace sogen
 {
 
-    struct cpu_interface
+    struct EMULATOR_INTERFACE cpu_interface
     {
         virtual ~cpu_interface() = default;
 
         // Identity of this virtual CPU within its machine, in [0, vcpu_count).
         virtual size_t index() const = 0;
-
-        struct descriptor_table_register
-        {
-            uint64_t base{};
-            uint32_t limit{};
-        };
-
-        virtual bool read_descriptor_table(int reg, descriptor_table_register& table) = 0;
 
         virtual void start(size_t count = 0) = 0;
         virtual void stop() = 0;

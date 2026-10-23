@@ -36,7 +36,7 @@ namespace sogen::test
 
             syscall_context context()
             {
-                return {.win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
             }
 
             NTSTATUS create_section(uint64_t size, ULONG flags = 0)

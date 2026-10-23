@@ -16,8 +16,174 @@
 
 namespace sogen::debugger
 {
+    namespace
+    {
+        // Register set, branch classification and frame-pointer chain of one guest architecture. A session picks
+        // one when it is created, from the guest machine's architecture.
+        struct debug_architecture
+        {
+            virtual ~debug_architecture() = default;
+
+            virtual std::vector<register_value> registers(guest_cpu& cpu) const = 0;
+            virtual void classify_branch(csh handle, const cs_insn& insn, disassembled_instruction& out) const = 0;
+            virtual uint64_t frame_pointer(guest_cpu& cpu) const = 0;
+        };
+
+        struct x86_64_debug_architecture final : debug_architecture
+        {
+            std::vector<register_value> registers(guest_cpu& guest) const override
+            {
+                auto& cpu = dynamic_cast<x86_64_cpu&>(guest);
+
+                static constexpr auto gpr = std::to_array<std::pair<const char*, x86_register>>({
+                    {"rax", x86_register::rax},
+                    {"rbx", x86_register::rbx},
+                    {"rcx", x86_register::rcx},
+                    {"rdx", x86_register::rdx},
+                    {"rsi", x86_register::rsi},
+                    {"rdi", x86_register::rdi},
+                    {"rbp", x86_register::rbp},
+                    {"rsp", x86_register::rsp},
+                    {"r8", x86_register::r8},
+                    {"r9", x86_register::r9},
+                    {"r10", x86_register::r10},
+                    {"r11", x86_register::r11},
+                    {"r12", x86_register::r12},
+                    {"r13", x86_register::r13},
+                    {"r14", x86_register::r14},
+                    {"r15", x86_register::r15},
+                    {"rip", x86_register::rip},
+                    {"rflags", x86_register::eflags},
+                });
+                static constexpr auto seg = std::to_array<std::pair<const char*, x86_register>>({
+                    {"cs", x86_register::cs},
+                    {"ss", x86_register::ss},
+                    {"ds", x86_register::ds},
+                    {"es", x86_register::es},
+                    {"fs", x86_register::fs},
+                    {"gs", x86_register::gs},
+                });
+
+                std::vector<register_value> result{};
+                result.reserve(std::size(gpr) + std::size(seg));
+
+                for (const auto& [name, reg] : gpr)
+                {
+                    result.push_back({.name = name, .value = cpu.reg<uint64_t>(reg), .size = sizeof(uint64_t)});
+                }
+                for (const auto& [name, reg] : seg)
+                {
+                    result.push_back({.name = name, .value = cpu.reg<uint16_t>(reg), .size = sizeof(uint16_t)});
+                }
+
+                return result;
+            }
+
+            void classify_branch(csh /*handle*/, const cs_insn& insn, disassembled_instruction& out) const override
+            {
+                switch (insn.id)
+                {
+                case X86_INS_CALL:
+                    out.is_call = true;
+                    break;
+                case X86_INS_JMP:
+                    out.is_jump = true;
+                    break;
+                case X86_INS_RET:
+                case X86_INS_RETF:
+                case X86_INS_IRET:
+                case X86_INS_IRETD:
+                case X86_INS_IRETQ:
+                    out.is_return = true;
+                    break;
+                default:
+                    // Conditional jumps (Jcc) all start with 'j'.
+                    out.is_jump = (out.mnemonic.size() > 1 && out.mnemonic[0] == 'j');
+                    break;
+                }
+
+                if ((out.is_call || out.is_jump) && insn.detail && insn.detail->x86.op_count > 0)
+                {
+                    const auto& op = insn.detail->x86.operands[0];
+                    if (op.type == X86_OP_IMM)
+                    {
+                        out.branch = static_cast<uint64_t>(op.imm);
+                    }
+                }
+            }
+
+            uint64_t frame_pointer(guest_cpu& cpu) const override
+            {
+                return dynamic_cast<x86_64_cpu&>(cpu).reg<uint64_t>(x86_register::rbp);
+            }
+        };
+
+        struct arm64_debug_architecture final : debug_architecture
+        {
+            std::vector<register_value> registers(guest_cpu& guest) const override
+            {
+                auto& cpu = dynamic_cast<arm64_cpu&>(guest);
+
+                std::vector<register_value> result{};
+                result.reserve(34);
+                for (int i = 0; i < 29; ++i)
+                {
+                    const auto reg = static_cast<arm64_register>(static_cast<int>(arm64_register::x0) + i);
+                    result.push_back({.name = "x" + std::to_string(i), .value = cpu.reg<uint64_t>(reg), .size = sizeof(uint64_t)});
+                }
+                result.push_back({.name = "fp", .value = cpu.reg<uint64_t>(arm64_register::x29), .size = sizeof(uint64_t)});
+                result.push_back({.name = "lr", .value = cpu.reg<uint64_t>(arm64_register::x30), .size = sizeof(uint64_t)});
+                result.push_back({.name = "sp", .value = cpu.read_stack_pointer(), .size = sizeof(uint64_t)});
+                result.push_back({.name = "pc", .value = cpu.read_instruction_pointer(), .size = sizeof(uint64_t)});
+                result.push_back({.name = "cpsr", .value = cpu.reg<uint32_t>(arm64_register::pstate), .size = sizeof(uint32_t)});
+                return result;
+            }
+
+            void classify_branch(const csh handle, const cs_insn& insn, disassembled_instruction& out) const override
+            {
+                // Capstone also puts the exception-generating SVC, HVC and SMC in the call group; like x86-64's
+                // syscall, they are not calls. Returns are in the jump group as well.
+                const auto is_exception_call = insn.id == AARCH64_INS_SVC || insn.id == AARCH64_INS_HVC || insn.id == AARCH64_INS_SMC;
+                out.is_return = cs_insn_group(handle, &insn, CS_GRP_RET);
+                out.is_call = cs_insn_group(handle, &insn, CS_GRP_CALL) && !is_exception_call;
+                out.is_jump = cs_insn_group(handle, &insn, CS_GRP_JUMP) && !out.is_return;
+
+                // A PC-relative branch carries its target as the last operand (CBZ and TBZ test a register first).
+                if (cs_insn_group(handle, &insn, CS_GRP_BRANCH_RELATIVE) && insn.detail && insn.detail->aarch64.op_count > 0)
+                {
+                    const auto& op = insn.detail->aarch64.operands[insn.detail->aarch64.op_count - 1];
+                    if (op.type == AARCH64_OP_IMM)
+                    {
+                        out.branch = static_cast<uint64_t>(op.imm);
+                    }
+                }
+            }
+
+            uint64_t frame_pointer(guest_cpu& cpu) const override
+            {
+                return dynamic_cast<arm64_cpu&>(cpu).reg<uint64_t>(arm64_register::x29);
+            }
+        };
+
+        const debug_architecture& debug_architecture_for(const windows_guest_architecture architecture)
+        {
+            static const x86_64_debug_architecture x86_64{};
+            static const arm64_debug_architecture arm64{};
+            switch (architecture)
+            {
+            case windows_guest_architecture::x86_64:
+                return x86_64;
+            case windows_guest_architecture::arm64:
+                return arm64;
+            default:
+                throw std::invalid_argument("The debugger does not support this guest architecture");
+            }
+        }
+    }
+
     struct debug_session::impl
     {
+        const debug_architecture* architecture{};
         std::vector<breakpoint> breakpoints{};
         std::unordered_set<uint64_t> breakpoint_addrs{};
 
@@ -32,8 +198,10 @@ namespace sogen::debugger
         : emu_(&emu),
           impl_(std::make_unique<impl>())
     {
-        auto& cpu = this->emu_->emu();
-        this->impl_->control_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](cpu_interface&, const uint64_t address) {
+        this->impl_->architecture = &debug_architecture_for(emu.abi().architecture());
+
+        auto& machine = this->emu_->emu();
+        this->impl_->control_hook = scoped_hook(machine, machine.hook_memory_execution([this](cpu_interface&, const uint64_t address) {
             if (this->should_break(address))
             {
                 enter_breakpoint(*this->emu_, address);
@@ -106,55 +274,12 @@ namespace sogen::debugger
 
     uint64_t debug_session::instruction_pointer() const
     {
-        return this->emu_->emu().reg<uint64_t>(x86_register::rip);
+        return this->emu_->active_cpu().read_instruction_pointer();
     }
 
     std::vector<register_value> debug_session::registers() const
     {
-        auto& cpu = this->emu_->emu();
-
-        static constexpr auto gpr = std::to_array<std::pair<const char*, x86_register>>({
-            {"rax", x86_register::rax},
-            {"rbx", x86_register::rbx},
-            {"rcx", x86_register::rcx},
-            {"rdx", x86_register::rdx},
-            {"rsi", x86_register::rsi},
-            {"rdi", x86_register::rdi},
-            {"rbp", x86_register::rbp},
-            {"rsp", x86_register::rsp},
-            {"r8", x86_register::r8},
-            {"r9", x86_register::r9},
-            {"r10", x86_register::r10},
-            {"r11", x86_register::r11},
-            {"r12", x86_register::r12},
-            {"r13", x86_register::r13},
-            {"r14", x86_register::r14},
-            {"r15", x86_register::r15},
-            {"rip", x86_register::rip},
-            {"rflags", x86_register::eflags},
-        });
-        static constexpr auto seg = std::to_array<std::pair<const char*, x86_register>>({
-            {"cs", x86_register::cs},
-            {"ss", x86_register::ss},
-            {"ds", x86_register::ds},
-            {"es", x86_register::es},
-            {"fs", x86_register::fs},
-            {"gs", x86_register::gs},
-        });
-
-        std::vector<register_value> result{};
-        result.reserve(std::size(gpr) + std::size(seg));
-
-        for (const auto& [name, reg] : gpr)
-        {
-            result.push_back({.name = name, .value = cpu.reg<uint64_t>(reg), .size = sizeof(uint64_t)});
-        }
-        for (const auto& [name, reg] : seg)
-        {
-            result.push_back({.name = name, .value = cpu.reg<uint16_t>(reg), .size = sizeof(uint16_t)});
-        }
-
-        return result;
+        return this->impl_->architecture->registers(this->emu_->active_cpu());
     }
 
     std::vector<disassembled_instruction> debug_session::disassemble(const uint64_t address, const size_t count) const
@@ -164,8 +289,6 @@ namespace sogen::debugger
         {
             return result;
         }
-
-        auto& cpu = this->emu_->emu();
 
         // Clamp before sizing the buffer: `count` comes straight from an
         // untrusted debug command (scripting console), and an unbounded
@@ -187,8 +310,9 @@ namespace sogen::debugger
         }
 
         disassembler dis{};
-        const auto cs_selector = cpu.reg<uint16_t>(x86_register::cs);
-        const auto insns = dis.disassemble(cpu, cs_selector, std::span<const uint8_t>(bytes.data(), bytes.size()), clamped_count, address);
+        auto& cpu = this->emu_->active_cpu();
+        const auto handle = dis.resolve_handle(cpu);
+        const auto insns = dis.disassemble(cpu, std::span<const uint8_t>(bytes.data(), bytes.size()), clamped_count, address);
 
         for (const auto& insn : insns)
         {
@@ -203,36 +327,7 @@ namespace sogen::debugger
                 out.symbol = name;
             }
 
-            switch (insn.id)
-            {
-            case X86_INS_CALL:
-                out.is_call = true;
-                break;
-            case X86_INS_JMP:
-                out.is_jump = true;
-                break;
-            case X86_INS_RET:
-            case X86_INS_RETF:
-            case X86_INS_IRET:
-            case X86_INS_IRETD:
-            case X86_INS_IRETQ:
-                out.is_return = true;
-                break;
-            default:
-                // Conditional jumps (Jcc) all start with 'j'.
-                out.is_jump = (out.mnemonic.size() > 1 && out.mnemonic[0] == 'j');
-                break;
-            }
-
-            if ((out.is_call || out.is_jump) && insn.detail && insn.detail->x86.op_count > 0)
-            {
-                const auto& op = insn.detail->x86.operands[0];
-                if (op.type == X86_OP_IMM)
-                {
-                    out.branch = static_cast<uint64_t>(op.imm);
-                }
-            }
-
+            this->impl_->architecture->classify_branch(handle, insn, out);
             result.push_back(std::move(out));
         }
 
@@ -264,7 +359,7 @@ namespace sogen::debugger
     {
         // Phase 2: the current frame plus a bounded, best-effort frame-pointer
         // walk. A precise unwinder (CFI/PE unwind info) is a later phase.
-        auto& cpu = this->emu_->emu();
+        auto& cpu = this->emu_->active_cpu();
         auto& memory = this->emu_->memory;
 
         const auto name_of = [&](const uint64_t ip) -> std::string {
@@ -274,11 +369,12 @@ namespace sogen::debugger
 
         std::vector<stack_frame> frames{};
 
-        const auto rip = cpu.reg<uint64_t>(x86_register::rip);
-        const auto rsp = cpu.reg<uint64_t>(x86_register::rsp);
+        const auto rip = cpu.read_instruction_pointer();
+        const auto rsp = cpu.read_stack_pointer();
         frames.push_back({.instruction_pointer = rip, .stack_pointer = rsp, .symbol = name_of(rip), .module = name_of(rip)});
 
-        auto frame_pointer = cpu.reg<uint64_t>(x86_register::rbp);
+        // RBP on x64 and X29 on ARM64 both address a {saved frame pointer, return address} record.
+        auto frame_pointer = this->impl_->architecture->frame_pointer(cpu);
         for (size_t depth = 0; depth < 64 && frame_pointer != 0; ++depth)
         {
             uint64_t saved_rbp = 0;

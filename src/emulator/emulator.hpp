@@ -1,6 +1,7 @@
 #pragma once
 
 #include "hook_interface.hpp"
+#include "interface.hpp"
 #include "memory_interface.hpp"
 
 #include "serialization.hpp"
@@ -8,7 +9,7 @@
 namespace sogen
 {
 
-    class emulator : public memory_interface, public hook_interface
+    class EMULATOR_INTERFACE emulator : public memory_interface, public hook_interface
     {
       public:
         emulator() = default;

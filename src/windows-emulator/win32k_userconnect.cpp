@@ -48,6 +48,65 @@ namespace sogen
             return results;
         }
 
+        // RtlRetrieveNtUserPfn(ansi*, wide*, worker*) on ARM64 forms each table address with ADRP/ADD and
+        // stores it through the output pointer in X0, X1 or X2. Results are ordered by that register.
+        std::vector<uint64_t> scan_arm64_output_pointer_stores(const std::vector<uint8_t>& bytes, const uint64_t code_base,
+                                                               const size_t max_results)
+        {
+            constexpr uint32_t ret_instruction = 0xD65F03C0;
+            std::array<std::optional<uint64_t>, 31> registers{};
+            std::vector<std::optional<uint64_t>> stored(max_results);
+
+            for (size_t offset = 0; offset + sizeof(uint32_t) <= bytes.size(); offset += sizeof(uint32_t))
+            {
+                uint32_t instruction{};
+                std::memcpy(&instruction, &bytes[offset], sizeof(instruction));
+                const auto pc = code_base + offset;
+                const auto rd = instruction & 0x1F;
+                const auto rn = (instruction >> 5) & 0x1F;
+
+                if (instruction == ret_instruction)
+                {
+                    break;
+                }
+
+                if ((instruction & 0x9F000000) == 0x90000000)
+                {
+                    const auto immediate = static_cast<int64_t>((((instruction >> 5) & 0x7FFFF) << 2) | ((instruction >> 29) & 0x3));
+                    const auto page_delta = ((immediate ^ 0x100000) - 0x100000) * 0x1000;
+                    if (rd < registers.size())
+                    {
+                        registers[rd] = (pc & ~uint64_t{0xFFF}) + static_cast<uint64_t>(page_delta);
+                    }
+                }
+                else if ((instruction & 0xFF800000) == 0x91000000)
+                {
+                    const auto shift = ((instruction >> 22) & 1) ? 12 : 0;
+                    const auto immediate = static_cast<uint64_t>((instruction >> 10) & 0xFFF) << shift;
+                    if (rd < registers.size())
+                    {
+                        registers[rd] = rn < registers.size() && registers[rn] ? std::optional{*registers[rn] + immediate} : std::nullopt;
+                    }
+                }
+                else if ((instruction & 0xFFFFFC00) == 0xF9000000 && rn < max_results && rd < registers.size() && registers[rd])
+                {
+                    stored[rn] = registers[rd];
+                }
+            }
+
+            std::vector<uint64_t> results{};
+            for (const auto& value : stored)
+            {
+                if (!value)
+                {
+                    return {};
+                }
+                results.push_back(*value);
+            }
+
+            return results;
+        }
+
         void refresh_dispatch_client_message(process_context& process)
         {
             uint64_t dispatch_client_message = 0;
@@ -276,7 +335,9 @@ namespace sogen
                 return false;
             }
 
-            const auto pointers = scan_rip_relative_lea_references(code_window, retrieve_user_pfn, k_expected_pfn_pointer_count);
+            const auto pointers = win_emu.process.native_architecture == windows_guest_architecture::arm64
+                                      ? scan_arm64_output_pointer_stores(code_window, retrieve_user_pfn, k_expected_pfn_pointer_count)
+                                      : scan_rip_relative_lea_references(code_window, retrieve_user_pfn, k_expected_pfn_pointer_count);
             if (pointers.size() != k_expected_pfn_pointer_count)
             {
                 return false;

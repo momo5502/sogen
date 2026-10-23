@@ -136,3 +136,7 @@ The guest file system is read-only by default, and guest writes fail with `STATU
 `--root-mode rw` to let the guest change the emulation root, or the host drives when no root is set. Use
 `--mount HOST:GUEST[:MODE]` to add a host file or directory at a guest path, for example
 `--mount .\out:C:\out:rw`. See [docs/filesystem.md](docs/filesystem.md) for the details of mounts and modes.
+
+Windows ARM64 executables run the same way, from an emulation root created with [create-root.bat](https://github.com/momo5502/sogen/blob/main/src/tools/create-root.bat) on a Windows ARM64 machine. They run on WHP on Windows ARM64, on Hypervisor.framework on Apple Silicon and on Unicorn elsewhere.
+
+`--backend` overrides environment-based selection. Outside Windows ARM64, where Unicorn's ARM64 backend is not built, `EMULATOR_UNICORN=1` runs ARM64 guests on Unicorn instead of the hypervisor.

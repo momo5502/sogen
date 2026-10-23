@@ -117,6 +117,7 @@ namespace sogen::test
             const uint32_t signature = PENTHeaders_t<uint32_t>::k_Signature;
             memory.add(base_address + nt_offset, &signature, sizeof(signature));
             PEFileHeader_t file_header{};
+            file_header.Machine = expected_arch == winpe::pe_arch::pe32 ? PEMachineType::I386 : PEMachineType::AMD64;
             memory.add(base_address + nt_offset + sizeof(signature), &file_header, sizeof(file_header));
             memory.add(base_address + nt_offset + sizeof(signature) + sizeof(file_header), &magic, sizeof(magic));
 
@@ -124,7 +125,9 @@ namespace sogen::test
 
             ASSERT_TRUE(result.is_valid());
             ASSERT_EQ(result.architecture, expected_arch);
-            EXPECT_EQ(result.suggested_mode, pe_architecture_detector::determine_execution_mode(expected_arch));
+            EXPECT_EQ(result.machine, file_header.Machine);
+            EXPECT_EQ(result.suggested_mode,
+                      pe_architecture_detector::determine_execution_mode({.architecture = expected_arch, .machine = file_header.Machine}));
             EXPECT_EQ(memory.read_count(), 4u);
             EXPECT_LE(memory.largest_read(), sizeof(PEDosHeader_t));
         }

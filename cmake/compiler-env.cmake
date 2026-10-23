@@ -58,6 +58,14 @@ endif()
 
 ##########################################
 
+# Unicorn's MSVC build only targets x86 and x86-64 hosts.
+set(SOGEN_ENABLE_UNICORN ON)
+if(MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+  set(SOGEN_ENABLE_UNICORN OFF)
+endif()
+
+##########################################
+
 if(SOGEN_ENABLE_RUST)
   add_compile_definitions(SOGEN_ENABLE_RUST_CODE=1)
 else()

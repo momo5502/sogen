@@ -287,7 +287,7 @@ namespace sogen::test
 
         (void)get_state_for_count(static_cast<size_t>(lower_bound));
 
-        const auto rip = emu.emu().read_instruction_pointer();
+        const auto rip = emu.x64_emu().read_instruction_pointer();
 
         printf("Diff detected after 0x%" PRIx64 " instructions at 0x%" PRIx64 " (%s)\n", lower_bound, rip, emu.mod_manager.find_name(rip));
     }

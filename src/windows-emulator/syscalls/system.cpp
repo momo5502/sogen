@@ -128,6 +128,8 @@ namespace sogen
 
                     EMU_NUMA_NODE_RELATIONSHIP64 numa_node{};
                     memset(&numa_node, 0, sizeof(numa_node));
+                    numa_node.GroupCount = 1;
+                    numa_node.GroupMask.Mask = active_processor_mask;
 
                     c.emu.write_memory(output_buffer + numa_root_size, numa_node);
                 };
@@ -236,6 +238,8 @@ namespace sogen
         constexpr uint64_t FAKE_KERNEL_BASE = 0xFFFFF80000000000ULL;
         constexpr uint32_t FAKE_KERNEL_SIZE = 0x00A00000;
         constexpr uint64_t PROCESSOR_FEATURE_BITS = 0x421993DFEULL;
+        // Observed on Windows on ARM; the bits describe the kernel rather than optional CPU features.
+        constexpr ULONG ARM64_PROCESSOR_FEATURE_BITS = 0xA0000000;
 
         template <typename Traits>
         void fill_ntoskrnl_module(RTL_PROCESS_MODULE_INFORMATION<Traits>& m)
@@ -666,6 +670,18 @@ namespace sogen
                     c.emu, system_information, system_information_length, return_length, [&](SYSTEM_PROCESSOR_INFORMATION64& info) {
                         memset(&info, 0, sizeof(info));
                         info.MaximumProcessors = 2;
+                        auto* arm64 = dynamic_cast<arm64_cpu*>(&c.emu);
+                        if (arm64 && info_class == SystemProcessorInformation)
+                        {
+                            // Windows on ARM reports the MIDR part number as the level and variant/revision as the revision.
+                            const auto midr = arm64->reg(arm64_register::midr_el1);
+                            info.ProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM64;
+                            info.ProcessorLevel = static_cast<USHORT>((midr >> 4) & 0xFFF);
+                            info.ProcessorRevision = static_cast<USHORT>((((midr >> 20) & 0xF) << 8) | (midr & 0xF));
+                            info.ProcessorFeatureBits = ARM64_PROCESSOR_FEATURE_BITS;
+                            return;
+                        }
+
                         info.ProcessorArchitecture =
                             (info_class == SystemProcessorInformation ? PROCESSOR_ARCHITECTURE_AMD64 : PROCESSOR_ARCHITECTURE_INTEL);
                         // TODO: Figure out the best way to derive this from 'kusd.ProcessorFeatures'
@@ -834,6 +850,25 @@ namespace sogen
             case SystemSupportedProcessorArchitectures: {
                 constexpr auto num_arch = 2;
 
+                // The input is the process whose machine Windows marks with the Process flag; NULL marks none.
+                if (input_buffer_length != sizeof(handle))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                handle process{};
+                if (!c.emu.try_read_memory(input_buffer, &process, sizeof(process)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                const auto is_current_process = process.bits != 0 && c.proc.is_current_process_handle(process);
+                const auto is_other_process =
+                    !is_current_process && process.value.type == handle_types::process && c.proc.processes.get(process) != nullptr;
+                if (process.bits != 0 && !is_current_process && !is_other_process)
+                {
+                    return process == CURRENT_THREAD || process.value.type == handle_types::thread ? STATUS_OBJECT_TYPE_MISMATCH
+                                                                                                   : STATUS_INVALID_HANDLE;
+                }
+
                 const auto required_length = sizeof(SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION) * (num_arch + 1);
                 if (system_information_length < required_length)
                 {
@@ -846,14 +881,22 @@ namespace sogen
                 }
 
                 std::array<SYSTEM_SUPPORTED_PROCESSOR_ARCHITECTURES_INFORMATION, num_arch + 1> supported_arch{};
-                supported_arch[0].Machine = IMAGE_FILE_MACHINE_AMD64;
+                const auto is_arm64 = c.proc.native_architecture == windows_guest_architecture::arm64;
+                supported_arch[0].Machine = is_arm64 ? IMAGE_FILE_MACHINE_ARM64 : IMAGE_FILE_MACHINE_AMD64;
                 supported_arch[0].KernelMode = 1;
                 supported_arch[0].UserMode = 1;
                 supported_arch[0].Native = 1;
+                supported_arch[0].Process = is_other_process || (is_current_process && !c.proc.is_wow64_process) ? 1 : 0;
                 supported_arch[1].Machine = IMAGE_FILE_MACHINE_I386;
                 supported_arch[1].UserMode = 1;
+                supported_arch[1].Process = is_current_process && c.proc.is_wow64_process ? 1 : 0;
+                supported_arch[1].WoW64Container = 1;
 
                 c.emu.write_memory(system_information, supported_arch);
+                if (return_length)
+                {
+                    return_length.try_write(required_length);
+                }
                 return STATUS_SUCCESS;
             }
 

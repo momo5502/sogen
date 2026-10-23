@@ -100,6 +100,9 @@ namespace sogen::sxs
         case PROCESSOR_ARCHITECTURE_IA32_ON_WIN64:
             machine = IMAGE_FILE_MACHINE_I386;
             break;
+        case PROCESSOR_ARCHITECTURE_ARM64:
+            machine = IMAGE_FILE_MACHINE_ARM64;
+            break;
         default:
             win_emu.log.warn("Unsupported activation context architecture: %u\n", data.processor_architecture);
             return {STATUS_NOT_SUPPORTED, lpc_request_result::reply_in_place};

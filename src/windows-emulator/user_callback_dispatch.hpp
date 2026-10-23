@@ -14,7 +14,7 @@ namespace sogen
     }
 
     template <typename T>
-    void write_user_callback_arg(x86_64_cpu& emu, const uint64_t arg_buffer, size_t& offset, const T& arg)
+    void write_user_callback_arg(guest_cpu& emu, const uint64_t arg_buffer, size_t& offset, const T& arg)
     {
         offset = static_cast<size_t>(align_up(offset, alignof(T)));
         emu.write_memory(arg_buffer + offset, &arg, sizeof(arg));
@@ -51,6 +51,27 @@ namespace sogen
     }
 
     template <typename... Args>
+    void prepare_arm64_call_stack(arm64_cpu& cpu, const uint32_t callback_index, const Args&... args)
+    {
+        const uint32_t arg_length = user_callback_args_size<Args...>();
+        const uint64_t new_sp = align_down(cpu.read_stack_pointer() - align_up(arg_length, 0x10) - 0x10, 0x10);
+        const uint64_t arg_buffer = new_sp + 0x10;
+
+        // KiUserCallbackDispatcher reads the arg buffer pointer, arg length and callback index from [sp].
+        cpu.reg(arm64_register::sp, new_sp);
+
+        if constexpr (sizeof...(Args) > 0)
+        {
+            size_t offset = 0;
+            (write_user_callback_arg(cpu, arg_buffer, offset, args), ...);
+        }
+
+        cpu.write_memory(new_sp, &arg_buffer, sizeof(arg_buffer));
+        cpu.write_memory(new_sp + 0x8, &arg_length, sizeof(arg_length));
+        cpu.write_memory(new_sp + 0xC, &callback_index, sizeof(callback_index));
+    }
+
+    template <typename... Args>
     void prepare_call_stack(x86_64_cpu& emu, const uint32_t callback_index, const Args&... args)
     {
         const uint32_t arg_length = user_callback_args_size<Args...>();
@@ -84,9 +105,18 @@ namespace sogen
     {
         push_callback_frame(c, completion_id, std::forward<StateT>(state_obj));
 
-        prepare_call_stack(c.emu, callback_index, args...);
+        if (auto* arm64 = dynamic_cast<arm64_cpu*>(&c.emu))
+        {
+            prepare_arm64_call_stack(*arm64, callback_index, args...);
+            arm64->reg(arm64_register::pc, c.proc.ki_user_callback_dispatcher);
+        }
+        else
+        {
+            auto& cpu = c.x64_cpu();
+            prepare_call_stack(cpu, callback_index, args...);
+            cpu.reg(x86_register::rip, c.proc.ki_user_callback_dispatcher);
+        }
 
-        c.emu.reg(x86_register::rip, c.proc.ki_user_callback_dispatcher);
         c.run_callback = true;
     }
 

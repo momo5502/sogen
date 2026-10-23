@@ -158,6 +158,34 @@ namespace sogen
             emu.reg(x86_register::rip, wow64::heaven_gate::kCodeBase);
         }
 
+        // ARM64 KiUserExceptionDispatcher finds the CONTEXT at SP and the EXCEPTION_RECORD at SP + 0x3B0,
+        // as its RtlDispatchException(record, context) call sequence shows.
+        constexpr uint64_t arm64_exception_record_offset = 0x3B0;
+
+        void dispatch_arm64_exception(windows_emulator& win_emu, arm64_cpu& cpu, const exception_record& record, const arm64_context& ctx)
+        {
+            static_assert(sizeof(arm64_context) <= arm64_exception_record_offset);
+
+            const auto exception_record_size = calculate_exception_record_size(record);
+            const auto allocation_size = arm64_exception_record_offset + exception_record_size;
+            const auto initial_sp = cpu.read_stack_pointer();
+            const auto new_sp = align_down(initial_sp - allocation_size, 0x10);
+
+            std::vector<uint8_t> zero_memory(static_cast<size_t>(initial_sp - new_sp), 0);
+            cpu.write_memory(new_sp, zero_memory.data(), zero_memory.size());
+            cpu.write_memory(new_sp, ctx);
+
+            emulator_allocator allocator{cpu, new_sp + arm64_exception_record_offset, exception_record_size};
+            const auto exception_record_obj = save_exception_record(allocator, record);
+            if (exception_record_obj.value() != allocator.get_base())
+            {
+                throw std::runtime_error("Bad exception record position on stack");
+            }
+
+            cpu.reg(arm64_register::sp, new_sp);
+            cpu.reg(arm64_register::pc, win_emu.process.ki_user_exception_dispatcher);
+        }
+
         WOW64_CONTEXT make_wow64_context(const CONTEXT64& ctx)
         {
             WOW64_CONTEXT result{};
@@ -257,9 +285,32 @@ namespace sogen
             .info = parameters.size() > 1 ? static_cast<uint64_t>(parameters[1]) : 0,
         });
 
+        if (auto* arm64 = dynamic_cast<arm64_cpu*>(&vcpu.cpu))
+        {
+            arm64_context ctx{};
+            ctx.ContextFlags = arm64_context_all;
+            cpu_context::save(*arm64, ctx);
+            ctx.Pc = win_emu.uses_instruction_precision() ? thread.current_ip : arm64->read_instruction_pointer();
+
+            if (parameters.size() > 15)
+            {
+                throw std::runtime_error("Too many exception parameters");
+            }
+
+            exception_record record{};
+            record.ExceptionCode = status;
+            record.NumberParameters = static_cast<DWORD>(parameters.size());
+            std::ranges::copy(parameters, record.ExceptionInformation);
+            record.ExceptionAddress = ctx.Pc;
+
+            dispatch_arm64_exception(win_emu, *arm64, record, ctx);
+            return;
+        }
+
+        auto& cpu = vcpu.x64_cpu();
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;
-        cpu_context::save(vcpu.cpu, ctx);
+        cpu_context::save(cpu, ctx);
         ctx.Rip = win_emu.uses_instruction_precision() //
                       ? thread.current_ip
                       : vcpu.cpu.read_instruction_pointer();
@@ -294,12 +345,12 @@ namespace sogen
 
         record.ExceptionAddress = ctx.Rip;
 
-        sync_wow64_cpu_reserved_context(win_emu, vcpu.cpu, thread, ctx);
+        sync_wow64_cpu_reserved_context(win_emu, cpu, thread, ctx);
 
         EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
         pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);
         pointers.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&record);
-        dispatch_exception_pointers(vcpu.cpu, win_emu.process.ki_user_exception_dispatcher, pointers);
+        dispatch_exception_pointers(cpu, win_emu.process.ki_user_exception_dispatcher, pointers);
     }
 
     void dispatch_access_violation(windows_emulator& win_emu, vcpu_context& vcpu, const uint64_t address, const memory_operation operation)

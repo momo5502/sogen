@@ -15,6 +15,9 @@
 #include "x64_register_mapping.hpp"
 #include "x64_target_descriptions.hpp"
 
+#include "aarch64_register_mapping.hpp"
+#include "aarch64_target_descriptions.hpp"
+
 namespace sogen
 {
 
@@ -48,21 +51,22 @@ namespace std
 namespace sogen
 {
 
-    class x86_64_gdb_stub_handler : public gdb_stub::debugging_handler
+    // GDB remote handler for vCPU 0 of a guest machine; derived handlers select the register layout.
+    class cpu_gdb_stub_handler : public gdb_stub::debugging_handler
     {
       public:
-        x86_64_gdb_stub_handler(x86_64_emulator& emu)
+        cpu_gdb_stub_handler(guest_machine& emu)
             : emu_(&emu)
         {
         }
 
-        ~x86_64_gdb_stub_handler() override = default;
+        ~cpu_gdb_stub_handler() override = default;
 
         gdb_stub::action run() override
         {
             try
             {
-                this->emu_->start();
+                this->cpu().start();
             }
             catch (const std::exception& e)
             {
@@ -76,7 +80,7 @@ namespace sogen
         {
             try
             {
-                this->emu_->start(1);
+                this->cpu().start(1);
             }
             catch (const std::exception& e)
             {
@@ -108,7 +112,7 @@ namespace sogen
 
                 const auto real_reg = registers[reg];
 
-                auto size = this->emu_->read_register(real_reg.reg, data, max_length);
+                auto size = this->cpu().read_raw_register(real_reg.reg, data, max_length);
 
                 if (real_reg.offset)
                 {
@@ -150,19 +154,19 @@ namespace sogen
                     std::vector<std::byte> full_data{};
                     full_data.resize(this->get_max_register_size());
 
-                    written_size = this->emu_->read_register(real_reg.reg, full_data.data(), full_data.size());
+                    written_size = this->cpu().read_raw_register(real_reg.reg, full_data.data(), full_data.size());
                     if (written_size < *real_reg.offset)
                     {
                         return 0;
                     }
 
                     memcpy(full_data.data() + *real_reg.offset, data, written_size - *real_reg.offset);
-                    this->emu_->write_register(real_reg.reg, full_data.data(), written_size);
+                    this->cpu().write_raw_register(real_reg.reg, full_data.data(), written_size);
                     written_size -= *real_reg.offset;
                 }
                 else
                 {
-                    written_size = this->emu_->write_register(real_reg.reg, data, size);
+                    written_size = this->cpu().write_raw_register(real_reg.reg, data, size);
                 }
 
                 return real_reg.expected_size.value_or(written_size);
@@ -176,6 +180,11 @@ namespace sogen
         bool read_memory(const uint64_t address, void* data, const size_t length) override
         {
             return this->emu_->try_read_memory(address, data, length);
+        }
+
+        bool is_arm64() const
+        {
+            return dynamic_cast<const arm64_cpu*>(&this->emu_->get_guest_cpu(0)) != nullptr;
         }
 
         bool write_memory(const uint64_t address, const void* data, const size_t length) override
@@ -230,7 +239,7 @@ namespace sogen
 
         void on_interrupt() override
         {
-            this->emu_->stop();
+            this->cpu().stop();
         }
 
         std::string get_target_description(const std::string_view file) override
@@ -258,6 +267,11 @@ namespace sogen
 
         std::span<const register_entry> get_register_mapping() const
         {
+            if (this->is_arm64())
+            {
+                return aarch64_gdb_registers;
+            }
+
             if (this->is_32_bit())
             {
                 return x86_gdb_registers;
@@ -268,6 +282,11 @@ namespace sogen
 
         std::span<const target_description> get_target_descriptions() const
         {
+            if (this->is_arm64())
+            {
+                return aarch64_target_descriptions;
+            }
+
             if (this->is_32_bit())
             {
                 return x86_target_descriptions;
@@ -289,7 +308,12 @@ namespace sogen
         virtual bool is_32_bit() const = 0;
 
       private:
-        x86_64_emulator* emu_{};
+        guest_machine* emu_{};
+
+        cpu_interface& cpu() const
+        {
+            return this->emu_->get_guest_cpu(0);
+        }
 
         using hook_map = std::unordered_map<breakpoint_key, scoped_hook>;
         utils::concurrency::container<hook_map> hooks_{};

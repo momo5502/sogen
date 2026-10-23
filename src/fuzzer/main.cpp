@@ -54,7 +54,7 @@ namespace sogen
             catch (...)
             {
                 win_emu.log.disable_output(false);
-                win_emu.log.error("Emulation failed at: 0x%" PRIx64 "\n", win_emu.emu().read_instruction_pointer());
+                win_emu.log.error("Emulation failed at: 0x%" PRIx64 "\n", win_emu.x64_emu().read_instruction_pointer());
                 throw;
             }
 
@@ -64,8 +64,8 @@ namespace sogen
         void forward_emulator(windows_emulator& win_emu)
         {
             const auto target = win_emu.mod_manager.executable->find_export("vulnerable");
-            win_emu.emu().hook_memory_execution(target, [&](cpu_interface&, uint64_t) {
-                win_emu.emu().stop(); //
+            win_emu.x64_emu().hook_memory_execution(target, [&](cpu_interface&, uint64_t) {
+                win_emu.x64_emu().stop(); //
             });
 
             run_emulation(win_emu);
@@ -81,7 +81,7 @@ namespace sogen
             fuzzer_executer(const std::span<const std::byte> data)
                 : emulator_data(data)
             {
-                emu.emu().hook_basic_block([&](cpu_interface&, const basic_block& block) {
+                emu.x64_emu().hook_basic_block([&](cpu_interface&, const basic_block& block) {
                     if (this->handler && visited_blocks.emplace(block.address).second)
                     {
                         (*this->handler)(block.address);
@@ -92,9 +92,9 @@ namespace sogen
                 emu.deserialize(deserializer);
                 emu.save_snapshot();
 
-                const auto return_address = emu.emu().read_stack(0);
-                emu.emu().hook_memory_execution(return_address, [&](cpu_interface&, const uint64_t) {
-                    emu.emu().stop(); //
+                const auto return_address = emu.x64_emu().read_stack(0);
+                emu.x64_emu().hook_memory_execution(return_address, [&](cpu_interface&, const uint64_t) {
+                    emu.x64_emu().stop(); //
                 });
             }
 
@@ -116,10 +116,10 @@ namespace sogen
 
                 const auto memory = emu.memory.allocate_memory(
                     static_cast<size_t>(page_align_up(std::max(data.size(), static_cast<size_t>(1)))), memory_permission::read_write);
-                emu.emu().write_memory(memory, data.data(), data.size());
+                emu.x64_emu().write_memory(memory, data.data(), data.size());
 
-                emu.emu().reg(x86_register::rcx, memory);
-                emu.emu().reg<uint64_t>(x86_register::rdx, data.size());
+                emu.x64_emu().reg(x86_register::rcx, memory);
+                emu.x64_emu().reg<uint64_t>(x86_register::rdx, data.size());
 
                 try
                 {

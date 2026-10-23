@@ -1,6 +1,7 @@
 #pragma once
 
 #include "emulator.hpp"
+#include "interface.hpp"
 #include "typed_cpu.hpp"
 
 #include <utility>
@@ -8,8 +9,22 @@
 namespace sogen
 {
 
+    // A machine viewed independently of its guest architecture: shared memory and hooks plus the
+    // register-independent view of each virtual CPU.
+    class EMULATOR_INTERFACE guest_machine : public emulator
+    {
+      public:
+        virtual size_t vcpu_count() const = 0;
+        virtual guest_cpu& get_guest_cpu(size_t index) = 0;
+
+        virtual bool supports_native_timestamp_counter() const
+        {
+            return false;
+        }
+    };
+
     template <typename Traits>
-    class typed_emulator : public emulator
+    class EMULATOR_INTERFACE typed_emulator : public guest_machine
     {
       public:
         using registers = Traits::register_type;

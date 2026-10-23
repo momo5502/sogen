@@ -23,7 +23,7 @@ namespace sogen::test
         };
 
         auto& mm = emu.memory;
-        auto& cpu = emu.emu();
+        auto& cpu = emu.x64_emu();
 
         constexpr size_t page = 0x1000;
 

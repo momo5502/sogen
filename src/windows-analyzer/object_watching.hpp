@@ -37,7 +37,7 @@ namespace sogen
             object.value(), static_cast<size_t>(object.size()),
             [i = std::move(info), object, &emu, verbose, modules, state = std::move(shared_state),
              on_access = std::forward<Callback>(on_access)](cpu_interface&, const uint64_t address, const void*, const size_t size) {
-                const auto rip = emu.emu().read_instruction_pointer();
+                const auto rip = emu.active_cpu().read_instruction_pointer();
                 const auto* mod = emu.mod_manager.find_by_address(rip);
                 const auto is_main_access = !mod || (mod == emu.mod_manager.executable || modules.contains(mod->name));
 
@@ -108,7 +108,7 @@ namespace sogen
                                 const auto verbose, Callback&& on_access,
                                 std::shared_ptr<object_watching_state> state = std::make_unique<object_watching_state>())
     {
-        return watch_object<T>(emu, modules, emulator_object<T>{emu.emu(), address}, verbose, std::forward<Callback>(on_access),
+        return watch_object<T>(emu, modules, emulator_object<T>{emu.memory, address}, verbose, std::forward<Callback>(on_access),
                                std::move(state));
     }
 

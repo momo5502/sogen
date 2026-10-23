@@ -68,14 +68,14 @@ namespace sogen::test
             NTSTATUS cancel(handle target)
             {
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 return syscalls::handle_NtCancelIoFile(context, target, this->status(0xF00));
             }
 
             NTSTATUS query_io_pending(handle target, uint64_t buffer, uint32_t length = sizeof(ULONG), uint64_t return_buffer = 0)
             {
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 return syscalls::handle_NtQueryInformationThread(context, target, ThreadIsIoPending, buffer, length,
                                                                  {this->emu->memory, return_buffer});
             }
@@ -116,7 +116,7 @@ namespace sogen::test
         this->expect_io_pending(CURRENT_THREAD, true);
         this->expect_io_pending(this->second, true);
         const syscall_context context{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelIoFileEx(context, this->endpoint, this->status(0), this->status(0xF00)));
         this->expect_io_pending(this->first, true);
         ASSERT_EQ(STATUS_SUCCESS, this->cancel(this->endpoint));
@@ -206,7 +206,7 @@ namespace sogen::test
         this->queue_poll(0, this->first);
         this->queue_poll(0x100, this->second);
         const syscall_context context{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelIoFileEx(context, this->endpoint, {this->emu->memory}, this->status(0xF00)));
         EXPECT_EQ(STATUS_CANCELLED, this->status(0).read().Status);
         EXPECT_EQ(STATUS_CANCELLED, this->status(0x100).read().Status);
@@ -220,7 +220,7 @@ namespace sogen::test
     TEST_F(IoCancellationTest, MissingStatusBlockIsRejected)
     {
         const syscall_context context{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         EXPECT_EQ(STATUS_INVALID_PARAMETER, syscalls::handle_NtCancelIoFile(context, this->endpoint, {this->emu->memory}));
     }
 

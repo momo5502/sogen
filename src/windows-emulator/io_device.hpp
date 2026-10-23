@@ -50,7 +50,7 @@ namespace sogen
         }
 
         io_device_context(utils::buffer_deserializer& buffer)
-            : io_device_context(buffer.read<x64_emulator_wrapper>().get())
+            : io_device_context(buffer.read<guest_machine_wrapper>().get())
         {
         }
 
