@@ -190,6 +190,11 @@ namespace sogen
             return this->layout_version_.load(std::memory_order_relaxed);
         }
 
+        // The highest address the guest can allocate at, which the backend can lower below the end of the user address
+        // space. The guest is still told about the whole user address space: V8 refuses to run in one smaller than its
+        // 1 TB sandbox, but copes with failing to reserve the sandbox.
+        std::uint64_t get_maximum_allocation_address() const;
+
         std::uint64_t get_default_allocation_address() const
         {
             return this->default_allocation_address_;

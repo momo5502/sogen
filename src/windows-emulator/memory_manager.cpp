@@ -599,7 +599,8 @@ namespace sogen
     bool memory_manager::allocate_memory_raw(const uint64_t address, const size_t size, const nt_memory_permission permissions,
                                              const bool reserve_only, const memory_region_kind kind)
     {
-        if (this->overlaps_reserved_region(address, size))
+        const auto maximum_address = this->get_maximum_allocation_address();
+        if (size > maximum_address || address > maximum_address - size + 1 || this->overlaps_reserved_region(address, size))
         {
             return false;
         }
@@ -1129,7 +1130,8 @@ namespace sogen
         }
 
         lowest_address = std::max<uint64_t>(lowest_address, MIN_ALLOCATION_ADDRESS);
-        highest_address = std::min<uint64_t>(highest_address ? highest_address : MAX_ALLOCATION_END_EXCL - 1, MAX_ALLOCATION_END_EXCL - 1);
+        const auto maximum_address = this->get_maximum_allocation_address();
+        highest_address = std::min<uint64_t>(highest_address ? highest_address : maximum_address, maximum_address);
         if (lowest_address > highest_address)
         {
             return 0;
@@ -1217,6 +1219,13 @@ namespace sogen
         }
 
         return 0;
+    }
+
+    uint64_t memory_manager::get_maximum_allocation_address() const
+    {
+        // Like Windows, keep the last 64 KB below the end of the user address space unallocated.
+        const auto backend_end = this->memory_->guest_address_end();
+        return std::min(MAX_ALLOCATION_ADDRESS, backend_end - ALLOCATION_GRANULARITY - 1);
     }
 
     region_info memory_manager::get_region_info(const uint64_t address)

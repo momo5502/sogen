@@ -1278,6 +1278,29 @@ namespace sogen::fex
             const auto* esr = find_aarch64_context<esr_context>(context, ESR_MAGIC);
             return esr != nullptr && (esr->esr & esr_write_not_read) != 0;
         }
+
+        // arm64 kernels with 4KB pages have 39 or 48 virtual address bits, and ones with 64KB pages 42 or 52, but
+        // mmap hands out nothing above 47 bits unless asked to.
+        uint64_t find_host_address_end()
+        {
+            for (const int bits : {47, 42})
+            {
+                const uint64_t end = uint64_t{1} << bits;
+                auto* probe = reinterpret_cast<void*>(end - page_size);
+                void* result =
+                    ::mmap(probe, page_size, PROT_NONE, MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+                if (result != MAP_FAILED)
+                {
+                    ::munmap(result, page_size);
+                }
+                if (result == probe || (result == MAP_FAILED && errno == EEXIST))
+                {
+                    return end;
+                }
+            }
+
+            return uint64_t{1} << 39;
+        }
 #endif
 
     }
@@ -2087,6 +2110,13 @@ namespace sogen::fex
             this->erase_region_range(address, size);
             this->regions_[address] = mapped_region{.size = size, .permissions = permissions, .owned = true};
         }
+
+#ifdef __linux__
+        uint64_t guest_address_end() const override
+        {
+            return this->host_address_end_;
+        }
+#endif
 
         void reserve_guest_address_range(uint64_t address, size_t size) override
         {
@@ -4160,6 +4190,11 @@ namespace sogen::fex
         // The pages FEX has translated code from since they were last invalidated, as it reports them. Only writes to
         // these need to invalidate code; FEX only reports a page again once its code has been invalidated.
         std::set<uint64_t> code_pages_;
+
+#ifdef __linux__
+        uint64_t host_address_end_{find_host_address_end()};
+#endif
+
         std::vector<mmio_region> mmio_regions_;
         std::map<uint64_t, tracked_range> tracked_ranges_;
 
