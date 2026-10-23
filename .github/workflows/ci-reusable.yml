@@ -804,7 +804,8 @@ jobs:
           retry_wait_seconds: 60
           command: |
             sudo apt-get update
-            sudo apt-get install -y --no-install-recommends gcc-${{ matrix.gcc-version }} g++-${{ matrix.gcc-version }}
+            sudo apt-get install -y --no-install-recommends -o Acquire::http::Timeout=60 -o Acquire::Retries=5 \
+              gcc-${{ matrix.gcc-version }} g++-${{ matrix.gcc-version }}
 
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v8
