@@ -2,6 +2,7 @@
 #include "session.hpp"
 
 #include <backend_selection.hpp>
+#include <subprocess_process_manager.hpp>
 #include <windows_emulator.hpp>
 
 namespace sogen::android
@@ -87,6 +88,35 @@ namespace sogen::android
 
             return settings;
         }
+
+        std::vector<std::string> create_child_arguments(const emulator_settings& settings, const uint16_t port, const std::string& token)
+        {
+            std::vector<std::string> arguments{
+                "--managed-process-port",
+                std::to_string(port),
+                "--managed-process-token",
+                token,
+                "--emulation",
+                settings.emulation_root.string(),
+                "--root-mode",
+                std::string{to_string(settings.root_mode)},
+                "--network",
+                std::string{network::to_string(settings.network)},
+            };
+
+            if (settings.spoof_gpu_features)
+            {
+                arguments.emplace_back("--spoof-gpu-features");
+            }
+
+            for (const auto& mount : settings.mounts)
+            {
+                arguments.emplace_back("--mount");
+                arguments.push_back(render_mount_spec(mount));
+            }
+
+            return arguments;
+        }
     }
 
     session::session(JavaVM& vm, JNIEnv& env, const jobject listener)
@@ -96,6 +126,7 @@ namespace sogen::android
         auto* listener_class = env.GetObjectClass(listener);
         this->methods_ = {
             .on_output = env.GetMethodID(listener_class, "onOutput", "(Ljava/lang/String;I)V"),
+            .on_console_output = env.GetMethodID(listener_class, "onConsoleOutput", "([B)V"),
             .on_window_created = env.GetMethodID(listener_class, "onWindowCreated", "(JIILjava/lang/String;Z)V"),
             .on_window_destroyed = env.GetMethodID(listener_class, "onWindowDestroyed", "(J)V"),
             .on_window_resized = env.GetMethodID(listener_class, "onWindowResized", "(JII)V"),
@@ -104,10 +135,20 @@ namespace sogen::android
             .on_cursor_moved = env.GetMethodID(listener_class, "onCursorMoved", "(JII)V"),
         };
         env.DeleteLocalRef(listener_class);
+
+        this->terminal_.emplace([this](std::string data) {
+            this->dispatcher_.post([this, data = std::move(data)](JNIEnv& env) {
+                auto* bytes = env.NewByteArray(static_cast<jsize>(data.size()));
+                env.SetByteArrayRegion(bytes, 0, static_cast<jsize>(data.size()), reinterpret_cast<const jbyte*>(data.data()));
+                env.CallVoidMethod(this->listener_, this->methods_.on_console_output, bytes);
+                env.DeleteLocalRef(bytes);
+            });
+        });
     }
 
     session::~session()
     {
+        this->terminal_.reset();
         this->dispatcher_.post([listener = this->listener_](JNIEnv& env) { env.DeleteGlobalRef(listener); });
     }
 
@@ -128,10 +169,21 @@ namespace sogen::android
             auto* ui_backend = ui.get();
 
             emulator_callbacks callbacks{};
-            callbacks.on_stdout = [this](const std::string_view data) { this->output(std::string{data}, -1); };
+            callbacks.on_stdout = pseudo_terminal::write_output;
+
+            auto settings = create_emulator_settings(config);
+            std::unique_ptr<subprocess_process_manager> processes{};
+            if (!config.sandbox_executable.empty())
+            {
+                processes =
+                    std::make_unique<subprocess_process_manager>(config.sandbox_executable, [settings](const auto port, const auto& token) {
+                        return create_child_arguments(settings, port, token);
+                    });
+            }
 
             windows_emulator win_emu{create_x86_64_emulator(parse_backend(config.backend)), create_application_settings(config),
-                                     create_emulator_settings(config), std::move(callbacks), emulator_interfaces{.ui = std::move(ui)}};
+                                     std::move(settings), std::move(callbacks),
+                                     emulator_interfaces{.ui = std::move(ui), .processes = processes.get()}};
 
             win_emu.log.disable_output(true);
             win_emu.log.set_sink([this](const color c, const std::string_view message) {
@@ -198,6 +250,16 @@ namespace sogen::android
         {
             action(*this->ui_);
         }
+    }
+
+    void session::console_input(const std::string_view data) const
+    {
+        this->terminal_->write_input(data);
+    }
+
+    void session::console_resize(const uint16_t columns, const uint16_t rows) const
+    {
+        this->terminal_->resize(columns, rows);
     }
 
     void session::on_window_created(const hwnd window, const int32_t width, const int32_t height, const std::u16string_view title,

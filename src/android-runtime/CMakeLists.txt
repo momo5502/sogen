@@ -18,6 +18,7 @@ set_target_properties(android-runtime PROPERTIES OUTPUT_NAME sogen)
 target_link_libraries(android-runtime PRIVATE
   windows-emulator
   backend-selection
+  process-manager
   vulkan-headers
   android
   log

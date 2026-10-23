@@ -8,6 +8,8 @@
 #ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
 #include <utils/win.hpp>
+#elif defined(__ANDROID__)
+#include <fex_x86_64_emulator.hpp>
 #else
 #include <kvm_x86_64_emulator.hpp>
 #endif
@@ -37,15 +39,6 @@ namespace sogen::sandbox
         std::filesystem::path get_current_binary_dir()
         {
             return utils::get_current_executable_path().parent_path();
-        }
-
-        std::filesystem::path get_sandbox_executable()
-        {
-#ifdef _WIN32
-            return get_current_binary_dir() / "sandbox.exe";
-#else
-            return get_current_binary_dir() / "sandbox";
-#endif
         }
 
         std::vector<std::u16string> parse_arguments(const std::span<const std::string_view> args)
@@ -124,7 +117,7 @@ namespace sogen::sandbox
             settings.root_mode = root_mode;
             settings.mounts = std::move(mounts);
 
-            subprocess_process_manager process_manager{get_sandbox_executable(), [&](const auto port, const auto& token) {
+            subprocess_process_manager process_manager{utils::get_current_executable_path(), [&](const auto port, const auto& token) {
                                                            std::vector<std::string> arguments{"--managed-process-port",
                                                                                               std::to_string(port),
                                                                                               "--managed-process-token",
@@ -165,6 +158,8 @@ namespace sogen::sandbox
 
 #ifdef _WIN32
             auto emulator = whp::create_x86_64_emulator(vcpu_count);
+#elif defined(__ANDROID__)
+            auto emulator = fex::create_x86_64_emulator();
 #else
             auto emulator = kvm::create_x86_64_emulator();
 #endif

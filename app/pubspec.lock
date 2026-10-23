@@ -73,6 +73,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.19.1"
+  convert:
+    dependency: transitive
+    description:
+      name: convert
+      sha256: b30acd5944035672bc15c6b7a8b47d773e41e2f17de064350988c5d02adb1c68
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.1.2"
   cross_file:
     dependency: transitive
     description:
@@ -105,6 +113,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.8.0"
+  equatable:
+    dependency: transitive
+    description:
+      name: equatable
+      sha256: "3bce007a596ff8b3119c45d68aaef631272537c03d30e5d4534dd24bf4c5eaa2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "2.1.0"
   fake_async:
     dependency: transitive
     description:
@@ -432,6 +448,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "2.2.1"
+  quiver:
+    dependency: transitive
+    description:
+      name: quiver
+      sha256: ea0b925899e64ecdfbf9c7becb60d5b50e706ade44a85b2363be2a22d88117d2
+      url: "https://pub.dev"
+    source: hosted
+    version: "3.2.2"
   record_use:
     dependency: transitive
     description:
@@ -557,6 +581,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "7.0.1"
+  xterm:
+    dependency: "direct main"
+    description:
+      name: xterm
+      sha256: "168dfedca77cba33fdb6f52e2cd001e9fde216e398e89335c19b524bb22da3a2"
+      url: "https://pub.dev"
+    source: hosted
+    version: "4.0.0"
   yaml:
     dependency: transitive
     description:
@@ -565,6 +597,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "3.1.4"
+  zmodem:
+    dependency: transitive
+    description:
+      name: zmodem
+      sha256: "3b7e5b29f3a7d8aee472029b05165a68438eff2f3f7766edf13daba1e297adbf"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.0.6"
 sdks:
   dart: ">=3.13.5 <4.0.0"
   flutter: ">=3.38.4"

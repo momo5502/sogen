@@ -101,7 +101,7 @@ extern "C"
                                                                             jstring application, jobjectArray arguments,
                                                                             jobjectArray environment, jobjectArray path_mappings,
                                                                             jstring working_directory, jstring backend,
-                                                                            const jboolean live_network)
+                                                                            const jboolean live_network, jstring sandbox_executable)
     {
         const sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -112,6 +112,7 @@ extern "C"
             .working_directory = to_string(*env, working_directory),
             .backend = to_string(*env, backend),
             .live_network = live_network == JNI_TRUE,
+            .sandbox_executable = to_string(*env, sandbox_executable),
         };
 
         return get_session(handle).run(config);
@@ -120,6 +121,20 @@ extern "C"
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeStop(JNIEnv* /*env*/, jobject /*self*/, const jlong handle)
     {
         get_session(handle).stop();
+    }
+
+    JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeConsoleInput(JNIEnv* env, jobject /*self*/, const jlong handle,
+                                                                                     jbyteArray data)
+    {
+        std::string bytes(static_cast<size_t>(env->GetArrayLength(data)), '\0');
+        env->GetByteArrayRegion(data, 0, static_cast<jsize>(bytes.size()), reinterpret_cast<jbyte*>(bytes.data()));
+        get_session(handle).console_input(bytes);
+    }
+
+    JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeConsoleResize(JNIEnv* /*env*/, jobject /*self*/, const jlong handle,
+                                                                                      const jint columns, const jint rows)
+    {
+        get_session(handle).console_resize(static_cast<uint16_t>(columns), static_cast<uint16_t>(rows));
     }
 
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeAttachSurface(JNIEnv* env, jobject /*self*/, const jlong handle,
