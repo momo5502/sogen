@@ -838,6 +838,36 @@ namespace sogen::fex
             std::vector<tracked_chunk> chunks;
         };
 
+        struct chunk_run
+        {
+            uint64_t address = 0;
+            size_t size = 0;
+
+            template <typename F>
+            void add(const uint64_t chunk_address, const size_t chunk_size, F&& f)
+            {
+                if (this->size != 0 && this->address + this->size != chunk_address)
+                {
+                    this->finish(f);
+                }
+                if (this->size == 0)
+                {
+                    this->address = chunk_address;
+                }
+                this->size += chunk_size;
+            }
+
+            template <typename F>
+            void finish(F&& f)
+            {
+                if (this->size != 0)
+                {
+                    f(this->address, this->size);
+                    this->size = 0;
+                }
+            }
+        };
+
         enum class tracked_access : uint8_t
         {
             none,
@@ -1240,6 +1270,13 @@ namespace sogen::fex
                 current = reinterpret_cast<_aarch64_ctx*>(reinterpret_cast<uint8_t*>(current) + current->size);
             }
             return nullptr;
+        }
+
+        bool is_write_fault(ucontext_t* context)
+        {
+            constexpr uint64_t esr_write_not_read = 1ULL << 6;
+            const auto* esr = find_aarch64_context<esr_context>(context, ESR_MAGIC);
+            return esr != nullptr && (esr->esr & esr_write_not_read) != 0;
         }
 #endif
 
@@ -2258,65 +2295,52 @@ namespace sogen::fex
         void take_written_ranges(const uint64_t address, const size_t size,
                                  const std::function<void(uint64_t written_address, size_t written_size)>& f) override
         {
-            uint64_t run_address = 0;
-            size_t run_size = 0;
-            const auto finish_run = [&] {
-                if (run_size != 0)
-                {
-                    f(run_address, run_size);
-                    run_size = 0;
-                }
+            chunk_run written_run{};
+            chunk_run protect_run{};
+            const auto protect = [&](const uint64_t run_address, const size_t run_size) {
+                this->require_protection(run_address, run_size, tracked_access::read_only);
             };
 
             this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
                 if (!chunk.written.exchange(false))
                 {
-                    finish_run();
+                    written_run.finish(f);
+                    protect_run.finish(protect);
                     return;
                 }
 
-                if (!chunk.stale)
+                written_run.add(chunk_address, chunk_size, f);
+                if (chunk.stale)
                 {
-                    this->require_protection(chunk_address, chunk_size, tracked_access::read_only);
+                    protect_run.finish(protect);
                 }
-
-                if (run_size == 0 || run_address + run_size != chunk_address)
+                else
                 {
-                    finish_run();
-                    run_address = chunk_address;
+                    protect_run.add(chunk_address, chunk_size, protect);
                 }
-                run_size += chunk_size;
             });
-            finish_run();
+            written_run.finish(f);
+            protect_run.finish(protect);
         }
 
         void invalidate_cache_on_access(const uint64_t address, const size_t size) override
         {
-            uint64_t run_address = 0;
-            size_t run_size = 0;
-            const auto finish_run = [&] {
-                if (run_size != 0)
-                {
-                    this->require_protection(run_address, run_size, tracked_access::none);
-                    run_size = 0;
-                }
+            chunk_run run{};
+            const auto protect = [&](const uint64_t run_address, const size_t run_size) {
+                this->require_protection(run_address, run_size, tracked_access::none);
             };
 
             this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
                 if (chunk.stale.exchange(true))
                 {
-                    finish_run();
-                    return;
+                    run.finish(protect);
                 }
-
-                if (run_size == 0 || run_address + run_size != chunk_address)
+                else
                 {
-                    finish_run();
-                    run_address = chunk_address;
+                    run.add(chunk_address, chunk_size, protect);
                 }
-                run_size += chunk_size;
             });
-            finish_run();
+            run.finish(protect);
         }
 #endif
 
@@ -2456,13 +2480,14 @@ namespace sogen::fex
             }
         }
 
-        // Cleans and invalidates a stale chunk's cache lines, and leaves it write-protected so that a write still marks it
-        // written. Cleaning makes the guest's unflushed writes visible as well, but the chunk keeps counting as written so
-        // that they are still flushed through the device.
+        // Cleans and invalidates a stale chunk's cache lines, and leaves it write-protected unless the chunk is written
+        // already, so that a write still marks it written. Cleaning makes the guest's unflushed writes visible as well,
+        // but the chunk keeps counting as written so that they are still flushed through the device.
         bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
         {
             chunk.stale = false;
-            if (!this->restrict_protection(chunk_address, chunk_size, tracked_access::read_only))
+            const auto access = chunk.written ? tracked_access::full : tracked_access::read_only;
+            if (!this->restrict_protection(chunk_address, chunk_size, access))
             {
                 return false;
             }
@@ -2492,16 +2517,23 @@ namespace sogen::fex
         // The first access to a stale chunk of tracked memory, or the first write to a clean one: brings the chunk up to
         // date or records the write, and lets the access through. Only the faulting page's protection decides whether a
         // write is allowed, since the guest can change the protection of parts of a chunk.
-        bool handle_tracked_memory_fault(const uint64_t host_fault_address)
+        bool handle_tracked_memory_fault(const uint64_t host_fault_address, const bool is_write)
         {
             const uint64_t address = this->to_guest_address(host_fault_address);
             bool handled = false;
             this->for_each_tracked_chunk(address, 1, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                const auto writable = [&] {
+                    return this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write);
+                };
                 if (chunk.stale)
                 {
+                    if (is_write && writable())
+                    {
+                        chunk.written = true;
+                    }
                     handled = this->bring_up_to_date(chunk, chunk_address, chunk_size);
                 }
-                else if (this->range_has_permission(address & ~(page_size - 1), page_size, memory_permission::write))
+                else if (writable())
                 {
                     chunk.written = true;
                     handled = this->restrict_protection(chunk_address, chunk_size, tracked_access::full);
@@ -3637,7 +3669,7 @@ namespace sogen::fex
                 }
 
 #ifndef __APPLE__
-                if (sig == SIGSEGV && info->si_code == SEGV_ACCERR && this->handle_tracked_memory_fault(fault_addr))
+                if (sig == SIGSEGV && info->si_code == SEGV_ACCERR && this->handle_tracked_memory_fault(fault_addr, is_write_fault(uctx)))
                 {
                     return true;
                 }
