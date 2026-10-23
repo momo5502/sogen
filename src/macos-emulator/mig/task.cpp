@@ -18,6 +18,11 @@ namespace sogen
         return make_mig_return_code_reply(request, macos_kern_return::KERN_SUCCESS);
     }
 
+    std::vector<std::byte> mig_task_restartable_ranges_synchronize(const macos_syscall_context&, const std::span<const std::byte> request)
+    {
+        return make_mig_return_code_reply(request, macos_kern_return::KERN_SUCCESS);
+    }
+
     // There is no launchd: the bootstrap port is a send right to a port nobody receives on.
     std::vector<std::byte> mig_task_get_special_port(const macos_syscall_context& c, const std::span<const std::byte> request)
     {

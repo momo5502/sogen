@@ -12,6 +12,7 @@ namespace sogen
         constexpr int32_t SEMAPHORE_CREATE_ID = 3418;
         constexpr int32_t MACH_VM_MAP_ID = 4811;
         constexpr int32_t TASK_RESTARTABLE_RANGES_REGISTER_ID = 8000;
+        constexpr int32_t TASK_RESTARTABLE_RANGES_SYNCHRONIZE_ID = 8001;
     }
 
     mig_routine find_mig_routine(const mach_port_object object, const int32_t id)
@@ -45,6 +46,8 @@ namespace sogen
                 return mig_mach_vm_map;
             case TASK_RESTARTABLE_RANGES_REGISTER_ID:
                 return mig_task_restartable_ranges_register;
+            case TASK_RESTARTABLE_RANGES_SYNCHRONIZE_ID:
+                return mig_task_restartable_ranges_synchronize;
             default:
                 break;
             }
