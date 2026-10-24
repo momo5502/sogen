@@ -65,6 +65,11 @@ namespace sogen
         }
 
         const auto extent = vk::blockExtent(traits_format);
+        if (extent[2] != 1)
+        {
+            return std::nullopt;
+        }
+
         return vulkan_format_block{.size = size, .width = extent[0], .height = extent[1]};
     }
 }

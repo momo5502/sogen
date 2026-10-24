@@ -546,6 +546,8 @@ namespace sogen
             uint32_t layer_count{};
             uint32_t new_layout{};
             bool transfers_ownership{};
+            // Set instead of the above where a primary executes a secondary command buffer.
+            uint64_t secondary{};
         };
 
         struct command_buffer_data
@@ -611,17 +613,33 @@ namespace sogen
                    this->descriptor_set_layouts.contains(id) || this->descriptor_pools.contains(id) || this->descriptor_sets.contains(id);
         }
 
-        void apply_layout_transitions(const uint64_t* submitted, const uint32_t count)
+        void apply_layout_transitions(const VkQueue queue, const uint64_t* submitted, const uint32_t count)
         {
             for (uint32_t i = 0; i < count; ++i)
             {
-                const auto cb = this->command_buffers.find(submitted[i]);
-                if (cb == this->command_buffers.end())
+                this->apply_layout_transitions(queue, submitted[i]);
+            }
+        }
+
+        void apply_layout_transitions(const VkQueue queue, const uint64_t command_buffer)
+        {
+            const auto cb = this->command_buffers.find(command_buffer);
+            if (cb == this->command_buffers.end())
+            {
+                return;
+            }
+
+            for (const auto& transition : cb->second.layout_transitions)
+            {
+                if (transition.secondary != 0)
                 {
+                    if (transition.secondary != command_buffer)
+                    {
+                        this->apply_layout_transitions(queue, transition.secondary);
+                    }
                     continue;
                 }
 
-                for (const auto& transition : cb->second.layout_transitions)
                 {
                     const auto image = this->images.find(transition.image);
                     if (image == this->images.end())
@@ -631,6 +649,11 @@ namespace sogen
 
                     auto& data = image->second;
                     data.ownership_transferred |= transition.transfers_ownership;
+
+                    // Submissions to different queues can run in another order than they were made in, which the tracked
+                    // layouts cannot follow.
+                    data.used_by_several_queues |= data.last_queue && data.last_queue != queue;
+                    data.last_queue = queue;
 
                     const auto aspects = get_vulkan_format_aspects(data.create.format);
                     const auto mip_end = transition.level_count == VK_REMAINING_MIP_LEVELS
@@ -760,6 +783,8 @@ namespace sogen
             // subresource_index. Vulkan cannot report it.
             std::vector<uint32_t> layouts{};
             bool ownership_transferred{};
+            VkQueue last_queue{};
+            bool used_by_several_queues{};
 
             uint32_t aspect_count() const
             {
@@ -3100,6 +3125,10 @@ namespace sogen
         }
 
         dev->second.cmd_execute_commands(cb->second.handle, static_cast<uint32_t>(handles.size()), handles.data());
+        for (const uint64_t id : secondaries)
+        {
+            cb->second.layout_transitions.push_back(impl::layout_transition{.secondary = id});
+        }
         return VK_SUCCESS;
     }
 
@@ -3632,7 +3661,7 @@ namespace sogen
         const VkResult result = dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
         if (result == VK_SUCCESS)
         {
-            this->impl_->apply_layout_transitions(command_ids, command_buffer_count);
+            this->impl_->apply_layout_transitions(queue_it->second.handle, command_ids, command_buffer_count);
             this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries), wait_count,
                                                     static_cast<const gpu_bridge::submit_semaphore_entry*>(signal_entries), signal_count);
         }
@@ -3723,7 +3752,7 @@ namespace sogen
         const VkResult result = dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
         if (result == VK_SUCCESS)
         {
-            this->impl_->apply_layout_transitions(cmd_ids, command_buffer_count);
+            this->impl_->apply_layout_transitions(queue_it->second.handle, cmd_ids, command_buffer_count);
             this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries), wait_count,
                                                     static_cast<const gpu_bridge::submit2_semaphore_entry*>(signal_entries), signal_count);
         }
@@ -4466,7 +4495,9 @@ namespace sogen
         {
             auto with_transfer = info;
             with_transfer.usage |= transfer_usage;
-            if (this->impl_->image_usage_supported(dev->second, with_transfer))
+            if (this->impl_->image_usage_supported(dev->second, with_transfer) &&
+                this->impl_->image_supports_host_import(dev->second, with_transfer) ==
+                    this->impl_->image_supports_host_import(dev->second, info))
             {
                 info.usage = with_transfer.usage;
                 copyable = true;
@@ -8125,7 +8156,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 5;
+        constexpr uint32_t snapshot_version = 6;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -8250,9 +8281,12 @@ namespace sogen
 
             // Copies one subresource in rows of texel blocks that fit the staging buffer. The image stays in layout, or, when
             // writing, goes from undefined to it. False if a single row does not fit.
-            bool copy_image(const VkImage image, const VkImageAspectFlagBits aspect, const uint32_t mip, const uint32_t layer,
-                            const VkExtent3D extent, const vulkan_format_block& block, const VkImageLayout layout,
-                            const std::span<std::byte> contents, const bool to_device)
+            // Barriers cover barrier_aspects, which for combined depth/stencil images has to be both. When writing, from is the
+            // layout the image is in before, and the image only goes to layout at the end if finish is set.
+            bool copy_image(const VkImage image, const VkImageAspectFlagBits aspect, const VkImageAspectFlags barrier_aspects,
+                            const uint32_t mip, const uint32_t layer, const VkExtent3D extent, const vulkan_format_block& block,
+                            const VkImageLayout from, const VkImageLayout layout, const bool finish, const std::span<std::byte> contents,
+                            const bool to_device)
             {
                 const auto& device = this->device_;
                 const uint64_t blocks_per_row = (extent.width + block.width - 1) / block.width;
@@ -8266,7 +8300,7 @@ namespace sogen
                 const uint64_t rows_per_chunk = chunk_size / row_size;
                 const VkImageLayout transfer_layout =
                     to_device ? VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-                VkImageLayout current = to_device ? VK_IMAGE_LAYOUT_UNDEFINED : layout;
+                VkImageLayout current = to_device ? from : layout;
 
                 const auto barrier = [&](const VkCommandBuffer command_buffer, const VkImageLayout from, const VkImageLayout to) {
                     VkImageMemoryBarrier info{};
@@ -8278,11 +8312,8 @@ namespace sogen
                     info.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                     info.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                     info.image = image;
-                    info.subresourceRange = {.aspectMask = static_cast<VkImageAspectFlags>(aspect),
-                                             .baseMipLevel = mip,
-                                             .levelCount = 1,
-                                             .baseArrayLayer = layer,
-                                             .layerCount = 1};
+                    info.subresourceRange = {
+                        .aspectMask = barrier_aspects, .baseMipLevel = mip, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
                     device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
                                                 0, nullptr, 0, nullptr, 1, &info);
                 };
@@ -8322,7 +8353,7 @@ namespace sogen
                                 device.cmd_copy_image_to_buffer(command_buffer, image, transfer_layout, this->staging_buffer_, 1, &region);
                             }
 
-                            if (!to_device || last)
+                            if (!to_device || (last && finish))
                             {
                                 barrier(command_buffer, transfer_layout, layout);
                             }
@@ -8784,7 +8815,10 @@ namespace sogen
                         }
 
                         const auto block = get_vulkan_copy_block(create.format, bit);
-                        if (!image.copyable || image.samples > 1 || image.ownership_transferred || !block)
+                        const bool layouts_match =
+                            aspect == 0 || layout == static_cast<VkImageLayout>(image.layouts[image.subresource_index(0, mip, layer)]);
+                        if (!image.copyable || image.samples > 1 || image.ownership_transferred || image.used_by_several_queues || !block ||
+                            !layouts_match)
                         {
                             throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
                         }
@@ -8797,8 +8831,8 @@ namespace sogen
 
                         std::vector<std::byte> contents(size);
                         if (!transfer_for(image.device_id)
-                                 .copy_image(image.handle, static_cast<VkImageAspectFlagBits>(bit), mip, layer, extent, *block, layout,
-                                             contents, false))
+                                 .copy_image(image.handle, static_cast<VkImageAspectFlagBits>(bit), aspects, mip, layer, extent, *block,
+                                             layout, layout, true, contents, false))
                         {
                             throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
                         }
@@ -9066,27 +9100,49 @@ namespace sogen
                 throw std::runtime_error("Restoring Vulkan image " + std::to_string(id) + " failed");
             }
 
+            struct saved_subresource
+            {
+                uint32_t aspect{};
+                uint32_t mip{};
+                uint32_t layer{};
+                std::vector<std::byte> contents{};
+            };
+
+            std::vector<saved_subresource> saved{};
             while (buffer.read<bool>())
             {
-                const auto aspect = buffer.read<uint32_t>();
-                const auto mip = buffer.read<uint32_t>();
-                const auto layer = buffer.read<uint32_t>();
-                auto contents = buffer.read_vector<std::byte>();
+                auto& entry = saved.emplace_back();
+                buffer.read(entry.aspect);
+                buffer.read(entry.mip);
+                buffer.read(entry.layer);
+                buffer.read_vector(entry.contents);
+            }
 
-                uint32_t aspect_index = 0;
-                for (uint32_t bit = 1; bit < aspect; bit <<= 1)
-                {
-                    aspect_index += (get_vulkan_format_aspects(create.format) & bit) != 0 ? 1 : 0;
-                }
+            if (!saved.empty() && !restored.copyable)
+            {
+                throw std::runtime_error("Vulkan image " + std::to_string(id) + " can no longer be copied on this GPU");
+            }
 
-                const auto block = get_vulkan_copy_block(create.format, aspect);
-                const VkExtent3D extent{.width = std::max(1U, create.width >> mip),
-                                        .height = std::max(1U, create.height >> mip),
-                                        .depth = std::max(1U, create.depth >> mip)};
-                if (!block || mip >= create.mip_levels || layer >= create.array_layers ||
+            const auto aspects = get_vulkan_format_aspects(create.format);
+            for (auto& entry : saved)
+            {
+                const bool first = std::ranges::none_of(saved, [&](const saved_subresource& other) {
+                    return &other < &entry && other.mip == entry.mip && other.layer == entry.layer;
+                });
+                const bool last = std::ranges::none_of(saved, [&](const saved_subresource& other) {
+                    return &other > &entry && other.mip == entry.mip && other.layer == entry.layer;
+                });
+
+                const auto block = get_vulkan_copy_block(create.format, entry.aspect);
+                const VkExtent3D extent{.width = std::max(1U, create.width >> entry.mip),
+                                        .height = std::max(1U, create.height >> entry.mip),
+                                        .depth = std::max(1U, create.depth >> entry.mip)};
+                if (!block || entry.mip >= create.mip_levels || entry.layer >= create.array_layers ||
                     !transfer_for(device).copy_image(
-                        restored.handle, static_cast<VkImageAspectFlagBits>(aspect), mip, layer, extent, *block,
-                        static_cast<VkImageLayout>(layouts[restored.subresource_index(aspect_index, mip, layer)]), contents, true))
+                        restored.handle, static_cast<VkImageAspectFlagBits>(entry.aspect), aspects, entry.mip, entry.layer, extent, *block,
+                        first ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        static_cast<VkImageLayout>(layouts[restored.subresource_index(0, entry.mip, entry.layer)]), last, entry.contents,
+                        true))
                 {
                     throw std::runtime_error("Restoring the contents of Vulkan image " + std::to_string(id) + " failed");
                 }
