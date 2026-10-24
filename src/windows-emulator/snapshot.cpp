@@ -3,6 +3,7 @@
 #include "snapshot.hpp"
 
 #include <utils/io.hpp>
+#include <utils/finally.hpp>
 #include <utils/compression.hpp>
 
 #include <array>
@@ -123,14 +124,18 @@ namespace sogen
             auto temporary_file = snapshot_file;
             temporary_file += ".tmp";
 
-            if (!utils::io::write_file(temporary_file, snapshot))
-            {
+            auto remove_temporary_file = utils::finally([&] {
                 std::error_code ec{};
                 std::filesystem::remove(temporary_file, ec);
+            });
+
+            if (!utils::io::write_file(temporary_file, snapshot))
+            {
                 throw std::runtime_error("Failed to write snapshot: " + snapshot_file.string());
             }
 
             std::filesystem::rename(temporary_file, snapshot_file);
+            remove_temporary_file.cancel();
         }
 
         PEMachineType get_snapshot_machine(const std::filesystem::path& snapshot_file)
