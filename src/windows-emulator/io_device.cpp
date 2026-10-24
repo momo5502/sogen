@@ -301,6 +301,12 @@ namespace sogen
         this->file_->device->restore_after_state_restore(win_emu);
     }
 
+    bool io_device_container::supports_snapshots() const
+    {
+        this->assert_validity();
+        return this->file_->device->supports_snapshots();
+    }
+
     void io_device_container::serialize_object(utils::buffer_serializer& buffer) const
     {
         this->assert_validity();

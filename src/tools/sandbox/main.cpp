@@ -5,7 +5,6 @@
 #include <registry/registry_file.hpp>
 #include <snapshot.hpp>
 #include <utils/finally.hpp>
-#include <utils/io.hpp>
 #include <utils/executable_path.hpp>
 #ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
@@ -57,6 +56,28 @@ namespace sogen::sandbox
             return wide_args;
         }
 
+        std::string describe_configuration(const emulator_settings& settings, const std::vector<std::filesystem::path>& registry_files)
+        {
+            std::string configuration{};
+            configuration += "emulation-root=" + std::filesystem::absolute(settings.emulation_root).string() + "\n";
+            configuration += "root-mode=" + std::string{to_string(settings.root_mode)} + "\n";
+            configuration += "registry=" + std::filesystem::absolute(settings.registry_directory).string() + "\n";
+            configuration += "network=" + std::string{network::to_string(settings.network)} + "\n";
+            configuration += std::string{"spoof-gpu-features="} + (settings.spoof_gpu_features ? "on" : "off") + "\n";
+
+            for (const auto& mount : settings.mounts)
+            {
+                configuration += "mount=" + render_mount_spec(mount) + "\n";
+            }
+
+            for (const auto& file : registry_files)
+            {
+                configuration += "reg-file=" + std::filesystem::absolute(file).string() + "\n";
+            }
+
+            return configuration;
+        }
+
         int run(const std::span<const std::string_view> args, const filesystem_mode root_mode, std::vector<mount_spec> mounts,
                 const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
                 const std::vector<std::filesystem::path>& registry_files,
@@ -90,11 +111,18 @@ namespace sogen::sandbox
             }
 
 #ifdef _WIN32
-            // One vCPU per host core; WHP supports at most 64 per partition. EMULATOR_VCPU_COUNT overrides.
-            auto vcpu_count = std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
+            // One vCPU per host core; WHP supports at most 64 per partition. EMULATOR_VCPU_COUNT overrides. Snapshots only
+            // support a single vCPU so far.
+            const auto uses_snapshots = !suspend_file.empty() || !resume_file.empty();
+            auto vcpu_count = uses_snapshots ? 1u : std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
             if (const char* env = std::getenv("EMULATOR_VCPU_COUNT"); env != nullptr && env[0] != '\0')
             {
                 vcpu_count = std::clamp(static_cast<uint32_t>(std::strtoul(env, nullptr, 10)), 1u, 64u);
+            }
+
+            if (uses_snapshots && vcpu_count != 1)
+            {
+                throw std::runtime_error("Suspending and resuming support only one vCPU");
             }
 #endif
 
@@ -175,15 +203,20 @@ namespace sogen::sandbox
                                                    : std::make_unique<windows_emulator>(std::move(emulator), settings, std::move(callbacks),
                                                                                         emulator_interfaces{.processes = &process_manager});
             auto& win_emu = *win_emu_ptr;
-            for (const auto& file : registry_files)
-            {
-                import_registry_file(win_emu.registry, file);
-            }
             win_emu.log.disable_output(true);
 
-            if (!resume_file.empty())
+            const auto configuration = describe_configuration(settings, registry_files);
+            if (resume_file.empty())
             {
-                snapshot::load_emulator_snapshot(win_emu, resume_file);
+                for (const auto& file : registry_files)
+                {
+                    import_registry_file(win_emu.registry, file);
+                }
+            }
+            else
+            {
+                // The snapshot carries the registry values the files were imported into.
+                snapshot::load_emulator_snapshot(win_emu, resume_file, configuration);
             }
 
             std::unique_ptr<emulator_process_target> managed_target{};
@@ -215,21 +248,30 @@ namespace sogen::sandbox
                 win_emu.stop();
             }};
 
-            win_emu.start();
+            while (true)
+            {
+                win_emu.start();
+
+                if (win_emu.process.exit_status.has_value() || suspend_file.empty() || signals_received == 0)
+                {
+                    break;
+                }
+
+                try
+                {
+                    snapshot::write_emulator_snapshot(win_emu, suspend_file, configuration);
+                    return 0;
+                }
+                catch (const std::exception& e)
+                {
+                    fprintf(stderr, "Suspending failed, the process keeps running: %s\n", e.what());
+                    signals_received = 0;
+                }
+            }
 
             const auto exit_status = win_emu.process.exit_status;
             if (!exit_status.has_value())
             {
-                if (!suspend_file.empty() && signals_received > 0)
-                {
-                    if (!utils::io::write_file(suspend_file, snapshot::create_emulator_snapshot(win_emu)))
-                    {
-                        throw std::runtime_error("Writing the snapshot failed");
-                    }
-
-                    return 0;
-                }
-
                 return 1;
             }
 

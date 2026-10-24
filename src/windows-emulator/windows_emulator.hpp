@@ -673,6 +673,7 @@ namespace sogen
         void track_section_first_execution(uint64_t address);
 
         void register_factories(utils::buffer_deserializer& buffer);
+        void ensure_snapshot_support() const;
     };
 
 } // namespace sogen

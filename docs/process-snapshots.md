@@ -8,6 +8,9 @@ code is shared with Android's single-vCPU FEX backend.
 
 - [x] CPU/kernel snapshot from the sandbox: `--suspend-to FILE` saves on Ctrl+C, `--resume FILE`
       continues (fd08c0ab). Snapshot code moved from the analyzer into `windows-emulator`.
+- [x] Save is transactional (temporary file, moved into place; a failed save keeps the process
+      running), devices can refuse snapshots (the GPU bridge does until slice 0), the launch
+      configuration is checked on resume, and snapshot options force one vCPU.
 - [ ] GPU slice 0 — headless Vulkan round-trip (see Milestones)
 - [ ] GPU slice 1 — swapchain, descriptors, graphics pipeline
 - [ ] Child processes
@@ -21,6 +24,7 @@ code is shared with Android's single-vCPU FEX backend.
 - GPU objects use typed, versioned records per Vulkan object type, rebuilt through `vulkan_host`
   helpers. Bridge IOCTLs are not replayed, since handlers have guest-visible side effects (guest VA
   allocation, output writes, window/surface creation).
+- Steam is out of scope for now; the focus is the GPU.
 - Suspend is a user action (a Suspend button), not backgrounding: Android gives no guaranteed time
   to write gigabytes after `onStop`.
 
@@ -28,15 +32,19 @@ code is shared with Android's single-vCPU FEX backend.
 
 `windows_emulator::serialize` already covers registers, guest memory, modules, the syscall dispatcher,
 registry runtime state and `process_context` (threads, all handle types, windows, GDI, input, ports,
-timers). Files reopen by path. Restore hooks re-create host windows and reattach audio and console.
+timers). Files reopen by path, so the host setup must match: the launcher passes a description of its
+configuration (emulation root, root mode, mounts, registry directory and files, network, GPU feature
+spoofing), which is stored in the snapshot and compared on resume. Restore hooks re-create host
+windows and reattach audio and console. Registry values imported from files at launch are part of the
+saved registry overlay, so resume does not import them again.
 
 Verified: a Python counter interrupted at count 12 (9.5 MB snapshot) resumed at 13 with its heap
 intact; the guest clock jumped forward by the suspended time.
 
 | Area | Today | Plan |
 | --- | --- | --- |
-| GPU bridge | `serialize_object` is empty | Typed records (below) |
-| GPU memory mapped into the guest | Saved as plain memory; mmio-kind reservations are erased on restore | Bridge re-places device memory at the exact VA, saves the bytes itself |
+| GPU bridge | Refuses snapshots | Typed records (below) |
+| GPU memory mapped into the guest | Reservation metadata saved, contents skipped, reservation erased on restore | Bridge re-places device memory at the exact VA, saves the bytes itself |
 | Imported guest memory | Saved with guest memory | Re-imported at the recorded address |
 | Sockets (AFD) | Endpoint re-created, connection lost | Restored as reset connections |
 | Child processes | Not saved | Nested snapshots |
@@ -129,6 +137,8 @@ Slice 1:
 - One graphics pipeline.
 - Tests for a resubmitted command buffer, descriptor overwrite and copy, pool reset, and a mapped
   write made before the snapshot.
+
+Then Settlers II (32-bit D3D9 through DXVK, WHP): suspend in game and resume.
 
 Later: more object types, MSAA, queries, BDA, multiple queues, multi-vCPU WHP, child processes, the
 Android Suspend/Resume UI.

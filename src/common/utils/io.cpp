@@ -39,7 +39,7 @@ namespace sogen
             {
                 stream.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
                 stream.close();
-                return true;
+                return !stream.fail();
             }
 
             return false;

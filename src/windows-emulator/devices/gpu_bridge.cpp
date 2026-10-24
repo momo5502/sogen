@@ -15,9 +15,6 @@ namespace sogen
         // \\.\SogenGpu and issuing IOCTLs; each control code maps to one bridge command, with the
         // payload carried in the input/output buffers. Real Vulkan objects live on the host (behind
         // vulkan_host) and the guest only ever sees opaque object ids.
-        //
-        // Live Vulkan state cannot be serialized, so this device intentionally does not participate
-        // in snapshots yet; restoring with an open GPU handle is an experimental limitation.
         struct gpu_bridge_device : io_device
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
@@ -253,6 +250,11 @@ namespace sogen
                     win_emu.log.warn("[gpu-bridge] Unsupported IOCTL: 0x%X\n", static_cast<unsigned>(context.io_control_code));
                     return STATUS_NOT_SUPPORTED;
                 }
+            }
+
+            bool supports_snapshots() const override
+            {
+                return false;
             }
 
             void serialize_object(utils::buffer_serializer&) const override
