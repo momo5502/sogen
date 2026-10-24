@@ -337,23 +337,24 @@ namespace sogen
 
                 utils::buffer_deserializer buffer{this->restored_vulkan_state_};
                 this->vulkan_.deserialize(
-                    buffer, vulkan_host::restore_callbacks{
-                                .imported_host_pointer =
-                                    [&](const uint64_t memory) {
-                                        return reinterpret_cast<void*>(
-                                            win_emu.memory.host_placement_address(this->imported_memory_.at(memory).guest_address));
-                                    },
-                                .replay_commands =
-                                    [&](const uint64_t command_buffer, const std::span<const std::byte> commands,
-                                        const std::span<const int32_t> results, const bool possibly_invalidated) {
-                                        // An invalidated command buffer may only be reset or freed, so what it held is lost anyway.
-                                        if (this->execute_recorded_commands(win_emu, commands, true, results) < 0 && !possibly_invalidated)
-                                        {
-                                            throw std::runtime_error("Re-recording Vulkan command buffer " +
-                                                                     std::to_string(command_buffer) + " failed");
-                                        }
-                                    },
-                            });
+                    buffer,
+                    vulkan_host::restore_callbacks{
+                        .imported_host_pointer =
+                            [&](const uint64_t memory) {
+                                return reinterpret_cast<void*>(
+                                    win_emu.memory.host_placement_address(this->imported_memory_.at(memory).guest_address));
+                            },
+                        .replay_commands =
+                            [&](const uint64_t command_buffer, const std::span<const std::byte> commands,
+                                const std::span<const int32_t> results, const bool invalidated) {
+                                // An invalidated command buffer may only be reset or freed, so what it held is lost anyway.
+                                if (!this->execute_recorded_commands(win_emu, commands, true, results).matches_expected && !invalidated)
+                                {
+                                    throw std::runtime_error("Re-recording Vulkan command buffer " + std::to_string(command_buffer) +
+                                                             " failed");
+                                }
+                            },
+                    });
                 this->restored_vulkan_state_ = {};
 
                 for (auto& imported : this->imported_memory_ | std::views::values)
@@ -4069,17 +4070,24 @@ namespace sogen
                 std::vector<std::byte> stream(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, stream.data(), stream.size());
 
-                const int32_t result = this->execute_recorded_commands(win_emu, stream, true, std::nullopt);
+                const int32_t result = this->execute_recorded_commands(win_emu, stream, true, std::nullopt).result;
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
             // Every recorded command starts with the command buffer it is recorded into.
-            // When replaying, expected_results holds what each command returned when it was first recorded, and the first
-            // command that returns something else is reported as -1 - its index.
-            int32_t execute_recorded_commands(windows_emulator& win_emu, const std::span<const std::byte> stream, const bool keep_recorded,
-                                              const std::optional<std::span<const int32_t>> expected_results)
+            struct recorded_commands_result
             {
-                int32_t result = 0; // VK_SUCCESS
+                // The first failure.
+                int32_t result{};
+                bool matches_expected{true};
+            };
+
+            // When replaying, expected_results holds what each command returned when it was first recorded.
+            recorded_commands_result execute_recorded_commands(windows_emulator& win_emu, const std::span<const std::byte> stream,
+                                                               const bool keep_recorded,
+                                                               const std::optional<std::span<const int32_t>> expected_results)
+            {
+                recorded_commands_result outcome{};
                 size_t offset = 0;
                 size_t index = 0;
                 while (offset + sizeof(gpu_bridge::command_record_header) <= stream.size())
@@ -4093,30 +4101,38 @@ namespace sogen
                         break; // truncated / malformed record
                     }
 
-                    const int32_t r = this->execute_recorded_command(win_emu, header.command, stream.data() + offset, header.size);
-                    if (r != 0 && result == 0)
+                    gpu_bridge::object_id command_buffer{};
+                    if (keep_recorded && header.size >= sizeof(command_buffer))
                     {
-                        result = r; // report the first failure
+                        std::memcpy(&command_buffer, stream.data() + offset, sizeof(command_buffer));
+                        this->vulkan_.capture_references(command_buffer);
                     }
 
-                    if (keep_recorded && header.size >= sizeof(gpu_bridge::object_id))
+                    const int32_t r = this->execute_recorded_command(win_emu, header.command, stream.data() + offset, header.size);
+                    if (r != 0 && outcome.result == 0)
                     {
-                        gpu_bridge::object_id command_buffer{};
-                        std::memcpy(&command_buffer, stream.data() + offset, sizeof(command_buffer));
+                        outcome.result = r;
+                    }
+
+                    if (command_buffer != 0)
+                    {
+                        this->vulkan_.capture_references(0);
                         this->vulkan_.append_recorded_command(command_buffer, stream.subspan(record_offset, sizeof(header) + header.size),
                                                               r);
                     }
 
                     if (expected_results && (index >= expected_results->size() || (*expected_results)[index] != r))
                     {
-                        return -1 - static_cast<int32_t>(index);
+                        outcome.matches_expected = false;
+                        return outcome;
                     }
 
                     offset += header.size;
                     ++index;
                 }
 
-                return result;
+                outcome.matches_expected = !expected_results || (offset == stream.size() && index == expected_results->size());
+                return outcome;
             }
 
             NTSTATUS handle_get_surface_capabilities(windows_emulator& win_emu, const io_device_context& context)

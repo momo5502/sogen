@@ -55,9 +55,9 @@ namespace sogen
         {
             std::function<void*(uint64_t memory)> imported_host_pointer{};
             // Re-records what was recorded into a command buffer since it was last begun or reset, with what each command
-            // returned then. A command buffer possibly invalidated by a destroyed object may fail where it did not before.
+            // returned then. A command buffer invalidated by a destroyed object may fail where it did not before.
             std::function<void(uint64_t command_buffer, std::span<const std::byte> commands, std::span<const int32_t> results,
-                               bool possibly_invalidated)>
+                               bool invalidated)>
                 replay_commands{};
         };
 
@@ -65,6 +65,8 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer, const restore_callbacks& callbacks);
 
         // Keeps a recorded command, in the bridge's record format, so that snapshots can re-record the command buffer.
+        // While a command recorded into command_buffer runs, the objects it looks up are noted. 0 stops noting them.
+        void capture_references(uint64_t command_buffer);
         void append_recorded_command(uint64_t command_buffer, std::span<const std::byte> command, int32_t result);
 
         int32_t create_instance(std::span<const std::string> extensions, uint64_t& out_instance);
