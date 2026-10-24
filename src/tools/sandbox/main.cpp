@@ -22,6 +22,9 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -238,6 +241,8 @@ namespace sogen::sandbox
             });
 
             std::atomic_uint32_t signals_received{0};
+            std::mutex suspend_mutex{};
+            std::condition_variable_any suspend_requested{};
             utils::interupt_handler interrupt_guard{[&] {
                 const auto value = signals_received++;
                 if (value >= 2)
@@ -245,8 +250,34 @@ namespace sogen::sandbox
                     _Exit(1);
                 }
 
-                win_emu.stop();
+                if (suspend_file.empty() || value > 0)
+                {
+                    win_emu.stop();
+                    return;
+                }
+
+                win_emu.request_suspend();
+                suspend_requested.notify_all();
             }};
+
+            // A suspend that waits for the end of a frame stops the process where it is if no frame ends in time.
+            std::jthread suspend_timeout([&](const std::stop_token& stop) {
+                std::unique_lock lock(suspend_mutex);
+                while (!stop.stop_requested())
+                {
+                    if (!suspend_requested.wait(lock, stop, [&] { return signals_received > 0; }))
+                    {
+                        return;
+                    }
+
+                    if (!suspend_requested.wait_for(lock, stop, std::chrono::seconds(2), [] { return false; }))
+                    {
+                        win_emu.stop();
+                    }
+
+                    suspend_requested.wait(lock, stop, [&] { return signals_received == 0; });
+                }
+            });
 
             while (true)
             {
@@ -265,7 +296,9 @@ namespace sogen::sandbox
                 catch (const std::exception& e)
                 {
                     fprintf(stderr, "Suspending failed, the process keeps running: %s\n", e.what());
+                    const std::scoped_lock lock(suspend_mutex);
                     signals_received = 0;
+                    suspend_requested.notify_all();
                 }
             }
 

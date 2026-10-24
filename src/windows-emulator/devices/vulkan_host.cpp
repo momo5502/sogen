@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -564,12 +565,69 @@ namespace sogen
             uint64_t instance_id{};
         };
 
+        struct swapchain_params
+        {
+            uint32_t flags{};
+            uint32_t format{};
+            uint32_t color_space{};
+            uint32_t width{};
+            uint32_t height{};
+            uint32_t image_array_layers{};
+            uint32_t min_image_count{};
+            uint32_t image_usage{};
+            uint32_t sharing_mode{};
+            std::vector<uint32_t> queue_family_indices{};
+            uint32_t pre_transform{};
+            uint32_t composite_alpha{};
+            uint32_t present_mode{};
+            uint32_t clipped{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->flags);
+                buffer.write(this->format);
+                buffer.write(this->color_space);
+                buffer.write(this->width);
+                buffer.write(this->height);
+                buffer.write(this->image_array_layers);
+                buffer.write(this->min_image_count);
+                buffer.write(this->image_usage);
+                buffer.write(this->sharing_mode);
+                buffer.write_vector(this->queue_family_indices);
+                buffer.write(this->pre_transform);
+                buffer.write(this->composite_alpha);
+                buffer.write(this->present_mode);
+                buffer.write(this->clipped);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->flags);
+                buffer.read(this->format);
+                buffer.read(this->color_space);
+                buffer.read(this->width);
+                buffer.read(this->height);
+                buffer.read(this->image_array_layers);
+                buffer.read(this->min_image_count);
+                buffer.read(this->image_usage);
+                buffer.read(this->sharing_mode);
+                buffer.read_vector(this->queue_family_indices);
+                buffer.read(this->pre_transform);
+                buffer.read(this->composite_alpha);
+                buffer.read(this->present_mode);
+                buffer.read(this->clipped);
+            }
+        };
+
         struct swapchain_data
         {
             VkSwapchainKHR handle{};
             uint64_t device_id{};
             uint64_t surface_id{};
             std::vector<uint64_t> image_ids{};
+            swapchain_params create{};
+            // Which images the guest acquired and has not presented yet.
+            std::vector<bool> acquired{};
         };
 
         object_table<instance_data> instances{&this->recording_references};
@@ -1143,6 +1201,38 @@ namespace sogen
             return (static_cast<uint64_t>(binding) << 32) | element;
         }
 
+        template <typename Set>
+        static bool is_inline_block(const Set& set, const uint32_t binding)
+        {
+            return std::ranges::any_of(set.layout_create->bindings, [&](const descriptor_binding& entry) {
+                return entry.binding == binding && entry.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
+            });
+        }
+
+        // The binding and array element of each descriptor an update of count descriptors starting at binding and element
+        // reaches, which continues into the following bindings once one ends. A variable count applies to the last binding.
+        template <typename Set>
+        static std::vector<std::pair<uint32_t, uint32_t>> consecutive_descriptors(const Set& set, const uint32_t binding, uint32_t element,
+                                                                                  uint32_t count)
+        {
+            auto bindings = set.layout_create->bindings;
+            std::ranges::sort(bindings, {}, &descriptor_binding::binding);
+
+            std::vector<std::pair<uint32_t, uint32_t>> descriptors{};
+            auto it = std::ranges::find(bindings, binding, &descriptor_binding::binding);
+            for (; it != bindings.end() && count > 0; ++it, element = 0)
+            {
+                const bool last = std::next(it) == bindings.end();
+                const uint32_t size = last && set.variable_descriptor_count ? *set.variable_descriptor_count : it->descriptor_count;
+                for (; element < size && count > 0; ++element, --count)
+                {
+                    descriptors.emplace_back(it->binding, element);
+                }
+            }
+
+            return descriptors;
+        }
+
         // Identifiers of shader code the guest asked for, so that pipelines it creates from them alone can be re-created.
         std::unordered_map<std::string, std::shared_ptr<const shader_code>> identified_code{};
 
@@ -1314,13 +1404,15 @@ namespace sogen
         uint64_t next_id{1};
 
         // Set while restoring a snapshot, so the object being re-created gets the id the guest already holds.
-        std::optional<uint64_t> forced_id{};
+        std::deque<uint64_t> forced_ids{};
 
         uint64_t allocate_id()
         {
-            if (this->forced_id)
+            if (!this->forced_ids.empty())
             {
-                return *std::exchange(this->forced_id, std::nullopt);
+                const auto id = this->forced_ids.front();
+                this->forced_ids.pop_front();
+                return id;
             }
 
             return this->next_id++;
@@ -4595,6 +4687,11 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    bool vulkan_host::has_swapchains() const
+    {
+        return !this->impl_->swapchains.empty();
+    }
+
     bool vulkan_host::has_device(const uint64_t device) const
     {
         return this->impl_->devices.contains(device);
@@ -5703,16 +5800,39 @@ namespace sogen
         sc.handle = native_swapchain;
         sc.device_id = device;
         sc.surface_id = surface;
+        sc.create = impl::swapchain_params{.flags = flags,
+                                           .format = format,
+                                           .color_space = color_space,
+                                           .width = width,
+                                           .height = height,
+                                           .image_array_layers = image_array_layers,
+                                           .min_image_count = min_image_count,
+                                           .image_usage = image_usage,
+                                           .sharing_mode = sharing_mode,
+                                           .queue_family_indices = {queue_family_indices.begin(), queue_family_indices.end()},
+                                           .pre_transform = pre_transform,
+                                           .composite_alpha = composite_alpha,
+                                           .present_mode = present_mode,
+                                           .clipped = clipped};
+        sc.acquired.assign(native_images.size(), false);
         sc.image_ids.reserve(native_images.size());
         for (VkImage image : native_images)
         {
             const uint64_t image_id = this->impl_->allocate_id();
-            this->impl_->images.emplace(image_id, impl::image_data{
-                                                      .handle = image,
-                                                      .device_id = device,
-                                                      .samples = 1,
-                                                      .owned = false,
-                                                  });
+            impl::image_data data{.handle = image, .device_id = device, .samples = 1, .owned = false};
+            data.create = impl::image_create_params{.format = format,
+                                                    .width = width,
+                                                    .height = height,
+                                                    .depth = 1,
+                                                    .mip_levels = 1,
+                                                    .array_layers = std::max(1U, image_array_layers),
+                                                    .samples = 1,
+                                                    .usage = image_usage,
+                                                    .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                                    .image_type = VK_IMAGE_TYPE_2D,
+                                                    .flags = 0};
+            data.layouts.assign(data.create.array_layers, VK_IMAGE_LAYOUT_UNDEFINED);
+            this->impl_->images.emplace(image_id, std::move(data));
             sc.image_ids.push_back(image_id);
         }
 
@@ -5788,8 +5908,17 @@ namespace sogen
             fence_handle = it->second.handle;
         }
 
-        return dev_it->second.acquire_next_image(dev_it->second.handle, sc_it->second.handle, timeout, semaphore_handle, fence_handle,
-                                                 &out_index);
+        const VkResult result = dev_it->second.acquire_next_image(dev_it->second.handle, sc_it->second.handle, timeout, semaphore_handle,
+                                                                  fence_handle, &out_index);
+        if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && out_index < sc_it->second.acquired.size())
+        {
+            sc_it->second.acquired[out_index] = true;
+            if (semaphore != 0)
+            {
+                this->impl_->semaphores.at(semaphore).binary_signaled = true;
+            }
+        }
+        return result;
     }
 
     int32_t vulkan_host::queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index,
@@ -5820,6 +5949,12 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             wait_handles.push_back(it->second.handle);
+        }
+
+        sc_it->second.acquired[image_index] = false;
+        for (const uint64_t semaphore : wait_semaphores)
+        {
+            this->impl_->semaphores.at(semaphore).binary_signaled = false;
         }
 
         VkSwapchainKHR native_swapchain = sc_it->second.handle;
@@ -7261,37 +7396,50 @@ namespace sogen
         {
             const auto& source = this->impl_->descriptor_sets.at(c.src_set);
             auto& destination = this->impl_->descriptor_sets.at(c.dst_set);
+            const auto from = impl::consecutive_descriptors(source, c.src_binding, c.src_array_element, c.descriptor_count);
+            const auto to = impl::consecutive_descriptors(destination, c.dst_binding, c.dst_array_element, c.descriptor_count);
+            const auto count = std::min(from.size(), to.size());
 
-            const auto& bindings = source.layout_create->bindings;
-            const bool inline_block = std::ranges::any_of(bindings, [&](const descriptor_binding& binding) {
-                return binding.binding == c.src_binding && binding.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
-            });
-
-            if (inline_block)
+            // Inline uniform blocks count bytes instead of descriptors.
+            if (impl::is_inline_block(source, c.src_binding))
             {
-                const auto block = source.inline_blocks.find(c.src_binding);
-                auto& target = destination.inline_blocks[c.dst_binding];
-                target.resize(std::max<size_t>(target.size(), static_cast<size_t>(c.dst_array_element) + c.descriptor_count));
-                for (uint32_t i = 0; i < c.descriptor_count; ++i)
+                std::vector<std::byte> bytes(count);
+                for (size_t i = 0; i < count; ++i)
                 {
-                    const size_t from = static_cast<size_t>(c.src_array_element) + i;
-                    target[c.dst_array_element + i] =
-                        block != source.inline_blocks.end() && from < block->second.size() ? block->second[from] : std::byte{};
+                    const auto block = source.inline_blocks.find(from[i].first);
+                    bytes[i] = block != source.inline_blocks.end() && from[i].second < block->second.size() ? block->second[from[i].second]
+                                                                                                            : std::byte{};
+                }
+
+                for (size_t i = 0; i < count; ++i)
+                {
+                    auto& block = destination.inline_blocks[to[i].first];
+                    block.resize(std::max<size_t>(block.size(), static_cast<size_t>(to[i].second) + 1));
+                    block[to[i].second] = bytes[i];
                 }
                 continue;
             }
 
-            for (uint32_t i = 0; i < c.descriptor_count; ++i)
+            std::vector<std::optional<impl::descriptor_slot>> slots(count);
+            for (size_t i = 0; i < count; ++i)
             {
-                const auto to = impl::descriptor_slot_key(c.dst_binding, c.dst_array_element + i);
-                if (const auto slot = source.slots.find(impl::descriptor_slot_key(c.src_binding, c.src_array_element + i));
+                if (const auto slot = source.slots.find(impl::descriptor_slot_key(from[i].first, from[i].second));
                     slot != source.slots.end())
                 {
-                    destination.slots[to] = slot->second;
+                    slots[i] = slot->second;
+                }
+            }
+
+            for (size_t i = 0; i < count; ++i)
+            {
+                const auto key = impl::descriptor_slot_key(to[i].first, to[i].second);
+                if (slots[i])
+                {
+                    destination.slots[key] = *slots[i];
                 }
                 else
                 {
-                    destination.slots.erase(to);
+                    destination.slots.erase(key);
                 }
             }
         }
@@ -8733,7 +8881,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 7;
+        constexpr uint32_t snapshot_version = 9;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -9088,8 +9236,6 @@ namespace sogen
     {
         auto& impl = *this->impl_;
 
-        reject_live_objects(impl.surfaces, "surfaces");
-        reject_live_objects(impl.swapchains, "swapchains");
         reject_live_objects(impl.query_pools, "query pools");
 
         for (const auto& memory : impl.memories | std::views::values)
@@ -9343,12 +9489,12 @@ namespace sogen
             buffer.write(buffer_object.memory_offset);
         }
 
-        buffer.write(static_cast<uint64_t>(impl.images.size()));
+        buffer.write(static_cast<uint64_t>(std::ranges::count_if(impl.images, [](const auto& entry) { return entry.second.owned; })));
         for (const auto& [id, image] : impl.images)
         {
             if (!image.owned)
             {
-                throw std::runtime_error("Snapshots do not support swapchain images yet");
+                continue;
             }
 
             const auto& create = image.create;
@@ -9415,6 +9561,29 @@ namespace sogen
             buffer.write(false);
         }
 
+        buffer.write(static_cast<uint64_t>(impl.surfaces.size()));
+        for (const auto& [id, surface] : impl.surfaces)
+        {
+            buffer.write(id);
+            buffer.write(surface.instance_id);
+        }
+
+        // Re-created swapchains give the guest images with undefined contents, so it has to draw each frame anew.
+        buffer.write(static_cast<uint64_t>(impl.swapchains.size()));
+        for (const auto& [id, swapchain] : impl.swapchains)
+        {
+            if (std::ranges::any_of(swapchain.acquired, [](const bool acquired) { return acquired; }))
+            {
+                throw std::runtime_error("Snapshots cannot be taken while the guest holds a swapchain image");
+            }
+
+            buffer.write(id);
+            buffer.write(swapchain.device_id);
+            buffer.write(swapchain.surface_id);
+            buffer.write(swapchain.create);
+            buffer.write_vector(swapchain.image_ids);
+        }
+
         buffer.write(static_cast<uint64_t>(impl.samplers.size()));
         for (const auto& [id, sampler] : impl.samplers)
         {
@@ -9429,6 +9598,13 @@ namespace sogen
             buffer.write(id);
             buffer.write(module.device_id);
             buffer.write(*module.code);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.identified_code.size()));
+        for (const auto& [identifier, code] : impl.identified_code)
+        {
+            buffer.write_string(identifier);
+            buffer.write(*code);
         }
 
         buffer.write(static_cast<uint64_t>(impl.descriptor_set_layouts.size()));
@@ -9620,7 +9796,7 @@ namespace sogen
     void vulkan_host::deserialize(utils::buffer_deserializer& buffer, const restore_callbacks& callbacks)
     {
         auto& impl = *this->impl_;
-        const auto clear_forced_id = utils::finally([&] { impl.forced_id.reset(); });
+        const auto clear_forced_ids = utils::finally([&] { impl.forced_ids.clear(); });
 
         std::unordered_map<uint64_t, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
         const auto transfer_for = [&](const uint64_t device_id) -> snapshot_transfer<impl::device_data>& {
@@ -9739,7 +9915,7 @@ namespace sogen
             }
 
             uint64_t instance{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_instance(extensions, instance);
             expect_restored(result, instance, id, "instance");
         }
@@ -9783,7 +9959,7 @@ namespace sogen
             buffer.read(create.spoof_missing_features);
 
             uint64_t device{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result =
                 this->create_device(create.physical_device, create.queues.data(), create.queues.size(), create.extensions.data(),
                                     create.extensions.size(), create.extension_count, create.features.data(), create.features.size(),
@@ -9799,7 +9975,7 @@ namespace sogen
             const auto queue_index = buffer.read<uint32_t>();
 
             uint64_t queue{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->get_device_queue(device, queue_family_index, queue_index, queue);
             expect_restored(result, queue, id, "queue");
         }
@@ -9815,7 +9991,7 @@ namespace sogen
             const auto imported = buffer.read<bool>();
 
             uint64_t memory{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             if (imported)
             {
                 const auto result = this->import_host_memory(device, size, memory_type_index, flags, device_mask,
@@ -9865,7 +10041,7 @@ namespace sogen
             const auto memory_offset = buffer.read<uint64_t>();
 
             uint64_t buffer_object{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_buffer(device, size, usage, buffer_object);
             expect_restored(result, buffer_object, id, "buffer");
 
@@ -9885,7 +10061,7 @@ namespace sogen
             auto layouts = buffer.read_vector<uint32_t>();
 
             uint64_t image{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result =
                 this->create_image(device, create.format, create.width, create.height, create.usage, create.tiling, create.samples,
                                    create.image_type, create.depth, create.mip_levels, create.array_layers, create.flags, image);
@@ -9952,11 +10128,45 @@ namespace sogen
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
         {
             const auto id = buffer.read<uint64_t>();
+            const auto instance = buffer.read<uint64_t>();
+
+            uint64_t surface{};
+            impl.forced_ids = {id};
+            const auto result = this->create_surface(instance, callbacks.create_native_surface(id, instance), surface);
+            expect_restored(result, surface, id, "surface");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto surface = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::swapchain_params>();
+            const auto image_ids = buffer.read_vector<uint64_t>();
+
+            uint64_t swapchain{};
+            uint32_t image_count = 0;
+            impl.forced_ids.assign(image_ids.begin(), image_ids.end());
+            impl.forced_ids.push_back(id);
+            const auto result = this->create_swapchain(device, surface, 0, create.flags, create.format, create.color_space, create.width,
+                                                       create.height, create.image_array_layers, create.min_image_count, create.image_usage,
+                                                       create.sharing_mode, create.queue_family_indices, create.pre_transform,
+                                                       create.composite_alpha, create.present_mode, create.clipped, swapchain, image_count);
+            if (result == VK_SUCCESS && image_count != image_ids.size())
+            {
+                throw std::runtime_error("The re-created Vulkan swapchain has a different number of images");
+            }
+            expect_restored(result, swapchain, id, "swapchain");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
             const auto device = buffer.read<uint64_t>();
             const auto desc = buffer.read<sampler_desc>();
 
             uint64_t sampler{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_sampler(device, desc, sampler);
             expect_restored(result, sampler, id, "sampler");
         }
@@ -9968,9 +10178,15 @@ namespace sogen
             const auto code = buffer.read<impl::shader_code>();
 
             uint64_t module{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_shader_module(device, code.flags, code.code.data(), code.code.size(), module);
             expect_restored(result, module, id, "shader module");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            auto identifier = buffer.read_string<char>();
+            impl.identified_code[std::move(identifier)] = std::make_shared<const impl::shader_code>(buffer.read<impl::shader_code>());
         }
 
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
@@ -9980,7 +10196,7 @@ namespace sogen
             const auto create = buffer.read<impl::set_layout_params>();
 
             uint64_t layout{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_descriptor_set_layout(device, create.flags, create.bindings, layout);
             expect_restored(result, layout, id, "descriptor set layout");
         }
@@ -9993,7 +10209,7 @@ namespace sogen
 
             const auto set_layouts = set_layout_ids(device, create);
             uint64_t layout{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result =
                 this->create_pipeline_layout(device, create.push_constant_stages, create.push_constant_size, set_layouts, layout);
             expect_restored(result, layout, id, "pipeline layout");
@@ -10006,7 +10222,7 @@ namespace sogen
             const auto create = buffer.read<impl::render_pass_params>();
 
             uint64_t render_pass{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_render_pass(device, create.format, create.load_op, create.store_op, create.initial_layout,
                                                          create.final_layout, create.depth_format, render_pass);
             expect_restored(result, render_pass, id, "render pass");
@@ -10020,7 +10236,7 @@ namespace sogen
             const auto data = buffer.read_vector<uint8_t>();
 
             uint64_t cache{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_pipeline_cache(device, flags, data, cache);
             expect_restored(result, cache, id, "pipeline cache");
         }
@@ -10039,14 +10255,14 @@ namespace sogen
             int32_t result{};
             if (create.compute)
             {
-                impl.forced_id = id;
+                impl.forced_ids = {id};
                 result = this->create_compute_pipeline(device, cache, layout, vertex, create.flags, pipeline);
             }
             else
             {
                 const auto render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create);
                 const auto fragment = stage_source(device, create.fragment);
-                impl.forced_id = id;
+                impl.forced_ids = {id};
                 result = this->create_graphics_pipeline(
                     device, cache, render_pass, layout, vertex, fragment, create.flags, create.width, create.height, create.bindings,
                     create.attributes, create.divisors, create.depth, create.color_formats, create.depth_format, create.stencil_format,
@@ -10071,7 +10287,7 @@ namespace sogen
             }
 
             uint64_t view{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result =
                 this->create_image_view(device, create.image, create.format, create.aspect_mask, create.view_type, create.base_mip_level,
                                         create.level_count, create.base_array_layer, create.layer_count, create.swizzle[0],
@@ -10090,7 +10306,7 @@ namespace sogen
             }
 
             uint64_t view{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_buffer_view(device, create.buffer, create.format, create.offset, create.range, view);
             expect_restored(result, view, id, "buffer view");
         }
@@ -10107,7 +10323,7 @@ namespace sogen
 
             const auto render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create);
             uint64_t framebuffer{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_framebuffer(device, render_pass, create.image_view, create.depth_view, create.width,
                                                          create.height, framebuffer);
             expect_restored(result, framebuffer, id, "framebuffer");
@@ -10120,7 +10336,7 @@ namespace sogen
             const auto create = buffer.read<impl::descriptor_pool_params>();
 
             uint64_t pool{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_descriptor_pool(device, create.max_sets, create.flags,
                                                              create.max_inline_uniform_block_bindings, create.sizes, pool);
             expect_restored(result, pool, id, "descriptor pool");
@@ -10154,7 +10370,7 @@ namespace sogen
             const std::array counts{variable_count};
             std::array<uint64_t, 1> sets{};
             uint32_t allocated = 0;
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->allocate_descriptor_sets(
                 device, pool, layouts, has_variable_count ? std::span<const uint32_t>{counts} : std::span<const uint32_t>{}, sets,
                 allocated);
@@ -10213,7 +10429,7 @@ namespace sogen
             const auto set = buffer.read<bool>();
 
             uint64_t event{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_event(device, flags, event);
             expect_restored(result, event, id, "event");
             if (set && this->set_event(device, id) != VK_SUCCESS)
@@ -10230,7 +10446,7 @@ namespace sogen
             const auto flags = buffer.read<uint32_t>();
 
             uint64_t pool{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_command_pool(device, queue_family_index, flags, pool);
             expect_restored(result, pool, id, "command pool");
         }
@@ -10264,7 +10480,7 @@ namespace sogen
             }
 
             uint64_t command_buffer{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->allocate_command_buffer(device, pool, level, command_buffer);
             expect_restored(result, command_buffer, id, "command buffer");
         }
@@ -10276,7 +10492,7 @@ namespace sogen
             const auto signaled = buffer.read<bool>();
 
             uint64_t fence{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_fence(device, signaled ? VK_FENCE_CREATE_SIGNALED_BIT : 0, fence);
             expect_restored(result, fence, id, "fence");
         }
@@ -10294,7 +10510,7 @@ namespace sogen
             const auto highest_wait = buffer.read<uint64_t>();
 
             uint64_t semaphore{};
-            impl.forced_id = id;
+            impl.forced_ids = {id};
             const auto result = this->create_semaphore(device, flags, type, value, semaphore);
             expect_restored(result, semaphore, id, "semaphore");
 

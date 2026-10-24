@@ -307,6 +307,12 @@ namespace sogen
         return this->file_->device->supports_snapshots();
     }
 
+    bool io_device_container::suspends_at_frame_end() const
+    {
+        this->assert_validity();
+        return this->file_->device->suspends_at_frame_end();
+    }
+
     void io_device_container::serialize_object(utils::buffer_serializer& buffer) const
     {
         this->assert_validity();

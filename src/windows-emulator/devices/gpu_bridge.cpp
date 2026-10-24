@@ -252,6 +252,11 @@ namespace sogen
                 }
             }
 
+            bool suspends_at_frame_end() const override
+            {
+                return this->vulkan_.has_swapchains();
+            }
+
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
                 if (std::ranges::any_of(this->direct_mappings_ | std::views::values,
@@ -282,6 +287,13 @@ namespace sogen
                     buffer.write(imported.size);
                     buffer.write(imported.device);
                     buffer.write(imported.access_tracked);
+                }
+
+                buffer.write(static_cast<uint64_t>(this->surface_windows_.size()));
+                for (const auto& [surface, window] : this->surface_windows_)
+                {
+                    buffer.write(surface);
+                    buffer.write(window);
                 }
 
                 buffer.write(static_cast<uint64_t>(this->observed_semaphores_.size()));
@@ -317,6 +329,13 @@ namespace sogen
                     buffer.read(imported.access_tracked);
                 }
 
+                this->surface_windows_.clear();
+                for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+                {
+                    const auto surface = buffer.read<uint64_t>();
+                    this->surface_windows_[surface] = buffer.read<hwnd>();
+                }
+
                 this->observed_semaphores_.clear();
                 for (auto count = buffer.read<uint64_t>(); count > 0; --count)
                 {
@@ -343,6 +362,15 @@ namespace sogen
                             [&](const uint64_t memory) {
                                 return reinterpret_cast<void*>(
                                     win_emu.memory.host_placement_address(this->imported_memory_.at(memory).guest_address));
+                            },
+                        .create_native_surface =
+                            [&](const uint64_t surface, const uint64_t instance) {
+                                uint64_t native_instance = 0;
+                                if (!this->vulkan_.get_native_instance_handle(instance, native_instance))
+                                {
+                                    return uint64_t{0};
+                                }
+                                return win_emu.ui().create_vulkan_surface(this->surface_windows_.at(surface), native_instance);
                             },
                         .replay_commands =
                             [&](const uint64_t command_buffer, const std::span<const std::byte> commands,
@@ -2392,6 +2420,12 @@ namespace sogen
                 const int32_t result = this->vulkan_.queue_present(
                     request.queue, request.swapchain, request.image_index, wait_semaphores,
                     [&](const std::function<int32_t()>& present) { return win_emu.run_without_kernel_lock(present); });
+
+                // The end of a frame is where a requested suspend happens, once this call has returned to the guest.
+                if (win_emu.take_suspend_request())
+                {
+                    win_emu.stop();
+                }
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 

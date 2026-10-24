@@ -54,6 +54,8 @@ namespace sogen
         struct restore_callbacks
         {
             std::function<void*(uint64_t memory)> imported_host_pointer{};
+            // A native surface for the window the surface was created for.
+            std::function<uint64_t(uint64_t surface, uint64_t instance)> create_native_surface{};
             // Re-records what was recorded into a command buffer since it was last begun or reset, with what each command
             // returned then. A command buffer invalidated by a destroyed object may fail where it did not before.
             std::function<void(uint64_t command_buffer, std::span<const std::byte> commands, std::span<const int32_t> results,
@@ -232,6 +234,7 @@ namespace sogen
         // The alignment map_memory_placed needs for its address, or 0 if the device cannot place mappings.
         uint64_t placed_map_alignment(uint64_t device) const;
         bool has_device(uint64_t device) const;
+        bool has_swapchains() const;
         uint64_t host_import_alignment(uint64_t device) const;
         bool is_host_visible_memory_type(uint64_t device, uint32_t memory_type_index) const;
         int32_t import_host_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint32_t flags, uint32_t device_mask,
