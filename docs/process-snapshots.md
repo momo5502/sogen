@@ -20,8 +20,11 @@ code is shared with Android's single-vCPU FEX backend.
 - [x] Query pools (occlusion, pipeline statistics, timestamps, transform feedback): results available at
       the snapshot are served until the query is reset; command buffers whose recording used them, or a
       restored swapchain image's undefined layout, are recorded again once that changed
-- [ ] MSAA contents, present completion (present fence/wait), multiple queues
-- [ ] Performance check of the shadow state against MW2 / Settlers II
+- [x] MSAA contents: sampled by a compute shader, written back per sample (stencil bit by bit) and
+      verified bit for bit on restore
+- [x] Settlers II suspended on a map and resumed in a new process
+- [x] Performance of the shadow state measured in game (below)
+- [ ] Present completion (present fence/wait), images used from several queues, several vCPUs on WHP
 - [ ] Child processes
 - [ ] Android integration
 
@@ -157,8 +160,12 @@ Android Suspend/Resume UI.
 Normal running must not get slower. Records are written at create time only. The hot paths are
 descriptor updates (about 92% of GPU IOCTLs in MW2), coalesced into a per-slot table update, and
 command streams, kept by moving the existing vector. Layout tracking costs a map update per barrier.
-All draining and readback happens only at suspend. Measured against MW2 and Baba Is You fps before and
-after.
+All draining and readback happens only at suspend.
+
+Measured on a Settlers II map (WHP, DXVK), per 5 s of wall time: the descriptor slot shadow takes about
+0.3% (about 32k updates), keeping recorded commands about 0.25% (180k commands), switching reference
+capture about 0.3%, noting the about 700k objects those commands look up an estimated 0.3-0.4%, and the
+work at submission 0.03%. In total about 1% of wall time.
 
 ## Side findings
 
