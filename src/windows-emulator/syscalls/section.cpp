@@ -182,6 +182,28 @@ namespace sogen
                     ucs.Buffer = ucs.Buffer - obj_address;
                 });
             }
+
+            void release_pagefile_view(const syscall_context& c, const uint64_t backing)
+            {
+                for (auto& [_, section_entry] : c.proc.sections)
+                {
+                    if (section_entry.backing_address == backing)
+                    {
+                        if (section_entry.mapped_view_count > 0)
+                        {
+                            --section_entry.mapped_view_count;
+                        }
+                        return;
+                    }
+                }
+
+                const auto orphan = c.proc.orphaned_section_backings.find(backing);
+                if (orphan != c.proc.orphaned_section_backings.end() && --orphan->second == 0)
+                {
+                    c.proc.orphaned_section_backings.erase(orphan);
+                    c.win_emu.memory.release_memory(backing, 0);
+                }
+            }
         }
 
         NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
@@ -493,6 +515,7 @@ namespace sogen
                     view_size.write(backing_size - aligned_offset);
                 }
                 base_address.write(section_entry->backing_address + aligned_offset);
+                ++section_entry->mapped_view_count;
                 return STATUS_SUCCESS;
             }
 
@@ -688,9 +711,10 @@ namespace sogen
             {
                 // A pagefile section keeps one persistent backing shared by every view, so unmapping a view
                 // must not free it (other views and open section handles may still reference it); it is released
-                // when the last section handle is closed.
+                // once the last section handle is closed and the last view is unmapped.
                 if (region_info.kind == memory_region_kind::pagefile_section_view)
                 {
+                    release_pagefile_view(c, region_info.allocation_base);
                     return STATUS_SUCCESS;
                 }
 
