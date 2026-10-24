@@ -344,13 +344,13 @@ namespace sogen
                                             win_emu.memory.host_placement_address(this->imported_memory_.at(memory).guest_address));
                                     },
                                 .replay_commands =
-                                    [&](const uint64_t command_buffer, const std::span<const std::byte> commands) {
-                                        // Commands may refer to objects destroyed since, which invalidated the command buffer; the
-                                        // guest has to reset it before using it again either way.
-                                        if (this->execute_recorded_commands(win_emu, commands, true) != vk_success)
+                                    [&](const uint64_t command_buffer, const std::span<const std::byte> commands,
+                                        const std::span<const int32_t> results, const bool possibly_invalidated) {
+                                        // An invalidated command buffer may only be reset or freed, so what it held is lost anyway.
+                                        if (this->execute_recorded_commands(win_emu, commands, true, results) < 0 && !possibly_invalidated)
                                         {
-                                            win_emu.log.warn("[gpu-bridge] Command buffer %llu was not fully re-recorded\n",
-                                                             static_cast<unsigned long long>(command_buffer));
+                                            throw std::runtime_error("Re-recording Vulkan command buffer " +
+                                                                     std::to_string(command_buffer) + " failed");
                                         }
                                     },
                             });
@@ -4069,15 +4069,19 @@ namespace sogen
                 std::vector<std::byte> stream(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, stream.data(), stream.size());
 
-                const int32_t result = this->execute_recorded_commands(win_emu, stream, true);
+                const int32_t result = this->execute_recorded_commands(win_emu, stream, true, std::nullopt);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
             // Every recorded command starts with the command buffer it is recorded into.
-            int32_t execute_recorded_commands(windows_emulator& win_emu, const std::span<const std::byte> stream, const bool keep_recorded)
+            // When replaying, expected_results holds what each command returned when it was first recorded, and the first
+            // command that returns something else is reported as -1 - its index.
+            int32_t execute_recorded_commands(windows_emulator& win_emu, const std::span<const std::byte> stream, const bool keep_recorded,
+                                              const std::optional<std::span<const int32_t>> expected_results)
             {
                 int32_t result = 0; // VK_SUCCESS
                 size_t offset = 0;
+                size_t index = 0;
                 while (offset + sizeof(gpu_bridge::command_record_header) <= stream.size())
                 {
                     const size_t record_offset = offset;
@@ -4099,10 +4103,17 @@ namespace sogen
                     {
                         gpu_bridge::object_id command_buffer{};
                         std::memcpy(&command_buffer, stream.data() + offset, sizeof(command_buffer));
-                        this->vulkan_.append_recorded_command(command_buffer, stream.subspan(record_offset, sizeof(header) + header.size));
+                        this->vulkan_.append_recorded_command(command_buffer, stream.subspan(record_offset, sizeof(header) + header.size),
+                                                              r);
+                    }
+
+                    if (expected_results && (index >= expected_results->size() || (*expected_results)[index] != r))
+                    {
+                        return -1 - static_cast<int32_t>(index);
                     }
 
                     offset += header.size;
+                    ++index;
                 }
 
                 return result;

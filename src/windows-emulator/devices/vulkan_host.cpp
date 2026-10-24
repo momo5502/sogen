@@ -503,6 +503,8 @@ namespace sogen
             uint64_t pool_id{};
             uint32_t level{};
             std::vector<std::byte> recorded{};
+            std::vector<int32_t> recorded_results{};
+            uint64_t recorded_epoch{};
         };
 
         struct fence_data
@@ -724,6 +726,10 @@ namespace sogen
         std::unordered_map<uint64_t, descriptor_pool_data> descriptor_pools;
         std::unordered_map<uint64_t, descriptor_set_data> descriptor_sets;
         uint64_t next_id{1};
+
+        // Counts destructions of objects commands refer to, so that a command buffer recorded before one of them is known
+        // to have possibly been invalidated.
+        uint64_t destroy_epoch{};
 
         // Set while restoring a snapshot, so the object being re-created gets the id the guest already holds.
         std::optional<uint64_t> forced_id{};
@@ -1082,7 +1088,10 @@ namespace sogen
             }
             for (const auto fence : it->second.abandoned_drain_fences)
             {
-                it->second.destroy_fence(it->second.handle, fence, nullptr);
+                if (it->second.get_fence_status(it->second.handle, fence) == VK_SUCCESS)
+                {
+                    it->second.destroy_fence(it->second.handle, fence, nullptr);
+                }
             }
             for (auto& [id, event] : this->events)
             {
@@ -1396,6 +1405,7 @@ namespace sogen
 
     void vulkan_host::destroy_instance(uint64_t instance)
     {
+        ++this->impl_->destroy_epoch;
         const auto it = this->impl_->instances.find(instance);
         if (it == this->impl_->instances.end())
         {
@@ -2701,6 +2711,7 @@ namespace sogen
 
     void vulkan_host::destroy_device(uint64_t device)
     {
+        ++this->impl_->destroy_epoch;
         this->impl_->erase_device(device);
     }
 
@@ -2760,6 +2771,7 @@ namespace sogen
 
     void vulkan_host::destroy_command_pool(uint64_t device, uint64_t pool)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->command_pools.find(pool);
         if (it == this->impl_->command_pools.end() || it->second.device_id != device)
@@ -2811,6 +2823,7 @@ namespace sogen
 
     void vulkan_host::free_command_buffer(uint64_t device, uint64_t pool, uint64_t command_buffer)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto pool_it = this->impl_->command_pools.find(pool);
         const auto cb = this->impl_->command_buffers.find(command_buffer);
@@ -2881,6 +2894,7 @@ namespace sogen
         if (result == VK_SUCCESS)
         {
             cb->second.recorded.clear();
+            cb->second.recorded_results.clear();
         }
         return result;
     }
@@ -2953,17 +2967,20 @@ namespace sogen
                 if (command_buffer.pool_id == pool)
                 {
                     command_buffer.recorded.clear();
+                    command_buffer.recorded_results.clear();
                 }
             }
         }
         return result;
     }
 
-    void vulkan_host::append_recorded_command(const uint64_t command_buffer, const std::span<const std::byte> command)
+    void vulkan_host::append_recorded_command(const uint64_t command_buffer, const std::span<const std::byte> command, const int32_t result)
     {
         if (const auto cb = this->impl_->command_buffers.find(command_buffer); cb != this->impl_->command_buffers.end())
         {
             cb->second.recorded.insert(cb->second.recorded.end(), command.begin(), command.end());
+            cb->second.recorded_results.push_back(result);
+            cb->second.recorded_epoch = this->impl_->destroy_epoch;
         }
     }
 
@@ -2985,6 +3002,7 @@ namespace sogen
         if (result == VK_SUCCESS)
         {
             cb->second.recorded.clear();
+            cb->second.recorded_results.clear();
         }
         return result;
     }
@@ -3068,6 +3086,7 @@ namespace sogen
 
     void vulkan_host::destroy_fence(uint64_t device, uint64_t fence)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->fences.find(fence);
         if (it == this->impl_->fences.end() || it->second.device_id != device)
@@ -3200,6 +3219,7 @@ namespace sogen
 
     void vulkan_host::destroy_semaphore(uint64_t device, uint64_t semaphore)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->semaphores.find(semaphore);
         if (it == this->impl_->semaphores.end() || it->second.device_id != device)
@@ -3274,6 +3294,7 @@ namespace sogen
 
     void vulkan_host::destroy_event(uint64_t device, uint64_t event)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->events.find(event);
         if (it == this->impl_->events.end() || it->second.device_id != device)
@@ -3673,6 +3694,7 @@ namespace sogen
 
     void vulkan_host::free_memory(uint64_t device, uint64_t memory)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->memories.find(memory);
         // Only the owning device may free the memory; ignore a cross-device free request.
@@ -3752,6 +3774,7 @@ namespace sogen
 
     void vulkan_host::destroy_buffer(uint64_t device, uint64_t buffer)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->buffers.find(buffer);
         if (it == this->impl_->buffers.end() || it->second.device_id != device)
@@ -4279,6 +4302,7 @@ namespace sogen
 
     void vulkan_host::destroy_image(uint64_t device, uint64_t image)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->images.find(image);
         if (it == this->impl_->images.end() || it->second.device_id != device || !it->second.owned)
@@ -4760,6 +4784,7 @@ namespace sogen
 
     void vulkan_host::destroy_sampler(uint64_t device, uint64_t sampler)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->samplers.find(sampler);
         if (it == this->impl_->samplers.end() || it->second.device_id != device)
@@ -4792,6 +4817,7 @@ namespace sogen
 
     void vulkan_host::destroy_surface(uint64_t surface)
     {
+        ++this->impl_->destroy_epoch;
         const auto it = this->impl_->surfaces.find(surface);
         if (it == this->impl_->surfaces.end())
         {
@@ -5063,6 +5089,7 @@ namespace sogen
 
     void vulkan_host::destroy_swapchain(uint64_t device, uint64_t swapchain)
     {
+        ++this->impl_->destroy_epoch;
         const auto it = this->impl_->swapchains.find(swapchain);
         if (it == this->impl_->swapchains.end() || it->second.device_id != device)
         {
@@ -5228,6 +5255,7 @@ namespace sogen
 
     void vulkan_host::destroy_shader_module(uint64_t device, uint64_t shader_module)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->shader_modules.find(shader_module);
         if (it == this->impl_->shader_modules.end() || it->second.device_id != device)
@@ -5338,6 +5366,7 @@ namespace sogen
 
     void vulkan_host::destroy_image_view(uint64_t device, uint64_t image_view)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->image_views.find(image_view);
         if (it == this->impl_->image_views.end() || it->second.device_id != device)
@@ -5385,6 +5414,7 @@ namespace sogen
 
     void vulkan_host::destroy_buffer_view(uint64_t device, uint64_t buffer_view)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->buffer_views.find(buffer_view);
         if (it == this->impl_->buffer_views.end() || it->second.device_id != device)
@@ -5461,6 +5491,7 @@ namespace sogen
 
     void vulkan_host::destroy_query_pool(uint64_t device, uint64_t query_pool)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->query_pools.find(query_pool);
         if (it == this->impl_->query_pools.end() || it->second.device_id != device)
@@ -5900,6 +5931,7 @@ namespace sogen
 
     void vulkan_host::destroy_render_pass(uint64_t device, uint64_t render_pass)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->render_passes.find(render_pass);
         if (it == this->impl_->render_passes.end() || it->second.device_id != device)
@@ -5963,6 +5995,7 @@ namespace sogen
 
     void vulkan_host::destroy_framebuffer(uint64_t device, uint64_t framebuffer)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->framebuffers.find(framebuffer);
         if (it == this->impl_->framebuffers.end() || it->second.device_id != device)
@@ -6028,6 +6061,7 @@ namespace sogen
 
     void vulkan_host::destroy_pipeline_layout(uint64_t device, uint64_t pipeline_layout)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->pipeline_layouts.find(pipeline_layout);
         if (it == this->impl_->pipeline_layouts.end() || it->second.device_id != device)
@@ -6143,6 +6177,7 @@ namespace sogen
 
     void vulkan_host::destroy_descriptor_set_layout(uint64_t device, uint64_t layout)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->descriptor_set_layouts.find(layout);
         if (it == this->impl_->descriptor_set_layouts.end() || it->second.device_id != device)
@@ -6204,6 +6239,7 @@ namespace sogen
 
     int32_t vulkan_host::reset_descriptor_pool(uint64_t device, uint64_t pool, uint32_t flags)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->descriptor_pools.find(pool);
         if (dev == this->impl_->devices.end() || it == this->impl_->descriptor_pools.end() || it->second.device_id != device ||
@@ -6224,6 +6260,7 @@ namespace sogen
 
     void vulkan_host::destroy_descriptor_pool(uint64_t device, uint64_t pool)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->descriptor_pools.find(pool);
         if (it == this->impl_->descriptor_pools.end() || it->second.device_id != device)
@@ -6303,6 +6340,7 @@ namespace sogen
 
     int32_t vulkan_host::free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto pool_it = this->impl_->descriptor_pools.find(pool);
         if (dev == this->impl_->devices.end() || pool_it == this->impl_->descriptor_pools.end() || pool_it->second.device_id != device ||
@@ -6536,6 +6574,7 @@ namespace sogen
 
     void vulkan_host::destroy_pipeline_cache(uint64_t device, uint64_t pipeline_cache)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto cache = this->impl_->pipeline_caches.find(pipeline_cache);
         if (cache == this->impl_->pipeline_caches.end() || cache->second.device_id != device)
@@ -7023,6 +7062,7 @@ namespace sogen
 
     void vulkan_host::destroy_pipeline(uint64_t device, uint64_t pipeline)
     {
+        ++this->impl_->destroy_epoch;
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->pipelines.find(pipeline);
         if (it == this->impl_->pipelines.end() || it->second.device_id != device)
@@ -7876,7 +7916,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 2;
+        constexpr uint32_t snapshot_version = 3;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -7907,6 +7947,110 @@ namespace sogen
             snapshot_transfer(const Device& device, const std::function<uint32_t(uint32_t type_bits)>& find_host_memory_type)
                 : device_(device)
             {
+                try
+                {
+                    this->create(find_host_memory_type);
+                }
+                catch (...)
+                {
+                    this->release();
+                    throw;
+                }
+            }
+
+            ~snapshot_transfer()
+            {
+                this->release();
+            }
+
+            snapshot_transfer(const snapshot_transfer&) = delete;
+            snapshot_transfer& operator=(const snapshot_transfer&) = delete;
+            snapshot_transfer(snapshot_transfer&&) = delete;
+            snapshot_transfer& operator=(snapshot_transfer&&) = delete;
+
+            // False if the memory's type cannot back transfer buffers, so that only its images can be saved.
+            bool copy(const VkDeviceMemory memory, const uint32_t memory_type_index, const std::span<std::byte> contents,
+                      const bool to_device)
+            {
+                const auto& device = this->device_;
+                for (VkDeviceSize offset = 0; offset < contents.size(); offset += chunk_size)
+                {
+                    const VkDeviceSize size = std::min<VkDeviceSize>(chunk_size, contents.size() - offset);
+
+                    // A buffer can need more memory than its size, more than is left at the end of the allocation. It is then
+                    // bound further down, and the copy starts inside it.
+                    VkDeviceSize alias_offset = offset;
+                    VkBuffer alias{};
+                    VkMemoryRequirements requirements{};
+                    for (int attempt = 0; attempt < 2; ++attempt)
+                    {
+                        alias = this->create_transfer_buffer(size + (offset - alias_offset));
+                        device.get_buffer_memory_requirements(device.handle, alias, &requirements);
+                        if ((requirements.memoryTypeBits & (1U << memory_type_index)) == 0 || requirements.alignment == 0 ||
+                            requirements.size > contents.size())
+                        {
+                            device.destroy_buffer(device.handle, alias, nullptr);
+                            return false;
+                        }
+
+                        const VkDeviceSize highest_offset =
+                            (contents.size() - requirements.size) / requirements.alignment * requirements.alignment;
+                        const VkDeviceSize aligned_offset = alias_offset / requirements.alignment * requirements.alignment;
+                        const VkDeviceSize fitting_offset = std::min(aligned_offset, highest_offset);
+                        if (fitting_offset == alias_offset)
+                        {
+                            break;
+                        }
+
+                        device.destroy_buffer(device.handle, alias, nullptr);
+                        alias = VK_NULL_HANDLE;
+                        alias_offset = fitting_offset;
+                    }
+
+                    if (!alias)
+                    {
+                        return false;
+                    }
+
+                    const auto destroy_alias = utils::finally([&] { device.destroy_buffer(device.handle, alias, nullptr); });
+                    if (device.bind_buffer_memory(device.handle, alias, memory, alias_offset) != VK_SUCCESS)
+                    {
+                        throw std::runtime_error("Aliasing Vulkan memory for a snapshot failed");
+                    }
+
+                    if (to_device)
+                    {
+                        std::memcpy(this->staging_data_, contents.data() + offset, static_cast<size_t>(size));
+                    }
+
+                    const VkDeviceSize inside = offset - alias_offset;
+                    const VkBufferCopy region{.srcOffset = to_device ? 0 : inside, .dstOffset = to_device ? inside : 0, .size = size};
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        device.cmd_copy_buffer(command_buffer, to_device ? this->staging_buffer_ : alias,
+                                               to_device ? alias : this->staging_buffer_, 1, &region);
+                    });
+
+                    if (!to_device)
+                    {
+                        std::memcpy(contents.data() + offset, this->staging_data_, static_cast<size_t>(size));
+                    }
+                }
+
+                return true;
+            }
+
+          private:
+            const Device& device_;
+            VkQueue queue_{};
+            VkCommandPool pool_{};
+            VkCommandBuffer command_buffer_{};
+            VkBuffer staging_buffer_{};
+            VkDeviceMemory staging_memory_{};
+            void* staging_data_{};
+
+            void create(const std::function<uint32_t(uint32_t type_bits)>& find_host_memory_type)
+            {
+                const auto& device = this->device_;
                 device.get_device_queue(device.handle, device.queue_family_index, 0, &this->queue_);
 
                 VkCommandPoolCreateInfo pool_info{};
@@ -7943,7 +8087,7 @@ namespace sogen
                 }
             }
 
-            ~snapshot_transfer()
+            void release()
             {
                 const auto& device = this->device_;
                 if (this->staging_memory_)
@@ -7958,64 +8102,11 @@ namespace sogen
                 {
                     device.destroy_command_pool(device.handle, this->pool_, nullptr);
                 }
+
+                this->staging_memory_ = VK_NULL_HANDLE;
+                this->staging_buffer_ = VK_NULL_HANDLE;
+                this->pool_ = VK_NULL_HANDLE;
             }
-
-            snapshot_transfer(const snapshot_transfer&) = delete;
-            snapshot_transfer& operator=(const snapshot_transfer&) = delete;
-            snapshot_transfer(snapshot_transfer&&) = delete;
-            snapshot_transfer& operator=(snapshot_transfer&&) = delete;
-
-            // False if the memory's type cannot back transfer buffers, so that only its images can be saved.
-            bool copy(const VkDeviceMemory memory, const uint32_t memory_type_index, const std::span<std::byte> contents,
-                      const bool to_device)
-            {
-                const auto& device = this->device_;
-                for (VkDeviceSize offset = 0; offset < contents.size(); offset += chunk_size)
-                {
-                    const VkDeviceSize size = std::min<VkDeviceSize>(chunk_size, contents.size() - offset);
-                    const VkBuffer alias = this->create_transfer_buffer(size);
-                    const auto destroy_alias = utils::finally([&] { device.destroy_buffer(device.handle, alias, nullptr); });
-
-                    VkMemoryRequirements requirements{};
-                    device.get_buffer_memory_requirements(device.handle, alias, &requirements);
-                    if ((requirements.memoryTypeBits & (1U << memory_type_index)) == 0 || offset % requirements.alignment != 0)
-                    {
-                        return false;
-                    }
-
-                    if (device.bind_buffer_memory(device.handle, alias, memory, offset) != VK_SUCCESS)
-                    {
-                        throw std::runtime_error("Aliasing Vulkan memory for a snapshot failed");
-                    }
-
-                    if (to_device)
-                    {
-                        std::memcpy(this->staging_data_, contents.data() + offset, static_cast<size_t>(size));
-                    }
-
-                    const VkBufferCopy region{.srcOffset = 0, .dstOffset = 0, .size = size};
-                    this->submit([&](const VkCommandBuffer command_buffer) {
-                        device.cmd_copy_buffer(command_buffer, to_device ? this->staging_buffer_ : alias,
-                                               to_device ? alias : this->staging_buffer_, 1, &region);
-                    });
-
-                    if (!to_device)
-                    {
-                        std::memcpy(contents.data() + offset, this->staging_data_, static_cast<size_t>(size));
-                    }
-                }
-
-                return true;
-            }
-
-          private:
-            const Device& device_;
-            VkQueue queue_{};
-            VkCommandPool pool_{};
-            VkCommandBuffer command_buffer_{};
-            VkBuffer staging_buffer_{};
-            VkDeviceMemory staging_memory_{};
-            void* staging_data_{};
 
             VkBuffer create_transfer_buffer(const VkDeviceSize size) const
             {
@@ -8360,6 +8451,8 @@ namespace sogen
             buffer.write(command_buffer.pool_id);
             buffer.write(command_buffer.level);
             buffer.write_vector(command_buffer.recorded);
+            buffer.write_vector(command_buffer.recorded_results);
+            buffer.write(command_buffer.recorded_epoch < impl.destroy_epoch);
         }
 
         buffer.write(static_cast<uint64_t>(impl.fences.size()));
@@ -8582,8 +8675,16 @@ namespace sogen
 
         std::vector<uint64_t> pending_binary_signals{};
 
-        std::vector<std::pair<uint64_t, std::vector<std::byte>>> recorded_primaries{};
-        std::vector<std::pair<uint64_t, std::vector<std::byte>>> recorded_secondaries{};
+        struct recorded_commands
+        {
+            uint64_t command_buffer{};
+            std::vector<std::byte> commands{};
+            std::vector<int32_t> results{};
+            bool possibly_invalidated{};
+        };
+
+        std::vector<recorded_commands> recorded_primaries{};
+        std::vector<recorded_commands> recorded_secondaries{};
 
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
         {
@@ -8591,10 +8692,13 @@ namespace sogen
             const auto device = buffer.read<uint64_t>();
             const auto pool = buffer.read<uint64_t>();
             const auto level = buffer.read<uint32_t>();
-            auto recorded = buffer.read_vector<std::byte>();
-            if (!recorded.empty())
+            recorded_commands recorded{.command_buffer = id};
+            buffer.read_vector(recorded.commands);
+            buffer.read_vector(recorded.results);
+            buffer.read(recorded.possibly_invalidated);
+            if (!recorded.commands.empty())
             {
-                (level == 1 ? recorded_secondaries : recorded_primaries).emplace_back(id, std::move(recorded));
+                (level == 1 ? recorded_secondaries : recorded_primaries).push_back(std::move(recorded));
             }
 
             uint64_t command_buffer{};
@@ -8658,14 +8762,12 @@ namespace sogen
 
         impl.next_id = next_id;
 
-        for (const auto& [command_buffer, commands] : recorded_secondaries)
+        for (const auto* recorded : {&recorded_secondaries, &recorded_primaries})
         {
-            callbacks.replay_commands(command_buffer, commands);
-        }
-
-        for (const auto& [command_buffer, commands] : recorded_primaries)
-        {
-            callbacks.replay_commands(command_buffer, commands);
+            for (const auto& entry : *recorded)
+            {
+                callbacks.replay_commands(entry.command_buffer, entry.commands, entry.results, entry.possibly_invalidated);
+            }
         }
     }
 }
