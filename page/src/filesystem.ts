@@ -285,7 +285,12 @@ export async function setupFilesystem(
   const { idbfs, runtimeRoot } = await initializeIDBFS("windows");
   const fs = new Filesystem(idbfs, runtimeRoot);
 
-  if (idbfs.FS.analyzePath(`${runtimeRoot}/api-set.bin`, false).exists) {
+  if (
+    idbfs.FS.analyzePath(
+      `${runtimeRoot}/filesys/c/windows/system32/apisetschema.dll`,
+      false,
+    ).exists
+  ) {
     return fs;
   }
 

@@ -1,14 +1,12 @@
 #include "../std_include.hpp"
 
 #include "apiset.hpp"
-#include "default_apiset.hpp"
 
 #include "../emulator_utils.hpp"
 
 #include <arch_emulator.hpp>
 
 #include <utils/io.hpp>
-#include <utils/compression.hpp>
 
 namespace sogen
 {
@@ -45,17 +43,6 @@ namespace sogen
                 return static_cast<ULONG>(address - result_base);
             }
 
-            std::vector<std::byte> decompress_apiset(const std::vector<std::byte>& apiset)
-            {
-                auto buffer = utils::compression::zstd::decompress(apiset);
-                if (buffer.empty())
-                {
-                    throw std::runtime_error("Failed to decompress API-SET");
-                }
-
-                return buffer;
-            }
-
             template <typename T>
             T read_schema_value(const std::vector<std::byte>& file, const uint64_t offset)
             {
@@ -69,8 +56,7 @@ namespace sogen
                 return value;
             }
 
-            // Windows maps the .apiset section of apisetschema.dll as the process API set map, so a root
-            // containing the DLL needs no separately dumped api-set.bin.
+            // Windows maps the .apiset section of apisetschema.dll as the process API set map.
             std::vector<std::byte> read_schema_dll(const std::filesystem::path& schema_dll)
             {
                 const auto file = utils::io::read_file(schema_dll);
@@ -111,71 +97,11 @@ namespace sogen
 
                 throw std::runtime_error("apisetschema.dll has no .apiset section");
             }
-
-            std::vector<std::byte> obtain_data(const location location, const std::filesystem::path& root)
-            {
-                switch (location)
-                {
-#ifdef OS_WINDOWS_64
-                case location::host: {
-                    const auto* teb = NtCurrentTeb64();
-                    const auto* peb = reinterpret_cast<PEB64*>(teb->ProcessEnvironmentBlock);
-                    const auto* api_set_map = reinterpret_cast<const API_SET_NAMESPACE*>(peb->ApiSetMap);
-                    const auto* data_ptr = reinterpret_cast<const std::byte*>(api_set_map);
-                    return {data_ptr, data_ptr + api_set_map->Size};
-                }
-#else
-                case location::host:
-                    throw std::runtime_error("The APISET host location is not supported on this platform");
-#endif
-                case location::file: {
-                    const auto apiset = utils::io::read_file(root / "api-set.bin");
-                    if (apiset.empty())
-                    {
-                        throw std::runtime_error("Failed to read file api-set.bin");
-                    }
-
-                    return decompress_apiset(apiset);
-                }
-                case location::default_windows_10: {
-                    const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w10);
-                    const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w10)};
-                    return decompress_apiset(apiset);
-                }
-                case location::default_windows_11: {
-                    const auto* byte_apiset = reinterpret_cast<const std::byte*>(apiset_w11);
-                    const std::vector<std::byte> apiset{byte_apiset, byte_apiset + sizeof(apiset_w11)};
-                    return decompress_apiset(apiset);
-                }
-                default:
-                    throw std::runtime_error("Bad API set location");
-                }
-            }
         }
 
-        container obtain(const location location, const std::filesystem::path& root)
+        container obtain(const std::filesystem::path& schema_dll)
         {
-            return {.data = obtain_data(location, root)};
-        }
-
-        container obtain(const std::filesystem::path& root, const std::filesystem::path& schema_dll)
-        {
-            auto apiset_loc = location::file;
-
-            if (root.empty())
-            {
-#ifdef OS_WINDOWS
-                apiset_loc = location::host;
-#else
-                apiset_loc = location::default_windows_11;
-#endif
-            }
-            else if (!utils::io::file_exists(root / "api-set.bin") && utils::io::file_exists(schema_dll))
-            {
-                return {.data = read_schema_dll(schema_dll)};
-            }
-
-            return obtain(apiset_loc, root);
+            return {.data = read_schema_dll(schema_dll)};
         }
 
         emulator_object<API_SET_NAMESPACE> clone(memory_interface& emu, emulator_allocator& allocator, const container& container)

@@ -241,9 +241,6 @@ jobs:
       - name: Create Emulation Root
         run: src/tools/create-root.bat
 
-      - name: Dump API Set
-        run: cd root && ../build/release/artifacts/dump-apiset.exe
-
       - name: Install DXVK and Vulkan Shim
         shell: pwsh
         run: ./src/tools/install-gpu-runtime.ps1 -WindowsDir root/filesys/c/windows -Shim64 build/release/artifacts/vulkan-shim-x64.dll -Shim32 build/release/artifacts/vulkan-shim-x86.dll
@@ -265,22 +262,12 @@ jobs:
   create-arm64-emulation-root:
     name: Create ARM64 Emulation Root
     runs-on: windows-11-arm
-    needs: [build-root-tools]
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
 
-      - name: Download Root Build Tools
-        uses: pyTooling/download-artifact@v8
-        with:
-          name: Temp Root Build Tools
-          path: build/release/artifacts
-
       - name: Create Emulation Root
         run: src/tools/create-root.bat
-
-      - name: Dump API Set
-        run: cd root && ../build/release/artifacts/dump-apiset.exe
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7

@@ -59,10 +59,10 @@ if(_SOGEN_BUILD_STANDALONE_TARGETS)
   endif()
 
   # The tools baked into the emulation root, grouped so CI builds one target. Each is included only when it
-  # exists for the current arch/config (dump-apiset is 64-bit; steam-shim needs the Steam bridge enabled).
+  # exists for the current arch/config (steam-shim needs the Steam bridge enabled).
   if(WIN32)
     add_custom_target(emulation-root-tools)
-    foreach(_root_tool vulkan-shim steam-shim dump-apiset)
+    foreach(_root_tool vulkan-shim steam-shim)
       if(TARGET ${_root_tool})
         add_dependencies(emulation-root-tools ${_root_tool})
       endif()
