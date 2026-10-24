@@ -1,3 +1,5 @@
+#include "std_include.hpp"
+
 #include "snapshot.hpp"
 
 #include <utils/io.hpp>

@@ -3,7 +3,9 @@
 #include <emulator_process_target.hpp>
 #include <inherited_pipes.hpp>
 #include <registry/registry_file.hpp>
+#include <snapshot.hpp>
 #include <utils/finally.hpp>
+#include <utils/io.hpp>
 #include <utils/executable_path.hpp>
 #ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
@@ -59,10 +61,11 @@ namespace sogen::sandbox
                 const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
                 const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
-                const bool spoof_gpu_features, managed_process_connection* managed_connection)
+                const bool spoof_gpu_features, const std::filesystem::path& suspend_file, const std::filesystem::path& resume_file,
+                managed_process_connection* managed_connection)
         {
             application_settings app_settings{
-                .application = std::u8string(args[0].begin(), args[0].end()),
+                .application = args.empty() ? std::u8string{} : std::u8string(args[0].begin(), args[0].end()),
                 .arguments = parse_arguments(args),
             };
             for (const auto& [name, value] : environment)
@@ -166,13 +169,22 @@ namespace sogen::sandbox
             auto emulator = kvm::create_x86_64_emulator();
 #endif
 
-            windows_emulator win_emu{std::move(emulator), std::move(app_settings), settings, std::move(callbacks),
-                                     emulator_interfaces{.processes = &process_manager}};
+            auto win_emu_ptr = resume_file.empty() ? std::make_unique<windows_emulator>(std::move(emulator), std::move(app_settings),
+                                                                                        settings, std::move(callbacks),
+                                                                                        emulator_interfaces{.processes = &process_manager})
+                                                   : std::make_unique<windows_emulator>(std::move(emulator), settings, std::move(callbacks),
+                                                                                        emulator_interfaces{.processes = &process_manager});
+            auto& win_emu = *win_emu_ptr;
             for (const auto& file : registry_files)
             {
                 import_registry_file(win_emu.registry, file);
             }
             win_emu.log.disable_output(true);
+
+            if (!resume_file.empty())
+            {
+                snapshot::load_emulator_snapshot(win_emu, resume_file);
+            }
 
             std::unique_ptr<emulator_process_target> managed_target{};
             if (managed_connection)
@@ -208,6 +220,16 @@ namespace sogen::sandbox
             const auto exit_status = win_emu.process.exit_status;
             if (!exit_status.has_value())
             {
+                if (!suspend_file.empty() && signals_received > 0)
+                {
+                    if (!utils::io::write_file(suspend_file, snapshot::create_emulator_snapshot(win_emu)))
+                    {
+                        throw std::runtime_error("Writing the snapshot failed");
+                    }
+
+                    return 0;
+                }
+
                 return 1;
             }
 
@@ -260,6 +282,11 @@ namespace sogen::sandbox
             bool spoof_gpu_features{};
             app.add_flag("--spoof-gpu-features", spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
+            std::filesystem::path suspend_file{};
+            std::filesystem::path resume_file{};
+            app.add_option("--suspend-to", suspend_file, "Save the process to this file instead of exiting when interrupted")
+                ->type_name("FILE");
+            app.add_option("--resume", resume_file, "Continue a process saved with --suspend-to")->type_name("FILE");
             app.add_option("--managed-process-port", managed_process_port)->group("");
             app.add_option("--managed-process-token", managed_process_token)->group("");
 
@@ -285,7 +312,7 @@ namespace sogen::sandbox
                     application.push_back(request.application);
                     application.insert(application.end(), request.arguments.begin(), request.arguments.end());
                 }
-                if (application.empty())
+                if (application.empty() && resume_file.empty())
                 {
                     puts(app.help().c_str());
                     return 1;
@@ -310,8 +337,8 @@ namespace sogen::sandbox
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_filesystem_mode(root_mode).value(), std::move(mounts), emulation_root, registry_directory,
-                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features,
-                           managed_process ? &*managed_process : nullptr);
+                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features, suspend_file,
+                           resume_file, managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {

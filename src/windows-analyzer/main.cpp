@@ -12,7 +12,7 @@
 #include <registry/registry_file.hpp>
 
 #include "object_watching.hpp"
-#include "snapshot.hpp"
+#include <snapshot.hpp>
 #include "analysis.hpp"
 #include "analysis_reporter.hpp"
 #include "jsonl_reporter.hpp"
