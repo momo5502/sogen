@@ -397,7 +397,7 @@ namespace sogen::py
         auto envp = parse_linux_environment(get_kwarg_object(kwargs, "environment"));
         auto linux_emu = std::make_unique<linux_emulator>(create_x86_64_emulator(get_backend_type(kwargs)),
                                                           get_kwarg<std::filesystem::path>(kwargs, "emulation_root", {}));
-        linux_emu->process.current_working_directory = linux_file_system::normalize_guest_path_string(
+        linux_emu->process.current_working_directory = posix_file_system::normalize_guest_path_string(
             get_kwarg<std::filesystem::path>(kwargs, "working_directory", std::filesystem::path{"/"}).string());
         apply_linux_path_mappings(*linux_emu, get_kwarg_object(kwargs, "path_mappings"), false);
         apply_linux_path_mappings(*linux_emu, get_kwarg_object(kwargs, "read_only_path_mappings"), true);
@@ -1261,7 +1261,7 @@ namespace sogen::py
         return {this->emu->process, *this->emu, nb::cast(this, nb::rv_policy::reference_internal)};
     }
 
-    linux_memory_manager& sogen_linux_emulator::memory() const
+    posix_memory_manager& sogen_linux_emulator::memory() const
     {
         return this->emu->memory;
     }

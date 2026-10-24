@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "linux_module_manager.hpp"
-#include "../linux_file_system.hpp"
+#include "../linux_memory_layout.hpp"
+#include <posix_file_system.hpp>
 
 #include <platform/elf.hpp>
 #include <utils/io.hpp>
@@ -524,7 +525,7 @@ namespace sogen
     }
 
     std::filesystem::path linux_module_manager::resolve_library(const std::string& name, const linux_mapped_module& requesting_module,
-                                                                const linux_file_system& file_sys) const
+                                                                const posix_file_system& file_sys) const
     {
         // If the name contains a slash, treat it as a path (absolute or relative)
         if (name.find('/') != std::string::npos)
@@ -598,7 +599,7 @@ namespace sogen
         return {};
     }
 
-    void linux_module_manager::load_dependencies(const linux_file_system& file_sys)
+    void linux_module_manager::load_dependencies(const posix_file_system& file_sys)
     {
         // BFS traversal of DT_NEEDED dependencies.
         // Collect libraries to load from all currently-loaded modules.
