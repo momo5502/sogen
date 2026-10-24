@@ -13,6 +13,12 @@
 
 namespace sogen
 {
+    namespace utils
+    {
+        class buffer_serializer;
+        class buffer_deserializer;
+    }
+
     // Thin host-side wrapper around the real Vulkan driver. Owns the dynamically loaded loader and
     // the mapping from opaque object ids (handed to the guest) to live Vulkan handles, so raw host
     // pointers never cross the bridge.
@@ -41,6 +47,12 @@ namespace sogen
 
         // False if no Vulkan driver could be loaded on the host.
         bool available() const;
+
+        // Saves the live objects so that deserialize can re-create them under the same ids. Waits for every device to go
+        // idle first. Throws for object types snapshots do not support yet. Imported memory aliases guest memory, which
+        // the snapshot does not contain: imported_host_pointer hands out where that memory lives after the restore.
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer, const std::function<void*(uint64_t memory)>& imported_host_pointer);
 
         int32_t create_instance(std::span<const std::string> extensions, uint64_t& out_instance);
         bool get_native_instance_handle(uint64_t instance, uint64_t& out_handle) const;

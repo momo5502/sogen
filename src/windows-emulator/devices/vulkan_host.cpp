@@ -3,6 +3,8 @@
 #include "spirv_clip_distance.hpp"
 
 #include <address_utils.hpp>
+#include <utils/finally.hpp>
+#include <utils/serialization.hpp>
 
 #include <algorithm>
 #include <array>
@@ -217,6 +219,7 @@ namespace sogen
             PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR get_calibrateable_time_domains{};
             PFN_vkCreateDevice create_device{};
             PFN_vkGetDeviceProcAddr get_device_proc_addr{};
+            std::vector<std::string> extensions{};
         };
 
         struct physical_device_data
@@ -268,9 +271,21 @@ namespace sogen
             return *device.portability;
         }
 
+        struct device_create_params
+        {
+            uint64_t physical_device{};
+            std::vector<gpu_bridge::device_queue_create_entry> queues{};
+            std::vector<std::byte> extensions{};
+            uint32_t extension_count{};
+            std::vector<std::byte> features{};
+            uint32_t feature_count{};
+            bool spoof_missing_features{};
+        };
+
         struct device_data
         {
             VkDevice handle{};
+            device_create_params create{};
             bool maintenance5_enabled{};
             // Held shared by presents running without the caller's locks, so destroying the device waits for them.
             std::shared_ptr<std::shared_mutex> presents = std::make_shared<std::shared_mutex>();
@@ -465,12 +480,16 @@ namespace sogen
         {
             VkQueue handle{};
             uint64_t device_id{};
+            uint32_t queue_family_index{};
+            uint32_t queue_index{};
         };
 
         struct command_pool_data
         {
             VkCommandPool handle{};
             uint64_t device_id{};
+            uint32_t queue_family_index{};
+            uint32_t flags{};
         };
 
         struct command_buffer_data
@@ -478,6 +497,7 @@ namespace sogen
             VkCommandBuffer handle{};
             uint64_t device_id{};
             uint64_t pool_id{};
+            uint32_t level{};
         };
 
         struct fence_data
@@ -496,12 +516,18 @@ namespace sogen
         {
             VkSemaphore handle{};
             uint64_t device_id{};
+            uint32_t flags{};
+            uint32_t type{};
         };
 
         struct memory_data
         {
             VkDeviceMemory handle{};
             uint64_t device_id{};
+            uint64_t requested_size{};
+            uint32_t memory_type_index{};
+            uint32_t flags{};
+            uint32_t device_mask{};
             void* persistent_host_pointer{};
             uint64_t mapped_size{};
             uint64_t allocation_size{};
@@ -514,6 +540,7 @@ namespace sogen
         {
             VkBuffer handle{};
             uint64_t device_id{};
+            uint32_t usage{};
             uint64_t memory_id{};
             uint64_t memory_offset{};
             uint64_t size{};
@@ -660,6 +687,19 @@ namespace sogen
         std::unordered_map<uint64_t, descriptor_pool_data> descriptor_pools;
         std::unordered_map<uint64_t, descriptor_set_data> descriptor_sets;
         uint64_t next_id{1};
+
+        // Set while restoring a snapshot, so the object being re-created gets the id the guest already holds.
+        std::optional<uint64_t> forced_id{};
+
+        uint64_t allocate_id()
+        {
+            if (this->forced_id)
+            {
+                return *std::exchange(this->forced_id, std::nullopt);
+            }
+
+            return this->next_id++;
+        }
 
         // Picks the first memory type set in `type_bits` that has all `required` property flags, using
         // the memory properties of the device's physical device. Returns UINT32_MAX if none qualifies.
@@ -1293,8 +1333,9 @@ namespace sogen
         }
         data.create_device = this->impl_->load_instance_proc<PFN_vkCreateDevice>(instance, "vkCreateDevice");
         data.get_device_proc_addr = this->impl_->load_instance_proc<PFN_vkGetDeviceProcAddr>(instance, "vkGetDeviceProcAddr");
+        data.extensions.assign(extensions.begin(), extensions.end());
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->instances.emplace(id, data);
         out_instance = id;
         return VK_SUCCESS;
@@ -1408,7 +1449,7 @@ namespace sogen
             auto id_it = this->impl_->physical_device_ids.find(device);
             if (id_it == this->impl_->physical_device_ids.end())
             {
-                const uint64_t id = this->impl_->next_id++;
+                const uint64_t id = this->impl_->allocate_id();
                 this->impl_->physical_devices.emplace(id, impl::physical_device_data{.handle = device, .instance_id = instance});
                 id_it = this->impl_->physical_device_ids.emplace(device, id).first;
             }
@@ -2364,6 +2405,18 @@ namespace sogen
 
         impl::device_data data{};
         data.handle = device;
+        data.create.physical_device = physical_device;
+        if (entries)
+        {
+            data.create.queues.assign(entries, entries + queue_entry_count);
+        }
+        data.create.extensions.assign(static_cast<const std::byte*>(extension_blob),
+                                      static_cast<const std::byte*>(extension_blob) + extension_blob_size);
+        data.create.extension_count = extension_count;
+        data.create.features.assign(static_cast<const std::byte*>(feature_blob),
+                                    static_cast<const std::byte*>(feature_blob) + feature_blob_size);
+        data.create.feature_count = feature_struct_count;
+        data.create.spoof_missing_features = spoof_missing_features;
         const bool maintenance5_extension_enabled =
             std::ranges::any_of(extensions, [](const char* name) { return std::strcmp(name, "VK_KHR_maintenance5") == 0; });
         const bool maintenance5_feature_enabled = std::ranges::any_of(chained, [](const std::vector<std::byte>& buffer) {
@@ -2599,7 +2652,7 @@ namespace sogen
                 reinterpret_cast<PFN_vkCmdSetPrimitiveRestartEnable>(resolve("vkCmdSetPrimitiveRestartEnable"));
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->devices.emplace(id, data);
         out_device = id;
         return VK_SUCCESS;
@@ -2627,8 +2680,10 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->queues.emplace(id, impl::queue_data{.handle = queue, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->queues.emplace(
+            id,
+            impl::queue_data{.handle = queue, .device_id = device, .queue_family_index = queue_family_index, .queue_index = queue_index});
         out_queue = id;
         return VK_SUCCESS;
     }
@@ -2655,8 +2710,9 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->command_pools.emplace(id, impl::command_pool_data{.handle = pool, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->command_pools.emplace(
+            id, impl::command_pool_data{.handle = pool, .device_id = device, .queue_family_index = queue_family_index, .flags = flags});
         out_pool = id;
         return VK_SUCCESS;
     }
@@ -2705,8 +2761,9 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->command_buffers.emplace(id, impl::command_buffer_data{.handle = command_buffer, .device_id = device, .pool_id = pool});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->command_buffers.emplace(
+            id, impl::command_buffer_data{.handle = command_buffer, .device_id = device, .pool_id = pool, .level = level});
         out_command_buffer = id;
         return VK_SUCCESS;
     }
@@ -2933,7 +2990,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->fences.emplace(id, impl::fence_data{.handle = fence, .device_id = device});
         out_fence = id;
         return VK_SUCCESS;
@@ -2987,8 +3044,9 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->semaphores.emplace(id, impl::semaphore_data{.handle = semaphore, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->semaphores.emplace(
+            id, impl::semaphore_data{.handle = semaphore, .device_id = device, .flags = flags, .type = semaphore_type});
         out_semaphore = id;
         return VK_SUCCESS;
     }
@@ -3138,7 +3196,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->events.emplace(id, impl::event_data{.handle = event, .device_id = device});
         out_event = id;
         return VK_SUCCESS;
@@ -3519,8 +3577,14 @@ namespace sogen
             }
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device, .allocation_size = aligned_size});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory,
+                                                            .device_id = device,
+                                                            .requested_size = size,
+                                                            .memory_type_index = memory_type_index,
+                                                            .flags = flags,
+                                                            .device_mask = device_mask,
+                                                            .allocation_size = aligned_size});
         out_memory = id;
         return VK_SUCCESS;
     }
@@ -3598,8 +3662,8 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->buffers.emplace(id, impl::buffer_data{.handle = buffer, .device_id = device, .size = size});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->buffers.emplace(id, impl::buffer_data{.handle = buffer, .device_id = device, .usage = usage, .size = size});
         out_buffer = id;
         return VK_SUCCESS;
     }
@@ -3951,9 +4015,13 @@ namespace sogen
             }
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->memories.emplace(id, impl::memory_data{.handle = memory,
                                                             .device_id = device,
+                                                            .requested_size = size,
+                                                            .memory_type_index = memory_type_index,
+                                                            .flags = flags,
+                                                            .device_mask = device_mask,
                                                             .persistent_host_pointer = host_pointer,
                                                             .mapped_size = size,
                                                             .allocation_size = size,
@@ -4121,7 +4189,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->images.emplace(id, impl::image_data{.handle = image, .device_id = device, .samples = samples ? samples : 1});
         out_image = id;
         return VK_SUCCESS;
@@ -4602,7 +4670,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->samplers.emplace(id, impl::sampler_data{.handle = sampler, .device_id = device});
         out_sampler = id;
         return VK_SUCCESS;
@@ -4631,7 +4699,7 @@ namespace sogen
             return VK_ERROR_SURFACE_LOST_KHR;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->surfaces.emplace(id, impl::surface_data{
                                               .handle = unpack_vulkan_handle<VkSurfaceKHR>(native_surface),
                                               .instance_id = instance,
@@ -4894,7 +4962,7 @@ namespace sogen
         sc.image_ids.reserve(native_images.size());
         for (VkImage image : native_images)
         {
-            const uint64_t image_id = this->impl_->next_id++;
+            const uint64_t image_id = this->impl_->allocate_id();
             this->impl_->images.emplace(image_id, impl::image_data{
                                                       .handle = image,
                                                       .device_id = device,
@@ -4904,7 +4972,7 @@ namespace sogen
             sc.image_ids.push_back(image_id);
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         out_image_count = static_cast<uint32_t>(sc.image_ids.size());
         this->impl_->swapchains.emplace(id, std::move(sc));
         out_swapchain = id;
@@ -5070,7 +5138,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->shader_modules.emplace(id, impl::shader_module_data{.handle = module, .device_id = device});
         out_module = id;
         return VK_SUCCESS;
@@ -5180,7 +5248,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->image_views.emplace(id, impl::image_view_data{.handle = view, .device_id = device});
         out_view = id;
         return VK_SUCCESS;
@@ -5227,7 +5295,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->buffer_views.emplace(id, impl::buffer_view_data{.handle = view, .device_id = device});
         out_view = id;
         return VK_SUCCESS;
@@ -5301,7 +5369,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->query_pools.emplace(
             id, impl::query_pool_data{
                     .handle = pool, .device_id = device, .query_type = query_type, .pipeline_statistics = pipeline_statistics});
@@ -5742,7 +5810,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->render_passes.emplace(id, impl::render_pass_data{.handle = render_pass, .device_id = device, .has_depth = has_depth});
         out_render_pass = id;
         return VK_SUCCESS;
@@ -5805,7 +5873,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->framebuffers.emplace(id, impl::framebuffer_data{.handle = framebuffer, .device_id = device});
         out_framebuffer = id;
         return VK_SUCCESS;
@@ -5870,7 +5938,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->pipeline_layouts.emplace(id, impl::pipeline_layout_data{.handle = layout, .device_id = device});
         out_layout = id;
         return VK_SUCCESS;
@@ -5935,7 +6003,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->descriptor_set_layouts.emplace(id, impl::descriptor_set_layout_data{.handle = layout, .device_id = device});
         out_layout = id;
         return VK_SUCCESS;
@@ -6046,7 +6114,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->descriptor_pools.emplace(id, impl::descriptor_pool_data{.handle = pool, .device_id = device});
         out_pool = id;
         return VK_SUCCESS;
@@ -6140,7 +6208,7 @@ namespace sogen
         out_count = static_cast<uint32_t>(sets.size());
         for (size_t i = 0; i < sets.size(); ++i)
         {
-            const uint64_t id = this->impl_->next_id++;
+            const uint64_t id = this->impl_->allocate_id();
             this->impl_->descriptor_sets.emplace(
                 id, impl::descriptor_set_data{.handle = sets[i], .device_id = device, .pool_id = pool, .buffer_bindings = {}});
             if (i < out_sets.size())
@@ -6378,7 +6446,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->pipeline_caches.emplace(id, impl::pipeline_cache_data{.handle = cache, .device_id = device});
         out_pipeline_cache = id;
         return VK_SUCCESS;
@@ -6791,7 +6859,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device});
         out_pipeline = id;
         return VK_SUCCESS;
@@ -6865,7 +6933,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device});
         out_pipeline = id;
         return VK_SUCCESS;
@@ -7722,5 +7790,459 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         return VK_SUCCESS;
+    }
+
+    namespace
+    {
+        constexpr uint32_t snapshot_version = 1;
+
+        template <typename Map>
+        void reject_live_objects(const Map& objects, const std::string_view type)
+        {
+            if (!objects.empty())
+            {
+                throw std::runtime_error("Snapshots do not support live Vulkan " + std::string{type} + " yet");
+            }
+        }
+
+        void expect_restored(const int32_t result, const uint64_t restored, const uint64_t expected, const std::string_view type)
+        {
+            if (result != VK_SUCCESS || restored != expected)
+            {
+                throw std::runtime_error("Restoring Vulkan " + std::string{type} + " " + std::to_string(expected) + " failed with result " +
+                                         std::to_string(result));
+            }
+        }
+
+        std::vector<VkPhysicalDevice> enumerate_native_physical_devices(const PFN_vkEnumeratePhysicalDevices enumerate,
+                                                                        const VkInstance instance)
+        {
+            uint32_t count = 0;
+            if (!enumerate || enumerate(instance, &count, nullptr) != VK_SUCCESS)
+            {
+                return {};
+            }
+
+            std::vector<VkPhysicalDevice> devices(count);
+            if (enumerate(instance, &count, devices.data()) != VK_SUCCESS)
+            {
+                return {};
+            }
+
+            devices.resize(count);
+            return devices;
+        }
+    }
+
+    void vulkan_host::serialize(utils::buffer_serializer& buffer) const
+    {
+        auto& impl = *this->impl_;
+
+        reject_live_objects(impl.events, "events");
+        reject_live_objects(impl.images, "images");
+        reject_live_objects(impl.samplers, "samplers");
+        reject_live_objects(impl.surfaces, "surfaces");
+        reject_live_objects(impl.swapchains, "swapchains");
+        reject_live_objects(impl.shader_modules, "shader modules");
+        reject_live_objects(impl.image_views, "image views");
+        reject_live_objects(impl.buffer_views, "buffer views");
+        reject_live_objects(impl.query_pools, "query pools");
+        reject_live_objects(impl.render_passes, "render passes");
+        reject_live_objects(impl.framebuffers, "framebuffers");
+        reject_live_objects(impl.pipeline_layouts, "pipeline layouts");
+        reject_live_objects(impl.pipelines, "pipelines");
+        reject_live_objects(impl.pipeline_caches, "pipeline caches");
+        reject_live_objects(impl.descriptor_set_layouts, "descriptor set layouts");
+        reject_live_objects(impl.descriptor_pools, "descriptor pools");
+        reject_live_objects(impl.descriptor_sets, "descriptor sets");
+
+        for (const auto& device : impl.devices | std::views::values)
+        {
+            if (!device.device_wait_idle || device.device_wait_idle(device.handle) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Waiting for a Vulkan device to go idle failed");
+            }
+        }
+
+        const auto memory_property_flags = [&](const impl::device_data& device, const uint32_t memory_type_index) -> VkMemoryPropertyFlags {
+            VkPhysicalDeviceMemoryProperties properties{};
+            if (!impl.query_memory_properties(device, properties))
+            {
+                return 0;
+            }
+
+            const auto index = impl.substitute_cached_memory_type(device, memory_type_index);
+            return index < properties.memoryTypeCount ? properties.memoryTypes[index].propertyFlags : 0;
+        };
+
+        buffer.write(snapshot_version);
+        buffer.write(impl.next_id);
+
+        buffer.write(static_cast<uint64_t>(impl.instances.size()));
+        for (const auto& [id, instance] : impl.instances)
+        {
+            buffer.write(id);
+            buffer.write(static_cast<uint64_t>(instance.extensions.size()));
+            for (const auto& extension : instance.extensions)
+            {
+                buffer.write_string(extension);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.physical_devices.size()));
+        for (const auto& [id, physical_device] : impl.physical_devices)
+        {
+            const auto& instance = impl.instances.at(physical_device.instance_id);
+            const auto native = enumerate_native_physical_devices(instance.enumerate_physical_devices, instance.handle);
+            const auto position = std::ranges::find(native, physical_device.handle);
+            if (position == native.end() || !instance.get_physical_device_properties)
+            {
+                throw std::runtime_error("A Vulkan physical device is no longer enumerated");
+            }
+
+            VkPhysicalDeviceProperties properties{};
+            instance.get_physical_device_properties(physical_device.handle, &properties);
+
+            buffer.write(id);
+            buffer.write(physical_device.instance_id);
+            buffer.write(static_cast<uint32_t>(position - native.begin()));
+            buffer.write(properties.vendorID);
+            buffer.write(properties.deviceID);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.devices.size()));
+        for (const auto& [id, device] : impl.devices)
+        {
+            buffer.write(id);
+            buffer.write(device.create.physical_device);
+            buffer.write_vector(device.create.queues);
+            buffer.write_vector(device.create.extensions);
+            buffer.write(device.create.extension_count);
+            buffer.write_vector(device.create.features);
+            buffer.write(device.create.feature_count);
+            buffer.write(device.create.spoof_missing_features);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.queues.size()));
+        for (const auto& [id, queue] : impl.queues)
+        {
+            buffer.write(id);
+            buffer.write(queue.device_id);
+            buffer.write(queue.queue_family_index);
+            buffer.write(queue.queue_index);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.memories.size()));
+        for (const auto& [id, memory] : impl.memories)
+        {
+            buffer.write(id);
+            buffer.write(memory.device_id);
+            buffer.write(memory.requested_size);
+            buffer.write(memory.memory_type_index);
+            buffer.write(memory.flags);
+            buffer.write(memory.device_mask);
+            buffer.write(memory.imported);
+
+            if (memory.imported)
+            {
+                continue;
+            }
+
+            const auto& device = impl.devices.at(memory.device_id);
+            if ((memory_property_flags(device, memory.memory_type_index) & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
+            {
+                throw std::runtime_error("Snapshots do not save device-local Vulkan memory yet");
+            }
+
+            void* mapped = memory.persistent_host_pointer;
+            if (!mapped &&
+                (!device.map_memory || device.map_memory(device.handle, memory.handle, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS))
+            {
+                throw std::runtime_error("Mapping Vulkan memory for a snapshot failed");
+            }
+
+            VkMappedMemoryRange range{};
+            range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = memory.handle;
+            range.size = VK_WHOLE_SIZE;
+            if (device.invalidate_mapped_memory_ranges)
+            {
+                device.invalidate_mapped_memory_ranges(device.handle, 1, &range);
+            }
+
+            const auto* contents = static_cast<const std::byte*>(mapped);
+            buffer.write_vector(std::vector<std::byte>(contents, contents + memory.allocation_size));
+
+            if (!memory.persistent_host_pointer)
+            {
+                device.unmap_memory(device.handle, memory.handle);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.buffers.size()));
+        for (const auto& [id, buffer_object] : impl.buffers)
+        {
+            buffer.write(id);
+            buffer.write(buffer_object.device_id);
+            buffer.write(buffer_object.size);
+            buffer.write(buffer_object.usage);
+            buffer.write(buffer_object.memory_id);
+            buffer.write(buffer_object.memory_offset);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.command_pools.size()));
+        for (const auto& [id, pool] : impl.command_pools)
+        {
+            buffer.write(id);
+            buffer.write(pool.device_id);
+            buffer.write(pool.queue_family_index);
+            buffer.write(pool.flags);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.command_buffers.size()));
+        for (const auto& [id, command_buffer] : impl.command_buffers)
+        {
+            buffer.write(id);
+            buffer.write(command_buffer.device_id);
+            buffer.write(command_buffer.pool_id);
+            buffer.write(command_buffer.level);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.fences.size()));
+        for (const auto& [id, fence] : impl.fences)
+        {
+            const auto& device = impl.devices.at(fence.device_id);
+            buffer.write(id);
+            buffer.write(fence.device_id);
+            buffer.write(device.get_fence_status && device.get_fence_status(device.handle, fence.handle) == VK_SUCCESS);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.semaphores.size()));
+        for (const auto& [id, semaphore] : impl.semaphores)
+        {
+            const auto& device = impl.devices.at(semaphore.device_id);
+            uint64_t value = 0;
+            if (semaphore.type == VK_SEMAPHORE_TYPE_TIMELINE &&
+                (!device.get_semaphore_counter_value ||
+                 device.get_semaphore_counter_value(device.handle, semaphore.handle, &value) != VK_SUCCESS))
+            {
+                throw std::runtime_error("Reading a Vulkan timeline semaphore failed");
+            }
+
+            buffer.write(id);
+            buffer.write(semaphore.device_id);
+            buffer.write(semaphore.flags);
+            buffer.write(semaphore.type);
+            buffer.write(value);
+        }
+    }
+
+    void vulkan_host::deserialize(utils::buffer_deserializer& buffer, const std::function<void*(uint64_t memory)>& imported_host_pointer)
+    {
+        auto& impl = *this->impl_;
+        const auto clear_forced_id = utils::finally([&] { impl.forced_id.reset(); });
+
+        if (buffer.read<uint32_t>() != snapshot_version)
+        {
+            throw std::runtime_error("Unsupported Vulkan snapshot version");
+        }
+
+        const auto next_id = buffer.read<uint64_t>();
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            std::vector<std::string> extensions(buffer.read<uint64_t>());
+            for (auto& extension : extensions)
+            {
+                extension = buffer.read_string<char>();
+            }
+
+            uint64_t instance{};
+            impl.forced_id = id;
+            const auto result = this->create_instance(extensions, instance);
+            expect_restored(result, instance, id, "instance");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto instance_id = buffer.read<uint64_t>();
+            const auto index = buffer.read<uint32_t>();
+            const auto vendor_id = buffer.read<uint32_t>();
+            const auto device_id = buffer.read<uint32_t>();
+
+            const auto& instance = impl.instances.at(instance_id);
+            const auto native = enumerate_native_physical_devices(instance.enumerate_physical_devices, instance.handle);
+
+            VkPhysicalDeviceProperties properties{};
+            if (index < native.size() && instance.get_physical_device_properties)
+            {
+                instance.get_physical_device_properties(native[index], &properties);
+            }
+
+            if (index >= native.size() || properties.vendorID != vendor_id || properties.deviceID != device_id)
+            {
+                throw std::runtime_error("The snapshot was taken on a different GPU");
+            }
+
+            impl.physical_devices.emplace(id, impl::physical_device_data{.handle = native[index], .instance_id = instance_id});
+            impl.physical_device_ids.emplace(native[index], id);
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            impl::device_create_params create{};
+            buffer.read(create.physical_device);
+            buffer.read_vector(create.queues);
+            buffer.read_vector(create.extensions);
+            buffer.read(create.extension_count);
+            buffer.read_vector(create.features);
+            buffer.read(create.feature_count);
+            buffer.read(create.spoof_missing_features);
+
+            uint64_t device{};
+            impl.forced_id = id;
+            const auto result =
+                this->create_device(create.physical_device, create.queues.data(), create.queues.size(), create.extensions.data(),
+                                    create.extensions.size(), create.extension_count, create.features.data(), create.features.size(),
+                                    create.feature_count, create.spoof_missing_features, device);
+            expect_restored(result, device, id, "device");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto queue_family_index = buffer.read<uint32_t>();
+            const auto queue_index = buffer.read<uint32_t>();
+
+            uint64_t queue{};
+            impl.forced_id = id;
+            const auto result = this->get_device_queue(device, queue_family_index, queue_index, queue);
+            expect_restored(result, queue, id, "queue");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto size = buffer.read<uint64_t>();
+            const auto memory_type_index = buffer.read<uint32_t>();
+            const auto flags = buffer.read<uint32_t>();
+            const auto device_mask = buffer.read<uint32_t>();
+            const auto imported = buffer.read<bool>();
+
+            uint64_t memory{};
+            impl.forced_id = id;
+            if (imported)
+            {
+                const auto result =
+                    this->import_host_memory(device, size, memory_type_index, flags, device_mask, imported_host_pointer(id), memory);
+                expect_restored(result, memory, id, "imported memory");
+                continue;
+            }
+
+            const auto result = this->allocate_memory(device, size, memory_type_index, flags, device_mask, memory);
+            expect_restored(result, memory, id, "memory");
+
+            const auto contents = buffer.read_vector<std::byte>();
+            const auto& dev = impl.devices.at(device);
+            const auto& mem = impl.memories.at(id);
+            void* mapped = nullptr;
+            if (contents.size() != mem.allocation_size || !dev.map_memory ||
+                dev.map_memory(dev.handle, mem.handle, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Restoring the contents of Vulkan memory " + std::to_string(id) + " failed");
+            }
+
+            std::memcpy(mapped, contents.data(), contents.size());
+
+            VkMappedMemoryRange range{};
+            range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+            range.memory = mem.handle;
+            range.size = VK_WHOLE_SIZE;
+            if (dev.flush_mapped_memory_ranges)
+            {
+                dev.flush_mapped_memory_ranges(dev.handle, 1, &range);
+            }
+
+            dev.unmap_memory(dev.handle, mem.handle);
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto size = buffer.read<uint64_t>();
+            const auto usage = buffer.read<uint32_t>();
+            const auto memory = buffer.read<uint64_t>();
+            const auto memory_offset = buffer.read<uint64_t>();
+
+            uint64_t buffer_object{};
+            impl.forced_id = id;
+            const auto result = this->create_buffer(device, size, usage, buffer_object);
+            expect_restored(result, buffer_object, id, "buffer");
+
+            if (memory != 0 && this->bind_buffer_memory(device, id, memory, memory_offset) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Binding restored Vulkan buffer " + std::to_string(id) + " failed");
+            }
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto queue_family_index = buffer.read<uint32_t>();
+            const auto flags = buffer.read<uint32_t>();
+
+            uint64_t pool{};
+            impl.forced_id = id;
+            const auto result = this->create_command_pool(device, queue_family_index, flags, pool);
+            expect_restored(result, pool, id, "command pool");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto pool = buffer.read<uint64_t>();
+            const auto level = buffer.read<uint32_t>();
+
+            uint64_t command_buffer{};
+            impl.forced_id = id;
+            const auto result = this->allocate_command_buffer(device, pool, level, command_buffer);
+            expect_restored(result, command_buffer, id, "command buffer");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto signaled = buffer.read<bool>();
+
+            uint64_t fence{};
+            impl.forced_id = id;
+            const auto result = this->create_fence(device, signaled ? VK_FENCE_CREATE_SIGNALED_BIT : 0, fence);
+            expect_restored(result, fence, id, "fence");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto flags = buffer.read<uint32_t>();
+            const auto type = buffer.read<uint32_t>();
+            const auto value = buffer.read<uint64_t>();
+
+            uint64_t semaphore{};
+            impl.forced_id = id;
+            const auto result = this->create_semaphore(device, flags, type, value, semaphore);
+            expect_restored(result, semaphore, id, "semaphore");
+        }
+
+        impl.next_id = next_id;
     }
 }

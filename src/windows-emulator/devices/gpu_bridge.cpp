@@ -252,17 +252,117 @@ namespace sogen
                 }
             }
 
-            bool supports_snapshots() const override
+            void serialize_object(utils::buffer_serializer& buffer) const override
             {
-                return false;
+                utils::buffer_serializer vulkan{};
+                this->vulkan_.serialize(vulkan);
+                buffer.write_vector(vulkan.get_buffer());
+
+                buffer.write(static_cast<uint64_t>(this->direct_mappings_.size()));
+                for (const auto& [memory, mapping] : this->direct_mappings_)
+                {
+                    buffer.write(memory);
+                    buffer.write(mapping.guest_address);
+                    buffer.write(mapping.size);
+                    buffer.write(mapping.device);
+                    buffer.write(mapping.placed);
+                }
+
+                buffer.write(static_cast<uint64_t>(this->imported_memory_.size()));
+                for (const auto& [memory, imported] : this->imported_memory_)
+                {
+                    buffer.write(memory);
+                    buffer.write(imported.guest_address);
+                    buffer.write(imported.size);
+                    buffer.write(imported.device);
+                    buffer.write(imported.access_tracked);
+                }
+
+                buffer.write(static_cast<uint64_t>(this->observed_semaphores_.size()));
+                for (const auto& [semaphore, observed] : this->observed_semaphores_)
+                {
+                    buffer.write(semaphore);
+                    buffer.write(observed.device);
+                    buffer.write(observed.value);
+                }
             }
 
-            void serialize_object(utils::buffer_serializer&) const override
+            void deserialize_object(utils::buffer_deserializer& buffer) override
             {
+                buffer.read_vector(this->restored_vulkan_state_);
+
+                this->direct_mappings_.clear();
+                for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+                {
+                    auto& mapping = this->direct_mappings_[buffer.read<uint64_t>()];
+                    buffer.read(mapping.guest_address);
+                    buffer.read(mapping.size);
+                    buffer.read(mapping.device);
+                    buffer.read(mapping.placed);
+                }
+
+                this->imported_memory_.clear();
+                for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+                {
+                    auto& imported = this->imported_memory_[buffer.read<uint64_t>()];
+                    buffer.read(imported.guest_address);
+                    buffer.read(imported.size);
+                    buffer.read(imported.device);
+                    buffer.read(imported.access_tracked);
+                }
+
+                this->observed_semaphores_.clear();
+                for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+                {
+                    auto& observed = this->observed_semaphores_[buffer.read<uint64_t>()];
+                    buffer.read(observed.device);
+                    buffer.read(observed.value);
+                }
             }
 
-            void deserialize_object(utils::buffer_deserializer&) override
+            // The Vulkan objects are re-created only once the guest memory imported memory aliases is back, and the
+            // guest's mappings of device memory are put back at the addresses the guest holds.
+            void restore_after_state_restore(windows_emulator& win_emu) override
             {
+                if (this->restored_vulkan_state_.empty())
+                {
+                    return;
+                }
+
+                utils::buffer_deserializer buffer{this->restored_vulkan_state_};
+                this->vulkan_.deserialize(buffer, [&](const uint64_t memory) {
+                    return reinterpret_cast<void*>(win_emu.memory.host_placement_address(this->imported_memory_.at(memory).guest_address));
+                });
+                this->restored_vulkan_state_ = {};
+
+                for (auto& imported : this->imported_memory_ | std::views::values)
+                {
+                    if (imported.access_tracked)
+                    {
+                        imported.access_tracked = win_emu.memory.track_access(imported.guest_address, static_cast<size_t>(imported.size));
+                    }
+                }
+
+                for (auto& [memory, mapping] : this->direct_mappings_)
+                {
+                    if (mapping.placed)
+                    {
+                        throw std::runtime_error("Restoring placed Vulkan memory mappings is not supported yet");
+                    }
+
+                    void* host_ptr = nullptr;
+                    uint64_t host_size = 0;
+                    constexpr uint64_t page = 0x1000;
+                    if (this->vulkan_.map_memory(mapping.device, memory, host_ptr, host_size) != vk_success ||
+                        ((host_size + page - 1) & ~(page - 1)) != mapping.size ||
+                        !win_emu.memory.allocate_host_memory_at(mapping.guest_address, static_cast<size_t>(mapping.size), host_ptr,
+                                                                memory_permission::read_write))
+                    {
+                        throw std::runtime_error("Restoring a Vulkan memory mapping at its guest address failed");
+                    }
+
+                    mapping.host_ptr = host_ptr;
+                }
             }
 
           private:
@@ -303,6 +403,8 @@ namespace sogen
             // The last counter value the guest read of each timeline semaphore, so that polling one only invalidates
             // imported memory when it shows new work completed.
             std::unordered_map<uint64_t, observed_semaphore> observed_semaphores_{};
+
+            std::vector<std::byte> restored_vulkan_state_{};
 
             void flush_imported_memory(windows_emulator& win_emu)
             {
