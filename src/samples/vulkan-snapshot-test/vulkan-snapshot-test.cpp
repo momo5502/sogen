@@ -3,18 +3,20 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <vector>
 
 // Keeps GPU state alive across iterations and prints a checksum per iteration, so that a run suspended and resumed in
-// the middle can be compared with an uninterrupted one. Each iteration first checks what the previous one left in GPU
-// memory, which is what a snapshot has to carry over.
+// the middle can be compared with an uninterrupted one. Between two iterations, where a suspend lands, GPU memory holds
+// the previous iteration's results, a binary semaphore holds a signal the next iteration waits for, and a command buffer
+// recorded once before the loop is waiting to be submitted again.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
     constexpr VkDeviceSize buffer_size = 2 * half_size;
+    constexpr size_t half_count = half_size / sizeof(uint32_t);
     constexpr uint32_t iterations = 40;
 
     uint32_t source_value(const uint32_t iteration)
@@ -29,29 +31,53 @@ namespace
 
     uint64_t checksum(const uint32_t* data, const size_t count)
     {
-        uint64_t hash = 14695981039346656037ull;
+        uint64_t hash = 14695981039346656037ULL;
         for (size_t i = 0; i < count; ++i)
         {
-            hash = (hash ^ data[i]) * 1099511628211ull;
+            hash = (hash ^ data[i]) * 1099511628211ULL;
         }
         return hash;
     }
 
-    bool check_destination(const uint32_t* destination, const uint32_t iteration)
+    bool holds_iteration(const uint32_t* data, const uint32_t iteration)
     {
-        constexpr auto half_count = static_cast<size_t>(half_size / sizeof(uint32_t));
         for (size_t i = 0; i < half_count; ++i)
         {
-            if (destination[i] != fill_value(iteration) || destination[half_count + i] != source_value(iteration))
+            if (data[i] != fill_value(iteration) || data[half_count + i] != source_value(iteration))
             {
                 return false;
             }
         }
         return true;
     }
+
+    uint32_t find_queue_family(const std::vector<VkQueueFamilyProperties>& families)
+    {
+        for (uint32_t i = 0; i < families.size(); ++i)
+        {
+            if ((families[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT)) != 0)
+            {
+                return i;
+            }
+        }
+        return UINT32_MAX;
+    }
+
+    uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties& properties, const uint32_t type_bits)
+    {
+        constexpr VkMemoryPropertyFlags wanted = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for (uint32_t i = 0; i < properties.memoryTypeCount; ++i)
+        {
+            if ((type_bits & (1U << i)) != 0 && (properties.memoryTypes[i].propertyFlags & wanted) == wanted)
+            {
+                return i;
+            }
+        }
+        return UINT32_MAX;
+    }
 }
 
-int main(int argc, char** argv)
+int main(const int argc, char** argv)
 {
     const char* dll = argc > 1 ? argv[1] : "vulkan-shim.dll";
     const HMODULE module = LoadLibraryA(dll);
@@ -105,6 +131,7 @@ int main(int argc, char** argv)
     LOAD(instance, vkCmdFillBuffer);
     LOAD(instance, vkCmdCopyBuffer);
     LOAD(instance, vkCreateFence);
+    LOAD(instance, vkCreateSemaphore);
     LOAD(instance, vkQueueSubmit);
     LOAD(instance, vkWaitForFences);
     LOAD(instance, vkResetFences);
@@ -122,23 +149,14 @@ int main(int argc, char** argv)
     std::vector<VkQueueFamilyProperties> families(family_count);
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, families.data());
 
-    uint32_t family = UINT32_MAX;
-    for (uint32_t i = 0; i < family_count; ++i)
-    {
-        if (families[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT))
-        {
-            family = i;
-            break;
-        }
-    }
-
+    const uint32_t family = find_queue_family(families);
     if (family == UINT32_MAX)
     {
         std::printf("[snapshot-test] no transfer queue family\n");
         return 1;
     }
 
-    const float priority = 1.0f;
+    const float priority = 1.0F;
     VkDeviceQueueCreateInfo queue_info{};
     queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     queue_info.queueFamilyIndex = family;
@@ -168,8 +186,10 @@ int main(int argc, char** argv)
 
     VkBuffer source{};
     VkBuffer destination{};
+    VkBuffer mirror{};
     if (vkCreateBuffer(device, &buffer_info, nullptr, &source) != VK_SUCCESS ||
-        vkCreateBuffer(device, &buffer_info, nullptr, &destination) != VK_SUCCESS)
+        vkCreateBuffer(device, &buffer_info, nullptr, &destination) != VK_SUCCESS ||
+        vkCreateBuffer(device, &buffer_info, nullptr, &mirror) != VK_SUCCESS)
     {
         std::printf("[snapshot-test] vkCreateBuffer failed\n");
         return 1;
@@ -182,32 +202,21 @@ int main(int argc, char** argv)
     VkPhysicalDeviceMemoryProperties memory_properties{};
     vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
-    constexpr VkMemoryPropertyFlags wanted = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-    uint32_t memory_type = UINT32_MAX;
-    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
-    {
-        if ((requirements.memoryTypeBits & (1u << i)) && (memory_properties.memoryTypes[i].propertyFlags & wanted) == wanted)
-        {
-            memory_type = i;
-            break;
-        }
-    }
-
-    if (memory_type == UINT32_MAX)
+    VkMemoryAllocateInfo allocate_info{};
+    allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate_info.allocationSize = 3 * stride;
+    allocate_info.memoryTypeIndex = find_memory_type(memory_properties, requirements.memoryTypeBits);
+    if (allocate_info.memoryTypeIndex == UINT32_MAX)
     {
         std::printf("[snapshot-test] no host-visible coherent memory type\n");
         return 1;
     }
 
-    VkMemoryAllocateInfo allocate_info{};
-    allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocate_info.allocationSize = 2 * stride;
-    allocate_info.memoryTypeIndex = memory_type;
-
     VkDeviceMemory memory{};
     if (vkAllocateMemory(device, &allocate_info, nullptr, &memory) != VK_SUCCESS ||
         vkBindBufferMemory(device, source, memory, 0) != VK_SUCCESS ||
-        vkBindBufferMemory(device, destination, memory, stride) != VK_SUCCESS)
+        vkBindBufferMemory(device, destination, memory, stride) != VK_SUCCESS ||
+        vkBindBufferMemory(device, mirror, memory, 2 * stride) != VK_SUCCESS)
     {
         std::printf("[snapshot-test] memory setup failed\n");
         return 1;
@@ -222,6 +231,7 @@ int main(int argc, char** argv)
 
     auto* source_data = static_cast<uint32_t*>(mapped);
     const auto* destination_data = reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(mapped) + stride);
+    const auto* mirror_data = reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(mapped) + (2 * stride));
 
     VkCommandPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -229,67 +239,103 @@ int main(int argc, char** argv)
     pool_info.queueFamilyIndex = family;
 
     VkCommandPool pool{};
-    VkCommandBuffer command_buffer{};
+    if (vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS)
+    {
+        std::printf("[snapshot-test] vkCreateCommandPool failed\n");
+        return 1;
+    }
+
     VkCommandBufferAllocateInfo command_buffer_info{};
     command_buffer_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    command_buffer_info.commandPool = pool;
     command_buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     command_buffer_info.commandBufferCount = 1;
-    if (vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS ||
-        (command_buffer_info.commandPool = pool, vkAllocateCommandBuffers(device, &command_buffer_info, &command_buffer)) != VK_SUCCESS)
+
+    VkCommandBuffer command_buffer{};
+    VkCommandBuffer mirror_command_buffer{};
+    if (vkAllocateCommandBuffers(device, &command_buffer_info, &command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &mirror_command_buffer) != VK_SUCCESS)
     {
-        std::printf("[snapshot-test] command buffer setup failed\n");
+        std::printf("[snapshot-test] vkAllocateCommandBuffers failed\n");
         return 1;
     }
 
     VkFenceCreateInfo fence_info{};
     fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkSemaphoreCreateInfo semaphore_info{};
+    semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
     VkFence fence{};
-    if (vkCreateFence(device, &fence_info, nullptr, &fence) != VK_SUCCESS)
+    VkSemaphore results_ready{};
+    if (vkCreateFence(device, &fence_info, nullptr, &fence) != VK_SUCCESS ||
+        vkCreateSemaphore(device, &semaphore_info, nullptr, &results_ready) != VK_SUCCESS)
     {
-        std::printf("[snapshot-test] vkCreateFence failed\n");
+        std::printf("[snapshot-test] synchronization setup failed\n");
         return 1;
     }
+
+    VkCommandBufferBeginInfo begin_info{};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+    const VkBufferCopy whole_buffer{.srcOffset = 0, .dstOffset = 0, .size = buffer_size};
+    vkBeginCommandBuffer(mirror_command_buffer, &begin_info);
+    vkCmdCopyBuffer(mirror_command_buffer, destination, mirror, 1, &whole_buffer);
+    vkEndCommandBuffer(mirror_command_buffer);
+
+    const auto submit_and_wait = [&](const VkCommandBuffer submitted, const VkSemaphore wait, const VkSemaphore signal) {
+        constexpr VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        VkSubmitInfo submit_info{};
+        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.waitSemaphoreCount = wait ? 1 : 0;
+        submit_info.pWaitSemaphores = &wait;
+        submit_info.pWaitDstStageMask = &wait_stage;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &submitted;
+        submit_info.signalSemaphoreCount = signal ? 1 : 0;
+        submit_info.pSignalSemaphores = &signal;
+        return vkQueueSubmit(queue, 1, &submit_info, fence) == VK_SUCCESS &&
+               vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS && vkResetFences(device, 1, &fence) == VK_SUCCESS;
+    };
 
     std::printf("[snapshot-test] mapped at %p\n", mapped);
 
     for (uint32_t iteration = 0; iteration < iterations; ++iteration)
     {
-        if (iteration > 0 && !check_destination(destination_data, iteration - 1))
+        if (iteration > 0)
         {
-            std::printf("[snapshot-test] iteration %u: GPU memory lost what iteration %u wrote\n", iteration, iteration - 1);
-            return 2;
+            if (!submit_and_wait(mirror_command_buffer, results_ready, VK_NULL_HANDLE))
+            {
+                std::printf("[snapshot-test] iteration %u: mirror submission failed\n", iteration);
+                return 3;
+            }
+
+            if (!holds_iteration(destination_data, iteration - 1) || !holds_iteration(mirror_data, iteration - 1))
+            {
+                std::printf("[snapshot-test] iteration %u: GPU memory lost what iteration %u wrote\n", iteration, iteration - 1);
+                return 2;
+            }
         }
 
-        constexpr auto half_count = static_cast<size_t>(half_size / sizeof(uint32_t));
         for (size_t i = 0; i < half_count; ++i)
         {
             source_data[i] = source_value(iteration);
         }
 
-        VkCommandBufferBeginInfo begin_info{};
-        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         vkBeginCommandBuffer(command_buffer, &begin_info);
         vkCmdFillBuffer(command_buffer, destination, 0, half_size, fill_value(iteration));
-
         const VkBufferCopy region{.srcOffset = 0, .dstOffset = half_size, .size = half_size};
         vkCmdCopyBuffer(command_buffer, source, destination, 1, &region);
-
         vkEndCommandBuffer(command_buffer);
 
-        VkSubmitInfo submit_info{};
-        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit_info.commandBufferCount = 1;
-        submit_info.pCommandBuffers = &command_buffer;
-        if (vkQueueSubmit(queue, 1, &submit_info, fence) != VK_SUCCESS ||
-            vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS || vkResetFences(device, 1, &fence) != VK_SUCCESS)
+        if (!submit_and_wait(command_buffer, VK_NULL_HANDLE, results_ready))
         {
             std::printf("[snapshot-test] iteration %u: submission failed\n", iteration);
             return 3;
         }
 
-        std::printf("[snapshot-test] iteration %u checksum %016llx mapped %p\n", iteration,
-                    static_cast<unsigned long long>(checksum(destination_data, static_cast<size_t>(buffer_size / sizeof(uint32_t)))),
-                    mapped);
+        const auto count = static_cast<size_t>(buffer_size / sizeof(uint32_t));
+        std::printf("[snapshot-test] iteration %u checksum %016" PRIx64 " %016" PRIx64 " mapped %p\n", iteration,
+                    checksum(destination_data, count), checksum(mirror_data, count), mapped);
         Sleep(500);
     }
 

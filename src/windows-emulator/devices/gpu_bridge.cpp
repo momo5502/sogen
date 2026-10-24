@@ -254,6 +254,12 @@ namespace sogen
 
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
+                if (std::ranges::any_of(this->direct_mappings_ | std::views::values,
+                                        [](const direct_mapping& mapping) { return mapping.placed; }))
+                {
+                    throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
+                }
+
                 utils::buffer_serializer vulkan{};
                 this->vulkan_.serialize(vulkan);
                 buffer.write_vector(vulkan.get_buffer());
@@ -330,9 +336,24 @@ namespace sogen
                 }
 
                 utils::buffer_deserializer buffer{this->restored_vulkan_state_};
-                this->vulkan_.deserialize(buffer, [&](const uint64_t memory) {
-                    return reinterpret_cast<void*>(win_emu.memory.host_placement_address(this->imported_memory_.at(memory).guest_address));
-                });
+                this->vulkan_.deserialize(
+                    buffer, vulkan_host::restore_callbacks{
+                                .imported_host_pointer =
+                                    [&](const uint64_t memory) {
+                                        return reinterpret_cast<void*>(
+                                            win_emu.memory.host_placement_address(this->imported_memory_.at(memory).guest_address));
+                                    },
+                                .replay_commands =
+                                    [&](const uint64_t command_buffer, const std::span<const std::byte> commands) {
+                                        // Commands may refer to objects destroyed since, which invalidated the command buffer; the
+                                        // guest has to reset it before using it again either way.
+                                        if (this->execute_recorded_commands(win_emu, commands, true) != vk_success)
+                                        {
+                                            win_emu.log.warn("[gpu-bridge] Command buffer %llu was not fully re-recorded\n",
+                                                             static_cast<unsigned long long>(command_buffer));
+                                        }
+                                    },
+                            });
                 this->restored_vulkan_state_ = {};
 
                 for (auto& imported : this->imported_memory_ | std::views::values)
@@ -345,11 +366,6 @@ namespace sogen
 
                 for (auto& [memory, mapping] : this->direct_mappings_)
                 {
-                    if (mapping.placed)
-                    {
-                        throw std::runtime_error("Restoring placed Vulkan memory mappings is not supported yet");
-                    }
-
                     void* host_ptr = nullptr;
                     uint64_t host_size = 0;
                     constexpr uint64_t page = 0x1000;
@@ -4053,10 +4069,19 @@ namespace sogen
                 std::vector<std::byte> stream(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, stream.data(), stream.size());
 
+                const int32_t result = this->execute_recorded_commands(win_emu, stream, true);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            // Returns the first failure. Every command starts with the command buffer it is recorded into, which keeps
+            // what it recorded for snapshots when keep_recorded is set.
+            int32_t execute_recorded_commands(windows_emulator& win_emu, const std::span<const std::byte> stream, const bool keep_recorded)
+            {
                 int32_t result = 0; // VK_SUCCESS
                 size_t offset = 0;
                 while (offset + sizeof(gpu_bridge::command_record_header) <= stream.size())
                 {
+                    const size_t record_offset = offset;
                     gpu_bridge::command_record_header header{};
                     std::memcpy(&header, stream.data() + offset, sizeof(header));
                     offset += sizeof(header);
@@ -4070,10 +4095,18 @@ namespace sogen
                     {
                         result = r; // report the first failure
                     }
+
+                    if (keep_recorded && header.size >= sizeof(gpu_bridge::object_id))
+                    {
+                        gpu_bridge::object_id command_buffer{};
+                        std::memcpy(&command_buffer, stream.data() + offset, sizeof(command_buffer));
+                        this->vulkan_.append_recorded_command(command_buffer, stream.subspan(record_offset, sizeof(header) + header.size));
+                    }
+
                     offset += header.size;
                 }
 
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                return result;
             }
 
             NTSTATUS handle_get_surface_capabilities(windows_emulator& win_emu, const io_device_context& context)

@@ -498,6 +498,7 @@ namespace sogen
             uint64_t device_id{};
             uint64_t pool_id{};
             uint32_t level{};
+            std::vector<std::byte> recorded{};
         };
 
         struct fence_data
@@ -518,7 +519,34 @@ namespace sogen
             uint64_t device_id{};
             uint32_t flags{};
             uint32_t type{};
+            // Vulkan cannot report these, so they are tracked from submissions for snapshots: whether a binary semaphore
+            // has a signal no wait consumed yet, and the highest timeline values signals and waits were submitted for.
+            bool binary_signaled{};
+            uint64_t highest_signal{};
+            uint64_t highest_wait{};
         };
+
+        template <typename Entry>
+        void track_submitted_semaphores(const Entry* waits, const uint32_t wait_count, const Entry* signals, const uint32_t signal_count)
+        {
+            for (uint32_t i = 0; i < wait_count; ++i)
+            {
+                if (const auto it = this->semaphores.find(waits[i].semaphore); it != this->semaphores.end())
+                {
+                    it->second.binary_signaled = false;
+                    it->second.highest_wait = std::max(it->second.highest_wait, waits[i].value);
+                }
+            }
+
+            for (uint32_t i = 0; i < signal_count; ++i)
+            {
+                if (const auto it = this->semaphores.find(signals[i].semaphore); it != this->semaphores.end())
+                {
+                    it->second.binary_signaled = true;
+                    it->second.highest_signal = std::max(it->second.highest_signal, signals[i].value);
+                }
+            }
+        }
 
         struct memory_data
         {
@@ -2803,6 +2831,8 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        cb->second.recorded.clear();
+
         VkCommandBufferBeginInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         info.flags = flags;
@@ -2899,7 +2929,23 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        for (auto& command_buffer : this->impl_->command_buffers | std::views::values)
+        {
+            if (command_buffer.pool_id == pool)
+            {
+                command_buffer.recorded.clear();
+            }
+        }
+
         return dev->second.reset_command_pool(dev->second.handle, it->second.handle, flags);
+    }
+
+    void vulkan_host::append_recorded_command(const uint64_t command_buffer, const std::span<const std::byte> command)
+    {
+        if (const auto cb = this->impl_->command_buffers.find(command_buffer); cb != this->impl_->command_buffers.end())
+        {
+            cb->second.recorded.insert(cb->second.recorded.end(), command.begin(), command.end());
+        }
     }
 
     int32_t vulkan_host::reset_command_buffer(uint64_t command_buffer, uint32_t flags)
@@ -2916,6 +2962,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        cb->second.recorded.clear();
         return dev->second.reset_command_buffer(cb->second.handle, flags);
     }
 
@@ -3357,7 +3404,13 @@ namespace sogen
 
         const auto lock = this->impl_->queue_lock(queue_it->second.handle);
         const std::scoped_lock guard(*lock);
-        return dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
+        const VkResult result = dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
+        if (result == VK_SUCCESS)
+        {
+            this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries), wait_count,
+                                                    static_cast<const gpu_bridge::submit_semaphore_entry*>(signal_entries), signal_count);
+        }
+        return result;
     }
 
     int32_t vulkan_host::queue_submit2(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
@@ -3441,7 +3494,13 @@ namespace sogen
 
         const auto lock = this->impl_->queue_lock(queue_it->second.handle);
         const std::scoped_lock guard(*lock);
-        return dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
+        const VkResult result = dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
+        if (result == VK_SUCCESS)
+        {
+            this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries), wait_count,
+                                                    static_cast<const gpu_bridge::submit2_semaphore_entry*>(signal_entries), signal_count);
+        }
+        return result;
     }
 
     int32_t vulkan_host::get_physical_device_memory_properties(uint64_t physical_device, void* out, size_t out_size)
@@ -7856,6 +7915,42 @@ namespace sogen
         reject_live_objects(impl.descriptor_pools, "descriptor pools");
         reject_live_objects(impl.descriptor_sets, "descriptor sets");
 
+        for (const auto& memory : impl.memories | std::views::values)
+        {
+            if (memory.placed)
+            {
+                throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
+            }
+
+            if (memory.imported && memory.non_coherent)
+            {
+                throw std::runtime_error("Snapshots do not support non-coherent imported Vulkan memory yet");
+            }
+        }
+
+        // Waiting for a device to go idle never returns while a queue waits for a timeline value that only later guest work
+        // would signal.
+        for (const auto& semaphore : impl.semaphores | std::views::values)
+        {
+            if (semaphore.type != VK_SEMAPHORE_TYPE_TIMELINE)
+            {
+                continue;
+            }
+
+            const auto& device = impl.devices.at(semaphore.device_id);
+            uint64_t value = 0;
+            if (!device.get_semaphore_counter_value ||
+                device.get_semaphore_counter_value(device.handle, semaphore.handle, &value) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Reading a Vulkan timeline semaphore failed");
+            }
+
+            if (semaphore.highest_wait > std::max(value, semaphore.highest_signal))
+            {
+                throw std::runtime_error("A Vulkan queue waits for a timeline value nothing has been submitted to signal");
+            }
+        }
+
         for (const auto& device : impl.devices | std::views::values)
         {
             if (!device.device_wait_idle || device.device_wait_idle(device.handle) != VK_SUCCESS)
@@ -7949,9 +8044,15 @@ namespace sogen
             }
 
             const auto& device = impl.devices.at(memory.device_id);
-            if ((memory_property_flags(device, memory.memory_type_index) & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
+            const auto property_flags = memory_property_flags(device, memory.memory_type_index);
+            if ((property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
             {
                 throw std::runtime_error("Snapshots do not save device-local Vulkan memory yet");
+            }
+
+            if ((property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0)
+            {
+                throw std::runtime_error("Snapshots do not save non-coherent Vulkan memory yet");
             }
 
             void* mapped = memory.persistent_host_pointer;
@@ -7959,15 +8060,6 @@ namespace sogen
                 (!device.map_memory || device.map_memory(device.handle, memory.handle, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS))
             {
                 throw std::runtime_error("Mapping Vulkan memory for a snapshot failed");
-            }
-
-            VkMappedMemoryRange range{};
-            range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-            range.memory = memory.handle;
-            range.size = VK_WHOLE_SIZE;
-            if (device.invalidate_mapped_memory_ranges)
-            {
-                device.invalidate_mapped_memory_ranges(device.handle, 1, &range);
             }
 
             const auto* contents = static_cast<const std::byte*>(mapped);
@@ -8006,6 +8098,7 @@ namespace sogen
             buffer.write(command_buffer.device_id);
             buffer.write(command_buffer.pool_id);
             buffer.write(command_buffer.level);
+            buffer.write_vector(command_buffer.recorded);
         }
 
         buffer.write(static_cast<uint64_t>(impl.fences.size()));
@@ -8034,10 +8127,13 @@ namespace sogen
             buffer.write(semaphore.flags);
             buffer.write(semaphore.type);
             buffer.write(value);
+            buffer.write(semaphore.binary_signaled);
+            buffer.write(semaphore.highest_signal);
+            buffer.write(semaphore.highest_wait);
         }
     }
 
-    void vulkan_host::deserialize(utils::buffer_deserializer& buffer, const std::function<void*(uint64_t memory)>& imported_host_pointer)
+    void vulkan_host::deserialize(utils::buffer_deserializer& buffer, const restore_callbacks& callbacks)
     {
         auto& impl = *this->impl_;
         const auto clear_forced_id = utils::finally([&] { impl.forced_id.reset(); });
@@ -8138,8 +8234,8 @@ namespace sogen
             impl.forced_id = id;
             if (imported)
             {
-                const auto result =
-                    this->import_host_memory(device, size, memory_type_index, flags, device_mask, imported_host_pointer(id), memory);
+                const auto result = this->import_host_memory(device, size, memory_type_index, flags, device_mask,
+                                                             callbacks.imported_host_pointer(id), memory);
                 expect_restored(result, memory, id, "imported memory");
                 continue;
             }
@@ -8158,16 +8254,6 @@ namespace sogen
             }
 
             std::memcpy(mapped, contents.data(), contents.size());
-
-            VkMappedMemoryRange range{};
-            range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-            range.memory = mem.handle;
-            range.size = VK_WHOLE_SIZE;
-            if (dev.flush_mapped_memory_ranges)
-            {
-                dev.flush_mapped_memory_ranges(dev.handle, 1, &range);
-            }
-
             dev.unmap_memory(dev.handle, mem.handle);
         }
 
@@ -8204,12 +8290,23 @@ namespace sogen
             expect_restored(result, pool, id, "command pool");
         }
 
+        std::vector<uint64_t> pending_binary_signals{};
+
+        // Secondary command buffers are re-recorded first, since primaries may execute them.
+        std::vector<std::pair<uint64_t, std::vector<std::byte>>> recorded_primaries{};
+        std::vector<std::pair<uint64_t, std::vector<std::byte>>> recorded_secondaries{};
+
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
         {
             const auto id = buffer.read<uint64_t>();
             const auto device = buffer.read<uint64_t>();
             const auto pool = buffer.read<uint64_t>();
             const auto level = buffer.read<uint32_t>();
+            auto recorded = buffer.read_vector<std::byte>();
+            if (!recorded.empty())
+            {
+                (level == 1 ? recorded_secondaries : recorded_primaries).emplace_back(id, std::move(recorded));
+            }
 
             uint64_t command_buffer{};
             impl.forced_id = id;
@@ -8236,13 +8333,49 @@ namespace sogen
             const auto flags = buffer.read<uint32_t>();
             const auto type = buffer.read<uint32_t>();
             const auto value = buffer.read<uint64_t>();
+            const auto binary_signaled = buffer.read<bool>();
+            const auto highest_signal = buffer.read<uint64_t>();
+            const auto highest_wait = buffer.read<uint64_t>();
 
             uint64_t semaphore{};
             impl.forced_id = id;
             const auto result = this->create_semaphore(device, flags, type, value, semaphore);
             expect_restored(result, semaphore, id, "semaphore");
+
+            auto& restored = impl.semaphores.at(id);
+            restored.highest_signal = highest_signal;
+            restored.highest_wait = highest_wait;
+            if (binary_signaled)
+            {
+                pending_binary_signals.push_back(id);
+            }
+        }
+
+        // A binary semaphore's pending signal is put back by a submission that only signals it.
+        for (const auto id : pending_binary_signals)
+        {
+            const auto& semaphore = impl.semaphores.at(id);
+            const auto queue =
+                std::ranges::find_if(impl.queues, [&](const auto& entry) { return entry.second.device_id == semaphore.device_id; });
+            const gpu_bridge::submit_semaphore_entry signal{.semaphore = id, .stage_mask = 0, .reserved = 0, .value = 0};
+            if (queue == impl.queues.end() ||
+                this->queue_submit(queue->first, 0, nullptr, 0, nullptr, 0, &signal, 1, false) != VK_SUCCESS ||
+                this->queue_wait_idle(queue->first) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Restoring the signal of Vulkan semaphore " + std::to_string(id) + " failed");
+            }
         }
 
         impl.next_id = next_id;
+
+        for (const auto& [command_buffer, commands] : recorded_secondaries)
+        {
+            callbacks.replay_commands(command_buffer, commands);
+        }
+
+        for (const auto& [command_buffer, commands] : recorded_primaries)
+        {
+            callbacks.replay_commands(command_buffer, commands);
+        }
     }
 }
