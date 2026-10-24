@@ -183,8 +183,7 @@ namespace sogen
             }
 
             auto& memory = emu.memory;
-            memory.release_memory(region.address, size);
-            if (!memory.allocate_memory(region.address, size, memory_permission::read_write))
+            if (!memory.replace_memory(region.address, size, memory_permission::read_write))
             {
                 throw std::runtime_error("Failed to map page-in linking region");
             }

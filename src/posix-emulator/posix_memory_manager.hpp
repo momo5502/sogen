@@ -80,6 +80,9 @@ namespace sogen
         // Unmap a region
         bool release_memory(uint64_t address, size_t size);
 
+        // Map a page-aligned region over whatever is mapped there; on failure the existing mappings are untouched
+        bool replace_memory(uint64_t address, size_t size, memory_permission permissions);
+
         // Unmap everything
         void unmap_all_memory();
 

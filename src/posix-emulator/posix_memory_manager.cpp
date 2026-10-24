@@ -303,6 +303,18 @@ namespace sogen
         return true;
     }
 
+    bool posix_memory_manager::replace_memory(const uint64_t address, const size_t size, const memory_permission permissions)
+    {
+        if (size == 0 || page_align_down(address) != address || page_align_up(size) != size ||
+            address > std::numeric_limits<uint64_t>::max() - size)
+        {
+            return false;
+        }
+
+        this->release_memory(address, size);
+        return this->allocate_memory(address, size, permissions);
+    }
+
     std::vector<posix_memory_region_info> posix_memory_manager::get_mapped_region_infos() const
     {
         std::vector<posix_memory_region_info> regions{};

@@ -20,40 +20,59 @@ namespace sogen
         constexpr uint64_t MACOS_F_NOCACHE = 48;
         constexpr uint64_t MACOS_F_GETPATH = 50;
         constexpr size_t MACOS_MAXPATHLEN = 1024;
+
+        constexpr uint64_t WRITE_CHUNK_SIZE = 0x10000;
+
+        void write_standard_stream(macos_emulator& emu, const uint64_t fd, const std::string_view data)
+        {
+            const auto& callback = fd == 1 ? emu.on_stdout : emu.on_stderr;
+            if (callback)
+            {
+                callback(data);
+                return;
+            }
+
+            auto* stream = fd == 1 ? stdout : stderr;
+            fwrite(data.data(), 1, data.size(), stream);
+            fflush(stream);
+        }
     }
 
     void sys_write(const macos_syscall_context& c)
     {
         const auto fd = get_macos_syscall_argument(c.emu, 0);
         const auto buffer = get_macos_syscall_argument(c.emu, 1);
-        const auto size = static_cast<size_t>(get_macos_syscall_argument(c.emu, 2));
+        const auto size = get_macos_syscall_argument(c.emu, 2);
 
         if (fd != 1 && fd != 2)
         {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
+            // Files are only ever opened read-only and sockets never connect, so XNU would fail the write either way.
+            const auto* file = c.emu_ref.fds.get(static_cast<int>(fd));
+            write_macos_syscall_error(c, file != nullptr && file->is_socket ? macos_errno::MACOS_ENOTCONN : macos_errno::MACOS_EBADF);
             return;
         }
 
-        std::vector<char> data(size);
-        if (!c.emu.try_read_memory(buffer, data.data(), size))
+        std::vector<char> chunk(static_cast<size_t>(std::min(size, WRITE_CHUNK_SIZE)));
+        uint64_t written = 0;
+        while (written < size)
+        {
+            const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(size - written, chunk.size()));
+            if (!c.emu.try_read_memory(buffer + written, chunk.data(), chunk_size))
+            {
+                break;
+            }
+
+            write_standard_stream(c.emu_ref, fd, std::string_view{chunk.data(), chunk_size});
+            written += chunk_size;
+        }
+
+        if (written == 0 && size != 0)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
             return;
         }
 
-        const auto& callback = fd == 1 ? c.emu_ref.on_stdout : c.emu_ref.on_stderr;
-        if (callback)
-        {
-            callback(std::string_view{data.data(), size});
-        }
-        else
-        {
-            auto* stream = fd == 1 ? stdout : stderr;
-            fwrite(data.data(), 1, size, stream);
-            fflush(stream);
-        }
-
-        write_macos_syscall_success(c, size);
+        write_macos_syscall_success(c, written);
     }
 
     void sys_open(const macos_syscall_context& c)

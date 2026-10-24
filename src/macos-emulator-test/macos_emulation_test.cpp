@@ -51,6 +51,18 @@ namespace sogen::macos_test
             0x0F, 0x05,                   // syscall
         });
 
+        constexpr auto OVERSIZED_WRITE_CODE = std::to_array<uint8_t>({
+            0xB8, 0x04, 0x00, 0x00, 0x02,                               // mov eax, 0x2000004 (write)
+            0xBF, 0x01, 0x00, 0x00, 0x00,                               // mov edi, 1
+            0x48, 0x8D, 0x35, 0x00, 0x00, 0x00, 0x00,                   // lea rsi, [rip]
+            0x48, 0xBA, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, // mov rdx, 0xFFFFFFFFFFFF
+            0x0F, 0x05,                                                 // syscall
+            0x89, 0xC7,                                                 // mov edi, eax
+            0x11, 0xFF,                                                 // adc edi, edi
+            0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                                 // syscall
+        });
+
         constexpr auto EXIT_WITH_ARGC_CODE = std::to_array<uint8_t>({
             0x48,
             0x8B,
@@ -400,6 +412,14 @@ namespace sogen::macos_test
 
         constexpr int ebadf = 9;
         EXPECT_EQ(result.exit_status, (ebadf * 2) + 1);
+    }
+
+    TEST(MacosEmulationTest, FailsWriteFromUnreadableRangeWithoutHostAllocation)
+    {
+        const auto result = run_image(make_test_image(OVERSIZED_WRITE_CODE));
+
+        constexpr int efault = 14;
+        EXPECT_EQ(result.exit_status, (efault * 2) + 1);
     }
 
     TEST(MacosEmulationTest, PassesArgumentCountOnInitialStack)

@@ -5,10 +5,36 @@
 
 #include <address_utils.hpp>
 
+#include <algorithm>
+#include <span>
 #include <vector>
 
 namespace sogen
 {
+    namespace
+    {
+        constexpr size_t FILE_COPY_CHUNK_SIZE = 0x10000;
+
+        void copy_file_to_memory(posix_memory_manager& memory, macos_file& file, const uint64_t offset, const uint64_t address,
+                                 const size_t length)
+        {
+            std::vector<std::byte> chunk(std::min(length, FILE_COPY_CHUNK_SIZE));
+            size_t copied = 0;
+            while (copied < length)
+            {
+                const auto chunk_size = std::min(chunk.size(), length - copied);
+                const auto read = file.read_at(offset + copied, std::span{chunk}.first(chunk_size));
+                memory.write_memory(address + copied, chunk.data(), read);
+                if (read < chunk_size)
+                {
+                    return;
+                }
+
+                copied += read;
+            }
+        }
+    }
+
     void sys_mmap(const macos_syscall_context& c)
     {
         constexpr uint64_t map_fixed = 0x10;
@@ -22,7 +48,7 @@ namespace sogen
         const auto offset = get_macos_syscall_argument(c.emu, 5);
 
         if (length == 0 || page_align_down(offset) != offset ||
-            ((flags & map_fixed) && page_align_down(requested_address) != requested_address))
+            ((flags & map_fixed) && (requested_address == 0 || page_align_down(requested_address) != requested_address)))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
             return;
@@ -36,17 +62,20 @@ namespace sogen
         }
 
         auto& memory = c.emu_ref.memory;
-        auto address = requested_address;
+        uint64_t address = 0;
         if (flags & map_fixed)
         {
-            memory.release_memory(address, length);
+            if (memory.replace_memory(requested_address, length, memory_permission::read_write))
+            {
+                address = requested_address;
+            }
         }
         else
         {
-            address = memory.find_free_allocation_base(length, requested_address);
+            address = memory.allocate_memory(length, memory_permission::read_write, requested_address);
         }
 
-        if (address == 0 || !memory.allocate_memory(address, length, memory_permission::read_write))
+        if (address == 0)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_ENOMEM);
             return;
@@ -54,9 +83,7 @@ namespace sogen
 
         if (file != nullptr)
         {
-            std::vector<std::byte> data(length);
-            const auto read = file->read_at(offset, data);
-            memory.write_memory(address, data.data(), read);
+            copy_file_to_memory(memory, *file, offset, address, length);
         }
 
         memory.protect_memory(address, length, to_memory_permission(protection));
