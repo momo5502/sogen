@@ -675,6 +675,11 @@ namespace sogen
             std::vector<layout_transition> layout_transitions{};
             // Query resets take effect when the command buffer is submitted: pool, first query, count.
             std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> query_resets{};
+            // Decisions made while recording from state a snapshot restored: saved query results written into buffers,
+            // and restored swapchain images whose first transition was made to start from undefined. Once that state
+            // changed, the command buffer is recorded again before it is submitted.
+            std::vector<std::pair<uint64_t, uint32_t>> restored_query_reads{};
+            std::vector<uint64_t> undefined_layout_images{};
             // Every object the recorded commands looked up. Ids are never reused, so one that no longer exists, or whose
             // memory no longer does, was destroyed after being recorded and invalidated the command buffer.
             std::unordered_set<uint64_t> references{};
@@ -728,6 +733,31 @@ namespace sogen
                    this->query_pools.contains(id) || this->render_passes.contains(id) || this->framebuffers.contains(id) ||
                    this->pipeline_layouts.contains(id) || this->pipelines.contains(id) || this->pipeline_caches.contains(id) ||
                    this->descriptor_set_layouts.contains(id) || this->descriptor_pools.contains(id) || this->descriptor_sets.contains(id);
+        }
+
+        bool depends_on_changed_state(const command_buffer_data& command_buffer) const
+        {
+            return std::ranges::any_of(command_buffer.restored_query_reads,
+                                       [&](const auto& read) {
+                                           const auto pool = this->query_pools.find(read.first);
+                                           return pool == this->query_pools.end() || !pool->second.restored_results.contains(read.second);
+                                       }) ||
+                   std::ranges::any_of(command_buffer.undefined_layout_images, [&](const uint64_t image) {
+                       const auto it = this->images.find(image);
+                       return it == this->images.end() || !it->second.layout_undefined;
+                   });
+        }
+
+        void rerecord_changed(const uint64_t* submitted, const uint32_t count, const std::function<void(uint64_t command_buffer)>& rerecord)
+        {
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto cb = this->command_buffers.find(submitted[i]);
+                if (rerecord && cb != this->command_buffers.end() && this->depends_on_changed_state(cb->second))
+                {
+                    rerecord(submitted[i]);
+                }
+            }
         }
 
         void apply_layout_transitions(const VkQueue queue, const uint64_t* submitted, const uint32_t count)
@@ -1335,9 +1365,21 @@ namespace sogen
 
             uint32_t value_count() const
             {
-                return this->query_type == VK_QUERY_TYPE_PIPELINE_STATISTICS
-                           ? static_cast<uint32_t>(std::popcount(this->pipeline_statistics))
-                           : 1;
+                switch (this->query_type)
+                {
+                case VK_QUERY_TYPE_PIPELINE_STATISTICS:
+                    return static_cast<uint32_t>(std::popcount(this->pipeline_statistics));
+                case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT:
+                    return 2;
+                default:
+                    return 1;
+                }
+            }
+
+            bool snapshot_supported() const
+            {
+                return this->query_type == VK_QUERY_TYPE_OCCLUSION || this->query_type == VK_QUERY_TYPE_PIPELINE_STATISTICS ||
+                       this->query_type == VK_QUERY_TYPE_TIMESTAMP || this->query_type == VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT;
             }
 
             void forget_restored(const uint32_t first_query, const uint32_t count)
@@ -3632,6 +3674,8 @@ namespace sogen
             cb->second.references.clear();
             cb->second.layout_transitions.clear();
             cb->second.query_resets.clear();
+            cb->second.restored_query_reads.clear();
+            cb->second.undefined_layout_images.clear();
         }
         return result;
     }
@@ -3712,6 +3756,8 @@ namespace sogen
                     command_buffer.references.clear();
                     command_buffer.layout_transitions.clear();
                     command_buffer.query_resets.clear();
+                    command_buffer.restored_query_reads.clear();
+                    command_buffer.undefined_layout_images.clear();
                 }
             }
         }
@@ -3722,6 +3768,24 @@ namespace sogen
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         this->impl_->recording_references = cb == this->impl_->command_buffers.end() ? nullptr : &cb->second.references;
+    }
+
+    std::vector<std::byte> vulkan_host::recorded_commands(const uint64_t command_buffer) const
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        return cb == this->impl_->command_buffers.end() ? std::vector<std::byte>{} : cb->second.recorded;
+    }
+
+    bool vulkan_host::can_reset_command_buffer(const uint64_t command_buffer) const
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return false;
+        }
+
+        const auto pool = this->impl_->command_pools.find(cb->second.pool_id);
+        return pool != this->impl_->command_pools.end() && (pool->second.flags & VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT) != 0;
     }
 
     void vulkan_host::append_recorded_command(const uint64_t command_buffer, const std::span<const std::byte> command, const int32_t result)
@@ -3755,6 +3819,8 @@ namespace sogen
             cb->second.references.clear();
             cb->second.layout_transitions.clear();
             cb->second.query_resets.clear();
+            cb->second.restored_query_reads.clear();
+            cb->second.undefined_layout_images.clear();
         }
         return result;
     }
@@ -4102,7 +4168,8 @@ namespace sogen
 
     int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
                                       const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
-                                      uint32_t signal_count, bool has_timeline_info)
+                                      uint32_t signal_count, bool has_timeline_info,
+                                      const std::function<void(uint64_t command_buffer)>& rerecord)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         if (queue_it == this->impl_->queues.end())
@@ -4165,6 +4232,7 @@ namespace sogen
         }
 
         const auto* command_ids = static_cast<const uint64_t*>(command_buffer_ids);
+        this->impl_->rerecord_changed(command_ids, command_buffer_count, rerecord);
         std::vector<VkCommandBuffer> command_buffers;
         command_buffers.reserve(command_buffer_count);
         for (uint32_t i = 0; i < command_buffer_count; ++i)
@@ -4209,7 +4277,7 @@ namespace sogen
 
     int32_t vulkan_host::queue_submit2(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
                                        const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
-                                       uint32_t signal_count)
+                                       uint32_t signal_count, const std::function<void(uint64_t command_buffer)>& rerecord)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         if (queue_it == this->impl_->queues.end())
@@ -4262,6 +4330,7 @@ namespace sogen
         }
 
         const auto* cmd_ids = static_cast<const uint64_t*>(command_buffer_ids);
+        this->impl_->rerecord_changed(cmd_ids, command_buffer_count, rerecord);
         std::vector<VkCommandBufferSubmitInfo> command_buffers;
         command_buffers.reserve(command_buffer_count);
         for (uint32_t i = 0; i < command_buffer_count; ++i)
@@ -5220,7 +5289,16 @@ namespace sogen
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask = src_access_mask;
         barrier.dstAccessMask = dst_access_mask;
-        barrier.oldLayout = img->second.layout_undefined ? VK_IMAGE_LAYOUT_UNDEFINED : translate_layout(old_layout);
+        const bool first_since_restore =
+            img->second.layout_undefined &&
+            std::ranges::none_of(cb->second.layout_transitions,
+                                 [&](const impl::layout_transition& transition) { return transition.image == image; });
+        if (first_since_restore)
+        {
+            cb->second.undefined_layout_images.push_back(image);
+        }
+
+        barrier.oldLayout = first_since_restore ? VK_IMAGE_LAYOUT_UNDEFINED : translate_layout(old_layout);
         barrier.newLayout = translate_layout(new_layout);
         barrier.srcQueueFamilyIndex = src_queue_family_index;
         barrier.dstQueueFamilyIndex = dst_queue_family_index;
@@ -6403,11 +6481,7 @@ namespace sogen
         // the total extent against out_size so the driver cannot write past the caller's buffer, regardless
         // of the guest-supplied stride (including stride == 0).
         const uint64_t value_size = (flags & VK_QUERY_RESULT_64_BIT) ? 8u : 4u;
-        uint64_t value_count = 1;
-        if (qp->second.query_type == VK_QUERY_TYPE_PIPELINE_STATISTICS)
-        {
-            value_count = static_cast<uint64_t>(std::popcount(qp->second.pipeline_statistics));
-        }
+        uint64_t value_count = qp->second.value_count();
         if (flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT)
         {
             value_count += 1;
@@ -6442,7 +6516,7 @@ namespace sogen
                 }
             }
 
-            if (result == VK_SUCCESS)
+            if (result == VK_SUCCESS || result == VK_NOT_READY)
             {
                 out_written = out_size;
             }
@@ -6451,7 +6525,7 @@ namespace sogen
 
         const VkResult result = dev->second.get_query_pool_results(dev->second.handle, qp->second.handle, first_query, query_count,
                                                                    out_size, out, stride, static_cast<VkQueryResultFlags>(flags));
-        if (result == VK_SUCCESS)
+        if (result == VK_SUCCESS || result == VK_NOT_READY)
         {
             out_written = out_size;
         }
@@ -6751,16 +6825,23 @@ namespace sogen
         // Restored queries are written into the buffer directly, since the re-created pool does not hold them.
         for (uint32_t i = 0; i < query_count; ++i)
         {
+            const auto query = first_query + i;
             const auto offset = destination_offset + (i * stride);
-            if (!qp->second.restored_results.contains(first_query + i))
+            const bool reset_before = std::ranges::any_of(cb->second.query_resets, [&](const auto& reset) {
+                const auto& [pool, first, count] = reset;
+                return pool == query_pool && query >= first && query - first < count;
+            });
+
+            if (reset_before || !qp->second.restored_results.contains(query))
             {
                 dev->second.cmd_copy_query_pool_results(cb->second.handle, qp->second.handle, first_query + i, 1, buffer->second.handle,
                                                         offset, stride, static_cast<VkQueryResultFlags>(flags));
                 continue;
             }
 
-            const auto restored = qp->second.restored_result(first_query + i, flags);
+            const auto restored = qp->second.restored_result(query, flags);
             dev->second.cmd_update_buffer(cb->second.handle, buffer->second.handle, offset, restored.size(), restored.data());
+            cb->second.restored_query_reads.emplace_back(query_pool, query);
         }
         return VK_SUCCESS;
     }
@@ -9011,7 +9092,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 10;
+        constexpr uint32_t snapshot_version = 11;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -9731,6 +9812,11 @@ namespace sogen
         buffer.write(static_cast<uint64_t>(impl.query_pools.size()));
         for (const auto& [id, pool] : impl.query_pools)
         {
+            if (!pool.snapshot_supported())
+            {
+                throw std::runtime_error("Snapshots do not support Vulkan query pools of type " + std::to_string(pool.query_type) + " yet");
+            }
+
             const auto& device = impl.devices.at(pool.device_id);
             const uint32_t values = pool.value_count();
             std::vector<uint64_t> results(static_cast<size_t>(pool.query_count) * (values + 1));

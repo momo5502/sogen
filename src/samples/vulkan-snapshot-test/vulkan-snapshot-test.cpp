@@ -157,6 +157,7 @@ int main(const int argc, char** argv)
     LOAD(instance, vkCmdResetQueryPool);
     LOAD(instance, vkCmdWriteTimestamp);
     LOAD(instance, vkGetQueryPoolResults);
+    LOAD(instance, vkCmdCopyQueryPoolResults);
     LOAD(instance, vkCreateFence);
     LOAD(instance, vkCreateSemaphore);
     LOAD(instance, vkQueueSubmit);
@@ -335,7 +336,9 @@ int main(const int argc, char** argv)
     VkCommandBuffer keep_command_buffer{};
     VkCommandBuffer image_command_buffer{};
     VkCommandBuffer setup_command_buffer{};
-    if (vkAllocateCommandBuffers(device, &command_buffer_info, &image_command_buffer) != VK_SUCCESS ||
+    VkCommandBuffer query_copy_command_buffer{};
+    if (vkAllocateCommandBuffers(device, &command_buffer_info, &query_copy_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &image_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &setup_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &mirror_command_buffer) != VK_SUCCESS ||
@@ -409,6 +412,12 @@ int main(const int argc, char** argv)
     vkCmdWriteTimestamp(setup_command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, query_pool, 0);
     vkEndCommandBuffer(setup_command_buffer);
 
+    vkBeginCommandBuffer(query_copy_command_buffer, &begin_info);
+    vkCmdCopyQueryPoolResults(query_copy_command_buffer, query_pool, 0, 1, image_readback, half_size, sizeof(uint64_t),
+                              VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    vkEndCommandBuffer(query_copy_command_buffer);
+    const auto* copied_timestamp = reinterpret_cast<const uint64_t*>(image_data + half_count);
+
     const auto read_timestamp = [&](const uint32_t query) {
         uint64_t value = 0;
         return vkGetQueryPoolResults(device, query_pool, query, 1, sizeof(value), &value, sizeof(value),
@@ -475,7 +484,8 @@ int main(const int argc, char** argv)
             source_data[i] = source_value(iteration);
         }
 
-        if (read_timestamp(0) != first_timestamp)
+        if (read_timestamp(0) != first_timestamp || !submit_and_wait(query_copy_command_buffer, VK_NULL_HANDLE, VK_NULL_HANDLE) ||
+            *copied_timestamp != first_timestamp)
         {
             std::printf("[snapshot-test] iteration %u: the timestamp query lost its result\n", iteration);
             return 4;

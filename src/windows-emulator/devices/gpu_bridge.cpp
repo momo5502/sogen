@@ -1477,9 +1477,9 @@ namespace sogen
                 this->flush_aliased_memory_for_device(win_emu);
                 this->flush_imported_memory(win_emu);
 
-                const int32_t result =
-                    this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(),
-                                                request.command_buffer_count, signals.data(), request.signal_count);
+                const int32_t result = this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count,
+                                                                   command_buffers.data(), request.command_buffer_count, signals.data(),
+                                                                   request.signal_count, this->rerecorder(win_emu));
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -1650,9 +1650,9 @@ namespace sogen
                 this->flush_aliased_memory_for_device(win_emu);
                 this->flush_imported_memory(win_emu);
 
-                const int32_t result = this->vulkan_.queue_submit(request.queue, request.fence, waits.data(), request.wait_count,
-                                                                  command_buffers.data(), request.command_buffer_count, signals.data(),
-                                                                  request.signal_count, request.has_timeline_info != 0);
+                const int32_t result = this->vulkan_.queue_submit(
+                    request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(), request.command_buffer_count,
+                    signals.data(), request.signal_count, request.has_timeline_info != 0, this->rerecorder(win_emu));
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -3303,6 +3303,24 @@ namespace sogen
             // Executes one recorded command-buffer command from a batch (see ioctl_record_commands). The
             // payload is the command's normal request struct; this is the per-command core shared with the
             // (legacy) individual command IOCTL handlers. Returns the VkResult.
+            std::function<void(uint64_t command_buffer)> rerecorder(windows_emulator& win_emu)
+            {
+                return [this, &win_emu](const uint64_t command_buffer) {
+                    if (!this->vulkan_.can_reset_command_buffer(command_buffer))
+                    {
+                        win_emu.log.warn("[gpu-bridge] Command buffer %llu depends on restored state that changed, but cannot be reset\n",
+                                         static_cast<unsigned long long>(command_buffer));
+                        return;
+                    }
+
+                    const auto commands = this->vulkan_.recorded_commands(command_buffer);
+                    if (this->vulkan_.reset_command_buffer(command_buffer, 0) == vk_success)
+                    {
+                        (void)this->execute_recorded_commands(win_emu, commands, true, std::nullopt);
+                    }
+                };
+            }
+
             int32_t execute_recorded_command(windows_emulator& win_emu, uint32_t command, const std::byte* payload, size_t size)
             {
                 constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)

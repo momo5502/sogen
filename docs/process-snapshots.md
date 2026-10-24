@@ -17,7 +17,10 @@ code is shared with Android's single-vCPU FEX backend.
 - [x] GPU slice 1 — samplers, shaders, layouts, pipelines, views, render passes, framebuffers,
       descriptor pools and sets, events, surfaces and swapchains; suspend at the end of a frame.
       Settlers II suspends and resumes on WHP
-- [ ] Query pools, MSAA contents, present completion (present fence/wait), multiple queues
+- [x] Query pools (occlusion, pipeline statistics, timestamps, transform feedback): results available at
+      the snapshot are served until the query is reset; command buffers whose recording used them, or a
+      restored swapchain image's undefined layout, are recorded again once that changed
+- [ ] MSAA contents, present completion (present fence/wait), multiple queues
 - [ ] Performance check of the shadow state against MW2 / Settlers II
 - [ ] Child processes
 - [ ] Android integration
@@ -120,8 +123,8 @@ Agreed with sol6_1 during design review.
 - **Buffer device address** needs the full capture/replay chain from device creation (feature,
   buffer create flag + opaque capture address, memory allocation flag + opaque address). The bridge
   currently drops buffer creation flags. Excluded until implemented.
-- **Queries**: completed results cannot be injected into a new pool. Live query pools are rejected
-  until a shadow of results exists.
+- **Queries**: completed results cannot be injected into a new pool, so they are kept in a shadow and
+  answered from it (host reads, and buffer writes in place of query copies) until the query is reset.
 - **External and sparse resources** are rejected.
 
 ## Milestones

@@ -69,6 +69,8 @@ namespace sogen
         // Keeps a recorded command, in the bridge's record format, so that snapshots can re-record the command buffer.
         // While a command recorded into command_buffer runs, the objects it looks up are noted. 0 stops noting them.
         void capture_references(uint64_t command_buffer);
+        std::vector<std::byte> recorded_commands(uint64_t command_buffer) const;
+        bool can_reset_command_buffer(uint64_t command_buffer) const;
         void append_recorded_command(uint64_t command_buffer, std::span<const std::byte> command, int32_t result);
 
         int32_t create_instance(std::span<const std::string> extensions, uint64_t& out_instance);
@@ -187,13 +189,16 @@ namespace sogen
 
         // Submits one VkSubmitInfo. wait_entries/signal_entries are submit_semaphore_entry arrays;
         // command_buffer_ids is an object_id array. fence 0 = none.
+        // rerecord records a command buffer again whose recording depended on state a snapshot restored that changed since.
         int32_t queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count, const void* command_buffer_ids,
-                             uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count, bool has_timeline_info);
+                             uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count, bool has_timeline_info,
+                             const std::function<void(uint64_t command_buffer)>& rerecord = {});
 
         // synchronization2 submit. wait_entries/signal_entries are submit2_semaphore_entry arrays;
         // command_buffer_ids is an object_id array. fence 0 = none.
         int32_t queue_submit2(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count, const void* command_buffer_ids,
-                              uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count);
+                              uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count,
+                              const std::function<void(uint64_t command_buffer)>& rerecord = {});
 
         // Writes up to out_size bytes of the device's VkPhysicalDeviceMemoryProperties into out.
         int32_t get_physical_device_memory_properties(uint64_t physical_device, void* out, size_t out_size);
