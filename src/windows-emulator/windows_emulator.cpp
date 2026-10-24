@@ -2491,6 +2491,11 @@ namespace sogen
         return this->suspend_requested_.exchange(false);
     }
 
+    void windows_emulator::cancel_suspend_request()
+    {
+        this->suspend_requested_ = false;
+    }
+
     void windows_emulator::ensure_snapshot_support() const
     {
         for (const auto& device : this->process.devices | std::views::values)

@@ -530,6 +530,7 @@ namespace sogen
         void request_suspend();
         // Called by such a device at the end of a frame.
         bool take_suspend_request();
+        void cancel_suspend_request();
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);

@@ -12,7 +12,8 @@
 // the middle can be compared with an uninterrupted one. Between two iterations, where a suspend lands, GPU memory holds
 // the previous iteration's results, a binary semaphore holds a signal the next iteration waits for, and a command buffer
 // recorded once before the loop is waiting to be submitted again. A buffer in memory the host cannot map carries the
-// results of the iteration before the previous one, and so does an image that rests in a shader-read layout.
+// results of the iteration before the previous one, and so does an image that rests in a shader-read layout. A
+// timestamp query written once has to keep its result.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
@@ -152,6 +153,10 @@ int main(const int argc, char** argv)
     LOAD(instance, vkCmdPipelineBarrier);
     LOAD(instance, vkCmdCopyImageToBuffer);
     LOAD(instance, vkCmdCopyBufferToImage);
+    LOAD(instance, vkCreateQueryPool);
+    LOAD(instance, vkCmdResetQueryPool);
+    LOAD(instance, vkCmdWriteTimestamp);
+    LOAD(instance, vkGetQueryPoolResults);
     LOAD(instance, vkCreateFence);
     LOAD(instance, vkCreateSemaphore);
     LOAD(instance, vkQueueSubmit);
@@ -386,9 +391,31 @@ int main(const int argc, char** argv)
     image_region.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1};
     image_region.imageExtent = {.width = image_size, .height = image_size, .depth = 1};
 
+    VkQueryPoolCreateInfo query_pool_info{};
+    query_pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    query_pool_info.queryCount = 2;
+
+    VkQueryPool query_pool{};
+    if (vkCreateQueryPool(device, &query_pool_info, nullptr, &query_pool) != VK_SUCCESS)
+    {
+        std::printf("[snapshot-test] vkCreateQueryPool failed\n");
+        return 1;
+    }
+
     vkBeginCommandBuffer(setup_command_buffer, &begin_info);
     transition(setup_command_buffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    vkCmdResetQueryPool(setup_command_buffer, query_pool, 0, 2);
+    vkCmdWriteTimestamp(setup_command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, query_pool, 0);
     vkEndCommandBuffer(setup_command_buffer);
+
+    const auto read_timestamp = [&](const uint32_t query) {
+        uint64_t value = 0;
+        return vkGetQueryPoolResults(device, query_pool, query, 1, sizeof(value), &value, sizeof(value),
+                                     VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS
+                   ? value
+                   : 0;
+    };
 
     vkBeginCommandBuffer(image_command_buffer, &begin_info);
     transition(image_command_buffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -421,6 +448,8 @@ int main(const int argc, char** argv)
         return 3;
     }
 
+    const uint64_t first_timestamp = read_timestamp(0);
+
     for (uint32_t iteration = 0; iteration < iterations; ++iteration)
     {
         if (iteration > 0)
@@ -446,13 +475,21 @@ int main(const int argc, char** argv)
             source_data[i] = source_value(iteration);
         }
 
+        if (read_timestamp(0) != first_timestamp)
+        {
+            std::printf("[snapshot-test] iteration %u: the timestamp query lost its result\n", iteration);
+            return 4;
+        }
+
         vkBeginCommandBuffer(command_buffer, &begin_info);
+        vkCmdResetQueryPool(command_buffer, query_pool, 1, 1);
+        vkCmdWriteTimestamp(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, query_pool, 1);
         vkCmdFillBuffer(command_buffer, destination, 0, half_size, fill_value(iteration));
         const VkBufferCopy region{.srcOffset = 0, .dstOffset = half_size, .size = half_size};
         vkCmdCopyBuffer(command_buffer, source, destination, 1, &region);
         vkEndCommandBuffer(command_buffer);
 
-        if (!submit_and_wait(command_buffer, VK_NULL_HANDLE, results_ready))
+        if (!submit_and_wait(command_buffer, VK_NULL_HANDLE, results_ready) || read_timestamp(1) == 0)
         {
             std::printf("[snapshot-test] iteration %u: submission failed\n", iteration);
             return 3;

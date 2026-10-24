@@ -296,6 +296,7 @@ namespace sogen::sandbox
                 catch (const std::exception& e)
                 {
                     fprintf(stderr, "Suspending failed, the process keeps running: %s\n", e.what());
+                    win_emu.cancel_suspend_request();
                     const std::scoped_lock lock(suspend_mutex);
                     signals_received = 0;
                     suspend_requested.notify_all();

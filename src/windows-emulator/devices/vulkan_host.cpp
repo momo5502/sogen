@@ -673,6 +673,8 @@ namespace sogen
             std::vector<std::byte> recorded{};
             std::vector<int32_t> recorded_results{};
             std::vector<layout_transition> layout_transitions{};
+            // Query resets take effect when the command buffer is submitted: pool, first query, count.
+            std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> query_resets{};
             // Every object the recorded commands looked up. Ids are never reused, so one that no longer exists, or whose
             // memory no longer does, was destroyed after being recorded and invalidated the command buffer.
             std::unordered_set<uint64_t> references{};
@@ -744,6 +746,14 @@ namespace sogen
                 return;
             }
 
+            for (const auto& [pool, first_query, count] : cb->second.query_resets)
+            {
+                if (const auto reset = this->query_pools.find(pool); reset != this->query_pools.end())
+                {
+                    reset->second.forget_restored(first_query, count);
+                }
+            }
+
             for (const auto& transition : cb->second.layout_transitions)
             {
                 if (transition.secondary != 0)
@@ -764,6 +774,7 @@ namespace sogen
 
                     auto& data = image->second;
                     data.ownership_transferred |= transition.transfers_ownership;
+                    data.layout_undefined = false;
 
                     // Submissions to different queues can run in another order than they were made in, which the tracked
                     // layouts cannot follow.
@@ -900,6 +911,8 @@ namespace sogen
             bool ownership_transferred{};
             VkQueue last_queue{};
             bool used_by_several_queues{};
+            // A re-created swapchain image is undefined, while the guest still believes it is in its saved layout.
+            bool layout_undefined{};
 
             uint32_t aspect_count() const
             {
@@ -1315,6 +1328,55 @@ namespace sogen
             uint64_t device_id{};
             uint32_t query_type{};
             uint32_t pipeline_statistics{};
+            uint32_t query_count{};
+            // Results that were available when the snapshot was taken, by query, until the guest resets the query. A
+            // re-created pool cannot hold them.
+            std::unordered_map<uint32_t, std::vector<uint64_t>> restored_results{};
+
+            uint32_t value_count() const
+            {
+                return this->query_type == VK_QUERY_TYPE_PIPELINE_STATISTICS
+                           ? static_cast<uint32_t>(std::popcount(this->pipeline_statistics))
+                           : 1;
+            }
+
+            void forget_restored(const uint32_t first_query, const uint32_t count)
+            {
+                if (this->restored_results.empty())
+                {
+                    return;
+                }
+
+                for (uint32_t query = first_query; query - first_query < count; ++query)
+                {
+                    this->restored_results.erase(query);
+                }
+            }
+
+            // A result as vkGetQueryPoolResults and vkCmdCopyQueryPoolResults lay it out.
+            std::vector<std::byte> restored_result(const uint32_t query, const uint32_t flags) const
+            {
+                const auto& values = this->restored_results.at(query);
+                const bool wide = (flags & VK_QUERY_RESULT_64_BIT) != 0;
+                std::vector<std::byte> result{};
+                const auto append = [&](const uint64_t value) {
+                    const auto narrow = static_cast<uint32_t>(value);
+                    const auto* bytes = wide ? reinterpret_cast<const std::byte*>(&value) : reinterpret_cast<const std::byte*>(&narrow);
+                    result.insert(result.end(), bytes, bytes + (wide ? sizeof(value) : sizeof(narrow)));
+                };
+
+                for (const auto value : values)
+                {
+                    append(value);
+                }
+
+                if ((flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) != 0)
+                {
+                    append(1);
+                }
+
+                return result;
+            }
         };
 
         struct render_pass_data
@@ -3569,6 +3631,7 @@ namespace sogen
             cb->second.recorded_results.clear();
             cb->second.references.clear();
             cb->second.layout_transitions.clear();
+            cb->second.query_resets.clear();
         }
         return result;
     }
@@ -3648,6 +3711,7 @@ namespace sogen
                     command_buffer.recorded_results.clear();
                     command_buffer.references.clear();
                     command_buffer.layout_transitions.clear();
+                    command_buffer.query_resets.clear();
                 }
             }
         }
@@ -3690,6 +3754,7 @@ namespace sogen
             cb->second.recorded_results.clear();
             cb->second.references.clear();
             cb->second.layout_transitions.clear();
+            cb->second.query_resets.clear();
         }
         return result;
     }
@@ -5155,7 +5220,7 @@ namespace sogen
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask = src_access_mask;
         barrier.dstAccessMask = dst_access_mask;
-        barrier.oldLayout = translate_layout(old_layout);
+        barrier.oldLayout = img->second.layout_undefined ? VK_IMAGE_LAYOUT_UNDEFINED : translate_layout(old_layout);
         barrier.newLayout = translate_layout(new_layout);
         barrier.srcQueueFamilyIndex = src_queue_family_index;
         barrier.dstQueueFamilyIndex = dst_queue_family_index;
@@ -5951,12 +6016,6 @@ namespace sogen
             wait_handles.push_back(it->second.handle);
         }
 
-        sc_it->second.acquired[image_index] = false;
-        for (const uint64_t semaphore : wait_semaphores)
-        {
-            this->impl_->semaphores.at(semaphore).binary_signaled = false;
-        }
-
         VkSwapchainKHR native_swapchain = sc_it->second.handle;
         VkPresentInfoKHR info{};
         info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -5974,15 +6033,33 @@ namespace sogen
 
         // The device lock is released before run_unlocked returns, since its caller may then wait for a lock that a
         // thread destroying the device holds.
-        return run_unlocked([&] {
-            int32_t result{};
+        const int32_t result = run_unlocked([&] {
+            int32_t present_result{};
             {
                 const std::scoped_lock guard(*queue_lock);
-                result = native_present(native_queue, &info);
+                present_result = native_present(native_queue, &info);
             }
             device_in_use.unlock();
-            return result;
+            return present_result;
         });
+
+        // Only these leave the present unqueued, with the image still acquired and the semaphores untouched.
+        if (result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY)
+        {
+            if (const auto presented = this->impl_->swapchains.find(swapchain); presented != this->impl_->swapchains.end())
+            {
+                presented->second.acquired[image_index] = false;
+            }
+
+            for (const uint64_t semaphore : wait_semaphores)
+            {
+                if (const auto waited = this->impl_->semaphores.find(semaphore); waited != this->impl_->semaphores.end())
+                {
+                    waited->second.binary_signaled = false;
+                }
+            }
+        }
+        return result;
     }
 
     int32_t vulkan_host::create_shader_module(uint64_t device, uint32_t flags, const void* code, size_t code_size, uint64_t& out_module)
@@ -6271,9 +6348,11 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->query_pools.emplace(
-            id, impl::query_pool_data{
-                    .handle = pool, .device_id = device, .query_type = query_type, .pipeline_statistics = pipeline_statistics});
+        this->impl_->query_pools.emplace(id, impl::query_pool_data{.handle = pool,
+                                                                   .device_id = device,
+                                                                   .query_type = query_type,
+                                                                   .pipeline_statistics = pipeline_statistics,
+                                                                   .query_count = query_count});
         out_pool = id;
         return VK_SUCCESS;
     }
@@ -6303,6 +6382,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.reset_query_pool(dev->second.handle, qp->second.handle, first_query, query_count);
+        qp->second.forget_restored(first_query, query_count);
         return VK_SUCCESS;
     }
 
@@ -6339,6 +6419,36 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        if (!qp->second.restored_results.empty())
+        {
+            // Restored queries are not available in the re-created pool, so they are answered one by one.
+            VkResult result = VK_SUCCESS;
+            for (uint32_t i = 0; i < query_count; ++i)
+            {
+                auto* element = static_cast<std::byte*>(out) + (i * effective_stride);
+                if (qp->second.restored_results.contains(first_query + i))
+                {
+                    const auto restored = qp->second.restored_result(first_query + i, flags);
+                    std::memcpy(element, restored.data(), restored.size());
+                    continue;
+                }
+
+                const VkResult single =
+                    dev->second.get_query_pool_results(dev->second.handle, qp->second.handle, first_query + i, 1, element_size, element,
+                                                       element_size, static_cast<VkQueryResultFlags>(flags));
+                if (single != VK_SUCCESS && result == VK_SUCCESS)
+                {
+                    result = single;
+                }
+            }
+
+            if (result == VK_SUCCESS)
+            {
+                out_written = out_size;
+            }
+            return result;
+        }
+
         const VkResult result = dev->second.get_query_pool_results(dev->second.handle, qp->second.handle, first_query, query_count,
                                                                    out_size, out, stride, static_cast<VkQueryResultFlags>(flags));
         if (result == VK_SUCCESS)
@@ -6363,6 +6473,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_reset_query_pool(cb->second.handle, qp->second.handle, first_query, query_count);
+        cb->second.query_resets.emplace_back(query_pool, first_query, query_count);
         return VK_SUCCESS;
     }
 
@@ -6630,8 +6741,27 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        dev->second.cmd_copy_query_pool_results(cb->second.handle, qp->second.handle, first_query, query_count, buffer->second.handle,
-                                                destination_offset, stride, static_cast<VkQueryResultFlags>(flags));
+        if (qp->second.restored_results.empty())
+        {
+            dev->second.cmd_copy_query_pool_results(cb->second.handle, qp->second.handle, first_query, query_count, buffer->second.handle,
+                                                    destination_offset, stride, static_cast<VkQueryResultFlags>(flags));
+            return VK_SUCCESS;
+        }
+
+        // Restored queries are written into the buffer directly, since the re-created pool does not hold them.
+        for (uint32_t i = 0; i < query_count; ++i)
+        {
+            const auto offset = destination_offset + (i * stride);
+            if (!qp->second.restored_results.contains(first_query + i))
+            {
+                dev->second.cmd_copy_query_pool_results(cb->second.handle, qp->second.handle, first_query + i, 1, buffer->second.handle,
+                                                        offset, stride, static_cast<VkQueryResultFlags>(flags));
+                continue;
+            }
+
+            const auto restored = qp->second.restored_result(first_query + i, flags);
+            dev->second.cmd_update_buffer(cb->second.handle, buffer->second.handle, offset, restored.size(), restored.data());
+        }
         return VK_SUCCESS;
     }
 
@@ -8881,7 +9011,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 9;
+        constexpr uint32_t snapshot_version = 10;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -9097,6 +9227,12 @@ namespace sogen
                 return true;
             }
 
+            void reset_query_pool(const VkQueryPool pool, const uint32_t count)
+            {
+                this->submit(
+                    [&](const VkCommandBuffer command_buffer) { this->device_.cmd_reset_query_pool(command_buffer, pool, 0, count); });
+            }
+
           private:
             const Device& device_;
             VkQueue queue_{};
@@ -9235,8 +9371,6 @@ namespace sogen
     void vulkan_host::serialize(utils::buffer_serializer& buffer) const
     {
         auto& impl = *this->impl_;
-
-        reject_live_objects(impl.query_pools, "query pools");
 
         for (const auto& memory : impl.memories | std::views::values)
         {
@@ -9577,11 +9711,61 @@ namespace sogen
                 throw std::runtime_error("Snapshots cannot be taken while the guest holds a swapchain image");
             }
 
+            if (std::ranges::count_if(impl.swapchains, [&](const auto& other) { return other.second.surface_id == swapchain.surface_id; }) >
+                1)
+            {
+                throw std::runtime_error("Snapshots do not support a retired Vulkan swapchain that is still alive yet");
+            }
+
             buffer.write(id);
             buffer.write(swapchain.device_id);
             buffer.write(swapchain.surface_id);
             buffer.write(swapchain.create);
             buffer.write_vector(swapchain.image_ids);
+            for (const auto image : swapchain.image_ids)
+            {
+                buffer.write_vector(impl.images.at(image).layouts);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.query_pools.size()));
+        for (const auto& [id, pool] : impl.query_pools)
+        {
+            const auto& device = impl.devices.at(pool.device_id);
+            const uint32_t values = pool.value_count();
+            std::vector<uint64_t> results(static_cast<size_t>(pool.query_count) * (values + 1));
+            const VkResult result =
+                pool.query_count == 0
+                    ? VK_SUCCESS
+                    : device.get_query_pool_results(device.handle, pool.handle, 0, pool.query_count, results.size() * sizeof(uint64_t),
+                                                    results.data(), (values + 1) * sizeof(uint64_t),
+                                                    VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            if (result != VK_SUCCESS && result != VK_NOT_READY)
+            {
+                throw std::runtime_error("Reading Vulkan query pool " + std::to_string(id) + " failed");
+            }
+
+            auto available = pool.restored_results;
+            for (uint32_t query = 0; query < pool.query_count; ++query)
+            {
+                const auto* entry = results.data() + (static_cast<size_t>(query) * (values + 1));
+                if (entry[values] != 0)
+                {
+                    available[query].assign(entry, entry + values);
+                }
+            }
+
+            buffer.write(id);
+            buffer.write(pool.device_id);
+            buffer.write(pool.query_type);
+            buffer.write(pool.query_count);
+            buffer.write(pool.pipeline_statistics);
+            buffer.write(static_cast<uint64_t>(available.size()));
+            for (const auto& [query, query_values] : available)
+            {
+                buffer.write(query);
+                buffer.write_vector(query_values);
+            }
         }
 
         buffer.write(static_cast<uint64_t>(impl.samplers.size()));
@@ -10157,6 +10341,46 @@ namespace sogen
                 throw std::runtime_error("The re-created Vulkan swapchain has a different number of images");
             }
             expect_restored(result, swapchain, id, "swapchain");
+
+            for (const auto image : image_ids)
+            {
+                auto& restored = impl.images.at(image);
+                auto layouts = buffer.read_vector<uint32_t>();
+                if (layouts.size() != restored.layouts.size())
+                {
+                    throw std::runtime_error("The re-created Vulkan swapchain has different images");
+                }
+                restored.layouts = std::move(layouts);
+                restored.layout_undefined = true;
+            }
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto query_type = buffer.read<uint32_t>();
+            const auto query_count = buffer.read<uint32_t>();
+            const auto pipeline_statistics = buffer.read<uint32_t>();
+
+            std::unordered_map<uint32_t, std::vector<uint64_t>> available{};
+            for (auto results = buffer.read<uint64_t>(); results > 0; --results)
+            {
+                const auto query = buffer.read<uint32_t>();
+                available[query] = buffer.read_vector<uint64_t>();
+            }
+
+            uint64_t pool{};
+            impl.forced_ids = {id};
+            const auto result = this->create_query_pool(device, query_type, query_count, pipeline_statistics, pool);
+            expect_restored(result, pool, id, "query pool");
+
+            auto& restored = impl.query_pools.at(id);
+            if (query_count > 0)
+            {
+                transfer_for(device).reset_query_pool(restored.handle, query_count);
+            }
+            restored.restored_results = std::move(available);
         }
 
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
