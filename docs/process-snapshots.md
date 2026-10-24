@@ -24,7 +24,11 @@ code is shared with Android's single-vCPU FEX backend.
       verified bit for bit on restore
 - [x] Settlers II suspended on a map and resumed in a new process
 - [x] Performance of the shadow state measured in game (below)
-- [ ] Present completion (present fence/wait), images used from several queues, several vCPUs on WHP
+- [x] Present completion does not need confirming: a suspend never destroys presentation objects in the
+      running process (the snapshot is written and the process exits, or saving fails and it keeps running),
+      and a restore starts in a fresh process with nothing pending
+- [ ] Images and swapchain images used from several queues (refused: their layouts depend on the order the
+      queues run in, which needs a model of the semaphore dependencies), several vCPUs on WHP
 - [ ] Child processes
 - [ ] Android integration
 

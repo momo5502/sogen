@@ -15,6 +15,7 @@
 // recorded once before the loop is waiting to be submitted again. A buffer in memory the host cannot map carries the
 // results of the iteration before the previous one, and so does an image that rests in a shader-read layout. A
 // timestamp query written once has to keep its result, and so does a multisampled image, checked through a resolve.
+// Multisampled depth/stencil and integer images, which cannot be resolved, rely on the check a restore makes itself.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
@@ -161,6 +162,7 @@ int main(const int argc, char** argv)
     LOAD(instance, vkCmdCopyQueryPoolResults);
     LOAD(instance, vkCmdClearColorImage);
     LOAD(instance, vkCmdResolveImage);
+    LOAD(instance, vkCmdClearDepthStencilImage);
     LOAD(instance, vkCreateFence);
     LOAD(instance, vkCreateSemaphore);
     LOAD(instance, vkQueueSubmit);
@@ -339,6 +341,44 @@ int main(const int argc, char** argv)
     }
     const auto* resolved_data = static_cast<const uint32_t*>(multisampled_mapped);
 
+    VkImageCreateInfo depth_info = multisampled_info;
+    depth_info.format = VK_FORMAT_D32_SFLOAT_S8_UINT;
+    depth_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    VkImageCreateInfo integer_info = multisampled_info;
+    integer_info.format = VK_FORMAT_R32_UINT;
+    integer_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    VkImage depth_stencil{};
+    VkImage integer{};
+    std::array<VkDeviceMemory, 2> attachment_memory{};
+    if (vkCreateImage(device, &depth_info, nullptr, &depth_stencil) != VK_SUCCESS)
+    {
+        depth_info.format = VK_FORMAT_D24_UNORM_S8_UINT;
+        if (vkCreateImage(device, &depth_info, nullptr, &depth_stencil) != VK_SUCCESS)
+        {
+            std::printf("[snapshot-test] no multisampled depth/stencil format\n");
+            return 1;
+        }
+    }
+
+    if (vkCreateImage(device, &integer_info, nullptr, &integer) != VK_SUCCESS)
+    {
+        std::printf("[snapshot-test] multisampled integer image setup failed\n");
+        return 1;
+    }
+
+    vkGetImageMemoryRequirements(device, depth_stencil, &needs);
+    bound = bind_new_memory(attachment_memory[0], needs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+            vkBindImageMemory(device, depth_stencil, attachment_memory[0], 0) == VK_SUCCESS;
+    vkGetImageMemoryRequirements(device, integer, &needs);
+    bound = bound && bind_new_memory(attachment_memory[1], needs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+            vkBindImageMemory(device, integer, attachment_memory[1], 0) == VK_SUCCESS;
+    if (!bound)
+    {
+        std::printf("[snapshot-test] multisampled attachment memory setup failed\n");
+        return 1;
+    }
+
     VkImage image{};
     VkMemoryRequirements image_requirements{};
     VkDeviceMemory image_memory{};
@@ -463,6 +503,24 @@ int main(const int argc, char** argv)
     transition(setup_command_buffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     transition_image(setup_command_buffer, multisampled, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     transition_image(setup_command_buffer, resolved, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transition_image(setup_command_buffer, integer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = depth_stencil;
+        barrier.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+                                    .baseMipLevel = 0,
+                                    .levelCount = 1,
+                                    .baseArrayLayer = 0,
+                                    .layerCount = 1};
+        vkCmdPipelineBarrier(setup_command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                             nullptr, 1, &barrier);
+    }
     vkCmdResetQueryPool(setup_command_buffer, query_pool, 0, 2);
     vkCmdWriteTimestamp(setup_command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, query_pool, 0);
     vkEndCommandBuffer(setup_command_buffer);
@@ -575,6 +633,18 @@ int main(const int argc, char** argv)
         const VkImageSubresourceRange color_range{
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
         vkCmdClearColorImage(command_buffer, multisampled, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &color_range);
+
+        VkClearColorValue integer_clear{};
+        integer_clear.uint32[0] = value;
+        vkCmdClearColorImage(command_buffer, integer, VK_IMAGE_LAYOUT_GENERAL, &integer_clear, 1, &color_range);
+
+        const VkClearDepthStencilValue depth_clear{.depth = static_cast<float>(iteration % 100) / 100.0F, .stencil = value & 0xFF};
+        const VkImageSubresourceRange depth_range{.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+                                                  .baseMipLevel = 0,
+                                                  .levelCount = 1,
+                                                  .baseArrayLayer = 0,
+                                                  .layerCount = 1};
+        vkCmdClearDepthStencilImage(command_buffer, depth_stencil, VK_IMAGE_LAYOUT_GENERAL, &depth_clear, 1, &depth_range);
         vkEndCommandBuffer(command_buffer);
 
         if (!submit_and_wait(command_buffer, VK_NULL_HANDLE, results_ready) || read_timestamp(1) == 0)

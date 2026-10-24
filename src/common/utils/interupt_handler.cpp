@@ -67,6 +67,8 @@ namespace sogen
             data.handler = std::move(callback);
 
 #ifdef _WIN32
+            // A process created in a new process group starts with Ctrl+C ignored, which handlers never see.
+            SetConsoleCtrlHandler(nullptr, FALSE);
             SetConsoleCtrlHandler(handler, TRUE);
 #else
             signal(SIGINT, handler);
