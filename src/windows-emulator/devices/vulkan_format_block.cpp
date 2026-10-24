@@ -4,6 +4,8 @@
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <vulkan/vulkan_format_traits.hpp>
 
+#include <string_view>
+
 namespace sogen
 {
     uint32_t get_vulkan_format_aspects(const uint32_t format)
@@ -23,6 +25,22 @@ namespace sogen
         default:
             return VK_IMAGE_ASPECT_COLOR_BIT;
         }
+    }
+
+    vulkan_format_numeric get_vulkan_format_numeric(const uint32_t format)
+    {
+        const std::string_view numeric = vk::componentNumericFormat(static_cast<vk::Format>(format), 0);
+        if (numeric == "UINT")
+        {
+            return vulkan_format_numeric::unsigned_integer;
+        }
+
+        if (numeric == "SINT")
+        {
+            return vulkan_format_numeric::signed_integer;
+        }
+
+        return vulkan_format_numeric::floating;
     }
 
     std::optional<vulkan_format_block> get_vulkan_copy_block(const uint32_t format, const uint32_t aspect_mask)

@@ -17,4 +17,14 @@ namespace sogen
 
     // The aspects images in this format have: color, or depth and/or stencil.
     uint32_t get_vulkan_format_aspects(uint32_t format);
+
+    // How shaders see the color values of a format.
+    enum class vulkan_format_numeric
+    {
+        floating,
+        unsigned_integer,
+        signed_integer,
+    };
+
+    vulkan_format_numeric get_vulkan_format_numeric(uint32_t format);
 }

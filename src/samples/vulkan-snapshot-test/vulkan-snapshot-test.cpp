@@ -3,6 +3,7 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <array>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -13,7 +14,7 @@
 // the previous iteration's results, a binary semaphore holds a signal the next iteration waits for, and a command buffer
 // recorded once before the loop is waiting to be submitted again. A buffer in memory the host cannot map carries the
 // results of the iteration before the previous one, and so does an image that rests in a shader-read layout. A
-// timestamp query written once has to keep its result.
+// timestamp query written once has to keep its result, and so does a multisampled image, checked through a resolve.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
@@ -158,6 +159,8 @@ int main(const int argc, char** argv)
     LOAD(instance, vkCmdWriteTimestamp);
     LOAD(instance, vkGetQueryPoolResults);
     LOAD(instance, vkCmdCopyQueryPoolResults);
+    LOAD(instance, vkCmdClearColorImage);
+    LOAD(instance, vkCmdResolveImage);
     LOAD(instance, vkCreateFence);
     LOAD(instance, vkCreateSemaphore);
     LOAD(instance, vkQueueSubmit);
@@ -290,6 +293,52 @@ int main(const int argc, char** argv)
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
+    VkImageCreateInfo multisampled_info = image_info;
+    multisampled_info.samples = VK_SAMPLE_COUNT_4_BIT;
+    multisampled_info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    VkImageCreateInfo resolved_info = image_info;
+    resolved_info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+    VkImage multisampled{};
+    VkImage resolved{};
+    VkBuffer multisampled_readback{};
+    std::array<VkDeviceMemory, 3> multisampled_memory{};
+    if (vkCreateImage(device, &multisampled_info, nullptr, &multisampled) != VK_SUCCESS ||
+        vkCreateImage(device, &resolved_info, nullptr, &resolved) != VK_SUCCESS ||
+        vkCreateBuffer(device, &buffer_info, nullptr, &multisampled_readback) != VK_SUCCESS)
+    {
+        std::printf("[snapshot-test] multisampled image setup failed\n");
+        return 1;
+    }
+
+    const auto bind_new_memory = [&](VkDeviceMemory& memory_out, const VkMemoryRequirements& needs, const VkMemoryPropertyFlags wanted) {
+        VkMemoryAllocateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        info.allocationSize = needs.size;
+        info.memoryTypeIndex = find_memory_type(memory_properties, needs.memoryTypeBits, wanted, 0);
+        return info.memoryTypeIndex != UINT32_MAX && vkAllocateMemory(device, &info, nullptr, &memory_out) == VK_SUCCESS;
+    };
+
+    VkMemoryRequirements needs{};
+    vkGetImageMemoryRequirements(device, multisampled, &needs);
+    bool bound = bind_new_memory(multisampled_memory[0], needs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+                 vkBindImageMemory(device, multisampled, multisampled_memory[0], 0) == VK_SUCCESS;
+    vkGetImageMemoryRequirements(device, resolved, &needs);
+    bound = bound && bind_new_memory(multisampled_memory[1], needs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+            vkBindImageMemory(device, resolved, multisampled_memory[1], 0) == VK_SUCCESS;
+    vkGetBufferMemoryRequirements(device, multisampled_readback, &needs);
+    bound = bound &&
+            bind_new_memory(multisampled_memory[2], needs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) &&
+            vkBindBufferMemory(device, multisampled_readback, multisampled_memory[2], 0) == VK_SUCCESS;
+
+    void* multisampled_mapped = nullptr;
+    if (!bound || vkMapMemory(device, multisampled_memory[2], 0, VK_WHOLE_SIZE, 0, &multisampled_mapped) != VK_SUCCESS)
+    {
+        std::printf("[snapshot-test] multisampled memory setup failed\n");
+        return 1;
+    }
+    const auto* resolved_data = static_cast<const uint32_t*>(multisampled_mapped);
+
     VkImage image{};
     VkMemoryRequirements image_requirements{};
     VkDeviceMemory image_memory{};
@@ -374,7 +423,8 @@ int main(const int argc, char** argv)
     vkCmdCopyBuffer(keep_command_buffer, destination, device_local, 1, &whole_buffer);
     vkEndCommandBuffer(keep_command_buffer);
 
-    const auto transition = [&](const VkCommandBuffer recorded, const VkImageLayout from, const VkImageLayout to) {
+    const auto transition_image = [&](const VkCommandBuffer recorded, const VkImage target, const VkImageLayout from,
+                                      const VkImageLayout to) {
         VkImageMemoryBarrier barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
@@ -383,11 +433,14 @@ int main(const int argc, char** argv)
         barrier.newLayout = to;
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = image;
+        barrier.image = target;
         barrier.subresourceRange = {
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
         vkCmdPipelineBarrier(recorded, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
                              &barrier);
+    };
+    const auto transition = [&](const VkCommandBuffer recorded, const VkImageLayout from, const VkImageLayout to) {
+        transition_image(recorded, image, from, to);
     };
 
     VkBufferImageCopy image_region{};
@@ -408,6 +461,8 @@ int main(const int argc, char** argv)
 
     vkBeginCommandBuffer(setup_command_buffer, &begin_info);
     transition(setup_command_buffer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    transition_image(setup_command_buffer, multisampled, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transition_image(setup_command_buffer, resolved, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     vkCmdResetQueryPool(setup_command_buffer, query_pool, 0, 2);
     vkCmdWriteTimestamp(setup_command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, query_pool, 0);
     vkEndCommandBuffer(setup_command_buffer);
@@ -497,12 +552,42 @@ int main(const int argc, char** argv)
         vkCmdFillBuffer(command_buffer, destination, 0, half_size, fill_value(iteration));
         const VkBufferCopy region{.srcOffset = 0, .dstOffset = half_size, .size = half_size};
         vkCmdCopyBuffer(command_buffer, source, destination, 1, &region);
+
+        // The multisampled image still holds the previous iteration's clear, which the resolve reads.
+        const VkImageSubresourceLayers color_layer{
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1};
+        const VkImageResolve resolve{.srcSubresource = color_layer,
+                                     .srcOffset = {},
+                                     .dstSubresource = color_layer,
+                                     .dstOffset = {},
+                                     .extent = {.width = image_size, .height = image_size, .depth = 1}};
+        vkCmdResolveImage(command_buffer, multisampled, VK_IMAGE_LAYOUT_GENERAL, resolved, VK_IMAGE_LAYOUT_GENERAL, 1, &resolve);
+        transition_image(command_buffer, resolved, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+        vkCmdCopyImageToBuffer(command_buffer, resolved, VK_IMAGE_LAYOUT_GENERAL, multisampled_readback, 1, &image_region);
+        transition_image(command_buffer, multisampled, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+
+        const uint32_t value = fill_value(iteration);
+        VkClearColorValue clear{};
+        for (uint32_t channel = 0; channel < 4; ++channel)
+        {
+            clear.float32[channel] = static_cast<float>((value >> (channel * 8)) & 0xFF) / 255.0F;
+        }
+        const VkImageSubresourceRange color_range{
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        vkCmdClearColorImage(command_buffer, multisampled, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &color_range);
         vkEndCommandBuffer(command_buffer);
 
         if (!submit_and_wait(command_buffer, VK_NULL_HANDLE, results_ready) || read_timestamp(1) == 0)
         {
             std::printf("[snapshot-test] iteration %u: submission failed\n", iteration);
             return 3;
+        }
+
+        if (iteration > 0 && !holds_fill(resolved_data, iteration - 1))
+        {
+            std::printf("[snapshot-test] iteration %u: the multisampled image lost what iteration %u cleared it to\n", iteration,
+                        iteration - 1);
+            return 5;
         }
 
         const auto count = static_cast<size_t>(buffer_size / sizeof(uint32_t));

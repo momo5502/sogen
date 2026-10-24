@@ -2,6 +2,7 @@
 #include "../vulkan_handle_utils.hpp"
 #include "spirv_clip_distance.hpp"
 #include "vulkan_format_block.hpp"
+#include "snapshot_shaders.hpp"
 
 #include <address_utils.hpp>
 #include <utils/finally.hpp>
@@ -14,6 +15,8 @@
 #include <cstddef>
 #include <cstring>
 #include <deque>
+#include <tuple>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -757,15 +760,15 @@ namespace sogen
             return true;
         }
 
-        void apply_layout_transitions(const VkQueue queue, const uint64_t* submitted, const uint32_t count)
+        void apply_layout_transitions(const VkQueue queue, const uint64_t queue_id, const uint64_t* submitted, const uint32_t count)
         {
             for (uint32_t i = 0; i < count; ++i)
             {
-                this->apply_layout_transitions(queue, submitted[i]);
+                this->apply_layout_transitions(queue, queue_id, submitted[i]);
             }
         }
 
-        void apply_layout_transitions(const VkQueue queue, const uint64_t command_buffer)
+        void apply_layout_transitions(const VkQueue queue, const uint64_t queue_id, const uint64_t command_buffer)
         {
             const auto cb = this->command_buffers.find(command_buffer);
             if (cb == this->command_buffers.end())
@@ -787,7 +790,7 @@ namespace sogen
                 {
                     if (transition.secondary != command_buffer)
                     {
-                        this->apply_layout_transitions(queue, transition.secondary);
+                        this->apply_layout_transitions(queue, queue_id, transition.secondary);
                     }
                     continue;
                 }
@@ -806,6 +809,7 @@ namespace sogen
                     // layouts cannot follow.
                     data.used_by_several_queues |= data.last_queue && data.last_queue != queue;
                     data.last_queue = queue;
+                    data.last_queue_id = queue_id;
 
                     const auto aspects = get_vulkan_format_aspects(data.create.format);
                     const auto mip_end = transition.level_count == VK_REMAINING_MIP_LEVELS
@@ -850,7 +854,8 @@ namespace sogen
 
             VkImageFormatProperties properties{};
             return instance->second.get_physical_device_image_format_properties(
-                       dev.physical_device, info.format, info.imageType, info.tiling, info.usage, info.flags, &properties) == VK_SUCCESS;
+                       dev.physical_device, info.format, info.imageType, info.tiling, info.usage, info.flags, &properties) == VK_SUCCESS &&
+                   (properties.sampleCounts & info.samples) != 0;
         }
 
         template <typename Entry>
@@ -936,6 +941,7 @@ namespace sogen
             std::vector<uint32_t> layouts{};
             bool ownership_transferred{};
             VkQueue last_queue{};
+            uint64_t last_queue_id{};
             bool used_by_several_queues{};
             // A re-created swapchain image is undefined, while the guest believes it is in its saved layout. It is
             // transitioned there when the guest first acquires it, before the guest can use it.
@@ -1343,8 +1349,8 @@ namespace sogen
                 }
             }
 
-            const auto queue =
-                std::ranges::find_if(this->queues, [&](const auto& entry) { return entry.second.device_id == image.device_id; });
+            // The guest last used the image on this queue, so its family owns it.
+            const auto queue = this->queues.find(image.last_queue_id);
             if (queue == this->queues.end())
             {
                 return false;
@@ -4373,7 +4379,7 @@ namespace sogen
         const VkResult result = dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
         if (result == VK_SUCCESS)
         {
-            this->impl_->apply_layout_transitions(queue_it->second.handle, command_ids, command_buffer_count);
+            this->impl_->apply_layout_transitions(queue_it->second.handle, queue, command_ids, command_buffer_count);
             this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries), wait_count,
                                                     static_cast<const gpu_bridge::submit_semaphore_entry*>(signal_entries), signal_count);
         }
@@ -4468,7 +4474,7 @@ namespace sogen
         const VkResult result = dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
         if (result == VK_SUCCESS)
         {
-            this->impl_->apply_layout_transitions(queue_it->second.handle, cmd_ids, command_buffer_count);
+            this->impl_->apply_layout_transitions(queue_it->second.handle, queue, cmd_ids, command_buffer_count);
             this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries), wait_count,
                                                     static_cast<const gpu_bridge::submit2_semaphore_entry*>(signal_entries), signal_count);
         }
@@ -5210,7 +5216,10 @@ namespace sogen
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
-        constexpr VkImageUsageFlags transfer_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        // Multisampled images are read by sampling them and written by rendering to them.
+        const VkImageUsageFlags transfer_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                 (info.samples > VK_SAMPLE_COUNT_1_BIT ? VK_IMAGE_USAGE_SAMPLED_BIT : 0);
+        constexpr VkImageUsageFlags attachment_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
         bool copyable = (info.usage & transfer_usage) == transfer_usage;
         if (!copyable)
         {
@@ -5223,6 +5232,11 @@ namespace sogen
                 info.usage = with_transfer.usage;
                 copyable = true;
             }
+        }
+
+        if (info.samples > VK_SAMPLE_COUNT_1_BIT && (info.usage & attachment_usage) == 0)
+        {
+            copyable = false;
         }
 
         VkExternalMemoryImageCreateInfo external_info{};
@@ -9198,7 +9212,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 11;
+        constexpr uint32_t snapshot_version = 12;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -9414,6 +9428,211 @@ namespace sogen
                 return true;
             }
 
+            // Multisampled images cannot be copied to buffers. A compute shader reads every sample as raw bits into the
+            // staging buffer instead, one block of rows at a time; each sample is written back by drawing with a sample
+            // mask that selects it, and stencil one bit at a time. Shaders can change the bits of some formats, so a
+            // written image is read again and must match.
+            static constexpr uint64_t sample_size = 16;
+
+            bool read_samples(const VkImage image, const uint32_t format, const uint32_t samples, const VkImageAspectFlagBits aspect,
+                              const VkImageAspectFlags barrier_aspects, const uint32_t layer, const VkExtent2D extent,
+                              const VkImageLayout layout, const std::span<std::byte> contents)
+            {
+                const auto& device = this->device_;
+                const uint64_t row_size = static_cast<uint64_t>(extent.width) * samples * sample_size;
+                if (row_size == 0 || row_size > chunk_size || contents.size() != row_size * extent.height)
+                {
+                    return false;
+                }
+
+                const VkPipeline pipeline = this->read_pipeline(sample_variant(format, aspect));
+                const VkImageView view = this->create_view(image, format, aspect, layer);
+                const auto destroy_view = utils::finally([&] { device.destroy_image_view(device.handle, view, nullptr); });
+
+                const VkImageLayout read_layout = aspect == VK_IMAGE_ASPECT_COLOR_BIT ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                                                      : VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                this->bind_sample_resources(view, read_layout);
+
+                const uint64_t rows_per_chunk = chunk_size / row_size;
+                for (uint32_t row = 0; row < extent.height;)
+                {
+                    const auto rows = static_cast<uint32_t>(std::min<uint64_t>(rows_per_chunk, extent.height - row));
+                    const bool first = row == 0;
+                    const bool last = row + rows == extent.height;
+
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        if (first)
+                        {
+                            this->image_barrier(command_buffer, image, barrier_aspects, layer, layout, read_layout);
+                        }
+
+                        const sample_parameters parameters{.width = extent.width, .rows = rows, .sample_count = samples, .first_row = row};
+                        device.cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+                        device.cmd_bind_descriptor_sets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, this->sample_pipeline_layout_, 0, 1,
+                                                        &this->sample_descriptor_set_, 0, nullptr);
+                        device.cmd_push_constants(command_buffer, this->sample_pipeline_layout_,
+                                                  VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters),
+                                                  &parameters);
+                        device.cmd_dispatch(command_buffer,
+                                            static_cast<uint32_t>((static_cast<uint64_t>(extent.width) * rows * samples + 63) / 64), 1, 1);
+
+                        VkMemoryBarrier written{};
+                        written.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                        written.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        written.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+                        device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
+                                                    &written, 0, nullptr, 0, nullptr);
+
+                        if (last)
+                        {
+                            this->image_barrier(command_buffer, image, barrier_aspects, layer, read_layout, layout);
+                        }
+                    });
+
+                    std::memcpy(contents.data() + (row * row_size), this->staging_data_, static_cast<size_t>(rows * row_size));
+                    row += rows;
+                }
+
+                return true;
+            }
+
+            // The image is in from, undefined for its first aspect, and only goes to layout after the last one.
+            bool write_samples(const VkImage image, const uint32_t format, const uint32_t samples, const VkImageAspectFlagBits aspect,
+                               const VkImageAspectFlags barrier_aspects, const uint32_t layer, const VkExtent2D extent, const bool first,
+                               const bool last, const VkImageLayout layout, const std::span<std::byte> contents)
+            {
+                const auto& device = this->device_;
+                const uint64_t row_size = static_cast<uint64_t>(extent.width) * samples * sample_size;
+                if (row_size == 0 || row_size > chunk_size || contents.size() != row_size * extent.height)
+                {
+                    return false;
+                }
+
+                const bool depth_stencil = aspect != VK_IMAGE_ASPECT_COLOR_BIT;
+                const VkImageLayout attachment_layout =
+                    depth_stencil ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                const auto variant = sample_variant(format, aspect);
+                const VkRenderPass render_pass = this->sample_render_pass(format, samples, depth_stencil);
+
+                const VkImageView view = this->create_view(image, format, barrier_aspects, layer);
+                const auto destroy_view = utils::finally([&] { device.destroy_image_view(device.handle, view, nullptr); });
+
+                VkFramebufferCreateInfo framebuffer_info{};
+                framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                framebuffer_info.renderPass = render_pass;
+                framebuffer_info.attachmentCount = 1;
+                framebuffer_info.pAttachments = &view;
+                framebuffer_info.width = extent.width;
+                framebuffer_info.height = extent.height;
+                framebuffer_info.layers = 1;
+
+                VkFramebuffer framebuffer{};
+                if (device.create_framebuffer(device.handle, &framebuffer_info, nullptr, &framebuffer) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating a framebuffer to restore a multisampled Vulkan image failed");
+                }
+                const auto destroy_framebuffer = utils::finally([&] { device.destroy_framebuffer(device.handle, framebuffer, nullptr); });
+
+                this->bind_sample_resources(VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED);
+
+                if (first)
+                {
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        if (!depth_stencil)
+                        {
+                            this->image_barrier(command_buffer, image, barrier_aspects, layer, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                attachment_layout);
+                            return;
+                        }
+
+                        // Stencil is built up bit by bit, so it starts out cleared.
+                        this->image_barrier(command_buffer, image, barrier_aspects, layer, VK_IMAGE_LAYOUT_UNDEFINED,
+                                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                        const VkClearDepthStencilValue clear{.depth = 0.0F, .stencil = 0};
+                        const VkImageSubresourceRange range{
+                            .aspectMask = barrier_aspects, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+                        device.cmd_clear_depth_stencil_image(command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1,
+                                                             &range);
+                        this->image_barrier(command_buffer, image, barrier_aspects, layer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                            attachment_layout);
+                    });
+                }
+
+                const uint64_t rows_per_chunk = chunk_size / row_size;
+                for (uint32_t row = 0; row < extent.height;)
+                {
+                    const auto rows = static_cast<uint32_t>(std::min<uint64_t>(rows_per_chunk, extent.height - row));
+                    std::memcpy(this->staging_data_, contents.data() + (row * row_size), static_cast<size_t>(rows * row_size));
+
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        VkRenderPassBeginInfo begin{};
+                        begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                        begin.renderPass = render_pass;
+                        begin.framebuffer = framebuffer;
+                        begin.renderArea = {.offset = {.x = 0, .y = static_cast<int32_t>(row)},
+                                            .extent = {.width = extent.width, .height = rows}};
+                        device.cmd_begin_render_pass(command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
+
+                        const VkViewport viewport{.x = 0.0F,
+                                                  .y = 0.0F,
+                                                  .width = static_cast<float>(extent.width),
+                                                  .height = static_cast<float>(extent.height),
+                                                  .minDepth = 0.0F,
+                                                  .maxDepth = 1.0F};
+                        device.cmd_set_viewport(command_buffer, 0, 1, &viewport);
+                        device.cmd_set_scissor(command_buffer, 0, 1, &begin.renderArea);
+                        device.cmd_bind_descriptor_sets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->sample_pipeline_layout_, 0,
+                                                        1, &this->sample_descriptor_set_, 0, nullptr);
+
+                        for (uint32_t sample = 0; sample < samples; ++sample)
+                        {
+                            device.cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                     this->write_pipeline(render_pass, format, samples, variant, sample));
+
+                            const uint32_t bits = variant == sample_shader::stencil ? 8 : 1;
+                            for (uint32_t bit = 0; bit < bits; ++bit)
+                            {
+                                const sample_parameters parameters{.width = extent.width,
+                                                                   .rows = rows,
+                                                                   .sample_count = samples,
+                                                                   .first_row = row,
+                                                                   .sample_index = sample,
+                                                                   .stencil_bit = bit};
+                                device.cmd_push_constants(command_buffer, this->sample_pipeline_layout_,
+                                                          VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters),
+                                                          &parameters);
+                                if (variant == sample_shader::stencil)
+                                {
+                                    device.cmd_set_stencil_write_mask(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK, 1U << bit);
+                                    device.cmd_set_stencil_reference(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK, 0xFF);
+                                }
+                                device.cmd_draw(command_buffer, 3, 1, 0, 0);
+                            }
+                        }
+
+                        device.cmd_end_render_pass(command_buffer);
+                    });
+
+                    row += rows;
+                }
+
+                std::vector<std::byte> written(contents.size());
+                if (!this->read_samples(image, format, samples, aspect, barrier_aspects, layer, extent, attachment_layout, written) ||
+                    written != std::vector<std::byte>(contents.begin(), contents.end()))
+                {
+                    return false;
+                }
+
+                if (last)
+                {
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        this->image_barrier(command_buffer, image, barrier_aspects, layer, attachment_layout, layout);
+                    });
+                }
+
+                return true;
+            }
+
             void reset_query_pool(const VkQueryPool pool, const uint32_t count)
             {
                 this->submit(
@@ -9421,8 +9640,394 @@ namespace sogen
             }
 
           private:
+            enum class sample_shader : uint8_t
+            {
+                floating,
+                unsigned_integer,
+                signed_integer,
+                depth,
+                stencil,
+            };
+
+            struct sample_parameters
+            {
+                uint32_t width{};
+                uint32_t rows{};
+                uint32_t sample_count{};
+                uint32_t layer{};
+                uint32_t first_row{};
+                uint32_t sample_index{};
+                uint32_t stencil_bit{};
+            };
+
             const Device& device_;
             VkQueue queue_{};
+            std::unordered_map<std::string_view, VkShaderModule> shader_modules_{};
+            VkDescriptorSetLayout sample_set_layout_{};
+            VkPipelineLayout sample_pipeline_layout_{};
+            VkDescriptorPool sample_descriptor_pool_{};
+            VkDescriptorSet sample_descriptor_set_{};
+            std::map<std::tuple<uint32_t, uint32_t, bool>, VkRenderPass> sample_render_passes_{};
+            std::map<std::tuple<VkRenderPass, uint32_t, uint32_t, sample_shader, uint32_t>, VkPipeline> sample_pipelines_{};
+
+            static sample_shader sample_variant(const uint32_t format, const VkImageAspectFlagBits aspect)
+            {
+                if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT)
+                {
+                    return sample_shader::depth;
+                }
+
+                if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT)
+                {
+                    return sample_shader::stencil;
+                }
+
+                switch (get_vulkan_format_numeric(format))
+                {
+                case vulkan_format_numeric::unsigned_integer:
+                    return sample_shader::unsigned_integer;
+                case vulkan_format_numeric::signed_integer:
+                    return sample_shader::signed_integer;
+                default:
+                    return sample_shader::floating;
+                }
+            }
+
+            VkShaderModule shader_module(const std::string_view name, const std::span<const uint32_t> code)
+            {
+                auto& module = this->shader_modules_[name];
+                if (!module)
+                {
+                    VkShaderModuleCreateInfo info{};
+                    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+                    info.codeSize = code.size_bytes();
+                    info.pCode = code.data();
+                    if (this->device_.create_shader_module(this->device_.handle, &info, nullptr, &module) != VK_SUCCESS)
+                    {
+                        throw std::runtime_error("Creating a Vulkan snapshot shader failed");
+                    }
+                }
+                return module;
+            }
+
+            void create_sample_layouts()
+            {
+                if (this->sample_pipeline_layout_)
+                {
+                    return;
+                }
+
+                const auto& device = this->device_;
+                const std::array bindings{
+                    VkDescriptorSetLayoutBinding{.binding = 0,
+                                                 .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                                 .descriptorCount = 1,
+                                                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                                                 .pImmutableSamplers = nullptr},
+                    VkDescriptorSetLayoutBinding{.binding = 1,
+                                                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                 .descriptorCount = 1,
+                                                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                 .pImmutableSamplers = nullptr},
+                };
+
+                VkDescriptorSetLayoutCreateInfo set_layout_info{};
+                set_layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+                set_layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+                set_layout_info.pBindings = bindings.data();
+
+                const VkPushConstantRange push_constants{.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                         .offset = 0,
+                                                         .size = sizeof(sample_parameters)};
+                VkPipelineLayoutCreateInfo pipeline_layout_info{};
+                pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+                pipeline_layout_info.setLayoutCount = 1;
+                pipeline_layout_info.pSetLayouts = &this->sample_set_layout_;
+                pipeline_layout_info.pushConstantRangeCount = 1;
+                pipeline_layout_info.pPushConstantRanges = &push_constants;
+
+                const std::array sizes{
+                    VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = 1},
+                    VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1},
+                };
+                VkDescriptorPoolCreateInfo pool_info{};
+                pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+                pool_info.maxSets = 1;
+                pool_info.poolSizeCount = static_cast<uint32_t>(sizes.size());
+                pool_info.pPoolSizes = sizes.data();
+
+                VkDescriptorSetAllocateInfo set_info{};
+                set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+                set_info.descriptorSetCount = 1;
+                set_info.pSetLayouts = &this->sample_set_layout_;
+
+                if (device.create_descriptor_set_layout(device.handle, &set_layout_info, nullptr, &this->sample_set_layout_) !=
+                        VK_SUCCESS ||
+                    device.create_pipeline_layout(device.handle, &pipeline_layout_info, nullptr, &this->sample_pipeline_layout_) !=
+                        VK_SUCCESS ||
+                    device.create_descriptor_pool(device.handle, &pool_info, nullptr, &this->sample_descriptor_pool_) != VK_SUCCESS ||
+                    (set_info.descriptorPool = this->sample_descriptor_pool_,
+                     device.allocate_descriptor_sets(device.handle, &set_info, &this->sample_descriptor_set_)) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot shader layouts failed");
+                }
+            }
+
+            void bind_sample_resources(const VkImageView view, const VkImageLayout layout)
+            {
+                this->create_sample_layouts();
+
+                const VkDescriptorImageInfo image_info{.sampler = VK_NULL_HANDLE, .imageView = view, .imageLayout = layout};
+                const VkDescriptorBufferInfo buffer_info{.buffer = this->staging_buffer_, .offset = 0, .range = VK_WHOLE_SIZE};
+                std::array<VkWriteDescriptorSet, 2> writes{};
+                for (auto& write : writes)
+                {
+                    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    write.dstSet = this->sample_descriptor_set_;
+                    write.descriptorCount = 1;
+                }
+                writes[0].dstBinding = 1;
+                writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[0].pBufferInfo = &buffer_info;
+                writes[1].dstBinding = 0;
+                writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                writes[1].pImageInfo = &image_info;
+
+                this->device_.update_descriptor_sets(this->device_.handle, view ? 2 : 1, writes.data(), 0, nullptr);
+            }
+
+            VkPipeline read_pipeline(const sample_shader variant)
+            {
+                this->create_sample_layouts();
+
+                const auto read_variant = variant == sample_shader::stencil ? sample_shader::unsigned_integer
+                                          : variant == sample_shader::depth ? sample_shader::floating
+                                                                            : variant;
+                auto& pipeline = this->sample_pipelines_[{VK_NULL_HANDLE, 0, 0, read_variant, 0}];
+                if (pipeline)
+                {
+                    return pipeline;
+                }
+
+                VkComputePipelineCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+                info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+                info.stage.pName = "main";
+                info.stage.module = read_variant == sample_shader::unsigned_integer
+                                        ? this->shader_module("read_samples_uint", snapshot_shaders::read_samples_uint)
+                                    : read_variant == sample_shader::signed_integer
+                                        ? this->shader_module("read_samples_sint", snapshot_shaders::read_samples_sint)
+                                        : this->shader_module("read_samples_float", snapshot_shaders::read_samples_float);
+                info.layout = this->sample_pipeline_layout_;
+
+                if (this->device_.create_compute_pipelines(this->device_.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) !=
+                    VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot read pipeline failed");
+                }
+                return pipeline;
+            }
+
+            VkRenderPass sample_render_pass(const uint32_t format, const uint32_t samples, const bool depth_stencil)
+            {
+                auto& render_pass = this->sample_render_passes_[{format, samples, depth_stencil}];
+                if (render_pass)
+                {
+                    return render_pass;
+                }
+
+                const VkImageLayout layout =
+                    depth_stencil ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                const VkAttachmentDescription attachment{.flags = 0,
+                                                         .format = static_cast<VkFormat>(format),
+                                                         .samples = static_cast<VkSampleCountFlagBits>(samples),
+                                                         .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+                                                         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                                         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+                                                         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                                         .initialLayout = layout,
+                                                         .finalLayout = layout};
+                const VkAttachmentReference reference{.attachment = 0, .layout = layout};
+
+                VkSubpassDescription subpass{};
+                subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+                subpass.colorAttachmentCount = depth_stencil ? 0 : 1;
+                subpass.pColorAttachments = depth_stencil ? nullptr : &reference;
+                subpass.pDepthStencilAttachment = depth_stencil ? &reference : nullptr;
+
+                VkRenderPassCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+                info.attachmentCount = 1;
+                info.pAttachments = &attachment;
+                info.subpassCount = 1;
+                info.pSubpasses = &subpass;
+
+                if (this->device_.create_render_pass(this->device_.handle, &info, nullptr, &render_pass) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot render pass failed");
+                }
+                return render_pass;
+            }
+
+            VkPipeline write_pipeline(const VkRenderPass render_pass, const uint32_t format, const uint32_t samples,
+                                      const sample_shader variant, const uint32_t sample)
+            {
+                auto& pipeline = this->sample_pipelines_[{render_pass, format, samples, variant, sample}];
+                if (pipeline)
+                {
+                    return pipeline;
+                }
+
+                const VkShaderModule fragment = [&] {
+                    switch (variant)
+                    {
+                    case sample_shader::unsigned_integer:
+                        return this->shader_module("write_sample_uint", snapshot_shaders::write_sample_uint);
+                    case sample_shader::signed_integer:
+                        return this->shader_module("write_sample_sint", snapshot_shaders::write_sample_sint);
+                    case sample_shader::depth:
+                        return this->shader_module("write_sample_depth", snapshot_shaders::write_sample_depth);
+                    case sample_shader::stencil:
+                        return this->shader_module("write_sample_stencil", snapshot_shaders::write_sample_stencil);
+                    default:
+                        return this->shader_module("write_sample_float", snapshot_shaders::write_sample_float);
+                    }
+                }();
+
+                std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+                for (auto& stage : stages)
+                {
+                    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+                    stage.pName = "main";
+                }
+                stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+                stages[0].module = this->shader_module("fullscreen", snapshot_shaders::fullscreen);
+                stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+                stages[1].module = fragment;
+
+                VkPipelineVertexInputStateCreateInfo vertex_input{};
+                vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+                VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+                input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+                input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+                VkPipelineViewportStateCreateInfo viewport{};
+                viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+                viewport.viewportCount = 1;
+                viewport.scissorCount = 1;
+
+                VkPipelineRasterizationStateCreateInfo rasterization{};
+                rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+                rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+                rasterization.cullMode = VK_CULL_MODE_NONE;
+                rasterization.lineWidth = 1.0F;
+
+                const std::array<VkSampleMask, 2> sample_mask{sample < 32 ? 1U << sample : 0U, sample >= 32 ? 1U << (sample - 32) : 0U};
+                VkPipelineMultisampleStateCreateInfo multisample{};
+                multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+                multisample.rasterizationSamples = static_cast<VkSampleCountFlagBits>(samples);
+                multisample.pSampleMask = sample_mask.data();
+
+                VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+                depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+                depth_stencil.depthTestEnable = variant == sample_shader::depth ? VK_TRUE : VK_FALSE;
+                depth_stencil.depthWriteEnable = variant == sample_shader::depth ? VK_TRUE : VK_FALSE;
+                depth_stencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+                depth_stencil.stencilTestEnable = variant == sample_shader::stencil ? VK_TRUE : VK_FALSE;
+                depth_stencil.front = {.failOp = VK_STENCIL_OP_KEEP,
+                                       .passOp = VK_STENCIL_OP_REPLACE,
+                                       .depthFailOp = VK_STENCIL_OP_KEEP,
+                                       .compareOp = VK_COMPARE_OP_ALWAYS,
+                                       .compareMask = 0xFF,
+                                       .writeMask = 0xFF,
+                                       .reference = 0xFF};
+                depth_stencil.back = depth_stencil.front;
+
+                const VkPipelineColorBlendAttachmentState blend_attachment{.blendEnable = VK_FALSE,
+                                                                           .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                           .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                           .colorBlendOp = VK_BLEND_OP_ADD,
+                                                                           .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                           .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                           .alphaBlendOp = VK_BLEND_OP_ADD,
+                                                                           .colorWriteMask =
+                                                                               VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                                                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
+                const bool color = variant != sample_shader::depth && variant != sample_shader::stencil;
+                VkPipelineColorBlendStateCreateInfo blend{};
+                blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+                blend.attachmentCount = color ? 1 : 0;
+                blend.pAttachments = &blend_attachment;
+
+                const std::array dynamic_states{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+                                                VK_DYNAMIC_STATE_STENCIL_REFERENCE};
+                VkPipelineDynamicStateCreateInfo dynamic{};
+                dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+                dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+                dynamic.pDynamicStates = dynamic_states.data();
+
+                VkGraphicsPipelineCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+                info.stageCount = static_cast<uint32_t>(stages.size());
+                info.pStages = stages.data();
+                info.pVertexInputState = &vertex_input;
+                info.pInputAssemblyState = &input_assembly;
+                info.pViewportState = &viewport;
+                info.pRasterizationState = &rasterization;
+                info.pMultisampleState = &multisample;
+                info.pDepthStencilState = color ? nullptr : &depth_stencil;
+                info.pColorBlendState = &blend;
+                info.pDynamicState = &dynamic;
+                info.layout = this->sample_pipeline_layout_;
+                info.renderPass = render_pass;
+
+                if (this->device_.create_graphics_pipelines(this->device_.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) !=
+                    VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot write pipeline failed");
+                }
+                return pipeline;
+            }
+
+            VkImageView create_view(const VkImage image, const uint32_t format, const VkImageAspectFlags aspects,
+                                    const uint32_t layer) const
+            {
+                VkImageViewCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                info.image = image;
+                info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+                info.format = static_cast<VkFormat>(format);
+                info.subresourceRange = {
+                    .aspectMask = aspects, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+
+                VkImageView view{};
+                if (this->device_.create_image_view(this->device_.handle, &info, nullptr, &view) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating a view of a multisampled Vulkan image failed");
+                }
+                return view;
+            }
+
+            void image_barrier(const VkCommandBuffer command_buffer, const VkImage image, const VkImageAspectFlags aspects,
+                               const uint32_t layer, const VkImageLayout from, const VkImageLayout to) const
+            {
+                VkImageMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.oldLayout = from;
+                barrier.newLayout = to;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image;
+                barrier.subresourceRange = {
+                    .aspectMask = aspects, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+                this->device_.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                                   0, 0, nullptr, 0, nullptr, 1, &barrier);
+            }
+
             VkCommandPool pool_{};
             VkCommandBuffer command_buffer_{};
             VkBuffer staging_buffer_{};
@@ -9451,7 +10056,7 @@ namespace sogen
                     throw std::runtime_error("Creating the Vulkan snapshot transfer queue failed");
                 }
 
-                this->staging_buffer_ = this->create_transfer_buffer(chunk_size);
+                this->staging_buffer_ = this->create_transfer_buffer(chunk_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
                 VkMemoryRequirements requirements{};
                 device.get_buffer_memory_requirements(device.handle, this->staging_buffer_, &requirements);
 
@@ -9471,6 +10076,37 @@ namespace sogen
             void release()
             {
                 const auto& device = this->device_;
+                for (const auto& [key, pipeline] : this->sample_pipelines_)
+                {
+                    device.destroy_pipeline(device.handle, pipeline, nullptr);
+                }
+                for (const auto& [key, render_pass] : this->sample_render_passes_)
+                {
+                    device.destroy_render_pass(device.handle, render_pass, nullptr);
+                }
+                for (const auto& [name, module] : this->shader_modules_)
+                {
+                    device.destroy_shader_module(device.handle, module, nullptr);
+                }
+                if (this->sample_pipeline_layout_)
+                {
+                    device.destroy_pipeline_layout(device.handle, this->sample_pipeline_layout_, nullptr);
+                }
+                if (this->sample_set_layout_)
+                {
+                    device.destroy_descriptor_set_layout(device.handle, this->sample_set_layout_, nullptr);
+                }
+                if (this->sample_descriptor_pool_)
+                {
+                    device.destroy_descriptor_pool(device.handle, this->sample_descriptor_pool_, nullptr);
+                }
+                this->sample_pipelines_.clear();
+                this->sample_render_passes_.clear();
+                this->shader_modules_.clear();
+                this->sample_pipeline_layout_ = VK_NULL_HANDLE;
+                this->sample_set_layout_ = VK_NULL_HANDLE;
+                this->sample_descriptor_pool_ = VK_NULL_HANDLE;
+
                 if (this->staging_memory_)
                 {
                     device.free_memory(device.handle, this->staging_memory_, nullptr);
@@ -9489,12 +10125,12 @@ namespace sogen
                 this->pool_ = VK_NULL_HANDLE;
             }
 
-            VkBuffer create_transfer_buffer(const VkDeviceSize size) const
+            VkBuffer create_transfer_buffer(const VkDeviceSize size, const VkBufferUsageFlags extra_usage = 0) const
             {
                 VkBufferCreateInfo info{};
                 info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
                 info.size = size;
-                info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+                info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | extra_usage;
                 info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
                 VkBuffer buffer{};
@@ -9845,11 +10481,36 @@ namespace sogen
                             continue;
                         }
 
-                        const auto block = get_vulkan_copy_block(create.format, bit);
                         const bool layouts_match =
                             aspect == 0 || layout == static_cast<VkImageLayout>(image.layouts[image.subresource_index(0, mip, layer)]);
-                        if (!image.copyable || image.samples > 1 || image.ownership_transferred || image.used_by_several_queues || !block ||
-                            !layouts_match)
+                        if (!image.copyable || image.ownership_transferred || image.used_by_several_queues || !layouts_match)
+                        {
+                            throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
+                        }
+
+                        if (image.samples > 1)
+                        {
+                            const VkExtent2D extent{.width = create.width, .height = create.height};
+                            std::vector<std::byte> contents(static_cast<size_t>(extent.width) * extent.height * image.samples *
+                                                            snapshot_transfer<impl::device_data>::sample_size);
+                            if (!transfer_for(image.device_id)
+                                     .read_samples(image.handle, create.format, image.samples, static_cast<VkImageAspectFlagBits>(bit),
+                                                   aspects, layer, extent, layout, contents))
+                            {
+                                throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) +
+                                                         " yet");
+                            }
+
+                            buffer.write(true);
+                            buffer.write(bit);
+                            buffer.write(mip);
+                            buffer.write(layer);
+                            buffer.write_vector(contents);
+                            continue;
+                        }
+
+                        const auto block = get_vulkan_copy_block(create.format, bit);
+                        if (!block)
                         {
                             throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
                         }
@@ -9911,7 +10572,14 @@ namespace sogen
             buffer.write_vector(swapchain.image_ids);
             for (const auto image : swapchain.image_ids)
             {
-                buffer.write_vector(impl.images.at(image).layouts);
+                const auto& data = impl.images.at(image);
+                if (data.used_by_several_queues)
+                {
+                    throw std::runtime_error("Snapshots do not support swapchain images used from several queues yet");
+                }
+
+                buffer.write_vector(data.layouts);
+                buffer.write(data.last_queue_id);
             }
         }
 
@@ -10483,6 +11151,18 @@ namespace sogen
                     return &other > &entry && other.mip == entry.mip && other.layer == entry.layer;
                 });
 
+                const auto saved_layout = static_cast<VkImageLayout>(layouts[restored.subresource_index(0, entry.mip, entry.layer)]);
+                if (restored.samples > 1)
+                {
+                    if (!transfer_for(device).write_samples(
+                            restored.handle, create.format, restored.samples, static_cast<VkImageAspectFlagBits>(entry.aspect), aspects,
+                            entry.layer, {.width = create.width, .height = create.height}, first, last, saved_layout, entry.contents))
+                    {
+                        throw std::runtime_error("Restoring the samples of Vulkan image " + std::to_string(id) + " failed");
+                    }
+                    continue;
+                }
+
                 const auto block = get_vulkan_copy_block(create.format, entry.aspect);
                 const VkExtent3D extent{.width = std::max(1U, create.width >> entry.mip),
                                         .height = std::max(1U, create.height >> entry.mip),
@@ -10543,7 +11223,9 @@ namespace sogen
                     throw std::runtime_error("The re-created Vulkan swapchain has different images");
                 }
                 restored.layouts = std::move(layouts);
-                restored.layout_undefined = true;
+                restored.last_queue_id = buffer.read<uint64_t>();
+                restored.layout_undefined =
+                    std::ranges::any_of(restored.layouts, [](const uint32_t layout) { return layout != VK_IMAGE_LAYOUT_UNDEFINED; });
             }
         }
 
