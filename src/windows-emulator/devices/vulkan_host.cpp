@@ -189,6 +189,62 @@ namespace sogen
         }
     }
 
+    // A sampler's description holds an optional pair, which is not trivially copyable.
+    static void serialize(utils::buffer_serializer& buffer, const vulkan_host::sampler_desc& desc)
+    {
+        buffer.write(desc.flags);
+        buffer.write(desc.mag_filter);
+        buffer.write(desc.min_filter);
+        buffer.write(desc.address_mode_u);
+        buffer.write(desc.address_mode_v);
+        buffer.write(desc.address_mode_w);
+        buffer.write(desc.mipmap_mode);
+        buffer.write(desc.compare_enable);
+        buffer.write(desc.compare_op);
+        buffer.write(desc.anisotropy_enable);
+        buffer.write(desc.border_color);
+        buffer.write(desc.mip_lod_bias);
+        buffer.write(desc.max_anisotropy);
+        buffer.write(desc.min_lod);
+        buffer.write(desc.max_lod);
+        buffer.write(desc.unnormalized_coordinates);
+        buffer.write_optional(desc.reduction_mode);
+        buffer.write(desc.custom_border_color.has_value());
+        if (desc.custom_border_color)
+        {
+            buffer.write(desc.custom_border_color->first);
+            buffer.write(desc.custom_border_color->second);
+        }
+    }
+
+    static void deserialize(utils::buffer_deserializer& buffer, vulkan_host::sampler_desc& desc)
+    {
+        buffer.read(desc.flags);
+        buffer.read(desc.mag_filter);
+        buffer.read(desc.min_filter);
+        buffer.read(desc.address_mode_u);
+        buffer.read(desc.address_mode_v);
+        buffer.read(desc.address_mode_w);
+        buffer.read(desc.mipmap_mode);
+        buffer.read(desc.compare_enable);
+        buffer.read(desc.compare_op);
+        buffer.read(desc.anisotropy_enable);
+        buffer.read(desc.border_color);
+        buffer.read(desc.mip_lod_bias);
+        buffer.read(desc.max_anisotropy);
+        buffer.read(desc.min_lod);
+        buffer.read(desc.max_lod);
+        buffer.read(desc.unnormalized_coordinates);
+        buffer.read_optional(desc.reduction_mode);
+        desc.custom_border_color.reset();
+        if (buffer.read<bool>())
+        {
+            auto& border = desc.custom_border_color.emplace();
+            buffer.read(border.first);
+            buffer.read(border.second);
+        }
+    }
+
     namespace
     {
         template <typename T>
@@ -574,6 +630,7 @@ namespace sogen
         {
             VkEvent handle{};
             uint64_t device_id{};
+            uint32_t flags{};
         };
 
         struct semaphore_data
@@ -797,10 +854,319 @@ namespace sogen
             }
         };
 
+        // What snapshots re-create objects from. What a later object needs only while it is created is shared with it, so
+        // that it can still be re-created after the guest destroyed that dependency.
+        struct shader_code
+        {
+            uint32_t flags{};
+            std::vector<std::byte> code{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->flags);
+                buffer.write_vector(this->code);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->flags);
+                buffer.read_vector(this->code);
+            }
+        };
+
+        struct set_layout_params
+        {
+            uint32_t flags{};
+            std::vector<descriptor_binding> bindings{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->flags);
+                buffer.write_vector(this->bindings);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->flags);
+                buffer.read_vector(this->bindings);
+            }
+        };
+
+        struct pipeline_layout_params
+        {
+            uint32_t push_constant_stages{};
+            uint32_t push_constant_size{};
+            std::vector<uint64_t> set_layouts{};
+            std::vector<std::shared_ptr<const set_layout_params>> set_layout_creates{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->push_constant_stages);
+                buffer.write(this->push_constant_size);
+                buffer.write_vector(this->set_layouts);
+                for (const auto& params : this->set_layout_creates)
+                {
+                    buffer.write(*params);
+                }
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->push_constant_stages);
+                buffer.read(this->push_constant_size);
+                buffer.read_vector(this->set_layouts);
+                this->set_layout_creates.clear();
+                for (size_t i = 0; i < this->set_layouts.size(); ++i)
+                {
+                    this->set_layout_creates.push_back(std::make_shared<const set_layout_params>(buffer.read<set_layout_params>()));
+                }
+            }
+        };
+
+        struct render_pass_params
+        {
+            uint32_t format{};
+            uint32_t load_op{};
+            uint32_t store_op{};
+            uint32_t initial_layout{};
+            uint32_t final_layout{};
+            uint32_t depth_format{};
+        };
+
+        struct shader_stage_params
+        {
+            uint64_t module{};
+            std::vector<uint8_t> identifier{};
+            // Missing for a stage given only by an identifier of code the bridge never saw.
+            std::shared_ptr<const shader_code> code{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->module);
+                buffer.write_vector(this->identifier);
+                buffer.write(this->code != nullptr);
+                if (this->code)
+                {
+                    buffer.write(*this->code);
+                }
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->module);
+                buffer.read_vector(this->identifier);
+                this->code = buffer.read<bool>() ? std::make_shared<const shader_code>(buffer.read<shader_code>()) : nullptr;
+            }
+        };
+
+        struct specialization_params
+        {
+            std::vector<spec_entry> entries{};
+            std::vector<uint8_t> data{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write_vector(this->entries);
+                buffer.write_vector(this->data);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read_vector(this->entries);
+                buffer.read_vector(this->data);
+            }
+        };
+
+        struct pipeline_params
+        {
+            bool compute{};
+            uint64_t pipeline_cache{};
+            uint64_t render_pass{};
+            render_pass_params render_pass_create{};
+            uint64_t pipeline_layout{};
+            std::shared_ptr<const pipeline_layout_params> layout_create{};
+            // The compute stage for compute pipelines.
+            shader_stage_params vertex{};
+            shader_stage_params fragment{};
+            uint32_t flags{};
+            uint32_t width{};
+            uint32_t height{};
+            std::vector<vertex_binding> bindings{};
+            std::vector<vertex_attribute> attributes{};
+            std::vector<vertex_divisor> divisors{};
+            depth_state depth{};
+            std::vector<uint32_t> color_formats{};
+            uint32_t depth_format{};
+            uint32_t stencil_format{};
+            uint32_t rasterization_samples{};
+            uint32_t primitive_topology{};
+            uint32_t primitive_restart_enable{};
+            uint32_t rasterization_stream{};
+            uint32_t rasterization_stream_flags{};
+            std::vector<uint32_t> dynamic_states{};
+            specialization_params vs_spec{};
+            specialization_params fs_spec{};
+            std::vector<color_blend_attachment> blend_attachments{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->compute);
+                buffer.write(this->pipeline_cache);
+                buffer.write(this->render_pass);
+                buffer.write(this->render_pass_create);
+                buffer.write(this->pipeline_layout);
+                buffer.write(*this->layout_create);
+                buffer.write(this->vertex);
+                buffer.write(this->fragment);
+                buffer.write(this->flags);
+                buffer.write(this->width);
+                buffer.write(this->height);
+                buffer.write_vector(this->bindings);
+                buffer.write_vector(this->attributes);
+                buffer.write_vector(this->divisors);
+                buffer.write(this->depth);
+                buffer.write_vector(this->color_formats);
+                buffer.write(this->depth_format);
+                buffer.write(this->stencil_format);
+                buffer.write(this->rasterization_samples);
+                buffer.write(this->primitive_topology);
+                buffer.write(this->primitive_restart_enable);
+                buffer.write(this->rasterization_stream);
+                buffer.write(this->rasterization_stream_flags);
+                buffer.write_vector(this->dynamic_states);
+                buffer.write(this->vs_spec);
+                buffer.write(this->fs_spec);
+                buffer.write_vector(this->blend_attachments);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->compute);
+                buffer.read(this->pipeline_cache);
+                buffer.read(this->render_pass);
+                buffer.read(this->render_pass_create);
+                buffer.read(this->pipeline_layout);
+                this->layout_create = std::make_shared<const pipeline_layout_params>(buffer.read<pipeline_layout_params>());
+                buffer.read(this->vertex);
+                buffer.read(this->fragment);
+                buffer.read(this->flags);
+                buffer.read(this->width);
+                buffer.read(this->height);
+                buffer.read_vector(this->bindings);
+                buffer.read_vector(this->attributes);
+                buffer.read_vector(this->divisors);
+                buffer.read(this->depth);
+                buffer.read_vector(this->color_formats);
+                buffer.read(this->depth_format);
+                buffer.read(this->stencil_format);
+                buffer.read(this->rasterization_samples);
+                buffer.read(this->primitive_topology);
+                buffer.read(this->primitive_restart_enable);
+                buffer.read(this->rasterization_stream);
+                buffer.read(this->rasterization_stream_flags);
+                buffer.read_vector(this->dynamic_states);
+                buffer.read(this->vs_spec);
+                buffer.read(this->fs_spec);
+                buffer.read_vector(this->blend_attachments);
+            }
+        };
+
+        struct image_view_params
+        {
+            uint64_t image{};
+            uint32_t format{};
+            uint32_t aspect_mask{};
+            uint32_t view_type{};
+            uint32_t base_mip_level{};
+            uint32_t level_count{};
+            uint32_t base_array_layer{};
+            uint32_t layer_count{};
+            std::array<uint32_t, 4> swizzle{};
+        };
+
+        struct buffer_view_params
+        {
+            uint64_t buffer{};
+            uint32_t format{};
+            uint64_t offset{};
+            uint64_t range{};
+        };
+
+        struct framebuffer_params
+        {
+            uint64_t render_pass{};
+            render_pass_params render_pass_create{};
+            uint64_t image_view{};
+            uint64_t depth_view{};
+            uint32_t width{};
+            uint32_t height{};
+        };
+
+        struct descriptor_pool_params
+        {
+            uint32_t max_sets{};
+            uint32_t flags{};
+            uint32_t max_inline_uniform_block_bindings{};
+            std::vector<descriptor_pool_size> sizes{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->max_sets);
+                buffer.write(this->flags);
+                buffer.write(this->max_inline_uniform_block_bindings);
+                buffer.write_vector(this->sizes);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->max_sets);
+                buffer.read(this->flags);
+                buffer.read(this->max_inline_uniform_block_bindings);
+                buffer.read_vector(this->sizes);
+            }
+        };
+
+        // The descriptor a set's binding and array element hold.
+        struct descriptor_slot
+        {
+            uint32_t descriptor_type{};
+            uint64_t buffer_or_view{};
+            uint64_t offset{};
+            uint64_t range{};
+            uint64_t sampler{};
+            uint64_t image_view{};
+            uint32_t image_layout{};
+        };
+
+        static uint64_t descriptor_slot_key(const uint32_t binding, const uint32_t element)
+        {
+            return (static_cast<uint64_t>(binding) << 32) | element;
+        }
+
+        // Identifiers of shader code the guest asked for, so that pipelines it creates from them alone can be re-created.
+        std::unordered_map<std::string, std::shared_ptr<const shader_code>> identified_code{};
+
+        shader_stage_params stage_params(const shader_stage_source& source)
+        {
+            shader_stage_params params{.module = source.module, .identifier = {source.identifier.begin(), source.identifier.end()}};
+            if (const auto module = this->shader_modules.find(source.module); module != this->shader_modules.end())
+            {
+                params.code = module->second.code;
+            }
+            else if (const auto code = this->identified_code.find(
+                         std::string(reinterpret_cast<const char*>(source.identifier.data()), source.identifier.size()));
+                     code != this->identified_code.end())
+            {
+                params.code = code->second;
+            }
+            return params;
+        }
+
         struct sampler_data
         {
             VkSampler handle{};
             uint64_t device_id{};
+            sampler_desc create{};
         };
 
         object_table<device_data> devices{&this->recording_references};
@@ -836,18 +1202,21 @@ namespace sogen
         {
             VkShaderModule handle{};
             uint64_t device_id{};
+            std::shared_ptr<const shader_code> code{};
         };
 
         struct image_view_data
         {
             VkImageView handle{};
             uint64_t device_id{};
+            image_view_params create{};
         };
 
         struct buffer_view_data
         {
             VkBufferView handle{};
             uint64_t device_id{};
+            buffer_view_params create{};
         };
 
         struct query_pool_data
@@ -863,42 +1232,49 @@ namespace sogen
             VkRenderPass handle{};
             uint64_t device_id{};
             bool has_depth{};
+            render_pass_params create{};
         };
 
         struct framebuffer_data
         {
             VkFramebuffer handle{};
             uint64_t device_id{};
+            framebuffer_params create{};
         };
 
         struct pipeline_layout_data
         {
             VkPipelineLayout handle{};
             uint64_t device_id{};
+            std::shared_ptr<const pipeline_layout_params> create{};
         };
 
         struct pipeline_data
         {
             VkPipeline handle{};
             uint64_t device_id{};
+            pipeline_params create{};
         };
 
         struct pipeline_cache_data
         {
             VkPipelineCache handle{};
             uint64_t device_id{};
+            uint32_t flags{};
         };
 
         struct descriptor_set_layout_data
         {
             VkDescriptorSetLayout handle{};
             uint64_t device_id{};
+            std::shared_ptr<const set_layout_params> create{};
         };
 
         struct descriptor_pool_data
         {
             VkDescriptorPool handle{};
             uint64_t device_id{};
+            descriptor_pool_params create{};
         };
 
         struct bound_buffer_info
@@ -915,6 +1291,12 @@ namespace sogen
             uint64_t device_id{};
             uint64_t pool_id{};
             std::unordered_map<uint32_t, bound_buffer_info> buffer_bindings;
+            uint64_t layout_id{};
+            std::shared_ptr<const set_layout_params> layout_create{};
+            std::optional<uint32_t> variable_descriptor_count{};
+            std::unordered_map<uint64_t, descriptor_slot> slots{};
+            // Inline uniform blocks by binding, written by byte offset.
+            std::unordered_map<uint32_t, std::vector<std::byte>> inline_blocks{};
         };
 
         object_table<shader_module_data> shader_modules{&this->recording_references};
@@ -3498,7 +3880,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->events.emplace(id, impl::event_data{.handle = event, .device_id = device});
+        this->impl_->events.emplace(id, impl::event_data{.handle = event, .device_id = device, .flags = flags});
         out_event = id;
         return VK_SUCCESS;
     }
@@ -5033,7 +5415,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->samplers.emplace(id, impl::sampler_data{.handle = sampler, .device_id = device});
+        this->impl_->samplers.emplace(id, impl::sampler_data{.handle = sampler, .device_id = device, .create = desc});
         out_sampler = id;
         return VK_SUCCESS;
     }
@@ -5501,7 +5883,12 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->shader_modules.emplace(id, impl::shader_module_data{.handle = module, .device_id = device});
+        const auto* code_bytes = static_cast<const std::byte*>(code);
+        this->impl_->shader_modules.emplace(
+            id, impl::shader_module_data{.handle = module,
+                                         .device_id = device,
+                                         .code = std::make_shared<const impl::shader_code>(
+                                             impl::shader_code{.flags = flags, .code = {code_bytes, code_bytes + code_size}})});
         out_module = id;
         return VK_SUCCESS;
     }
@@ -5538,6 +5925,7 @@ namespace sogen
         dev->second.get_shader_module_identifier(dev->second.handle, module->second.handle, &result);
         identifier_size = std::min<uint32_t>(result.identifierSize, static_cast<uint32_t>(identifier.size()));
         std::memcpy(identifier.data(), result.identifier, identifier_size);
+        this->impl_->identified_code[std::string(reinterpret_cast<const char*>(identifier.data()), identifier_size)] = module->second.code;
         return VK_SUCCESS;
     }
 
@@ -5571,6 +5959,10 @@ namespace sogen
         dev->second.get_shader_module_create_info_identifier(dev->second.handle, &create_info, &result);
         identifier_size = std::min<uint32_t>(result.identifierSize, static_cast<uint32_t>(identifier.size()));
         std::memcpy(identifier.data(), result.identifier, identifier_size);
+
+        const auto* code_bytes = static_cast<const std::byte*>(code);
+        this->impl_->identified_code[std::string(reinterpret_cast<const char*>(identifier.data()), identifier_size)] =
+            std::make_shared<const impl::shader_code>(impl::shader_code{.flags = flags, .code = {code_bytes, code_bytes + code_size}});
         return VK_SUCCESS;
     }
 
@@ -5611,7 +6003,17 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->image_views.emplace(id, impl::image_view_data{.handle = view, .device_id = device});
+        this->impl_->image_views.emplace(id, impl::image_view_data{.handle = view,
+                                                                   .device_id = device,
+                                                                   .create = {.image = image,
+                                                                              .format = format,
+                                                                              .aspect_mask = aspect_mask,
+                                                                              .view_type = view_type,
+                                                                              .base_mip_level = base_mip_level,
+                                                                              .level_count = level_count,
+                                                                              .base_array_layer = base_array_layer,
+                                                                              .layer_count = layer_count,
+                                                                              .swizzle = {swizzle_r, swizzle_g, swizzle_b, swizzle_a}}});
         out_view = id;
         return VK_SUCCESS;
     }
@@ -5658,7 +6060,9 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->buffer_views.emplace(id, impl::buffer_view_data{.handle = view, .device_id = device});
+        this->impl_->buffer_views.emplace(
+            id, impl::buffer_view_data{
+                    .handle = view, .device_id = device, .create = {.buffer = buffer, .format = format, .offset = offset, .range = range}});
         out_view = id;
         return VK_SUCCESS;
     }
@@ -6173,7 +6577,15 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->render_passes.emplace(id, impl::render_pass_data{.handle = render_pass, .device_id = device, .has_depth = has_depth});
+        this->impl_->render_passes.emplace(id, impl::render_pass_data{.handle = render_pass,
+                                                                      .device_id = device,
+                                                                      .has_depth = has_depth,
+                                                                      .create = {.format = format,
+                                                                                 .load_op = load_op,
+                                                                                 .store_op = store_op,
+                                                                                 .initial_layout = initial_layout,
+                                                                                 .final_layout = final_layout,
+                                                                                 .depth_format = depth_format}});
         out_render_pass = id;
         return VK_SUCCESS;
     }
@@ -6236,7 +6648,14 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->framebuffers.emplace(id, impl::framebuffer_data{.handle = framebuffer, .device_id = device});
+        this->impl_->framebuffers.emplace(id, impl::framebuffer_data{.handle = framebuffer,
+                                                                     .device_id = device,
+                                                                     .create = {.render_pass = render_pass,
+                                                                                .render_pass_create = rp->second.create,
+                                                                                .image_view = image_view,
+                                                                                .depth_view = depth_view,
+                                                                                .width = width,
+                                                                                .height = height}});
         out_framebuffer = id;
         return VK_SUCCESS;
     }
@@ -6301,7 +6720,17 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->pipeline_layouts.emplace(id, impl::pipeline_layout_data{.handle = layout, .device_id = device});
+        auto create = std::make_shared<impl::pipeline_layout_params>();
+        create->push_constant_stages = push_constant_stages;
+        create->push_constant_size = push_constant_size;
+        create->set_layouts.assign(set_layouts.begin(), set_layouts.end());
+        for (const uint64_t set_layout : set_layouts)
+        {
+            create->set_layout_creates.push_back(this->impl_->descriptor_set_layouts.at(set_layout).create);
+        }
+
+        this->impl_->pipeline_layouts.emplace(
+            id, impl::pipeline_layout_data{.handle = layout, .device_id = device, .create = std::move(create)});
         out_layout = id;
         return VK_SUCCESS;
     }
@@ -6366,7 +6795,11 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->descriptor_set_layouts.emplace(id, impl::descriptor_set_layout_data{.handle = layout, .device_id = device});
+        this->impl_->descriptor_set_layouts.emplace(
+            id, impl::descriptor_set_layout_data{.handle = layout,
+                                                 .device_id = device,
+                                                 .create = std::make_shared<const impl::set_layout_params>(impl::set_layout_params{
+                                                     .flags = flags, .bindings = {bindings.begin(), bindings.end()}})});
         out_layout = id;
         return VK_SUCCESS;
     }
@@ -6477,7 +6910,13 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->descriptor_pools.emplace(id, impl::descriptor_pool_data{.handle = pool, .device_id = device});
+        this->impl_->descriptor_pools.emplace(
+            id, impl::descriptor_pool_data{.handle = pool,
+                                           .device_id = device,
+                                           .create = {.max_sets = max_sets,
+                                                      .flags = flags,
+                                                      .max_inline_uniform_block_bindings = max_inline_uniform_block_bindings,
+                                                      .sizes = {sizes.begin(), sizes.end()}}});
         out_pool = id;
         return VK_SUCCESS;
     }
@@ -6571,8 +7010,14 @@ namespace sogen
         for (size_t i = 0; i < sets.size(); ++i)
         {
             const uint64_t id = this->impl_->allocate_id();
-            this->impl_->descriptor_sets.emplace(
-                id, impl::descriptor_set_data{.handle = sets[i], .device_id = device, .pool_id = pool, .buffer_bindings = {}});
+            impl::descriptor_set_data data{.handle = sets[i], .device_id = device, .pool_id = pool, .buffer_bindings = {}};
+            data.layout_id = set_layouts[i];
+            data.layout_create = this->impl_->descriptor_set_layouts.at(set_layouts[i]).create;
+            if (!variable_descriptor_counts.empty())
+            {
+                data.variable_descriptor_count = variable_descriptor_counts[i];
+            }
+            this->impl_->descriptor_sets.emplace(id, std::move(data));
             if (i < out_sets.size())
             {
                 out_sets[i] = id;
@@ -6782,6 +7227,75 @@ namespace sogen
             dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(),
                                                static_cast<uint32_t>(vk_copies.size()), vk_copies.data());
         }
+
+        cached_set_id = 0;
+        cached_set = nullptr;
+        for (const descriptor_write& w : writes)
+        {
+            if (w.dst_set != cached_set_id || cached_set == nullptr)
+            {
+                cached_set_id = w.dst_set;
+                cached_set = &this->impl_->descriptor_sets.at(w.dst_set);
+            }
+
+            if (w.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
+            {
+                auto& block = cached_set->inline_blocks[w.dst_binding];
+                block.resize(std::max<size_t>(block.size(), w.dst_array_element + w.inline_uniform_data.size()));
+                std::ranges::copy(w.inline_uniform_data, block.begin() + w.dst_array_element);
+                continue;
+            }
+
+            cached_set->slots[impl::descriptor_slot_key(w.dst_binding, w.dst_array_element)] = impl::descriptor_slot{
+                .descriptor_type = w.descriptor_type,
+                .buffer_or_view = w.buffer_or_view,
+                .offset = w.offset,
+                .range = w.range,
+                .sampler = w.sampler,
+                .image_view = w.image_view,
+                .image_layout = w.image_layout,
+            };
+        }
+
+        for (const descriptor_copy& c : copies)
+        {
+            const auto& source = this->impl_->descriptor_sets.at(c.src_set);
+            auto& destination = this->impl_->descriptor_sets.at(c.dst_set);
+
+            const auto& bindings = source.layout_create->bindings;
+            const bool inline_block = std::ranges::any_of(bindings, [&](const descriptor_binding& binding) {
+                return binding.binding == c.src_binding && binding.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
+            });
+
+            if (inline_block)
+            {
+                const auto block = source.inline_blocks.find(c.src_binding);
+                auto& target = destination.inline_blocks[c.dst_binding];
+                target.resize(std::max<size_t>(target.size(), static_cast<size_t>(c.dst_array_element) + c.descriptor_count));
+                for (uint32_t i = 0; i < c.descriptor_count; ++i)
+                {
+                    const size_t from = static_cast<size_t>(c.src_array_element) + i;
+                    target[c.dst_array_element + i] =
+                        block != source.inline_blocks.end() && from < block->second.size() ? block->second[from] : std::byte{};
+                }
+                continue;
+            }
+
+            for (uint32_t i = 0; i < c.descriptor_count; ++i)
+            {
+                const auto to = impl::descriptor_slot_key(c.dst_binding, c.dst_array_element + i);
+                if (const auto slot = source.slots.find(impl::descriptor_slot_key(c.src_binding, c.src_array_element + i));
+                    slot != source.slots.end())
+                {
+                    destination.slots[to] = slot->second;
+                }
+                else
+                {
+                    destination.slots.erase(to);
+                }
+            }
+        }
+
         return VK_SUCCESS;
     }
 
@@ -6809,7 +7323,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->pipeline_caches.emplace(id, impl::pipeline_cache_data{.handle = cache, .device_id = device});
+        this->impl_->pipeline_caches.emplace(id, impl::pipeline_cache_data{.handle = cache, .device_id = device, .flags = flags});
         out_pipeline_cache = id;
         return VK_SUCCESS;
     }
@@ -7222,7 +7736,37 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device});
+        impl::pipeline_params create{};
+        create.pipeline_cache = pipeline_cache;
+        create.render_pass = render_pass;
+        if (const auto rp = this->impl_->render_passes.find(render_pass); rp != this->impl_->render_passes.end())
+        {
+            create.render_pass_create = rp->second.create;
+        }
+        create.pipeline_layout = pipeline_layout;
+        create.layout_create = layout->second.create;
+        create.vertex = this->impl_->stage_params(vertex_shader);
+        create.fragment = this->impl_->stage_params(fragment_shader);
+        create.flags = flags;
+        create.width = width;
+        create.height = height;
+        create.bindings.assign(bindings.begin(), bindings.end());
+        create.attributes.assign(attributes.begin(), attributes.end());
+        create.divisors.assign(divisors.begin(), divisors.end());
+        create.depth = depth;
+        create.color_formats.assign(color_formats.begin(), color_formats.end());
+        create.depth_format = depth_format;
+        create.stencil_format = stencil_format;
+        create.rasterization_samples = rasterization_samples;
+        create.primitive_topology = primitive_topology;
+        create.primitive_restart_enable = primitive_restart_enable;
+        create.rasterization_stream = rasterization_stream;
+        create.rasterization_stream_flags = rasterization_stream_flags;
+        create.dynamic_states.assign(dynamic_states.begin(), dynamic_states.end());
+        create.vs_spec = {.entries = {vs_spec.entries.begin(), vs_spec.entries.end()}, .data = {vs_spec.data.begin(), vs_spec.data.end()}};
+        create.fs_spec = {.entries = {fs_spec.entries.begin(), fs_spec.entries.end()}, .data = {fs_spec.data.begin(), fs_spec.data.end()}};
+        create.blend_attachments.assign(blend_attachments_in.begin(), blend_attachments_in.end());
+        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device, .create = std::move(create)});
         out_pipeline = id;
         return VK_SUCCESS;
     }
@@ -7296,7 +7840,14 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device});
+        impl::pipeline_params create{};
+        create.compute = true;
+        create.pipeline_cache = pipeline_cache;
+        create.pipeline_layout = pipeline_layout;
+        create.layout_create = layout->second.create;
+        create.vertex = this->impl_->stage_params(shader);
+        create.flags = flags;
+        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device, .create = std::move(create)});
         out_pipeline = id;
         return VK_SUCCESS;
     }
@@ -7351,6 +7902,32 @@ namespace sogen
         info.pClearValues = clears.data();
 
         dev->second.cmd_begin_render_pass(cb->second.handle, &info, VK_SUBPASS_CONTENTS_INLINE);
+
+        const auto record_transition = [&](const uint64_t view_id, const uint32_t aspect_mask, const VkImageLayout layout) {
+            const auto view = this->impl_->image_views.find(view_id);
+            if (view == this->impl_->image_views.end())
+            {
+                return;
+            }
+
+            const auto& create = view->second.create;
+            cb->second.layout_transitions.push_back(impl::layout_transition{
+                .image = create.image,
+                .aspect_mask = aspect_mask,
+                .base_mip_level = create.base_mip_level,
+                .level_count = create.level_count ? create.level_count : 1,
+                .base_array_layer = create.base_array_layer,
+                .layer_count = create.layer_count ? create.layer_count : 1,
+                .new_layout = static_cast<uint32_t>(layout),
+            });
+        };
+
+        record_transition(fb->second.create.image_view, VK_IMAGE_ASPECT_COLOR_BIT, translate_layout(rp->second.create.final_layout));
+        if (fb->second.create.depth_view != 0)
+        {
+            record_transition(fb->second.create.depth_view, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        }
         return VK_SUCCESS;
     }
 
@@ -8156,7 +8733,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 6;
+        constexpr uint32_t snapshot_version = 7;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -8511,22 +9088,9 @@ namespace sogen
     {
         auto& impl = *this->impl_;
 
-        reject_live_objects(impl.events, "events");
-        reject_live_objects(impl.samplers, "samplers");
         reject_live_objects(impl.surfaces, "surfaces");
         reject_live_objects(impl.swapchains, "swapchains");
-        reject_live_objects(impl.shader_modules, "shader modules");
-        reject_live_objects(impl.image_views, "image views");
-        reject_live_objects(impl.buffer_views, "buffer views");
         reject_live_objects(impl.query_pools, "query pools");
-        reject_live_objects(impl.render_passes, "render passes");
-        reject_live_objects(impl.framebuffers, "framebuffers");
-        reject_live_objects(impl.pipeline_layouts, "pipeline layouts");
-        reject_live_objects(impl.pipelines, "pipelines");
-        reject_live_objects(impl.pipeline_caches, "pipeline caches");
-        reject_live_objects(impl.descriptor_set_layouts, "descriptor set layouts");
-        reject_live_objects(impl.descriptor_pools, "descriptor pools");
-        reject_live_objects(impl.descriptor_sets, "descriptor sets");
 
         for (const auto& memory : impl.memories | std::views::values)
         {
@@ -8851,6 +9415,154 @@ namespace sogen
             buffer.write(false);
         }
 
+        buffer.write(static_cast<uint64_t>(impl.samplers.size()));
+        for (const auto& [id, sampler] : impl.samplers)
+        {
+            buffer.write(id);
+            buffer.write(sampler.device_id);
+            buffer.write(sampler.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.shader_modules.size()));
+        for (const auto& [id, module] : impl.shader_modules)
+        {
+            buffer.write(id);
+            buffer.write(module.device_id);
+            buffer.write(*module.code);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.descriptor_set_layouts.size()));
+        for (const auto& [id, layout] : impl.descriptor_set_layouts)
+        {
+            buffer.write(id);
+            buffer.write(layout.device_id);
+            buffer.write(*layout.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.pipeline_layouts.size()));
+        for (const auto& [id, layout] : impl.pipeline_layouts)
+        {
+            buffer.write(id);
+            buffer.write(layout.device_id);
+            buffer.write(*layout.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.render_passes.size()));
+        for (const auto& [id, render_pass] : impl.render_passes)
+        {
+            buffer.write(id);
+            buffer.write(render_pass.device_id);
+            buffer.write(render_pass.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.pipeline_caches.size()));
+        for (const auto& [id, cache] : impl.pipeline_caches)
+        {
+            const auto& device = impl.devices.at(cache.device_id);
+            size_t size = 0;
+            if (device.get_pipeline_cache_data(device.handle, cache.handle, &size, nullptr) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Reading a Vulkan pipeline cache failed");
+            }
+
+            std::vector<uint8_t> data(size);
+            if (device.get_pipeline_cache_data(device.handle, cache.handle, &size, data.data()) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Reading a Vulkan pipeline cache failed");
+            }
+
+            data.resize(size);
+            buffer.write(id);
+            buffer.write(cache.device_id);
+            buffer.write(cache.flags);
+            buffer.write_vector(data);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.pipelines.size()));
+        for (const auto& [id, pipeline] : impl.pipelines)
+        {
+            const auto restorable = [&](const impl::shader_stage_params& stage) {
+                return stage.code != nullptr || impl.shader_modules.contains(stage.module);
+            };
+
+            if (!restorable(pipeline.create.vertex) || (!pipeline.create.compute && !restorable(pipeline.create.fragment)))
+            {
+                throw std::runtime_error("Vulkan pipeline " + std::to_string(id) + " was created from shader code the bridge never saw");
+            }
+
+            buffer.write(id);
+            buffer.write(pipeline.device_id);
+            buffer.write(pipeline.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.image_views.size()));
+        for (const auto& [id, view] : impl.image_views)
+        {
+            buffer.write(id);
+            buffer.write(view.device_id);
+            buffer.write(view.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.buffer_views.size()));
+        for (const auto& [id, view] : impl.buffer_views)
+        {
+            buffer.write(id);
+            buffer.write(view.device_id);
+            buffer.write(view.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.framebuffers.size()));
+        for (const auto& [id, framebuffer] : impl.framebuffers)
+        {
+            buffer.write(id);
+            buffer.write(framebuffer.device_id);
+            buffer.write(framebuffer.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.descriptor_pools.size()));
+        for (const auto& [id, pool] : impl.descriptor_pools)
+        {
+            buffer.write(id);
+            buffer.write(pool.device_id);
+            buffer.write(pool.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.descriptor_sets.size()));
+        for (const auto& [id, set] : impl.descriptor_sets)
+        {
+            buffer.write(id);
+            buffer.write(set.device_id);
+            buffer.write(set.pool_id);
+            buffer.write(set.layout_id);
+            buffer.write(*set.layout_create);
+            buffer.write(set.variable_descriptor_count.has_value());
+            buffer.write(set.variable_descriptor_count.value_or(0));
+
+            buffer.write(static_cast<uint64_t>(set.slots.size()));
+            for (const auto& [key, slot] : set.slots)
+            {
+                buffer.write(key);
+                buffer.write(slot);
+            }
+
+            buffer.write(static_cast<uint64_t>(set.inline_blocks.size()));
+            for (const auto& [binding, block] : set.inline_blocks)
+            {
+                buffer.write(binding);
+                buffer.write_vector(block);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.events.size()));
+        for (const auto& [id, event] : impl.events)
+        {
+            const auto& device = impl.devices.at(event.device_id);
+            buffer.write(id);
+            buffer.write(event.device_id);
+            buffer.write(event.flags);
+            buffer.write(device.get_event_status(device.handle, event.handle) == VK_EVENT_SET);
+        }
+
         buffer.write(static_cast<uint64_t>(impl.command_pools.size()));
         for (const auto& [id, pool] : impl.command_pools)
         {
@@ -8929,7 +9641,93 @@ namespace sogen
             throw std::runtime_error("Unsupported Vulkan snapshot version");
         }
 
-        const auto next_id = buffer.read<uint64_t>();
+        impl.next_id = buffer.read<uint64_t>();
+
+        std::vector<std::function<void()>> temporaries{};
+        const auto destroy_temporaries = utils::finally([&] {
+            for (auto it = temporaries.rbegin(); it != temporaries.rend(); ++it)
+            {
+                (*it)();
+            }
+        });
+
+        const auto ensure_set_layout = [&](const uint64_t device, const uint64_t id, const impl::set_layout_params& create) {
+            if (impl.descriptor_set_layouts.contains(id))
+            {
+                return id;
+            }
+
+            uint64_t layout{};
+            if (this->create_descriptor_set_layout(device, create.flags, create.bindings, layout) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan descriptor set layout failed");
+            }
+            temporaries.emplace_back([this, device, layout] { this->destroy_descriptor_set_layout(device, layout); });
+            return layout;
+        };
+
+        const auto set_layout_ids = [&](const uint64_t device, const impl::pipeline_layout_params& create) {
+            std::vector<uint64_t> ids{};
+            for (size_t i = 0; i < create.set_layouts.size(); ++i)
+            {
+                ids.push_back(ensure_set_layout(device, create.set_layouts[i], *create.set_layout_creates[i]));
+            }
+            return ids;
+        };
+
+        const auto ensure_pipeline_layout = [&](const uint64_t device, const uint64_t id, const impl::pipeline_layout_params& create) {
+            if (impl.pipeline_layouts.contains(id))
+            {
+                return id;
+            }
+
+            uint64_t layout{};
+            if (this->create_pipeline_layout(device, create.push_constant_stages, create.push_constant_size, set_layout_ids(device, create),
+                                             layout) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan pipeline layout failed");
+            }
+            temporaries.emplace_back([this, device, layout] { this->destroy_pipeline_layout(device, layout); });
+            return layout;
+        };
+
+        const auto ensure_render_pass = [&](const uint64_t device, const uint64_t id, const impl::render_pass_params& create) -> uint64_t {
+            if (id == 0 || impl.render_passes.contains(id))
+            {
+                return id;
+            }
+
+            uint64_t render_pass{};
+            if (this->create_render_pass(device, create.format, create.load_op, create.store_op, create.initial_layout, create.final_layout,
+                                         create.depth_format, render_pass) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan render pass failed");
+            }
+            temporaries.emplace_back([this, device, render_pass] { this->destroy_render_pass(device, render_pass); });
+            return render_pass;
+        };
+
+        // Stages whose module was destroyed get a temporary one from the saved code, also those given by an identifier.
+        const auto stage_source = [&](const uint64_t device, const impl::shader_stage_params& stage) -> shader_stage_source {
+            if (stage.module != 0 && impl.shader_modules.contains(stage.module))
+            {
+                return {.module = stage.module, .identifier = {}};
+            }
+
+            if (!stage.code)
+            {
+                return {.module = 0, .identifier = stage.identifier};
+            }
+
+            uint64_t module{};
+            if (this->create_shader_module(device, stage.code->flags, stage.code->code.data(), stage.code->code.size(), module) !=
+                VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan shader module failed");
+            }
+            temporaries.emplace_back([this, device, module] { this->destroy_shader_module(device, module); });
+            return {.module = module, .identifier = {}};
+        };
 
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
         {
@@ -9155,6 +9953,279 @@ namespace sogen
         {
             const auto id = buffer.read<uint64_t>();
             const auto device = buffer.read<uint64_t>();
+            const auto desc = buffer.read<sampler_desc>();
+
+            uint64_t sampler{};
+            impl.forced_id = id;
+            const auto result = this->create_sampler(device, desc, sampler);
+            expect_restored(result, sampler, id, "sampler");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto code = buffer.read<impl::shader_code>();
+
+            uint64_t module{};
+            impl.forced_id = id;
+            const auto result = this->create_shader_module(device, code.flags, code.code.data(), code.code.size(), module);
+            expect_restored(result, module, id, "shader module");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::set_layout_params>();
+
+            uint64_t layout{};
+            impl.forced_id = id;
+            const auto result = this->create_descriptor_set_layout(device, create.flags, create.bindings, layout);
+            expect_restored(result, layout, id, "descriptor set layout");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::pipeline_layout_params>();
+
+            const auto set_layouts = set_layout_ids(device, create);
+            uint64_t layout{};
+            impl.forced_id = id;
+            const auto result =
+                this->create_pipeline_layout(device, create.push_constant_stages, create.push_constant_size, set_layouts, layout);
+            expect_restored(result, layout, id, "pipeline layout");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::render_pass_params>();
+
+            uint64_t render_pass{};
+            impl.forced_id = id;
+            const auto result = this->create_render_pass(device, create.format, create.load_op, create.store_op, create.initial_layout,
+                                                         create.final_layout, create.depth_format, render_pass);
+            expect_restored(result, render_pass, id, "render pass");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto flags = buffer.read<uint32_t>();
+            const auto data = buffer.read_vector<uint8_t>();
+
+            uint64_t cache{};
+            impl.forced_id = id;
+            const auto result = this->create_pipeline_cache(device, flags, data, cache);
+            expect_restored(result, cache, id, "pipeline cache");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::pipeline_params>();
+
+            const auto cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0;
+            const auto layout = ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create);
+            const auto vertex = stage_source(device, create.vertex);
+
+            uint64_t pipeline{};
+            int32_t result{};
+            if (create.compute)
+            {
+                impl.forced_id = id;
+                result = this->create_compute_pipeline(device, cache, layout, vertex, create.flags, pipeline);
+            }
+            else
+            {
+                const auto render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create);
+                const auto fragment = stage_source(device, create.fragment);
+                impl.forced_id = id;
+                result = this->create_graphics_pipeline(
+                    device, cache, render_pass, layout, vertex, fragment, create.flags, create.width, create.height, create.bindings,
+                    create.attributes, create.divisors, create.depth, create.color_formats, create.depth_format, create.stencil_format,
+                    create.rasterization_samples, create.primitive_topology, create.primitive_restart_enable, create.rasterization_stream,
+                    create.rasterization_stream_flags, create.dynamic_states,
+                    specialization{.entries = create.vs_spec.entries, .data = create.vs_spec.data},
+                    specialization{.entries = create.fs_spec.entries, .data = create.fs_spec.data}, create.blend_attachments, pipeline);
+            }
+            expect_restored(result, pipeline, id, "pipeline");
+        }
+
+        // Views and framebuffers whose image, buffer or attachments are gone cannot be used any more, so they are not
+        // re-created.
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::image_view_params>();
+            if (!impl.images.contains(create.image))
+            {
+                continue;
+            }
+
+            uint64_t view{};
+            impl.forced_id = id;
+            const auto result =
+                this->create_image_view(device, create.image, create.format, create.aspect_mask, create.view_type, create.base_mip_level,
+                                        create.level_count, create.base_array_layer, create.layer_count, create.swizzle[0],
+                                        create.swizzle[1], create.swizzle[2], create.swizzle[3], view);
+            expect_restored(result, view, id, "image view");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::buffer_view_params>();
+            if (!impl.buffers.contains(create.buffer))
+            {
+                continue;
+            }
+
+            uint64_t view{};
+            impl.forced_id = id;
+            const auto result = this->create_buffer_view(device, create.buffer, create.format, create.offset, create.range, view);
+            expect_restored(result, view, id, "buffer view");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::framebuffer_params>();
+            if (!impl.image_views.contains(create.image_view) || (create.depth_view != 0 && !impl.image_views.contains(create.depth_view)))
+            {
+                continue;
+            }
+
+            const auto render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create);
+            uint64_t framebuffer{};
+            impl.forced_id = id;
+            const auto result = this->create_framebuffer(device, render_pass, create.image_view, create.depth_view, create.width,
+                                                         create.height, framebuffer);
+            expect_restored(result, framebuffer, id, "framebuffer");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::descriptor_pool_params>();
+
+            uint64_t pool{};
+            impl.forced_id = id;
+            const auto result = this->create_descriptor_pool(device, create.max_sets, create.flags,
+                                                             create.max_inline_uniform_block_bindings, create.sizes, pool);
+            expect_restored(result, pool, id, "descriptor pool");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto pool = buffer.read<uint64_t>();
+            const auto layout_id = buffer.read<uint64_t>();
+            const auto layout_create = buffer.read<impl::set_layout_params>();
+            const auto has_variable_count = buffer.read<bool>();
+            const auto variable_count = buffer.read<uint32_t>();
+
+            std::vector<std::pair<uint64_t, impl::descriptor_slot>> slots(buffer.read<uint64_t>());
+            for (auto& [key, slot] : slots)
+            {
+                buffer.read(key);
+                buffer.read(slot);
+            }
+
+            std::vector<std::pair<uint32_t, std::vector<std::byte>>> inline_blocks(buffer.read<uint64_t>());
+            for (auto& [binding, block] : inline_blocks)
+            {
+                buffer.read(binding);
+                buffer.read_vector(block);
+            }
+
+            const std::array layouts{ensure_set_layout(device, layout_id, layout_create)};
+            const std::array counts{variable_count};
+            std::array<uint64_t, 1> sets{};
+            uint32_t allocated = 0;
+            impl.forced_id = id;
+            const auto result = this->allocate_descriptor_sets(
+                device, pool, layouts, has_variable_count ? std::span<const uint32_t>{counts} : std::span<const uint32_t>{}, sets,
+                allocated);
+            expect_restored(result, allocated == 1 ? sets[0] : 0, id, "descriptor set");
+
+            auto& restored = impl.descriptor_sets.at(id);
+            restored.layout_id = layout_id;
+
+            std::vector<descriptor_write> writes{};
+            for (const auto& [key, slot] : slots)
+            {
+                writes.push_back(descriptor_write{.dst_set = id,
+                                                  .dst_binding = static_cast<uint32_t>(key >> 32),
+                                                  .dst_array_element = static_cast<uint32_t>(key),
+                                                  .descriptor_type = slot.descriptor_type,
+                                                  .buffer_or_view = slot.buffer_or_view,
+                                                  .offset = slot.offset,
+                                                  .range = slot.range,
+                                                  .sampler = slot.sampler,
+                                                  .image_view = slot.image_view,
+                                                  .image_layout = slot.image_layout,
+                                                  .inline_uniform_data = {}});
+            }
+
+            for (const auto& [binding, block] : inline_blocks)
+            {
+                writes.push_back(descriptor_write{.dst_set = id,
+                                                  .dst_binding = binding,
+                                                  .dst_array_element = 0,
+                                                  .descriptor_type = VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK,
+                                                  .buffer_or_view = 0,
+                                                  .offset = 0,
+                                                  .range = 0,
+                                                  .sampler = 0,
+                                                  .image_view = 0,
+                                                  .image_layout = 0,
+                                                  .inline_uniform_data = block});
+            }
+
+            // A descriptor referring to an object destroyed since is invalid and cannot be written again; the guest may
+            // not use it.
+            if (this->update_descriptor_sets(device, writes, {}) != VK_SUCCESS)
+            {
+                for (const auto& write : writes)
+                {
+                    (void)this->update_descriptor_sets(device, std::span{&write, 1}, {});
+                }
+            }
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto flags = buffer.read<uint32_t>();
+            const auto set = buffer.read<bool>();
+
+            uint64_t event{};
+            impl.forced_id = id;
+            const auto result = this->create_event(device, flags, event);
+            expect_restored(result, event, id, "event");
+            if (set && this->set_event(device, id) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Restoring Vulkan event " + std::to_string(id) + " failed");
+            }
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
             const auto queue_family_index = buffer.read<uint32_t>();
             const auto flags = buffer.read<uint32_t>();
 
@@ -9250,8 +10321,6 @@ namespace sogen
                 throw std::runtime_error("Restoring the signal of Vulkan semaphore " + std::to_string(id) + " failed");
             }
         }
-
-        impl.next_id = next_id;
 
         for (const auto* recorded : {&recorded_secondaries, &recorded_primaries})
         {
