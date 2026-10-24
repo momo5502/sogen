@@ -26,9 +26,21 @@ layout(push_constant) uniform parameters
     uint layer;
     uint first_row;
     uint sample_index;
+    uint stencil_bit;
 };
 
-#if defined(DEPTH_FORMAT)
+#if defined(STENCIL_FORMAT)
+// Stencil cannot be written from a shader without an extension, so each bit is set by a draw that keeps only the
+// fragments whose saved value has it.
+void main()
+{
+    const uvec2 coordinate = uvec2(gl_FragCoord.xy);
+    if ((samples[((coordinate.y - first_row) * width + coordinate.x) * sample_count + sample_index].x & (1u << stencil_bit)) == 0)
+    {
+        discard;
+    }
+}
+#elif defined(DEPTH_FORMAT)
 void main()
 {
     const uvec2 coordinate = uvec2(gl_FragCoord.xy);

@@ -3303,21 +3303,22 @@ namespace sogen
             // Executes one recorded command-buffer command from a batch (see ioctl_record_commands). The
             // payload is the command's normal request struct; this is the per-command core shared with the
             // (legacy) individual command IOCTL handlers. Returns the VkResult.
-            std::function<void(uint64_t command_buffer)> rerecorder(windows_emulator& win_emu)
+            // A command buffer that cannot be reset on its own, or records differently than before, makes the submission fail
+            // instead of running outdated work.
+            std::function<bool(uint64_t command_buffer)> rerecorder(windows_emulator& win_emu)
             {
                 return [this, &win_emu](const uint64_t command_buffer) {
                     if (!this->vulkan_.can_reset_command_buffer(command_buffer))
                     {
-                        win_emu.log.warn("[gpu-bridge] Command buffer %llu depends on restored state that changed, but cannot be reset\n",
-                                         static_cast<unsigned long long>(command_buffer));
-                        return;
+                        win_emu.log.error("[gpu-bridge] Command buffer %llu depends on restored state that changed, but cannot be reset\n",
+                                          static_cast<unsigned long long>(command_buffer));
+                        return false;
                     }
 
                     const auto commands = this->vulkan_.recorded_commands(command_buffer);
-                    if (this->vulkan_.reset_command_buffer(command_buffer, 0) == vk_success)
-                    {
-                        (void)this->execute_recorded_commands(win_emu, commands, true, std::nullopt);
-                    }
+                    const auto results = this->vulkan_.recorded_results(command_buffer);
+                    return this->vulkan_.reset_command_buffer(command_buffer, 0) == vk_success &&
+                           this->execute_recorded_commands(win_emu, commands, true, results).matches_expected;
                 };
             }
 

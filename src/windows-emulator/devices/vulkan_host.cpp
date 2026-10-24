@@ -675,11 +675,11 @@ namespace sogen
             std::vector<layout_transition> layout_transitions{};
             // Query resets take effect when the command buffer is submitted: pool, first query, count.
             std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> query_resets{};
-            // Decisions made while recording from state a snapshot restored: saved query results written into buffers,
-            // and restored swapchain images whose first transition was made to start from undefined. Once that state
-            // changed, the command buffer is recorded again before it is submitted.
+            // Saved query results this command buffer writes into buffers. Once one of the queries is reset, the command
+            // buffer is recorded again before it is submitted.
             std::vector<std::pair<uint64_t, uint32_t>> restored_query_reads{};
-            std::vector<uint64_t> undefined_layout_images{};
+            // A command buffer the guest may submit while it is still pending cannot be reset to record it again.
+            bool simultaneous_use{};
             // Every object the recorded commands looked up. Ids are never reused, so one that no longer exists, or whose
             // memory no longer does, was destroyed after being recorded and invalidated the command buffer.
             std::unordered_set<uint64_t> references{};
@@ -737,27 +737,24 @@ namespace sogen
 
         bool depends_on_changed_state(const command_buffer_data& command_buffer) const
         {
-            return std::ranges::any_of(command_buffer.restored_query_reads,
-                                       [&](const auto& read) {
-                                           const auto pool = this->query_pools.find(read.first);
-                                           return pool == this->query_pools.end() || !pool->second.restored_results.contains(read.second);
-                                       }) ||
-                   std::ranges::any_of(command_buffer.undefined_layout_images, [&](const uint64_t image) {
-                       const auto it = this->images.find(image);
-                       return it == this->images.end() || !it->second.layout_undefined;
-                   });
+            return std::ranges::any_of(command_buffer.restored_query_reads, [&](const auto& read) {
+                const auto pool = this->query_pools.find(read.first);
+                return pool == this->query_pools.end() || !pool->second.restored_results.contains(read.second);
+            });
         }
 
-        void rerecord_changed(const uint64_t* submitted, const uint32_t count, const std::function<void(uint64_t command_buffer)>& rerecord)
+        bool rerecord_changed(const uint64_t* submitted, const uint32_t count, const std::function<bool(uint64_t command_buffer)>& rerecord)
         {
             for (uint32_t i = 0; i < count; ++i)
             {
                 const auto cb = this->command_buffers.find(submitted[i]);
-                if (rerecord && cb != this->command_buffers.end() && this->depends_on_changed_state(cb->second))
+                if (cb != this->command_buffers.end() && this->depends_on_changed_state(cb->second) &&
+                    (!rerecord || !rerecord(submitted[i])))
                 {
-                    rerecord(submitted[i]);
+                    return false;
                 }
             }
+            return true;
         }
 
         void apply_layout_transitions(const VkQueue queue, const uint64_t* submitted, const uint32_t count)
@@ -804,7 +801,6 @@ namespace sogen
 
                     auto& data = image->second;
                     data.ownership_transferred |= transition.transfers_ownership;
-                    data.layout_undefined = false;
 
                     // Submissions to different queues can run in another order than they were made in, which the tracked
                     // layouts cannot follow.
@@ -941,7 +937,8 @@ namespace sogen
             bool ownership_transferred{};
             VkQueue last_queue{};
             bool used_by_several_queues{};
-            // A re-created swapchain image is undefined, while the guest still believes it is in its saved layout.
+            // A re-created swapchain image is undefined, while the guest believes it is in its saved layout. It is
+            // transitioned there when the guest first acquires it, before the guest can use it.
             bool layout_undefined{};
 
             uint32_t aspect_count() const
@@ -1326,6 +1323,90 @@ namespace sogen
         object_table<memory_data> memories{&this->recording_references};
         object_table<buffer_data> buffers{&this->recording_references};
         object_table<image_data> images{&this->recording_references};
+
+        // Takes the semaphore the acquire signals, if any, and signals it again once the image is in its saved layout.
+        bool transition_restored_swapchain_image(const device_data& device, image_data& image, const VkSemaphore acquired)
+        {
+            const auto queue =
+                std::ranges::find_if(this->queues, [&](const auto& entry) { return entry.second.device_id == image.device_id; });
+            if (queue == this->queues.end())
+            {
+                return false;
+            }
+
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.queueFamilyIndex = queue->second.queue_family_index;
+
+            VkCommandPool pool{};
+            if (device.create_command_pool(device.handle, &pool_info, nullptr, &pool) != VK_SUCCESS)
+            {
+                return false;
+            }
+            const auto destroy_pool = utils::finally([&] { device.destroy_command_pool(device.handle, pool, nullptr); });
+
+            VkCommandBufferAllocateInfo allocate_info{};
+            allocate_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocate_info.commandPool = pool;
+            allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocate_info.commandBufferCount = 1;
+
+            VkCommandBuffer command_buffer{};
+            VkCommandBufferBeginInfo begin_info{};
+            begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (device.allocate_command_buffers(device.handle, &allocate_info, &command_buffer) != VK_SUCCESS ||
+                device.begin_command_buffer(command_buffer, &begin_info) != VK_SUCCESS)
+            {
+                return false;
+            }
+
+            for (uint32_t layer = 0; layer < image.create.array_layers; ++layer)
+            {
+                const auto layout = static_cast<VkImageLayout>(image.layouts[image.subresource_index(0, 0, layer)]);
+                if (layout == VK_IMAGE_LAYOUT_UNDEFINED)
+                {
+                    continue;
+                }
+
+                VkImageMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = layout;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image.handle;
+                barrier.subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+                device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
+                                            nullptr, 0, nullptr, 1, &barrier);
+            }
+
+            constexpr VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.waitSemaphoreCount = acquired ? 1 : 0;
+            submit.pWaitSemaphores = &acquired;
+            submit.pWaitDstStageMask = &wait_stage;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &command_buffer;
+            submit.signalSemaphoreCount = acquired ? 1 : 0;
+            submit.pSignalSemaphores = &acquired;
+
+            const auto lock = this->queue_lock(queue->second.handle);
+            const std::scoped_lock guard(*lock);
+            if (device.end_command_buffer(command_buffer) != VK_SUCCESS ||
+                device.queue_submit(queue->second.handle, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
+                device.queue_wait_idle(queue->second.handle) != VK_SUCCESS)
+            {
+                return false;
+            }
+
+            image.layout_undefined = false;
+            return true;
+        }
+
         object_table<sampler_data> samplers{&this->recording_references};
         object_table<surface_data> surfaces{&this->recording_references};
         object_table<swapchain_data> swapchains{&this->recording_references};
@@ -3669,13 +3750,13 @@ namespace sogen
         const VkResult result = dev->second.begin_command_buffer(cb->second.handle, &info);
         if (result == VK_SUCCESS)
         {
+            cb->second.simultaneous_use = (flags & VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT) != 0;
             cb->second.recorded.clear();
             cb->second.recorded_results.clear();
             cb->second.references.clear();
             cb->second.layout_transitions.clear();
             cb->second.query_resets.clear();
             cb->second.restored_query_reads.clear();
-            cb->second.undefined_layout_images.clear();
         }
         return result;
     }
@@ -3757,7 +3838,6 @@ namespace sogen
                     command_buffer.layout_transitions.clear();
                     command_buffer.query_resets.clear();
                     command_buffer.restored_query_reads.clear();
-                    command_buffer.undefined_layout_images.clear();
                 }
             }
         }
@@ -3776,6 +3856,12 @@ namespace sogen
         return cb == this->impl_->command_buffers.end() ? std::vector<std::byte>{} : cb->second.recorded;
     }
 
+    std::vector<int32_t> vulkan_host::recorded_results(const uint64_t command_buffer) const
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        return cb == this->impl_->command_buffers.end() ? std::vector<int32_t>{} : cb->second.recorded_results;
+    }
+
     bool vulkan_host::can_reset_command_buffer(const uint64_t command_buffer) const
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
@@ -3785,7 +3871,8 @@ namespace sogen
         }
 
         const auto pool = this->impl_->command_pools.find(cb->second.pool_id);
-        return pool != this->impl_->command_pools.end() && (pool->second.flags & VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT) != 0;
+        return !cb->second.simultaneous_use && pool != this->impl_->command_pools.end() &&
+               (pool->second.flags & VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT) != 0;
     }
 
     void vulkan_host::append_recorded_command(const uint64_t command_buffer, const std::span<const std::byte> command, const int32_t result)
@@ -3820,7 +3907,6 @@ namespace sogen
             cb->second.layout_transitions.clear();
             cb->second.query_resets.clear();
             cb->second.restored_query_reads.clear();
-            cb->second.undefined_layout_images.clear();
         }
         return result;
     }
@@ -4169,7 +4255,7 @@ namespace sogen
     int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
                                       const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
                                       uint32_t signal_count, bool has_timeline_info,
-                                      const std::function<void(uint64_t command_buffer)>& rerecord)
+                                      const std::function<bool(uint64_t command_buffer)>& rerecord)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         if (queue_it == this->impl_->queues.end())
@@ -4232,7 +4318,10 @@ namespace sogen
         }
 
         const auto* command_ids = static_cast<const uint64_t*>(command_buffer_ids);
-        this->impl_->rerecord_changed(command_ids, command_buffer_count, rerecord);
+        if (!this->impl_->rerecord_changed(command_ids, command_buffer_count, rerecord))
+        {
+            return VK_ERROR_DEVICE_LOST;
+        }
         std::vector<VkCommandBuffer> command_buffers;
         command_buffers.reserve(command_buffer_count);
         for (uint32_t i = 0; i < command_buffer_count; ++i)
@@ -4277,7 +4366,7 @@ namespace sogen
 
     int32_t vulkan_host::queue_submit2(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
                                        const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
-                                       uint32_t signal_count, const std::function<void(uint64_t command_buffer)>& rerecord)
+                                       uint32_t signal_count, const std::function<bool(uint64_t command_buffer)>& rerecord)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         if (queue_it == this->impl_->queues.end())
@@ -4330,7 +4419,10 @@ namespace sogen
         }
 
         const auto* cmd_ids = static_cast<const uint64_t*>(command_buffer_ids);
-        this->impl_->rerecord_changed(cmd_ids, command_buffer_count, rerecord);
+        if (!this->impl_->rerecord_changed(cmd_ids, command_buffer_count, rerecord))
+        {
+            return VK_ERROR_DEVICE_LOST;
+        }
         std::vector<VkCommandBufferSubmitInfo> command_buffers;
         command_buffers.reserve(command_buffer_count);
         for (uint32_t i = 0; i < command_buffer_count; ++i)
@@ -5289,16 +5381,7 @@ namespace sogen
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask = src_access_mask;
         barrier.dstAccessMask = dst_access_mask;
-        const bool first_since_restore =
-            img->second.layout_undefined &&
-            std::ranges::none_of(cb->second.layout_transitions,
-                                 [&](const impl::layout_transition& transition) { return transition.image == image; });
-        if (first_since_restore)
-        {
-            cb->second.undefined_layout_images.push_back(image);
-        }
-
-        barrier.oldLayout = first_since_restore ? VK_IMAGE_LAYOUT_UNDEFINED : translate_layout(old_layout);
+        barrier.oldLayout = translate_layout(old_layout);
         barrier.newLayout = translate_layout(new_layout);
         barrier.srcQueueFamilyIndex = src_queue_family_index;
         barrier.dstQueueFamilyIndex = dst_queue_family_index;
@@ -6055,6 +6138,12 @@ namespace sogen
                                                                   fence_handle, &out_index);
         if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && out_index < sc_it->second.acquired.size())
         {
+            auto& image = this->impl_->images.at(sc_it->second.image_ids[out_index]);
+            if (image.layout_undefined && !this->impl_->transition_restored_swapchain_image(dev_it->second, image, semaphore_handle))
+            {
+                return VK_ERROR_DEVICE_LOST;
+            }
+
             sc_it->second.acquired[out_index] = true;
             if (semaphore != 0)
             {

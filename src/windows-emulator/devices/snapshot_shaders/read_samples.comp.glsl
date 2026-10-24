@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_samplerless_texture_functions : require
 
 // Reads every sample of one layer of a multisampled image, a block of rows at a time, as raw bits.
 #if defined(UINT_FORMAT)
@@ -28,6 +29,7 @@ layout(push_constant) uniform parameters
     uint layer;
     uint first_row;
     uint sample_index;
+    uint stencil_bit;
 };
 
 void main()
