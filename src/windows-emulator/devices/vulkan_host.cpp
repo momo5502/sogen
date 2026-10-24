@@ -1324,9 +1324,25 @@ namespace sogen
         object_table<buffer_data> buffers{&this->recording_references};
         object_table<image_data> images{&this->recording_references};
 
-        // Takes the semaphore the acquire signals, if any, and signals it again once the image is in its saved layout.
-        bool transition_restored_swapchain_image(const device_data& device, image_data& image, const VkSemaphore acquired)
+        // Takes the semaphore the acquire signals and signals it again once the image is in its saved layout. An acquire
+        // with only a fence is waited for first, since the image is only available to the device then.
+        bool transition_restored_swapchain_image(const device_data& device, image_data& image, const VkSemaphore acquired,
+                                                 const VkFence acquired_fence)
         {
+            if (!acquired && acquired_fence)
+            {
+                VkResult status = VK_NOT_READY;
+                while ((status = device.get_fence_status(device.handle, acquired_fence)) == VK_NOT_READY)
+                {
+                    std::this_thread::yield();
+                }
+
+                if (status != VK_SUCCESS)
+                {
+                    return false;
+                }
+            }
+
             const auto queue =
                 std::ranges::find_if(this->queues, [&](const auto& entry) { return entry.second.device_id == image.device_id; });
             if (queue == this->queues.end())
@@ -6139,7 +6155,8 @@ namespace sogen
         if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && out_index < sc_it->second.acquired.size())
         {
             auto& image = this->impl_->images.at(sc_it->second.image_ids[out_index]);
-            if (image.layout_undefined && !this->impl_->transition_restored_swapchain_image(dev_it->second, image, semaphore_handle))
+            if (image.layout_undefined &&
+                !this->impl_->transition_restored_swapchain_image(dev_it->second, image, semaphore_handle, fence_handle))
             {
                 return VK_ERROR_DEVICE_LOST;
             }
