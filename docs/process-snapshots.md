@@ -11,8 +11,14 @@ code is shared with Android's single-vCPU FEX backend.
 - [x] Save is transactional (temporary file, moved into place; a failed save keeps the process
       running), devices can refuse snapshots (the GPU bridge does until slice 0), the launch
       configuration is checked on resume, and snapshot options force one vCPU.
-- [ ] GPU slice 0 — headless Vulkan round-trip (see Milestones)
-- [ ] GPU slice 1 — swapchain, descriptors, graphics pipeline
+- [x] GPU slice 0 — headless Vulkan round-trip: instances, devices, queues, memory (host-visible and
+      device-local), buffers, images with tracked layouts, command buffers with their recorded commands,
+      fences, semaphores (`vulkan-snapshot-test`)
+- [x] GPU slice 1 — samplers, shaders, layouts, pipelines, views, render passes, framebuffers,
+      descriptor pools and sets, events, surfaces and swapchains; suspend at the end of a frame.
+      Settlers II suspends and resumes on WHP
+- [ ] Query pools, MSAA contents, present completion (present fence/wait), multiple queues
+- [ ] Performance check of the shadow state against MW2 / Settlers II
 - [ ] Child processes
 - [ ] Android integration
 
