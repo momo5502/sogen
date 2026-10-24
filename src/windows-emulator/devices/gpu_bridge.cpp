@@ -4073,8 +4073,7 @@ namespace sogen
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
-            // Returns the first failure. Every command starts with the command buffer it is recorded into, which keeps
-            // what it recorded for snapshots when keep_recorded is set.
+            // Every recorded command starts with the command buffer it is recorded into.
             int32_t execute_recorded_commands(windows_emulator& win_emu, const std::span<const std::byte> stream, const bool keep_recorded)
             {
                 int32_t result = 0; // VK_SUCCESS

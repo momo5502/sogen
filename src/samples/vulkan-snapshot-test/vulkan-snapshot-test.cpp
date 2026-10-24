@@ -11,7 +11,8 @@
 // Keeps GPU state alive across iterations and prints a checksum per iteration, so that a run suspended and resumed in
 // the middle can be compared with an uninterrupted one. Between two iterations, where a suspend lands, GPU memory holds
 // the previous iteration's results, a binary semaphore holds a signal the next iteration waits for, and a command buffer
-// recorded once before the loop is waiting to be submitted again.
+// recorded once before the loop is waiting to be submitted again. A buffer in memory the host cannot map carries the
+// results of the iteration before the previous one.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
@@ -63,12 +64,13 @@ namespace
         return UINT32_MAX;
     }
 
-    uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties& properties, const uint32_t type_bits)
+    uint32_t find_memory_type(const VkPhysicalDeviceMemoryProperties& properties, const uint32_t type_bits,
+                              const VkMemoryPropertyFlags wanted, const VkMemoryPropertyFlags unwanted)
     {
-        constexpr VkMemoryPropertyFlags wanted = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
         for (uint32_t i = 0; i < properties.memoryTypeCount; ++i)
         {
-            if ((type_bits & (1U << i)) != 0 && (properties.memoryTypes[i].propertyFlags & wanted) == wanted)
+            const auto flags = properties.memoryTypes[i].propertyFlags;
+            if ((type_bits & (1U << i)) != 0 && (flags & wanted) == wanted && (flags & unwanted) == 0)
             {
                 return i;
             }
@@ -187,9 +189,11 @@ int main(const int argc, char** argv)
     VkBuffer source{};
     VkBuffer destination{};
     VkBuffer mirror{};
+    VkBuffer device_local{};
     if (vkCreateBuffer(device, &buffer_info, nullptr, &source) != VK_SUCCESS ||
         vkCreateBuffer(device, &buffer_info, nullptr, &destination) != VK_SUCCESS ||
-        vkCreateBuffer(device, &buffer_info, nullptr, &mirror) != VK_SUCCESS)
+        vkCreateBuffer(device, &buffer_info, nullptr, &mirror) != VK_SUCCESS ||
+        vkCreateBuffer(device, &buffer_info, nullptr, &device_local) != VK_SUCCESS)
     {
         std::printf("[snapshot-test] vkCreateBuffer failed\n");
         return 1;
@@ -205,15 +209,25 @@ int main(const int argc, char** argv)
     VkMemoryAllocateInfo allocate_info{};
     allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocate_info.allocationSize = 3 * stride;
-    allocate_info.memoryTypeIndex = find_memory_type(memory_properties, requirements.memoryTypeBits);
-    if (allocate_info.memoryTypeIndex == UINT32_MAX)
+    allocate_info.memoryTypeIndex = find_memory_type(memory_properties, requirements.memoryTypeBits,
+                                                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0);
+
+    VkMemoryAllocateInfo device_local_info{};
+    device_local_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    device_local_info.allocationSize = stride;
+    device_local_info.memoryTypeIndex = find_memory_type(memory_properties, requirements.memoryTypeBits,
+                                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT);
+    if (allocate_info.memoryTypeIndex == UINT32_MAX || device_local_info.memoryTypeIndex == UINT32_MAX)
     {
-        std::printf("[snapshot-test] no host-visible coherent memory type\n");
+        std::printf("[snapshot-test] missing a host-visible coherent or a device-local memory type\n");
         return 1;
     }
 
     VkDeviceMemory memory{};
+    VkDeviceMemory device_local_memory{};
     if (vkAllocateMemory(device, &allocate_info, nullptr, &memory) != VK_SUCCESS ||
+        vkAllocateMemory(device, &device_local_info, nullptr, &device_local_memory) != VK_SUCCESS ||
+        vkBindBufferMemory(device, device_local, device_local_memory, 0) != VK_SUCCESS ||
         vkBindBufferMemory(device, source, memory, 0) != VK_SUCCESS ||
         vkBindBufferMemory(device, destination, memory, stride) != VK_SUCCESS ||
         vkBindBufferMemory(device, mirror, memory, 2 * stride) != VK_SUCCESS)
@@ -253,8 +267,10 @@ int main(const int argc, char** argv)
 
     VkCommandBuffer command_buffer{};
     VkCommandBuffer mirror_command_buffer{};
+    VkCommandBuffer keep_command_buffer{};
     if (vkAllocateCommandBuffers(device, &command_buffer_info, &command_buffer) != VK_SUCCESS ||
-        vkAllocateCommandBuffers(device, &command_buffer_info, &mirror_command_buffer) != VK_SUCCESS)
+        vkAllocateCommandBuffers(device, &command_buffer_info, &mirror_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &keep_command_buffer) != VK_SUCCESS)
     {
         std::printf("[snapshot-test] vkAllocateCommandBuffers failed\n");
         return 1;
@@ -279,8 +295,12 @@ int main(const int argc, char** argv)
 
     const VkBufferCopy whole_buffer{.srcOffset = 0, .dstOffset = 0, .size = buffer_size};
     vkBeginCommandBuffer(mirror_command_buffer, &begin_info);
-    vkCmdCopyBuffer(mirror_command_buffer, destination, mirror, 1, &whole_buffer);
+    vkCmdCopyBuffer(mirror_command_buffer, device_local, mirror, 1, &whole_buffer);
     vkEndCommandBuffer(mirror_command_buffer);
+
+    vkBeginCommandBuffer(keep_command_buffer, &begin_info);
+    vkCmdCopyBuffer(keep_command_buffer, destination, device_local, 1, &whole_buffer);
+    vkEndCommandBuffer(keep_command_buffer);
 
     const auto submit_and_wait = [&](const VkCommandBuffer submitted, const VkSemaphore wait, const VkSemaphore signal) {
         constexpr VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -303,13 +323,14 @@ int main(const int argc, char** argv)
     {
         if (iteration > 0)
         {
-            if (!submit_and_wait(mirror_command_buffer, results_ready, VK_NULL_HANDLE))
+            if (!submit_and_wait(mirror_command_buffer, results_ready, VK_NULL_HANDLE) ||
+                !submit_and_wait(keep_command_buffer, VK_NULL_HANDLE, VK_NULL_HANDLE))
             {
                 std::printf("[snapshot-test] iteration %u: mirror submission failed\n", iteration);
                 return 3;
             }
 
-            if (!holds_iteration(destination_data, iteration - 1) || !holds_iteration(mirror_data, iteration - 1))
+            if (!holds_iteration(destination_data, iteration - 1) || (iteration > 1 && !holds_iteration(mirror_data, iteration - 2)))
             {
                 std::printf("[snapshot-test] iteration %u: GPU memory lost what iteration %u wrote\n", iteration, iteration - 1);
                 return 2;

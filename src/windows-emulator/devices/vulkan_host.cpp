@@ -17,6 +17,9 @@
 #include <shared_mutex>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
+#include <thread>
+#include <chrono>
 #include <vector>
 #include <ranges>
 
@@ -286,6 +289,7 @@ namespace sogen
         {
             VkDevice handle{};
             device_create_params create{};
+            std::vector<VkFence> abandoned_drain_fences{};
             bool maintenance5_enabled{};
             // Held shared by presents running without the caller's locks, so destroying the device waits for them.
             std::shared_ptr<std::shared_mutex> presents = std::make_shared<std::shared_mutex>();
@@ -522,6 +526,7 @@ namespace sogen
             // Vulkan cannot report these, so they are tracked from submissions for snapshots: whether a binary semaphore
             // has a signal no wait consumed yet, and the highest timeline values signals and waits were submitted for.
             bool binary_signaled{};
+            bool binary_wait_unsignaled{};
             uint64_t highest_signal{};
             uint64_t highest_wait{};
         };
@@ -533,6 +538,10 @@ namespace sogen
             {
                 if (const auto it = this->semaphores.find(waits[i].semaphore); it != this->semaphores.end())
                 {
+                    if (it->second.type != VK_SEMAPHORE_TYPE_TIMELINE && !it->second.binary_signaled)
+                    {
+                        it->second.binary_wait_unsignaled = true;
+                    }
                     it->second.binary_signaled = false;
                     it->second.highest_wait = std::max(it->second.highest_wait, waits[i].value);
                 }
@@ -1070,6 +1079,10 @@ namespace sogen
                 {
                     it->second.destroy_fence(it->second.handle, fence.handle, nullptr);
                 }
+            }
+            for (const auto fence : it->second.abandoned_drain_fences)
+            {
+                it->second.destroy_fence(it->second.handle, fence, nullptr);
             }
             for (auto& [id, event] : this->events)
             {
@@ -2831,8 +2844,6 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        cb->second.recorded.clear();
-
         VkCommandBufferBeginInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         info.flags = flags;
@@ -2866,7 +2877,12 @@ namespace sogen
             info.pInheritanceInfo = &inheritance;
         }
 
-        return dev->second.begin_command_buffer(cb->second.handle, &info);
+        const VkResult result = dev->second.begin_command_buffer(cb->second.handle, &info);
+        if (result == VK_SUCCESS)
+        {
+            cb->second.recorded.clear();
+        }
+        return result;
     }
 
     int32_t vulkan_host::cmd_execute_commands(uint64_t command_buffer, std::span<const uint64_t> secondaries)
@@ -2929,15 +2945,18 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        for (auto& command_buffer : this->impl_->command_buffers | std::views::values)
+        const VkResult result = dev->second.reset_command_pool(dev->second.handle, it->second.handle, flags);
+        if (result == VK_SUCCESS)
         {
-            if (command_buffer.pool_id == pool)
+            for (auto& command_buffer : this->impl_->command_buffers | std::views::values)
             {
-                command_buffer.recorded.clear();
+                if (command_buffer.pool_id == pool)
+                {
+                    command_buffer.recorded.clear();
+                }
             }
         }
-
-        return dev->second.reset_command_pool(dev->second.handle, it->second.handle, flags);
+        return result;
     }
 
     void vulkan_host::append_recorded_command(const uint64_t command_buffer, const std::span<const std::byte> command)
@@ -2962,8 +2981,12 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        cb->second.recorded.clear();
-        return dev->second.reset_command_buffer(cb->second.handle, flags);
+        const VkResult result = dev->second.reset_command_buffer(cb->second.handle, flags);
+        if (result == VK_SUCCESS)
+        {
+            cb->second.recorded.clear();
+        }
+        return result;
     }
 
     int32_t vulkan_host::queue_wait_idle(uint64_t queue)
@@ -7853,7 +7876,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 1;
+        constexpr uint32_t snapshot_version = 2;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -7872,6 +7895,173 @@ namespace sogen
                                          std::to_string(result));
             }
         }
+
+        // Moves the contents of memory the host cannot map through a host-visible staging buffer, by aliasing transfer
+        // buffers over the memory one chunk at a time. Only for snapshots, while the guest is stopped.
+        template <typename Device>
+        class snapshot_transfer
+        {
+          public:
+            static constexpr VkDeviceSize chunk_size = 16 * 1024 * 1024;
+
+            snapshot_transfer(const Device& device, const std::function<uint32_t(uint32_t type_bits)>& find_host_memory_type)
+                : device_(device)
+            {
+                device.get_device_queue(device.handle, device.queue_family_index, 0, &this->queue_);
+
+                VkCommandPoolCreateInfo pool_info{};
+                pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+                pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+                pool_info.queueFamilyIndex = device.queue_family_index;
+
+                VkCommandBufferAllocateInfo command_buffer_info{};
+                command_buffer_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+                command_buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                command_buffer_info.commandBufferCount = 1;
+
+                if (!this->queue_ || device.create_command_pool(device.handle, &pool_info, nullptr, &this->pool_) != VK_SUCCESS ||
+                    (command_buffer_info.commandPool = this->pool_,
+                     device.allocate_command_buffers(device.handle, &command_buffer_info, &this->command_buffer_)) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot transfer queue failed");
+                }
+
+                this->staging_buffer_ = this->create_transfer_buffer(chunk_size);
+                VkMemoryRequirements requirements{};
+                device.get_buffer_memory_requirements(device.handle, this->staging_buffer_, &requirements);
+
+                VkMemoryAllocateInfo allocate_info{};
+                allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                allocate_info.allocationSize = requirements.size;
+                allocate_info.memoryTypeIndex = find_host_memory_type(requirements.memoryTypeBits);
+                if (allocate_info.memoryTypeIndex == UINT32_MAX ||
+                    device.allocate_memory(device.handle, &allocate_info, nullptr, &this->staging_memory_) != VK_SUCCESS ||
+                    device.bind_buffer_memory(device.handle, this->staging_buffer_, this->staging_memory_, 0) != VK_SUCCESS ||
+                    device.map_memory(device.handle, this->staging_memory_, 0, VK_WHOLE_SIZE, 0, &this->staging_data_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot staging buffer failed");
+                }
+            }
+
+            ~snapshot_transfer()
+            {
+                const auto& device = this->device_;
+                if (this->staging_memory_)
+                {
+                    device.free_memory(device.handle, this->staging_memory_, nullptr);
+                }
+                if (this->staging_buffer_)
+                {
+                    device.destroy_buffer(device.handle, this->staging_buffer_, nullptr);
+                }
+                if (this->pool_)
+                {
+                    device.destroy_command_pool(device.handle, this->pool_, nullptr);
+                }
+            }
+
+            snapshot_transfer(const snapshot_transfer&) = delete;
+            snapshot_transfer& operator=(const snapshot_transfer&) = delete;
+            snapshot_transfer(snapshot_transfer&&) = delete;
+            snapshot_transfer& operator=(snapshot_transfer&&) = delete;
+
+            // False if the memory's type cannot back transfer buffers, so that only its images can be saved.
+            bool copy(const VkDeviceMemory memory, const uint32_t memory_type_index, const std::span<std::byte> contents,
+                      const bool to_device)
+            {
+                const auto& device = this->device_;
+                for (VkDeviceSize offset = 0; offset < contents.size(); offset += chunk_size)
+                {
+                    const VkDeviceSize size = std::min<VkDeviceSize>(chunk_size, contents.size() - offset);
+                    const VkBuffer alias = this->create_transfer_buffer(size);
+                    const auto destroy_alias = utils::finally([&] { device.destroy_buffer(device.handle, alias, nullptr); });
+
+                    VkMemoryRequirements requirements{};
+                    device.get_buffer_memory_requirements(device.handle, alias, &requirements);
+                    if ((requirements.memoryTypeBits & (1U << memory_type_index)) == 0 || offset % requirements.alignment != 0)
+                    {
+                        return false;
+                    }
+
+                    if (device.bind_buffer_memory(device.handle, alias, memory, offset) != VK_SUCCESS)
+                    {
+                        throw std::runtime_error("Aliasing Vulkan memory for a snapshot failed");
+                    }
+
+                    if (to_device)
+                    {
+                        std::memcpy(this->staging_data_, contents.data() + offset, static_cast<size_t>(size));
+                    }
+
+                    const VkBufferCopy region{.srcOffset = 0, .dstOffset = 0, .size = size};
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        device.cmd_copy_buffer(command_buffer, to_device ? this->staging_buffer_ : alias,
+                                               to_device ? alias : this->staging_buffer_, 1, &region);
+                    });
+
+                    if (!to_device)
+                    {
+                        std::memcpy(contents.data() + offset, this->staging_data_, static_cast<size_t>(size));
+                    }
+                }
+
+                return true;
+            }
+
+          private:
+            const Device& device_;
+            VkQueue queue_{};
+            VkCommandPool pool_{};
+            VkCommandBuffer command_buffer_{};
+            VkBuffer staging_buffer_{};
+            VkDeviceMemory staging_memory_{};
+            void* staging_data_{};
+
+            VkBuffer create_transfer_buffer(const VkDeviceSize size) const
+            {
+                VkBufferCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+                info.size = size;
+                info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+                info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+                VkBuffer buffer{};
+                if (this->device_.create_buffer(this->device_.handle, &info, nullptr, &buffer) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating a Vulkan snapshot transfer buffer failed");
+                }
+                return buffer;
+            }
+
+            template <typename Record>
+            void submit(const Record& record)
+            {
+                const auto& device = this->device_;
+
+                VkCommandBufferBeginInfo begin_info{};
+                begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+                VkSubmitInfo submit_info{};
+                submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                submit_info.commandBufferCount = 1;
+                submit_info.pCommandBuffers = &this->command_buffer_;
+
+                if (device.begin_command_buffer(this->command_buffer_, &begin_info) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Recording a Vulkan snapshot transfer failed");
+                }
+
+                record(this->command_buffer_);
+
+                if (device.end_command_buffer(this->command_buffer_) != VK_SUCCESS ||
+                    device.queue_submit(this->queue_, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS ||
+                    device.queue_wait_idle(this->queue_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Running a Vulkan snapshot transfer failed");
+                }
+            }
+        };
 
         std::vector<VkPhysicalDevice> enumerate_native_physical_devices(const PFN_vkEnumeratePhysicalDevices enumerate,
                                                                         const VkInstance instance)
@@ -7928,10 +8118,15 @@ namespace sogen
             }
         }
 
-        // Waiting for a device to go idle never returns while a queue waits for a timeline value that only later guest work
-        // would signal.
+        // Waiting for a device to go idle never returns while a queue waits for something only later guest work would
+        // signal.
         for (const auto& semaphore : impl.semaphores | std::views::values)
         {
+            if (semaphore.binary_wait_unsignaled)
+            {
+                throw std::runtime_error("A Vulkan queue waits for a binary semaphore nothing has been submitted to signal");
+            }
+
             if (semaphore.type != VK_SEMAPHORE_TYPE_TIMELINE)
             {
                 continue;
@@ -7951,6 +8146,50 @@ namespace sogen
             }
         }
 
+        // The checks above cannot see the order of submissions, e.g. a wait on one queue for a signal submitted after it on
+        // the same queue. Each queue therefore gets a fence behind its work, which signals once all of it is done, and the
+        // snapshot is refused unless every fence does so in time.
+        std::unordered_set<VkQueue> drained{};
+        for (const auto& queue : impl.queues | std::views::values)
+        {
+            auto& device = impl.devices.at(queue.device_id);
+            if (!drained.insert(queue.handle).second)
+            {
+                continue;
+            }
+
+            VkFenceCreateInfo fence_info{};
+            fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            VkFence fence{};
+            if (device.create_fence(device.handle, &fence_info, nullptr, &fence) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Creating a Vulkan fence to drain a queue failed");
+            }
+
+            if (device.queue_submit(queue.handle, 0, nullptr, fence) != VK_SUCCESS)
+            {
+                device.destroy_fence(device.handle, fence, nullptr);
+                throw std::runtime_error("Draining a Vulkan queue failed");
+            }
+
+            constexpr auto drain_timeout = std::chrono::seconds(5);
+            const auto deadline = std::chrono::steady_clock::now() + drain_timeout;
+            VkResult status = VK_NOT_READY;
+            while ((status = device.get_fence_status(device.handle, fence)) == VK_NOT_READY && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
+            if (status != VK_SUCCESS)
+            {
+                device.abandoned_drain_fences.push_back(fence);
+                throw std::runtime_error(
+                    "A Vulkan queue did not finish its work, it may wait for something the guest has not signaled yet");
+            }
+
+            device.destroy_fence(device.handle, fence, nullptr);
+        }
+
         for (const auto& device : impl.devices | std::views::values)
         {
             if (!device.device_wait_idle || device.device_wait_idle(device.handle) != VK_SUCCESS)
@@ -7958,6 +8197,20 @@ namespace sogen
                 throw std::runtime_error("Waiting for a Vulkan device to go idle failed");
             }
         }
+
+        std::unordered_map<uint64_t, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
+        const auto transfer_for = [&](const uint64_t device_id) -> snapshot_transfer<impl::device_data>& {
+            auto& transfer = transfers[device_id];
+            if (!transfer)
+            {
+                const auto& device = impl.devices.at(device_id);
+                transfer = std::make_unique<snapshot_transfer<impl::device_data>>(device, [&](const uint32_t type_bits) {
+                    return impl.find_memory_type(device, type_bits,
+                                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                });
+            }
+            return *transfer;
+        };
 
         const auto memory_property_flags = [&](const impl::device_data& device, const uint32_t memory_type_index) -> VkMemoryPropertyFlags {
             VkPhysicalDeviceMemoryProperties properties{};
@@ -8047,7 +8300,15 @@ namespace sogen
             const auto property_flags = memory_property_flags(device, memory.memory_type_index);
             if ((property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
             {
-                throw std::runtime_error("Snapshots do not save device-local Vulkan memory yet");
+                std::vector<std::byte> contents(memory.allocation_size);
+                if (!transfer_for(memory.device_id)
+                         .copy(memory.handle, impl.substitute_cached_memory_type(device, memory.memory_type_index), contents, false))
+                {
+                    throw std::runtime_error("Snapshots do not save Vulkan memory only images can use yet");
+                }
+
+                buffer.write_vector(contents);
+                continue;
             }
 
             if ((property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0)
@@ -8128,6 +8389,7 @@ namespace sogen
             buffer.write(semaphore.type);
             buffer.write(value);
             buffer.write(semaphore.binary_signaled);
+            buffer.write(semaphore.binary_wait_unsignaled);
             buffer.write(semaphore.highest_signal);
             buffer.write(semaphore.highest_wait);
         }
@@ -8137,6 +8399,20 @@ namespace sogen
     {
         auto& impl = *this->impl_;
         const auto clear_forced_id = utils::finally([&] { impl.forced_id.reset(); });
+
+        std::unordered_map<uint64_t, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
+        const auto transfer_for = [&](const uint64_t device_id) -> snapshot_transfer<impl::device_data>& {
+            auto& transfer = transfers[device_id];
+            if (!transfer)
+            {
+                const auto& device = impl.devices.at(device_id);
+                transfer = std::make_unique<snapshot_transfer<impl::device_data>>(device, [&](const uint32_t type_bits) {
+                    return impl.find_memory_type(device, type_bits,
+                                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                });
+            }
+            return *transfer;
+        };
 
         if (buffer.read<uint32_t>() != snapshot_version)
         {
@@ -8243,12 +8519,26 @@ namespace sogen
             const auto result = this->allocate_memory(device, size, memory_type_index, flags, device_mask, memory);
             expect_restored(result, memory, id, "memory");
 
-            const auto contents = buffer.read_vector<std::byte>();
+            auto contents = buffer.read_vector<std::byte>();
             const auto& dev = impl.devices.at(device);
             const auto& mem = impl.memories.at(id);
+            if (contents.size() != mem.allocation_size)
+            {
+                throw std::runtime_error("The snapshot holds the wrong size for Vulkan memory " + std::to_string(id));
+            }
+
+            const auto memory_type = impl.substitute_cached_memory_type(dev, memory_type_index);
+            if (!this->is_host_visible_memory_type(device, memory_type_index))
+            {
+                if (!transfer_for(device).copy(mem.handle, memory_type, contents, true))
+                {
+                    throw std::runtime_error("Restoring the contents of Vulkan memory " + std::to_string(id) + " failed");
+                }
+                continue;
+            }
+
             void* mapped = nullptr;
-            if (contents.size() != mem.allocation_size || !dev.map_memory ||
-                dev.map_memory(dev.handle, mem.handle, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
+            if (!dev.map_memory || dev.map_memory(dev.handle, mem.handle, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
             {
                 throw std::runtime_error("Restoring the contents of Vulkan memory " + std::to_string(id) + " failed");
             }
@@ -8292,7 +8582,6 @@ namespace sogen
 
         std::vector<uint64_t> pending_binary_signals{};
 
-        // Secondary command buffers are re-recorded first, since primaries may execute them.
         std::vector<std::pair<uint64_t, std::vector<std::byte>>> recorded_primaries{};
         std::vector<std::pair<uint64_t, std::vector<std::byte>>> recorded_secondaries{};
 
@@ -8334,6 +8623,7 @@ namespace sogen
             const auto type = buffer.read<uint32_t>();
             const auto value = buffer.read<uint64_t>();
             const auto binary_signaled = buffer.read<bool>();
+            const auto binary_wait_unsignaled = buffer.read<bool>();
             const auto highest_signal = buffer.read<uint64_t>();
             const auto highest_wait = buffer.read<uint64_t>();
 
@@ -8343,6 +8633,7 @@ namespace sogen
             expect_restored(result, semaphore, id, "semaphore");
 
             auto& restored = impl.semaphores.at(id);
+            restored.binary_wait_unsignaled = binary_wait_unsignaled;
             restored.highest_signal = highest_signal;
             restored.highest_wait = highest_wait;
             if (binary_signaled)
@@ -8351,7 +8642,6 @@ namespace sogen
             }
         }
 
-        // A binary semaphore's pending signal is put back by a submission that only signals it.
         for (const auto id : pending_binary_signals)
         {
             const auto& semaphore = impl.semaphores.at(id);
