@@ -462,6 +462,7 @@ namespace sogen
         uint64_t shared_section_size{0};
         uint64_t dbwin_buffer{0};
         uint64_t dbwin_buffer_size{0};
+        std::map<uint64_t, uint32_t> orphaned_section_backings{};
 
         std::optional<NTSTATUS> exit_status{};
 
