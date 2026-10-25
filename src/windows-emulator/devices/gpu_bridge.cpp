@@ -650,7 +650,8 @@ namespace sogen
                 }
 
                 uint64_t instance = gpu_bridge::null_object;
-                const auto extensions = win_emu.ui().vulkan_instance_extensions();
+                auto& ui = win_emu.ui();
+                const auto extensions = win_emu.run_without_kernel_lock([&ui] { return ui.vulkan_instance_extensions(); });
                 const int32_t result = this->vulkan_.create_instance(extensions, instance);
 
                 const gpu_bridge::create_instance_response response{
@@ -2319,7 +2320,11 @@ namespace sogen
                                                                             .surface = gpu_bridge::null_object});
                 }
 
-                const uint64_t native_surface = win_emu.ui().create_vulkan_surface(static_cast<hwnd>(request.hwnd), native_instance);
+                auto& ui = win_emu.ui();
+                const uint64_t native_surface =
+                    win_emu.run_without_kernel_lock([&ui, window = static_cast<hwnd>(request.hwnd), native_instance] {
+                        return ui.create_vulkan_surface(window, native_instance);
+                    });
                 uint64_t surface = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_surface(request.instance, native_surface, surface);
                 if (result == 0)
