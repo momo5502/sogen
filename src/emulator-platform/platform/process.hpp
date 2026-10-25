@@ -774,6 +774,20 @@ namespace sogen
     } CONTEXT_EX, *PCONTEXT_EX;
 
     template <typename Traits>
+    struct EMU_QUOTA_LIMITS
+    {
+        Traits::SIZE_T PagedPoolLimit;
+        Traits::SIZE_T NonPagedPoolLimit;
+        Traits::SIZE_T MinimumWorkingSetSize;
+        Traits::SIZE_T MaximumWorkingSetSize;
+        Traits::SIZE_T PagefileLimit;
+        std::int64_t TimeLimit;
+    };
+
+    static_assert(sizeof(EMU_QUOTA_LIMITS<EmulatorTraits<Emu32>>) == 0x20);
+    static_assert(sizeof(EMU_QUOTA_LIMITS<EmulatorTraits<Emu64>>) == 0x30);
+
+    template <typename Traits>
     struct EMU_EXCEPTION_RECORD
     {
         DWORD ExceptionCode;
