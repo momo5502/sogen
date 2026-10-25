@@ -176,6 +176,149 @@ namespace sogen
 
             load_emulator_snapshot(win_emu, data, configuration);
         }
+
+        controller::controller(windows_emulator& win_emu, std::string configuration, std::filesystem::path directory,
+                               outcome_callback on_outcome)
+            : win_emu_(win_emu),
+              configuration_(std::move(configuration)),
+              directory_(std::move(directory)),
+              on_outcome_(std::move(on_outcome)),
+              watcher_([this] { this->watch(); })
+        {
+        }
+
+        controller::~controller()
+        {
+            {
+                const std::scoped_lock lock(this->mutex_);
+                this->watching_ = false;
+            }
+            this->changed_.notify_all();
+            this->watcher_.join();
+        }
+
+        bool controller::request(std::filesystem::path destination)
+        {
+            {
+                const std::scoped_lock lock(this->mutex_);
+                if (this->pending_)
+                {
+                    return false;
+                }
+                this->pending_ = std::move(destination);
+            }
+            this->changed_.notify_all();
+            return true;
+        }
+
+        void controller::stop()
+        {
+            const std::scoped_lock lock(this->mutex_);
+            this->stop_requested_ = true;
+            this->win_emu_.stop();
+        }
+
+        // Requesting a suspend takes locks the emulator may hold while it handles input, so it happens on this thread.
+        void controller::watch()
+        {
+            std::unique_lock lock(this->mutex_);
+            while (this->watching_)
+            {
+                this->changed_.wait_for(lock, std::chrono::milliseconds(50));
+                if (!this->running_)
+                {
+                    continue;
+                }
+
+                if (this->pending_ && !this->suspend_requested_)
+                {
+                    this->suspend_requested_ = true;
+                    this->win_emu_.request_suspend();
+                    this->deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                }
+                else if (this->suspend_requested_ && std::chrono::steady_clock::now() >= this->deadline_)
+                {
+                    this->win_emu_.stop();
+                    this->deadline_ = std::chrono::steady_clock::time_point::max();
+                }
+            }
+        }
+
+        std::filesystem::path controller::next_snapshot_path() const
+        {
+            const auto stem = get_main_executable_name(this->win_emu_) + "-" + std::to_string(time(nullptr));
+            auto path = this->directory_ / (stem + ".snap");
+            for (size_t i = 1; std::filesystem::exists(path); ++i)
+            {
+                path = this->directory_ / (stem + "-" + std::to_string(i) + ".snap");
+            }
+            return path;
+        }
+
+        bool controller::run()
+        {
+            while (true)
+            {
+                {
+                    const std::scoped_lock lock(this->mutex_);
+                    if (this->stop_requested_)
+                    {
+                        return false;
+                    }
+                    this->running_ = true;
+                }
+
+                this->win_emu_.start();
+
+                std::unique_lock lock(this->mutex_);
+                this->running_ = false;
+                if (!this->pending_)
+                {
+                    return false;
+                }
+
+                snapshot_outcome outcome{.path = this->pending_->empty() ? this->next_snapshot_path() : *this->pending_};
+                const bool ended = this->stop_requested_ || this->win_emu_.process.exit_status.has_value();
+                lock.unlock();
+
+                if (ended)
+                {
+                    outcome.error = "The process ended before it was saved";
+                }
+                else
+                {
+                    try
+                    {
+                        if (outcome.path.has_parent_path())
+                        {
+                            std::filesystem::create_directories(outcome.path.parent_path());
+                        }
+                        write_emulator_snapshot(this->win_emu_, outcome.path, this->configuration_);
+                    }
+                    catch (const std::exception& e)
+                    {
+                        outcome.error = e.what();
+                    }
+                }
+
+                lock.lock();
+                this->pending_.reset();
+                this->suspend_requested_ = false;
+                this->deadline_ = std::chrono::steady_clock::time_point::max();
+                this->win_emu_.cancel_suspend_request();
+                lock.unlock();
+
+                if (this->on_outcome_)
+                {
+                    this->on_outcome_(outcome);
+                }
+
+                if (ended || outcome.error.empty())
+                {
+                    return outcome.error.empty();
+                }
+            }
+        }
     }
 
 } // namespace sogen

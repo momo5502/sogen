@@ -726,6 +726,11 @@ namespace sogen
                 this->sink_ = std::move(sink);
             }
 
+            void set_snapshot_request_sink(std::function<void()> sink) override
+            {
+                this->snapshot_request_sink_ = std::move(sink);
+            }
+
             void pump_events() override
             {
                 {
@@ -798,6 +803,18 @@ namespace sogen
                             break;
                         }
 
+                        const auto modifiers = event.key.mod;
+                        if (event.key.key == SDLK_S && (modifiers & SDL_KMOD_CTRL) != 0 && (modifiers & SDL_KMOD_ALT) != 0 &&
+                            (modifiers & SDL_KMOD_SHIFT) != 0 && this->snapshot_request_sink_)
+                        {
+                            if (!event.key.repeat)
+                            {
+                                this->snapshot_request_sink_();
+                            }
+                            this->snapshot_key_held_ = true;
+                            break;
+                        }
+
                         const auto vk = map_sdl_keycode(event.key.key);
                         if (vk == 0)
                         {
@@ -841,6 +858,12 @@ namespace sogen
                         const auto guest = this->resolve_guest(event.key.windowID);
                         if (guest == 0)
                         {
+                            break;
+                        }
+
+                        if (event.key.key == SDLK_S && this->snapshot_key_held_)
+                        {
+                            this->snapshot_key_held_ = false;
                             break;
                         }
 
@@ -1780,6 +1803,8 @@ namespace sogen
             }
 
             event_sink sink_{};
+            std::function<void()> snapshot_request_sink_{};
+            bool snapshot_key_held_{};
             bool initialized_{};
             bool vulkan_library_loaded_{};
             hwnd active_window_{};

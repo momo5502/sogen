@@ -88,6 +88,11 @@ namespace sogen
         virtual void set_event_sink(event_sink sink) = 0;
         virtual void pump_events() = 0;
 
+        // Called when the user asks the host to save the process, with input the guest never receives.
+        virtual void set_snapshot_request_sink(std::function<void()> /*sink*/)
+        {
+        }
+
         virtual void reset()
         {
         }
