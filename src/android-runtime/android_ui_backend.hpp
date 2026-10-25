@@ -82,6 +82,7 @@ namespace sogen::android
         void present_surface(hwnd window, const ui_surface_desc& surface) override;
         void set_cursor_position(hwnd window, int32_t screen_x, int32_t screen_y) override;
         void set_cursor_clip(hwnd window, const std::optional<ui_rect>& screen_rect, bool relative) override;
+        void set_cursor_visibility(bool visible) override;
 
         std::vector<std::string> vulkan_instance_extensions() override;
         uint64_t create_vulkan_surface(hwnd window, uint64_t instance) override;
@@ -114,7 +115,13 @@ namespace sogen::android
         std::unordered_map<uint8_t, std::chrono::steady_clock::time_point> key_down_since_{};
         hwnd active_window_{};
         uint16_t mouse_buttons_{};
+        // Touches move a hidden cursor by deltas even without a clip: on Windows, raw input keeps reporting motion when the
+        // cursor stops at the screen edge, and games that hide the cursor steer by it.
         hwnd relative_window_{};
+        hwnd clip_relative_window_{};
+        bool cursor_hidden_{};
+
+        void update_relative_mouse();
 
         void queue_event(hwnd window, uint32_t message, uint64_t w_param, uint64_t l_param);
         void activate(hwnd window);

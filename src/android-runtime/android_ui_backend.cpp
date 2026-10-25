@@ -218,13 +218,33 @@ namespace sogen::android
 
     void android_ui_backend::set_cursor_clip(const hwnd window, const std::optional<ui_rect>& /*screen_rect*/, const bool relative)
     {
+        {
+            const std::lock_guard lock{this->mutex_};
+            this->clip_relative_window_ = relative ? this->top_level_ancestor(window) : 0;
+        }
+
+        this->update_relative_mouse();
+    }
+
+    void android_ui_backend::set_cursor_visibility(const bool visible)
+    {
+        {
+            const std::lock_guard lock{this->mutex_};
+            this->cursor_hidden_ = !visible;
+        }
+
+        this->update_relative_mouse();
+    }
+
+    void android_ui_backend::update_relative_mouse()
+    {
         hwnd previous{};
         hwnd current{};
 
         {
             const std::lock_guard lock{this->mutex_};
 
-            current = relative ? this->top_level_ancestor(window) : 0;
+            current = this->clip_relative_window_ != 0 ? this->clip_relative_window_ : (this->cursor_hidden_ ? this->active_window_ : 0);
             if (current == this->relative_window_)
             {
                 return;
@@ -458,6 +478,11 @@ namespace sogen::android
             if (this->relative_window_ == window)
             {
                 this->relative_window_ = 0;
+            }
+
+            if (this->clip_relative_window_ == window)
+            {
+                this->clip_relative_window_ = 0;
             }
         }
 
