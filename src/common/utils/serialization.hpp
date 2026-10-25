@@ -110,8 +110,11 @@ namespace sogen
                 const auto* security_buffer = reinterpret_cast<const std::byte*>(&old_size_remainder);
                 this->buffer_.insert(this->buffer_.end(), security_buffer, security_buffer + check_size);
 
-                const auto* byte_buffer = static_cast<const std::byte*>(buffer);
-                this->buffer_.insert(this->buffer_.end(), byte_buffer, byte_buffer + length);
+                if (length > 0)
+                {
+                    const auto* byte_buffer = static_cast<const std::byte*>(buffer);
+                    this->buffer_.insert(this->buffer_.end(), byte_buffer, byte_buffer + length);
+                }
             }
 
             void write(const buffer_serializer& object)
@@ -380,7 +383,10 @@ namespace sogen
             void read(void* data, const size_t length)
             {
                 const auto span = this->read_data(length);
-                memcpy(data, span.data(), length);
+                if (length > 0)
+                {
+                    memcpy(data, span.data(), length);
+                }
             }
 
             template <typename T>

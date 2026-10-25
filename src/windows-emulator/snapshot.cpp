@@ -8,6 +8,8 @@
 
 #include <array>
 #include <fstream>
+#include <random>
+#include <sstream>
 
 namespace sogen
 {
@@ -73,6 +75,12 @@ namespace sogen
                 return utils::compression::zstd::decompress(data);
             }
 
+            std::string random_suffix()
+            {
+                std::random_device device{};
+                return (std::stringstream{} << std::hex << device() << device()).str();
+            }
+
             std::string get_main_executable_name(const windows_emulator& win_emu)
             {
                 const auto* exe = win_emu.mod_manager.executable;
@@ -123,7 +131,7 @@ namespace sogen
 
             // Written next to the destination and moved over it, so a failed write never leaves a truncated snapshot behind.
             auto temporary_file = snapshot_file;
-            temporary_file += ".tmp";
+            temporary_file += "." + random_suffix() + ".tmp";
 
             auto remove_temporary_file = utils::finally([&] {
                 std::error_code ec{};
@@ -218,7 +226,8 @@ namespace sogen
             this->win_emu_.stop();
         }
 
-        // Requesting a suspend takes locks the emulator may hold while it handles input, so it happens on this thread.
+        // Requesting a suspend takes locks the emulator may hold while it handles input, so it happens on this thread. Starting
+        // the emulator clears a stop that came just before, so stops and requests are repeated until the run ends.
         void controller::watch()
         {
             std::unique_lock lock(this->mutex_);
@@ -230,29 +239,39 @@ namespace sogen
                     continue;
                 }
 
-                if (this->pending_ && !this->suspend_requested_)
-                {
-                    this->suspend_requested_ = true;
-                    this->win_emu_.request_suspend();
-                    this->deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-                }
-                else if (this->suspend_requested_ && std::chrono::steady_clock::now() >= this->deadline_)
+                if (this->stop_requested_)
                 {
                     this->win_emu_.stop();
-                    this->deadline_ = std::chrono::steady_clock::time_point::max();
+                    continue;
+                }
+
+                if (!this->pending_)
+                {
+                    continue;
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                if (!this->suspend_requested_)
+                {
+                    this->suspend_requested_ = true;
+                    this->deadline_ = now + std::chrono::seconds(2);
+                }
+
+                if (now >= this->deadline_)
+                {
+                    this->win_emu_.stop();
+                }
+                else
+                {
+                    this->win_emu_.request_suspend();
                 }
             }
         }
 
         std::filesystem::path controller::next_snapshot_path() const
         {
-            const auto stem = get_main_executable_name(this->win_emu_) + "-" + std::to_string(time(nullptr));
-            auto path = this->directory_ / (stem + ".snap");
-            for (size_t i = 1; std::filesystem::exists(path); ++i)
-            {
-                path = this->directory_ / (stem + "-" + std::to_string(i) + ".snap");
-            }
-            return path;
+            return this->directory_ /
+                   (get_main_executable_name(this->win_emu_) + "-" + std::to_string(time(nullptr)) + "-" + random_suffix() + ".snap");
         }
 
         bool controller::run()
@@ -278,7 +297,7 @@ namespace sogen
                 }
 
                 snapshot_outcome outcome{.path = this->pending_->empty() ? this->next_snapshot_path() : *this->pending_};
-                const bool ended = this->stop_requested_ || this->win_emu_.process.exit_status.has_value();
+                bool ended = this->stop_requested_ || this->win_emu_.process.exit_status.has_value();
                 lock.unlock();
 
                 if (ended)
@@ -298,6 +317,17 @@ namespace sogen
                     catch (const std::exception& e)
                     {
                         outcome.error = e.what();
+                    }
+
+                    lock.lock();
+                    const bool stopped = this->stop_requested_;
+                    lock.unlock();
+                    if (stopped && outcome.error.empty())
+                    {
+                        std::error_code ec{};
+                        std::filesystem::remove(outcome.path, ec);
+                        outcome.error = "The process was stopped while it was saved";
+                        ended = true;
                     }
                 }
 
