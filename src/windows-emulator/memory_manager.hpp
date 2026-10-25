@@ -124,6 +124,9 @@ namespace sogen
         // place fails.
         uint64_t allocate_placed_host_memory(size_t size, nt_memory_permission permissions, uint64_t highest_address,
                                              const std::function<bool(void* host_address)>& place);
+        // The same at a given free guest address, such as one a restored process had memory placed at.
+        bool allocate_placed_host_memory_at(uint64_t address, size_t size, nt_memory_permission permissions,
+                                            const std::function<bool(void* host_address)>& place);
         uint64_t host_placement_address(uint64_t address) const override;
 
         // Backend coherency hooks for host-aliased memory (see memory_interface). Device emulation such as

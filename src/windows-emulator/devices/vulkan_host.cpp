@@ -10779,14 +10779,6 @@ namespace sogen
     {
         auto& impl = *this->impl_;
 
-        for (const auto& memory : impl.memories | std::views::values)
-        {
-            if (memory.placed)
-            {
-                throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
-            }
-        }
-
         // Waiting for a device to go idle never returns while a queue waits for something only later guest work would
         // signal.
         for (const auto& semaphore : impl.semaphores | std::views::values)
