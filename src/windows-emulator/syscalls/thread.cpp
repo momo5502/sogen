@@ -287,6 +287,31 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (info_class == ThreadIdealProcessor)
+            {
+                if (thread_information_length != sizeof(ULONG))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                // MAXIMUM_PROCESSORS leaves the ideal processor as it is. The previous one is returned as the status.
+                constexpr ULONG maximum_processors = 64;
+                const auto processor = c.emu.read_memory<ULONG>(thread_information);
+                const auto processor_count = c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
+                if (processor != maximum_processors && processor >= processor_count)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto previous = thread->ideal_processor;
+                if (processor != maximum_processors)
+                {
+                    thread->ideal_processor = processor;
+                }
+
+                return static_cast<NTSTATUS>(previous);
+            }
+
             c.win_emu.log.error("Unsupported thread set info class: %X\n", info_class);
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;

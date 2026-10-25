@@ -441,6 +441,9 @@ namespace sogen
 
         bool debugger_hide{false};
 
+        // Threads are not scheduled by processor, so this only answers SetThreadIdealProcessor.
+        uint32_t ideal_processor{};
+
         std::vector<callback_frame> callback_stack;
         std::optional<uint64_t> callback_return_rax{};
         std::optional<user_cbt_hook> cbt_hook{};
@@ -555,6 +558,7 @@ namespace sogen
 
             buffer.write(this->create_flags);
             buffer.write(this->suspended);
+            buffer.write(this->ideal_processor);
             buffer.write_optional(this->await_time);
             buffer.write_optional(this->await_msg);
             buffer.write_optional(this->await_msg_mask);
@@ -635,6 +639,7 @@ namespace sogen
 
             buffer.read(this->create_flags);
             buffer.read(this->suspended);
+            buffer.read(this->ideal_processor);
             buffer.read_optional(this->await_time);
             buffer.read_optional(this->await_msg, [this] { return pending_msg{*this->memory_ptr}; });
             buffer.read_optional(this->await_msg_mask);
