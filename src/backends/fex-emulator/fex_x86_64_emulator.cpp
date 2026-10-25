@@ -3057,24 +3057,9 @@ namespace sogen::fex
             const uint64_t end = host_page_align_up_apple(address + size);
             for (uint64_t host_page = start; host_page < end; host_page += host_page_size_apple)
             {
-                if (!enable)
-                {
-                    // Restores via sync_host_page_apple, which re-derives the declared permissions
-                    // from the shadow table.
-                    this->sync_host_page_apple(host_page);
-                    continue;
-                }
-
-                memory_permission effective = memory_permission::none;
-                for (uint64_t page = host_page; page < host_page + host_page_size_apple; page += page_size)
-                {
-                    const auto it = this->page_shadow_apple_.find(page);
-                    if (it != this->page_shadow_apple_.end())
-                    {
-                        effective = effective | it->second;
-                    }
-                }
-                ::mprotect(reinterpret_cast<void*>(host_page), host_page_size_apple, to_prot_apple(effective | added));
+                // The page stays claimed while it is accessible, so only its protection changes.
+                const auto declared = this->shadow_permission_apple(host_page).value_or(memory_permission::none);
+                ::mprotect(reinterpret_cast<void*>(host_page), host_page_size_apple, to_prot_apple(enable ? declared | added : declared));
             }
 #else
             // The range can span several regions_ entries with different declared permissions, so
@@ -3258,24 +3243,10 @@ namespace sogen::fex
         // PROT_NONE page without breaking a legitimate access from a stricter neighbor.
         void sync_host_page_apple(uint64_t host_page_addr)
         {
-            memory_permission effective = memory_permission::none;
-            bool any_slot_present = false;
-
-            for (uint64_t page = host_page_addr; page < host_page_addr + host_page_size_apple; page += page_size)
-            {
-                const auto it = this->page_shadow_apple_.find(page);
-                if (it == this->page_shadow_apple_.end())
-                {
-                    continue;
-                }
-                any_slot_present = true;
-                effective = effective | it->second;
-            }
-
-            void* host_ptr = reinterpret_cast<void*>(host_page_addr);
+            const auto effective = this->shadow_permission_apple(host_page_addr);
             const bool currently_mapped = this->host_range_is_claimed(host_page_addr, host_page_size_apple);
 
-            if (!any_slot_present)
+            if (!effective)
             {
                 if (currently_mapped)
                 {
@@ -3294,10 +3265,25 @@ namespace sogen::fex
                 this->claim_host_range(host_page_addr, host_page_size_apple);
             }
 
-            if (::mprotect(host_ptr, host_page_size_apple, to_prot_apple(effective)) != 0)
+            if (::mprotect(reinterpret_cast<void*>(host_page_addr), host_page_size_apple, to_prot_apple(*effective)) != 0)
             {
                 throw std::runtime_error("FEX backend failed to change memory protection");
             }
+        }
+
+        std::optional<memory_permission> shadow_permission_apple(const uint64_t host_page_addr) const
+        {
+            std::optional<memory_permission> effective{};
+            for (uint64_t page = host_page_addr; page < host_page_addr + host_page_size_apple; page += page_size)
+            {
+                const auto it = this->page_shadow_apple_.find(page);
+                if (it != this->page_shadow_apple_.end())
+                {
+                    effective = effective.value_or(memory_permission::none) | it->second;
+                }
+            }
+
+            return effective;
         }
 
         void sync_host_pages_covering_apple(uint64_t address, size_t size)
