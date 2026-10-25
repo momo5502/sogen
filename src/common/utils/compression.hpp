@@ -5,6 +5,8 @@
 #include <span>
 #include <vector>
 
+struct ZSTD_outBuffer_s;
+
 namespace sogen
 {
 
@@ -62,6 +64,8 @@ namespace sogen
 
                 // Fills the whole span, or throws if the compressed data ends or is corrupt.
                 void read(std::span<std::byte> data);
+                // Throws unless the compressed data ends with its frame right after what was read.
+                void finish();
 
               private:
                 struct context_deleter
@@ -74,6 +78,10 @@ namespace sogen
                 std::vector<std::byte> in_buffer_;
                 size_t in_position_{};
                 size_t in_size_{};
+                bool frame_complete_{};
+
+                bool fill_input();
+                void decompress(ZSTD_outBuffer_s& output);
             };
         }
     }
