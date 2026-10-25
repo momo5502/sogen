@@ -264,6 +264,12 @@ namespace sogen::android
             this->mouse_buttons_ &= static_cast<uint16_t>(~button_mask(button));
         }
 
+        if (this->is_relative(window))
+        {
+            this->queue_relative_event(window, button_message(button, down), this->mouse_buttons_);
+            return;
+        }
+
         this->queue_event(window, WM_MOUSEMOVE, this->mouse_buttons_, pack_point(x, y));
         this->queue_event(window, button_message(button, down), this->mouse_buttons_, pack_point(x, y));
     }
@@ -273,6 +279,12 @@ namespace sogen::android
         const std::lock_guard lock{this->mutex_};
 
         const auto w_param = (static_cast<uint64_t>(static_cast<uint16_t>(delta)) << 16) | this->mouse_buttons_;
+        if (this->is_relative(window))
+        {
+            this->queue_relative_event(window, WM_MOUSEWHEEL, w_param);
+            return;
+        }
+
         this->queue_event(window, WM_MOUSEWHEEL, w_param, pack_point(x, y));
     }
 
@@ -707,6 +719,24 @@ namespace sogen::android
     void android_ui_backend::queue_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param)
     {
         this->events_.push_back(ui_event{.window = window, .message = message, .wParam = w_param, .lParam = l_param});
+    }
+
+    // Touches only send deltas while the cursor is captured, so the position the app knows is stale. A motion of
+    // nothing keeps the guest's own cursor position.
+    void android_ui_backend::queue_relative_event(const hwnd window, const uint32_t message, const uint64_t w_param)
+    {
+        this->events_.push_back(ui_event{
+            .window = window,
+            .message = message,
+            .wParam = w_param,
+            .lParam = 0,
+            .relative_motion = std::pair{0, 0},
+        });
+    }
+
+    bool android_ui_backend::is_relative(const hwnd window) const
+    {
+        return this->relative_window_ != 0 && this->relative_window_ == this->top_level_ancestor(window);
     }
 
     bool android_ui_backend::activate(const hwnd window)
