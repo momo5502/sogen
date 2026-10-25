@@ -688,6 +688,9 @@ namespace sogen
             std::vector<layout_transition> layout_transitions{};
             // Query resets take effect when the command buffer is submitted: pool, first query, count.
             std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> query_resets{};
+            // For each reset, the number of layout transitions recorded before it, which places it among the secondaries
+            // the command buffer executes.
+            std::vector<size_t> query_reset_positions{};
             // Saved query results this command buffer writes into buffers. Once one of the queries is reset, the command
             // buffer is recorded again before it is submitted.
             std::vector<std::pair<uint64_t, uint32_t>> restored_query_reads{};
@@ -751,11 +754,24 @@ namespace sogen
                    this->descriptor_set_layouts.contains(id) || this->descriptor_pools.contains(id) || this->descriptor_sets.contains(id);
         }
 
+        // Resets that work ordered before a submission makes, which only take effect on the saved query results once that
+        // work runs. While the submission is checked and recorded again, a restored query they reset counts as reset.
+        std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> resets_ahead{};
+
+        bool reset_ahead(const uint64_t query_pool, const uint32_t query) const
+        {
+            return std::ranges::any_of(this->resets_ahead, [&](const auto& reset) {
+                const auto& [pool, first, count] = reset;
+                return pool == query_pool && query >= first && query - first < count;
+            });
+        }
+
         bool depends_on_changed_state(const command_buffer_data& command_buffer) const
         {
             return std::ranges::any_of(command_buffer.restored_query_reads, [&](const auto& read) {
                 const auto pool = this->query_pools.find(read.first);
-                return pool == this->query_pools.end() || !pool->second.restored_results.contains(read.second);
+                return pool == this->query_pools.end() || !pool->second.restored_results.contains(read.second) ||
+                       this->reset_ahead(read.first, read.second);
             });
         }
 
@@ -772,12 +788,78 @@ namespace sogen
             return secondaries;
         }
 
-        bool rerecord_changed(const uint64_t* submitted, const uint32_t count, const std::function<bool(uint64_t command_buffer)>& rerecord)
+        // Adds the resets of the modelled submissions that run before a submission to the given queue with these waits: those
+        // pending on the same queue, and those whose signals it waits for, together with what runs before them.
+        void add_resets_ahead_of(const VkQueue queue, std::vector<std::pair<uint64_t, uint64_t>> waits)
+        {
+            std::unordered_set<const pending_submission*> included{};
+            const auto include_up_to = [&](const std::deque<pending_submission>& pending, const size_t last) {
+                for (size_t i = 0; i <= last; ++i)
+                {
+                    if (included.insert(&pending[i]).second)
+                    {
+                        this->resets_ahead.insert(this->resets_ahead.end(), pending[i].query_resets.begin(), pending[i].query_resets.end());
+                        waits.insert(waits.end(), pending[i].waits.begin(), pending[i].waits.end());
+                    }
+                }
+            };
+
+            if (const auto same_queue = this->pending_submissions.find(queue);
+                same_queue != this->pending_submissions.end() && !same_queue->second.empty())
+            {
+                include_up_to(same_queue->second, same_queue->second.size() - 1);
+            }
+
+            while (!waits.empty())
+            {
+                const auto [semaphore, value] = waits.back();
+                waits.pop_back();
+                const auto waited = this->semaphores.find(semaphore);
+                if (waited == this->semaphores.end())
+                {
+                    continue;
+                }
+
+                const bool timeline = waited->second.type == VK_SEMAPHORE_TYPE_TIMELINE;
+                if (timeline ? waited->second.modeled_value >= value : waited->second.modeled_signals > 0)
+                {
+                    continue;
+                }
+
+                for (const auto& pending : this->pending_submissions | std::views::values)
+                {
+                    const auto signaler = std::ranges::find_if(pending, [&](const pending_submission& submission) {
+                        return std::ranges::any_of(submission.signals, [&](const auto& signal) {
+                            return signal.first == semaphore && (!timeline || signal.second >= value);
+                        });
+                    });
+                    if (signaler != pending.end())
+                    {
+                        include_up_to(pending, static_cast<size_t>(signaler - pending.begin()));
+                    }
+                }
+            }
+        }
+
+        // A command buffer whose recording baked a saved query result in is recorded again before it is submitted once
+        // the query was reset, including by work that runs before it in the same submission.
+        bool rerecord_changed(const VkQueue queue, const std::vector<std::pair<uint64_t, uint64_t>>& waits, const uint64_t* submitted,
+                              const uint32_t count, const std::function<bool(uint64_t command_buffer)>& rerecord)
         {
             const auto rerecord_one = [&](const uint64_t command_buffer) { return rerecord && rerecord(command_buffer); };
 
+            this->add_resets_ahead_of(queue, waits);
+            const auto forget_resets_ahead = utils::finally([&] { this->resets_ahead.clear(); });
+
             for (uint32_t i = 0; i < count; ++i)
             {
+                if (i > 0)
+                {
+                    pending_submission preceding{};
+                    this->collect_effects(submitted[i - 1], preceding);
+                    this->resets_ahead.insert(this->resets_ahead.end(), preceding.query_resets.begin(), preceding.query_resets.end());
+                }
+
                 const auto cb = this->command_buffers.find(submitted[i]);
                 if (cb == this->command_buffers.end())
                 {
@@ -785,36 +867,60 @@ namespace sogen
                 }
 
                 bool stale = this->depends_on_changed_state(cb->second);
-                for (const uint64_t secondary : executed_secondaries(cb->second))
+                const auto outer_resets = this->resets_ahead.size();
+                size_t next_reset = 0;
+                const auto& transitions = cb->second.layout_transitions;
+                for (size_t position = 0; position < transitions.size(); ++position)
                 {
+                    const auto& own = cb->second;
+                    for (; next_reset < own.query_reset_positions.size() && own.query_reset_positions[next_reset] <= position; ++next_reset)
+                    {
+                        this->resets_ahead.push_back(own.query_resets[next_reset]);
+                    }
+
+                    const uint64_t secondary = transitions[position].secondary;
                     const auto executed = this->command_buffers.find(secondary);
-                    if (executed == this->command_buffers.end() || !this->depends_on_changed_state(executed->second))
+                    if (secondary == 0 || executed == this->command_buffers.end())
                     {
                         continue;
                     }
 
-                    if (!rerecord_one(secondary))
+                    if (this->depends_on_changed_state(executed->second))
                     {
-                        return false;
+                        if (!rerecord_one(secondary))
+                        {
+                            return false;
+                        }
+
+                        // Recording a secondary again invalidates every primary that executes it. The others are not part of
+                        // this submission, so what runs before it does not apply to them.
+                        std::vector<uint64_t> invalidated{};
+                        for (const auto& [id, other] : this->command_buffers)
+                        {
+                            if (id != submitted[i] &&
+                                std::ranges::any_of(other.layout_transitions,
+                                                    [&](const layout_transition& transition) { return transition.secondary == secondary; }))
+                            {
+                                invalidated.push_back(id);
+                            }
+                        }
+
+                        auto ahead = std::exchange(this->resets_ahead, {});
+                        const bool recorded = std::ranges::all_of(invalidated, rerecord_one);
+                        this->resets_ahead = std::move(ahead);
+                        if (!recorded)
+                        {
+                            return false;
+                        }
+                        stale = true;
                     }
 
-                    // Recording a secondary again invalidates every primary that executes it.
-                    std::vector<uint64_t> invalidated{};
-                    for (const auto& [id, other] : this->command_buffers)
-                    {
-                        if (id != submitted[i] && std::ranges::any_of(other.layout_transitions, [&](const layout_transition& transition) {
-                                return transition.secondary == secondary;
-                            }))
-                        {
-                            invalidated.push_back(id);
-                        }
-                    }
-                    if (!std::ranges::all_of(invalidated, rerecord_one))
-                    {
-                        return false;
-                    }
-                    stale = true;
+                    pending_submission executed_effects{};
+                    this->collect_effects(secondary, executed_effects);
+                    this->resets_ahead.insert(this->resets_ahead.end(), executed_effects.query_resets.begin(),
+                                              executed_effects.query_resets.end());
                 }
+                this->resets_ahead.resize(outer_resets);
 
                 if (stale && !rerecord_one(submitted[i]))
                 {
@@ -4076,6 +4182,7 @@ namespace sogen
             cb->second.references.clear();
             cb->second.layout_transitions.clear();
             cb->second.query_resets.clear();
+            cb->second.query_reset_positions.clear();
             cb->second.restored_query_reads.clear();
         }
         return result;
@@ -4157,6 +4264,7 @@ namespace sogen
                     command_buffer.references.clear();
                     command_buffer.layout_transitions.clear();
                     command_buffer.query_resets.clear();
+                    command_buffer.query_reset_positions.clear();
                     command_buffer.restored_query_reads.clear();
                 }
             }
@@ -4226,6 +4334,7 @@ namespace sogen
             cb->second.references.clear();
             cb->second.layout_transitions.clear();
             cb->second.query_resets.clear();
+            cb->second.query_reset_positions.clear();
             cb->second.restored_query_reads.clear();
         }
         return result;
@@ -4645,7 +4754,13 @@ namespace sogen
         }
 
         const auto* command_ids = static_cast<const uint64_t*>(command_buffer_ids);
-        if (!this->impl_->rerecord_changed(command_ids, command_buffer_count, rerecord))
+        std::vector<std::pair<uint64_t, uint64_t>> modeled_waits{};
+        for (uint32_t i = 0; i < wait_count; ++i)
+        {
+            const auto& wait = static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries)[i];
+            modeled_waits.emplace_back(wait.semaphore, wait.value);
+        }
+        if (!this->impl_->rerecord_changed(queue_it->second.handle, modeled_waits, command_ids, command_buffer_count, rerecord))
         {
             return VK_ERROR_DEVICE_LOST;
         }
@@ -4748,7 +4863,13 @@ namespace sogen
         }
 
         const auto* cmd_ids = static_cast<const uint64_t*>(command_buffer_ids);
-        if (!this->impl_->rerecord_changed(cmd_ids, command_buffer_count, rerecord))
+        std::vector<std::pair<uint64_t, uint64_t>> modeled_waits{};
+        for (uint32_t i = 0; i < wait_count; ++i)
+        {
+            const auto& wait = static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries)[i];
+            modeled_waits.emplace_back(wait.semaphore, wait.value);
+        }
+        if (!this->impl_->rerecord_changed(queue_it->second.handle, modeled_waits, cmd_ids, command_buffer_count, rerecord))
         {
             return VK_ERROR_DEVICE_LOST;
         }
@@ -7026,6 +7147,7 @@ namespace sogen
         }
         dev->second.cmd_reset_query_pool(cb->second.handle, qp->second.handle, first_query, query_count);
         cb->second.query_resets.emplace_back(query_pool, first_query, query_count);
+        cb->second.query_reset_positions.push_back(cb->second.layout_transitions.size());
         return VK_SUCCESS;
     }
 
@@ -7310,7 +7432,7 @@ namespace sogen
                 return pool == query_pool && query >= first && query - first < count;
             });
 
-            if (reset_before || !qp->second.restored_results.contains(query))
+            if (reset_before || this->impl_->reset_ahead(query_pool, query) || !qp->second.restored_results.contains(query))
             {
                 dev->second.cmd_copy_query_pool_results(cb->second.handle, qp->second.handle, first_query + i, 1, buffer->second.handle,
                                                         offset, stride, static_cast<VkQueryResultFlags>(flags));

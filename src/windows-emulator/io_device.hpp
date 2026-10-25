@@ -192,7 +192,6 @@ namespace sogen
             (void)win_emu;
         }
 
-        // Whether a suspend waits until the device reached the end of a frame.
         virtual bool suspends_at_frame_end() const
         {
             return false;

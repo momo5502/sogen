@@ -7,7 +7,10 @@ Android killed the `:sogen` process. Development happens on desktop WHP with one
 code is shared with Android's single-vCPU FEX backend.
 
 - [x] CPU/kernel snapshot from the sandbox: `--suspend-to FILE` saves on Ctrl+C, `--resume FILE`
-      continues (fd08c0ab). Snapshot code moved from the analyzer into `windows-emulator`.
+      continues (fd08c0ab). Snapshot code moved from the analyzer into `windows-emulator`. A process with a
+      swapchain is suspended after its next present; if none comes within two seconds it is saved where it
+      is, which is just as consistent, since GPU work is drained first and an acquired image refuses the save.
+      A second Ctrl+C stops without saving.
 - [x] Save is transactional (temporary file, moved into place; a failed save keeps the process
       running), devices can refuse snapshots (the GPU bridge does until slice 0), the launch
       configuration is checked on resume, and snapshot options force one vCPU.
@@ -60,7 +63,7 @@ timers). Files reopen by path, so the host setup must match: the launcher passes
 configuration (emulation root, root mode, mounts, registry directory and files, network, GPU feature
 spoofing), which is stored in the snapshot and compared on resume. Restore hooks re-create host
 windows and reattach audio and console. Registry values imported from files at launch are part of the
-saved registry overlay, so resume does not import them again.
+saved registry overlay, so resume does not import them again; registry files are compared by path only.
 
 Verified: a Python counter interrupted at count 12 (9.5 MB snapshot) resumed at 13 with its heap
 intact; the guest clock jumped forward by the suspended time.

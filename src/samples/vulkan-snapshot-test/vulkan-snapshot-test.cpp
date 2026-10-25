@@ -22,6 +22,8 @@
 // Multisampled depth/stencil and integer images, which cannot be resolved, are read sample by sample by a compute shader
 // of the test's own. An image is also passed between two queues in the opposite order of the submissions, through a timeline semaphore, and
 // another one is handed between two queue families every iteration, starting on the one that is not the device's first.
+// A secondary command buffer recorded once copies a query that an earlier command buffer of the same submission resets
+// and writes again every iteration.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
@@ -186,6 +188,7 @@ int main(const int argc, char** argv)
     LOAD(instance, vkCmdBindDescriptorSets);
     LOAD(instance, vkCmdPushConstants);
     LOAD(instance, vkCmdDispatch);
+    LOAD(instance, vkCmdExecuteCommands);
     LOAD(instance, vkCmdCopyImageToBuffer);
     LOAD(instance, vkCmdCopyBufferToImage);
     LOAD(instance, vkCreateQueryPool);
@@ -700,6 +703,11 @@ int main(const int argc, char** argv)
     VkCommandBuffer image_command_buffer{};
     VkCommandBuffer setup_command_buffer{};
     VkCommandBuffer query_copy_command_buffer{};
+    VkCommandBuffer regenerate_command_buffer{};
+    VkCommandBuffer execute_copy_command_buffer{};
+    VkCommandBuffer secondary_copy_command_buffer{};
+    VkCommandBufferAllocateInfo secondary_info = command_buffer_info;
+    secondary_info.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
     VkCommandBuffer check_command_buffer{};
     VkCommandBuffer hand_back_command_buffer{};
     VkCommandBuffer hand_over_command_buffer{};
@@ -716,6 +724,9 @@ int main(const int argc, char** argv)
         }
     }
     if (vkAllocateCommandBuffers(device, &command_buffer_info, &query_copy_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &regenerate_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &execute_copy_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &secondary_info, &secondary_copy_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &check_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &hand_back_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &hand_over_command_buffer) != VK_SUCCESS ||
@@ -798,7 +809,7 @@ int main(const int argc, char** argv)
     VkQueryPoolCreateInfo query_pool_info{};
     query_pool_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
     query_pool_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
-    query_pool_info.queryCount = 2;
+    query_pool_info.queryCount = 3;
 
     VkQueryPool query_pool{};
     if (vkCreateQueryPool(device, &query_pool_info, nullptr, &query_pool) != VK_SUCCESS)
@@ -839,6 +850,37 @@ int main(const int argc, char** argv)
                               VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
     vkEndCommandBuffer(query_copy_command_buffer);
     const auto* copied_timestamp = reinterpret_cast<const uint64_t*>(image_data + half_count);
+
+    vkBeginCommandBuffer(regenerate_command_buffer, &begin_info);
+    vkCmdResetQueryPool(regenerate_command_buffer, query_pool, 2, 1);
+    vkCmdWriteTimestamp(regenerate_command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, query_pool, 2);
+    vkEndCommandBuffer(regenerate_command_buffer);
+
+    const VkCommandBufferInheritanceInfo inheritance{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO,
+                                                     .pNext = nullptr,
+                                                     .renderPass = VK_NULL_HANDLE,
+                                                     .subpass = 0,
+                                                     .framebuffer = VK_NULL_HANDLE,
+                                                     .occlusionQueryEnable = VK_FALSE,
+                                                     .queryFlags = 0,
+                                                     .pipelineStatistics = 0};
+    const VkCommandBufferBeginInfo secondary_begin{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .pNext = nullptr, .flags = 0, .pInheritanceInfo = &inheritance};
+    vkBeginCommandBuffer(secondary_copy_command_buffer, &secondary_begin);
+    vkCmdCopyQueryPoolResults(secondary_copy_command_buffer, query_pool, 2, 1, image_readback, half_size + (2 * sizeof(uint64_t)),
+                              sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    vkEndCommandBuffer(secondary_copy_command_buffer);
+
+    vkBeginCommandBuffer(execute_copy_command_buffer, &begin_info);
+    const VkMemoryBarrier after_regenerate{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                           .pNext = nullptr,
+                                           .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+                                           .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT};
+    vkCmdPipelineBarrier(execute_copy_command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1,
+                         &after_regenerate, 0, nullptr, 0, nullptr);
+    vkCmdExecuteCommands(execute_copy_command_buffer, 1, &secondary_copy_command_buffer);
+    vkEndCommandBuffer(execute_copy_command_buffer);
+    const auto* regenerated_copy = reinterpret_cast<const uint64_t*>(image_data + half_count) + 2;
 
     const auto read_timestamp = [&](const uint32_t query) {
         uint64_t value = 0;
@@ -981,6 +1023,24 @@ int main(const int argc, char** argv)
             *copied_timestamp != first_timestamp)
         {
             std::printf("[snapshot-test] iteration %u: the timestamp query lost its result\n", iteration);
+            return 4;
+        }
+
+        const std::array regenerate_and_copy{regenerate_command_buffer, execute_copy_command_buffer};
+        const VkSubmitInfo regenerate_info{.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                                           .pNext = nullptr,
+                                           .waitSemaphoreCount = 0,
+                                           .pWaitSemaphores = nullptr,
+                                           .pWaitDstStageMask = nullptr,
+                                           .commandBufferCount = static_cast<uint32_t>(regenerate_and_copy.size()),
+                                           .pCommandBuffers = regenerate_and_copy.data(),
+                                           .signalSemaphoreCount = 0,
+                                           .pSignalSemaphores = nullptr};
+        if (vkQueueSubmit(queue, 1, &regenerate_info, fence) != VK_SUCCESS ||
+            vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS || vkResetFences(device, 1, &fence) != VK_SUCCESS ||
+            *regenerated_copy == 0 || *regenerated_copy != read_timestamp(2))
+        {
+            std::printf("[snapshot-test] iteration %u: a secondary command buffer copied a stale query result\n", iteration);
             return 4;
         }
 
