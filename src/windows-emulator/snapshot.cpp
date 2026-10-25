@@ -64,11 +64,21 @@ namespace sogen
                 return header;
             }
 
+            size_t get_state_size(const snapshot_header& header)
+            {
+                const auto size = static_cast<size_t>(header.state_size);
+                if (size != header.state_size)
+                {
+                    throw std::runtime_error("The snapshot is too large for this host");
+                }
+
+                return size;
+            }
+
             std::vector<std::byte> get_decompressed_emulator_state(const std::span<const std::byte> snapshot)
             {
                 const auto header = read_header(snapshot);
-                auto state =
-                    utils::compression::zstd::decompress(snapshot.subspan(sizeof(snapshot_header)), static_cast<size_t>(header.state_size));
+                auto state = utils::compression::zstd::decompress(snapshot.subspan(sizeof(snapshot_header)), get_state_size(header));
                 if (state.size() != header.state_size)
                 {
                     throw std::runtime_error("Failed to decompress snapshot");
@@ -254,7 +264,7 @@ namespace sogen
             }};
 
             utils::buffer_deserializer deserializer{[&](const std::span<std::byte> data) { decompressor.read(data); },
-                                                    static_cast<size_t>(read_header(header_data).state_size)};
+                                                    get_state_size(read_header(header_data))};
             deserialize_emulator_state(win_emu, configuration, deserializer);
 
             if (deserializer.get_remaining_size() != 0)
