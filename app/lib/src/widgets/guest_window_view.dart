@@ -37,6 +37,9 @@ class _GuestWindowViewState extends State<GuestWindowView> {
   // Long enough for games that poll the button state once per frame to see a tap's click.
   static const _clickDuration = Duration(milliseconds: 60);
 
+  // A finger travels far less than a mouse, so mouse-look would turn slowly at one count per guest pixel.
+  static const _relativeSensitivity = 3.0;
+
   final Map<int, MouseButton> _pressed = {};
 
   final ValueNotifier<Offset?> _cursor = ValueNotifier(null);
@@ -244,7 +247,7 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     final window = widget.window;
     if (_relative) {
       // Inside the FittedBox, the delta is already in guest pixels; the fraction carries over so slow movement adds up.
-      final motion = _relativeRemainder + event.localDelta;
+      final motion = _relativeRemainder + event.localDelta * _relativeSensitivity;
       final dx = motion.dx.truncate();
       final dy = motion.dy.truncate();
       _relativeRemainder = Offset(motion.dx - dx, motion.dy - dy);
