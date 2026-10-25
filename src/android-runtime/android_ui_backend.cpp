@@ -2,6 +2,7 @@
 #include "android_ui_backend.hpp"
 #include "android_keymap.hpp"
 
+#include <utils/finally.hpp>
 #include <vulkan_handle_utils.hpp>
 
 #include <android/native_window.h>
@@ -267,9 +268,17 @@ namespace sogen::android
     void android_ui_backend::post_mouse_button(const hwnd window, const mouse_button button, const bool down, const int32_t x,
                                                const int32_t y)
     {
+        bool activated{};
+        const auto update = utils::finally([&] {
+            if (activated)
+            {
+                this->update_relative_mouse();
+            }
+        });
+
         const std::lock_guard lock{this->mutex_};
 
-        this->activate(window);
+        activated = this->activate(window);
 
         if (down)
         {
@@ -300,9 +309,17 @@ namespace sogen::android
             return;
         }
 
+        bool activated{};
+        const auto update = utils::finally([&] {
+            if (activated)
+            {
+                this->update_relative_mouse();
+            }
+        });
+
         const std::lock_guard lock{this->mutex_};
 
-        this->activate(window);
+        activated = this->activate(window);
 
         const bool system_key = key->virtual_key == VK_MENU || key->virtual_key == VK_F10;
         const uint32_t down_message = system_key ? WM_SYSKEYDOWN : WM_KEYDOWN;
@@ -432,6 +449,8 @@ namespace sogen::android
 
     void android_ui_backend::create_window(const ui_window_desc& desc)
     {
+        bool activated{};
+
         {
             const std::lock_guard lock{this->mutex_};
 
@@ -443,11 +462,15 @@ namespace sogen::android
 
             if (desc.visible && this->active_window_ == 0)
             {
-                this->activate(desc.handle);
+                activated = this->activate(desc.handle);
             }
         }
 
         this->host_->on_window_created(desc.handle, client_width(desc), client_height(desc), desc.title, desc.visible);
+        if (activated)
+        {
+            this->update_relative_mouse();
+        }
     }
 
     void android_ui_backend::destroy_window(const hwnd window)
@@ -544,6 +567,8 @@ namespace sogen::android
 
     void android_ui_backend::set_window_visible(const hwnd window, const bool visible)
     {
+        bool activated{};
+
         {
             const std::lock_guard lock{this->mutex_};
 
@@ -561,11 +586,15 @@ namespace sogen::android
 
             if (visible)
             {
-                this->activate(window);
+                activated = this->activate(window);
             }
         }
 
         this->host_->on_window_visibility_changed(window, visible);
+        if (activated)
+        {
+            this->update_relative_mouse();
+        }
     }
 
     void android_ui_backend::set_window_title(const hwnd window, const std::u16string_view title)
@@ -710,12 +739,12 @@ namespace sogen::android
         this->events_.push_back(ui_event{.window = window, .message = message, .wParam = w_param, .lParam = l_param});
     }
 
-    void android_ui_backend::activate(const hwnd window)
+    bool android_ui_backend::activate(const hwnd window)
     {
         const auto top_level = this->top_level_ancestor(window);
         if (top_level == 0 || top_level == this->active_window_)
         {
-            return;
+            return false;
         }
 
         if (this->active_window_ != 0)
@@ -727,6 +756,7 @@ namespace sogen::android
         this->active_window_ = top_level;
         this->queue_event(top_level, WM_SETFOCUS, 0, 0);
         this->queue_event(top_level, WM_ACTIVATE, WA_ACTIVE, 0);
+        return true;
     }
 
     hwnd android_ui_backend::top_level_ancestor(hwnd window) const
