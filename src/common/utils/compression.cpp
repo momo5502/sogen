@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <memory>
+#include <thread>
 
 namespace sogen
 {
@@ -38,8 +40,16 @@ namespace sogen
                 const auto max_size = ZSTD_compressBound(data.size());
                 std::vector<std::byte> result(max_size);
 
-                const auto compressed_size = ZSTD_compress(result.data(), max_size, data.data(), data.size(), compression_level);
+                const std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> context{ZSTD_createCCtx(), &ZSTD_freeCCtx};
+                if (!context || ZSTD_isError(ZSTD_CCtx_setParameter(context.get(), ZSTD_c_compressionLevel, compression_level)))
+                {
+                    return {};
+                }
 
+                // Builds without multithreading reject workers and compress on the calling thread instead.
+                (void)ZSTD_CCtx_setParameter(context.get(), ZSTD_c_nbWorkers, static_cast<int>(std::thread::hardware_concurrency()));
+
+                const auto compressed_size = ZSTD_compress2(context.get(), result.data(), max_size, data.data(), data.size());
                 if (ZSTD_isError(compressed_size))
                 {
                     return {};

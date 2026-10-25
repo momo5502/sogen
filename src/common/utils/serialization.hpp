@@ -83,6 +83,12 @@ namespace sogen
             struct has_deserializer_constructor : std::bool_constant<std::is_constructible_v<T, buffer_deserializer&>>
             {
             };
+
+            // Elements that are written as their bytes, which a vector of them can write as one block.
+            template <typename T>
+            constexpr bool is_plain_v = std::is_trivially_copyable_v<T> && std::is_default_constructible_v<T> && !Serializable<T> &&
+                                        !has_serialize_function<T>::value && !has_deserialize_function<T>::value &&
+                                        !has_deserializer_constructor<T>::value && !is_vector<T>::value && !is_optional<T>::value;
         }
 
         class buffer_serializer
@@ -173,9 +179,16 @@ namespace sogen
             {
                 this->write(static_cast<uint64_t>(vec.size()));
 
-                for (const auto& v : vec)
+                if constexpr (detail::is_plain_v<std::remove_cv_t<T>>)
                 {
-                    this->write(v);
+                    this->write(vec.data(), vec.size_bytes());
+                }
+                else
+                {
+                    for (const auto& v : vec)
+                    {
+                        this->write(v);
+                    }
                 }
             }
 
@@ -453,11 +466,25 @@ namespace sogen
             {
                 const auto size = this->read<uint64_t>();
                 result.clear();
-                result.reserve(static_cast<size_t>(size));
 
-                for (uint64_t i = 0; i < size; ++i)
+                if constexpr (detail::is_plain_v<T>)
                 {
-                    result.emplace_back(this->read<T>());
+                    if (size > (this->buffer_.size() - this->offset_) / sizeof(T))
+                    {
+                        throw std::runtime_error("Out of bounds read from byte buffer");
+                    }
+
+                    result.resize(static_cast<size_t>(size));
+                    this->read(result.data(), result.size() * sizeof(T));
+                }
+                else
+                {
+                    result.reserve(static_cast<size_t>(size));
+
+                    for (uint64_t i = 0; i < size; ++i)
+                    {
+                        result.emplace_back(this->read<T>());
+                    }
                 }
             }
 
@@ -539,14 +566,13 @@ namespace sogen
             void read_string(std::basic_string<T>& result)
             {
                 const auto size = this->read<uint64_t>();
-
-                result.clear();
-                result.reserve(static_cast<size_t>(size));
-
-                for (uint64_t i = 0; i < size; ++i)
+                if (size > this->get_remaining_size() / sizeof(T))
                 {
-                    result.push_back(this->read<T>());
+                    throw std::runtime_error("Out of bounds read from byte buffer");
                 }
+
+                result.resize(static_cast<size_t>(size));
+                this->read(result.data(), result.size() * sizeof(T));
             }
 
             template <typename T = char>

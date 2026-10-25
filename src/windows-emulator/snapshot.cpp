@@ -20,7 +20,7 @@ namespace sogen
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
                 char magic[4] = {'S', 'N', 'A', 'P'};
-                uint32_t version{4};
+                uint32_t version{5};
                 uint32_t machine{static_cast<uint32_t>(PEMachineType::AMD64)};
             };
 
@@ -64,7 +64,7 @@ namespace sogen
                 serializer.write_string(configuration);
                 win_emu.serialize(serializer);
 
-                return utils::compression::zstd::compress(serializer.get_buffer());
+                return utils::compression::zstd::compress(serializer.get_buffer(), 1);
             }
 
             std::vector<std::byte> get_decompressed_emulator_state(const std::span<const std::byte> snapshot)
