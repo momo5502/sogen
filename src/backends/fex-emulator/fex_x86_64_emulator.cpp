@@ -111,6 +111,11 @@ namespace sogen::fex
         // The part of the guest address space a WoW64 process's 32-bit code can address.
         constexpr uint64_t low_guest_window_size = 0x100000000ULL;
 
+        // Guest memory above 4GB is placed in one window that every process reserves at the same address, so a saved
+        // process finds its addresses free again in a new one. Android's 39-bit address space leaves this range alone.
+        constexpr uint64_t guest_arena_base = 0x1000000000ULL;
+        constexpr uint64_t guest_arena_size = 0x4000000000ULL;
+
 #ifdef __linux__
         constexpr uint64_t guest_address_space_end = 0x00007ffffffeffffULL + 1;
 
@@ -1350,6 +1355,9 @@ namespace sogen::fex
                 throw std::runtime_error("FEX backend requires 4KB host pages on Linux");
             }
 #endif
+#ifndef __APPLE__
+            this->reserve_guest_arena();
+#endif
             this->initialize_context();
         }
 
@@ -1380,6 +1388,11 @@ namespace sogen::fex
             if (this->low_guest_window_ != 0)
             {
                 ::munmap(reinterpret_cast<void*>(this->low_guest_window_), low_guest_window_size);
+            }
+
+            if (this->guest_arena_ != 0)
+            {
+                ::munmap(reinterpret_cast<void*>(this->guest_arena_), guest_arena_size);
             }
 
             if (g_active_emulator == this)
@@ -1679,14 +1692,41 @@ namespace sogen::fex
 
         void serialize_state(utils::buffer_serializer& buffer, bool /*is_snapshot*/) const override
         {
+            for (const auto& [address, region] : this->regions_)
+            {
+                const bool in_low_window = this->low_guest_window_ != 0 && address + region.size <= low_guest_window_size;
+                const bool in_arena = this->guest_arena_ != 0 && address >= this->guest_arena_ &&
+                                      address + region.size <= this->guest_arena_ + guest_arena_size;
+                if (!in_low_window && !in_arena)
+                {
+                    std::array<char, 128> message{};
+                    snprintf(message.data(), message.size(), "Guest memory at 0x%llx lies where a new process may not get it back",
+                             static_cast<unsigned long long>(address));
+                    throw std::runtime_error(message.data());
+                }
+            }
+
             buffer.write_vector(this->save_registers());
-            // TODO(fex): a full snapshot should also persist the mapped-memory layout and contents so a
-            // restore can re-mmap and refill the (host == guest) address space. Registers-only for now.
+            buffer.write(this->guest_arena_);
+            buffer.write(this->low_guest_window_ != 0);
         }
 
         void deserialize_state(utils::buffer_deserializer& buffer, bool /*is_snapshot*/) override
         {
             this->restore_registers(buffer.read_vector<std::byte>());
+            if (buffer.read<uint64_t>() != this->guest_arena_)
+            {
+                throw std::runtime_error("The guest memory window the process was saved with is not available");
+            }
+
+#ifndef __APPLE__
+            if (buffer.read<bool>() && this->low_guest_window_ == 0)
+            {
+                this->enable_low_guest_window();
+            }
+#else
+            (void)buffer.read<bool>();
+#endif
         }
 
         // x86_emulator
@@ -2074,7 +2114,8 @@ namespace sogen::fex
             return this->host_mappings_in(address, address + size);
         }
 
-        // Guest addresses inside the low window are backed by the window, which only this backend maps into.
+        // Guest addresses inside the low window are backed by the window, which only this backend maps into. Above 4GB, the
+        // guest only gets the arena.
         std::vector<host_reserved_range> host_mappings_in(uint64_t start, const uint64_t end) const
         {
             if (this->low_guest_window_ != 0)
@@ -2087,7 +2128,27 @@ namespace sogen::fex
                 return {};
             }
 
-            return read_host_mappings_linux(start, end);
+            if (this->guest_arena_ == 0)
+            {
+                return read_host_mappings_linux(start, end);
+            }
+
+            std::vector<host_reserved_range> ranges{};
+            if (start < low_guest_window_size)
+            {
+                ranges = read_host_mappings_linux(start, std::min(end, low_guest_window_size));
+            }
+
+            const auto add_unavailable = [&](const uint64_t from, const uint64_t to) {
+                if (from < to)
+                {
+                    ranges.push_back({.address = from, .size = static_cast<size_t>(to - from)});
+                }
+            };
+            const uint64_t above_low = std::max(start, low_guest_window_size);
+            add_unavailable(above_low, std::min(end, this->guest_arena_));
+            add_unavailable(std::max(above_low, this->guest_arena_ + guest_arena_size), end);
+            return ranges;
         }
 #endif
 
@@ -2712,7 +2773,7 @@ namespace sogen::fex
             }
 #else
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
-                if (this->is_in_low_guest_window(host_address))
+                if (this->is_in_low_guest_window(host_address) || this->is_in_guest_arena(host_address, span_size))
                 {
                     return;
                 }
@@ -2759,7 +2820,7 @@ namespace sogen::fex
         void release_host_claim(const uint64_t address, const size_t size)
         {
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
-                if (this->is_in_low_guest_window(host_address))
+                if (this->is_in_low_guest_window(host_address) || this->is_in_guest_arena(host_address, span_size))
                 {
                     replace_host_span(host_address, span_size, PROT_NONE);
                 }
@@ -2790,6 +2851,39 @@ namespace sogen::fex
             this->low_guest_window_ = reinterpret_cast<uint64_t>(window);
             this->context_->SetWow64GuestRebaseValue(this->low_guest_window_);
             this->context_->SetNeedsWow64GuestRebase(true);
+        }
+#endif
+
+        bool is_in_guest_arena(const uint64_t host_address, const size_t size) const
+        {
+            return this->guest_arena_ != 0 && host_address >= this->guest_arena_ &&
+                   host_address + size <= this->guest_arena_ + guest_arena_size;
+        }
+
+#ifndef __APPLE__
+        // Without the arena, guest memory still works but cannot be saved.
+        void reserve_guest_arena()
+        {
+            if (guest_arena_base + guest_arena_size > this->host_address_end_)
+            {
+                return;
+            }
+
+            void* arena = ::mmap(reinterpret_cast<void*>(guest_arena_base), guest_arena_size, PROT_NONE,
+                                 MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (arena == MAP_FAILED)
+            {
+                return;
+            }
+
+            // Kernels before 4.17 take MAP_FIXED_NOREPLACE as a hint.
+            if (reinterpret_cast<uint64_t>(arena) != guest_arena_base)
+            {
+                ::munmap(arena, guest_arena_size);
+                return;
+            }
+
+            this->guest_arena_ = guest_arena_base;
         }
 #endif
 
@@ -4222,6 +4316,7 @@ namespace sogen::fex
 #ifdef __linux__
         uint64_t host_address_end_{find_host_address_end()};
 #endif
+        uint64_t guest_arena_{};
 
         std::vector<mmio_region> mmio_regions_;
         // Bringing a stale chunk up to date only changes host protections and caches, which reads do as well.

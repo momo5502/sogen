@@ -214,6 +214,12 @@ namespace sogen::android
 
             win_emu.log.info("Using emulator backend: %s\n", win_emu.emu().get_name().c_str());
 
+            // Restoring re-creates the windows, and their surfaces only arrive through the UI backend.
+            {
+                const std::lock_guard lock{this->mutex_};
+                this->ui_ = ui_backend;
+            }
+
             const auto configuration = describe_configuration(config);
             if (!config.resume_file.empty())
             {
@@ -227,12 +233,12 @@ namespace sogen::android
                 const std::lock_guard lock{this->mutex_};
                 if (this->stop_requested_)
                 {
+                    this->ui_ = nullptr;
                     return 1;
                 }
 
                 this->emulator_ = &win_emu;
                 this->snapshots_ = &snapshots;
-                this->ui_ = ui_backend;
             }
 
             const bool saved = snapshots.run();
