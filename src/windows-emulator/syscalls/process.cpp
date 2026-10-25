@@ -21,7 +21,7 @@ namespace sogen
             template <typename Traits>
             EMU_QUOTA_LIMITS<Traits> default_quota_limits()
             {
-                using size_type = typename Traits::SIZE_T;
+                using size_type = Traits::SIZE_T;
                 constexpr auto unlimited = static_cast<size_type>(~0ULL);
 
                 return {
