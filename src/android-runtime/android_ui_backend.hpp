@@ -113,7 +113,7 @@ namespace sogen::android
         void update_relative_mouse();
 
         void queue_event(hwnd window, uint32_t message, uint64_t w_param, uint64_t l_param);
-        void activate(hwnd window);
+        bool activate(hwnd window);
         hwnd top_level_ancestor(hwnd window) const;
         window_state* find_top_level(hwnd window);
         void release_surfaces();
