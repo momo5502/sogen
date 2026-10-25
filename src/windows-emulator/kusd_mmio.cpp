@@ -148,9 +148,10 @@ namespace sogen
         }
     }
 
-    kusd_mmio::kusd_mmio(memory_manager& memory, utils::clock& clock)
+    kusd_mmio::kusd_mmio(memory_manager& memory, utils::clock& clock, const bool intercept)
         : memory_(&memory),
-          clock_(&clock)
+          clock_(&clock),
+          intercept_(intercept)
     {
     }
 
@@ -159,14 +160,8 @@ namespace sogen
         this->deregister_mmio();
     }
 
-    kusd_mmio::kusd_mmio(utils::buffer_deserializer& buffer)
-        : kusd_mmio(buffer.read<memory_manager_wrapper>(), buffer.read<clock_wrapper>())
+    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env)
     {
-    }
-
-    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env, const bool intercept)
-    {
-        this->intercept_ = intercept;
         setup_kusd(this->kusd_, version, fake_env);
         this->register_mmio();
     }
