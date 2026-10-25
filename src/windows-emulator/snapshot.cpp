@@ -245,6 +245,13 @@ namespace sogen
             utils::buffer_deserializer deserializer{[&](const std::span<std::byte> data) { decompressor.read(data); },
                                                     static_cast<size_t>(read_header(header_data).state_size)};
             deserialize_emulator_state(win_emu, configuration, deserializer);
+
+            if (deserializer.get_remaining_size() != 0)
+            {
+                throw std::runtime_error("The snapshot holds more state than was restored");
+            }
+
+            decompressor.finish();
         }
 
         controller::controller(windows_emulator& win_emu, std::string configuration, std::filesystem::path directory,

@@ -47,16 +47,17 @@ namespace sogen
                 std::vector<std::byte> buffer(decompressed_size);
                 ZSTD_inBuffer input{data.data(), data.size(), 0};
                 ZSTD_outBuffer output{buffer.data(), buffer.size(), 0};
+                size_t result = 1;
                 while (input.pos < input.size)
                 {
-                    const auto result = ZSTD_decompressStream(context.get(), &output, &input);
+                    result = ZSTD_decompressStream(context.get(), &output, &input);
                     if (ZSTD_isError(result) || (result != 0 && output.pos == output.size))
                     {
                         return {};
                     }
                 }
 
-                if (output.pos != buffer.size())
+                if (result != 0 || output.pos != buffer.size())
                 {
                     return {};
                 }
@@ -143,29 +144,64 @@ namespace sogen
 
             void stream_decompressor::read(const std::span<std::byte> data)
             {
-                auto* context = static_cast<ZSTD_DCtx*>(this->context_.get());
                 ZSTD_outBuffer output{data.data(), data.size(), 0};
-
                 while (output.pos < output.size)
                 {
-                    if (this->in_position_ == this->in_size_)
+                    if (this->frame_complete_)
                     {
-                        this->in_size_ = this->input_(this->in_buffer_);
-                        this->in_position_ = 0;
-                        if (this->in_size_ == 0)
-                        {
-                            throw std::runtime_error("The compressed data ended early");
-                        }
+                        throw std::runtime_error("The compressed data ended early");
                     }
 
-                    ZSTD_inBuffer input{this->in_buffer_.data(), this->in_size_, this->in_position_};
-                    const auto result = ZSTD_decompressStream(context, &output, &input);
-                    this->in_position_ = input.pos;
-                    if (ZSTD_isError(result))
+                    this->decompress(output);
+                }
+            }
+
+            void stream_decompressor::finish()
+            {
+                std::byte extra{};
+                while (!this->frame_complete_)
+                {
+                    ZSTD_outBuffer output{&extra, sizeof(extra), 0};
+                    this->decompress(output);
+                    if (output.pos != 0)
                     {
-                        throw std::runtime_error(std::string{"zstd decompression failed: "} + ZSTD_getErrorName(result));
+                        throw std::runtime_error("The compressed data holds more than expected");
                     }
                 }
+
+                if (this->fill_input())
+                {
+                    throw std::runtime_error("The compressed data continues after its frame");
+                }
+            }
+
+            bool stream_decompressor::fill_input()
+            {
+                if (this->in_position_ == this->in_size_)
+                {
+                    this->in_size_ = this->input_(this->in_buffer_);
+                    this->in_position_ = 0;
+                }
+
+                return this->in_position_ < this->in_size_;
+            }
+
+            void stream_decompressor::decompress(ZSTD_outBuffer& output)
+            {
+                if (!this->fill_input())
+                {
+                    throw std::runtime_error("The compressed data ended early");
+                }
+
+                ZSTD_inBuffer input{this->in_buffer_.data(), this->in_size_, this->in_position_};
+                const auto result = ZSTD_decompressStream(static_cast<ZSTD_DCtx*>(this->context_.get()), &output, &input);
+                this->in_position_ = input.pos;
+                if (ZSTD_isError(result))
+                {
+                    throw std::runtime_error(std::string{"zstd decompression failed: "} + ZSTD_getErrorName(result));
+                }
+
+                this->frame_complete_ = result == 0;
             }
 
             std::vector<std::byte> compress(const std::span<const std::byte> data, const int compression_level)
