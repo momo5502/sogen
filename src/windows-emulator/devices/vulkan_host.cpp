@@ -759,7 +759,7 @@ namespace sogen
             });
         }
 
-        std::vector<uint64_t> executed_secondaries(const command_buffer_data& command_buffer) const
+        static std::vector<uint64_t> executed_secondaries(const command_buffer_data& command_buffer)
         {
             std::vector<uint64_t> secondaries{};
             for (const auto& transition : command_buffer.layout_transitions)
@@ -785,7 +785,7 @@ namespace sogen
                 }
 
                 bool stale = this->depends_on_changed_state(cb->second);
-                for (const uint64_t secondary : this->executed_secondaries(cb->second))
+                for (const uint64_t secondary : executed_secondaries(cb->second))
                 {
                     const auto executed = this->command_buffers.find(secondary);
                     if (executed == this->command_buffers.end() || !this->depends_on_changed_state(executed->second))
@@ -2028,7 +2028,7 @@ namespace sogen
             sc.image_ids.clear();
 
             const auto& dev = dev_it->second;
-            for (auto* const fence : sc.spare_present_fences)
+            for (const VkFence fence : sc.spare_present_fences)
             {
                 dev.destroy_fence(dev.handle, fence, nullptr);
             }
@@ -2047,7 +2047,7 @@ namespace sogen
                     return;
                 }
             }
-            for (auto* const fence : sc.presenting)
+            for (const VkFence fence : sc.presenting)
             {
                 dev.destroy_fence(dev.handle, fence, nullptr);
             }
@@ -2060,7 +2060,7 @@ namespace sogen
             sc.handle = VK_NULL_HANDLE;
         }
 
-        VkResult take_present_fence(const device_data& dev, swapchain_data& sc, VkFence& out_fence)
+        static VkResult take_present_fence(const device_data& dev, swapchain_data& sc, VkFence& out_fence)
         {
             std::erase_if(sc.presenting, [&](const VkFence fence) {
                 if (dev.get_fence_status(dev.handle, fence) != VK_SUCCESS || dev.reset_fences(dev.handle, 1, &fence) != VK_SUCCESS)
@@ -2219,7 +2219,7 @@ namespace sogen
             }
             // A fence still pending here belongs to a queue that never finished: no teardown of it is valid, so it is left to
             // the device's destruction.
-            for (auto* const fence : it->second.abandoned_drain_fences)
+            for (const VkFence fence : it->second.abandoned_drain_fences)
             {
                 if (it->second.get_fence_status(it->second.handle, fence) == VK_SUCCESS)
                 {
@@ -6542,7 +6542,7 @@ namespace sogen
         VkSwapchainPresentFenceInfoEXT present_fence_info{};
         if (dev_it->second.present_fences)
         {
-            if (const VkResult fence_result = this->impl_->take_present_fence(dev_it->second, sc_it->second, present_fence);
+            if (const VkResult fence_result = impl::take_present_fence(dev_it->second, sc_it->second, present_fence);
                 fence_result != VK_SUCCESS)
             {
                 return fence_result;
