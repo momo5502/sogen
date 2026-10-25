@@ -97,8 +97,7 @@ namespace sogen
 
             buffer_serializer() = default;
 
-            // Hands the written bytes to the sink in pieces instead of keeping them, so get_buffer() holds only what was
-            // not flushed yet.
+            // get_buffer() then holds only what was not flushed to the sink yet.
             explicit buffer_serializer(sink output)
                 : sink_(std::move(output))
             {
@@ -110,7 +109,6 @@ namespace sogen
                 this->append(static_cast<const std::byte*>(buffer), length);
             }
 
-            // Writes one entry of the given length that read_chunk fills piece by piece, so the caller never holds all of it.
             void write_chunked(const size_t length, const std::function<void(size_t offset, std::span<std::byte> chunk)>& read_chunk)
             {
                 this->begin_entry(length);
@@ -403,7 +401,6 @@ namespace sogen
         class buffer_deserializer
         {
           public:
-            // Fills the whole span with the next bytes of the data, or throws.
             using source = std::function<void(std::span<std::byte> data)>;
 
             template <typename T>
@@ -414,8 +411,7 @@ namespace sogen
                 static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable");
             }
 
-            // Pulls the given number of bytes from the source in pieces instead of holding them all. Spans it returns stay
-            // valid only until the next read.
+            // Spans it returns stay valid only until the next read.
             buffer_deserializer(source input, const size_t size)
                 : source_(std::move(input)),
                   size_(size)
@@ -439,7 +435,6 @@ namespace sogen
                 return this->take(length);
             }
 
-            // Reads one entry piece by piece, so a source-backed deserializer never holds all of it.
             void read_chunked(const size_t length, const std::function<void(size_t offset, std::span<const std::byte> chunk)>& consume)
             {
                 this->begin_entry(length);
