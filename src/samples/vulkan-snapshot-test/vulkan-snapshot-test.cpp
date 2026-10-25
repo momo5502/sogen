@@ -23,7 +23,7 @@
 // of the test's own. An image is also passed between two queues in the opposite order of the submissions, through a timeline semaphore, and
 // another one is handed between two queue families every iteration, starting on the one that is not the device's first.
 // A secondary command buffer recorded once copies a query that an earlier command buffer of the same submission resets
-// and writes again every iteration.
+// and writes again every iteration, and a primary copies a query that a secondary it executes resets and writes.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
@@ -706,6 +706,8 @@ int main(const int argc, char** argv)
     VkCommandBuffer regenerate_command_buffer{};
     VkCommandBuffer execute_copy_command_buffer{};
     VkCommandBuffer secondary_copy_command_buffer{};
+    VkCommandBuffer secondary_regenerate_command_buffer{};
+    VkCommandBuffer copy_after_secondary_command_buffer{};
     VkCommandBufferAllocateInfo secondary_info = command_buffer_info;
     secondary_info.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
     VkCommandBuffer check_command_buffer{};
@@ -727,6 +729,8 @@ int main(const int argc, char** argv)
         vkAllocateCommandBuffers(device, &command_buffer_info, &regenerate_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &execute_copy_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &secondary_info, &secondary_copy_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &secondary_info, &secondary_regenerate_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &copy_after_secondary_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &check_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &hand_back_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &hand_over_command_buffer) != VK_SUCCESS ||
@@ -882,6 +886,20 @@ int main(const int argc, char** argv)
     vkEndCommandBuffer(execute_copy_command_buffer);
     const auto* regenerated_copy = reinterpret_cast<const uint64_t*>(image_data + half_count) + 2;
 
+    vkBeginCommandBuffer(secondary_regenerate_command_buffer, &secondary_begin);
+    vkCmdResetQueryPool(secondary_regenerate_command_buffer, query_pool, 2, 1);
+    vkCmdWriteTimestamp(secondary_regenerate_command_buffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, query_pool, 2);
+    vkEndCommandBuffer(secondary_regenerate_command_buffer);
+
+    vkBeginCommandBuffer(copy_after_secondary_command_buffer, &begin_info);
+    vkCmdExecuteCommands(copy_after_secondary_command_buffer, 1, &secondary_regenerate_command_buffer);
+    vkCmdPipelineBarrier(copy_after_secondary_command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1,
+                         &after_regenerate, 0, nullptr, 0, nullptr);
+    vkCmdCopyQueryPoolResults(copy_after_secondary_command_buffer, query_pool, 2, 1, image_readback, half_size + (3 * sizeof(uint64_t)),
+                              sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    vkEndCommandBuffer(copy_after_secondary_command_buffer);
+    const auto* copied_after_secondary = regenerated_copy + 1;
+
     const auto read_timestamp = [&](const uint32_t query) {
         uint64_t value = 0;
         return vkGetQueryPoolResults(device, query_pool, query, 1, sizeof(value), &value, sizeof(value),
@@ -1023,6 +1041,13 @@ int main(const int argc, char** argv)
             *copied_timestamp != first_timestamp)
         {
             std::printf("[snapshot-test] iteration %u: the timestamp query lost its result\n", iteration);
+            return 4;
+        }
+
+        if (!submit_and_wait(copy_after_secondary_command_buffer, VK_NULL_HANDLE, VK_NULL_HANDLE) || *copied_after_secondary == 0 ||
+            *copied_after_secondary != read_timestamp(2))
+        {
+            std::printf("[snapshot-test] iteration %u: a primary copied a stale result of a query its secondary reset\n", iteration);
             return 4;
         }
 

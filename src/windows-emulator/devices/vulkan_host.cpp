@@ -826,17 +826,30 @@ namespace sogen
                     continue;
                 }
 
+                // Only the signal the wait is satisfied by first runs before it: the lowest pending value that reaches it.
+                const std::deque<pending_submission>* signaling_queue = nullptr;
+                size_t signaler = 0;
+                uint64_t signaled_value = UINT64_MAX;
                 for (const auto& pending : this->pending_submissions | std::views::values)
                 {
-                    const auto signaler = std::ranges::find_if(pending, [&](const pending_submission& submission) {
-                        return std::ranges::any_of(submission.signals, [&](const auto& signal) {
-                            return signal.first == semaphore && (!timeline || signal.second >= value);
-                        });
-                    });
-                    if (signaler != pending.end())
+                    for (size_t i = 0; i < pending.size(); ++i)
                     {
-                        include_up_to(pending, static_cast<size_t>(signaler - pending.begin()));
+                        for (const auto& [signaled, signal_value] : pending[i].signals)
+                        {
+                            const uint64_t reached = timeline ? signal_value : 0;
+                            if (signaled == semaphore && (!timeline || signal_value >= value) && reached < signaled_value)
+                            {
+                                signaling_queue = &pending;
+                                signaler = i;
+                                signaled_value = reached;
+                            }
+                        }
                     }
+                }
+
+                if (signaling_queue)
+                {
+                    include_up_to(*signaling_queue, signaler);
                 }
             }
         }
@@ -4216,7 +4229,16 @@ namespace sogen
         dev->second.cmd_execute_commands(cb->second.handle, static_cast<uint32_t>(handles.size()), handles.data());
         for (const uint64_t id : secondaries)
         {
-            cb->second.layout_transitions.push_back(impl::layout_transition{.secondary = id});
+            auto& primary = cb->second;
+            primary.layout_transitions.push_back(impl::layout_transition{.secondary = id});
+
+            // The primary's own later query copies have to see what the secondary resets.
+            const auto& executed = this->impl_->command_buffers.at(id);
+            for (const auto& reset : executed.query_resets)
+            {
+                primary.query_resets.push_back(reset);
+                primary.query_reset_positions.push_back(primary.layout_transitions.size());
+            }
         }
         return VK_SUCCESS;
     }
