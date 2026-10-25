@@ -16,6 +16,24 @@ namespace sogen
             constexpr USHORT executable_large_address_aware_image = 0x0022;
             constexpr ULONG process_create_flags_inherit_handles = 4;
 
+            // The defaults of a process without a job: unlimited pools, page file and time. GlobalMemoryStatusEx caps the
+            // available page file at PagefileLimit, so zero would report no memory at all.
+            template <typename Traits>
+            EMU_QUOTA_LIMITS<Traits> default_quota_limits()
+            {
+                using size_type = typename Traits::SIZE_T;
+                constexpr auto unlimited = static_cast<size_type>(~0ULL);
+
+                return {
+                    .PagedPoolLimit = unlimited,
+                    .NonPagedPoolLimit = unlimited,
+                    .MinimumWorkingSetSize = 0xC8000,
+                    .MaximumWorkingSetSize = 0x159000,
+                    .PagefileLimit = unlimited,
+                    .TimeLimit = -1,
+                };
+            }
+
             std::vector<std::u16string> parse_command_line(const std::u16string_view command_line)
             {
                 std::vector<std::u16string> arguments{};
@@ -716,8 +734,8 @@ namespace sogen
                     });
 
             case ProcessQuotaLimits: {
-                constexpr uint32_t quota_limits32_size = 0x20;
-                constexpr uint32_t quota_limits64_size = 0x30;
+                constexpr uint32_t quota_limits32_size = sizeof(EMU_QUOTA_LIMITS<EmulatorTraits<Emu32>>);
+                constexpr uint32_t quota_limits64_size = sizeof(EMU_QUOTA_LIMITS<EmulatorTraits<Emu64>>);
 
                 if (process_information_length != quota_limits32_size && process_information_length != quota_limits64_size)
                 {
@@ -728,27 +746,15 @@ namespace sogen
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
-                // The defaults of a process without a job: unlimited pools, page file and time. GlobalMemoryStatusEx caps
-                // the available page file at PagefileLimit, so zero would report no memory at all.
-                constexpr uint64_t unlimited = ~0ULL;
-                constexpr uint64_t minimum_working_set = 0xC8000;
-                constexpr uint64_t maximum_working_set = 0x159000;
-                constexpr int64_t unlimited_time = -1;
-
                 if (process_information_length == quota_limits64_size)
                 {
-                    const std::array<uint64_t, 6> limits{unlimited,           unlimited, minimum_working_set,
-                                                         maximum_working_set, unlimited, static_cast<uint64_t>(unlimited_time)};
-                    c.emu.write_memory(process_information, limits.data(), sizeof(limits));
+                    const auto limits = default_quota_limits<EmulatorTraits<Emu64>>();
+                    c.emu.write_memory(process_information, &limits, sizeof(limits));
                 }
                 else
                 {
-                    const std::array<uint32_t, 6> limits{
-                        static_cast<uint32_t>(unlimited),           static_cast<uint32_t>(unlimited),
-                        static_cast<uint32_t>(minimum_working_set), static_cast<uint32_t>(maximum_working_set),
-                        static_cast<uint32_t>(unlimited),           0};
-                    c.emu.write_memory(process_information, limits.data(), sizeof(limits));
-                    c.emu.write_memory(process_information + 0x18, &unlimited_time, sizeof(unlimited_time));
+                    const auto limits = default_quota_limits<EmulatorTraits<Emu32>>();
+                    c.emu.write_memory(process_information, &limits, sizeof(limits));
                 }
 
                 if (return_length)
