@@ -2473,8 +2473,53 @@ namespace sogen
         buffer.register_factory<accelerator_table>([this] { return accelerator_table{this->emu()}; });
     }
 
+    void windows_emulator::request_suspend()
+    {
+        const std::scoped_lock lock(this->kernel_lock_);
+        if (std::ranges::any_of(this->process.devices | std::views::values,
+                                [](const io_device_container& device) { return device.suspends_at_frame_end(); }))
+        {
+            this->suspend_requested_ = true;
+            return;
+        }
+
+        this->stop();
+    }
+
+    bool windows_emulator::take_suspend_request()
+    {
+        return this->suspend_requested_.exchange(false);
+    }
+
+    void windows_emulator::cancel_suspend_request()
+    {
+        this->suspend_requested_ = false;
+    }
+
+    void windows_emulator::ensure_serialization_support() const
+    {
+        for (const auto& device : this->process.devices | std::views::values)
+        {
+            if (!device.supports_serialization())
+            {
+                throw std::runtime_error("The device " + u16_to_u8(device.get_device_path()) + " does not support snapshots");
+            }
+        }
+    }
+
+    void windows_emulator::prepare_serialization()
+    {
+        this->ensure_serialization_support();
+        for (auto& device : this->process.devices | std::views::values)
+        {
+            device.prepare_serialization(*this);
+        }
+    }
+
     void windows_emulator::serialize(utils::buffer_serializer& buffer) const
     {
+        this->ensure_serialization_support();
+
         buffer.write(this->application_settings_);
         buffer.write(this->setup_completed_);
         buffer.write(this->executed_instructions_);
@@ -2546,6 +2591,8 @@ namespace sogen
 
     void windows_emulator::save_snapshot()
     {
+        this->prepare_serialization();
+
         utils::buffer_serializer buffer{};
 
         buffer.write(this->setup_completed_);

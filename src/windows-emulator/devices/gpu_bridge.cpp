@@ -15,9 +15,6 @@ namespace sogen
         // \\.\SogenGpu and issuing IOCTLs; each control code maps to one bridge command, with the
         // payload carried in the input/output buffers. Real Vulkan objects live on the host (behind
         // vulkan_host) and the guest only ever sees opaque object ids.
-        //
-        // Live Vulkan state cannot be serialized, so this device intentionally does not participate
-        // in snapshots yet; restoring with an open GPU handle is an experimental limitation.
         struct gpu_bridge_device : io_device
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
@@ -255,12 +252,168 @@ namespace sogen
                 }
             }
 
-            void serialize_object(utils::buffer_serializer&) const override
+            bool suspends_at_frame_end() const override
             {
+                return this->vulkan_.has_swapchains();
             }
 
-            void deserialize_object(utils::buffer_deserializer&) override
+            void prepare_serialization(windows_emulator& win_emu) override
             {
+                this->vulkan_.quiesce();
+                this->invalidate_imported_memory(win_emu);
+            }
+
+            void serialize_object(utils::buffer_serializer& buffer) const override
+            {
+                if (std::ranges::any_of(this->direct_mappings_ | std::views::values,
+                                        [](const direct_mapping& mapping) { return mapping.placed; }))
+                {
+                    throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
+                }
+
+                utils::buffer_serializer vulkan{};
+                this->vulkan_.serialize(vulkan);
+                buffer.write_vector(vulkan.get_buffer());
+
+                buffer.write(static_cast<uint64_t>(this->direct_mappings_.size()));
+                for (const auto& [memory, mapping] : this->direct_mappings_)
+                {
+                    buffer.write(memory);
+                    buffer.write(mapping.guest_address);
+                    buffer.write(mapping.size);
+                    buffer.write(mapping.device);
+                    buffer.write(mapping.placed);
+                }
+
+                buffer.write(static_cast<uint64_t>(this->imported_memory_.size()));
+                for (const auto& [memory, imported] : this->imported_memory_)
+                {
+                    buffer.write(memory);
+                    buffer.write(imported.guest_address);
+                    buffer.write(imported.size);
+                    buffer.write(imported.device);
+                    buffer.write(imported.access_tracked);
+                }
+
+                buffer.write(static_cast<uint64_t>(this->surface_windows_.size()));
+                for (const auto& [surface, window] : this->surface_windows_)
+                {
+                    buffer.write(surface);
+                    buffer.write(window);
+                }
+
+                buffer.write(static_cast<uint64_t>(this->observed_semaphores_.size()));
+                for (const auto& [semaphore, observed] : this->observed_semaphores_)
+                {
+                    buffer.write(semaphore);
+                    buffer.write(observed.device);
+                    buffer.write(observed.value);
+                }
+            }
+
+            void deserialize_object(utils::buffer_deserializer& buffer) override
+            {
+                buffer.read_vector(this->restored_vulkan_state_);
+
+                this->direct_mappings_.clear();
+                for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+                {
+                    auto& mapping = this->direct_mappings_[buffer.read<uint64_t>()];
+                    buffer.read(mapping.guest_address);
+                    buffer.read(mapping.size);
+                    buffer.read(mapping.device);
+                    buffer.read(mapping.placed);
+                }
+
+                this->imported_memory_.clear();
+                for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+                {
+                    auto& imported = this->imported_memory_[buffer.read<uint64_t>()];
+                    buffer.read(imported.guest_address);
+                    buffer.read(imported.size);
+                    buffer.read(imported.device);
+                    buffer.read(imported.access_tracked);
+                }
+
+                this->surface_windows_.clear();
+                for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+                {
+                    const auto surface = buffer.read<uint64_t>();
+                    this->surface_windows_[surface] = buffer.read<hwnd>();
+                }
+
+                this->observed_semaphores_.clear();
+                for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+                {
+                    auto& observed = this->observed_semaphores_[buffer.read<uint64_t>()];
+                    buffer.read(observed.device);
+                    buffer.read(observed.value);
+                }
+            }
+
+            // The Vulkan objects are re-created only once the guest memory imported memory aliases is back, and the
+            // guest's mappings of device memory are put back at the addresses the guest holds.
+            void restore_after_state_restore(windows_emulator& win_emu) override
+            {
+                if (this->restored_vulkan_state_.empty())
+                {
+                    return;
+                }
+
+                utils::buffer_deserializer buffer{this->restored_vulkan_state_};
+                this->vulkan_.deserialize(
+                    buffer,
+                    vulkan_host::restore_callbacks{
+                        .imported_host_pointer =
+                            [&](const uint64_t memory) {
+                                return reinterpret_cast<void*>(
+                                    win_emu.memory.host_placement_address(this->imported_memory_.at(memory).guest_address));
+                            },
+                        .create_native_surface =
+                            [&](const uint64_t surface, const uint64_t instance) {
+                                uint64_t native_instance = 0;
+                                if (!this->vulkan_.get_native_instance_handle(instance, native_instance))
+                                {
+                                    return uint64_t{0};
+                                }
+                                return win_emu.ui().create_vulkan_surface(this->surface_windows_.at(surface), native_instance);
+                            },
+                        .replay_commands =
+                            [&](const uint64_t command_buffer, const std::span<const std::byte> commands,
+                                const std::span<const int32_t> results, const bool invalidated) {
+                                // An invalidated command buffer may only be reset or freed, so what it held is lost anyway.
+                                if (!this->execute_recorded_commands(win_emu, commands, true, results).matches_expected && !invalidated)
+                                {
+                                    throw std::runtime_error("Re-recording Vulkan command buffer " + std::to_string(command_buffer) +
+                                                             " failed");
+                                }
+                            },
+                    });
+                this->restored_vulkan_state_ = {};
+
+                for (auto& imported : this->imported_memory_ | std::views::values)
+                {
+                    if (imported.access_tracked)
+                    {
+                        imported.access_tracked = win_emu.memory.track_access(imported.guest_address, static_cast<size_t>(imported.size));
+                    }
+                }
+
+                for (auto& [memory, mapping] : this->direct_mappings_)
+                {
+                    void* host_ptr = nullptr;
+                    uint64_t host_size = 0;
+                    constexpr uint64_t page = 0x1000;
+                    if (this->vulkan_.map_memory(mapping.device, memory, host_ptr, host_size) != vk_success ||
+                        ((host_size + page - 1) & ~(page - 1)) != mapping.size ||
+                        !win_emu.memory.allocate_host_memory_at(mapping.guest_address, static_cast<size_t>(mapping.size), host_ptr,
+                                                                memory_permission::read_write))
+                    {
+                        throw std::runtime_error("Restoring a Vulkan memory mapping at its guest address failed");
+                    }
+
+                    mapping.host_ptr = host_ptr;
+                }
             }
 
           private:
@@ -301,6 +454,8 @@ namespace sogen
             // The last counter value the guest read of each timeline semaphore, so that polling one only invalidates
             // imported memory when it shows new work completed.
             std::unordered_map<uint64_t, observed_semaphore> observed_semaphores_{};
+
+            std::vector<std::byte> restored_vulkan_state_{};
 
             void flush_imported_memory(windows_emulator& win_emu)
             {
@@ -1328,9 +1483,9 @@ namespace sogen
                 this->flush_aliased_memory_for_device(win_emu);
                 this->flush_imported_memory(win_emu);
 
-                const int32_t result =
-                    this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(),
-                                                request.command_buffer_count, signals.data(), request.signal_count);
+                const int32_t result = this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count,
+                                                                   command_buffers.data(), request.command_buffer_count, signals.data(),
+                                                                   request.signal_count, this->rerecorder(win_emu));
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -1501,9 +1656,9 @@ namespace sogen
                 this->flush_aliased_memory_for_device(win_emu);
                 this->flush_imported_memory(win_emu);
 
-                const int32_t result = this->vulkan_.queue_submit(request.queue, request.fence, waits.data(), request.wait_count,
-                                                                  command_buffers.data(), request.command_buffer_count, signals.data(),
-                                                                  request.signal_count, request.has_timeline_info != 0);
+                const int32_t result = this->vulkan_.queue_submit(
+                    request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(), request.command_buffer_count,
+                    signals.data(), request.signal_count, request.has_timeline_info != 0, this->rerecorder(win_emu));
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -2271,6 +2426,12 @@ namespace sogen
                 const int32_t result = this->vulkan_.queue_present(
                     request.queue, request.swapchain, request.image_index, wait_semaphores,
                     [&](const std::function<int32_t()>& present) { return win_emu.run_without_kernel_lock(present); });
+
+                // The end of a frame is where a requested suspend happens, once this call has returned to the guest.
+                if (win_emu.take_suspend_request())
+                {
+                    win_emu.stop();
+                }
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -3148,6 +3309,25 @@ namespace sogen
             // Executes one recorded command-buffer command from a batch (see ioctl_record_commands). The
             // payload is the command's normal request struct; this is the per-command core shared with the
             // (legacy) individual command IOCTL handlers. Returns the VkResult.
+            // A command buffer that cannot be reset on its own, or records differently than before, makes the submission fail
+            // instead of running outdated work.
+            std::function<bool(uint64_t command_buffer)> rerecorder(windows_emulator& win_emu)
+            {
+                return [this, &win_emu](const uint64_t command_buffer) {
+                    if (!this->vulkan_.can_reset_command_buffer(command_buffer))
+                    {
+                        win_emu.log.error("[gpu-bridge] Command buffer %llu depends on restored state that changed, but cannot be reset\n",
+                                          static_cast<unsigned long long>(command_buffer));
+                        return false;
+                    }
+
+                    const auto commands = this->vulkan_.recorded_commands(command_buffer);
+                    const auto results = this->vulkan_.recorded_results(command_buffer);
+                    return this->vulkan_.reset_command_buffer(command_buffer, 0) == vk_success &&
+                           this->execute_recorded_commands(win_emu, commands, true, results).matches_expected;
+                };
+            }
+
             int32_t execute_recorded_command(windows_emulator& win_emu, uint32_t command, const std::byte* payload, size_t size)
             {
                 constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
@@ -3949,10 +4129,28 @@ namespace sogen
                 std::vector<std::byte> stream(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, stream.data(), stream.size());
 
-                int32_t result = 0; // VK_SUCCESS
+                const int32_t result = this->execute_recorded_commands(win_emu, stream, true, std::nullopt).first_failure;
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            // Every recorded command starts with the command buffer it is recorded into.
+            struct recorded_commands_result
+            {
+                int32_t first_failure{};
+                bool matches_expected{true};
+            };
+
+            // When replaying, expected_results holds what each command returned when it was first recorded.
+            recorded_commands_result execute_recorded_commands(windows_emulator& win_emu, const std::span<const std::byte> stream,
+                                                               const bool keep_recorded,
+                                                               const std::optional<std::span<const int32_t>> expected_results)
+            {
+                recorded_commands_result outcome{};
                 size_t offset = 0;
+                size_t index = 0;
                 while (offset + sizeof(gpu_bridge::command_record_header) <= stream.size())
                 {
+                    const size_t record_offset = offset;
                     gpu_bridge::command_record_header header{};
                     std::memcpy(&header, stream.data() + offset, sizeof(header));
                     offset += sizeof(header);
@@ -3961,15 +4159,38 @@ namespace sogen
                         break; // truncated / malformed record
                     }
 
-                    const int32_t r = this->execute_recorded_command(win_emu, header.command, stream.data() + offset, header.size);
-                    if (r != 0 && result == 0)
+                    gpu_bridge::object_id command_buffer{};
+                    if (keep_recorded && header.size >= sizeof(command_buffer))
                     {
-                        result = r; // report the first failure
+                        std::memcpy(&command_buffer, stream.data() + offset, sizeof(command_buffer));
+                        this->vulkan_.capture_references(command_buffer);
                     }
+
+                    const int32_t r = this->execute_recorded_command(win_emu, header.command, stream.data() + offset, header.size);
+                    if (r != 0 && outcome.first_failure == 0)
+                    {
+                        outcome.first_failure = r;
+                    }
+
+                    if (command_buffer != 0)
+                    {
+                        this->vulkan_.capture_references(0);
+                        this->vulkan_.append_recorded_command(command_buffer, stream.subspan(record_offset, sizeof(header) + header.size),
+                                                              r);
+                    }
+
+                    if (expected_results && (index >= expected_results->size() || (*expected_results)[index] != r))
+                    {
+                        outcome.matches_expected = false;
+                        return outcome;
+                    }
+
                     offset += header.size;
+                    ++index;
                 }
 
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                outcome.matches_expected = !expected_results || (offset == stream.size() && index == expected_results->size());
+                return outcome;
             }
 
             NTSTATUS handle_get_surface_capabilities(windows_emulator& win_emu, const io_device_context& context)

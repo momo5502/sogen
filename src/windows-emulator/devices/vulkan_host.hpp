@@ -13,6 +13,12 @@
 
 namespace sogen
 {
+    namespace utils
+    {
+        class buffer_serializer;
+        class buffer_deserializer;
+    }
+
     // Thin host-side wrapper around the real Vulkan driver. Owns the dynamically loaded loader and
     // the mapping from opaque object ids (handed to the guest) to live Vulkan handles, so raw host
     // pointers never cross the bridge.
@@ -41,6 +47,34 @@ namespace sogen
 
         // False if no Vulkan driver could be loaded on the host.
         bool available() const;
+
+        // Saves the live objects so that deserialize can re-create them under the same ids. Waits for every device to go
+        // idle first. Throws for object types snapshots do not support yet. Imported memory aliases guest memory, which
+        // the snapshot does not contain: imported_host_pointer hands out where that memory lives after the restore.
+        struct restore_callbacks
+        {
+            std::function<void*(uint64_t memory)> imported_host_pointer{};
+            // A native surface for the window the surface was created for.
+            std::function<uint64_t(uint64_t surface, uint64_t instance)> create_native_surface{};
+            // Re-records what was recorded into a command buffer since it was last begun or reset, with what each command
+            // returned then. A command buffer invalidated by a destroyed object may fail where it did not before.
+            std::function<void(uint64_t command_buffer, std::span<const std::byte> commands, std::span<const int32_t> results,
+                               bool invalidated)>
+                replay_commands{};
+        };
+
+        // Waits for all submitted GPU work, which serialize requires. It throws if that work waits for later guest work.
+        void quiesce();
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer, const restore_callbacks& callbacks);
+
+        // Keeps a recorded command, in the bridge's record format, so that snapshots can re-record the command buffer.
+        // While a command recorded into command_buffer runs, the objects it looks up are noted. 0 stops noting them.
+        void capture_references(uint64_t command_buffer);
+        std::vector<std::byte> recorded_commands(uint64_t command_buffer) const;
+        std::vector<int32_t> recorded_results(uint64_t command_buffer) const;
+        bool can_reset_command_buffer(uint64_t command_buffer) const;
+        void append_recorded_command(uint64_t command_buffer, std::span<const std::byte> command, int32_t result);
 
         int32_t create_instance(std::span<const std::string> extensions, uint64_t& out_instance);
         bool get_native_instance_handle(uint64_t instance, uint64_t& out_handle) const;
@@ -158,13 +192,16 @@ namespace sogen
 
         // Submits one VkSubmitInfo. wait_entries/signal_entries are submit_semaphore_entry arrays;
         // command_buffer_ids is an object_id array. fence 0 = none.
+        // rerecord records a command buffer again whose recording depended on state a snapshot restored that changed since.
         int32_t queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count, const void* command_buffer_ids,
-                             uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count, bool has_timeline_info);
+                             uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count, bool has_timeline_info,
+                             const std::function<bool(uint64_t command_buffer)>& rerecord = {});
 
         // synchronization2 submit. wait_entries/signal_entries are submit2_semaphore_entry arrays;
         // command_buffer_ids is an object_id array. fence 0 = none.
         int32_t queue_submit2(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count, const void* command_buffer_ids,
-                              uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count);
+                              uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count,
+                              const std::function<bool(uint64_t command_buffer)>& rerecord = {});
 
         // Writes up to out_size bytes of the device's VkPhysicalDeviceMemoryProperties into out.
         int32_t get_physical_device_memory_properties(uint64_t physical_device, void* out, size_t out_size);
@@ -205,6 +242,7 @@ namespace sogen
         // The alignment map_memory_placed needs for its address, or 0 if the device cannot place mappings.
         uint64_t placed_map_alignment(uint64_t device) const;
         bool has_device(uint64_t device) const;
+        bool has_swapchains() const;
         uint64_t host_import_alignment(uint64_t device) const;
         bool is_host_visible_memory_type(uint64_t device, uint32_t memory_type_index) const;
         int32_t import_host_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint32_t flags, uint32_t device_mask,

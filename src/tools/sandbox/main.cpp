@@ -3,6 +3,7 @@
 #include <emulator_process_target.hpp>
 #include <inherited_pipes.hpp>
 #include <registry/registry_file.hpp>
+#include <snapshot.hpp>
 #include <utils/finally.hpp>
 #include <utils/executable_path.hpp>
 #ifdef _WIN32
@@ -21,9 +22,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -55,14 +59,37 @@ namespace sogen::sandbox
             return wide_args;
         }
 
+        std::string describe_configuration(const emulator_settings& settings, const std::vector<std::filesystem::path>& registry_files)
+        {
+            std::string configuration{};
+            configuration += "emulation-root=" + std::filesystem::absolute(settings.emulation_root).string() + "\n";
+            configuration += "root-mode=" + std::string{to_string(settings.root_mode)} + "\n";
+            configuration += "registry=" + std::filesystem::absolute(settings.registry_directory).string() + "\n";
+            configuration += "network=" + std::string{network::to_string(settings.network)} + "\n";
+            configuration += std::string{"spoof-gpu-features="} + (settings.spoof_gpu_features ? "on" : "off") + "\n";
+
+            for (const auto& mount : settings.mounts)
+            {
+                configuration += "mount=" + render_mount_spec(mount) + "\n";
+            }
+
+            for (const auto& file : registry_files)
+            {
+                configuration += "reg-file=" + std::filesystem::absolute(file).string() + "\n";
+            }
+
+            return configuration;
+        }
+
         int run(const std::span<const std::string_view> args, const filesystem_mode root_mode, std::vector<mount_spec> mounts,
                 const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
                 const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
-                const bool spoof_gpu_features, managed_process_connection* managed_connection)
+                const bool spoof_gpu_features, const std::filesystem::path& suspend_file, const std::filesystem::path& resume_file,
+                managed_process_connection* managed_connection)
         {
             application_settings app_settings{
-                .application = std::u8string(args[0].begin(), args[0].end()),
+                .application = args.empty() ? std::u8string{} : std::u8string(args[0].begin(), args[0].end()),
                 .arguments = parse_arguments(args),
             };
             for (const auto& [name, value] : environment)
@@ -87,11 +114,18 @@ namespace sogen::sandbox
             }
 
 #ifdef _WIN32
-            // One vCPU per host core; WHP supports at most 64 per partition. EMULATOR_VCPU_COUNT overrides.
-            auto vcpu_count = std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
+            // One vCPU per host core; WHP supports at most 64 per partition. EMULATOR_VCPU_COUNT overrides. Snapshots only
+            // support a single vCPU so far.
+            const auto uses_snapshots = !suspend_file.empty() || !resume_file.empty();
+            auto vcpu_count = uses_snapshots ? 1u : std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
             if (const char* env = std::getenv("EMULATOR_VCPU_COUNT"); env != nullptr && env[0] != '\0')
             {
                 vcpu_count = std::clamp(static_cast<uint32_t>(std::strtoul(env, nullptr, 10)), 1u, 64u);
+            }
+
+            if (uses_snapshots && vcpu_count != 1)
+            {
+                throw std::runtime_error("Suspending and resuming support only one vCPU");
             }
 #endif
 
@@ -166,13 +200,27 @@ namespace sogen::sandbox
             auto emulator = kvm::create_x86_64_emulator();
 #endif
 
-            windows_emulator win_emu{std::move(emulator), std::move(app_settings), settings, std::move(callbacks),
-                                     emulator_interfaces{.processes = &process_manager}};
-            for (const auto& file : registry_files)
-            {
-                import_registry_file(win_emu.registry, file);
-            }
+            auto win_emu_ptr = resume_file.empty() ? std::make_unique<windows_emulator>(std::move(emulator), std::move(app_settings),
+                                                                                        settings, std::move(callbacks),
+                                                                                        emulator_interfaces{.processes = &process_manager})
+                                                   : std::make_unique<windows_emulator>(std::move(emulator), settings, std::move(callbacks),
+                                                                                        emulator_interfaces{.processes = &process_manager});
+            auto& win_emu = *win_emu_ptr;
             win_emu.log.disable_output(true);
+
+            const auto configuration = describe_configuration(settings, registry_files);
+            if (resume_file.empty())
+            {
+                for (const auto& file : registry_files)
+                {
+                    import_registry_file(win_emu.registry, file);
+                }
+            }
+            else
+            {
+                // The snapshot carries the registry values the files were imported into.
+                snapshot::load_emulator_snapshot(win_emu, resume_file, configuration);
+            }
 
             std::unique_ptr<emulator_process_target> managed_target{};
             if (managed_connection)
@@ -194,16 +242,91 @@ namespace sogen::sandbox
 
             std::atomic_uint32_t signals_received{0};
             utils::interupt_handler interrupt_guard{[&] {
-                const auto value = signals_received++;
-                if (value >= 2)
+                if (signals_received++ >= 2)
                 {
                     _Exit(1);
                 }
-
-                win_emu.stop();
             }};
 
-            win_emu.start();
+            // A signal handler cannot take the locks stopping or suspending the process needs, so a thread watching the
+            // interrupts does that. A suspend that waits for the end of a frame stops the process where it is if no frame
+            // ends within two seconds.
+            std::mutex suspend_mutex{};
+            std::condition_variable suspend_changed{};
+            bool watching = true;
+            bool running = false;
+            bool suspend_requested = false;
+            uint32_t signals_handled = 0;
+            std::thread signal_watcher([&] {
+                std::unique_lock lock(suspend_mutex);
+                auto deadline = std::chrono::steady_clock::time_point::max();
+                while (watching)
+                {
+                    suspend_changed.wait_for(lock, std::chrono::milliseconds(50));
+                    const auto received = signals_received.load();
+                    if (received > signals_handled)
+                    {
+                        signals_handled = received;
+                        if (suspend_file.empty() || received > 1)
+                        {
+                            win_emu.stop();
+                        }
+                        else
+                        {
+                            suspend_requested = true;
+                            win_emu.request_suspend();
+                            deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                        }
+                    }
+                    else if (suspend_requested && running && std::chrono::steady_clock::now() >= deadline)
+                    {
+                        win_emu.stop();
+                        deadline = std::chrono::steady_clock::time_point::max();
+                    }
+                }
+            });
+
+            const auto signal_watcher_guard = utils::finally([&] {
+                {
+                    const std::scoped_lock lock(suspend_mutex);
+                    watching = false;
+                }
+                suspend_changed.notify_all();
+                signal_watcher.join();
+            });
+
+            const auto set_running = [&](const bool value) {
+                const std::scoped_lock lock(suspend_mutex);
+                running = value;
+            };
+
+            while (true)
+            {
+                set_running(true);
+                win_emu.start();
+                set_running(false);
+
+                // A second interrupt stops the process without saving it.
+                if (win_emu.process.exit_status.has_value() || suspend_file.empty() || signals_received != 1)
+                {
+                    break;
+                }
+
+                try
+                {
+                    snapshot::write_emulator_snapshot(win_emu, suspend_file, configuration);
+                    return 0;
+                }
+                catch (const std::exception& e)
+                {
+                    fprintf(stderr, "Suspending failed, the process keeps running: %s\n", e.what());
+                    const std::scoped_lock lock(suspend_mutex);
+                    win_emu.cancel_suspend_request();
+                    signals_received = 0;
+                    signals_handled = 0;
+                    suspend_requested = false;
+                }
+            }
 
             const auto exit_status = win_emu.process.exit_status;
             if (!exit_status.has_value())
@@ -260,6 +383,11 @@ namespace sogen::sandbox
             bool spoof_gpu_features{};
             app.add_flag("--spoof-gpu-features", spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
+            std::filesystem::path suspend_file{};
+            std::filesystem::path resume_file{};
+            app.add_option("--suspend-to", suspend_file, "Save the process to this file instead of exiting when interrupted")
+                ->type_name("FILE");
+            app.add_option("--resume", resume_file, "Continue a process saved with --suspend-to")->type_name("FILE");
             app.add_option("--managed-process-port", managed_process_port)->group("");
             app.add_option("--managed-process-token", managed_process_token)->group("");
 
@@ -285,10 +413,15 @@ namespace sogen::sandbox
                     application.push_back(request.application);
                     application.insert(application.end(), request.arguments.begin(), request.arguments.end());
                 }
-                if (application.empty())
+                if (application.empty() && resume_file.empty())
                 {
                     puts(app.help().c_str());
                     return 1;
+                }
+
+                if (!application.empty() && !resume_file.empty())
+                {
+                    throw std::runtime_error("--resume continues the saved application and takes no other");
                 }
 
                 std::vector<mount_spec> mounts{};
@@ -310,8 +443,8 @@ namespace sogen::sandbox
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_filesystem_mode(root_mode).value(), std::move(mounts), emulation_root, registry_directory,
-                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features,
-                           managed_process ? &*managed_process : nullptr);
+                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features, suspend_file,
+                           resume_file, managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {

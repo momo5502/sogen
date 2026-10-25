@@ -1,6 +1,9 @@
+#include "std_include.hpp"
+
 #include "snapshot.hpp"
 
 #include <utils/io.hpp>
+#include <utils/finally.hpp>
 #include <utils/compression.hpp>
 
 #include <array>
@@ -17,7 +20,7 @@ namespace sogen
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
                 char magic[4] = {'S', 'N', 'A', 'P'};
-                uint32_t version{3};
+                uint32_t version{4};
                 uint32_t machine{static_cast<uint32_t>(PEMachineType::AMD64)};
             };
 
@@ -55,9 +58,10 @@ namespace sogen
                 return snapshot.subspan(sizeof(snapshot_header));
             }
 
-            std::vector<std::byte> get_compressed_emulator_state(const windows_emulator& win_emu)
+            std::vector<std::byte> get_compressed_emulator_state(const windows_emulator& win_emu, const std::string_view configuration)
             {
                 utils::buffer_serializer serializer{};
+                serializer.write_string(configuration);
                 win_emu.serialize(serializer);
 
                 return utils::compression::zstd::compress(serializer.get_buffer());
@@ -81,9 +85,10 @@ namespace sogen
             }
         }
 
-        std::vector<std::byte> create_emulator_snapshot(const windows_emulator& win_emu)
+        std::vector<std::byte> create_emulator_snapshot(windows_emulator& win_emu, const std::string_view configuration)
         {
-            const auto state = get_compressed_emulator_state(win_emu);
+            win_emu.prepare_serialization();
+            const auto state = get_compressed_emulator_state(win_emu, configuration);
 
             snapshot_header header{};
             header.machine = static_cast<uint32_t>(
@@ -98,7 +103,7 @@ namespace sogen
             return snapshot;
         }
 
-        std::filesystem::path write_emulator_snapshot(const windows_emulator& win_emu, const bool log)
+        std::filesystem::path write_emulator_snapshot(windows_emulator& win_emu, const bool log)
         {
             std::filesystem::path snapshot_file = get_main_executable_name(win_emu) + "-" + std::to_string(time(nullptr)) + ".snap";
 
@@ -107,13 +112,31 @@ namespace sogen
                 win_emu.log.log("Writing snapshot to %s...\n", snapshot_file.string().c_str());
             }
 
-            const auto snapshot = create_emulator_snapshot(win_emu);
-            if (!utils::io::write_file(snapshot_file, snapshot))
+            write_emulator_snapshot(win_emu, snapshot_file);
+            return snapshot_file;
+        }
+
+        void write_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
+                                     const std::string_view configuration)
+        {
+            const auto snapshot = create_emulator_snapshot(win_emu, configuration);
+
+            // Written next to the destination and moved over it, so a failed write never leaves a truncated snapshot behind.
+            auto temporary_file = snapshot_file;
+            temporary_file += ".tmp";
+
+            auto remove_temporary_file = utils::finally([&] {
+                std::error_code ec{};
+                std::filesystem::remove(temporary_file, ec);
+            });
+
+            if (!utils::io::write_file(temporary_file, snapshot))
             {
-                throw std::runtime_error("Failed to write snapshot!");
+                throw std::runtime_error("Failed to write snapshot: " + snapshot_file.string());
             }
 
-            return snapshot_file;
+            std::filesystem::rename(temporary_file, snapshot_file);
+            remove_temporary_file.cancel();
         }
 
         PEMachineType get_snapshot_machine(const std::filesystem::path& snapshot_file)
@@ -128,15 +151,22 @@ namespace sogen
             return static_cast<PEMachineType>(read_header(header).machine);
         }
 
-        void load_emulator_snapshot(windows_emulator& win_emu, const std::span<const std::byte> snapshot)
+        void load_emulator_snapshot(windows_emulator& win_emu, const std::span<const std::byte> snapshot,
+                                    const std::string_view configuration)
         {
             const auto data = get_decompressed_emulator_state(snapshot);
 
             utils::buffer_deserializer deserializer{data};
+            if (deserializer.read_string<char>() != configuration)
+            {
+                throw std::runtime_error("The snapshot was taken with a different emulator configuration");
+            }
+
             win_emu.deserialize(deserializer);
         }
 
-        void load_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file)
+        void load_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
+                                    const std::string_view configuration)
         {
             std::vector<std::byte> data{};
             if (!utils::io::read_file(snapshot_file, &data))
@@ -144,7 +174,7 @@ namespace sogen
                 throw std::runtime_error("Failed to read snapshot file: " + snapshot_file.string());
             }
 
-            load_emulator_snapshot(win_emu, data);
+            load_emulator_snapshot(win_emu, data, configuration);
         }
     }
 

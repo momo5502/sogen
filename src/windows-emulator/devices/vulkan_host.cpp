@@ -1,8 +1,12 @@
 #include "vulkan_host.hpp"
 #include "../vulkan_handle_utils.hpp"
 #include "spirv_clip_distance.hpp"
+#include "vulkan_format_block.hpp"
+#include "snapshot_shaders.hpp"
 
 #include <address_utils.hpp>
+#include <utils/finally.hpp>
+#include <utils/serialization.hpp>
 
 #include <algorithm>
 #include <array>
@@ -10,11 +14,17 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <deque>
+#include <tuple>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
+#include <thread>
+#include <chrono>
 #include <vector>
 #include <ranges>
 
@@ -183,8 +193,103 @@ namespace sogen
         }
     }
 
+    // A sampler's description holds an optional pair, which is not trivially copyable.
+    static void serialize(utils::buffer_serializer& buffer, const vulkan_host::sampler_desc& desc)
+    {
+        buffer.write(desc.flags);
+        buffer.write(desc.mag_filter);
+        buffer.write(desc.min_filter);
+        buffer.write(desc.address_mode_u);
+        buffer.write(desc.address_mode_v);
+        buffer.write(desc.address_mode_w);
+        buffer.write(desc.mipmap_mode);
+        buffer.write(desc.compare_enable);
+        buffer.write(desc.compare_op);
+        buffer.write(desc.anisotropy_enable);
+        buffer.write(desc.border_color);
+        buffer.write(desc.mip_lod_bias);
+        buffer.write(desc.max_anisotropy);
+        buffer.write(desc.min_lod);
+        buffer.write(desc.max_lod);
+        buffer.write(desc.unnormalized_coordinates);
+        buffer.write_optional(desc.reduction_mode);
+        buffer.write(desc.custom_border_color.has_value());
+        if (desc.custom_border_color)
+        {
+            buffer.write(desc.custom_border_color->first);
+            buffer.write(desc.custom_border_color->second);
+        }
+    }
+
+    static void deserialize(utils::buffer_deserializer& buffer, vulkan_host::sampler_desc& desc)
+    {
+        buffer.read(desc.flags);
+        buffer.read(desc.mag_filter);
+        buffer.read(desc.min_filter);
+        buffer.read(desc.address_mode_u);
+        buffer.read(desc.address_mode_v);
+        buffer.read(desc.address_mode_w);
+        buffer.read(desc.mipmap_mode);
+        buffer.read(desc.compare_enable);
+        buffer.read(desc.compare_op);
+        buffer.read(desc.anisotropy_enable);
+        buffer.read(desc.border_color);
+        buffer.read(desc.mip_lod_bias);
+        buffer.read(desc.max_anisotropy);
+        buffer.read(desc.min_lod);
+        buffer.read(desc.max_lod);
+        buffer.read(desc.unnormalized_coordinates);
+        buffer.read_optional(desc.reduction_mode);
+        desc.custom_border_color.reset();
+        if (buffer.read<bool>())
+        {
+            auto& border = desc.custom_border_color.emplace();
+            buffer.read(border.first);
+            buffer.read(border.second);
+        }
+    }
+
+    namespace
+    {
+        template <typename T>
+        class object_table : public std::unordered_map<uint64_t, T>
+        {
+          public:
+            explicit object_table(std::unordered_set<uint64_t>* const* references)
+                : references_(references)
+            {
+            }
+
+            auto find(const uint64_t id)
+            {
+                this->note(id);
+                return std::unordered_map<uint64_t, T>::find(id);
+            }
+
+            auto find(const uint64_t id) const
+            {
+                this->note(id);
+                return std::unordered_map<uint64_t, T>::find(id);
+            }
+
+          private:
+            std::unordered_set<uint64_t>* const* references_{};
+
+            void note(const uint64_t id) const
+            {
+                if (*this->references_)
+                {
+                    (*this->references_)->insert(id);
+                }
+            }
+        };
+    }
+
     struct vulkan_host::impl
     {
+        // The command buffer whose recorded command is running, which notes every object looked up.
+        std::unordered_set<uint64_t>* recording_references{};
+
         library_handle loader{};
         PFN_vkGetInstanceProcAddr get_instance_proc_addr{};
         PFN_vkCreateInstance create_instance{};
@@ -193,6 +298,8 @@ namespace sogen
         struct instance_data
         {
             VkInstance handle{};
+            // Whether the instance extensions present fences need are enabled, which the guest never asked for.
+            bool surface_maintenance1{};
             PFN_vkDestroyInstance destroy_instance{};
             PFN_vkEnumeratePhysicalDevices enumerate_physical_devices{};
             PFN_vkGetPhysicalDeviceProperties get_physical_device_properties{};
@@ -217,6 +324,7 @@ namespace sogen
             PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR get_calibrateable_time_domains{};
             PFN_vkCreateDevice create_device{};
             PFN_vkGetDeviceProcAddr get_device_proc_addr{};
+            std::vector<std::string> extensions{};
         };
 
         struct physical_device_data
@@ -268,9 +376,22 @@ namespace sogen
             return *device.portability;
         }
 
+        struct device_create_params
+        {
+            uint64_t physical_device{};
+            std::vector<gpu_bridge::device_queue_create_entry> queues{};
+            std::vector<std::byte> extensions{};
+            uint32_t extension_count{};
+            std::vector<std::byte> features{};
+            uint32_t feature_count{};
+            bool spoof_missing_features{};
+        };
+
         struct device_data
         {
             VkDevice handle{};
+            device_create_params create{};
+            std::vector<VkFence> abandoned_drain_fences{};
             bool maintenance5_enabled{};
             // Held shared by presents running without the caller's locks, so destroying the device waits for them.
             std::shared_ptr<std::shared_mutex> presents = std::make_shared<std::shared_mutex>();
@@ -296,6 +417,8 @@ namespace sogen
             PFN_vkDestroyFence destroy_fence{};
             PFN_vkResetFences reset_fences{};
             PFN_vkGetFenceStatus get_fence_status{};
+            PFN_vkWaitForFences wait_for_fences{};
+            bool present_fences{};
             PFN_vkCreateEvent create_event{};
             PFN_vkDestroyEvent destroy_event{};
             PFN_vkGetEventStatus get_event_status{};
@@ -449,28 +572,109 @@ namespace sogen
             uint64_t instance_id{};
         };
 
+        struct swapchain_params
+        {
+            uint32_t flags{};
+            uint32_t format{};
+            uint32_t color_space{};
+            uint32_t width{};
+            uint32_t height{};
+            uint32_t image_array_layers{};
+            uint32_t min_image_count{};
+            uint32_t image_usage{};
+            uint32_t sharing_mode{};
+            std::vector<uint32_t> queue_family_indices{};
+            uint32_t pre_transform{};
+            uint32_t composite_alpha{};
+            uint32_t present_mode{};
+            uint32_t clipped{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->flags);
+                buffer.write(this->format);
+                buffer.write(this->color_space);
+                buffer.write(this->width);
+                buffer.write(this->height);
+                buffer.write(this->image_array_layers);
+                buffer.write(this->min_image_count);
+                buffer.write(this->image_usage);
+                buffer.write(this->sharing_mode);
+                buffer.write_vector(this->queue_family_indices);
+                buffer.write(this->pre_transform);
+                buffer.write(this->composite_alpha);
+                buffer.write(this->present_mode);
+                buffer.write(this->clipped);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->flags);
+                buffer.read(this->format);
+                buffer.read(this->color_space);
+                buffer.read(this->width);
+                buffer.read(this->height);
+                buffer.read(this->image_array_layers);
+                buffer.read(this->min_image_count);
+                buffer.read(this->image_usage);
+                buffer.read(this->sharing_mode);
+                buffer.read_vector(this->queue_family_indices);
+                buffer.read(this->pre_transform);
+                buffer.read(this->composite_alpha);
+                buffer.read(this->present_mode);
+                buffer.read(this->clipped);
+            }
+        };
+
         struct swapchain_data
         {
             VkSwapchainKHR handle{};
             uint64_t device_id{};
             uint64_t surface_id{};
             std::vector<uint64_t> image_ids{};
+            swapchain_params create{};
+            // Which images the guest acquired and has not presented yet.
+            std::vector<bool> acquired{};
+            // Returning from a present does not mean the presentation engine is done with the swapchain, which has to
+            // outlive what it still presents. Each present therefore signals a fence when it is.
+            std::vector<VkFence> presenting{};
+            std::vector<VkFence> spare_present_fences{};
         };
 
-        std::unordered_map<uint64_t, instance_data> instances;
-        std::unordered_map<uint64_t, physical_device_data> physical_devices;
+        object_table<instance_data> instances{&this->recording_references};
+        object_table<physical_device_data> physical_devices{&this->recording_references};
         std::unordered_map<VkPhysicalDevice, uint64_t> physical_device_ids;
 
         struct queue_data
         {
             VkQueue handle{};
             uint64_t device_id{};
+            uint32_t queue_family_index{};
+            uint32_t queue_index{};
         };
 
         struct command_pool_data
         {
             VkCommandPool handle{};
             uint64_t device_id{};
+            uint32_t queue_family_index{};
+            uint32_t flags{};
+        };
+
+        struct layout_transition
+        {
+            uint64_t image{};
+            uint32_t aspect_mask{};
+            uint32_t base_mip_level{};
+            uint32_t level_count{};
+            uint32_t base_array_layer{};
+            uint32_t layer_count{};
+            uint32_t new_layout{};
+            bool transfers_ownership{};
+            uint32_t source_family{VK_QUEUE_FAMILY_IGNORED};
+            uint32_t destination_family{VK_QUEUE_FAMILY_IGNORED};
+            // Set instead of the above where a primary executes a secondary command buffer.
+            uint64_t secondary{};
         };
 
         struct command_buffer_data
@@ -478,6 +682,23 @@ namespace sogen
             VkCommandBuffer handle{};
             uint64_t device_id{};
             uint64_t pool_id{};
+            uint32_t level{};
+            std::vector<std::byte> recorded{};
+            std::vector<int32_t> recorded_results{};
+            std::vector<layout_transition> layout_transitions{};
+            // Query resets take effect when the command buffer is submitted: pool, first query, count.
+            std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> query_resets{};
+            // For each reset, the number of layout transitions recorded before it, which places it among the secondaries
+            // the command buffer executes.
+            std::vector<size_t> query_reset_positions{};
+            // Saved query results this command buffer writes into buffers. Once one of the queries is reset, the command
+            // buffer is recorded again before it is submitted.
+            std::vector<std::pair<uint64_t, uint32_t>> restored_query_reads{};
+            // A command buffer the guest may submit while it is still pending cannot be reset to record it again.
+            bool simultaneous_use{};
+            // Every object the recorded commands looked up. Ids are never reused, so one that no longer exists, or whose
+            // memory no longer does, was destroyed after being recorded and invalidated the command buffer.
+            std::unordered_set<uint64_t> references{};
         };
 
         struct fence_data
@@ -490,18 +711,474 @@ namespace sogen
         {
             VkEvent handle{};
             uint64_t device_id{};
+            uint32_t flags{};
         };
 
         struct semaphore_data
         {
             VkSemaphore handle{};
             uint64_t device_id{};
+            uint32_t flags{};
+            uint32_t type{};
+            // Vulkan cannot report these, so they are tracked from submissions for snapshots: whether a binary semaphore
+            // has a signal no wait consumed yet, and the highest timeline values signals and waits were submitted for.
+            bool binary_signaled{};
+            bool binary_wait_unsignaled{};
+            // The signals and the value the modelled execution order has reached.
+            uint32_t modeled_signals{};
+            uint64_t modeled_value{};
+            uint64_t highest_signal{};
+            uint64_t highest_wait{};
         };
+
+        bool is_live(const uint64_t id) const
+        {
+            const auto bound_memory_live = [&](const uint64_t memory) { return memory == 0 || this->memories.contains(memory); };
+            if (const auto buffer = this->buffers.find(id); buffer != this->buffers.end())
+            {
+                return bound_memory_live(buffer->second.memory_id);
+            }
+
+            if (const auto image = this->images.find(id); image != this->images.end())
+            {
+                return bound_memory_live(image->second.memory_id);
+            }
+
+            return this->instances.contains(id) || this->physical_devices.contains(id) || this->devices.contains(id) ||
+                   this->queues.contains(id) || this->command_pools.contains(id) || this->command_buffers.contains(id) ||
+                   this->fences.contains(id) || this->events.contains(id) || this->semaphores.contains(id) || this->memories.contains(id) ||
+                   this->samplers.contains(id) || this->surfaces.contains(id) || this->swapchains.contains(id) ||
+                   this->shader_modules.contains(id) || this->image_views.contains(id) || this->buffer_views.contains(id) ||
+                   this->query_pools.contains(id) || this->render_passes.contains(id) || this->framebuffers.contains(id) ||
+                   this->pipeline_layouts.contains(id) || this->pipelines.contains(id) || this->pipeline_caches.contains(id) ||
+                   this->descriptor_set_layouts.contains(id) || this->descriptor_pools.contains(id) || this->descriptor_sets.contains(id);
+        }
+
+        // Resets that work ordered before a submission makes, which only take effect on the saved query results once that
+        // work runs. While the submission is checked and recorded again, a restored query they reset counts as reset.
+        std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> resets_ahead{};
+
+        bool reset_ahead(const uint64_t query_pool, const uint32_t query) const
+        {
+            return std::ranges::any_of(this->resets_ahead, [&](const auto& reset) {
+                const auto& [pool, first, count] = reset;
+                return pool == query_pool && query >= first && query - first < count;
+            });
+        }
+
+        bool depends_on_changed_state(const command_buffer_data& command_buffer) const
+        {
+            return std::ranges::any_of(command_buffer.restored_query_reads, [&](const auto& read) {
+                const auto pool = this->query_pools.find(read.first);
+                return pool == this->query_pools.end() || !pool->second.restored_results.contains(read.second) ||
+                       this->reset_ahead(read.first, read.second);
+            });
+        }
+
+        static std::vector<uint64_t> executed_secondaries(const command_buffer_data& command_buffer)
+        {
+            std::vector<uint64_t> secondaries{};
+            for (const auto& transition : command_buffer.layout_transitions)
+            {
+                if (transition.secondary != 0)
+                {
+                    secondaries.push_back(transition.secondary);
+                }
+            }
+            return secondaries;
+        }
+
+        // Adds the resets of the modelled submissions that run before a submission to the given queue with these waits: those
+        // pending on the same queue, and those whose signals it waits for, together with what runs before them.
+        void add_resets_ahead_of(const VkQueue queue, std::vector<std::pair<uint64_t, uint64_t>> waits)
+        {
+            std::unordered_set<const pending_submission*> included{};
+            const auto include_up_to = [&](const std::deque<pending_submission>& pending, const size_t last) {
+                for (size_t i = 0; i <= last; ++i)
+                {
+                    if (included.insert(&pending[i]).second)
+                    {
+                        this->resets_ahead.insert(this->resets_ahead.end(), pending[i].query_resets.begin(), pending[i].query_resets.end());
+                        waits.insert(waits.end(), pending[i].waits.begin(), pending[i].waits.end());
+                    }
+                }
+            };
+
+            if (const auto same_queue = this->pending_submissions.find(queue);
+                same_queue != this->pending_submissions.end() && !same_queue->second.empty())
+            {
+                include_up_to(same_queue->second, same_queue->second.size() - 1);
+            }
+
+            while (!waits.empty())
+            {
+                const auto [semaphore, value] = waits.back();
+                waits.pop_back();
+                const auto waited = this->semaphores.find(semaphore);
+                if (waited == this->semaphores.end())
+                {
+                    continue;
+                }
+
+                const bool timeline = waited->second.type == VK_SEMAPHORE_TYPE_TIMELINE;
+                if (timeline ? waited->second.modeled_value >= value : waited->second.modeled_signals > 0)
+                {
+                    continue;
+                }
+
+                // Only the signal the wait is satisfied by first runs before it: the lowest pending value that reaches it.
+                const std::deque<pending_submission>* signaling_queue = nullptr;
+                size_t signaler = 0;
+                uint64_t signaled_value = UINT64_MAX;
+                for (const auto& pending : this->pending_submissions | std::views::values)
+                {
+                    for (size_t i = 0; i < pending.size(); ++i)
+                    {
+                        for (const auto& [signaled, signal_value] : pending[i].signals)
+                        {
+                            const uint64_t reached = timeline ? signal_value : 0;
+                            if (signaled == semaphore && (!timeline || signal_value >= value) &&
+                                (!signaling_queue || reached < signaled_value))
+                            {
+                                signaling_queue = &pending;
+                                signaler = i;
+                                signaled_value = reached;
+                            }
+                        }
+                    }
+                }
+
+                if (signaling_queue)
+                {
+                    include_up_to(*signaling_queue, signaler);
+                }
+            }
+        }
+
+        // A command buffer whose recording baked a saved query result in is recorded again before it is submitted once
+        // the query was reset, including by work that runs before it in the same submission.
+        bool rerecord_changed(const VkQueue queue, const std::vector<std::pair<uint64_t, uint64_t>>& waits, const uint64_t* submitted,
+                              const uint32_t count, const std::function<bool(uint64_t command_buffer)>& rerecord)
+        {
+            const auto rerecord_one = [&](const uint64_t command_buffer) { return rerecord && rerecord(command_buffer); };
+
+            this->add_resets_ahead_of(queue, waits);
+            const auto forget_resets_ahead = utils::finally([&] { this->resets_ahead.clear(); });
+
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                if (i > 0)
+                {
+                    pending_submission preceding{};
+                    this->collect_effects(submitted[i - 1], preceding);
+                    this->resets_ahead.insert(this->resets_ahead.end(), preceding.query_resets.begin(), preceding.query_resets.end());
+                }
+
+                const auto cb = this->command_buffers.find(submitted[i]);
+                if (cb == this->command_buffers.end())
+                {
+                    continue;
+                }
+
+                bool stale = this->depends_on_changed_state(cb->second);
+                const auto outer_resets = this->resets_ahead.size();
+                size_t next_reset = 0;
+                const auto& transitions = cb->second.layout_transitions;
+                for (size_t position = 0; position < transitions.size(); ++position)
+                {
+                    const auto& own = cb->second;
+                    for (; next_reset < own.query_reset_positions.size() && own.query_reset_positions[next_reset] <= position; ++next_reset)
+                    {
+                        this->resets_ahead.push_back(own.query_resets[next_reset]);
+                    }
+
+                    const uint64_t secondary = transitions[position].secondary;
+                    const auto executed = this->command_buffers.find(secondary);
+                    if (secondary == 0 || executed == this->command_buffers.end())
+                    {
+                        continue;
+                    }
+
+                    if (this->depends_on_changed_state(executed->second))
+                    {
+                        if (!rerecord_one(secondary))
+                        {
+                            return false;
+                        }
+
+                        // Recording a secondary again invalidates every primary that executes it. The others are not part of
+                        // this submission, so what runs before it does not apply to them.
+                        std::vector<uint64_t> invalidated{};
+                        for (const auto& [id, other] : this->command_buffers)
+                        {
+                            if (id != submitted[i] &&
+                                std::ranges::any_of(other.layout_transitions,
+                                                    [&](const layout_transition& transition) { return transition.secondary == secondary; }))
+                            {
+                                invalidated.push_back(id);
+                            }
+                        }
+
+                        auto ahead = std::exchange(this->resets_ahead, {});
+                        const bool recorded = std::ranges::all_of(invalidated, rerecord_one);
+                        this->resets_ahead = std::move(ahead);
+                        if (!recorded)
+                        {
+                            return false;
+                        }
+                        stale = true;
+                    }
+
+                    pending_submission executed_effects{};
+                    this->collect_effects(secondary, executed_effects);
+                    this->resets_ahead.insert(this->resets_ahead.end(), executed_effects.query_resets.begin(),
+                                              executed_effects.query_resets.end());
+                }
+                this->resets_ahead.resize(outer_resets);
+
+                if (stale && !rerecord_one(submitted[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Submissions to different queues run in the order their semaphores impose, not in the order they were made in,
+        // and a valid guest orders transitions of the same image that way. What a submission does to images and queries is
+        // therefore kept until everything it waits for is signaled by what ran before it.
+        struct pending_submission
+        {
+            uint64_t queue_id{};
+            std::vector<layout_transition> transitions{};
+            std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> query_resets{};
+            std::vector<std::pair<uint64_t, uint64_t>> waits{};
+            std::vector<std::pair<uint64_t, uint64_t>> signals{};
+        };
+
+        // A present does not delay later submissions to its queue, so presents wait in an order of their own.
+        std::unordered_map<VkQueue, std::deque<pending_submission>> pending_submissions{};
+        std::unordered_map<VkQueue, std::deque<pending_submission>> pending_presents{};
+        // Whether all submitted work finished and nothing was submitted since.
+        bool quiesced{};
+
+        void collect_effects(const uint64_t command_buffer, pending_submission& submission, const uint32_t depth = 0)
+        {
+            const auto cb = this->command_buffers.find(command_buffer);
+            if (cb == this->command_buffers.end() || depth > 1)
+            {
+                return;
+            }
+
+            submission.query_resets.insert(submission.query_resets.end(), cb->second.query_resets.begin(), cb->second.query_resets.end());
+            for (const auto& transition : cb->second.layout_transitions)
+            {
+                if (transition.secondary != 0)
+                {
+                    this->collect_effects(transition.secondary, submission, depth + 1);
+                }
+                else
+                {
+                    submission.transitions.push_back(transition);
+                }
+            }
+        }
+
+        template <typename Entry>
+        void submit_modeled(const VkQueue queue, const uint64_t queue_id, const uint64_t* command_buffers, const uint32_t count,
+                            const Entry* waits, const uint32_t wait_count, const Entry* signals, const uint32_t signal_count)
+        {
+            pending_submission submission{.queue_id = queue_id};
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                this->collect_effects(command_buffers[i], submission);
+            }
+            for (uint32_t i = 0; i < wait_count; ++i)
+            {
+                submission.waits.emplace_back(waits[i].semaphore, waits[i].value);
+            }
+            for (uint32_t i = 0; i < signal_count; ++i)
+            {
+                submission.signals.emplace_back(signals[i].semaphore, signals[i].value);
+            }
+
+            this->pending_submissions[queue].push_back(std::move(submission));
+            this->quiesced = false;
+            this->run_modeled();
+        }
+
+        bool can_run(const pending_submission& submission) const
+        {
+            return std::ranges::all_of(submission.waits, [&](const auto& wait) {
+                const auto semaphore = this->semaphores.find(wait.first);
+                return semaphore == this->semaphores.end() ||
+                       (semaphore->second.type == VK_SEMAPHORE_TYPE_TIMELINE ? semaphore->second.modeled_value >= wait.second
+                                                                             : semaphore->second.modeled_signals > 0);
+            });
+        }
+
+        void run_modeled()
+        {
+            for (bool progress = true; progress;)
+            {
+                progress = false;
+                for (auto* pending : {&this->pending_submissions, &this->pending_presents})
+                {
+                    for (auto& queue : *pending | std::views::values)
+                    {
+                        while (!queue.empty() && this->can_run(queue.front()))
+                        {
+                            this->run_modeled(queue.front());
+                            queue.pop_front();
+                            progress = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        void run_modeled(const pending_submission& submission)
+        {
+            for (const auto& [semaphore, value] : submission.waits)
+            {
+                if (const auto it = this->semaphores.find(semaphore);
+                    it != this->semaphores.end() && it->second.type != VK_SEMAPHORE_TYPE_TIMELINE)
+                {
+                    --it->second.modeled_signals;
+                }
+            }
+
+            for (const auto& [pool, first_query, count] : submission.query_resets)
+            {
+                if (const auto reset = this->query_pools.find(pool); reset != this->query_pools.end())
+                {
+                    reset->second.forget_restored(first_query, count);
+                }
+            }
+
+            for (const auto& transition : submission.transitions)
+            {
+                this->apply_layout_transition(submission.queue_id, transition);
+            }
+
+            for (const auto& [semaphore, value] : submission.signals)
+            {
+                if (const auto it = this->semaphores.find(semaphore); it != this->semaphores.end())
+                {
+                    if (it->second.type == VK_SEMAPHORE_TYPE_TIMELINE)
+                    {
+                        it->second.modeled_value = std::max(it->second.modeled_value, value);
+                    }
+                    else
+                    {
+                        ++it->second.modeled_signals;
+                    }
+                }
+            }
+        }
+
+        bool has_pending_submissions() const
+        {
+            const auto any_pending = [](const auto& pending) {
+                return std::ranges::any_of(pending | std::views::values, [](const auto& queue) { return !queue.empty(); });
+            };
+            return any_pending(this->pending_submissions) || any_pending(this->pending_presents);
+        }
+
+        void apply_layout_transition(const uint64_t queue_id, const layout_transition& transition)
+        {
+            const auto image = this->images.find(transition.image);
+            if (image == this->images.end())
+            {
+                return;
+            }
+
+            auto& data = image->second;
+            data.last_queue_id = queue_id;
+            const auto queue = this->queues.find(queue_id);
+            const auto family = queue == this->queues.end() ? VK_QUEUE_FAMILY_IGNORED : queue->second.queue_family_index;
+
+            const auto aspects = get_vulkan_format_aspects(data.create.format);
+            const auto mip_end = transition.level_count == VK_REMAINING_MIP_LEVELS
+                                     ? data.create.mip_levels
+                                     : std::min(data.create.mip_levels, transition.base_mip_level + transition.level_count);
+            const auto layer_end = transition.layer_count == VK_REMAINING_ARRAY_LAYERS
+                                       ? data.create.array_layers
+                                       : std::min(data.create.array_layers, transition.base_array_layer + transition.layer_count);
+
+            uint32_t aspect = 0;
+            for (uint32_t bit = 1; bit <= VK_IMAGE_ASPECT_STENCIL_BIT; bit <<= 1)
+            {
+                if ((aspects & bit) == 0)
+                {
+                    continue;
+                }
+
+                if ((transition.aspect_mask & bit) != 0)
+                {
+                    for (uint32_t mip = transition.base_mip_level; mip < mip_end; ++mip)
+                    {
+                        for (uint32_t layer = transition.base_array_layer; layer < layer_end; ++layer)
+                        {
+                            const auto index = data.subresource_index(aspect, mip, layer);
+                            data.layouts[index] = transition.new_layout;
+                            data.transfer_ownership(index, transition, family);
+                        }
+                    }
+                }
+
+                ++aspect;
+            }
+        }
+
+        bool image_usage_supported(const device_data& dev, const VkImageCreateInfo& info)
+        {
+            const auto instance = this->instances.find(dev.instance_id);
+            if (instance == this->instances.end() || !instance->second.get_physical_device_image_format_properties)
+            {
+                return false;
+            }
+
+            VkImageFormatProperties properties{};
+            return instance->second.get_physical_device_image_format_properties(
+                       dev.physical_device, info.format, info.imageType, info.tiling, info.usage, info.flags, &properties) == VK_SUCCESS &&
+                   (properties.sampleCounts & info.samples) != 0;
+        }
+
+        template <typename Entry>
+        void track_submitted_semaphores(const Entry* waits, const uint32_t wait_count, const Entry* signals, const uint32_t signal_count)
+        {
+            for (uint32_t i = 0; i < wait_count; ++i)
+            {
+                if (const auto it = this->semaphores.find(waits[i].semaphore); it != this->semaphores.end())
+                {
+                    if (it->second.type != VK_SEMAPHORE_TYPE_TIMELINE && !it->second.binary_signaled)
+                    {
+                        it->second.binary_wait_unsignaled = true;
+                    }
+                    it->second.binary_signaled = false;
+                    it->second.highest_wait = std::max(it->second.highest_wait, waits[i].value);
+                }
+            }
+
+            for (uint32_t i = 0; i < signal_count; ++i)
+            {
+                if (const auto it = this->semaphores.find(signals[i].semaphore); it != this->semaphores.end())
+                {
+                    it->second.binary_signaled = it->second.type != VK_SEMAPHORE_TYPE_TIMELINE;
+                    it->second.highest_signal = std::max(it->second.highest_signal, signals[i].value);
+                }
+            }
+        }
 
         struct memory_data
         {
             VkDeviceMemory handle{};
             uint64_t device_id{};
+            uint64_t requested_size{};
+            uint32_t memory_type_index{};
+            uint32_t flags{};
+            uint32_t device_mask{};
             void* persistent_host_pointer{};
             uint64_t mapped_size{};
             uint64_t allocation_size{};
@@ -514,9 +1191,25 @@ namespace sogen
         {
             VkBuffer handle{};
             uint64_t device_id{};
+            uint32_t usage{};
             uint64_t memory_id{};
             uint64_t memory_offset{};
             uint64_t size{};
+        };
+
+        struct image_create_params
+        {
+            uint32_t format{};
+            uint32_t width{};
+            uint32_t height{};
+            uint32_t depth{};
+            uint32_t mip_levels{};
+            uint32_t array_layers{};
+            uint32_t samples{};
+            uint32_t usage{};
+            uint32_t tiling{};
+            uint32_t image_type{};
+            uint32_t flags{};
         };
 
         struct image_data
@@ -525,16 +1218,416 @@ namespace sogen
             uint64_t device_id{};
             uint32_t samples{1};
             bool owned{true};
+            image_create_params create{};
+            uint64_t memory_id{};
+            uint64_t memory_offset{};
+            // Whether the image was created with the transfer usage snapshots copy it with.
+            bool copyable{};
+            // The layout of each aspect, mip level and array layer as of the last submission, in the order of
+            // subresource_index. Vulkan cannot report it.
+            std::vector<uint32_t> layouts{};
+            // Per subresource, the queue family that owns it and the family a release handed it to that has not acquired
+            // it yet. An exclusive image belongs to the family that first used it until a release and acquire move it.
+            std::vector<uint32_t> owners{};
+            std::vector<uint32_t> released_to{};
+            bool ownership_unknown{};
+            uint64_t last_queue_id{};
+            // A re-created swapchain image is undefined, while the guest believes it is in its saved layout. It is
+            // transitioned there when the guest first acquires it, before the guest can use it.
+            bool layout_undefined{};
+
+            uint32_t aspect_count() const
+            {
+                return static_cast<uint32_t>(std::popcount(get_vulkan_format_aspects(this->create.format)));
+            }
+
+            size_t subresource_index(const uint32_t aspect, const uint32_t mip, const uint32_t layer) const
+            {
+                return (static_cast<size_t>(aspect) * this->create.mip_levels + mip) * this->create.array_layers + layer;
+            }
+
+            void transfer_ownership(const size_t index, const layout_transition& transition, const uint32_t family)
+            {
+                auto& owner = this->owners[index];
+                auto& released = this->released_to[index];
+                if (!transition.transfers_ownership)
+                {
+                    owner = family;
+                }
+                else if (family == transition.source_family)
+                {
+                    this->ownership_unknown |= owner != VK_QUEUE_FAMILY_IGNORED && owner != family;
+                    owner = family;
+                    released = transition.destination_family;
+                }
+                else if (family == transition.destination_family && released == family && owner == transition.source_family)
+                {
+                    owner = family;
+                    released = VK_QUEUE_FAMILY_IGNORED;
+                }
+                else
+                {
+                    this->ownership_unknown = true;
+                }
+            }
+
+            void reset_subresources(const size_t count)
+            {
+                this->layouts.assign(count, VK_IMAGE_LAYOUT_UNDEFINED);
+                this->owners.assign(count, VK_QUEUE_FAMILY_IGNORED);
+                this->released_to.assign(count, VK_QUEUE_FAMILY_IGNORED);
+            }
         };
+
+        // What snapshots re-create objects from. What a later object needs only while it is created is shared with it, so
+        // that it can still be re-created after the guest destroyed that dependency.
+        struct shader_code
+        {
+            uint32_t flags{};
+            std::vector<std::byte> code{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->flags);
+                buffer.write_vector(this->code);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->flags);
+                buffer.read_vector(this->code);
+            }
+        };
+
+        struct set_layout_params
+        {
+            uint32_t flags{};
+            std::vector<descriptor_binding> bindings{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->flags);
+                buffer.write_vector(this->bindings);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->flags);
+                buffer.read_vector(this->bindings);
+            }
+        };
+
+        struct pipeline_layout_params
+        {
+            uint32_t push_constant_stages{};
+            uint32_t push_constant_size{};
+            std::vector<uint64_t> set_layouts{};
+            std::vector<std::shared_ptr<const set_layout_params>> set_layout_creates{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->push_constant_stages);
+                buffer.write(this->push_constant_size);
+                buffer.write_vector(this->set_layouts);
+                for (const auto& params : this->set_layout_creates)
+                {
+                    buffer.write(*params);
+                }
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->push_constant_stages);
+                buffer.read(this->push_constant_size);
+                buffer.read_vector(this->set_layouts);
+                this->set_layout_creates.clear();
+                for (size_t i = 0; i < this->set_layouts.size(); ++i)
+                {
+                    this->set_layout_creates.push_back(std::make_shared<const set_layout_params>(buffer.read<set_layout_params>()));
+                }
+            }
+        };
+
+        struct render_pass_params
+        {
+            uint32_t format{};
+            uint32_t load_op{};
+            uint32_t store_op{};
+            uint32_t initial_layout{};
+            uint32_t final_layout{};
+            uint32_t depth_format{};
+        };
+
+        struct shader_stage_params
+        {
+            uint64_t module{};
+            std::vector<uint8_t> identifier{};
+            // Missing for a stage given only by an identifier of code the bridge never saw.
+            std::shared_ptr<const shader_code> code{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->module);
+                buffer.write_vector(this->identifier);
+                buffer.write(this->code != nullptr);
+                if (this->code)
+                {
+                    buffer.write(*this->code);
+                }
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->module);
+                buffer.read_vector(this->identifier);
+                this->code = buffer.read<bool>() ? std::make_shared<const shader_code>(buffer.read<shader_code>()) : nullptr;
+            }
+        };
+
+        struct specialization_params
+        {
+            std::vector<spec_entry> entries{};
+            std::vector<uint8_t> data{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write_vector(this->entries);
+                buffer.write_vector(this->data);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read_vector(this->entries);
+                buffer.read_vector(this->data);
+            }
+        };
+
+        struct pipeline_params
+        {
+            bool compute{};
+            uint64_t pipeline_cache{};
+            uint64_t render_pass{};
+            render_pass_params render_pass_create{};
+            uint64_t pipeline_layout{};
+            std::shared_ptr<const pipeline_layout_params> layout_create{};
+            // The compute stage for compute pipelines.
+            shader_stage_params vertex{};
+            shader_stage_params fragment{};
+            uint32_t flags{};
+            uint32_t width{};
+            uint32_t height{};
+            std::vector<vertex_binding> bindings{};
+            std::vector<vertex_attribute> attributes{};
+            std::vector<vertex_divisor> divisors{};
+            depth_state depth{};
+            std::vector<uint32_t> color_formats{};
+            uint32_t depth_format{};
+            uint32_t stencil_format{};
+            uint32_t rasterization_samples{};
+            uint32_t primitive_topology{};
+            uint32_t primitive_restart_enable{};
+            uint32_t rasterization_stream{};
+            uint32_t rasterization_stream_flags{};
+            std::vector<uint32_t> dynamic_states{};
+            specialization_params vs_spec{};
+            specialization_params fs_spec{};
+            std::vector<color_blend_attachment> blend_attachments{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->compute);
+                buffer.write(this->pipeline_cache);
+                buffer.write(this->render_pass);
+                buffer.write(this->render_pass_create);
+                buffer.write(this->pipeline_layout);
+                buffer.write(*this->layout_create);
+                buffer.write(this->vertex);
+                buffer.write(this->fragment);
+                buffer.write(this->flags);
+                buffer.write(this->width);
+                buffer.write(this->height);
+                buffer.write_vector(this->bindings);
+                buffer.write_vector(this->attributes);
+                buffer.write_vector(this->divisors);
+                buffer.write(this->depth);
+                buffer.write_vector(this->color_formats);
+                buffer.write(this->depth_format);
+                buffer.write(this->stencil_format);
+                buffer.write(this->rasterization_samples);
+                buffer.write(this->primitive_topology);
+                buffer.write(this->primitive_restart_enable);
+                buffer.write(this->rasterization_stream);
+                buffer.write(this->rasterization_stream_flags);
+                buffer.write_vector(this->dynamic_states);
+                buffer.write(this->vs_spec);
+                buffer.write(this->fs_spec);
+                buffer.write_vector(this->blend_attachments);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->compute);
+                buffer.read(this->pipeline_cache);
+                buffer.read(this->render_pass);
+                buffer.read(this->render_pass_create);
+                buffer.read(this->pipeline_layout);
+                this->layout_create = std::make_shared<const pipeline_layout_params>(buffer.read<pipeline_layout_params>());
+                buffer.read(this->vertex);
+                buffer.read(this->fragment);
+                buffer.read(this->flags);
+                buffer.read(this->width);
+                buffer.read(this->height);
+                buffer.read_vector(this->bindings);
+                buffer.read_vector(this->attributes);
+                buffer.read_vector(this->divisors);
+                buffer.read(this->depth);
+                buffer.read_vector(this->color_formats);
+                buffer.read(this->depth_format);
+                buffer.read(this->stencil_format);
+                buffer.read(this->rasterization_samples);
+                buffer.read(this->primitive_topology);
+                buffer.read(this->primitive_restart_enable);
+                buffer.read(this->rasterization_stream);
+                buffer.read(this->rasterization_stream_flags);
+                buffer.read_vector(this->dynamic_states);
+                buffer.read(this->vs_spec);
+                buffer.read(this->fs_spec);
+                buffer.read_vector(this->blend_attachments);
+            }
+        };
+
+        struct image_view_params
+        {
+            uint64_t image{};
+            uint32_t format{};
+            uint32_t aspect_mask{};
+            uint32_t view_type{};
+            uint32_t base_mip_level{};
+            uint32_t level_count{};
+            uint32_t base_array_layer{};
+            uint32_t layer_count{};
+            std::array<uint32_t, 4> swizzle{};
+        };
+
+        struct buffer_view_params
+        {
+            uint64_t buffer{};
+            uint32_t format{};
+            uint64_t offset{};
+            uint64_t range{};
+        };
+
+        struct framebuffer_params
+        {
+            uint64_t render_pass{};
+            render_pass_params render_pass_create{};
+            uint64_t image_view{};
+            uint64_t depth_view{};
+            uint32_t width{};
+            uint32_t height{};
+        };
+
+        struct descriptor_pool_params
+        {
+            uint32_t max_sets{};
+            uint32_t flags{};
+            uint32_t max_inline_uniform_block_bindings{};
+            std::vector<descriptor_pool_size> sizes{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->max_sets);
+                buffer.write(this->flags);
+                buffer.write(this->max_inline_uniform_block_bindings);
+                buffer.write_vector(this->sizes);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->max_sets);
+                buffer.read(this->flags);
+                buffer.read(this->max_inline_uniform_block_bindings);
+                buffer.read_vector(this->sizes);
+            }
+        };
+
+        // The descriptor a set's binding and array element hold.
+        struct descriptor_slot
+        {
+            uint32_t descriptor_type{};
+            uint64_t buffer_or_view{};
+            uint64_t offset{};
+            uint64_t range{};
+            uint64_t sampler{};
+            uint64_t image_view{};
+            uint32_t image_layout{};
+        };
+
+        static uint64_t descriptor_slot_key(const uint32_t binding, const uint32_t element)
+        {
+            return (static_cast<uint64_t>(binding) << 32) | element;
+        }
+
+        template <typename Set>
+        static bool is_inline_block(const Set& set, const uint32_t binding)
+        {
+            return std::ranges::any_of(set.layout_create->bindings, [&](const descriptor_binding& entry) {
+                return entry.binding == binding && entry.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
+            });
+        }
+
+        // The binding and array element of each descriptor an update of count descriptors starting at binding and element
+        // reaches, which continues into the following bindings once one ends. A variable count applies to the last binding.
+        template <typename Set>
+        static std::vector<std::pair<uint32_t, uint32_t>> consecutive_descriptors(const Set& set, const uint32_t binding, uint32_t element,
+                                                                                  uint32_t count)
+        {
+            auto bindings = set.layout_create->bindings;
+            std::ranges::sort(bindings, {}, &descriptor_binding::binding);
+
+            std::vector<std::pair<uint32_t, uint32_t>> descriptors{};
+            auto it = std::ranges::find(bindings, binding, &descriptor_binding::binding);
+            for (; it != bindings.end() && count > 0; ++it, element = 0)
+            {
+                const bool last = std::next(it) == bindings.end();
+                const uint32_t size = last && set.variable_descriptor_count ? *set.variable_descriptor_count : it->descriptor_count;
+                for (; element < size && count > 0; ++element, --count)
+                {
+                    descriptors.emplace_back(it->binding, element);
+                }
+            }
+
+            return descriptors;
+        }
+
+        // Identifiers of shader code the guest asked for, so that pipelines it creates from them alone can be re-created.
+        std::unordered_map<std::string, std::shared_ptr<const shader_code>> identified_code{};
+
+        shader_stage_params stage_params(const shader_stage_source& source)
+        {
+            shader_stage_params params{.module = source.module, .identifier = {source.identifier.begin(), source.identifier.end()}};
+            if (const auto module = this->shader_modules.find(source.module); module != this->shader_modules.end())
+            {
+                params.code = module->second.code;
+            }
+            else if (const auto code = this->identified_code.find(
+                         std::string(reinterpret_cast<const char*>(source.identifier.data()), source.identifier.size()));
+                     code != this->identified_code.end())
+            {
+                params.code = code->second;
+            }
+            return params;
+        }
 
         struct sampler_data
         {
             VkSampler handle{};
             uint64_t device_id{};
+            sampler_desc create{};
         };
 
-        std::unordered_map<uint64_t, device_data> devices;
-        std::unordered_map<uint64_t, queue_data> queues;
+        object_table<device_data> devices{&this->recording_references};
+        object_table<queue_data> queues{&this->recording_references};
         // Vulkan requires host access to a queue to be externally synchronized. Several queue ids can name the same
         // native queue, so the locks are keyed by it.
         std::unordered_map<VkQueue, std::shared_ptr<std::mutex>> queue_locks;
@@ -549,35 +1642,138 @@ namespace sogen
             return lock;
         }
 
-        std::unordered_map<uint64_t, command_pool_data> command_pools;
-        std::unordered_map<uint64_t, command_buffer_data> command_buffers;
-        std::unordered_map<uint64_t, fence_data> fences;
-        std::unordered_map<uint64_t, event_data> events;
-        std::unordered_map<uint64_t, semaphore_data> semaphores;
-        std::unordered_map<uint64_t, memory_data> memories;
-        std::unordered_map<uint64_t, buffer_data> buffers;
-        std::unordered_map<uint64_t, image_data> images;
-        std::unordered_map<uint64_t, sampler_data> samplers;
-        std::unordered_map<uint64_t, surface_data> surfaces;
-        std::unordered_map<uint64_t, swapchain_data> swapchains;
+        object_table<command_pool_data> command_pools{&this->recording_references};
+        object_table<command_buffer_data> command_buffers{&this->recording_references};
+        object_table<fence_data> fences{&this->recording_references};
+        object_table<event_data> events{&this->recording_references};
+        object_table<semaphore_data> semaphores{&this->recording_references};
+        object_table<memory_data> memories{&this->recording_references};
+        object_table<buffer_data> buffers{&this->recording_references};
+        object_table<image_data> images{&this->recording_references};
+
+        // Takes the semaphore the acquire signals and signals it again once the image is in its saved layout. An acquire
+        // with only a fence is waited for first, since the image is only available to the device then.
+        bool transition_restored_swapchain_image(const device_data& device, image_data& image, const VkSemaphore acquired,
+                                                 const VkFence acquired_fence)
+        {
+            if (!acquired && acquired_fence)
+            {
+                VkResult status = VK_NOT_READY;
+                while ((status = device.get_fence_status(device.handle, acquired_fence)) == VK_NOT_READY)
+                {
+                    std::this_thread::yield();
+                }
+
+                if (status != VK_SUCCESS)
+                {
+                    return false;
+                }
+            }
+
+            // The guest last used the image on this queue, so its family owns it.
+            const auto queue = this->queues.find(image.last_queue_id);
+            if (queue == this->queues.end())
+            {
+                return false;
+            }
+
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.queueFamilyIndex = queue->second.queue_family_index;
+
+            VkCommandPool pool{};
+            if (device.create_command_pool(device.handle, &pool_info, nullptr, &pool) != VK_SUCCESS)
+            {
+                return false;
+            }
+            const auto destroy_pool = utils::finally([&] { device.destroy_command_pool(device.handle, pool, nullptr); });
+
+            VkCommandBufferAllocateInfo allocate_info{};
+            allocate_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocate_info.commandPool = pool;
+            allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocate_info.commandBufferCount = 1;
+
+            VkCommandBuffer command_buffer{};
+            VkCommandBufferBeginInfo begin_info{};
+            begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            if (device.allocate_command_buffers(device.handle, &allocate_info, &command_buffer) != VK_SUCCESS ||
+                device.begin_command_buffer(command_buffer, &begin_info) != VK_SUCCESS)
+            {
+                return false;
+            }
+
+            for (uint32_t layer = 0; layer < image.create.array_layers; ++layer)
+            {
+                const auto layout = static_cast<VkImageLayout>(image.layouts[image.subresource_index(0, 0, layer)]);
+                if (layout == VK_IMAGE_LAYOUT_UNDEFINED)
+                {
+                    continue;
+                }
+
+                VkImageMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                barrier.newLayout = layout;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image.handle;
+                barrier.subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+                device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
+                                            nullptr, 0, nullptr, 1, &barrier);
+            }
+
+            constexpr VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.waitSemaphoreCount = acquired ? 1 : 0;
+            submit.pWaitSemaphores = &acquired;
+            submit.pWaitDstStageMask = &wait_stage;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &command_buffer;
+            submit.signalSemaphoreCount = acquired ? 1 : 0;
+            submit.pSignalSemaphores = &acquired;
+
+            const auto lock = this->queue_lock(queue->second.handle);
+            const std::scoped_lock guard(*lock);
+            if (device.end_command_buffer(command_buffer) != VK_SUCCESS ||
+                device.queue_submit(queue->second.handle, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS ||
+                device.queue_wait_idle(queue->second.handle) != VK_SUCCESS)
+            {
+                return false;
+            }
+
+            image.layout_undefined = false;
+            return true;
+        }
+
+        object_table<sampler_data> samplers{&this->recording_references};
+        object_table<surface_data> surfaces{&this->recording_references};
+        object_table<swapchain_data> swapchains{&this->recording_references};
 
         // Graphics-pipeline objects. All non-dispatchable, device-owned, so one shape suffices.
         struct shader_module_data
         {
             VkShaderModule handle{};
             uint64_t device_id{};
+            std::shared_ptr<const shader_code> code{};
         };
 
         struct image_view_data
         {
             VkImageView handle{};
             uint64_t device_id{};
+            image_view_params create{};
         };
 
         struct buffer_view_data
         {
             VkBufferView handle{};
             uint64_t device_id{};
+            buffer_view_params create{};
         };
 
         struct query_pool_data
@@ -586,6 +1782,67 @@ namespace sogen
             uint64_t device_id{};
             uint32_t query_type{};
             uint32_t pipeline_statistics{};
+            uint32_t query_count{};
+            // Results that were available when the snapshot was taken, by query, until the guest resets the query. A
+            // re-created pool cannot hold them.
+            std::unordered_map<uint32_t, std::vector<uint64_t>> restored_results{};
+
+            uint32_t value_count() const
+            {
+                switch (this->query_type)
+                {
+                case VK_QUERY_TYPE_PIPELINE_STATISTICS:
+                    return static_cast<uint32_t>(std::popcount(this->pipeline_statistics));
+                case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT:
+                    return 2;
+                default:
+                    return 1;
+                }
+            }
+
+            bool snapshot_supported() const
+            {
+                return this->query_type == VK_QUERY_TYPE_OCCLUSION || this->query_type == VK_QUERY_TYPE_PIPELINE_STATISTICS ||
+                       this->query_type == VK_QUERY_TYPE_TIMESTAMP || this->query_type == VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT;
+            }
+
+            void forget_restored(const uint32_t first_query, const uint32_t count)
+            {
+                if (this->restored_results.empty())
+                {
+                    return;
+                }
+
+                for (uint32_t query = first_query; query - first_query < count; ++query)
+                {
+                    this->restored_results.erase(query);
+                }
+            }
+
+            // A result as vkGetQueryPoolResults and vkCmdCopyQueryPoolResults lay it out.
+            std::vector<std::byte> restored_result(const uint32_t query, const uint32_t flags) const
+            {
+                const auto& values = this->restored_results.at(query);
+                const bool wide = (flags & VK_QUERY_RESULT_64_BIT) != 0;
+                std::vector<std::byte> result{};
+                const auto append = [&](const uint64_t value) {
+                    const auto narrow = static_cast<uint32_t>(value);
+                    const auto* bytes = wide ? reinterpret_cast<const std::byte*>(&value) : reinterpret_cast<const std::byte*>(&narrow);
+                    result.insert(result.end(), bytes, bytes + (wide ? sizeof(value) : sizeof(narrow)));
+                };
+
+                for (const auto value : values)
+                {
+                    append(value);
+                }
+
+                if ((flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) != 0)
+                {
+                    append(1);
+                }
+
+                return result;
+            }
         };
 
         struct render_pass_data
@@ -593,42 +1850,49 @@ namespace sogen
             VkRenderPass handle{};
             uint64_t device_id{};
             bool has_depth{};
+            render_pass_params create{};
         };
 
         struct framebuffer_data
         {
             VkFramebuffer handle{};
             uint64_t device_id{};
+            framebuffer_params create{};
         };
 
         struct pipeline_layout_data
         {
             VkPipelineLayout handle{};
             uint64_t device_id{};
+            std::shared_ptr<const pipeline_layout_params> create{};
         };
 
         struct pipeline_data
         {
             VkPipeline handle{};
             uint64_t device_id{};
+            pipeline_params create{};
         };
 
         struct pipeline_cache_data
         {
             VkPipelineCache handle{};
             uint64_t device_id{};
+            uint32_t flags{};
         };
 
         struct descriptor_set_layout_data
         {
             VkDescriptorSetLayout handle{};
             uint64_t device_id{};
+            std::shared_ptr<const set_layout_params> create{};
         };
 
         struct descriptor_pool_data
         {
             VkDescriptorPool handle{};
             uint64_t device_id{};
+            descriptor_pool_params create{};
         };
 
         struct bound_buffer_info
@@ -645,21 +1909,42 @@ namespace sogen
             uint64_t device_id{};
             uint64_t pool_id{};
             std::unordered_map<uint32_t, bound_buffer_info> buffer_bindings;
+            uint64_t layout_id{};
+            std::shared_ptr<const set_layout_params> layout_create{};
+            std::optional<uint32_t> variable_descriptor_count{};
+            std::unordered_map<uint64_t, descriptor_slot> slots{};
+            // Inline uniform blocks by binding, written by byte offset.
+            std::unordered_map<uint32_t, std::vector<std::byte>> inline_blocks{};
         };
 
-        std::unordered_map<uint64_t, shader_module_data> shader_modules;
-        std::unordered_map<uint64_t, image_view_data> image_views;
-        std::unordered_map<uint64_t, buffer_view_data> buffer_views;
-        std::unordered_map<uint64_t, query_pool_data> query_pools;
-        std::unordered_map<uint64_t, render_pass_data> render_passes;
-        std::unordered_map<uint64_t, framebuffer_data> framebuffers;
-        std::unordered_map<uint64_t, pipeline_layout_data> pipeline_layouts;
-        std::unordered_map<uint64_t, pipeline_data> pipelines;
-        std::unordered_map<uint64_t, pipeline_cache_data> pipeline_caches;
-        std::unordered_map<uint64_t, descriptor_set_layout_data> descriptor_set_layouts;
-        std::unordered_map<uint64_t, descriptor_pool_data> descriptor_pools;
-        std::unordered_map<uint64_t, descriptor_set_data> descriptor_sets;
+        object_table<shader_module_data> shader_modules{&this->recording_references};
+        object_table<image_view_data> image_views{&this->recording_references};
+        object_table<buffer_view_data> buffer_views{&this->recording_references};
+        object_table<query_pool_data> query_pools{&this->recording_references};
+        object_table<render_pass_data> render_passes{&this->recording_references};
+        object_table<framebuffer_data> framebuffers{&this->recording_references};
+        object_table<pipeline_layout_data> pipeline_layouts{&this->recording_references};
+        object_table<pipeline_data> pipelines{&this->recording_references};
+        object_table<pipeline_cache_data> pipeline_caches{&this->recording_references};
+        object_table<descriptor_set_layout_data> descriptor_set_layouts{&this->recording_references};
+        object_table<descriptor_pool_data> descriptor_pools{&this->recording_references};
+        object_table<descriptor_set_data> descriptor_sets{&this->recording_references};
         uint64_t next_id{1};
+
+        // Set while restoring a snapshot, so the object being re-created gets the id the guest already holds.
+        std::deque<uint64_t> forced_ids{};
+
+        uint64_t allocate_id()
+        {
+            if (!this->forced_ids.empty())
+            {
+                const auto id = this->forced_ids.front();
+                this->forced_ids.pop_front();
+                return id;
+            }
+
+            return this->next_id++;
+        }
 
         // Picks the first memory type set in `type_bits` that has all `required` property flags, using
         // the memory properties of the device's physical device. Returns UINT32_MAX if none qualifies.
@@ -862,11 +2147,60 @@ namespace sogen
             }
             sc.image_ids.clear();
 
+            const auto& dev = dev_it->second;
+            for (const VkFence fence : sc.spare_present_fences)
+            {
+                dev.destroy_fence(dev.handle, fence, nullptr);
+            }
+            sc.spare_present_fences.clear();
+
+            // The swapchain and its present fences must outlive the presents. When waiting for them fails for another
+            // reason than a lost device, they may still be in use and are left alive.
+            if (!sc.presenting.empty())
+            {
+                const VkResult waited =
+                    dev.wait_for_fences(dev.handle, static_cast<uint32_t>(sc.presenting.size()), sc.presenting.data(), VK_TRUE, UINT64_MAX);
+                if (waited != VK_SUCCESS && waited != VK_ERROR_DEVICE_LOST)
+                {
+                    sc.presenting.clear();
+                    sc.handle = VK_NULL_HANDLE;
+                    return;
+                }
+            }
+            for (const VkFence fence : sc.presenting)
+            {
+                dev.destroy_fence(dev.handle, fence, nullptr);
+            }
+            sc.presenting.clear();
+
             if (sc.handle && dev_it->second.destroy_swapchain)
             {
                 dev_it->second.destroy_swapchain(dev_it->second.handle, sc.handle, nullptr);
             }
             sc.handle = VK_NULL_HANDLE;
+        }
+
+        static VkResult take_present_fence(const device_data& dev, swapchain_data& sc, VkFence& out_fence)
+        {
+            std::erase_if(sc.presenting, [&](const VkFence fence) {
+                if (dev.get_fence_status(dev.handle, fence) != VK_SUCCESS || dev.reset_fences(dev.handle, 1, &fence) != VK_SUCCESS)
+                {
+                    return false;
+                }
+                sc.spare_present_fences.push_back(fence);
+                return true;
+            });
+
+            if (!sc.spare_present_fences.empty())
+            {
+                out_fence = sc.spare_present_fences.back();
+                sc.spare_present_fences.pop_back();
+                return VK_SUCCESS;
+            }
+
+            VkFenceCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            return dev.create_fence(dev.handle, &info, nullptr, &out_fence);
         }
 
         void erase_device(uint64_t device_id)
@@ -1001,6 +2335,15 @@ namespace sogen
                 if (fence.device_id == device_id && fence.handle && it->second.destroy_fence)
                 {
                     it->second.destroy_fence(it->second.handle, fence.handle, nullptr);
+                }
+            }
+            // A fence still pending here belongs to a queue that never finished: no teardown of it is valid, so it is left to
+            // the device's destruction.
+            for (const VkFence fence : it->second.abandoned_drain_fences)
+            {
+                if (it->second.get_fence_status(it->second.handle, fence) == VK_SUCCESS)
+                {
+                    it->second.destroy_fence(it->second.handle, fence, nullptr);
                 }
             }
             for (auto& [id, event] : this->events)
@@ -1196,6 +2539,7 @@ namespace sogen
 #endif
         }
 
+        bool surface_maintenance1 = false;
         VkInstanceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         create_info.flags = instance_flags;
@@ -1230,6 +2574,28 @@ namespace sogen
                 extension_names.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
                 create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
             }
+
+            const auto enabled = [&](const std::string_view name) {
+                return std::ranges::any_of(extension_names, [&](const char* extension) { return name == extension; });
+            };
+            const auto offered = [&](const std::string_view name) {
+                return std::ranges::any_of(
+                    available, [&](const VkExtensionProperties& ext) { return name == static_cast<const char*>(ext.extensionName); });
+            };
+            constexpr std::array present_fence_extensions{VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,
+                                                          VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME};
+            if (api_version >= VK_API_VERSION_1_1 && enabled(VK_KHR_SURFACE_EXTENSION_NAME) &&
+                std::ranges::all_of(present_fence_extensions, offered))
+            {
+                for (const char* name : present_fence_extensions)
+                {
+                    if (!enabled(name))
+                    {
+                        extension_names.push_back(name);
+                    }
+                }
+                surface_maintenance1 = true;
+            }
         }
         create_info.enabledExtensionCount = static_cast<uint32_t>(extension_names.size());
         create_info.ppEnabledExtensionNames = extension_names.empty() ? nullptr : extension_names.data();
@@ -1243,6 +2609,7 @@ namespace sogen
 
         impl::instance_data data{};
         data.handle = instance;
+        data.surface_maintenance1 = surface_maintenance1;
         data.destroy_instance = this->impl_->load_instance_proc<PFN_vkDestroyInstance>(instance, "vkDestroyInstance");
         data.enumerate_physical_devices =
             this->impl_->load_instance_proc<PFN_vkEnumeratePhysicalDevices>(instance, "vkEnumeratePhysicalDevices");
@@ -1293,8 +2660,9 @@ namespace sogen
         }
         data.create_device = this->impl_->load_instance_proc<PFN_vkCreateDevice>(instance, "vkCreateDevice");
         data.get_device_proc_addr = this->impl_->load_instance_proc<PFN_vkGetDeviceProcAddr>(instance, "vkGetDeviceProcAddr");
+        data.extensions.assign(extensions.begin(), extensions.end());
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->instances.emplace(id, data);
         out_instance = id;
         return VK_SUCCESS;
@@ -1408,7 +2776,7 @@ namespace sogen
             auto id_it = this->impl_->physical_device_ids.find(device);
             if (id_it == this->impl_->physical_device_ids.end())
             {
-                const uint64_t id = this->impl_->next_id++;
+                const uint64_t id = this->impl_->allocate_id();
                 this->impl_->physical_devices.emplace(id, impl::physical_device_data{.handle = device, .instance_id = instance});
                 id_it = this->impl_->physical_device_ids.emplace(device, id).first;
             }
@@ -2342,6 +3710,28 @@ namespace sogen
             }
         }
 
+        VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT present_fence_features{};
+        present_fence_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+        bool present_fences = false;
+        if (instance->second.surface_maintenance1 && instance->second.get_physical_device_features2 &&
+            std::ranges::any_of(extensions, [](const char* name) { return std::strcmp(name, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0; }) &&
+            impl::has_device_extension(instance->second, pd->second.handle, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
+        {
+            VkPhysicalDeviceFeatures2 supported{};
+            supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            supported.pNext = &present_fence_features;
+            instance->second.get_physical_device_features2(pd->second.handle, &supported);
+
+            if (present_fence_features.swapchainMaintenance1)
+            {
+                present_fence_features.pNext = nullptr;
+                feature_tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&present_fence_features);
+                feature_tail = reinterpret_cast<VkBaseOutStructure*>(&present_fence_features);
+                extensions.push_back(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+                present_fences = true;
+            }
+        }
+
         VkDeviceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
@@ -2350,7 +3740,7 @@ namespace sogen
         create_info.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
         // Enabled features ride the pNext chain (VkPhysicalDeviceFeatures2 + the chained structs); a
         // chain present means pEnabledFeatures must stay null.
-        if (has_feature_chain || placed_map_alignment != 0)
+        if (has_feature_chain || placed_map_alignment != 0 || present_fences)
         {
             create_info.pNext = &features2;
         }
@@ -2364,6 +3754,18 @@ namespace sogen
 
         impl::device_data data{};
         data.handle = device;
+        data.create.physical_device = physical_device;
+        if (entries)
+        {
+            data.create.queues.assign(entries, entries + queue_entry_count);
+        }
+        data.create.extensions.assign(static_cast<const std::byte*>(extension_blob),
+                                      static_cast<const std::byte*>(extension_blob) + extension_blob_size);
+        data.create.extension_count = extension_count;
+        data.create.features.assign(static_cast<const std::byte*>(feature_blob),
+                                    static_cast<const std::byte*>(feature_blob) + feature_blob_size);
+        data.create.feature_count = feature_struct_count;
+        data.create.spoof_missing_features = spoof_missing_features;
         const bool maintenance5_extension_enabled =
             std::ranges::any_of(extensions, [](const char* name) { return std::strcmp(name, "VK_KHR_maintenance5") == 0; });
         const bool maintenance5_feature_enabled = std::ranges::any_of(chained, [](const std::vector<std::byte>& buffer) {
@@ -2375,6 +3777,7 @@ namespace sogen
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
+        data.present_fences = present_fences;
 
         if (spoof_missing_features && instance->second.get_physical_device_features2)
         {
@@ -2416,6 +3819,7 @@ namespace sogen
             data.wait_semaphores = reinterpret_cast<PFN_vkWaitSemaphores>(resolve("vkWaitSemaphores"));
             data.get_buffer_device_address = reinterpret_cast<PFN_vkGetBufferDeviceAddress>(resolve("vkGetBufferDeviceAddress"));
             data.get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(resolve("vkGetFenceStatus"));
+            data.wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(resolve("vkWaitForFences"));
             data.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(resolve("vkQueueSubmit"));
             data.queue_submit2 = reinterpret_cast<PFN_vkQueueSubmit2>(resolve("vkQueueSubmit2"));
             data.create_swapchain = reinterpret_cast<PFN_vkCreateSwapchainKHR>(resolve("vkCreateSwapchainKHR"));
@@ -2599,7 +4003,7 @@ namespace sogen
                 reinterpret_cast<PFN_vkCmdSetPrimitiveRestartEnable>(resolve("vkCmdSetPrimitiveRestartEnable"));
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->devices.emplace(id, data);
         out_device = id;
         return VK_SUCCESS;
@@ -2627,8 +4031,10 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->queues.emplace(id, impl::queue_data{.handle = queue, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->queues.emplace(
+            id,
+            impl::queue_data{.handle = queue, .device_id = device, .queue_family_index = queue_family_index, .queue_index = queue_index});
         out_queue = id;
         return VK_SUCCESS;
     }
@@ -2655,8 +4061,9 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->command_pools.emplace(id, impl::command_pool_data{.handle = pool, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->command_pools.emplace(
+            id, impl::command_pool_data{.handle = pool, .device_id = device, .queue_family_index = queue_family_index, .flags = flags});
         out_pool = id;
         return VK_SUCCESS;
     }
@@ -2705,8 +4112,9 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->command_buffers.emplace(id, impl::command_buffer_data{.handle = command_buffer, .device_id = device, .pool_id = pool});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->command_buffers.emplace(
+            id, impl::command_buffer_data{.handle = command_buffer, .device_id = device, .pool_id = pool, .level = level});
         out_command_buffer = id;
         return VK_SUCCESS;
     }
@@ -2779,7 +4187,19 @@ namespace sogen
             info.pInheritanceInfo = &inheritance;
         }
 
-        return dev->second.begin_command_buffer(cb->second.handle, &info);
+        const VkResult result = dev->second.begin_command_buffer(cb->second.handle, &info);
+        if (result == VK_SUCCESS)
+        {
+            cb->second.simultaneous_use = (flags & VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT) != 0;
+            cb->second.recorded.clear();
+            cb->second.recorded_results.clear();
+            cb->second.references.clear();
+            cb->second.layout_transitions.clear();
+            cb->second.query_resets.clear();
+            cb->second.query_reset_positions.clear();
+            cb->second.restored_query_reads.clear();
+        }
+        return result;
     }
 
     int32_t vulkan_host::cmd_execute_commands(uint64_t command_buffer, std::span<const uint64_t> secondaries)
@@ -2808,6 +4228,19 @@ namespace sogen
         }
 
         dev->second.cmd_execute_commands(cb->second.handle, static_cast<uint32_t>(handles.size()), handles.data());
+        for (const uint64_t id : secondaries)
+        {
+            auto& primary = cb->second;
+            primary.layout_transitions.push_back(impl::layout_transition{.secondary = id});
+
+            // The primary's own later query copies have to see what the secondary resets.
+            const auto& executed = this->impl_->command_buffers.at(id);
+            for (const auto& reset : executed.query_resets)
+            {
+                primary.query_resets.push_back(reset);
+                primary.query_reset_positions.push_back(primary.layout_transitions.size());
+            }
+        }
         return VK_SUCCESS;
     }
 
@@ -2842,7 +4275,64 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        return dev->second.reset_command_pool(dev->second.handle, it->second.handle, flags);
+        const VkResult result = dev->second.reset_command_pool(dev->second.handle, it->second.handle, flags);
+        if (result == VK_SUCCESS)
+        {
+            for (auto& command_buffer : this->impl_->command_buffers | std::views::values)
+            {
+                if (command_buffer.pool_id == pool)
+                {
+                    command_buffer.recorded.clear();
+                    command_buffer.recorded_results.clear();
+                    command_buffer.references.clear();
+                    command_buffer.layout_transitions.clear();
+                    command_buffer.query_resets.clear();
+                    command_buffer.query_reset_positions.clear();
+                    command_buffer.restored_query_reads.clear();
+                }
+            }
+        }
+        return result;
+    }
+
+    void vulkan_host::capture_references(const uint64_t command_buffer)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        this->impl_->recording_references = cb == this->impl_->command_buffers.end() ? nullptr : &cb->second.references;
+    }
+
+    std::vector<std::byte> vulkan_host::recorded_commands(const uint64_t command_buffer) const
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        return cb == this->impl_->command_buffers.end() ? std::vector<std::byte>{} : cb->second.recorded;
+    }
+
+    std::vector<int32_t> vulkan_host::recorded_results(const uint64_t command_buffer) const
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        return cb == this->impl_->command_buffers.end() ? std::vector<int32_t>{} : cb->second.recorded_results;
+    }
+
+    bool vulkan_host::can_reset_command_buffer(const uint64_t command_buffer) const
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return false;
+        }
+
+        const auto pool = this->impl_->command_pools.find(cb->second.pool_id);
+        return !cb->second.simultaneous_use && pool != this->impl_->command_pools.end() &&
+               (pool->second.flags & VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT) != 0;
+    }
+
+    void vulkan_host::append_recorded_command(const uint64_t command_buffer, const std::span<const std::byte> command, const int32_t result)
+    {
+        if (const auto cb = this->impl_->command_buffers.find(command_buffer); cb != this->impl_->command_buffers.end())
+        {
+            cb->second.recorded.insert(cb->second.recorded.end(), command.begin(), command.end());
+            cb->second.recorded_results.push_back(result);
+        }
     }
 
     int32_t vulkan_host::reset_command_buffer(uint64_t command_buffer, uint32_t flags)
@@ -2859,7 +4349,18 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        return dev->second.reset_command_buffer(cb->second.handle, flags);
+        const VkResult result = dev->second.reset_command_buffer(cb->second.handle, flags);
+        if (result == VK_SUCCESS)
+        {
+            cb->second.recorded.clear();
+            cb->second.recorded_results.clear();
+            cb->second.references.clear();
+            cb->second.layout_transitions.clear();
+            cb->second.query_resets.clear();
+            cb->second.query_reset_positions.clear();
+            cb->second.restored_query_reads.clear();
+        }
+        return result;
     }
 
     int32_t vulkan_host::queue_wait_idle(uint64_t queue)
@@ -2933,7 +4434,7 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->fences.emplace(id, impl::fence_data{.handle = fence, .device_id = device});
         out_fence = id;
         return VK_SUCCESS;
@@ -2987,8 +4488,10 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->semaphores.emplace(id, impl::semaphore_data{.handle = semaphore, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->semaphores.emplace(
+            id, impl::semaphore_data{
+                    .handle = semaphore, .device_id = device, .flags = flags, .type = semaphore_type, .modeled_value = initial_value});
         out_semaphore = id;
         return VK_SUCCESS;
     }
@@ -3019,7 +4522,13 @@ namespace sogen
         info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
         info.semaphore = it->second.handle;
         info.value = value;
-        return dev->second.signal_semaphore(dev->second.handle, &info);
+        const VkResult result = dev->second.signal_semaphore(dev->second.handle, &info);
+        if (result == VK_SUCCESS)
+        {
+            it->second.modeled_value = std::max(it->second.modeled_value, value);
+            this->impl_->run_modeled();
+        }
+        return result;
     }
 
     int32_t vulkan_host::wait_semaphores(uint64_t device, uint32_t flags, const void* entries, uint32_t count, uint64_t timeout)
@@ -3138,8 +4647,8 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->events.emplace(id, impl::event_data{.handle = event, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->events.emplace(id, impl::event_data{.handle = event, .device_id = device, .flags = flags});
         out_event = id;
         return VK_SUCCESS;
     }
@@ -3204,7 +4713,8 @@ namespace sogen
 
     int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
                                       const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
-                                      uint32_t signal_count, bool has_timeline_info)
+                                      uint32_t signal_count, bool has_timeline_info,
+                                      const std::function<bool(uint64_t command_buffer)>& rerecord)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         if (queue_it == this->impl_->queues.end())
@@ -3267,6 +4777,16 @@ namespace sogen
         }
 
         const auto* command_ids = static_cast<const uint64_t*>(command_buffer_ids);
+        std::vector<std::pair<uint64_t, uint64_t>> modeled_waits{};
+        for (uint32_t i = 0; i < wait_count; ++i)
+        {
+            const auto& wait = static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries)[i];
+            modeled_waits.emplace_back(wait.semaphore, wait.value);
+        }
+        if (!this->impl_->rerecord_changed(queue_it->second.handle, modeled_waits, command_ids, command_buffer_count, rerecord))
+        {
+            return VK_ERROR_DEVICE_LOST;
+        }
         std::vector<VkCommandBuffer> command_buffers;
         command_buffers.reserve(command_buffer_count);
         for (uint32_t i = 0; i < command_buffer_count; ++i)
@@ -3299,12 +4819,21 @@ namespace sogen
 
         const auto lock = this->impl_->queue_lock(queue_it->second.handle);
         const std::scoped_lock guard(*lock);
-        return dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
+        const VkResult result = dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
+        if (result == VK_SUCCESS)
+        {
+            this->impl_->submit_modeled(queue_it->second.handle, queue, command_ids, command_buffer_count,
+                                        static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries), wait_count,
+                                        static_cast<const gpu_bridge::submit_semaphore_entry*>(signal_entries), signal_count);
+            this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries), wait_count,
+                                                    static_cast<const gpu_bridge::submit_semaphore_entry*>(signal_entries), signal_count);
+        }
+        return result;
     }
 
     int32_t vulkan_host::queue_submit2(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
                                        const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
-                                       uint32_t signal_count)
+                                       uint32_t signal_count, const std::function<bool(uint64_t command_buffer)>& rerecord)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         if (queue_it == this->impl_->queues.end())
@@ -3357,6 +4886,16 @@ namespace sogen
         }
 
         const auto* cmd_ids = static_cast<const uint64_t*>(command_buffer_ids);
+        std::vector<std::pair<uint64_t, uint64_t>> modeled_waits{};
+        for (uint32_t i = 0; i < wait_count; ++i)
+        {
+            const auto& wait = static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries)[i];
+            modeled_waits.emplace_back(wait.semaphore, wait.value);
+        }
+        if (!this->impl_->rerecord_changed(queue_it->second.handle, modeled_waits, cmd_ids, command_buffer_count, rerecord))
+        {
+            return VK_ERROR_DEVICE_LOST;
+        }
         std::vector<VkCommandBufferSubmitInfo> command_buffers;
         command_buffers.reserve(command_buffer_count);
         for (uint32_t i = 0; i < command_buffer_count; ++i)
@@ -3383,7 +4922,16 @@ namespace sogen
 
         const auto lock = this->impl_->queue_lock(queue_it->second.handle);
         const std::scoped_lock guard(*lock);
-        return dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
+        const VkResult result = dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
+        if (result == VK_SUCCESS)
+        {
+            this->impl_->submit_modeled(queue_it->second.handle, queue, cmd_ids, command_buffer_count,
+                                        static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries), wait_count,
+                                        static_cast<const gpu_bridge::submit2_semaphore_entry*>(signal_entries), signal_count);
+            this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries), wait_count,
+                                                    static_cast<const gpu_bridge::submit2_semaphore_entry*>(signal_entries), signal_count);
+        }
+        return result;
     }
 
     int32_t vulkan_host::get_physical_device_memory_properties(uint64_t physical_device, void* out, size_t out_size)
@@ -3519,8 +5067,14 @@ namespace sogen
             }
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device, .allocation_size = aligned_size});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory,
+                                                            .device_id = device,
+                                                            .requested_size = size,
+                                                            .memory_type_index = memory_type_index,
+                                                            .flags = flags,
+                                                            .device_mask = device_mask,
+                                                            .allocation_size = aligned_size});
         out_memory = id;
         return VK_SUCCESS;
     }
@@ -3598,8 +5152,8 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->buffers.emplace(id, impl::buffer_data{.handle = buffer, .device_id = device, .size = size});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->buffers.emplace(id, impl::buffer_data{.handle = buffer, .device_id = device, .usage = usage, .size = size});
         out_buffer = id;
         return VK_SUCCESS;
     }
@@ -3834,6 +5388,11 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    bool vulkan_host::has_swapchains() const
+    {
+        return !this->impl_->swapchains.empty();
+    }
+
     bool vulkan_host::has_device(const uint64_t device) const
     {
         return this->impl_->devices.contains(device);
@@ -3951,9 +5510,13 @@ namespace sogen
             }
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->memories.emplace(id, impl::memory_data{.handle = memory,
                                                             .device_id = device,
+                                                            .requested_size = size,
+                                                            .memory_type_index = memory_type_index,
+                                                            .flags = flags,
+                                                            .device_mask = device_mask,
                                                             .persistent_host_pointer = host_pointer,
                                                             .mapped_size = size,
                                                             .allocation_size = size,
@@ -4106,6 +5669,29 @@ namespace sogen
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
+        // Multisampled images are read by sampling them and written by rendering to them.
+        const VkImageUsageFlags transfer_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                 (info.samples > VK_SAMPLE_COUNT_1_BIT ? VK_IMAGE_USAGE_SAMPLED_BIT : 0);
+        constexpr VkImageUsageFlags attachment_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        bool copyable = (info.usage & transfer_usage) == transfer_usage;
+        if (!copyable)
+        {
+            auto with_transfer = info;
+            with_transfer.usage |= transfer_usage;
+            if (this->impl_->image_usage_supported(dev->second, with_transfer) &&
+                this->impl_->image_supports_host_import(dev->second, with_transfer) ==
+                    this->impl_->image_supports_host_import(dev->second, info))
+            {
+                info.usage = with_transfer.usage;
+                copyable = true;
+            }
+        }
+
+        if (info.samples > VK_SAMPLE_COUNT_1_BIT && (info.usage & attachment_usage) == 0)
+        {
+            copyable = false;
+        }
+
         VkExternalMemoryImageCreateInfo external_info{};
         if (this->impl_->image_supports_host_import(dev->second, info))
         {
@@ -4121,8 +5707,23 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->images.emplace(id, impl::image_data{.handle = image, .device_id = device, .samples = samples ? samples : 1});
+        const uint64_t id = this->impl_->allocate_id();
+        impl::image_data data{.handle = image, .device_id = device, .samples = samples ? samples : 1, .copyable = copyable};
+        data.create = impl::image_create_params{
+            .format = format,
+            .width = width,
+            .height = height,
+            .depth = info.extent.depth,
+            .mip_levels = info.mipLevels,
+            .array_layers = info.arrayLayers,
+            .samples = samples,
+            .usage = usage,
+            .tiling = tiling,
+            .image_type = image_type,
+            .flags = flags,
+        };
+        data.reset_subresources(static_cast<size_t>(data.aspect_count()) * info.mipLevels * info.arrayLayers);
+        this->impl_->images.emplace(id, std::move(data));
         out_image = id;
         return VK_SUCCESS;
     }
@@ -4213,7 +5814,13 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        return dev->second.bind_image_memory(dev->second.handle, img->second.handle, mem->second.handle, offset);
+        const VkResult result = dev->second.bind_image_memory(dev->second.handle, img->second.handle, mem->second.handle, offset);
+        if (result == VK_SUCCESS)
+        {
+            img->second.memory_id = memory;
+            img->second.memory_offset = offset;
+        }
+        return result;
     }
 
     namespace
@@ -4265,6 +5872,19 @@ namespace sogen
         barrier.subresourceRange = to_vk_range(range);
 
         dev->second.cmd_pipeline_barrier(cb->second.handle, src_stage_mask, dst_stage_mask, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+
+        cb->second.layout_transitions.push_back(impl::layout_transition{
+            .image = image,
+            .aspect_mask = range.aspect_mask,
+            .base_mip_level = range.base_mip_level,
+            .level_count = range.level_count,
+            .base_array_layer = range.base_array_layer,
+            .layer_count = range.layer_count,
+            .new_layout = static_cast<uint32_t>(barrier.newLayout),
+            .transfers_ownership = src_queue_family_index != dst_queue_family_index && src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
+            .source_family = src_queue_family_index,
+            .destination_family = dst_queue_family_index,
+        });
         return VK_SUCCESS;
     }
 
@@ -4602,8 +6222,8 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->samplers.emplace(id, impl::sampler_data{.handle = sampler, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->samplers.emplace(id, impl::sampler_data{.handle = sampler, .device_id = device, .create = desc});
         out_sampler = id;
         return VK_SUCCESS;
     }
@@ -4631,7 +6251,7 @@ namespace sogen
             return VK_ERROR_SURFACE_LOST_KHR;
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         this->impl_->surfaces.emplace(id, impl::surface_data{
                                               .handle = unpack_vulkan_handle<VkSurfaceKHR>(native_surface),
                                               .instance_id = instance,
@@ -4891,20 +6511,43 @@ namespace sogen
         sc.handle = native_swapchain;
         sc.device_id = device;
         sc.surface_id = surface;
+        sc.create = impl::swapchain_params{.flags = flags,
+                                           .format = format,
+                                           .color_space = color_space,
+                                           .width = width,
+                                           .height = height,
+                                           .image_array_layers = image_array_layers,
+                                           .min_image_count = min_image_count,
+                                           .image_usage = image_usage,
+                                           .sharing_mode = sharing_mode,
+                                           .queue_family_indices = {queue_family_indices.begin(), queue_family_indices.end()},
+                                           .pre_transform = pre_transform,
+                                           .composite_alpha = composite_alpha,
+                                           .present_mode = present_mode,
+                                           .clipped = clipped};
+        sc.acquired.assign(native_images.size(), false);
         sc.image_ids.reserve(native_images.size());
         for (VkImage image : native_images)
         {
-            const uint64_t image_id = this->impl_->next_id++;
-            this->impl_->images.emplace(image_id, impl::image_data{
-                                                      .handle = image,
-                                                      .device_id = device,
-                                                      .samples = 1,
-                                                      .owned = false,
-                                                  });
+            const uint64_t image_id = this->impl_->allocate_id();
+            impl::image_data data{.handle = image, .device_id = device, .samples = 1, .owned = false};
+            data.create = impl::image_create_params{.format = format,
+                                                    .width = width,
+                                                    .height = height,
+                                                    .depth = 1,
+                                                    .mip_levels = 1,
+                                                    .array_layers = std::max(1U, image_array_layers),
+                                                    .samples = 1,
+                                                    .usage = image_usage,
+                                                    .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                                    .image_type = VK_IMAGE_TYPE_2D,
+                                                    .flags = 0};
+            data.reset_subresources(data.create.array_layers);
+            this->impl_->images.emplace(image_id, std::move(data));
             sc.image_ids.push_back(image_id);
         }
 
-        const uint64_t id = this->impl_->next_id++;
+        const uint64_t id = this->impl_->allocate_id();
         out_image_count = static_cast<uint32_t>(sc.image_ids.size());
         this->impl_->swapchains.emplace(id, std::move(sc));
         out_swapchain = id;
@@ -4976,8 +6619,27 @@ namespace sogen
             fence_handle = it->second.handle;
         }
 
-        return dev_it->second.acquire_next_image(dev_it->second.handle, sc_it->second.handle, timeout, semaphore_handle, fence_handle,
-                                                 &out_index);
+        const VkResult result = dev_it->second.acquire_next_image(dev_it->second.handle, sc_it->second.handle, timeout, semaphore_handle,
+                                                                  fence_handle, &out_index);
+        if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && out_index < sc_it->second.acquired.size())
+        {
+            auto& image = this->impl_->images.at(sc_it->second.image_ids[out_index]);
+            if (image.layout_undefined &&
+                !this->impl_->transition_restored_swapchain_image(dev_it->second, image, semaphore_handle, fence_handle))
+            {
+                return VK_ERROR_DEVICE_LOST;
+            }
+
+            sc_it->second.acquired[out_index] = true;
+            if (semaphore != 0)
+            {
+                auto& acquired = this->impl_->semaphores.at(semaphore);
+                acquired.binary_signaled = true;
+                ++acquired.modeled_signals;
+                this->impl_->run_modeled();
+            }
+        }
+        return result;
     }
 
     int32_t vulkan_host::queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index,
@@ -5019,6 +6681,23 @@ namespace sogen
         info.pSwapchains = &native_swapchain;
         info.pImageIndices = &image_index;
 
+        const uint64_t present_device = queue_it->second.device_id;
+        VkFence present_fence{};
+        VkSwapchainPresentFenceInfoEXT present_fence_info{};
+        if (dev_it->second.present_fences)
+        {
+            if (const VkResult fence_result = impl::take_present_fence(dev_it->second, sc_it->second, present_fence);
+                fence_result != VK_SUCCESS)
+            {
+                return fence_result;
+            }
+
+            present_fence_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT;
+            present_fence_info.swapchainCount = 1;
+            present_fence_info.pFences = &present_fence;
+            info.pNext = &present_fence_info;
+        }
+
         const auto native_present = dev_it->second.queue_present;
         auto* const native_queue = queue_it->second.handle;
         const auto queue_lock = this->impl_->queue_lock(native_queue);
@@ -5027,15 +6706,60 @@ namespace sogen
 
         // The device lock is released before run_unlocked returns, since its caller may then wait for a lock that a
         // thread destroying the device holds.
-        return run_unlocked([&] {
-            int32_t result{};
+        const int32_t result = run_unlocked([&] {
+            int32_t present_result{};
             {
                 const std::scoped_lock guard(*queue_lock);
-                result = native_present(native_queue, &info);
+                present_result = native_present(native_queue, &info);
             }
             device_in_use.unlock();
-            return result;
+            return present_result;
         });
+
+        // Only these leave the present unqueued, with the image still acquired and the semaphores untouched.
+        const bool queued = result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        if (present_fence)
+        {
+            if (const auto presented = this->impl_->swapchains.find(swapchain); presented != this->impl_->swapchains.end())
+            {
+                (queued ? presented->second.presenting : presented->second.spare_present_fences).push_back(present_fence);
+            }
+            else if (const auto device_it = this->impl_->devices.find(present_device); device_it != this->impl_->devices.end())
+            {
+                const auto& dev = device_it->second;
+                if (const VkResult waited = dev.wait_for_fences(dev.handle, 1, &present_fence, VK_TRUE, UINT64_MAX);
+                    waited == VK_SUCCESS || waited == VK_ERROR_DEVICE_LOST)
+                {
+                    dev.destroy_fence(dev.handle, present_fence, nullptr);
+                }
+            }
+        }
+
+        if (queued)
+        {
+            if (const auto presented = this->impl_->swapchains.find(swapchain); presented != this->impl_->swapchains.end())
+            {
+                presented->second.acquired[image_index] = false;
+            }
+
+            for (const uint64_t semaphore : wait_semaphores)
+            {
+                if (const auto waited = this->impl_->semaphores.find(semaphore); waited != this->impl_->semaphores.end())
+                {
+                    waited->second.binary_signaled = false;
+                }
+            }
+
+            impl::pending_submission present{.queue_id = queue};
+            for (const uint64_t semaphore : wait_semaphores)
+            {
+                present.waits.emplace_back(semaphore, 0);
+            }
+            this->impl_->pending_presents[native_queue].push_back(std::move(present));
+            this->impl_->quiesced = false;
+            this->impl_->run_modeled();
+        }
+        return result;
     }
 
     int32_t vulkan_host::create_shader_module(uint64_t device, uint32_t flags, const void* code, size_t code_size, uint64_t& out_module)
@@ -5070,8 +6794,13 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->shader_modules.emplace(id, impl::shader_module_data{.handle = module, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        const auto* code_bytes = static_cast<const std::byte*>(code);
+        this->impl_->shader_modules.emplace(
+            id, impl::shader_module_data{.handle = module,
+                                         .device_id = device,
+                                         .code = std::make_shared<const impl::shader_code>(
+                                             impl::shader_code{.flags = flags, .code = {code_bytes, code_bytes + code_size}})});
         out_module = id;
         return VK_SUCCESS;
     }
@@ -5108,6 +6837,7 @@ namespace sogen
         dev->second.get_shader_module_identifier(dev->second.handle, module->second.handle, &result);
         identifier_size = std::min<uint32_t>(result.identifierSize, static_cast<uint32_t>(identifier.size()));
         std::memcpy(identifier.data(), result.identifier, identifier_size);
+        this->impl_->identified_code[std::string(reinterpret_cast<const char*>(identifier.data()), identifier_size)] = module->second.code;
         return VK_SUCCESS;
     }
 
@@ -5141,6 +6871,10 @@ namespace sogen
         dev->second.get_shader_module_create_info_identifier(dev->second.handle, &create_info, &result);
         identifier_size = std::min<uint32_t>(result.identifierSize, static_cast<uint32_t>(identifier.size()));
         std::memcpy(identifier.data(), result.identifier, identifier_size);
+
+        const auto* code_bytes = static_cast<const std::byte*>(code);
+        this->impl_->identified_code[std::string(reinterpret_cast<const char*>(identifier.data()), identifier_size)] =
+            std::make_shared<const impl::shader_code>(impl::shader_code{.flags = flags, .code = {code_bytes, code_bytes + code_size}});
         return VK_SUCCESS;
     }
 
@@ -5180,8 +6914,18 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->image_views.emplace(id, impl::image_view_data{.handle = view, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->image_views.emplace(id, impl::image_view_data{.handle = view,
+                                                                   .device_id = device,
+                                                                   .create = {.image = image,
+                                                                              .format = format,
+                                                                              .aspect_mask = aspect_mask,
+                                                                              .view_type = view_type,
+                                                                              .base_mip_level = base_mip_level,
+                                                                              .level_count = level_count,
+                                                                              .base_array_layer = base_array_layer,
+                                                                              .layer_count = layer_count,
+                                                                              .swizzle = {swizzle_r, swizzle_g, swizzle_b, swizzle_a}}});
         out_view = id;
         return VK_SUCCESS;
     }
@@ -5227,8 +6971,10 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->buffer_views.emplace(id, impl::buffer_view_data{.handle = view, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->buffer_views.emplace(
+            id, impl::buffer_view_data{
+                    .handle = view, .device_id = device, .create = {.buffer = buffer, .format = format, .offset = offset, .range = range}});
         out_view = id;
         return VK_SUCCESS;
     }
@@ -5301,10 +7047,12 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->query_pools.emplace(
-            id, impl::query_pool_data{
-                    .handle = pool, .device_id = device, .query_type = query_type, .pipeline_statistics = pipeline_statistics});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->query_pools.emplace(id, impl::query_pool_data{.handle = pool,
+                                                                   .device_id = device,
+                                                                   .query_type = query_type,
+                                                                   .pipeline_statistics = pipeline_statistics,
+                                                                   .query_count = query_count});
         out_pool = id;
         return VK_SUCCESS;
     }
@@ -5334,6 +7082,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.reset_query_pool(dev->second.handle, qp->second.handle, first_query, query_count);
+        qp->second.forget_restored(first_query, query_count);
         return VK_SUCCESS;
     }
 
@@ -5354,11 +7103,7 @@ namespace sogen
         // the total extent against out_size so the driver cannot write past the caller's buffer, regardless
         // of the guest-supplied stride (including stride == 0).
         const uint64_t value_size = (flags & VK_QUERY_RESULT_64_BIT) ? 8u : 4u;
-        uint64_t value_count = 1;
-        if (qp->second.query_type == VK_QUERY_TYPE_PIPELINE_STATISTICS)
-        {
-            value_count = static_cast<uint64_t>(std::popcount(qp->second.pipeline_statistics));
-        }
+        uint64_t value_count = qp->second.value_count();
         if (flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT)
         {
             value_count += 1;
@@ -5370,9 +7115,39 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        if (!qp->second.restored_results.empty())
+        {
+            // Restored queries are not available in the re-created pool, so they are answered one by one.
+            VkResult result = VK_SUCCESS;
+            for (uint32_t i = 0; i < query_count; ++i)
+            {
+                auto* element = static_cast<std::byte*>(out) + (i * effective_stride);
+                if (qp->second.restored_results.contains(first_query + i))
+                {
+                    const auto restored = qp->second.restored_result(first_query + i, flags);
+                    std::memcpy(element, restored.data(), restored.size());
+                    continue;
+                }
+
+                const VkResult single = dev->second.get_query_pool_results(dev->second.handle, qp->second.handle, first_query + i, 1,
+                                                                           static_cast<size_t>(element_size), element, element_size,
+                                                                           static_cast<VkQueryResultFlags>(flags));
+                if (single != VK_SUCCESS && result == VK_SUCCESS)
+                {
+                    result = single;
+                }
+            }
+
+            if (result == VK_SUCCESS || result == VK_NOT_READY)
+            {
+                out_written = out_size;
+            }
+            return result;
+        }
+
         const VkResult result = dev->second.get_query_pool_results(dev->second.handle, qp->second.handle, first_query, query_count,
                                                                    out_size, out, stride, static_cast<VkQueryResultFlags>(flags));
-        if (result == VK_SUCCESS)
+        if (result == VK_SUCCESS || result == VK_NOT_READY)
         {
             out_written = out_size;
         }
@@ -5394,6 +7169,8 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_reset_query_pool(cb->second.handle, qp->second.handle, first_query, query_count);
+        cb->second.query_resets.emplace_back(query_pool, first_query, query_count);
+        cb->second.query_reset_positions.push_back(cb->second.layout_transitions.size());
         return VK_SUCCESS;
     }
 
@@ -5661,8 +7438,34 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        dev->second.cmd_copy_query_pool_results(cb->second.handle, qp->second.handle, first_query, query_count, buffer->second.handle,
-                                                destination_offset, stride, static_cast<VkQueryResultFlags>(flags));
+        if (qp->second.restored_results.empty())
+        {
+            dev->second.cmd_copy_query_pool_results(cb->second.handle, qp->second.handle, first_query, query_count, buffer->second.handle,
+                                                    destination_offset, stride, static_cast<VkQueryResultFlags>(flags));
+            return VK_SUCCESS;
+        }
+
+        // Restored queries are written into the buffer directly, since the re-created pool does not hold them.
+        for (uint32_t i = 0; i < query_count; ++i)
+        {
+            const auto query = first_query + i;
+            const auto offset = destination_offset + (i * stride);
+            const bool reset_before = std::ranges::any_of(cb->second.query_resets, [&](const auto& reset) {
+                const auto& [pool, first, count] = reset;
+                return pool == query_pool && query >= first && query - first < count;
+            });
+
+            if (reset_before || this->impl_->reset_ahead(query_pool, query) || !qp->second.restored_results.contains(query))
+            {
+                dev->second.cmd_copy_query_pool_results(cb->second.handle, qp->second.handle, first_query + i, 1, buffer->second.handle,
+                                                        offset, stride, static_cast<VkQueryResultFlags>(flags));
+                continue;
+            }
+
+            const auto restored = qp->second.restored_result(query, flags);
+            dev->second.cmd_update_buffer(cb->second.handle, buffer->second.handle, offset, restored.size(), restored.data());
+            cb->second.restored_query_reads.emplace_back(query_pool, query);
+        }
         return VK_SUCCESS;
     }
 
@@ -5742,8 +7545,16 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->render_passes.emplace(id, impl::render_pass_data{.handle = render_pass, .device_id = device, .has_depth = has_depth});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->render_passes.emplace(id, impl::render_pass_data{.handle = render_pass,
+                                                                      .device_id = device,
+                                                                      .has_depth = has_depth,
+                                                                      .create = {.format = format,
+                                                                                 .load_op = load_op,
+                                                                                 .store_op = store_op,
+                                                                                 .initial_layout = initial_layout,
+                                                                                 .final_layout = final_layout,
+                                                                                 .depth_format = depth_format}});
         out_render_pass = id;
         return VK_SUCCESS;
     }
@@ -5805,8 +7616,15 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->framebuffers.emplace(id, impl::framebuffer_data{.handle = framebuffer, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->framebuffers.emplace(id, impl::framebuffer_data{.handle = framebuffer,
+                                                                     .device_id = device,
+                                                                     .create = {.render_pass = render_pass,
+                                                                                .render_pass_create = rp->second.create,
+                                                                                .image_view = image_view,
+                                                                                .depth_view = depth_view,
+                                                                                .width = width,
+                                                                                .height = height}});
         out_framebuffer = id;
         return VK_SUCCESS;
     }
@@ -5870,8 +7688,18 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->pipeline_layouts.emplace(id, impl::pipeline_layout_data{.handle = layout, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        auto create = std::make_shared<impl::pipeline_layout_params>();
+        create->push_constant_stages = push_constant_stages;
+        create->push_constant_size = push_constant_size;
+        create->set_layouts.assign(set_layouts.begin(), set_layouts.end());
+        for (const uint64_t set_layout : set_layouts)
+        {
+            create->set_layout_creates.push_back(this->impl_->descriptor_set_layouts.at(set_layout).create);
+        }
+
+        this->impl_->pipeline_layouts.emplace(
+            id, impl::pipeline_layout_data{.handle = layout, .device_id = device, .create = std::move(create)});
         out_layout = id;
         return VK_SUCCESS;
     }
@@ -5935,8 +7763,12 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->descriptor_set_layouts.emplace(id, impl::descriptor_set_layout_data{.handle = layout, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->descriptor_set_layouts.emplace(
+            id, impl::descriptor_set_layout_data{.handle = layout,
+                                                 .device_id = device,
+                                                 .create = std::make_shared<const impl::set_layout_params>(impl::set_layout_params{
+                                                     .flags = flags, .bindings = {bindings.begin(), bindings.end()}})});
         out_layout = id;
         return VK_SUCCESS;
     }
@@ -6046,8 +7878,14 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->descriptor_pools.emplace(id, impl::descriptor_pool_data{.handle = pool, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->descriptor_pools.emplace(
+            id, impl::descriptor_pool_data{.handle = pool,
+                                           .device_id = device,
+                                           .create = {.max_sets = max_sets,
+                                                      .flags = flags,
+                                                      .max_inline_uniform_block_bindings = max_inline_uniform_block_bindings,
+                                                      .sizes = {sizes.begin(), sizes.end()}}});
         out_pool = id;
         return VK_SUCCESS;
     }
@@ -6140,9 +7978,15 @@ namespace sogen
         out_count = static_cast<uint32_t>(sets.size());
         for (size_t i = 0; i < sets.size(); ++i)
         {
-            const uint64_t id = this->impl_->next_id++;
-            this->impl_->descriptor_sets.emplace(
-                id, impl::descriptor_set_data{.handle = sets[i], .device_id = device, .pool_id = pool, .buffer_bindings = {}});
+            const uint64_t id = this->impl_->allocate_id();
+            impl::descriptor_set_data data{.handle = sets[i], .device_id = device, .pool_id = pool, .buffer_bindings = {}};
+            data.layout_id = set_layouts[i];
+            data.layout_create = this->impl_->descriptor_set_layouts.at(set_layouts[i]).create;
+            if (!variable_descriptor_counts.empty())
+            {
+                data.variable_descriptor_count = variable_descriptor_counts[i];
+            }
+            this->impl_->descriptor_sets.emplace(id, std::move(data));
             if (i < out_sets.size())
             {
                 out_sets[i] = id;
@@ -6352,6 +8196,88 @@ namespace sogen
             dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(),
                                                static_cast<uint32_t>(vk_copies.size()), vk_copies.data());
         }
+
+        cached_set_id = 0;
+        cached_set = nullptr;
+        for (const descriptor_write& w : writes)
+        {
+            if (w.dst_set != cached_set_id || cached_set == nullptr)
+            {
+                cached_set_id = w.dst_set;
+                cached_set = &this->impl_->descriptor_sets.at(w.dst_set);
+            }
+
+            if (w.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
+            {
+                auto& block = cached_set->inline_blocks[w.dst_binding];
+                block.resize(std::max<size_t>(block.size(), w.dst_array_element + w.inline_uniform_data.size()));
+                std::ranges::copy(w.inline_uniform_data, block.begin() + w.dst_array_element);
+                continue;
+            }
+
+            cached_set->slots[impl::descriptor_slot_key(w.dst_binding, w.dst_array_element)] = impl::descriptor_slot{
+                .descriptor_type = w.descriptor_type,
+                .buffer_or_view = w.buffer_or_view,
+                .offset = w.offset,
+                .range = w.range,
+                .sampler = w.sampler,
+                .image_view = w.image_view,
+                .image_layout = w.image_layout,
+            };
+        }
+
+        for (const descriptor_copy& c : copies)
+        {
+            const auto& source = this->impl_->descriptor_sets.at(c.src_set);
+            auto& destination = this->impl_->descriptor_sets.at(c.dst_set);
+            const auto from = impl::consecutive_descriptors(source, c.src_binding, c.src_array_element, c.descriptor_count);
+            const auto to = impl::consecutive_descriptors(destination, c.dst_binding, c.dst_array_element, c.descriptor_count);
+            const auto count = std::min(from.size(), to.size());
+
+            // Inline uniform blocks count bytes instead of descriptors.
+            if (impl::is_inline_block(source, c.src_binding))
+            {
+                std::vector<std::byte> bytes(count);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    const auto block = source.inline_blocks.find(from[i].first);
+                    bytes[i] = block != source.inline_blocks.end() && from[i].second < block->second.size() ? block->second[from[i].second]
+                                                                                                            : std::byte{};
+                }
+
+                for (size_t i = 0; i < count; ++i)
+                {
+                    auto& block = destination.inline_blocks[to[i].first];
+                    block.resize(std::max<size_t>(block.size(), static_cast<size_t>(to[i].second) + 1));
+                    block[to[i].second] = bytes[i];
+                }
+                continue;
+            }
+
+            std::vector<std::optional<impl::descriptor_slot>> slots(count);
+            for (size_t i = 0; i < count; ++i)
+            {
+                if (const auto slot = source.slots.find(impl::descriptor_slot_key(from[i].first, from[i].second));
+                    slot != source.slots.end())
+                {
+                    slots[i] = slot->second;
+                }
+            }
+
+            for (size_t i = 0; i < count; ++i)
+            {
+                const auto key = impl::descriptor_slot_key(to[i].first, to[i].second);
+                if (slots[i])
+                {
+                    destination.slots[key] = *slots[i];
+                }
+                else
+                {
+                    destination.slots.erase(key);
+                }
+            }
+        }
+
         return VK_SUCCESS;
     }
 
@@ -6378,8 +8304,8 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->pipeline_caches.emplace(id, impl::pipeline_cache_data{.handle = cache, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        this->impl_->pipeline_caches.emplace(id, impl::pipeline_cache_data{.handle = cache, .device_id = device, .flags = flags});
         out_pipeline_cache = id;
         return VK_SUCCESS;
     }
@@ -6791,8 +8717,38 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        impl::pipeline_params create{};
+        create.pipeline_cache = pipeline_cache;
+        create.render_pass = render_pass;
+        if (const auto rp = this->impl_->render_passes.find(render_pass); rp != this->impl_->render_passes.end())
+        {
+            create.render_pass_create = rp->second.create;
+        }
+        create.pipeline_layout = pipeline_layout;
+        create.layout_create = layout->second.create;
+        create.vertex = this->impl_->stage_params(vertex_shader);
+        create.fragment = this->impl_->stage_params(fragment_shader);
+        create.flags = flags;
+        create.width = width;
+        create.height = height;
+        create.bindings.assign(bindings.begin(), bindings.end());
+        create.attributes.assign(attributes.begin(), attributes.end());
+        create.divisors.assign(divisors.begin(), divisors.end());
+        create.depth = depth;
+        create.color_formats.assign(color_formats.begin(), color_formats.end());
+        create.depth_format = depth_format;
+        create.stencil_format = stencil_format;
+        create.rasterization_samples = rasterization_samples;
+        create.primitive_topology = primitive_topology;
+        create.primitive_restart_enable = primitive_restart_enable;
+        create.rasterization_stream = rasterization_stream;
+        create.rasterization_stream_flags = rasterization_stream_flags;
+        create.dynamic_states.assign(dynamic_states.begin(), dynamic_states.end());
+        create.vs_spec = {.entries = {vs_spec.entries.begin(), vs_spec.entries.end()}, .data = {vs_spec.data.begin(), vs_spec.data.end()}};
+        create.fs_spec = {.entries = {fs_spec.entries.begin(), fs_spec.entries.end()}, .data = {fs_spec.data.begin(), fs_spec.data.end()}};
+        create.blend_attachments.assign(blend_attachments_in.begin(), blend_attachments_in.end());
+        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device, .create = std::move(create)});
         out_pipeline = id;
         return VK_SUCCESS;
     }
@@ -6865,8 +8821,15 @@ namespace sogen
             return result;
         }
 
-        const uint64_t id = this->impl_->next_id++;
-        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device});
+        const uint64_t id = this->impl_->allocate_id();
+        impl::pipeline_params create{};
+        create.compute = true;
+        create.pipeline_cache = pipeline_cache;
+        create.pipeline_layout = pipeline_layout;
+        create.layout_create = layout->second.create;
+        create.vertex = this->impl_->stage_params(shader);
+        create.flags = flags;
+        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device, .create = std::move(create)});
         out_pipeline = id;
         return VK_SUCCESS;
     }
@@ -6921,6 +8884,32 @@ namespace sogen
         info.pClearValues = clears.data();
 
         dev->second.cmd_begin_render_pass(cb->second.handle, &info, VK_SUBPASS_CONTENTS_INLINE);
+
+        const auto record_transition = [&](const uint64_t view_id, const uint32_t aspect_mask, const VkImageLayout layout) {
+            const auto view = this->impl_->image_views.find(view_id);
+            if (view == this->impl_->image_views.end())
+            {
+                return;
+            }
+
+            const auto& create = view->second.create;
+            cb->second.layout_transitions.push_back(impl::layout_transition{
+                .image = create.image,
+                .aspect_mask = aspect_mask,
+                .base_mip_level = create.base_mip_level,
+                .level_count = create.level_count ? create.level_count : 1,
+                .base_array_layer = create.base_array_layer,
+                .layer_count = create.layer_count ? create.layer_count : 1,
+                .new_layout = static_cast<uint32_t>(layout),
+            });
+        };
+
+        record_transition(fb->second.create.image_view, VK_IMAGE_ASPECT_COLOR_BIT, translate_layout(rp->second.create.final_layout));
+        if (fb->second.create.depth_view != 0)
+        {
+            record_transition(fb->second.create.depth_view, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
+                              VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        }
         return VK_SUCCESS;
     }
 
@@ -7722,5 +9711,2531 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         return VK_SUCCESS;
+    }
+
+    namespace
+    {
+        constexpr uint32_t snapshot_version = 14;
+
+        template <typename Map>
+        void reject_live_objects(const Map& objects, const std::string_view type)
+        {
+            if (!objects.empty())
+            {
+                throw std::runtime_error("Snapshots do not support live Vulkan " + std::string{type} + " yet");
+            }
+        }
+
+        void expect_restored(const int32_t result, const uint64_t restored, const uint64_t expected, const std::string_view type)
+        {
+            if (result != VK_SUCCESS || restored != expected)
+            {
+                throw std::runtime_error("Restoring Vulkan " + std::string{type} + " " + std::to_string(expected) + " failed with result " +
+                                         std::to_string(result));
+            }
+        }
+
+        // Moves the contents of memory the host cannot map through a host-visible staging buffer, by aliasing transfer
+        // buffers over the memory one chunk at a time. Only for snapshots, while the guest is stopped.
+        template <typename Device>
+        class snapshot_transfer
+        {
+          public:
+            static constexpr VkDeviceSize chunk_size = 16 * 1024 * 1024;
+
+            snapshot_transfer(const Device& device, const uint32_t queue_family,
+                              const std::function<uint32_t(uint32_t type_bits)>& find_host_memory_type)
+                : device_(device),
+                  queue_family_(queue_family)
+            {
+                try
+                {
+                    this->create(find_host_memory_type);
+                }
+                catch (...)
+                {
+                    this->release();
+                    throw;
+                }
+            }
+
+            ~snapshot_transfer()
+            {
+                this->release();
+            }
+
+            snapshot_transfer(const snapshot_transfer&) = delete;
+            snapshot_transfer& operator=(const snapshot_transfer&) = delete;
+            snapshot_transfer(snapshot_transfer&&) = delete;
+            snapshot_transfer& operator=(snapshot_transfer&&) = delete;
+
+            // False if the memory's type cannot back transfer buffers, so that only its images can be saved.
+            bool copy(const VkDeviceMemory memory, const uint32_t memory_type_index, const std::span<std::byte> contents,
+                      const bool to_device)
+            {
+                const auto& device = this->device_;
+                for (VkDeviceSize offset = 0; offset < contents.size(); offset += chunk_size)
+                {
+                    const VkDeviceSize size = std::min<VkDeviceSize>(chunk_size, contents.size() - offset);
+
+                    // A buffer can need more memory than its size, more than is left at the end of the allocation. It is then
+                    // bound further down, and the copy starts inside it.
+                    VkDeviceSize alias_offset = offset;
+                    VkBuffer alias{};
+                    VkMemoryRequirements requirements{};
+                    for (int attempt = 0; attempt < 2; ++attempt)
+                    {
+                        alias = this->create_transfer_buffer(size + (offset - alias_offset));
+                        device.get_buffer_memory_requirements(device.handle, alias, &requirements);
+                        if ((requirements.memoryTypeBits & (1U << memory_type_index)) == 0 || requirements.alignment == 0 ||
+                            requirements.size > contents.size())
+                        {
+                            device.destroy_buffer(device.handle, alias, nullptr);
+                            return false;
+                        }
+
+                        const VkDeviceSize highest_offset =
+                            (contents.size() - requirements.size) / requirements.alignment * requirements.alignment;
+                        const VkDeviceSize aligned_offset = alias_offset / requirements.alignment * requirements.alignment;
+                        const VkDeviceSize fitting_offset = std::min(aligned_offset, highest_offset);
+                        if (fitting_offset == alias_offset)
+                        {
+                            break;
+                        }
+
+                        device.destroy_buffer(device.handle, alias, nullptr);
+                        alias = VK_NULL_HANDLE;
+                        alias_offset = fitting_offset;
+                    }
+
+                    if (!alias)
+                    {
+                        return false;
+                    }
+
+                    const auto destroy_alias = utils::finally([&] { device.destroy_buffer(device.handle, alias, nullptr); });
+                    if (device.bind_buffer_memory(device.handle, alias, memory, alias_offset) != VK_SUCCESS)
+                    {
+                        throw std::runtime_error("Aliasing Vulkan memory for a snapshot failed");
+                    }
+
+                    if (to_device)
+                    {
+                        std::memcpy(this->staging_data_, contents.data() + offset, static_cast<size_t>(size));
+                    }
+
+                    const VkDeviceSize inside = offset - alias_offset;
+                    const VkBufferCopy region{.srcOffset = to_device ? 0 : inside, .dstOffset = to_device ? inside : 0, .size = size};
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        device.cmd_copy_buffer(command_buffer, to_device ? this->staging_buffer_ : alias,
+                                               to_device ? alias : this->staging_buffer_, 1, &region);
+                    });
+
+                    if (!to_device)
+                    {
+                        std::memcpy(contents.data() + offset, this->staging_data_, static_cast<size_t>(size));
+                    }
+                }
+
+                return true;
+            }
+
+            // Copies one subresource in rows of texel blocks that fit the staging buffer. The image stays in layout, or, when
+            // writing, goes from undefined to it. False if a single row does not fit.
+            // Barriers cover barrier_aspects, which for combined depth/stencil images has to be both. When writing, from is the
+            // layout the image is in before, and the image only goes to layout at the end if finish is set.
+            bool copy_image(const VkImage image, const VkImageAspectFlagBits aspect, const VkImageAspectFlags barrier_aspects,
+                            const uint32_t mip, const uint32_t layer, const VkExtent3D extent, const vulkan_format_block& block,
+                            const VkImageLayout from, const VkImageLayout layout, const bool finish, const std::span<std::byte> contents,
+                            const bool to_device)
+            {
+                const auto& device = this->device_;
+                const uint64_t blocks_per_row = (extent.width + block.width - 1) / block.width;
+                const uint64_t rows_per_slice = (extent.height + block.height - 1) / block.height;
+                const uint64_t row_size = blocks_per_row * block.size;
+                if (row_size == 0 || row_size > chunk_size || contents.size() != row_size * rows_per_slice * extent.depth)
+                {
+                    return false;
+                }
+
+                const uint64_t rows_per_chunk = chunk_size / row_size;
+                const VkImageLayout transfer_layout =
+                    to_device ? VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL : VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                VkImageLayout current = to_device ? from : layout;
+
+                const auto barrier = [&](const VkCommandBuffer command_buffer, const VkImageLayout from, const VkImageLayout to) {
+                    VkImageMemoryBarrier info{};
+                    info.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    info.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                    info.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                    info.oldLayout = from;
+                    info.newLayout = to;
+                    info.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    info.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    info.image = image;
+                    info.subresourceRange = {
+                        .aspectMask = barrier_aspects, .baseMipLevel = mip, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+                    device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0,
+                                                0, nullptr, 0, nullptr, 1, &info);
+                };
+
+                uint64_t offset = 0;
+                for (uint32_t z = 0; z < extent.depth; ++z)
+                {
+                    for (uint64_t row = 0; row < rows_per_slice; row += rows_per_chunk)
+                    {
+                        const uint64_t rows = std::min(rows_per_chunk, rows_per_slice - row);
+                        const auto y = static_cast<uint32_t>(row * block.height);
+                        const auto height = std::min(extent.height - y, static_cast<uint32_t>(rows * block.height));
+                        const auto size = static_cast<size_t>(rows * row_size);
+                        const bool last = z + 1 == extent.depth && row + rows == rows_per_slice;
+
+                        if (to_device)
+                        {
+                            std::memcpy(this->staging_data_, contents.data() + offset, size);
+                        }
+
+                        VkBufferImageCopy region{};
+                        region.imageSubresource = {.aspectMask = static_cast<VkImageAspectFlags>(aspect),
+                                                   .mipLevel = mip,
+                                                   .baseArrayLayer = layer,
+                                                   .layerCount = 1};
+                        region.imageOffset = {.x = 0, .y = static_cast<int32_t>(y), .z = static_cast<int32_t>(z)};
+                        region.imageExtent = {.width = extent.width, .height = height, .depth = 1};
+
+                        this->submit([&](const VkCommandBuffer command_buffer) {
+                            barrier(command_buffer, current, transfer_layout);
+                            if (to_device)
+                            {
+                                device.cmd_copy_buffer_to_image(command_buffer, this->staging_buffer_, image, transfer_layout, 1, &region);
+                            }
+                            else
+                            {
+                                device.cmd_copy_image_to_buffer(command_buffer, image, transfer_layout, this->staging_buffer_, 1, &region);
+                            }
+
+                            if (!to_device || (last && finish))
+                            {
+                                barrier(command_buffer, transfer_layout, layout);
+                            }
+                        });
+                        current = to_device ? transfer_layout : layout;
+
+                        if (!to_device)
+                        {
+                            std::memcpy(contents.data() + offset, this->staging_data_, size);
+                        }
+
+                        offset += size;
+                    }
+                }
+
+                return true;
+            }
+
+            // Multisampled images cannot be copied to buffers. A compute shader reads every sample as raw bits into the
+            // staging buffer instead, one block of rows at a time; each sample is written back by drawing with a sample
+            // mask that selects it, and stencil one bit at a time. Shaders can change the bits of some formats, so a
+            // written image is read again and must match.
+            static constexpr uint64_t sample_size = 16;
+
+            bool read_samples(const VkImage image, const uint32_t format, const uint32_t samples, const VkImageAspectFlagBits aspect,
+                              const VkImageAspectFlags barrier_aspects, const uint32_t layer, const VkExtent2D extent,
+                              const VkImageLayout layout, const std::span<std::byte> contents)
+            {
+                const auto& device = this->device_;
+                const uint64_t row_size = static_cast<uint64_t>(extent.width) * samples * sample_size;
+                if (row_size == 0 || row_size > chunk_size || contents.size() != row_size * extent.height)
+                {
+                    return false;
+                }
+
+                const VkPipeline pipeline = this->read_pipeline(sample_variant(format, aspect));
+                const VkImageView view = this->create_view(image, format, aspect, layer);
+                const auto destroy_view = utils::finally([&] { device.destroy_image_view(device.handle, view, nullptr); });
+
+                const VkImageLayout read_layout = aspect == VK_IMAGE_ASPECT_COLOR_BIT ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+                                                                                      : VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+                this->bind_sample_resources(view, read_layout);
+
+                const uint64_t rows_per_chunk = chunk_size / row_size;
+                for (uint32_t row = 0; row < extent.height;)
+                {
+                    const auto rows = static_cast<uint32_t>(std::min<uint64_t>(rows_per_chunk, extent.height - row));
+                    const bool first = row == 0;
+                    const bool last = row + rows == extent.height;
+
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        if (first)
+                        {
+                            this->image_barrier(command_buffer, image, barrier_aspects, layer, layout, read_layout);
+                        }
+
+                        const sample_parameters parameters{.width = extent.width, .rows = rows, .sample_count = samples, .first_row = row};
+                        device.cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+                        device.cmd_bind_descriptor_sets(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, this->sample_pipeline_layout_, 0, 1,
+                                                        &this->sample_descriptor_set_, 0, nullptr);
+                        device.cmd_push_constants(command_buffer, this->sample_pipeline_layout_,
+                                                  VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters),
+                                                  &parameters);
+                        device.cmd_dispatch(command_buffer,
+                                            static_cast<uint32_t>((static_cast<uint64_t>(extent.width) * rows * samples + 63) / 64), 1, 1);
+
+                        VkMemoryBarrier written{};
+                        written.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                        written.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                        written.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+                        device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1,
+                                                    &written, 0, nullptr, 0, nullptr);
+
+                        if (last)
+                        {
+                            this->image_barrier(command_buffer, image, barrier_aspects, layer, read_layout, layout);
+                        }
+                    });
+
+                    std::memcpy(contents.data() + (row * row_size), this->staging_data_, static_cast<size_t>(rows * row_size));
+                    row += rows;
+                }
+
+                return true;
+            }
+
+            // The image is in from, undefined for its first aspect, and only goes to layout after the last one.
+            bool write_samples(const VkImage image, const uint32_t format, const uint32_t samples, const VkImageAspectFlagBits aspect,
+                               const VkImageAspectFlags barrier_aspects, const uint32_t layer, const VkExtent2D extent, const bool first,
+                               const bool last, const VkImageLayout layout, const std::span<std::byte> contents)
+            {
+                const auto& device = this->device_;
+                const uint64_t row_size = static_cast<uint64_t>(extent.width) * samples * sample_size;
+                if (row_size == 0 || row_size > chunk_size || contents.size() != row_size * extent.height)
+                {
+                    return false;
+                }
+
+                const bool depth_stencil = aspect != VK_IMAGE_ASPECT_COLOR_BIT;
+                const VkImageLayout attachment_layout =
+                    depth_stencil ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                const auto variant = sample_variant(format, aspect);
+                const VkRenderPass render_pass = this->sample_render_pass(format, samples, depth_stencil);
+
+                const VkImageView view = this->create_view(image, format, barrier_aspects, layer);
+                const auto destroy_view = utils::finally([&] { device.destroy_image_view(device.handle, view, nullptr); });
+
+                VkFramebufferCreateInfo framebuffer_info{};
+                framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+                framebuffer_info.renderPass = render_pass;
+                framebuffer_info.attachmentCount = 1;
+                framebuffer_info.pAttachments = &view;
+                framebuffer_info.width = extent.width;
+                framebuffer_info.height = extent.height;
+                framebuffer_info.layers = 1;
+
+                VkFramebuffer framebuffer{};
+                if (device.create_framebuffer(device.handle, &framebuffer_info, nullptr, &framebuffer) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating a framebuffer to restore a multisampled Vulkan image failed");
+                }
+                const auto destroy_framebuffer = utils::finally([&] { device.destroy_framebuffer(device.handle, framebuffer, nullptr); });
+
+                this->bind_sample_resources(VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED);
+
+                if (first)
+                {
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        if (!depth_stencil)
+                        {
+                            this->image_barrier(command_buffer, image, barrier_aspects, layer, VK_IMAGE_LAYOUT_UNDEFINED,
+                                                attachment_layout);
+                            return;
+                        }
+
+                        // Stencil is built up bit by bit, so it starts out cleared.
+                        this->image_barrier(command_buffer, image, barrier_aspects, layer, VK_IMAGE_LAYOUT_UNDEFINED,
+                                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                        const VkClearDepthStencilValue clear{.depth = 0.0F, .stencil = 0};
+                        const VkImageSubresourceRange range{
+                            .aspectMask = barrier_aspects, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+                        device.cmd_clear_depth_stencil_image(command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1,
+                                                             &range);
+                        this->image_barrier(command_buffer, image, barrier_aspects, layer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                            attachment_layout);
+                    });
+                }
+
+                const uint64_t rows_per_chunk = chunk_size / row_size;
+                for (uint32_t row = 0; row < extent.height;)
+                {
+                    const auto rows = static_cast<uint32_t>(std::min<uint64_t>(rows_per_chunk, extent.height - row));
+                    std::memcpy(this->staging_data_, contents.data() + (row * row_size), static_cast<size_t>(rows * row_size));
+
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        VkRenderPassBeginInfo begin{};
+                        begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                        begin.renderPass = render_pass;
+                        begin.framebuffer = framebuffer;
+                        begin.renderArea = {.offset = {.x = 0, .y = static_cast<int32_t>(row)},
+                                            .extent = {.width = extent.width, .height = rows}};
+                        device.cmd_begin_render_pass(command_buffer, &begin, VK_SUBPASS_CONTENTS_INLINE);
+
+                        const VkViewport viewport{.x = 0.0F,
+                                                  .y = 0.0F,
+                                                  .width = static_cast<float>(extent.width),
+                                                  .height = static_cast<float>(extent.height),
+                                                  .minDepth = 0.0F,
+                                                  .maxDepth = 1.0F};
+                        device.cmd_set_viewport(command_buffer, 0, 1, &viewport);
+                        device.cmd_set_scissor(command_buffer, 0, 1, &begin.renderArea);
+                        device.cmd_bind_descriptor_sets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->sample_pipeline_layout_, 0,
+                                                        1, &this->sample_descriptor_set_, 0, nullptr);
+
+                        for (uint32_t sample = 0; sample < samples; ++sample)
+                        {
+                            device.cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                     this->write_pipeline(render_pass, format, samples, variant, sample));
+
+                            const uint32_t bits = variant == sample_shader::stencil ? 8 : 1;
+                            for (uint32_t bit = 0; bit < bits; ++bit)
+                            {
+                                const sample_parameters parameters{.width = extent.width,
+                                                                   .rows = rows,
+                                                                   .sample_count = samples,
+                                                                   .first_row = row,
+                                                                   .sample_index = sample,
+                                                                   .stencil_bit = bit};
+                                device.cmd_push_constants(command_buffer, this->sample_pipeline_layout_,
+                                                          VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters),
+                                                          &parameters);
+                                if (variant == sample_shader::stencil)
+                                {
+                                    device.cmd_set_stencil_write_mask(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK, 1U << bit);
+                                    device.cmd_set_stencil_reference(command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK, 0xFF);
+                                }
+                                device.cmd_draw(command_buffer, 3, 1, 0, 0);
+                            }
+                        }
+
+                        device.cmd_end_render_pass(command_buffer);
+                    });
+
+                    row += rows;
+                }
+
+                std::vector<std::byte> written(contents.size());
+                if (!this->read_samples(image, format, samples, aspect, barrier_aspects, layer, extent, attachment_layout, written) ||
+                    written != std::vector<std::byte>(contents.begin(), contents.end()))
+                {
+                    return false;
+                }
+
+                if (last)
+                {
+                    this->submit([&](const VkCommandBuffer command_buffer) {
+                        this->image_barrier(command_buffer, image, barrier_aspects, layer, attachment_layout, layout);
+                    });
+                }
+
+                return true;
+            }
+
+            void reset_query_pool(const VkQueryPool pool, const uint32_t count)
+            {
+                this->submit(
+                    [&](const VkCommandBuffer command_buffer) { this->device_.cmd_reset_query_pool(command_buffer, pool, 0, count); });
+            }
+
+          private:
+            enum class sample_shader : uint8_t
+            {
+                floating,
+                unsigned_integer,
+                signed_integer,
+                depth,
+                stencil,
+            };
+
+            struct sample_parameters
+            {
+                uint32_t width{};
+                uint32_t rows{};
+                uint32_t sample_count{};
+                uint32_t layer{};
+                uint32_t first_row{};
+                uint32_t sample_index{};
+                uint32_t stencil_bit{};
+            };
+
+            const Device& device_;
+            uint32_t queue_family_{};
+            VkQueue queue_{};
+            std::unordered_map<std::string_view, VkShaderModule> shader_modules_{};
+            VkDescriptorSetLayout sample_set_layout_{};
+            VkPipelineLayout sample_pipeline_layout_{};
+            VkDescriptorPool sample_descriptor_pool_{};
+            VkDescriptorSet sample_descriptor_set_{};
+            std::map<std::tuple<uint32_t, uint32_t, bool>, VkRenderPass> sample_render_passes_{};
+            std::map<std::tuple<VkRenderPass, uint32_t, uint32_t, sample_shader, uint32_t>, VkPipeline> sample_pipelines_{};
+
+            static sample_shader sample_variant(const uint32_t format, const VkImageAspectFlagBits aspect)
+            {
+                if (aspect == VK_IMAGE_ASPECT_DEPTH_BIT)
+                {
+                    return sample_shader::depth;
+                }
+
+                if (aspect == VK_IMAGE_ASPECT_STENCIL_BIT)
+                {
+                    return sample_shader::stencil;
+                }
+
+                switch (get_vulkan_format_numeric(format))
+                {
+                case vulkan_format_numeric::unsigned_integer:
+                    return sample_shader::unsigned_integer;
+                case vulkan_format_numeric::signed_integer:
+                    return sample_shader::signed_integer;
+                default:
+                    return sample_shader::floating;
+                }
+            }
+
+            VkShaderModule shader_module(const std::string_view name, const std::span<const uint32_t> code)
+            {
+                auto& module = this->shader_modules_[name];
+                if (!module)
+                {
+                    VkShaderModuleCreateInfo info{};
+                    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+                    info.codeSize = code.size_bytes();
+                    info.pCode = code.data();
+                    if (this->device_.create_shader_module(this->device_.handle, &info, nullptr, &module) != VK_SUCCESS)
+                    {
+                        throw std::runtime_error("Creating a Vulkan snapshot shader failed");
+                    }
+                }
+                return module;
+            }
+
+            void create_sample_layouts()
+            {
+                if (this->sample_pipeline_layout_)
+                {
+                    return;
+                }
+
+                const auto& device = this->device_;
+                const std::array bindings{
+                    VkDescriptorSetLayoutBinding{.binding = 0,
+                                                 .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                                 .descriptorCount = 1,
+                                                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                                                 .pImmutableSamplers = nullptr},
+                    VkDescriptorSetLayoutBinding{.binding = 1,
+                                                 .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                 .descriptorCount = 1,
+                                                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                 .pImmutableSamplers = nullptr},
+                };
+
+                VkDescriptorSetLayoutCreateInfo set_layout_info{};
+                set_layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+                set_layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+                set_layout_info.pBindings = bindings.data();
+
+                const VkPushConstantRange push_constants{.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                         .offset = 0,
+                                                         .size = sizeof(sample_parameters)};
+                VkPipelineLayoutCreateInfo pipeline_layout_info{};
+                pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+                pipeline_layout_info.setLayoutCount = 1;
+                pipeline_layout_info.pSetLayouts = &this->sample_set_layout_;
+                pipeline_layout_info.pushConstantRangeCount = 1;
+                pipeline_layout_info.pPushConstantRanges = &push_constants;
+
+                const std::array sizes{
+                    VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = 1},
+                    VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1},
+                };
+                VkDescriptorPoolCreateInfo pool_info{};
+                pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+                pool_info.maxSets = 1;
+                pool_info.poolSizeCount = static_cast<uint32_t>(sizes.size());
+                pool_info.pPoolSizes = sizes.data();
+
+                VkDescriptorSetAllocateInfo set_info{};
+                set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+                set_info.descriptorSetCount = 1;
+                set_info.pSetLayouts = &this->sample_set_layout_;
+
+                if (device.create_descriptor_set_layout(device.handle, &set_layout_info, nullptr, &this->sample_set_layout_) !=
+                        VK_SUCCESS ||
+                    device.create_pipeline_layout(device.handle, &pipeline_layout_info, nullptr, &this->sample_pipeline_layout_) !=
+                        VK_SUCCESS ||
+                    device.create_descriptor_pool(device.handle, &pool_info, nullptr, &this->sample_descriptor_pool_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot shader layouts failed");
+                }
+
+                set_info.descriptorPool = this->sample_descriptor_pool_;
+                if (device.allocate_descriptor_sets(device.handle, &set_info, &this->sample_descriptor_set_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot shader layouts failed");
+                }
+            }
+
+            void bind_sample_resources(const VkImageView view, const VkImageLayout layout)
+            {
+                this->create_sample_layouts();
+
+                const VkDescriptorImageInfo image_info{.sampler = VK_NULL_HANDLE, .imageView = view, .imageLayout = layout};
+                const VkDescriptorBufferInfo buffer_info{.buffer = this->staging_buffer_, .offset = 0, .range = VK_WHOLE_SIZE};
+                std::array<VkWriteDescriptorSet, 2> writes{};
+                for (auto& write : writes)
+                {
+                    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                    write.dstSet = this->sample_descriptor_set_;
+                    write.descriptorCount = 1;
+                }
+                writes[0].dstBinding = 1;
+                writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                writes[0].pBufferInfo = &buffer_info;
+                writes[1].dstBinding = 0;
+                writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                writes[1].pImageInfo = &image_info;
+
+                this->device_.update_descriptor_sets(this->device_.handle, view ? 2 : 1, writes.data(), 0, nullptr);
+            }
+
+            VkPipeline read_pipeline(const sample_shader variant)
+            {
+                this->create_sample_layouts();
+
+                const auto read_variant = [&] {
+                    switch (variant)
+                    {
+                    case sample_shader::stencil:
+                        return sample_shader::unsigned_integer;
+                    case sample_shader::depth:
+                        return sample_shader::floating;
+                    default:
+                        return variant;
+                    }
+                }();
+                auto& pipeline = this->sample_pipelines_[{VK_NULL_HANDLE, 0, 0, read_variant, 0}];
+                if (pipeline)
+                {
+                    return pipeline;
+                }
+
+                const VkShaderModule module = [&] {
+                    switch (read_variant)
+                    {
+                    case sample_shader::unsigned_integer:
+                        return this->shader_module("read_samples_uint", snapshot_shaders::read_samples_uint);
+                    case sample_shader::signed_integer:
+                        return this->shader_module("read_samples_sint", snapshot_shaders::read_samples_sint);
+                    default:
+                        return this->shader_module("read_samples_float", snapshot_shaders::read_samples_float);
+                    }
+                }();
+
+                const VkComputePipelineCreateInfo info{
+                    .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                    .pNext = nullptr,
+                    .flags = 0,
+                    .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                              .pNext = nullptr,
+                              .flags = 0,
+                              .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                              .module = module,
+                              .pName = "main",
+                              .pSpecializationInfo = nullptr},
+                    .layout = this->sample_pipeline_layout_,
+                    .basePipelineHandle = VK_NULL_HANDLE,
+                    .basePipelineIndex = -1,
+                };
+
+                if (this->device_.create_compute_pipelines(this->device_.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) !=
+                    VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot read pipeline failed");
+                }
+                return pipeline;
+            }
+
+            VkRenderPass sample_render_pass(const uint32_t format, const uint32_t samples, const bool depth_stencil)
+            {
+                auto& render_pass = this->sample_render_passes_[{format, samples, depth_stencil}];
+                if (render_pass)
+                {
+                    return render_pass;
+                }
+
+                const VkImageLayout layout =
+                    depth_stencil ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                const VkAttachmentDescription attachment{.flags = 0,
+                                                         .format = static_cast<VkFormat>(format),
+                                                         .samples = static_cast<VkSampleCountFlagBits>(samples),
+                                                         .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+                                                         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                                         .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+                                                         .stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE,
+                                                         .initialLayout = layout,
+                                                         .finalLayout = layout};
+                const VkAttachmentReference reference{.attachment = 0, .layout = layout};
+
+                VkSubpassDescription subpass{};
+                subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+                subpass.colorAttachmentCount = depth_stencil ? 0 : 1;
+                subpass.pColorAttachments = depth_stencil ? nullptr : &reference;
+                subpass.pDepthStencilAttachment = depth_stencil ? &reference : nullptr;
+
+                VkRenderPassCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+                info.attachmentCount = 1;
+                info.pAttachments = &attachment;
+                info.subpassCount = 1;
+                info.pSubpasses = &subpass;
+
+                if (this->device_.create_render_pass(this->device_.handle, &info, nullptr, &render_pass) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot render pass failed");
+                }
+                return render_pass;
+            }
+
+            VkPipeline write_pipeline(const VkRenderPass render_pass, const uint32_t format, const uint32_t samples,
+                                      const sample_shader variant, const uint32_t sample)
+            {
+                auto& pipeline = this->sample_pipelines_[{render_pass, format, samples, variant, sample}];
+                if (pipeline)
+                {
+                    return pipeline;
+                }
+
+                const VkShaderModule fragment = [&] {
+                    switch (variant)
+                    {
+                    case sample_shader::unsigned_integer:
+                        return this->shader_module("write_sample_uint", snapshot_shaders::write_sample_uint);
+                    case sample_shader::signed_integer:
+                        return this->shader_module("write_sample_sint", snapshot_shaders::write_sample_sint);
+                    case sample_shader::depth:
+                        return this->shader_module("write_sample_depth", snapshot_shaders::write_sample_depth);
+                    case sample_shader::stencil:
+                        return this->shader_module("write_sample_stencil", snapshot_shaders::write_sample_stencil);
+                    default:
+                        return this->shader_module("write_sample_float", snapshot_shaders::write_sample_float);
+                    }
+                }();
+
+                const auto shader_stage = [](const VkShaderStageFlagBits stage, const VkShaderModule module) {
+                    return VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                           .pNext = nullptr,
+                                                           .flags = 0,
+                                                           .stage = stage,
+                                                           .module = module,
+                                                           .pName = "main",
+                                                           .pSpecializationInfo = nullptr};
+                };
+                const std::array stages{
+                    shader_stage(VK_SHADER_STAGE_VERTEX_BIT, this->shader_module("fullscreen", snapshot_shaders::fullscreen)),
+                    shader_stage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment),
+                };
+
+                VkPipelineVertexInputStateCreateInfo vertex_input{};
+                vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+                VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+                input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+                input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+                VkPipelineViewportStateCreateInfo viewport{};
+                viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+                viewport.viewportCount = 1;
+                viewport.scissorCount = 1;
+
+                VkPipelineRasterizationStateCreateInfo rasterization{};
+                rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+                rasterization.polygonMode = VK_POLYGON_MODE_FILL;
+                rasterization.cullMode = VK_CULL_MODE_NONE;
+                rasterization.lineWidth = 1.0F;
+
+                const std::array<VkSampleMask, 2> sample_mask{sample < 32 ? 1U << sample : 0U, sample >= 32 ? 1U << (sample - 32) : 0U};
+                const VkPipelineMultisampleStateCreateInfo multisample{
+                    .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                    .pNext = nullptr,
+                    .flags = 0,
+                    .rasterizationSamples = static_cast<VkSampleCountFlagBits>(samples),
+                    .sampleShadingEnable = VK_FALSE,
+                    .minSampleShading = 0.0F,
+                    .pSampleMask = sample_mask.data(),
+                    .alphaToCoverageEnable = VK_FALSE,
+                    .alphaToOneEnable = VK_FALSE,
+                };
+
+                VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+                depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+                depth_stencil.depthTestEnable = variant == sample_shader::depth ? VK_TRUE : VK_FALSE;
+                depth_stencil.depthWriteEnable = variant == sample_shader::depth ? VK_TRUE : VK_FALSE;
+                depth_stencil.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+                depth_stencil.stencilTestEnable = variant == sample_shader::stencil ? VK_TRUE : VK_FALSE;
+                depth_stencil.front = {.failOp = VK_STENCIL_OP_KEEP,
+                                       .passOp = VK_STENCIL_OP_REPLACE,
+                                       .depthFailOp = VK_STENCIL_OP_KEEP,
+                                       .compareOp = VK_COMPARE_OP_ALWAYS,
+                                       .compareMask = 0xFF,
+                                       .writeMask = 0xFF,
+                                       .reference = 0xFF};
+                depth_stencil.back = depth_stencil.front;
+
+                const VkPipelineColorBlendAttachmentState blend_attachment{.blendEnable = VK_FALSE,
+                                                                           .srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                           .dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                           .colorBlendOp = VK_BLEND_OP_ADD,
+                                                                           .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+                                                                           .dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+                                                                           .alphaBlendOp = VK_BLEND_OP_ADD,
+                                                                           .colorWriteMask =
+                                                                               VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                                                               VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
+                const bool color = variant != sample_shader::depth && variant != sample_shader::stencil;
+                VkPipelineColorBlendStateCreateInfo blend{};
+                blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+                blend.attachmentCount = color ? 1 : 0;
+                blend.pAttachments = &blend_attachment;
+
+                const std::array dynamic_states{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+                                                VK_DYNAMIC_STATE_STENCIL_REFERENCE};
+                VkPipelineDynamicStateCreateInfo dynamic{};
+                dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+                dynamic.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+                dynamic.pDynamicStates = dynamic_states.data();
+
+                VkGraphicsPipelineCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+                info.stageCount = static_cast<uint32_t>(stages.size());
+                info.pStages = stages.data();
+                info.pVertexInputState = &vertex_input;
+                info.pInputAssemblyState = &input_assembly;
+                info.pViewportState = &viewport;
+                info.pRasterizationState = &rasterization;
+                info.pMultisampleState = &multisample;
+                info.pDepthStencilState = color ? nullptr : &depth_stencil;
+                info.pColorBlendState = &blend;
+                info.pDynamicState = &dynamic;
+                info.layout = this->sample_pipeline_layout_;
+                info.renderPass = render_pass;
+
+                if (this->device_.create_graphics_pipelines(this->device_.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) !=
+                    VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot write pipeline failed");
+                }
+                return pipeline;
+            }
+
+            VkImageView create_view(const VkImage image, const uint32_t format, const VkImageAspectFlags aspects,
+                                    const uint32_t layer) const
+            {
+                VkImageViewCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                info.image = image;
+                info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+                info.format = static_cast<VkFormat>(format);
+                info.subresourceRange = {
+                    .aspectMask = aspects, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+
+                VkImageView view{};
+                if (this->device_.create_image_view(this->device_.handle, &info, nullptr, &view) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating a view of a multisampled Vulkan image failed");
+                }
+                return view;
+            }
+
+            void image_barrier(const VkCommandBuffer command_buffer, const VkImage image, const VkImageAspectFlags aspects,
+                               const uint32_t layer, const VkImageLayout from, const VkImageLayout to) const
+            {
+                VkImageMemoryBarrier barrier{};
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.srcAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                barrier.oldLayout = from;
+                barrier.newLayout = to;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.image = image;
+                barrier.subresourceRange = {
+                    .aspectMask = aspects, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = layer, .layerCount = 1};
+                this->device_.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                                   0, 0, nullptr, 0, nullptr, 1, &barrier);
+            }
+
+            VkCommandPool pool_{};
+            VkCommandBuffer command_buffer_{};
+            VkBuffer staging_buffer_{};
+            VkDeviceMemory staging_memory_{};
+            void* staging_data_{};
+
+            void create(const std::function<uint32_t(uint32_t type_bits)>& find_host_memory_type)
+            {
+                const auto& device = this->device_;
+                device.get_device_queue(device.handle, this->queue_family_, 0, &this->queue_);
+
+                VkCommandPoolCreateInfo pool_info{};
+                pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+                pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+                pool_info.queueFamilyIndex = this->queue_family_;
+
+                VkCommandBufferAllocateInfo command_buffer_info{};
+                command_buffer_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+                command_buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                command_buffer_info.commandBufferCount = 1;
+
+                if (!this->queue_ || device.create_command_pool(device.handle, &pool_info, nullptr, &this->pool_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot transfer queue failed");
+                }
+
+                command_buffer_info.commandPool = this->pool_;
+                if (device.allocate_command_buffers(device.handle, &command_buffer_info, &this->command_buffer_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot transfer queue failed");
+                }
+
+                this->staging_buffer_ = this->create_transfer_buffer(chunk_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+                VkMemoryRequirements requirements{};
+                device.get_buffer_memory_requirements(device.handle, this->staging_buffer_, &requirements);
+
+                VkMemoryAllocateInfo allocate_info{};
+                allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                allocate_info.allocationSize = requirements.size;
+                allocate_info.memoryTypeIndex = find_host_memory_type(requirements.memoryTypeBits);
+                if (allocate_info.memoryTypeIndex == UINT32_MAX ||
+                    device.allocate_memory(device.handle, &allocate_info, nullptr, &this->staging_memory_) != VK_SUCCESS ||
+                    device.bind_buffer_memory(device.handle, this->staging_buffer_, this->staging_memory_, 0) != VK_SUCCESS ||
+                    device.map_memory(device.handle, this->staging_memory_, 0, VK_WHOLE_SIZE, 0, &this->staging_data_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot staging buffer failed");
+                }
+            }
+
+            void release()
+            {
+                const auto& device = this->device_;
+                for (const auto& [key, pipeline] : this->sample_pipelines_)
+                {
+                    device.destroy_pipeline(device.handle, pipeline, nullptr);
+                }
+                for (const auto& [key, render_pass] : this->sample_render_passes_)
+                {
+                    device.destroy_render_pass(device.handle, render_pass, nullptr);
+                }
+                for (const auto& [name, module] : this->shader_modules_)
+                {
+                    device.destroy_shader_module(device.handle, module, nullptr);
+                }
+                if (this->sample_pipeline_layout_)
+                {
+                    device.destroy_pipeline_layout(device.handle, this->sample_pipeline_layout_, nullptr);
+                }
+                if (this->sample_set_layout_)
+                {
+                    device.destroy_descriptor_set_layout(device.handle, this->sample_set_layout_, nullptr);
+                }
+                if (this->sample_descriptor_pool_)
+                {
+                    device.destroy_descriptor_pool(device.handle, this->sample_descriptor_pool_, nullptr);
+                }
+                this->sample_pipelines_.clear();
+                this->sample_render_passes_.clear();
+                this->shader_modules_.clear();
+                this->sample_pipeline_layout_ = VK_NULL_HANDLE;
+                this->sample_set_layout_ = VK_NULL_HANDLE;
+                this->sample_descriptor_pool_ = VK_NULL_HANDLE;
+
+                if (this->staging_memory_)
+                {
+                    device.free_memory(device.handle, this->staging_memory_, nullptr);
+                }
+                if (this->staging_buffer_)
+                {
+                    device.destroy_buffer(device.handle, this->staging_buffer_, nullptr);
+                }
+                if (this->pool_)
+                {
+                    device.destroy_command_pool(device.handle, this->pool_, nullptr);
+                }
+
+                this->staging_memory_ = VK_NULL_HANDLE;
+                this->staging_buffer_ = VK_NULL_HANDLE;
+                this->pool_ = VK_NULL_HANDLE;
+            }
+
+            VkBuffer create_transfer_buffer(const VkDeviceSize size, const VkBufferUsageFlags extra_usage = 0) const
+            {
+                VkBufferCreateInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+                info.size = size;
+                info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | extra_usage;
+                info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+                VkBuffer buffer{};
+                if (this->device_.create_buffer(this->device_.handle, &info, nullptr, &buffer) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating a Vulkan snapshot transfer buffer failed");
+                }
+                return buffer;
+            }
+
+            template <typename Record>
+            void submit(const Record& record)
+            {
+                const auto& device = this->device_;
+
+                VkCommandBufferBeginInfo begin_info{};
+                begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+                VkSubmitInfo submit_info{};
+                submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                submit_info.commandBufferCount = 1;
+                submit_info.pCommandBuffers = &this->command_buffer_;
+
+                if (device.begin_command_buffer(this->command_buffer_, &begin_info) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Recording a Vulkan snapshot transfer failed");
+                }
+
+                record(this->command_buffer_);
+
+                if (device.end_command_buffer(this->command_buffer_) != VK_SUCCESS ||
+                    device.queue_submit(this->queue_, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS ||
+                    device.queue_wait_idle(this->queue_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Running a Vulkan snapshot transfer failed");
+                }
+            }
+        };
+
+        std::vector<VkPhysicalDevice> enumerate_native_physical_devices(const PFN_vkEnumeratePhysicalDevices enumerate,
+                                                                        const VkInstance instance)
+        {
+            uint32_t count = 0;
+            if (!enumerate || enumerate(instance, &count, nullptr) != VK_SUCCESS)
+            {
+                return {};
+            }
+
+            std::vector<VkPhysicalDevice> devices(count);
+            if (enumerate(instance, &count, devices.data()) != VK_SUCCESS)
+            {
+                return {};
+            }
+
+            devices.resize(count);
+            return devices;
+        }
+    }
+
+    void vulkan_host::quiesce()
+    {
+        auto& impl = *this->impl_;
+
+        for (const auto& memory : impl.memories | std::views::values)
+        {
+            if (memory.placed)
+            {
+                throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
+            }
+
+            if (memory.imported && memory.non_coherent)
+            {
+                throw std::runtime_error("Snapshots do not support non-coherent imported Vulkan memory yet");
+            }
+        }
+
+        // Waiting for a device to go idle never returns while a queue waits for something only later guest work would
+        // signal.
+        for (const auto& semaphore : impl.semaphores | std::views::values)
+        {
+            if (semaphore.binary_wait_unsignaled)
+            {
+                throw std::runtime_error("A Vulkan queue waits for a binary semaphore nothing has been submitted to signal");
+            }
+
+            if (semaphore.type != VK_SEMAPHORE_TYPE_TIMELINE)
+            {
+                continue;
+            }
+
+            const auto& device = impl.devices.at(semaphore.device_id);
+            uint64_t value = 0;
+            if (!device.get_semaphore_counter_value ||
+                device.get_semaphore_counter_value(device.handle, semaphore.handle, &value) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Reading a Vulkan timeline semaphore failed");
+            }
+
+            if (semaphore.highest_wait > std::max(value, semaphore.highest_signal))
+            {
+                throw std::runtime_error("A Vulkan queue waits for a timeline value nothing has been submitted to signal");
+            }
+        }
+
+        for (auto& device : impl.devices | std::views::values)
+        {
+            std::erase_if(device.abandoned_drain_fences, [&](const VkFence fence) {
+                if (device.get_fence_status(device.handle, fence) != VK_SUCCESS)
+                {
+                    return false;
+                }
+
+                device.destroy_fence(device.handle, fence, nullptr);
+                return true;
+            });
+        }
+
+        if (impl.has_pending_submissions())
+        {
+            throw std::runtime_error("A Vulkan queue waits for something no submission, acquire or host signal provides");
+        }
+
+        // The checks above cannot see the order of submissions, e.g. a wait on one queue for a signal submitted after it on
+        // the same queue. Each queue therefore gets a fence behind its work, which signals once all of it is done, and the
+        // snapshot is refused unless every fence does so in time.
+        std::unordered_set<VkQueue> drained{};
+        for (const auto& queue : impl.queues | std::views::values)
+        {
+            auto& device = impl.devices.at(queue.device_id);
+            if (!drained.insert(queue.handle).second)
+            {
+                continue;
+            }
+
+            VkFenceCreateInfo fence_info{};
+            fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            VkFence fence{};
+            if (device.create_fence(device.handle, &fence_info, nullptr, &fence) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Creating a Vulkan fence to drain a queue failed");
+            }
+
+            if (device.queue_submit(queue.handle, 0, nullptr, fence) != VK_SUCCESS)
+            {
+                device.destroy_fence(device.handle, fence, nullptr);
+                throw std::runtime_error("Draining a Vulkan queue failed");
+            }
+
+            constexpr auto drain_timeout = std::chrono::seconds(5);
+            const auto deadline = std::chrono::steady_clock::now() + drain_timeout;
+            VkResult status = VK_NOT_READY;
+            while ((status = device.get_fence_status(device.handle, fence)) == VK_NOT_READY && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
+            if (status != VK_SUCCESS)
+            {
+                device.abandoned_drain_fences.push_back(fence);
+                throw std::runtime_error(
+                    "A Vulkan queue did not finish its work, it may wait for something the guest has not signaled yet");
+            }
+
+            device.destroy_fence(device.handle, fence, nullptr);
+        }
+
+        for (const auto& device : impl.devices | std::views::values)
+        {
+            if (!device.device_wait_idle || device.device_wait_idle(device.handle) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Waiting for a Vulkan device to go idle failed");
+            }
+        }
+
+        impl.quiesced = true;
+    }
+
+    void vulkan_host::serialize(utils::buffer_serializer& buffer) const
+    {
+        auto& impl = *this->impl_;
+        if (!impl.quiesced)
+        {
+            throw std::runtime_error("Vulkan state can only be saved after the GPU finished its work");
+        }
+
+        std::map<std::pair<uint64_t, uint32_t>, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
+        const auto transfer_for = [&](const uint64_t device_id,
+                                      const uint32_t family = VK_QUEUE_FAMILY_IGNORED) -> snapshot_transfer<impl::device_data>& {
+            const auto& device = impl.devices.at(device_id);
+            const auto queue_family = family == VK_QUEUE_FAMILY_IGNORED ? device.queue_family_index : family;
+            auto& transfer = transfers[{device_id, queue_family}];
+            if (!transfer)
+            {
+                transfer = std::make_unique<snapshot_transfer<impl::device_data>>(device, queue_family, [&](const uint32_t type_bits) {
+                    return impl.find_memory_type(device, type_bits,
+                                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                });
+            }
+            return *transfer;
+        };
+
+        const auto memory_property_flags = [&](const impl::device_data& device, const uint32_t memory_type_index) -> VkMemoryPropertyFlags {
+            VkPhysicalDeviceMemoryProperties properties{};
+            if (!impl.query_memory_properties(device, properties))
+            {
+                return 0;
+            }
+
+            const auto index = impl.substitute_cached_memory_type(device, memory_type_index);
+            return index < properties.memoryTypeCount ? properties.memoryTypes[index].propertyFlags : 0;
+        };
+
+        buffer.write(snapshot_version);
+        buffer.write(impl.next_id);
+
+        buffer.write(static_cast<uint64_t>(impl.instances.size()));
+        for (const auto& [id, instance] : impl.instances)
+        {
+            buffer.write(id);
+            buffer.write(static_cast<uint64_t>(instance.extensions.size()));
+            for (const auto& extension : instance.extensions)
+            {
+                buffer.write_string(extension);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.physical_devices.size()));
+        for (const auto& [id, physical_device] : impl.physical_devices)
+        {
+            const auto& instance = impl.instances.at(physical_device.instance_id);
+            const auto native = enumerate_native_physical_devices(instance.enumerate_physical_devices, instance.handle);
+            const auto position = std::ranges::find(native, physical_device.handle);
+            if (position == native.end() || !instance.get_physical_device_properties)
+            {
+                throw std::runtime_error("A Vulkan physical device is no longer enumerated");
+            }
+
+            VkPhysicalDeviceProperties properties{};
+            instance.get_physical_device_properties(physical_device.handle, &properties);
+
+            buffer.write(id);
+            buffer.write(physical_device.instance_id);
+            buffer.write(static_cast<uint32_t>(position - native.begin()));
+            buffer.write(properties.vendorID);
+            buffer.write(properties.deviceID);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.devices.size()));
+        for (const auto& [id, device] : impl.devices)
+        {
+            buffer.write(id);
+            buffer.write(device.create.physical_device);
+            buffer.write_vector(device.create.queues);
+            buffer.write_vector(device.create.extensions);
+            buffer.write(device.create.extension_count);
+            buffer.write_vector(device.create.features);
+            buffer.write(device.create.feature_count);
+            buffer.write(device.create.spoof_missing_features);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.queues.size()));
+        for (const auto& [id, queue] : impl.queues)
+        {
+            buffer.write(id);
+            buffer.write(queue.device_id);
+            buffer.write(queue.queue_family_index);
+            buffer.write(queue.queue_index);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.memories.size()));
+        for (const auto& [id, memory] : impl.memories)
+        {
+            buffer.write(id);
+            buffer.write(memory.device_id);
+            buffer.write(memory.requested_size);
+            buffer.write(memory.memory_type_index);
+            buffer.write(memory.flags);
+            buffer.write(memory.device_mask);
+            buffer.write(memory.imported);
+
+            if (memory.imported)
+            {
+                continue;
+            }
+
+            const auto& device = impl.devices.at(memory.device_id);
+            const auto property_flags = memory_property_flags(device, memory.memory_type_index);
+            if ((property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
+            {
+                std::vector<std::byte> contents(static_cast<size_t>(memory.allocation_size));
+                if (!transfer_for(memory.device_id)
+                         .copy(memory.handle, impl.substitute_cached_memory_type(device, memory.memory_type_index), contents, false))
+                {
+                    throw std::runtime_error("Snapshots do not save Vulkan memory only images can use yet");
+                }
+
+                buffer.write_vector(contents);
+                continue;
+            }
+
+            if ((property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0)
+            {
+                throw std::runtime_error("Snapshots do not save non-coherent Vulkan memory yet");
+            }
+
+            void* mapped = memory.persistent_host_pointer;
+            if (!mapped &&
+                (!device.map_memory || device.map_memory(device.handle, memory.handle, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS))
+            {
+                throw std::runtime_error("Mapping Vulkan memory for a snapshot failed");
+            }
+
+            const auto* contents = static_cast<const std::byte*>(mapped);
+            buffer.write_vector(std::vector<std::byte>(contents, contents + memory.allocation_size));
+
+            if (!memory.persistent_host_pointer)
+            {
+                device.unmap_memory(device.handle, memory.handle);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.buffers.size()));
+        for (const auto& [id, buffer_object] : impl.buffers)
+        {
+            buffer.write(id);
+            buffer.write(buffer_object.device_id);
+            buffer.write(buffer_object.size);
+            buffer.write(buffer_object.usage);
+            buffer.write(buffer_object.memory_id);
+            buffer.write(buffer_object.memory_offset);
+        }
+
+        buffer.write(static_cast<uint64_t>(std::ranges::count_if(impl.images, [](const auto& entry) { return entry.second.owned; })));
+        for (const auto& [id, image] : impl.images)
+        {
+            if (!image.owned)
+            {
+                continue;
+            }
+
+            const auto& create = image.create;
+            buffer.write(id);
+            buffer.write(image.device_id);
+            buffer.write(create);
+            buffer.write(image.memory_id);
+            buffer.write(image.memory_offset);
+            buffer.write_vector(image.layouts);
+            buffer.write_vector(image.owners);
+
+            if (image.ownership_unknown ||
+                std::ranges::any_of(image.released_to, [](const uint32_t family) { return family != VK_QUEUE_FAMILY_IGNORED; }))
+            {
+                throw std::runtime_error("Vulkan image " + std::to_string(id) + " is being handed between queue families");
+            }
+
+            const auto aspects = get_vulkan_format_aspects(create.format);
+            uint32_t aspect = 0;
+            for (uint32_t bit = 1; bit <= VK_IMAGE_ASPECT_STENCIL_BIT; bit <<= 1)
+            {
+                if ((aspects & bit) == 0)
+                {
+                    continue;
+                }
+
+                for (uint32_t mip = 0; mip < create.mip_levels; ++mip)
+                {
+                    for (uint32_t layer = 0; layer < create.array_layers; ++layer)
+                    {
+                        const auto layout = static_cast<VkImageLayout>(image.layouts[image.subresource_index(aspect, mip, layer)]);
+                        if (layout == VK_IMAGE_LAYOUT_UNDEFINED || layout == VK_IMAGE_LAYOUT_PREINITIALIZED || image.memory_id == 0)
+                        {
+                            continue;
+                        }
+
+                        const auto first_aspect = image.subresource_index(0, mip, layer);
+                        const auto owner = image.owners[first_aspect];
+                        const bool layouts_match = aspect == 0 || (layout == static_cast<VkImageLayout>(image.layouts[first_aspect]) &&
+                                                                   owner == image.owners[image.subresource_index(aspect, mip, layer)]);
+                        // Multisampled contents are read and written by shaders, which the device's first queue family runs.
+                        const bool owner_runs_shaders = image.samples == 1 || owner == VK_QUEUE_FAMILY_IGNORED ||
+                                                        owner == impl.devices.at(image.device_id).queue_family_index;
+                        if (!image.copyable || !layouts_match || !owner_runs_shaders)
+                        {
+                            throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
+                        }
+
+                        if (image.samples > 1)
+                        {
+                            const VkExtent2D extent{.width = create.width, .height = create.height};
+                            std::vector<std::byte> contents(static_cast<size_t>(extent.width) * extent.height * image.samples *
+                                                            snapshot_transfer<impl::device_data>::sample_size);
+                            if (!transfer_for(image.device_id, owner)
+                                     .read_samples(image.handle, create.format, image.samples, static_cast<VkImageAspectFlagBits>(bit),
+                                                   aspects, layer, extent, layout, contents))
+                            {
+                                throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) +
+                                                         " yet");
+                            }
+
+                            buffer.write(true);
+                            buffer.write(bit);
+                            buffer.write(mip);
+                            buffer.write(layer);
+                            buffer.write_vector(contents);
+                            continue;
+                        }
+
+                        const auto block = get_vulkan_copy_block(create.format, bit);
+                        if (!block)
+                        {
+                            throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
+                        }
+
+                        const VkExtent3D extent{.width = std::max(1U, create.width >> mip),
+                                                .height = std::max(1U, create.height >> mip),
+                                                .depth = std::max(1U, create.depth >> mip)};
+                        const uint64_t size = ((extent.width + block->width - 1) / block->width) *
+                                              ((extent.height + block->height - 1) / block->height) * extent.depth * block->size;
+
+                        std::vector<std::byte> contents(static_cast<size_t>(size));
+                        if (!transfer_for(image.device_id, owner)
+                                 .copy_image(image.handle, static_cast<VkImageAspectFlagBits>(bit), aspects, mip, layer, extent, *block,
+                                             layout, layout, true, contents, false))
+                        {
+                            throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
+                        }
+
+                        buffer.write(true);
+                        buffer.write(bit);
+                        buffer.write(mip);
+                        buffer.write(layer);
+                        buffer.write_vector(contents);
+                    }
+                }
+
+                ++aspect;
+            }
+
+            buffer.write(false);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.surfaces.size()));
+        for (const auto& [id, surface] : impl.surfaces)
+        {
+            buffer.write(id);
+            buffer.write(surface.instance_id);
+        }
+
+        // Re-created swapchains give the guest images with undefined contents, so it has to draw each frame anew.
+        buffer.write(static_cast<uint64_t>(impl.swapchains.size()));
+        for (const auto& [id, swapchain] : impl.swapchains)
+        {
+            if (std::ranges::any_of(swapchain.acquired, [](const bool acquired) { return acquired; }))
+            {
+                throw std::runtime_error("Snapshots cannot be taken while the guest holds a swapchain image");
+            }
+
+            if (std::ranges::count_if(impl.swapchains, [&](const auto& other) { return other.second.surface_id == swapchain.surface_id; }) >
+                1)
+            {
+                throw std::runtime_error("Snapshots do not support a retired Vulkan swapchain that is still alive yet");
+            }
+
+            buffer.write(id);
+            buffer.write(swapchain.device_id);
+            buffer.write(swapchain.surface_id);
+            buffer.write(swapchain.create);
+            buffer.write_vector(swapchain.image_ids);
+            for (const auto image : swapchain.image_ids)
+            {
+                const auto& data = impl.images.at(image);
+                buffer.write_vector(data.layouts);
+                buffer.write(data.last_queue_id);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.query_pools.size()));
+        for (const auto& [id, pool] : impl.query_pools)
+        {
+            if (!pool.snapshot_supported())
+            {
+                throw std::runtime_error("Snapshots do not support Vulkan query pools of type " + std::to_string(pool.query_type) + " yet");
+            }
+
+            const auto& device = impl.devices.at(pool.device_id);
+            const uint32_t values = pool.value_count();
+            std::vector<uint64_t> results(static_cast<size_t>(pool.query_count) * (values + 1));
+            const VkResult result =
+                pool.query_count == 0
+                    ? VK_SUCCESS
+                    : device.get_query_pool_results(device.handle, pool.handle, 0, pool.query_count, results.size() * sizeof(uint64_t),
+                                                    results.data(), (values + 1) * sizeof(uint64_t),
+                                                    VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            if (result != VK_SUCCESS && result != VK_NOT_READY)
+            {
+                throw std::runtime_error("Reading Vulkan query pool " + std::to_string(id) + " failed");
+            }
+
+            auto available = pool.restored_results;
+            for (uint32_t query = 0; query < pool.query_count; ++query)
+            {
+                const auto* entry = results.data() + (static_cast<size_t>(query) * (values + 1));
+                if (entry[values] != 0)
+                {
+                    available[query].assign(entry, entry + values);
+                }
+            }
+
+            buffer.write(id);
+            buffer.write(pool.device_id);
+            buffer.write(pool.query_type);
+            buffer.write(pool.query_count);
+            buffer.write(pool.pipeline_statistics);
+            buffer.write(static_cast<uint64_t>(available.size()));
+            for (const auto& [query, query_values] : available)
+            {
+                buffer.write(query);
+                buffer.write_vector(query_values);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.samplers.size()));
+        for (const auto& [id, sampler] : impl.samplers)
+        {
+            buffer.write(id);
+            buffer.write(sampler.device_id);
+            buffer.write(sampler.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.shader_modules.size()));
+        for (const auto& [id, module] : impl.shader_modules)
+        {
+            buffer.write(id);
+            buffer.write(module.device_id);
+            buffer.write(*module.code);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.identified_code.size()));
+        for (const auto& [identifier, code] : impl.identified_code)
+        {
+            buffer.write_string(identifier);
+            buffer.write(*code);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.descriptor_set_layouts.size()));
+        for (const auto& [id, layout] : impl.descriptor_set_layouts)
+        {
+            buffer.write(id);
+            buffer.write(layout.device_id);
+            buffer.write(*layout.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.pipeline_layouts.size()));
+        for (const auto& [id, layout] : impl.pipeline_layouts)
+        {
+            buffer.write(id);
+            buffer.write(layout.device_id);
+            buffer.write(*layout.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.render_passes.size()));
+        for (const auto& [id, render_pass] : impl.render_passes)
+        {
+            buffer.write(id);
+            buffer.write(render_pass.device_id);
+            buffer.write(render_pass.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.pipeline_caches.size()));
+        for (const auto& [id, cache] : impl.pipeline_caches)
+        {
+            const auto& device = impl.devices.at(cache.device_id);
+            size_t size = 0;
+            if (device.get_pipeline_cache_data(device.handle, cache.handle, &size, nullptr) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Reading a Vulkan pipeline cache failed");
+            }
+
+            std::vector<uint8_t> data(size);
+            if (device.get_pipeline_cache_data(device.handle, cache.handle, &size, data.data()) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Reading a Vulkan pipeline cache failed");
+            }
+
+            data.resize(size);
+            buffer.write(id);
+            buffer.write(cache.device_id);
+            buffer.write(cache.flags);
+            buffer.write_vector(data);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.pipelines.size()));
+        for (const auto& [id, pipeline] : impl.pipelines)
+        {
+            const auto restorable = [&](const impl::shader_stage_params& stage) {
+                return stage.code != nullptr || impl.shader_modules.contains(stage.module);
+            };
+
+            if (!restorable(pipeline.create.vertex) || (!pipeline.create.compute && !restorable(pipeline.create.fragment)))
+            {
+                throw std::runtime_error("Vulkan pipeline " + std::to_string(id) + " was created from shader code the bridge never saw");
+            }
+
+            buffer.write(id);
+            buffer.write(pipeline.device_id);
+            buffer.write(pipeline.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.image_views.size()));
+        for (const auto& [id, view] : impl.image_views)
+        {
+            buffer.write(id);
+            buffer.write(view.device_id);
+            buffer.write(view.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.buffer_views.size()));
+        for (const auto& [id, view] : impl.buffer_views)
+        {
+            buffer.write(id);
+            buffer.write(view.device_id);
+            buffer.write(view.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.framebuffers.size()));
+        for (const auto& [id, framebuffer] : impl.framebuffers)
+        {
+            buffer.write(id);
+            buffer.write(framebuffer.device_id);
+            buffer.write(framebuffer.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.descriptor_pools.size()));
+        for (const auto& [id, pool] : impl.descriptor_pools)
+        {
+            buffer.write(id);
+            buffer.write(pool.device_id);
+            buffer.write(pool.create);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.descriptor_sets.size()));
+        for (const auto& [id, set] : impl.descriptor_sets)
+        {
+            buffer.write(id);
+            buffer.write(set.device_id);
+            buffer.write(set.pool_id);
+            buffer.write(set.layout_id);
+            buffer.write(*set.layout_create);
+            buffer.write(set.variable_descriptor_count.has_value());
+            buffer.write(set.variable_descriptor_count.value_or(0));
+
+            buffer.write(static_cast<uint64_t>(set.slots.size()));
+            for (const auto& [key, slot] : set.slots)
+            {
+                buffer.write(key);
+                buffer.write(slot);
+            }
+
+            buffer.write(static_cast<uint64_t>(set.inline_blocks.size()));
+            for (const auto& [binding, block] : set.inline_blocks)
+            {
+                buffer.write(binding);
+                buffer.write_vector(block);
+            }
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.events.size()));
+        for (const auto& [id, event] : impl.events)
+        {
+            const auto& device = impl.devices.at(event.device_id);
+            buffer.write(id);
+            buffer.write(event.device_id);
+            buffer.write(event.flags);
+            buffer.write(device.get_event_status(device.handle, event.handle) == VK_EVENT_SET);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.command_pools.size()));
+        for (const auto& [id, pool] : impl.command_pools)
+        {
+            buffer.write(id);
+            buffer.write(pool.device_id);
+            buffer.write(pool.queue_family_index);
+            buffer.write(pool.flags);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.command_buffers.size()));
+        for (const auto& [id, command_buffer] : impl.command_buffers)
+        {
+            buffer.write(id);
+            buffer.write(command_buffer.device_id);
+            buffer.write(command_buffer.pool_id);
+            buffer.write(command_buffer.level);
+            buffer.write_vector(command_buffer.recorded);
+            buffer.write_vector(command_buffer.recorded_results);
+            buffer.write(std::ranges::any_of(command_buffer.references, [&](const uint64_t id) { return !impl.is_live(id); }));
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.fences.size()));
+        for (const auto& [id, fence] : impl.fences)
+        {
+            const auto& device = impl.devices.at(fence.device_id);
+            buffer.write(id);
+            buffer.write(fence.device_id);
+            buffer.write(device.get_fence_status && device.get_fence_status(device.handle, fence.handle) == VK_SUCCESS);
+        }
+
+        buffer.write(static_cast<uint64_t>(impl.semaphores.size()));
+        for (const auto& [id, semaphore] : impl.semaphores)
+        {
+            const auto& device = impl.devices.at(semaphore.device_id);
+            uint64_t value = 0;
+            if (semaphore.type == VK_SEMAPHORE_TYPE_TIMELINE &&
+                (!device.get_semaphore_counter_value ||
+                 device.get_semaphore_counter_value(device.handle, semaphore.handle, &value) != VK_SUCCESS))
+            {
+                throw std::runtime_error("Reading a Vulkan timeline semaphore failed");
+            }
+
+            buffer.write(id);
+            buffer.write(semaphore.device_id);
+            buffer.write(semaphore.flags);
+            buffer.write(semaphore.type);
+            buffer.write(value);
+            buffer.write(semaphore.binary_signaled);
+            buffer.write(semaphore.binary_wait_unsignaled);
+            buffer.write(semaphore.highest_signal);
+            buffer.write(semaphore.highest_wait);
+        }
+    }
+
+    void vulkan_host::deserialize(utils::buffer_deserializer& buffer, const restore_callbacks& callbacks)
+    {
+        auto& impl = *this->impl_;
+        const auto clear_forced_ids = utils::finally([&] { impl.forced_ids.clear(); });
+
+        std::map<std::pair<uint64_t, uint32_t>, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
+        const auto transfer_for = [&](const uint64_t device_id,
+                                      const uint32_t family = VK_QUEUE_FAMILY_IGNORED) -> snapshot_transfer<impl::device_data>& {
+            const auto& device = impl.devices.at(device_id);
+            const auto queue_family = family == VK_QUEUE_FAMILY_IGNORED ? device.queue_family_index : family;
+            auto& transfer = transfers[{device_id, queue_family}];
+            if (!transfer)
+            {
+                transfer = std::make_unique<snapshot_transfer<impl::device_data>>(device, queue_family, [&](const uint32_t type_bits) {
+                    return impl.find_memory_type(device, type_bits,
+                                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                });
+            }
+            return *transfer;
+        };
+
+        if (buffer.read<uint32_t>() != snapshot_version)
+        {
+            throw std::runtime_error("Unsupported Vulkan snapshot version");
+        }
+
+        impl.next_id = buffer.read<uint64_t>();
+
+        std::vector<std::function<void()>> temporaries{};
+        const auto destroy_temporaries = utils::finally([&] {
+            for (const auto& destroy : std::views::reverse(temporaries))
+            {
+                destroy();
+            }
+        });
+
+        const auto ensure_set_layout = [&](const uint64_t device, const uint64_t id, const impl::set_layout_params& create) {
+            if (impl.descriptor_set_layouts.contains(id))
+            {
+                return id;
+            }
+
+            uint64_t layout{};
+            if (this->create_descriptor_set_layout(device, create.flags, create.bindings, layout) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan descriptor set layout failed");
+            }
+            temporaries.emplace_back([this, device, layout] { this->destroy_descriptor_set_layout(device, layout); });
+            return layout;
+        };
+
+        const auto set_layout_ids = [&](const uint64_t device, const impl::pipeline_layout_params& create) {
+            std::vector<uint64_t> ids{};
+            ids.reserve(create.set_layouts.size());
+            for (size_t i = 0; i < create.set_layouts.size(); ++i)
+            {
+                ids.push_back(ensure_set_layout(device, create.set_layouts[i], *create.set_layout_creates[i]));
+            }
+            return ids;
+        };
+
+        const auto ensure_pipeline_layout = [&](const uint64_t device, const uint64_t id, const impl::pipeline_layout_params& create) {
+            if (impl.pipeline_layouts.contains(id))
+            {
+                return id;
+            }
+
+            uint64_t layout{};
+            if (this->create_pipeline_layout(device, create.push_constant_stages, create.push_constant_size, set_layout_ids(device, create),
+                                             layout) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan pipeline layout failed");
+            }
+            temporaries.emplace_back([this, device, layout] { this->destroy_pipeline_layout(device, layout); });
+            return layout;
+        };
+
+        const auto ensure_render_pass = [&](const uint64_t device, const uint64_t id, const impl::render_pass_params& create) -> uint64_t {
+            if (id == 0 || impl.render_passes.contains(id))
+            {
+                return id;
+            }
+
+            uint64_t render_pass{};
+            if (this->create_render_pass(device, create.format, create.load_op, create.store_op, create.initial_layout, create.final_layout,
+                                         create.depth_format, render_pass) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan render pass failed");
+            }
+            temporaries.emplace_back([this, device, render_pass] { this->destroy_render_pass(device, render_pass); });
+            return render_pass;
+        };
+
+        // Stages whose module was destroyed get a temporary one from the saved code, also those given by an identifier.
+        const auto stage_source = [&](const uint64_t device, const impl::shader_stage_params& stage) -> shader_stage_source {
+            if (stage.module != 0 && impl.shader_modules.contains(stage.module))
+            {
+                return {.module = stage.module, .identifier = {}};
+            }
+
+            if (!stage.code)
+            {
+                return {.module = 0, .identifier = stage.identifier};
+            }
+
+            uint64_t module{};
+            if (this->create_shader_module(device, stage.code->flags, stage.code->code.data(), stage.code->code.size(), module) !=
+                VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan shader module failed");
+            }
+            temporaries.emplace_back([this, device, module] { this->destroy_shader_module(device, module); });
+            return {.module = module, .identifier = {}};
+        };
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            std::vector<std::string> extensions(static_cast<size_t>(buffer.read<uint64_t>()));
+            for (auto& extension : extensions)
+            {
+                extension = buffer.read_string<char>();
+            }
+
+            uint64_t instance{};
+            impl.forced_ids = {id};
+            const auto result = this->create_instance(extensions, instance);
+            expect_restored(result, instance, id, "instance");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto instance_id = buffer.read<uint64_t>();
+            const auto index = buffer.read<uint32_t>();
+            const auto vendor_id = buffer.read<uint32_t>();
+            const auto device_id = buffer.read<uint32_t>();
+
+            const auto& instance = impl.instances.at(instance_id);
+            const auto native = enumerate_native_physical_devices(instance.enumerate_physical_devices, instance.handle);
+
+            VkPhysicalDeviceProperties properties{};
+            if (index < native.size() && instance.get_physical_device_properties)
+            {
+                instance.get_physical_device_properties(native[index], &properties);
+            }
+
+            if (index >= native.size() || properties.vendorID != vendor_id || properties.deviceID != device_id)
+            {
+                throw std::runtime_error("The snapshot was taken on a different GPU");
+            }
+
+            impl.physical_devices.emplace(id, impl::physical_device_data{.handle = native[index], .instance_id = instance_id});
+            impl.physical_device_ids.emplace(native[index], id);
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            impl::device_create_params create{};
+            buffer.read(create.physical_device);
+            buffer.read_vector(create.queues);
+            buffer.read_vector(create.extensions);
+            buffer.read(create.extension_count);
+            buffer.read_vector(create.features);
+            buffer.read(create.feature_count);
+            buffer.read(create.spoof_missing_features);
+
+            const auto& physical_device = impl.physical_devices.at(create.physical_device);
+            const auto& instance = impl.instances.at(physical_device.instance_id);
+            uint32_t family_count = 0;
+            instance.get_queue_family_properties(physical_device.handle, &family_count, nullptr);
+            std::vector<VkQueueFamilyProperties> families(family_count);
+            instance.get_queue_family_properties(physical_device.handle, &family_count, families.data());
+            if (std::ranges::any_of(create.queues, [&](const auto& queue) {
+                    return queue.queue_family_index >= family_count || queue.queue_count > families[queue.queue_family_index].queueCount;
+                }))
+            {
+                throw std::runtime_error("This GPU no longer offers the queues of Vulkan device " + std::to_string(id));
+            }
+
+            uint64_t device{};
+            impl.forced_ids = {id};
+            const auto result =
+                this->create_device(create.physical_device, create.queues.data(), create.queues.size(), create.extensions.data(),
+                                    create.extensions.size(), create.extension_count, create.features.data(), create.features.size(),
+                                    create.feature_count, create.spoof_missing_features, device);
+            expect_restored(result, device, id, "device");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto queue_family_index = buffer.read<uint32_t>();
+            const auto queue_index = buffer.read<uint32_t>();
+
+            uint64_t queue{};
+            impl.forced_ids = {id};
+            const auto result = this->get_device_queue(device, queue_family_index, queue_index, queue);
+            expect_restored(result, queue, id, "queue");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto size = buffer.read<uint64_t>();
+            const auto memory_type_index = buffer.read<uint32_t>();
+            const auto flags = buffer.read<uint32_t>();
+            const auto device_mask = buffer.read<uint32_t>();
+            const auto imported = buffer.read<bool>();
+
+            uint64_t memory{};
+            impl.forced_ids = {id};
+            if (imported)
+            {
+                const auto result = this->import_host_memory(device, size, memory_type_index, flags, device_mask,
+                                                             callbacks.imported_host_pointer(id), memory);
+                expect_restored(result, memory, id, "imported memory");
+                continue;
+            }
+
+            const auto result = this->allocate_memory(device, size, memory_type_index, flags, device_mask, memory);
+            expect_restored(result, memory, id, "memory");
+
+            auto contents = buffer.read_vector<std::byte>();
+            const auto& dev = impl.devices.at(device);
+            const auto& mem = impl.memories.at(id);
+            if (contents.size() != mem.allocation_size)
+            {
+                throw std::runtime_error("The snapshot holds the wrong size for Vulkan memory " + std::to_string(id));
+            }
+
+            const auto memory_type = impl.substitute_cached_memory_type(dev, memory_type_index);
+            if (!this->is_host_visible_memory_type(device, memory_type_index))
+            {
+                if (!transfer_for(device).copy(mem.handle, memory_type, contents, true))
+                {
+                    throw std::runtime_error("Restoring the contents of Vulkan memory " + std::to_string(id) + " failed");
+                }
+                continue;
+            }
+
+            void* mapped = nullptr;
+            if (!dev.map_memory || dev.map_memory(dev.handle, mem.handle, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Restoring the contents of Vulkan memory " + std::to_string(id) + " failed");
+            }
+
+            std::memcpy(mapped, contents.data(), contents.size());
+            dev.unmap_memory(dev.handle, mem.handle);
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto size = buffer.read<uint64_t>();
+            const auto usage = buffer.read<uint32_t>();
+            const auto memory = buffer.read<uint64_t>();
+            const auto memory_offset = buffer.read<uint64_t>();
+
+            uint64_t buffer_object{};
+            impl.forced_ids = {id};
+            const auto result = this->create_buffer(device, size, usage, buffer_object);
+            expect_restored(result, buffer_object, id, "buffer");
+
+            if (memory != 0 && this->bind_buffer_memory(device, id, memory, memory_offset) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Binding restored Vulkan buffer " + std::to_string(id) + " failed");
+            }
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::image_create_params>();
+            const auto memory = buffer.read<uint64_t>();
+            const auto memory_offset = buffer.read<uint64_t>();
+            auto layouts = buffer.read_vector<uint32_t>();
+            auto owners = buffer.read_vector<uint32_t>();
+
+            uint64_t image{};
+            impl.forced_ids = {id};
+            const auto result =
+                this->create_image(device, create.format, create.width, create.height, create.usage, create.tiling, create.samples,
+                                   create.image_type, create.depth, create.mip_levels, create.array_layers, create.flags, image);
+            expect_restored(result, image, id, "image");
+
+            auto& restored = impl.images.at(id);
+            if (layouts.size() != restored.layouts.size() || owners.size() != restored.owners.size() ||
+                (memory != 0 && this->bind_image_memory(device, id, memory, memory_offset) != VK_SUCCESS))
+            {
+                throw std::runtime_error("Restoring Vulkan image " + std::to_string(id) + " failed");
+            }
+
+            struct saved_subresource
+            {
+                uint32_t aspect{};
+                uint32_t mip{};
+                uint32_t layer{};
+                std::vector<std::byte> contents{};
+            };
+
+            std::vector<saved_subresource> saved{};
+            while (buffer.read<bool>())
+            {
+                auto& entry = saved.emplace_back();
+                buffer.read(entry.aspect);
+                buffer.read(entry.mip);
+                buffer.read(entry.layer);
+                buffer.read_vector(entry.contents);
+            }
+
+            if (!saved.empty() && !restored.copyable)
+            {
+                throw std::runtime_error("Vulkan image " + std::to_string(id) + " can no longer be copied on this GPU");
+            }
+
+            const auto aspects = get_vulkan_format_aspects(create.format);
+            for (auto& entry : saved)
+            {
+                const bool first = std::ranges::none_of(saved, [&](const saved_subresource& other) {
+                    return &other < &entry && other.mip == entry.mip && other.layer == entry.layer;
+                });
+                const bool last = std::ranges::none_of(saved, [&](const saved_subresource& other) {
+                    return &other > &entry && other.mip == entry.mip && other.layer == entry.layer;
+                });
+
+                const auto saved_layout = static_cast<VkImageLayout>(layouts[restored.subresource_index(0, entry.mip, entry.layer)]);
+                const auto owner_family = owners[restored.subresource_index(0, entry.mip, entry.layer)];
+                if (restored.samples > 1)
+                {
+                    if (!transfer_for(device, owner_family)
+                             .write_samples(restored.handle, create.format, restored.samples,
+                                            static_cast<VkImageAspectFlagBits>(entry.aspect), aspects, entry.layer,
+                                            {.width = create.width, .height = create.height}, first, last, saved_layout, entry.contents))
+                    {
+                        throw std::runtime_error("Restoring the samples of Vulkan image " + std::to_string(id) + " failed");
+                    }
+                    continue;
+                }
+
+                const auto block = get_vulkan_copy_block(create.format, entry.aspect);
+                const VkExtent3D extent{.width = std::max(1U, create.width >> entry.mip),
+                                        .height = std::max(1U, create.height >> entry.mip),
+                                        .depth = std::max(1U, create.depth >> entry.mip)};
+                if (!block || entry.mip >= create.mip_levels || entry.layer >= create.array_layers ||
+                    !transfer_for(device, owner_family)
+                         .copy_image(restored.handle, static_cast<VkImageAspectFlagBits>(entry.aspect), aspects, entry.mip, entry.layer,
+                                     extent, *block, first ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                     static_cast<VkImageLayout>(layouts[restored.subresource_index(0, entry.mip, entry.layer)]), last,
+                                     entry.contents, true))
+                {
+                    throw std::runtime_error("Restoring the contents of Vulkan image " + std::to_string(id) + " failed");
+                }
+            }
+
+            restored.layouts = std::move(layouts);
+            restored.owners = std::move(owners);
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto instance = buffer.read<uint64_t>();
+
+            uint64_t surface{};
+            impl.forced_ids = {id};
+            const auto result = this->create_surface(instance, callbacks.create_native_surface(id, instance), surface);
+            expect_restored(result, surface, id, "surface");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto surface = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::swapchain_params>();
+            const auto image_ids = buffer.read_vector<uint64_t>();
+
+            uint64_t swapchain{};
+            uint32_t image_count = 0;
+            impl.forced_ids.assign(image_ids.begin(), image_ids.end());
+            impl.forced_ids.push_back(id);
+            const auto result = this->create_swapchain(device, surface, 0, create.flags, create.format, create.color_space, create.width,
+                                                       create.height, create.image_array_layers, create.min_image_count, create.image_usage,
+                                                       create.sharing_mode, create.queue_family_indices, create.pre_transform,
+                                                       create.composite_alpha, create.present_mode, create.clipped, swapchain, image_count);
+            if (result == VK_SUCCESS && image_count != image_ids.size())
+            {
+                throw std::runtime_error("The re-created Vulkan swapchain has a different number of images");
+            }
+            expect_restored(result, swapchain, id, "swapchain");
+
+            for (const auto image : image_ids)
+            {
+                auto& restored = impl.images.at(image);
+                auto layouts = buffer.read_vector<uint32_t>();
+                if (layouts.size() != restored.layouts.size())
+                {
+                    throw std::runtime_error("The re-created Vulkan swapchain has different images");
+                }
+                restored.layouts = std::move(layouts);
+                restored.last_queue_id = buffer.read<uint64_t>();
+                restored.layout_undefined =
+                    std::ranges::any_of(restored.layouts, [](const uint32_t layout) { return layout != VK_IMAGE_LAYOUT_UNDEFINED; });
+            }
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto query_type = buffer.read<uint32_t>();
+            const auto query_count = buffer.read<uint32_t>();
+            const auto pipeline_statistics = buffer.read<uint32_t>();
+
+            std::unordered_map<uint32_t, std::vector<uint64_t>> available{};
+            for (auto results = buffer.read<uint64_t>(); results > 0; --results)
+            {
+                const auto query = buffer.read<uint32_t>();
+                available[query] = buffer.read_vector<uint64_t>();
+            }
+
+            uint64_t pool{};
+            impl.forced_ids = {id};
+            const auto result = this->create_query_pool(device, query_type, query_count, pipeline_statistics, pool);
+            expect_restored(result, pool, id, "query pool");
+
+            auto& restored = impl.query_pools.at(id);
+            if (query_count > 0)
+            {
+                transfer_for(device).reset_query_pool(restored.handle, query_count);
+            }
+            restored.restored_results = std::move(available);
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto desc = buffer.read<sampler_desc>();
+
+            uint64_t sampler{};
+            impl.forced_ids = {id};
+            const auto result = this->create_sampler(device, desc, sampler);
+            expect_restored(result, sampler, id, "sampler");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto code = buffer.read<impl::shader_code>();
+
+            uint64_t module{};
+            impl.forced_ids = {id};
+            const auto result = this->create_shader_module(device, code.flags, code.code.data(), code.code.size(), module);
+            expect_restored(result, module, id, "shader module");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            auto identifier = buffer.read_string<char>();
+            impl.identified_code[std::move(identifier)] = std::make_shared<const impl::shader_code>(buffer.read<impl::shader_code>());
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::set_layout_params>();
+
+            uint64_t layout{};
+            impl.forced_ids = {id};
+            const auto result = this->create_descriptor_set_layout(device, create.flags, create.bindings, layout);
+            expect_restored(result, layout, id, "descriptor set layout");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::pipeline_layout_params>();
+
+            const auto set_layouts = set_layout_ids(device, create);
+            uint64_t layout{};
+            impl.forced_ids = {id};
+            const auto result =
+                this->create_pipeline_layout(device, create.push_constant_stages, create.push_constant_size, set_layouts, layout);
+            expect_restored(result, layout, id, "pipeline layout");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::render_pass_params>();
+
+            uint64_t render_pass{};
+            impl.forced_ids = {id};
+            const auto result = this->create_render_pass(device, create.format, create.load_op, create.store_op, create.initial_layout,
+                                                         create.final_layout, create.depth_format, render_pass);
+            expect_restored(result, render_pass, id, "render pass");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto flags = buffer.read<uint32_t>();
+            const auto data = buffer.read_vector<uint8_t>();
+
+            uint64_t cache{};
+            impl.forced_ids = {id};
+            const auto result = this->create_pipeline_cache(device, flags, data, cache);
+            expect_restored(result, cache, id, "pipeline cache");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::pipeline_params>();
+
+            const auto cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0;
+            const auto layout = ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create);
+            const auto vertex = stage_source(device, create.vertex);
+
+            uint64_t pipeline{};
+            int32_t result{};
+            if (create.compute)
+            {
+                impl.forced_ids = {id};
+                result = this->create_compute_pipeline(device, cache, layout, vertex, create.flags, pipeline);
+            }
+            else
+            {
+                const auto render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create);
+                const auto fragment = stage_source(device, create.fragment);
+                impl.forced_ids = {id};
+                result = this->create_graphics_pipeline(
+                    device, cache, render_pass, layout, vertex, fragment, create.flags, create.width, create.height, create.bindings,
+                    create.attributes, create.divisors, create.depth, create.color_formats, create.depth_format, create.stencil_format,
+                    create.rasterization_samples, create.primitive_topology, create.primitive_restart_enable, create.rasterization_stream,
+                    create.rasterization_stream_flags, create.dynamic_states,
+                    specialization{.entries = create.vs_spec.entries, .data = create.vs_spec.data},
+                    specialization{.entries = create.fs_spec.entries, .data = create.fs_spec.data}, create.blend_attachments, pipeline);
+            }
+            expect_restored(result, pipeline, id, "pipeline");
+        }
+
+        // Views and framebuffers whose image, buffer or attachments are gone cannot be used any more, so they are not
+        // re-created.
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::image_view_params>();
+            if (!impl.images.contains(create.image))
+            {
+                continue;
+            }
+
+            uint64_t view{};
+            impl.forced_ids = {id};
+            const auto result =
+                this->create_image_view(device, create.image, create.format, create.aspect_mask, create.view_type, create.base_mip_level,
+                                        create.level_count, create.base_array_layer, create.layer_count, create.swizzle[0],
+                                        create.swizzle[1], create.swizzle[2], create.swizzle[3], view);
+            expect_restored(result, view, id, "image view");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::buffer_view_params>();
+            if (!impl.buffers.contains(create.buffer))
+            {
+                continue;
+            }
+
+            uint64_t view{};
+            impl.forced_ids = {id};
+            const auto result = this->create_buffer_view(device, create.buffer, create.format, create.offset, create.range, view);
+            expect_restored(result, view, id, "buffer view");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::framebuffer_params>();
+            if (!impl.image_views.contains(create.image_view) || (create.depth_view != 0 && !impl.image_views.contains(create.depth_view)))
+            {
+                continue;
+            }
+
+            const auto render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create);
+            uint64_t framebuffer{};
+            impl.forced_ids = {id};
+            const auto result = this->create_framebuffer(device, render_pass, create.image_view, create.depth_view, create.width,
+                                                         create.height, framebuffer);
+            expect_restored(result, framebuffer, id, "framebuffer");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto create = buffer.read<impl::descriptor_pool_params>();
+
+            uint64_t pool{};
+            impl.forced_ids = {id};
+            const auto result = this->create_descriptor_pool(device, create.max_sets, create.flags,
+                                                             create.max_inline_uniform_block_bindings, create.sizes, pool);
+            expect_restored(result, pool, id, "descriptor pool");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto pool = buffer.read<uint64_t>();
+            const auto layout_id = buffer.read<uint64_t>();
+            const auto layout_create = buffer.read<impl::set_layout_params>();
+            const auto has_variable_count = buffer.read<bool>();
+            const auto variable_count = buffer.read<uint32_t>();
+
+            std::vector<std::pair<uint64_t, impl::descriptor_slot>> slots(static_cast<size_t>(buffer.read<uint64_t>()));
+            for (auto& [key, slot] : slots)
+            {
+                buffer.read(key);
+                buffer.read(slot);
+            }
+
+            std::vector<std::pair<uint32_t, std::vector<std::byte>>> inline_blocks(static_cast<size_t>(buffer.read<uint64_t>()));
+            for (auto& [binding, block] : inline_blocks)
+            {
+                buffer.read(binding);
+                buffer.read_vector(block);
+            }
+
+            const std::array layouts{ensure_set_layout(device, layout_id, layout_create)};
+            const std::array counts{variable_count};
+            std::array<uint64_t, 1> sets{};
+            uint32_t allocated = 0;
+            impl.forced_ids = {id};
+            const auto result = this->allocate_descriptor_sets(
+                device, pool, layouts, has_variable_count ? std::span<const uint32_t>{counts} : std::span<const uint32_t>{}, sets,
+                allocated);
+            expect_restored(result, allocated == 1 ? sets[0] : 0, id, "descriptor set");
+
+            auto& restored = impl.descriptor_sets.at(id);
+            restored.layout_id = layout_id;
+
+            std::vector<descriptor_write> writes{};
+            writes.reserve(slots.size() + inline_blocks.size());
+            for (const auto& [key, slot] : slots)
+            {
+                writes.push_back(descriptor_write{.dst_set = id,
+                                                  .dst_binding = static_cast<uint32_t>(key >> 32),
+                                                  .dst_array_element = static_cast<uint32_t>(key),
+                                                  .descriptor_type = slot.descriptor_type,
+                                                  .buffer_or_view = slot.buffer_or_view,
+                                                  .offset = slot.offset,
+                                                  .range = slot.range,
+                                                  .sampler = slot.sampler,
+                                                  .image_view = slot.image_view,
+                                                  .image_layout = slot.image_layout,
+                                                  .inline_uniform_data = {}});
+            }
+
+            for (const auto& [binding, block] : inline_blocks)
+            {
+                writes.push_back(descriptor_write{.dst_set = id,
+                                                  .dst_binding = binding,
+                                                  .dst_array_element = 0,
+                                                  .descriptor_type = VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK,
+                                                  .buffer_or_view = 0,
+                                                  .offset = 0,
+                                                  .range = 0,
+                                                  .sampler = 0,
+                                                  .image_view = 0,
+                                                  .image_layout = 0,
+                                                  .inline_uniform_data = block});
+            }
+
+            // A descriptor referring to an object destroyed since is invalid and cannot be written again; the guest may
+            // not use it.
+            if (this->update_descriptor_sets(device, writes, {}) != VK_SUCCESS)
+            {
+                for (const auto& write : writes)
+                {
+                    (void)this->update_descriptor_sets(device, std::span{&write, 1}, {});
+                }
+            }
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto flags = buffer.read<uint32_t>();
+            const auto set = buffer.read<bool>();
+
+            uint64_t event{};
+            impl.forced_ids = {id};
+            const auto result = this->create_event(device, flags, event);
+            expect_restored(result, event, id, "event");
+            if (set && this->set_event(device, id) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Restoring Vulkan event " + std::to_string(id) + " failed");
+            }
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto queue_family_index = buffer.read<uint32_t>();
+            const auto flags = buffer.read<uint32_t>();
+
+            uint64_t pool{};
+            impl.forced_ids = {id};
+            const auto result = this->create_command_pool(device, queue_family_index, flags, pool);
+            expect_restored(result, pool, id, "command pool");
+        }
+
+        std::vector<uint64_t> pending_binary_signals{};
+
+        struct recorded_commands
+        {
+            uint64_t command_buffer{};
+            std::vector<std::byte> commands{};
+            std::vector<int32_t> results{};
+            bool invalidated{};
+        };
+
+        std::vector<recorded_commands> recorded_primaries{};
+        std::vector<recorded_commands> recorded_secondaries{};
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto pool = buffer.read<uint64_t>();
+            const auto level = buffer.read<uint32_t>();
+            recorded_commands recorded{.command_buffer = id};
+            buffer.read_vector(recorded.commands);
+            buffer.read_vector(recorded.results);
+            buffer.read(recorded.invalidated);
+            if (!recorded.commands.empty())
+            {
+                (level == 1 ? recorded_secondaries : recorded_primaries).push_back(std::move(recorded));
+            }
+
+            uint64_t command_buffer{};
+            impl.forced_ids = {id};
+            const auto result = this->allocate_command_buffer(device, pool, level, command_buffer);
+            expect_restored(result, command_buffer, id, "command buffer");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto signaled = buffer.read<bool>();
+
+            uint64_t fence{};
+            impl.forced_ids = {id};
+            const auto result = this->create_fence(device, signaled ? VK_FENCE_CREATE_SIGNALED_BIT : 0, fence);
+            expect_restored(result, fence, id, "fence");
+        }
+
+        for (auto count = buffer.read<uint64_t>(); count > 0; --count)
+        {
+            const auto id = buffer.read<uint64_t>();
+            const auto device = buffer.read<uint64_t>();
+            const auto flags = buffer.read<uint32_t>();
+            const auto type = buffer.read<uint32_t>();
+            const auto value = buffer.read<uint64_t>();
+            const auto binary_signaled = buffer.read<bool>();
+            const auto binary_wait_unsignaled = buffer.read<bool>();
+            const auto highest_signal = buffer.read<uint64_t>();
+            const auto highest_wait = buffer.read<uint64_t>();
+
+            uint64_t semaphore{};
+            impl.forced_ids = {id};
+            const auto result = this->create_semaphore(device, flags, type, value, semaphore);
+            expect_restored(result, semaphore, id, "semaphore");
+
+            auto& restored = impl.semaphores.at(id);
+            restored.binary_wait_unsignaled = binary_wait_unsignaled;
+            restored.highest_signal = highest_signal;
+            restored.highest_wait = highest_wait;
+            if (binary_signaled)
+            {
+                pending_binary_signals.push_back(id);
+            }
+        }
+
+        for (const auto id : pending_binary_signals)
+        {
+            const auto& semaphore = impl.semaphores.at(id);
+            const auto queue =
+                std::ranges::find_if(impl.queues, [&](const auto& entry) { return entry.second.device_id == semaphore.device_id; });
+            const gpu_bridge::submit_semaphore_entry signal{.semaphore = id, .stage_mask = 0, .reserved = 0, .value = 0};
+            if (queue == impl.queues.end() ||
+                this->queue_submit(queue->first, 0, nullptr, 0, nullptr, 0, &signal, 1, false) != VK_SUCCESS ||
+                this->queue_wait_idle(queue->first) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Restoring the signal of Vulkan semaphore " + std::to_string(id) + " failed");
+            }
+        }
+
+        for (const auto* recorded : {&recorded_secondaries, &recorded_primaries})
+        {
+            for (const auto& entry : *recorded)
+            {
+                callbacks.replay_commands(entry.command_buffer, entry.commands, entry.results, entry.invalidated);
+            }
+        }
     }
 }

@@ -526,6 +526,13 @@ namespace sogen
         void start(size_t count = 0);
         void stop();
 
+        // Stops the process for a snapshot: right away, or at the end of the next frame of a device that waits for one.
+        void request_suspend();
+        // Called by such a device at the end of a frame.
+        bool take_suspend_request();
+        void cancel_suspend_request();
+
+        void prepare_serialization();
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
 
@@ -616,6 +623,7 @@ namespace sogen
         bool intercept_kusd_{true};
         bool spoof_gpu_features_{false};
         uint32_t vcpu_count_{1};
+        std::atomic_bool suspend_requested_{false};
         std::atomic_bool should_stop{false};
 
         // The emulator kernel lock: held by all code touching shared kernel state,
@@ -673,6 +681,7 @@ namespace sogen
         void track_section_first_execution(uint64_t address);
 
         void register_factories(utils::buffer_deserializer& buffer);
+        void ensure_serialization_support() const;
     };
 
 } // namespace sogen
