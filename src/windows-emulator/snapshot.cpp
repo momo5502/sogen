@@ -125,7 +125,7 @@ namespace sogen
         }
 
         void write_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
-                                     const std::string_view configuration)
+                                     const std::string_view configuration, const std::function<bool()>& should_commit)
         {
             const auto snapshot = create_emulator_snapshot(win_emu, configuration);
 
@@ -141,6 +141,11 @@ namespace sogen
             if (!utils::io::write_file(temporary_file, snapshot))
             {
                 throw std::runtime_error("Failed to write snapshot: " + snapshot_file.string());
+            }
+
+            if (should_commit && !should_commit())
+            {
+                throw std::runtime_error("The process was stopped while it was saved");
             }
 
             std::filesystem::rename(temporary_file, snapshot_file);
@@ -312,22 +317,21 @@ namespace sogen
                         {
                             std::filesystem::create_directories(outcome.path.parent_path());
                         }
-                        write_emulator_snapshot(this->win_emu_, outcome.path, this->configuration_);
+                        write_emulator_snapshot(this->win_emu_, outcome.path, this->configuration_, [this] {
+                            const std::scoped_lock commit_lock(this->mutex_);
+                            return !this->stop_requested_;
+                        });
                     }
                     catch (const std::exception& e)
                     {
                         outcome.error = e.what();
                     }
 
-                    lock.lock();
-                    const bool stopped = this->stop_requested_;
-                    lock.unlock();
-                    if (stopped && outcome.error.empty())
+                    if (!outcome.error.empty())
                     {
-                        std::error_code ec{};
-                        std::filesystem::remove(outcome.path, ec);
-                        outcome.error = "The process was stopped while it was saved";
-                        ended = true;
+                        lock.lock();
+                        ended = this->stop_requested_;
+                        lock.unlock();
                     }
                 }
 
