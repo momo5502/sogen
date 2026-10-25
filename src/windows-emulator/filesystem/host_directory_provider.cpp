@@ -49,6 +49,80 @@ namespace sogen
             }
         }
 
+        std::optional<std::filesystem::path> find_entry_ignoring_case(const std::filesystem::path& directory,
+                                                                      const std::filesystem::path& name)
+        {
+            const auto wanted = name.u16string();
+            std::optional<std::u16string> match{};
+
+            std::error_code ec{};
+            for (const auto& entry : std::filesystem::directory_iterator(directory, ec))
+            {
+                auto candidate = entry.path().filename().u16string();
+                if (!utils::string::equals_ignore_case(candidate, wanted) || (match && *match < candidate))
+                {
+                    continue;
+                }
+
+                match = std::move(candidate);
+            }
+
+            if (!match)
+            {
+                return std::nullopt;
+            }
+
+            return std::filesystem::path{*match};
+        }
+
+        std::filesystem::path recover_host_case(const std::filesystem::path& root, const std::filesystem::path& candidate)
+        {
+            const auto relative = candidate.lexically_relative(root);
+            if (relative.empty())
+            {
+                return candidate;
+            }
+
+            auto resolved = root;
+            auto component = relative.begin();
+
+            for (; component != relative.end(); ++component)
+            {
+                if (component->empty())
+                {
+                    continue;
+                }
+
+                std::error_code ec{};
+                if (std::filesystem::exists(resolved / *component, ec))
+                {
+                    resolved /= *component;
+                    continue;
+                }
+
+                const auto match = find_entry_ignoring_case(resolved, *component);
+                if (!match)
+                {
+                    break;
+                }
+
+                resolved /= *match;
+            }
+
+            // Everything from the first component that has no counterpart on the host is kept as asked, because
+            // create_directory and the destination side of rename translate a path that must not exist yet and
+            // then validate its parent.
+            for (; component != relative.end(); ++component)
+            {
+                if (!component->empty())
+                {
+                    resolved /= *component;
+                }
+            }
+
+            return resolved;
+        }
+
 #ifdef OS_WINDOWS
         struct find_handle_deleter
         {
@@ -149,14 +223,20 @@ namespace sogen
         }
 
         auto candidate = (this->target_ / path.to_portable_path()).lexically_normal();
+        const auto root = this->target_.lexically_normal();
         // The containment check is lexical and does not follow symlinks. Host symlinks inside the mount may
         // point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
-        if (!is_subpath(this->target_.lexically_normal(), candidate))
+        if (!is_subpath(root, candidate))
         {
             return std::nullopt;
         }
 
         std::error_code ec{};
+        if (!std::filesystem::exists(candidate, ec))
+        {
+            candidate = recover_host_case(root, candidate);
+        }
+
         auto resolved = weakly_canonical(candidate, ec);
         if (ec)
         {
