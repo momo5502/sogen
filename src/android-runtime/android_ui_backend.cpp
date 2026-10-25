@@ -204,6 +204,46 @@ namespace sogen::android
         this->queue_event(window, WM_MOUSEMOVE, this->mouse_buttons_, pack_point(x, y));
     }
 
+    void android_ui_backend::post_mouse_motion(const hwnd window, const int32_t dx, const int32_t dy)
+    {
+        const std::lock_guard lock{this->mutex_};
+        this->events_.push_back(ui_event{
+            .window = window,
+            .message = WM_MOUSEMOVE,
+            .wParam = this->mouse_buttons_,
+            .lParam = 0,
+            .relative_motion = std::pair{dx, dy},
+        });
+    }
+
+    void android_ui_backend::set_cursor_clip(const hwnd window, const std::optional<ui_rect>& /*screen_rect*/, const bool relative)
+    {
+        hwnd previous{};
+        hwnd current{};
+
+        {
+            const std::lock_guard lock{this->mutex_};
+
+            current = relative ? this->top_level_ancestor(window) : 0;
+            if (current == this->relative_window_)
+            {
+                return;
+            }
+
+            previous = std::exchange(this->relative_window_, current);
+        }
+
+        if (previous != 0)
+        {
+            this->host_->on_relative_mouse_changed(previous, false);
+        }
+
+        if (current != 0)
+        {
+            this->host_->on_relative_mouse_changed(current, true);
+        }
+    }
+
     void android_ui_backend::post_mouse_button(const hwnd window, const mouse_button button, const bool down, const int32_t x,
                                                const int32_t y)
     {
@@ -413,6 +453,11 @@ namespace sogen::android
             if (this->active_window_ == window)
             {
                 this->active_window_ = 0;
+            }
+
+            if (this->relative_window_ == window)
+            {
+                this->relative_window_ = 0;
             }
         }
 

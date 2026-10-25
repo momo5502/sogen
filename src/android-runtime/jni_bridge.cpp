@@ -185,6 +185,13 @@ extern "C"
             [&](sogen::android::android_ui_backend& ui) { ui.post_mouse_move(static_cast<sogen::hwnd>(window), x, y); });
     }
 
+    JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeMouseMotion(JNIEnv* /*env*/, jobject /*self*/, const jlong handle,
+                                                                                    const jlong window, const jint dx, const jint dy)
+    {
+        get_session(handle).with_ui(
+            [&](sogen::android::android_ui_backend& ui) { ui.post_mouse_motion(static_cast<sogen::hwnd>(window), dx, dy); });
+    }
+
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeMouseButton(JNIEnv* /*env*/, jobject /*self*/, const jlong handle,
                                                                                     const jlong window, const jint button,
                                                                                     const jboolean down, const jint x, const jint y)
