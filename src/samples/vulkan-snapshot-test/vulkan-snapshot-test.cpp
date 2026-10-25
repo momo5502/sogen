@@ -15,7 +15,8 @@
 // recorded once before the loop is waiting to be submitted again. A buffer in memory the host cannot map carries the
 // results of the iteration before the previous one, and so does an image that rests in a shader-read layout. A
 // timestamp query written once has to keep its result, and so does a multisampled image, checked through a resolve.
-// Multisampled depth/stencil and integer images, which cannot be resolved, rely on the check a restore makes itself.
+// Multisampled depth/stencil and integer images, which cannot be resolved, rely on the check a restore makes itself. An
+// image is also passed between two queues in the opposite order of the submissions, through a timeline semaphore.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
@@ -98,6 +99,9 @@ namespace
 
 int main(const int argc, char** argv)
 {
+    // Each line has to reach a redirected output right away, since a suspended run never flushes it.
+    (void)std::setvbuf(stdout, nullptr, _IONBF, 0);
+
     const char* dll = argc > 1 ? argv[1] : "vulkan-shim.dll";
     const HMODULE module = LoadLibraryA(dll);
     if (!module)
@@ -120,7 +124,7 @@ int main(const int argc, char** argv)
 
     VkApplicationInfo app_info{};
     app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    app_info.apiVersion = VK_API_VERSION_1_1;
+    app_info.apiVersion = VK_API_VERSION_1_2;
 
     VkInstanceCreateInfo instance_info{};
     instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -169,35 +173,57 @@ int main(const int argc, char** argv)
     LOAD(instance, vkWaitForFences);
     LOAD(instance, vkResetFences);
 
-    uint32_t device_count = 1;
-    VkPhysicalDevice physical_device{};
-    if (vkEnumeratePhysicalDevices(instance, &device_count, &physical_device) < 0 || device_count == 0)
+    uint32_t device_count = 0;
+    vkEnumeratePhysicalDevices(instance, &device_count, nullptr);
+    std::vector<VkPhysicalDevice> physical_devices(device_count);
+    if (vkEnumeratePhysicalDevices(instance, &device_count, physical_devices.data()) < 0 || device_count == 0)
     {
         std::printf("[snapshot-test] no physical device\n");
         return 1;
     }
 
-    uint32_t family_count = 0;
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, nullptr);
-    std::vector<VkQueueFamilyProperties> families(family_count);
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, families.data());
+    VkPhysicalDevice physical_device{};
+    std::vector<VkQueueFamilyProperties> families{};
+    uint32_t family = UINT32_MAX;
+    for (const auto candidate : physical_devices)
+    {
+        uint32_t family_count = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, nullptr);
+        std::vector<VkQueueFamilyProperties> candidate_families(family_count);
+        vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, candidate_families.data());
 
-    const uint32_t family = find_queue_family(families);
+        const uint32_t candidate_family = find_queue_family(candidate_families);
+        if (candidate_family != UINT32_MAX &&
+            (family == UINT32_MAX || candidate_families[candidate_family].queueCount > families[family].queueCount))
+        {
+            physical_device = candidate;
+            families = std::move(candidate_families);
+            family = candidate_family;
+        }
+    }
+
     if (family == UINT32_MAX)
     {
         std::printf("[snapshot-test] no transfer queue family\n");
         return 1;
     }
 
-    const float priority = 1.0F;
+    const std::array priorities{1.0F, 1.0F};
+    const uint32_t queue_count = (std::min)(2U, families[family].queueCount);
+    std::printf("[snapshot-test] %u devices, using %u queues\n", device_count, queue_count);
     VkDeviceQueueCreateInfo queue_info{};
     queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     queue_info.queueFamilyIndex = family;
-    queue_info.queueCount = 1;
-    queue_info.pQueuePriorities = &priority;
+    queue_info.queueCount = queue_count;
+    queue_info.pQueuePriorities = priorities.data();
+
+    VkPhysicalDeviceVulkan12Features timeline_features{};
+    timeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    timeline_features.timelineSemaphore = VK_TRUE;
 
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    device_info.pNext = &timeline_features;
     device_info.queueCreateInfoCount = 1;
     device_info.pQueueCreateInfos = &queue_info;
 
@@ -209,7 +235,9 @@ int main(const int argc, char** argv)
     }
 
     VkQueue queue{};
+    VkQueue second_queue{};
     vkGetDeviceQueue(device, family, 0, &queue);
+    vkGetDeviceQueue(device, family, queue_count - 1, &second_queue);
 
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -348,9 +376,10 @@ int main(const int argc, char** argv)
     integer_info.format = VK_FORMAT_R32_UINT;
     integer_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
+    VkImage shared{};
     VkImage depth_stencil{};
     VkImage integer{};
-    std::array<VkDeviceMemory, 2> attachment_memory{};
+    std::array<VkDeviceMemory, 3> attachment_memory{};
     if (vkCreateImage(device, &depth_info, nullptr, &depth_stencil) != VK_SUCCESS)
     {
         depth_info.format = VK_FORMAT_D24_UNORM_S8_UINT;
@@ -361,7 +390,8 @@ int main(const int argc, char** argv)
         }
     }
 
-    if (vkCreateImage(device, &integer_info, nullptr, &integer) != VK_SUCCESS)
+    if (vkCreateImage(device, &integer_info, nullptr, &integer) != VK_SUCCESS ||
+        vkCreateImage(device, &image_info, nullptr, &shared) != VK_SUCCESS)
     {
         std::printf("[snapshot-test] multisampled integer image setup failed\n");
         return 1;
@@ -373,6 +403,9 @@ int main(const int argc, char** argv)
     vkGetImageMemoryRequirements(device, integer, &needs);
     bound = bound && bind_new_memory(attachment_memory[1], needs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
             vkBindImageMemory(device, integer, attachment_memory[1], 0) == VK_SUCCESS;
+    vkGetImageMemoryRequirements(device, shared, &needs);
+    bound = bound && bind_new_memory(attachment_memory[2], needs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+            vkBindImageMemory(device, shared, attachment_memory[2], 0) == VK_SUCCESS;
     if (!bound)
     {
         std::printf("[snapshot-test] multisampled attachment memory setup failed\n");
@@ -426,7 +459,11 @@ int main(const int argc, char** argv)
     VkCommandBuffer image_command_buffer{};
     VkCommandBuffer setup_command_buffer{};
     VkCommandBuffer query_copy_command_buffer{};
+    VkCommandBuffer hand_back_command_buffer{};
+    VkCommandBuffer hand_over_command_buffer{};
     if (vkAllocateCommandBuffers(device, &command_buffer_info, &query_copy_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &hand_back_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &hand_over_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &image_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &setup_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &command_buffer) != VK_SUCCESS ||
@@ -441,6 +478,20 @@ int main(const int argc, char** argv)
     fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkSemaphoreCreateInfo semaphore_info{};
     semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkSemaphoreTypeCreateInfo timeline_info{};
+    timeline_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+    timeline_info.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+    VkSemaphoreCreateInfo timeline_semaphore_info{};
+    timeline_semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    timeline_semaphore_info.pNext = &timeline_info;
+
+    VkSemaphore handed_over{};
+    if (vkCreateSemaphore(device, &timeline_semaphore_info, nullptr, &handed_over) != VK_SUCCESS)
+    {
+        std::printf("[snapshot-test] timeline semaphore setup failed\n");
+        return 1;
+    }
 
     VkFence fence{};
     VkSemaphore results_ready{};
@@ -504,6 +555,7 @@ int main(const int argc, char** argv)
     transition_image(setup_command_buffer, multisampled, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     transition_image(setup_command_buffer, resolved, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     transition_image(setup_command_buffer, integer, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transition_image(setup_command_buffer, shared, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     {
         VkImageMemoryBarrier barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -646,6 +698,56 @@ int main(const int argc, char** argv)
                                                   .layerCount = 1};
         vkCmdClearDepthStencilImage(command_buffer, depth_stencil, VK_IMAGE_LAYOUT_GENERAL, &depth_clear, 1, &depth_range);
         vkEndCommandBuffer(command_buffer);
+
+        const VkImageSubresourceRange shared_range{
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        vkBeginCommandBuffer(hand_back_command_buffer, &begin_info);
+        transition_image(hand_back_command_buffer, shared, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        vkEndCommandBuffer(hand_back_command_buffer);
+
+        vkBeginCommandBuffer(hand_over_command_buffer, &begin_info);
+        transition_image(hand_over_command_buffer, shared, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdClearColorImage(hand_over_command_buffer, shared, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &shared_range);
+        vkEndCommandBuffer(hand_over_command_buffer);
+
+        const uint64_t handed_over_value = iteration + 1;
+        constexpr VkPipelineStageFlags all_commands = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        VkTimelineSemaphoreSubmitInfo hand_back_timeline{};
+        hand_back_timeline.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        hand_back_timeline.waitSemaphoreValueCount = 1;
+        hand_back_timeline.pWaitSemaphoreValues = &handed_over_value;
+        VkSubmitInfo hand_back{};
+        hand_back.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        hand_back.pNext = &hand_back_timeline;
+        hand_back.waitSemaphoreCount = 1;
+        hand_back.pWaitSemaphores = &handed_over;
+        hand_back.pWaitDstStageMask = &all_commands;
+        hand_back.commandBufferCount = 1;
+        hand_back.pCommandBuffers = &hand_back_command_buffer;
+
+        VkTimelineSemaphoreSubmitInfo hand_over_timeline{};
+        hand_over_timeline.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        hand_over_timeline.signalSemaphoreValueCount = 1;
+        hand_over_timeline.pSignalSemaphoreValues = &handed_over_value;
+        VkSubmitInfo hand_over{};
+        hand_over.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        hand_over.pNext = &hand_over_timeline;
+        hand_over.commandBufferCount = 1;
+        hand_over.pCommandBuffers = &hand_over_command_buffer;
+        hand_over.signalSemaphoreCount = 1;
+        hand_over.pSignalSemaphores = &handed_over;
+
+        // With a single queue, a wait submitted before its signal would never run.
+        const bool reversed = queue_count > 1;
+        if (vkQueueSubmit(reversed ? queue : second_queue, 1, reversed ? &hand_back : &hand_over, reversed ? fence : VK_NULL_HANDLE) !=
+                VK_SUCCESS ||
+            vkQueueSubmit(reversed ? second_queue : queue, 1, reversed ? &hand_over : &hand_back, reversed ? VK_NULL_HANDLE : fence) !=
+                VK_SUCCESS ||
+            vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS || vkResetFences(device, 1, &fence) != VK_SUCCESS)
+        {
+            std::printf("[snapshot-test] iteration %u: handing the image between queues failed\n", iteration);
+            return 3;
+        }
 
         if (!submit_and_wait(command_buffer, VK_NULL_HANDLE, results_ready) || read_timestamp(1) == 0)
         {

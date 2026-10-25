@@ -663,6 +663,7 @@ namespace sogen
             uint32_t layer_count{};
             uint32_t new_layout{};
             bool transfers_ownership{};
+            uint32_t destination_family{VK_QUEUE_FAMILY_IGNORED};
             // Set instead of the above where a primary executes a secondary command buffer.
             uint64_t secondary{};
         };
@@ -711,6 +712,9 @@ namespace sogen
             // has a signal no wait consumed yet, and the highest timeline values signals and waits were submitted for.
             bool binary_signaled{};
             bool binary_wait_unsignaled{};
+            // The signals and the value the modelled execution order has reached.
+            uint32_t modeled_signals{};
+            uint64_t modeled_value{};
             uint64_t highest_signal{};
             uint64_t highest_wait{};
         };
@@ -760,23 +764,103 @@ namespace sogen
             return true;
         }
 
-        void apply_layout_transitions(const VkQueue queue, const uint64_t queue_id, const uint64_t* submitted, const uint32_t count)
+        // Submissions to different queues run in the order their semaphores impose, not in the order they were made in,
+        // and a valid guest orders transitions of the same image that way. What a submission does to images and queries is
+        // therefore kept until everything it waits for is signaled by what ran before it.
+        struct pending_submission
         {
-            for (uint32_t i = 0; i < count; ++i)
-            {
-                this->apply_layout_transitions(queue, queue_id, submitted[i]);
-            }
-        }
+            uint64_t queue_id{};
+            std::vector<layout_transition> transitions{};
+            std::vector<std::tuple<uint64_t, uint32_t, uint32_t>> query_resets{};
+            std::vector<std::pair<uint64_t, uint64_t>> waits{};
+            std::vector<std::pair<uint64_t, uint64_t>> signals{};
+        };
 
-        void apply_layout_transitions(const VkQueue queue, const uint64_t queue_id, const uint64_t command_buffer)
+        std::unordered_map<VkQueue, std::deque<pending_submission>> pending_submissions{};
+
+        void collect_effects(const uint64_t command_buffer, pending_submission& submission, const uint32_t depth = 0)
         {
             const auto cb = this->command_buffers.find(command_buffer);
-            if (cb == this->command_buffers.end())
+            if (cb == this->command_buffers.end() || depth > 1)
             {
                 return;
             }
 
-            for (const auto& [pool, first_query, count] : cb->second.query_resets)
+            submission.query_resets.insert(submission.query_resets.end(), cb->second.query_resets.begin(), cb->second.query_resets.end());
+            for (const auto& transition : cb->second.layout_transitions)
+            {
+                if (transition.secondary != 0)
+                {
+                    this->collect_effects(transition.secondary, submission, depth + 1);
+                }
+                else
+                {
+                    submission.transitions.push_back(transition);
+                }
+            }
+        }
+
+        template <typename Entry>
+        void submit_modeled(const VkQueue queue, const uint64_t queue_id, const uint64_t* command_buffers, const uint32_t count,
+                            const Entry* waits, const uint32_t wait_count, const Entry* signals, const uint32_t signal_count)
+        {
+            pending_submission submission{.queue_id = queue_id};
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                this->collect_effects(command_buffers[i], submission);
+            }
+            for (uint32_t i = 0; i < wait_count; ++i)
+            {
+                submission.waits.emplace_back(waits[i].semaphore, waits[i].value);
+            }
+            for (uint32_t i = 0; i < signal_count; ++i)
+            {
+                submission.signals.emplace_back(signals[i].semaphore, signals[i].value);
+            }
+
+            this->pending_submissions[queue].push_back(std::move(submission));
+            this->run_modeled();
+        }
+
+        bool can_run(const pending_submission& submission) const
+        {
+            return std::ranges::all_of(submission.waits, [&](const auto& wait) {
+                const auto semaphore = this->semaphores.find(wait.first);
+                return semaphore == this->semaphores.end() ||
+                       (semaphore->second.type == VK_SEMAPHORE_TYPE_TIMELINE ? semaphore->second.modeled_value >= wait.second
+                                                                             : semaphore->second.modeled_signals > 0);
+            });
+        }
+
+        void run_modeled()
+        {
+            for (bool progress = true; progress;)
+            {
+                progress = false;
+                for (auto& queue : this->pending_submissions | std::views::values)
+                {
+                    while (!queue.empty() && this->can_run(queue.front()))
+                    {
+                        this->run_modeled(queue.front());
+                        queue.pop_front();
+                        progress = true;
+                    }
+                }
+            }
+        }
+
+        void run_modeled(const pending_submission& submission)
+        {
+            for (const auto& [semaphore, value] : submission.waits)
+            {
+                if (const auto it = this->semaphores.find(semaphore);
+                    it != this->semaphores.end() && it->second.type != VK_SEMAPHORE_TYPE_TIMELINE)
+                {
+                    --it->second.modeled_signals;
+                }
+            }
+
+            for (const auto& [pool, first_query, count] : submission.query_resets)
             {
                 if (const auto reset = this->query_pools.find(pool); reset != this->query_pools.end())
                 {
@@ -784,63 +868,75 @@ namespace sogen
                 }
             }
 
-            for (const auto& transition : cb->second.layout_transitions)
+            for (const auto& transition : submission.transitions)
             {
-                if (transition.secondary != 0)
+                this->apply_layout_transition(submission.queue_id, transition);
+            }
+
+            for (const auto& [semaphore, value] : submission.signals)
+            {
+                if (const auto it = this->semaphores.find(semaphore); it != this->semaphores.end())
                 {
-                    if (transition.secondary != command_buffer)
+                    if (it->second.type == VK_SEMAPHORE_TYPE_TIMELINE)
                     {
-                        this->apply_layout_transitions(queue, queue_id, transition.secondary);
+                        it->second.modeled_value = std::max(it->second.modeled_value, value);
                     }
+                    else
+                    {
+                        ++it->second.modeled_signals;
+                    }
+                }
+            }
+        }
+
+        bool has_pending_submissions() const
+        {
+            return std::ranges::any_of(this->pending_submissions | std::views::values, [](const auto& queue) { return !queue.empty(); });
+        }
+
+        void apply_layout_transition(const uint64_t queue_id, const layout_transition& transition)
+        {
+            const auto image = this->images.find(transition.image);
+            if (image == this->images.end())
+            {
+                return;
+            }
+
+            auto& data = image->second;
+            if (transition.transfers_ownership)
+            {
+                data.owner_family = transition.destination_family;
+            }
+            data.last_queue_id = queue_id;
+
+            const auto aspects = get_vulkan_format_aspects(data.create.format);
+            const auto mip_end = transition.level_count == VK_REMAINING_MIP_LEVELS
+                                     ? data.create.mip_levels
+                                     : std::min(data.create.mip_levels, transition.base_mip_level + transition.level_count);
+            const auto layer_end = transition.layer_count == VK_REMAINING_ARRAY_LAYERS
+                                       ? data.create.array_layers
+                                       : std::min(data.create.array_layers, transition.base_array_layer + transition.layer_count);
+
+            uint32_t aspect = 0;
+            for (uint32_t bit = 1; bit <= VK_IMAGE_ASPECT_STENCIL_BIT; bit <<= 1)
+            {
+                if ((aspects & bit) == 0)
+                {
                     continue;
                 }
 
+                if ((transition.aspect_mask & bit) != 0)
                 {
-                    const auto image = this->images.find(transition.image);
-                    if (image == this->images.end())
+                    for (uint32_t mip = transition.base_mip_level; mip < mip_end; ++mip)
                     {
-                        continue;
-                    }
-
-                    auto& data = image->second;
-                    data.ownership_transferred |= transition.transfers_ownership;
-
-                    // Submissions to different queues can run in another order than they were made in, which the tracked
-                    // layouts cannot follow.
-                    data.used_by_several_queues |= data.last_queue && data.last_queue != queue;
-                    data.last_queue = queue;
-                    data.last_queue_id = queue_id;
-
-                    const auto aspects = get_vulkan_format_aspects(data.create.format);
-                    const auto mip_end = transition.level_count == VK_REMAINING_MIP_LEVELS
-                                             ? data.create.mip_levels
-                                             : std::min(data.create.mip_levels, transition.base_mip_level + transition.level_count);
-                    const auto layer_end = transition.layer_count == VK_REMAINING_ARRAY_LAYERS
-                                               ? data.create.array_layers
-                                               : std::min(data.create.array_layers, transition.base_array_layer + transition.layer_count);
-
-                    uint32_t aspect = 0;
-                    for (uint32_t bit = 1; bit <= VK_IMAGE_ASPECT_STENCIL_BIT; bit <<= 1)
-                    {
-                        if ((aspects & bit) == 0)
+                        for (uint32_t layer = transition.base_array_layer; layer < layer_end; ++layer)
                         {
-                            continue;
+                            data.layouts[data.subresource_index(aspect, mip, layer)] = transition.new_layout;
                         }
-
-                        if ((transition.aspect_mask & bit) != 0)
-                        {
-                            for (uint32_t mip = transition.base_mip_level; mip < mip_end; ++mip)
-                            {
-                                for (uint32_t layer = transition.base_array_layer; layer < layer_end; ++layer)
-                                {
-                                    data.layouts[data.subresource_index(aspect, mip, layer)] = transition.new_layout;
-                                }
-                            }
-                        }
-
-                        ++aspect;
                     }
                 }
+
+                ++aspect;
             }
         }
 
@@ -878,7 +974,7 @@ namespace sogen
             {
                 if (const auto it = this->semaphores.find(signals[i].semaphore); it != this->semaphores.end())
                 {
-                    it->second.binary_signaled = true;
+                    it->second.binary_signaled = it->second.type != VK_SEMAPHORE_TYPE_TIMELINE;
                     it->second.highest_signal = std::max(it->second.highest_signal, signals[i].value);
                 }
             }
@@ -939,10 +1035,9 @@ namespace sogen
             // The layout of each aspect, mip level and array layer as of the last submission, in the order of
             // subresource_index. Vulkan cannot report it.
             std::vector<uint32_t> layouts{};
-            bool ownership_transferred{};
-            VkQueue last_queue{};
+            // The queue family a release and acquire handed the image to, if any.
+            uint32_t owner_family{VK_QUEUE_FAMILY_IGNORED};
             uint64_t last_queue_id{};
-            bool used_by_several_queues{};
             // A re-created swapchain image is undefined, while the guest believes it is in its saved layout. It is
             // transitioned there when the guest first acquires it, before the guest can use it.
             bool layout_undefined{};
@@ -4060,7 +4155,8 @@ namespace sogen
 
         const uint64_t id = this->impl_->allocate_id();
         this->impl_->semaphores.emplace(
-            id, impl::semaphore_data{.handle = semaphore, .device_id = device, .flags = flags, .type = semaphore_type});
+            id, impl::semaphore_data{
+                    .handle = semaphore, .device_id = device, .flags = flags, .type = semaphore_type, .modeled_value = initial_value});
         out_semaphore = id;
         return VK_SUCCESS;
     }
@@ -4091,7 +4187,13 @@ namespace sogen
         info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
         info.semaphore = it->second.handle;
         info.value = value;
-        return dev->second.signal_semaphore(dev->second.handle, &info);
+        const VkResult result = dev->second.signal_semaphore(dev->second.handle, &info);
+        if (result == VK_SUCCESS)
+        {
+            it->second.modeled_value = std::max(it->second.modeled_value, value);
+            this->impl_->run_modeled();
+        }
+        return result;
     }
 
     int32_t vulkan_host::wait_semaphores(uint64_t device, uint32_t flags, const void* entries, uint32_t count, uint64_t timeout)
@@ -4379,7 +4481,9 @@ namespace sogen
         const VkResult result = dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
         if (result == VK_SUCCESS)
         {
-            this->impl_->apply_layout_transitions(queue_it->second.handle, queue, command_ids, command_buffer_count);
+            this->impl_->submit_modeled(queue_it->second.handle, queue, command_ids, command_buffer_count,
+                                        static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries), wait_count,
+                                        static_cast<const gpu_bridge::submit_semaphore_entry*>(signal_entries), signal_count);
             this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit_semaphore_entry*>(wait_entries), wait_count,
                                                     static_cast<const gpu_bridge::submit_semaphore_entry*>(signal_entries), signal_count);
         }
@@ -4474,7 +4578,9 @@ namespace sogen
         const VkResult result = dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
         if (result == VK_SUCCESS)
         {
-            this->impl_->apply_layout_transitions(queue_it->second.handle, queue, cmd_ids, command_buffer_count);
+            this->impl_->submit_modeled(queue_it->second.handle, queue, cmd_ids, command_buffer_count,
+                                        static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries), wait_count,
+                                        static_cast<const gpu_bridge::submit2_semaphore_entry*>(signal_entries), signal_count);
             this->impl_->track_submitted_semaphores(static_cast<const gpu_bridge::submit2_semaphore_entry*>(wait_entries), wait_count,
                                                     static_cast<const gpu_bridge::submit2_semaphore_entry*>(signal_entries), signal_count);
         }
@@ -5429,6 +5535,7 @@ namespace sogen
             .layer_count = range.layer_count,
             .new_layout = static_cast<uint32_t>(barrier.newLayout),
             .transfers_ownership = src_queue_family_index != dst_queue_family_index && src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
+            .destination_family = dst_queue_family_index,
         });
         return VK_SUCCESS;
     }
@@ -6178,7 +6285,10 @@ namespace sogen
             sc_it->second.acquired[out_index] = true;
             if (semaphore != 0)
             {
-                this->impl_->semaphores.at(semaphore).binary_signaled = true;
+                auto& acquired = this->impl_->semaphores.at(semaphore);
+                acquired.binary_signaled = true;
+                ++acquired.modeled_signals;
+                this->impl_->run_modeled();
             }
         }
         return result;
@@ -6256,6 +6366,14 @@ namespace sogen
                     waited->second.binary_signaled = false;
                 }
             }
+
+            impl::pending_submission present{.queue_id = queue};
+            for (const uint64_t semaphore : wait_semaphores)
+            {
+                present.waits.emplace_back(semaphore, 0);
+            }
+            this->impl_->pending_submissions[queue_it->second.handle].push_back(std::move(present));
+            this->impl_->run_modeled();
         }
         return result;
     }
@@ -9212,7 +9330,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 12;
+        constexpr uint32_t snapshot_version = 13;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -9240,8 +9358,10 @@ namespace sogen
           public:
             static constexpr VkDeviceSize chunk_size = 16 * 1024 * 1024;
 
-            snapshot_transfer(const Device& device, const std::function<uint32_t(uint32_t type_bits)>& find_host_memory_type)
-                : device_(device)
+            snapshot_transfer(const Device& device, const uint32_t queue_family,
+                              const std::function<uint32_t(uint32_t type_bits)>& find_host_memory_type)
+                : device_(device),
+                  queue_family_(queue_family)
             {
                 try
                 {
@@ -9661,6 +9781,7 @@ namespace sogen
             };
 
             const Device& device_;
+            uint32_t queue_family_{};
             VkQueue queue_{};
             std::unordered_map<std::string_view, VkShaderModule> shader_modules_{};
             VkDescriptorSetLayout sample_set_layout_{};
@@ -10037,12 +10158,12 @@ namespace sogen
             void create(const std::function<uint32_t(uint32_t type_bits)>& find_host_memory_type)
             {
                 const auto& device = this->device_;
-                device.get_device_queue(device.handle, device.queue_family_index, 0, &this->queue_);
+                device.get_device_queue(device.handle, this->queue_family_, 0, &this->queue_);
 
                 VkCommandPoolCreateInfo pool_info{};
                 pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
                 pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-                pool_info.queueFamilyIndex = device.queue_family_index;
+                pool_info.queueFamilyIndex = this->queue_family_;
 
                 VkCommandBufferAllocateInfo command_buffer_info{};
                 command_buffer_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -10249,6 +10370,11 @@ namespace sogen
             });
         }
 
+        if (impl.has_pending_submissions())
+        {
+            throw std::runtime_error("A Vulkan queue waits for something no submission, acquire or host signal provides");
+        }
+
         // The checks above cannot see the order of submissions, e.g. a wait on one queue for a signal submitted after it on
         // the same queue. Each queue therefore gets a fence behind its work, which signals once all of it is done, and the
         // snapshot is refused unless every fence does so in time.
@@ -10301,13 +10427,15 @@ namespace sogen
             }
         }
 
-        std::unordered_map<uint64_t, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
-        const auto transfer_for = [&](const uint64_t device_id) -> snapshot_transfer<impl::device_data>& {
-            auto& transfer = transfers[device_id];
+        std::map<std::pair<uint64_t, uint32_t>, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
+        const auto transfer_for = [&](const uint64_t device_id,
+                                      const uint32_t family = VK_QUEUE_FAMILY_IGNORED) -> snapshot_transfer<impl::device_data>& {
+            const auto& device = impl.devices.at(device_id);
+            const auto queue_family = family == VK_QUEUE_FAMILY_IGNORED ? device.queue_family_index : family;
+            auto& transfer = transfers[{device_id, queue_family}];
             if (!transfer)
             {
-                const auto& device = impl.devices.at(device_id);
-                transfer = std::make_unique<snapshot_transfer<impl::device_data>>(device, [&](const uint32_t type_bits) {
+                transfer = std::make_unique<snapshot_transfer<impl::device_data>>(device, queue_family, [&](const uint32_t type_bits) {
                     return impl.find_memory_type(device, type_bits,
                                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 });
@@ -10461,6 +10589,7 @@ namespace sogen
             buffer.write(image.memory_id);
             buffer.write(image.memory_offset);
             buffer.write_vector(image.layouts);
+            buffer.write(image.owner_family);
 
             const auto aspects = get_vulkan_format_aspects(create.format);
             uint32_t aspect = 0;
@@ -10483,7 +10612,10 @@ namespace sogen
 
                         const bool layouts_match =
                             aspect == 0 || layout == static_cast<VkImageLayout>(image.layouts[image.subresource_index(0, mip, layer)]);
-                        if (!image.copyable || image.ownership_transferred || image.used_by_several_queues || !layouts_match)
+                        // Multisampled contents are read and written by shaders, which the device's first queue family runs.
+                        const bool owner_runs_shaders = image.samples == 1 || image.owner_family == VK_QUEUE_FAMILY_IGNORED ||
+                                                        image.owner_family == impl.devices.at(image.device_id).queue_family_index;
+                        if (!image.copyable || !layouts_match || !owner_runs_shaders)
                         {
                             throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
                         }
@@ -10493,7 +10625,7 @@ namespace sogen
                             const VkExtent2D extent{.width = create.width, .height = create.height};
                             std::vector<std::byte> contents(static_cast<size_t>(extent.width) * extent.height * image.samples *
                                                             snapshot_transfer<impl::device_data>::sample_size);
-                            if (!transfer_for(image.device_id)
+                            if (!transfer_for(image.device_id, image.owner_family)
                                      .read_samples(image.handle, create.format, image.samples, static_cast<VkImageAspectFlagBits>(bit),
                                                    aspects, layer, extent, layout, contents))
                             {
@@ -10522,7 +10654,7 @@ namespace sogen
                                               ((extent.height + block->height - 1) / block->height) * extent.depth * block->size;
 
                         std::vector<std::byte> contents(size);
-                        if (!transfer_for(image.device_id)
+                        if (!transfer_for(image.device_id, image.owner_family)
                                  .copy_image(image.handle, static_cast<VkImageAspectFlagBits>(bit), aspects, mip, layer, extent, *block,
                                              layout, layout, true, contents, false))
                         {
@@ -10573,11 +10705,6 @@ namespace sogen
             for (const auto image : swapchain.image_ids)
             {
                 const auto& data = impl.images.at(image);
-                if (data.used_by_several_queues)
-                {
-                    throw std::runtime_error("Snapshots do not support swapchain images used from several queues yet");
-                }
-
                 buffer.write_vector(data.layouts);
                 buffer.write(data.last_queue_id);
             }
@@ -10842,13 +10969,15 @@ namespace sogen
         auto& impl = *this->impl_;
         const auto clear_forced_ids = utils::finally([&] { impl.forced_ids.clear(); });
 
-        std::unordered_map<uint64_t, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
-        const auto transfer_for = [&](const uint64_t device_id) -> snapshot_transfer<impl::device_data>& {
-            auto& transfer = transfers[device_id];
+        std::map<std::pair<uint64_t, uint32_t>, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
+        const auto transfer_for = [&](const uint64_t device_id,
+                                      const uint32_t family = VK_QUEUE_FAMILY_IGNORED) -> snapshot_transfer<impl::device_data>& {
+            const auto& device = impl.devices.at(device_id);
+            const auto queue_family = family == VK_QUEUE_FAMILY_IGNORED ? device.queue_family_index : family;
+            auto& transfer = transfers[{device_id, queue_family}];
             if (!transfer)
             {
-                const auto& device = impl.devices.at(device_id);
-                transfer = std::make_unique<snapshot_transfer<impl::device_data>>(device, [&](const uint32_t type_bits) {
+                transfer = std::make_unique<snapshot_transfer<impl::device_data>>(device, queue_family, [&](const uint32_t type_bits) {
                     return impl.find_memory_type(device, type_bits,
                                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 });
@@ -11103,6 +11232,7 @@ namespace sogen
             const auto memory = buffer.read<uint64_t>();
             const auto memory_offset = buffer.read<uint64_t>();
             auto layouts = buffer.read_vector<uint32_t>();
+            const auto owner_family = buffer.read<uint32_t>();
 
             uint64_t image{};
             impl.forced_ids = {id};
@@ -11112,6 +11242,7 @@ namespace sogen
             expect_restored(result, image, id, "image");
 
             auto& restored = impl.images.at(id);
+            restored.owner_family = owner_family;
             if (layouts.size() != restored.layouts.size() ||
                 (memory != 0 && this->bind_image_memory(device, id, memory, memory_offset) != VK_SUCCESS))
             {
@@ -11154,9 +11285,10 @@ namespace sogen
                 const auto saved_layout = static_cast<VkImageLayout>(layouts[restored.subresource_index(0, entry.mip, entry.layer)]);
                 if (restored.samples > 1)
                 {
-                    if (!transfer_for(device).write_samples(
-                            restored.handle, create.format, restored.samples, static_cast<VkImageAspectFlagBits>(entry.aspect), aspects,
-                            entry.layer, {.width = create.width, .height = create.height}, first, last, saved_layout, entry.contents))
+                    if (!transfer_for(device, owner_family)
+                             .write_samples(restored.handle, create.format, restored.samples,
+                                            static_cast<VkImageAspectFlagBits>(entry.aspect), aspects, entry.layer,
+                                            {.width = create.width, .height = create.height}, first, last, saved_layout, entry.contents))
                     {
                         throw std::runtime_error("Restoring the samples of Vulkan image " + std::to_string(id) + " failed");
                     }
@@ -11168,11 +11300,11 @@ namespace sogen
                                         .height = std::max(1U, create.height >> entry.mip),
                                         .depth = std::max(1U, create.depth >> entry.mip)};
                 if (!block || entry.mip >= create.mip_levels || entry.layer >= create.array_layers ||
-                    !transfer_for(device).copy_image(
-                        restored.handle, static_cast<VkImageAspectFlagBits>(entry.aspect), aspects, entry.mip, entry.layer, extent, *block,
-                        first ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                        static_cast<VkImageLayout>(layouts[restored.subresource_index(0, entry.mip, entry.layer)]), last, entry.contents,
-                        true))
+                    !transfer_for(device, owner_family)
+                         .copy_image(restored.handle, static_cast<VkImageAspectFlagBits>(entry.aspect), aspects, entry.mip, entry.layer,
+                                     extent, *block, first ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                     static_cast<VkImageLayout>(layouts[restored.subresource_index(0, entry.mip, entry.layer)]), last,
+                                     entry.contents, true))
                 {
                     throw std::runtime_error("Restoring the contents of Vulkan image " + std::to_string(id) + " failed");
                 }

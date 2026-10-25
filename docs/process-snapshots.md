@@ -27,8 +27,11 @@ code is shared with Android's single-vCPU FEX backend.
 - [x] Present completion does not need confirming: a suspend never destroys presentation objects in the
       running process (the snapshot is written and the process exits, or saving fails and it keeps running),
       and a restore starts in a fresh process with nothing pending
-- [ ] Images and swapchain images used from several queues (refused: their layouts depend on the order the
-      queues run in, which needs a model of the semaphore dependencies), several vCPUs on WHP
+- [x] Images and swapchain images used from several queues: what each submission does to layouts, ownership
+      and queries waits until the submissions, acquires and host signals before it provide its semaphore waits,
+      so the tracked state follows the order the queues run in. Contents are copied on a queue of the family
+      that owns the image. A snapshot is refused while a modelled wait is still unsatisfied
+- [ ] Several vCPUs on WHP
 - [ ] Child processes
 - [ ] Android integration
 
@@ -125,8 +128,8 @@ Agreed with sol6_1 during design review.
 - **Buffers** by copy; **non-MSAA color images** per mip/layer; **depth/stencil** per aspect;
   **MSAA** via shader passes (last).
 - **Layouts** are tracked per aspect, mip and layer, plus queue-family ownership, from explicit
-  barriers and render-pass initial/final transitions. Per-command-buffer effects are applied at
-  submit in submission order (one queue for now).
+  barriers and render-pass initial/final transitions. Per-command-buffer effects are applied in the
+  order the semaphores impose across queues (submission order on one queue).
 - **Buffer device address** needs the full capture/replay chain from device creation (feature,
   buffer create flag + opaque capture address, memory allocation flag + opaque address). The bridge
   currently drops buffer creation flags. Excluded until implemented.
