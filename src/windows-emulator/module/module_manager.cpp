@@ -96,6 +96,7 @@ namespace sogen
             buffer.write(mod.entry_point);
 
             buffer.write(mod.machine);
+            buffer.write(mod.characteristics);
             buffer.write(mod.dll_characteristics);
             buffer.write(mod.size_of_stack_reserve);
             buffer.write(mod.size_of_stack_commit);
@@ -122,6 +123,7 @@ namespace sogen
             buffer.read(mod.entry_point);
 
             buffer.read(mod.machine);
+            buffer.read(mod.characteristics);
             buffer.read(mod.dll_characteristics);
             buffer.read(mod.size_of_stack_reserve);
             buffer.read(mod.size_of_stack_commit);

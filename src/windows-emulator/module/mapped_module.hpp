@@ -44,6 +44,7 @@ namespace sogen
 
         // PE header fields
         uint16_t machine{};
+        uint16_t characteristics{};
         uint16_t dll_characteristics{};
         uint64_t size_of_stack_reserve{};
         uint64_t size_of_stack_commit{};
