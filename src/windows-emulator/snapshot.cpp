@@ -6,6 +6,7 @@
 #include <utils/finally.hpp>
 #include <utils/compression.hpp>
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <random>
@@ -22,11 +23,14 @@ namespace sogen
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
                 char magic[4] = {'S', 'N', 'A', 'P'};
-                uint32_t version{6};
+                uint32_t version{7};
                 uint32_t machine{static_cast<uint32_t>(PEMachineType::AMD64)};
+                uint32_t reserved{};
+                // A streamed zstd frame does not record its decompressed size.
+                uint64_t state_size{};
             };
 
-            static_assert(sizeof(snapshot_header) == 12);
+            static_assert(sizeof(snapshot_header) == 24);
 
             snapshot_header read_header(const std::span<const std::byte> snapshot)
             {
@@ -54,26 +58,52 @@ namespace sogen
                 return header;
             }
 
-            std::span<const std::byte> validate_header(const std::span<const std::byte> snapshot)
-            {
-                read_header(snapshot);
-                return snapshot.subspan(sizeof(snapshot_header));
-            }
-
-            std::vector<std::byte> get_compressed_emulator_state(const windows_emulator& win_emu, const std::string_view configuration)
-            {
-                utils::buffer_serializer serializer{};
-                serializer.write_string(configuration);
-                win_emu.serialize(serializer);
-
-                return utils::compression::zstd::compress(serializer.get_buffer(), 1);
-            }
-
             std::vector<std::byte> get_decompressed_emulator_state(const std::span<const std::byte> snapshot)
             {
-                const auto data = validate_header(snapshot);
-                return utils::compression::zstd::decompress(data);
+                const auto header = read_header(snapshot);
+                auto state = utils::compression::zstd::decompress(snapshot.subspan(sizeof(snapshot_header)), header.state_size);
+                if (state.size() != header.state_size)
+                {
+                    throw std::runtime_error("Failed to decompress snapshot");
+                }
+
+                return state;
             }
+
+            snapshot_header make_header(const windows_emulator& win_emu, const size_t state_size)
+            {
+                snapshot_header header{};
+                header.machine = static_cast<uint32_t>(
+                    win_emu.process.native_architecture == windows_guest_architecture::arm64 ? PEMachineType::ARM64 : PEMachineType::AMD64);
+                header.state_size = state_size;
+                return header;
+            }
+
+            std::span<const std::byte> header_bytes(const snapshot_header& header)
+            {
+                return {reinterpret_cast<const std::byte*>(&header), sizeof(header)};
+            }
+
+            void serialize_emulator_state(const windows_emulator& win_emu, const std::string_view configuration,
+                                          utils::buffer_serializer& serializer)
+            {
+                serializer.write_string(configuration);
+                win_emu.serialize(serializer);
+            }
+
+            void deserialize_emulator_state(windows_emulator& win_emu, const std::string_view configuration,
+                                            utils::buffer_deserializer& deserializer)
+            {
+                if (deserializer.read_string<char>() != configuration)
+                {
+                    throw std::runtime_error("The snapshot was taken with a different emulator configuration");
+                }
+
+                win_emu.deserialize(deserializer);
+            }
+
+            // Every worker keeps its own buffers, which a device with little memory may not afford while saving a large process.
+            constexpr unsigned max_compression_workers = 4;
 
             std::string random_suffix()
             {
@@ -97,12 +127,13 @@ namespace sogen
         {
             win_emu.emu().ensure_restorable_in_new_process();
             win_emu.prepare_serialization();
-            const auto state = get_compressed_emulator_state(win_emu, configuration);
 
-            snapshot_header header{};
-            header.machine = static_cast<uint32_t>(
-                win_emu.process.native_architecture == windows_guest_architecture::arm64 ? PEMachineType::ARM64 : PEMachineType::AMD64);
-            std::span header_span(reinterpret_cast<const std::byte*>(&header), sizeof(header));
+            utils::buffer_serializer serializer{};
+            serialize_emulator_state(win_emu, configuration, serializer);
+            const auto state = utils::compression::zstd::compress(serializer.get_buffer(), 1);
+
+            const auto header = make_header(win_emu, serializer.size());
+            const auto header_span = header_bytes(header);
 
             std::vector<std::byte> snapshot{};
             snapshot.reserve(header_span.size() + state.size());
@@ -128,7 +159,8 @@ namespace sogen
         void write_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
                                      const std::string_view configuration, const std::function<bool()>& should_commit)
         {
-            const auto snapshot = create_emulator_snapshot(win_emu, configuration);
+            win_emu.emu().ensure_restorable_in_new_process();
+            win_emu.prepare_serialization();
 
             // Written next to the destination and moved over it, so a failed write never leaves a truncated snapshot behind.
             auto temporary_file = snapshot_file;
@@ -139,9 +171,29 @@ namespace sogen
                 std::filesystem::remove(temporary_file, ec);
             });
 
-            if (!utils::io::write_file(temporary_file, snapshot))
             {
-                throw std::runtime_error("Failed to write snapshot: " + snapshot_file.string());
+                std::ofstream stream{temporary_file, std::ios::binary | std::ios::trunc};
+                const auto write = [&](const std::span<const std::byte> data) {
+                    stream.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+                };
+
+                // The state is streamed to the file rather than held in memory, so its size is filled into the header last.
+                write(header_bytes(make_header(win_emu, 0)));
+
+                utils::compression::zstd::stream_compressor compressor{
+                    write, 1, std::min(std::thread::hardware_concurrency(), max_compression_workers)};
+                utils::buffer_serializer serializer{[&](const std::span<const std::byte> data) { compressor.write(data); }};
+                serialize_emulator_state(win_emu, configuration, serializer);
+                serializer.flush();
+                compressor.finish();
+
+                stream.seekp(0);
+                write(header_bytes(make_header(win_emu, serializer.size())));
+
+                if (!stream.flush())
+                {
+                    throw std::runtime_error("Failed to write snapshot: " + snapshot_file.string());
+                }
             }
 
             if (should_commit && !should_commit())
@@ -171,24 +223,28 @@ namespace sogen
             const auto data = get_decompressed_emulator_state(snapshot);
 
             utils::buffer_deserializer deserializer{data};
-            if (deserializer.read_string<char>() != configuration)
-            {
-                throw std::runtime_error("The snapshot was taken with a different emulator configuration");
-            }
-
-            win_emu.deserialize(deserializer);
+            deserialize_emulator_state(win_emu, configuration, deserializer);
         }
 
         void load_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
                                     const std::string_view configuration)
         {
-            std::vector<std::byte> data{};
-            if (!utils::io::read_file(snapshot_file, &data))
+            std::ifstream stream{snapshot_file, std::ios::binary};
+            std::array<std::byte, sizeof(snapshot_header)> header_data{};
+            if (!stream.read(reinterpret_cast<char*>(header_data.data()), header_data.size()))
             {
                 throw std::runtime_error("Failed to read snapshot file: " + snapshot_file.string());
             }
 
-            load_emulator_snapshot(win_emu, data, configuration);
+            // The state is decompressed while it is restored rather than held in memory.
+            utils::compression::zstd::stream_decompressor decompressor{[&](const std::span<std::byte> compressed) {
+                stream.read(reinterpret_cast<char*>(compressed.data()), static_cast<std::streamsize>(compressed.size()));
+                return static_cast<size_t>(stream.gcount());
+            }};
+
+            utils::buffer_deserializer deserializer{[&](const std::span<std::byte> data) { decompressor.read(data); },
+                                                    static_cast<size_t>(read_header(header_data).state_size)};
+            deserialize_emulator_state(win_emu, configuration, deserializer);
         }
 
         controller::controller(windows_emulator& win_emu, std::string configuration, std::filesystem::path directory,

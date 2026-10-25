@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 
 namespace sogen
@@ -33,6 +34,138 @@ namespace sogen
                 }
 
                 return buffer;
+            }
+
+            std::vector<std::byte> decompress(const std::span<const std::byte> data, const size_t decompressed_size)
+            {
+                const std::unique_ptr<ZSTD_DCtx, decltype(&ZSTD_freeDCtx)> context{ZSTD_createDCtx(), &ZSTD_freeDCtx};
+                if (!context)
+                {
+                    return {};
+                }
+
+                std::vector<std::byte> buffer(decompressed_size);
+                ZSTD_inBuffer input{data.data(), data.size(), 0};
+                ZSTD_outBuffer output{buffer.data(), buffer.size(), 0};
+                while (input.pos < input.size)
+                {
+                    const auto result = ZSTD_decompressStream(context.get(), &output, &input);
+                    if (ZSTD_isError(result) || (result != 0 && output.pos == output.size))
+                    {
+                        return {};
+                    }
+                }
+
+                if (output.pos != buffer.size())
+                {
+                    return {};
+                }
+
+                return buffer;
+            }
+
+            void stream_compressor::context_deleter::operator()(void* context) const
+            {
+                ZSTD_freeCCtx(static_cast<ZSTD_CCtx*>(context));
+            }
+
+            stream_compressor::stream_compressor(sink output, const int compression_level, const unsigned workers)
+                : output_(std::move(output)),
+                  context_(ZSTD_createCCtx()),
+                  out_buffer_(ZSTD_CStreamOutSize())
+            {
+                auto* context = static_cast<ZSTD_CCtx*>(this->context_.get());
+                if (!context || ZSTD_isError(ZSTD_CCtx_setParameter(context, ZSTD_c_compressionLevel, compression_level)))
+                {
+                    throw std::runtime_error("Failed to create a zstd stream");
+                }
+
+                // Builds without multithreading reject workers and compress on the calling thread instead.
+                (void)ZSTD_CCtx_setParameter(context, ZSTD_c_nbWorkers, static_cast<int>(workers));
+            }
+
+            stream_compressor::~stream_compressor() = default;
+
+            void stream_compressor::write(const std::span<const std::byte> data)
+            {
+                this->compress(data, false);
+            }
+
+            void stream_compressor::finish()
+            {
+                this->compress({}, true);
+            }
+
+            void stream_compressor::compress(const std::span<const std::byte> data, const bool end)
+            {
+                auto* context = static_cast<ZSTD_CCtx*>(this->context_.get());
+                ZSTD_inBuffer input{data.data(), data.size(), 0};
+                const auto directive = end ? ZSTD_e_end : ZSTD_e_continue;
+
+                while (true)
+                {
+                    ZSTD_outBuffer output{this->out_buffer_.data(), this->out_buffer_.size(), 0};
+                    const auto remaining = ZSTD_compressStream2(context, &output, &input, directive);
+                    if (ZSTD_isError(remaining))
+                    {
+                        throw std::runtime_error(std::string{"zstd compression failed: "} + ZSTD_getErrorName(remaining));
+                    }
+
+                    if (output.pos > 0)
+                    {
+                        this->output_(std::span(this->out_buffer_).first(output.pos));
+                    }
+
+                    if (end ? remaining == 0 : input.pos == input.size)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            void stream_decompressor::context_deleter::operator()(void* context) const
+            {
+                ZSTD_freeDCtx(static_cast<ZSTD_DCtx*>(context));
+            }
+
+            stream_decompressor::stream_decompressor(source input)
+                : input_(std::move(input)),
+                  context_(ZSTD_createDCtx()),
+                  in_buffer_(ZSTD_DStreamInSize())
+            {
+                if (!this->context_)
+                {
+                    throw std::runtime_error("Failed to create a zstd stream");
+                }
+            }
+
+            stream_decompressor::~stream_decompressor() = default;
+
+            void stream_decompressor::read(const std::span<std::byte> data)
+            {
+                auto* context = static_cast<ZSTD_DCtx*>(this->context_.get());
+                ZSTD_outBuffer output{data.data(), data.size(), 0};
+
+                while (output.pos < output.size)
+                {
+                    if (this->in_position_ == this->in_size_)
+                    {
+                        this->in_size_ = this->input_(this->in_buffer_);
+                        this->in_position_ = 0;
+                        if (this->in_size_ == 0)
+                        {
+                            throw std::runtime_error("The compressed data ended early");
+                        }
+                    }
+
+                    ZSTD_inBuffer input{this->in_buffer_.data(), this->in_size_, this->in_position_};
+                    const auto result = ZSTD_decompressStream(context, &output, &input);
+                    this->in_position_ = input.pos;
+                    if (ZSTD_isError(result))
+                    {
+                        throw std::runtime_error(std::string{"zstd decompression failed: "} + ZSTD_getErrorName(result));
+                    }
+                }
             }
 
             std::vector<std::byte> compress(const std::span<const std::byte> data, const int compression_level)
