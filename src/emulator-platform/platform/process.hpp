@@ -846,10 +846,14 @@ namespace sogen
         ULONG IoWriteOperationCount;
         ULONG IoOtherOperationCount;
         ULONG AvailablePages;
-        ULONGLONG CommittedPages;
-        ULONGLONG CommitLimit;
-        ULONGLONG PeakCommitment;
+        ULONG CommittedPages;
+        ULONG CommitLimit;
+        ULONG PeakCommitment;
     };
+
+    static_assert(offsetof(SYSTEM_PERFORMANCE_MEMORY_INFORMATION64, AvailablePages) == 44);
+    static_assert(offsetof(SYSTEM_PERFORMANCE_MEMORY_INFORMATION64, PeakCommitment) == 56);
+    static_assert(sizeof(SYSTEM_PERFORMANCE_MEMORY_INFORMATION64) == 64);
 
     typedef struct _SYSTEM_CODEINTEGRITY_INFORMATION
     {
