@@ -211,8 +211,9 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     }
 
     final pointer = event.pointer;
-    // Holding still before moving would hold the button through the look gesture.
+    // A look gesture often starts with a pause, which must not turn into holding the button while looking around.
     final relative = _relative;
+    _relativeRemainder = Offset.zero;
     _touch = _TrackpadTouch(
       pointer: pointer,
       start: event.timeStamp,
