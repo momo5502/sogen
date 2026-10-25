@@ -835,6 +835,22 @@ namespace sogen
         char NumberOfProcessors;
     } SYSTEM_BASIC_INFORMATION64, *PSYSTEM_BASIC_INFORMATION64;
 
+    // The memory counters at the start of SYSTEM_PERFORMANCE_INFORMATION; the rest of it changes between Windows versions.
+    struct SYSTEM_PERFORMANCE_MEMORY_INFORMATION64
+    {
+        LONGLONG IdleProcessTime;
+        LONGLONG IoReadTransferCount;
+        LONGLONG IoWriteTransferCount;
+        LONGLONG IoOtherTransferCount;
+        ULONG IoReadOperationCount;
+        ULONG IoWriteOperationCount;
+        ULONG IoOtherOperationCount;
+        ULONG AvailablePages;
+        ULONGLONG CommittedPages;
+        ULONGLONG CommitLimit;
+        ULONGLONG PeakCommitment;
+    };
+
     typedef struct _SYSTEM_CODEINTEGRITY_INFORMATION
     {
         ULONG Length;

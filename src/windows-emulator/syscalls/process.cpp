@@ -728,8 +728,28 @@ namespace sogen
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
-                const std::vector<std::byte> zeroed(process_information_length, std::byte{0});
-                c.emu.write_memory(process_information, zeroed.data(), zeroed.size());
+                // The defaults of a process without a job: unlimited pools, page file and time. GlobalMemoryStatusEx caps
+                // the available page file at PagefileLimit, so zero would report no memory at all.
+                constexpr uint64_t unlimited = ~0ULL;
+                constexpr uint64_t minimum_working_set = 0xC8000;
+                constexpr uint64_t maximum_working_set = 0x159000;
+                constexpr int64_t unlimited_time = -1;
+
+                if (process_information_length == quota_limits64_size)
+                {
+                    const std::array<uint64_t, 6> limits{unlimited,           unlimited, minimum_working_set,
+                                                         maximum_working_set, unlimited, static_cast<uint64_t>(unlimited_time)};
+                    c.emu.write_memory(process_information, limits.data(), sizeof(limits));
+                }
+                else
+                {
+                    const std::array<uint32_t, 6> limits{
+                        static_cast<uint32_t>(unlimited),           static_cast<uint32_t>(unlimited),
+                        static_cast<uint32_t>(minimum_working_set), static_cast<uint32_t>(maximum_working_set),
+                        static_cast<uint32_t>(unlimited),           0};
+                    c.emu.write_memory(process_information, limits.data(), sizeof(limits));
+                    c.emu.write_memory(process_information + 0x18, &unlimited_time, sizeof(unlimited_time));
+                }
 
                 if (return_length)
                 {
