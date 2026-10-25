@@ -101,7 +101,8 @@ extern "C"
                                                                             jstring application, jobjectArray arguments,
                                                                             jobjectArray environment, jobjectArray path_mappings,
                                                                             jstring working_directory, jstring backend,
-                                                                            const jboolean live_network, jstring sandbox_executable)
+                                                                            const jboolean live_network, jstring sandbox_executable,
+                                                                            jstring snapshot_directory, jstring resume_file)
     {
         const sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -113,6 +114,8 @@ extern "C"
             .backend = to_string(*env, backend),
             .live_network = live_network == JNI_TRUE,
             .sandbox_executable = to_string(*env, sandbox_executable),
+            .snapshot_directory = to_string(*env, snapshot_directory),
+            .resume_file = to_string(*env, resume_file),
         };
 
         return get_session(handle).run(config);
@@ -121,6 +124,12 @@ extern "C"
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeStop(JNIEnv* /*env*/, jobject /*self*/, const jlong handle)
     {
         get_session(handle).stop();
+    }
+
+    JNIEXPORT jboolean JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeSuspend(JNIEnv* env, jobject /*self*/, const jlong handle,
+                                                                                    jstring destination)
+    {
+        return get_session(handle).suspend(to_string(*env, destination)) ? JNI_TRUE : JNI_FALSE;
     }
 
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeConsoleInput(JNIEnv* env, jobject /*self*/, const jlong handle,

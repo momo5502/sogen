@@ -17,6 +17,12 @@
 namespace sogen
 {
     class windows_emulator;
+
+    namespace snapshot
+    {
+        class controller;
+        struct snapshot_outcome;
+    }
 }
 
 namespace sogen::android
@@ -32,6 +38,10 @@ namespace sogen::android
         std::string backend{};
         bool live_network{};
         std::filesystem::path sandbox_executable{};
+        // Where a suspend without a destination saves the process.
+        std::filesystem::path snapshot_directory{};
+        // A saved process to continue instead of starting the application.
+        std::filesystem::path resume_file{};
     };
 
     class session final : public ui_host
@@ -48,6 +58,9 @@ namespace sogen::android
         int run(const run_config& config);
         void stop();
 
+        // Saves the process and ends the session. Returns false while it is not running or already being saved.
+        bool suspend(std::filesystem::path destination);
+
         void with_ui(const std::function<void(android_ui_backend&)>& action);
 
         void console_input(std::string_view data) const;
@@ -62,6 +75,7 @@ namespace sogen::android
 
       private:
         int run_emulator(const run_config& config);
+        void report_snapshot(const snapshot::snapshot_outcome& outcome);
 
         struct listener_methods
         {
@@ -73,6 +87,7 @@ namespace sogen::android
             jmethodID on_window_visibility_changed{};
             jmethodID on_window_title_changed{};
             jmethodID on_cursor_moved{};
+            jmethodID on_snapshot{};
         };
 
         jobject listener_{};
@@ -81,6 +96,7 @@ namespace sogen::android
 
         std::mutex mutex_{};
         windows_emulator* emulator_{};
+        snapshot::controller* snapshots_{};
         android_ui_backend* ui_{};
         bool stop_requested_{};
 

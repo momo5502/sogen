@@ -30,6 +30,11 @@ namespace sogen
 
         virtual void serialize_state(utils::buffer_serializer& buffer, bool is_snapshot) const = 0;
         virtual void deserialize_state(utils::buffer_deserializer& buffer, bool is_snapshot) = 0;
+
+        // Snapshot files are restored by a new process, unlike the in-process state other serialization users restore.
+        virtual void ensure_restorable_in_new_process() const
+        {
+        }
     };
 
 } // namespace sogen

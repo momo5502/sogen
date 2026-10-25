@@ -13,6 +13,10 @@ data class RunConfig(
     /** Empty selects the platform default: FEX on arm64, Unicorn elsewhere. */
     val backend: String = "",
     val liveNetwork: Boolean = false,
+    /** Where a suspend without a destination saves the process. */
+    val snapshotDirectory: String = "",
+    /** A saved process to continue instead of starting [application]. */
+    val resumeFile: String = "",
 ) {
     fun toBundle(): Bundle = Bundle().apply {
         putString(KEY_ROOT, emulationRoot)
@@ -23,6 +27,8 @@ data class RunConfig(
         putString(KEY_WORKING_DIRECTORY, workingDirectory)
         putString(KEY_BACKEND, backend)
         putBoolean(KEY_LIVE_NETWORK, liveNetwork)
+        putString(KEY_SNAPSHOT_DIRECTORY, snapshotDirectory)
+        putString(KEY_RESUME_FILE, resumeFile)
     }
 
     companion object {
@@ -34,6 +40,8 @@ data class RunConfig(
         private const val KEY_WORKING_DIRECTORY = "workingDirectory"
         private const val KEY_BACKEND = "backend"
         private const val KEY_LIVE_NETWORK = "liveNetwork"
+        private const val KEY_SNAPSHOT_DIRECTORY = "snapshotDirectory"
+        private const val KEY_RESUME_FILE = "resumeFile"
 
         fun fromBundle(bundle: Bundle) = RunConfig(
             emulationRoot = bundle.getString(KEY_ROOT).orEmpty(),
@@ -44,6 +52,8 @@ data class RunConfig(
             workingDirectory = bundle.getString(KEY_WORKING_DIRECTORY).orEmpty(),
             backend = bundle.getString(KEY_BACKEND).orEmpty(),
             liveNetwork = bundle.getBoolean(KEY_LIVE_NETWORK),
+            snapshotDirectory = bundle.getString(KEY_SNAPSHOT_DIRECTORY).orEmpty(),
+            resumeFile = bundle.getString(KEY_RESUME_FILE).orEmpty(),
         )
 
         private fun pairs(flat: List<String>?): Map<String, String> =

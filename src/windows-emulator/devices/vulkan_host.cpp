@@ -5532,30 +5532,44 @@ namespace sogen
         return mem != this->impl_->memories.end() && mem->second.imported && mem->second.non_coherent;
     }
 
-    void vulkan_host::flush_imported_memory(const std::span<const memory_range> ranges)
+    int32_t vulkan_host::flush_imported_memory(const std::span<const memory_range> ranges)
     {
+        VkResult result = VK_SUCCESS;
         for (const auto& [device_id, mapped_ranges] : this->impl_->to_mapped_ranges(ranges))
         {
             const auto dev = this->impl_->devices.find(device_id);
             if (dev != this->impl_->devices.end() && dev->second.flush_mapped_memory_ranges)
             {
-                dev->second.flush_mapped_memory_ranges(dev->second.handle, static_cast<uint32_t>(mapped_ranges.size()),
-                                                       mapped_ranges.data());
+                const auto flushed = dev->second.flush_mapped_memory_ranges(dev->second.handle, static_cast<uint32_t>(mapped_ranges.size()),
+                                                                            mapped_ranges.data());
+                if (result == VK_SUCCESS)
+                {
+                    result = flushed;
+                }
             }
         }
+
+        return result;
     }
 
-    void vulkan_host::invalidate_imported_memory(const std::span<const memory_range> ranges)
+    int32_t vulkan_host::invalidate_imported_memory(const std::span<const memory_range> ranges)
     {
+        VkResult result = VK_SUCCESS;
         for (const auto& [device_id, mapped_ranges] : this->impl_->to_mapped_ranges(ranges))
         {
             const auto dev = this->impl_->devices.find(device_id);
             if (dev != this->impl_->devices.end() && dev->second.invalidate_mapped_memory_ranges)
             {
-                dev->second.invalidate_mapped_memory_ranges(dev->second.handle, static_cast<uint32_t>(mapped_ranges.size()),
-                                                            mapped_ranges.data());
+                const auto invalidated = dev->second.invalidate_mapped_memory_ranges(
+                    dev->second.handle, static_cast<uint32_t>(mapped_ranges.size()), mapped_ranges.data());
+                if (result == VK_SUCCESS)
+                {
+                    result = invalidated;
+                }
             }
         }
+
+        return result;
     }
 
     uint64_t vulkan_host::allocation_size(uint64_t memory) const
@@ -10748,11 +10762,6 @@ namespace sogen
             if (memory.placed)
             {
                 throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
-            }
-
-            if (memory.imported && memory.non_coherent)
-            {
-                throw std::runtime_error("Snapshots do not support non-coherent imported Vulkan memory yet");
             }
         }
 

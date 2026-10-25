@@ -67,6 +67,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -110,6 +111,13 @@ namespace sogen::fex
 
         // The part of the guest address space a WoW64 process's 32-bit code can address.
         constexpr uint64_t low_guest_window_size = 0x100000000ULL;
+
+        // Guest memory above 4GB is placed in one window that every process reserves at the same address, so a saved
+        // process finds its addresses free again in a new one. Android's 39-bit address space leaves this range alone.
+#ifndef __APPLE__
+        constexpr uint64_t guest_arena_base = 0x1000000000ULL;
+#endif
+        constexpr uint64_t guest_arena_size = 0x4000000000ULL;
 
 #ifdef __linux__
         constexpr uint64_t guest_address_space_end = 0x00007ffffffeffffULL + 1;
@@ -1350,6 +1358,9 @@ namespace sogen::fex
                 throw std::runtime_error("FEX backend requires 4KB host pages on Linux");
             }
 #endif
+#ifndef __APPLE__
+            this->reserve_guest_arena();
+#endif
             this->initialize_context();
         }
 
@@ -1380,6 +1391,11 @@ namespace sogen::fex
             if (this->low_guest_window_ != 0)
             {
                 ::munmap(reinterpret_cast<void*>(this->low_guest_window_), low_guest_window_size);
+            }
+
+            if (this->guest_arena_ != 0)
+            {
+                ::munmap(reinterpret_cast<void*>(this->guest_arena_), guest_arena_size);
             }
 
             if (g_active_emulator == this)
@@ -1591,27 +1607,31 @@ namespace sogen::fex
             }
         }
 
+        // The whole architectural state lives in a single CPUState struct, followed by the id of the emulator it came from.
         std::vector<std::byte> save_registers() const override
         {
-            // The whole architectural state lives in a single CPUState struct; snapshot it verbatim.
             const auto& state = this->cpu_state();
-            std::vector<std::byte> data(sizeof(FEXCore::Core::CPUState));
+            std::vector<std::byte> data(sizeof(FEXCore::Core::CPUState) + sizeof(this->instance_id_));
             std::memcpy(data.data(), &state, sizeof(state));
+            std::memcpy(data.data() + sizeof(state), &this->instance_id_, sizeof(this->instance_id_));
             return data;
         }
 
         // Preserves the fields that are per-FEXCore-thread-global rather than per-logical-guest-thread:
         // FEXCore rewrites L1Pointer/L1Mask itself whenever the JIT lookup cache reallocates, so the
-        // live values are always the correct ones and a stale snapshot must not clobber them.
+        // live values are always the correct ones and a stale snapshot must not clobber them. The
+        // segment_arrays point at the process-wide descriptor tables that load_gdt installs.
         // callret_sp/_pad1 are handled by ensure_callret_buffer.
-        void restore_state_into(FEXCore::Core::InternalThreadState* thread, const std::byte* src)
+        void restore_state_into(FEXCore::Core::InternalThreadState* thread, const FEXCore::Core::CPUState& restored)
         {
             auto& state = thread->CurrentFrame->State;
             const auto l1_pointer = state.L1Pointer;
             const auto l1_mask = state.L1Mask;
-            std::memcpy(&state, src, sizeof(FEXCore::Core::CPUState));
+            const auto segment_arrays = std::to_array(state.segment_arrays);
+            std::memcpy(&state, &restored, sizeof(state));
             state.L1Pointer = l1_pointer;
             state.L1Mask = l1_mask;
+            std::ranges::copy(segment_arrays, std::begin(state.segment_arrays));
             this->ensure_callret_buffer(state);
             thread->CallRetStackBase = reinterpret_cast<void*>(state._pad1);
 
@@ -1627,21 +1647,37 @@ namespace sogen::fex
 
         void restore_registers(const std::vector<std::byte>& register_data) override
         {
-            if (register_data.size() != sizeof(FEXCore::Core::CPUState))
+            FEXCore::Core::CPUState restored{};
+            uint64_t instance_id{};
+            if (register_data.size() != sizeof(restored) + sizeof(instance_id))
             {
                 throw std::runtime_error("FEX register snapshot has unexpected size");
+            }
+
+            std::memcpy(&restored, register_data.data(), sizeof(restored));
+            std::memcpy(&instance_id, register_data.data() + sizeof(restored), sizeof(instance_id));
+
+            // The call-ret buffer, descriptor tables and JIT blocks are host memory of the emulator that saved the state,
+            // so a state from a saved process gets its own.
+            if (instance_id != this->instance_id_)
+            {
+                restored._pad1 = 0;
+                restored.callret_sp = 0;
+                restored.InlineJITBlockHeader = 0;
             }
 
             if (this->thread_ == nullptr)
             {
                 // No thread yet: writing into staged_state_, which create_thread() will seed the
                 // real thread from (including installing L1Pointer/L1Mask/callret_sp correctly
-                // itself afterward) - a verbatim copy here is fine.
-                std::memcpy(&this->staged_state_, register_data.data(), sizeof(FEXCore::Core::CPUState));
+                // itself afterward).
+                const auto segment_arrays = std::to_array(this->staged_state_.segment_arrays);
+                std::memcpy(&this->staged_state_, &restored, sizeof(restored));
+                std::ranges::copy(segment_arrays, std::begin(this->staged_state_.segment_arrays));
                 return;
             }
 
-            this->restore_state_into(this->thread_, register_data.data());
+            this->restore_state_into(this->thread_, restored);
         }
 
         bool has_violation() const override
@@ -1677,16 +1713,69 @@ namespace sogen::fex
             return false;
         }
 
+        void ensure_restorable_in_new_process() const override
+        {
+            const auto ensure_restorable = [this](const uint64_t address, const uint64_t size) {
+                const bool in_low_window = this->low_guest_window_ != 0 && address + size <= low_guest_window_size;
+                const bool in_arena =
+                    this->guest_arena_ != 0 && address >= this->guest_arena_ && address + size <= this->guest_arena_ + guest_arena_size;
+                if (!in_low_window && !in_arena)
+                {
+                    std::array<char, 128> message{};
+                    snprintf(message.data(), message.size(), "Guest memory at 0x%llx lies where a new process may not get it back",
+                             static_cast<unsigned long long>(address));
+                    throw std::runtime_error(message.data());
+                }
+            };
+
+            for (const auto& [address, region] : this->regions_)
+            {
+                ensure_restorable(address, region.size);
+            }
+
+            // Reserved but uncommitted guest memory has no region, and a new process has to claim it as well.
+            for (const auto& [address, size] : this->claimed_host_ranges_)
+            {
+                ensure_restorable(address, size);
+            }
+        }
+
         void serialize_state(utils::buffer_serializer& buffer, bool /*is_snapshot*/) const override
         {
             buffer.write_vector(this->save_registers());
-            // TODO(fex): a full snapshot should also persist the mapped-memory layout and contents so a
-            // restore can re-mmap and refill the (host == guest) address space. Registers-only for now.
+            buffer.write(this->guest_arena_);
+            buffer.write(this->low_guest_window_ != 0);
+            buffer.write(this->gdt_base_);
+            buffer.write(this->gdt_limit_);
         }
 
         void deserialize_state(utils::buffer_deserializer& buffer, bool /*is_snapshot*/) override
         {
-            this->restore_registers(buffer.read_vector<std::byte>());
+            const auto registers = buffer.read_vector<std::byte>();
+            if (buffer.read<uint64_t>() != this->guest_arena_)
+            {
+                throw std::runtime_error("The guest memory window the process was saved with is not available");
+            }
+
+            const auto low_guest_window = buffer.read<bool>();
+            const auto gdt_base = buffer.read<uint64_t>();
+            const auto gdt_limit = buffer.read<uint32_t>();
+
+#ifndef __APPLE__
+            if (low_guest_window && this->low_guest_window_ == 0)
+            {
+                this->enable_low_guest_window();
+            }
+#else
+            (void)low_guest_window;
+#endif
+
+            // The descriptor table's host address depends on the low window, so it is set again once that exists.
+            if (gdt_base != 0)
+            {
+                this->load_gdt(gdt_base, gdt_limit);
+            }
+            this->restore_registers(registers);
         }
 
         // x86_emulator
@@ -1766,12 +1855,33 @@ namespace sogen::fex
             {
                 return false;
             }
+
+#ifndef __APPLE__
+            // A stale chunk of tracked memory is inaccessible until it is brought up to date, which the fault handler only
+            // does for the guest's own accesses.
+            this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                this->require_up_to_date(chunk, chunk_address, chunk_size);
+            });
+#endif
+
+            // Host-side reads, e.g. of a snapshot, also cover memory the guest made inaccessible to itself.
+            const bool needs_temporary_read = !this->range_has_permission(address, size, memory_permission::read);
+            if (needs_temporary_read)
+            {
+                this->set_temporary_access(address, size, memory_permission::read, true);
+            }
+
             // memmove, not memcpy: callers (e.g. the PE loader's section copy) can hand this a source
             // buffer that overlaps the guest destination range - overlapping memcpy is undefined
             // behaviour. This is a generic guest memory-copy primitive with no non-overlap contract.
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
                 std::memmove(static_cast<std::byte*>(data) + offset, reinterpret_cast<const void*>(host_address), span_size);
             });
+
+            if (needs_temporary_read)
+            {
+                this->set_temporary_access(address, size, memory_permission::read, false);
+            }
             return true;
         }
 
@@ -1802,7 +1912,7 @@ namespace sogen::fex
 
             if (needs_temporary_write)
             {
-                this->set_temporary_write_access(address, size, true);
+                this->set_temporary_access(address, size, memory_permission::write, true);
             }
 
             // memmove, not memcpy: see try_read_memory - the source may overlap the guest destination.
@@ -1812,7 +1922,7 @@ namespace sogen::fex
 
             if (needs_temporary_write)
             {
-                this->set_temporary_write_access(address, size, false);
+                this->set_temporary_access(address, size, memory_permission::write, false);
             }
 
             if (this->range_has_code(address, size))
@@ -2053,7 +2163,8 @@ namespace sogen::fex
             return this->host_mappings_in(address, address + size);
         }
 
-        // Guest addresses inside the low window are backed by the window, which only this backend maps into.
+        // Guest addresses inside the low window are backed by the window, which only this backend maps into. Above 4GB, the
+        // guest only gets the arena.
         std::vector<host_reserved_range> host_mappings_in(uint64_t start, const uint64_t end) const
         {
             if (this->low_guest_window_ != 0)
@@ -2066,7 +2177,27 @@ namespace sogen::fex
                 return {};
             }
 
-            return read_host_mappings_linux(start, end);
+            if (this->guest_arena_ == 0)
+            {
+                return read_host_mappings_linux(start, end);
+            }
+
+            std::vector<host_reserved_range> ranges{};
+            if (start < low_guest_window_size)
+            {
+                ranges = read_host_mappings_linux(start, std::min(end, low_guest_window_size));
+            }
+
+            const auto add_unavailable = [&](const uint64_t from, const uint64_t to) {
+                if (from < to)
+                {
+                    ranges.push_back({.address = from, .size = static_cast<size_t>(to - from)});
+                }
+            };
+            const uint64_t above_low = std::max(start, low_guest_window_size);
+            add_unavailable(above_low, std::min(end, this->guest_arena_));
+            add_unavailable(std::max(above_low, this->guest_arena_ + guest_arena_size), end);
+            return ranges;
         }
 #endif
 
@@ -2278,6 +2409,11 @@ namespace sogen::fex
 
         void flush_host_memory_cache(const void* host_pointer, size_t size) override
         {
+            flush_cache_lines(host_pointer, size);
+        }
+
+        static void flush_cache_lines(const void* host_pointer, size_t size)
+        {
             if (host_pointer == nullptr || size == 0)
             {
                 return;
@@ -2431,7 +2567,7 @@ namespace sogen::fex
         // access tracking
 
         template <typename F>
-        void for_each_tracked_chunk(const uint64_t address, const size_t size, F&& f)
+        void for_each_tracked_chunk(const uint64_t address, const size_t size, F&& f) const
         {
             const uint64_t end = address + size;
             auto it = this->tracked_ranges_.upper_bound(address);
@@ -2482,7 +2618,7 @@ namespace sogen::fex
         }
 
         // Applies the guest's protection to the mapped parts of a range, limited to access.
-        bool restrict_protection(const uint64_t address, const size_t size, const tracked_access access)
+        bool restrict_protection(const uint64_t address, const size_t size, const tracked_access access) const
         {
             bool restricted = true;
             this->for_each_mapped_piece(
@@ -2515,7 +2651,7 @@ namespace sogen::fex
         // Cleans and invalidates a stale chunk's cache lines, and leaves it write-protected unless the chunk is written
         // already, so that a write still marks it written. Cleaning makes the guest's unflushed writes visible as well,
         // but the chunk keeps counting as written so that they are still flushed through the device.
-        bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
+        bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) const
         {
             chunk.stale = false;
             const auto access = chunk.written ? tracked_access::full : tracked_access::read_only;
@@ -2531,14 +2667,14 @@ namespace sogen::fex
                     {
                         this->for_each_host_span(piece_address, piece_size,
                                                  [&](const uint64_t host_address, const size_t span_size, size_t) {
-                                                     this->flush_host_memory_cache(reinterpret_cast<const void*>(host_address), span_size);
+                                                     flush_cache_lines(reinterpret_cast<const void*>(host_address), span_size);
                                                  });
                     }
                 });
             return true;
         }
 
-        void require_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
+        void require_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) const
         {
             if (chunk.stale && !this->bring_up_to_date(chunk, chunk_address, chunk_size))
             {
@@ -2686,7 +2822,7 @@ namespace sogen::fex
             }
 #else
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
-                if (this->is_in_low_guest_window(host_address))
+                if (this->is_in_low_guest_window(host_address) || this->is_in_guest_arena(host_address, span_size))
                 {
                     return;
                 }
@@ -2733,7 +2869,7 @@ namespace sogen::fex
         void release_host_claim(const uint64_t address, const size_t size)
         {
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
-                if (this->is_in_low_guest_window(host_address))
+                if (this->is_in_low_guest_window(host_address) || this->is_in_guest_arena(host_address, span_size))
                 {
                     replace_host_span(host_address, span_size, PROT_NONE);
                 }
@@ -2764,6 +2900,39 @@ namespace sogen::fex
             this->low_guest_window_ = reinterpret_cast<uint64_t>(window);
             this->context_->SetWow64GuestRebaseValue(this->low_guest_window_);
             this->context_->SetNeedsWow64GuestRebase(true);
+        }
+#endif
+
+        bool is_in_guest_arena(const uint64_t host_address, const size_t size) const
+        {
+            return this->guest_arena_ != 0 && host_address >= this->guest_arena_ &&
+                   host_address + size <= this->guest_arena_ + guest_arena_size;
+        }
+
+#ifndef __APPLE__
+        // Without the arena, guest memory still works but cannot be saved.
+        void reserve_guest_arena()
+        {
+            if (guest_arena_base + guest_arena_size > this->host_address_end_)
+            {
+                return;
+            }
+
+            void* arena = ::mmap(reinterpret_cast<void*>(guest_arena_base), guest_arena_size, PROT_NONE,
+                                 MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (arena == MAP_FAILED)
+            {
+                return;
+            }
+
+            // Kernels before 4.17 take MAP_FIXED_NOREPLACE as a hint.
+            if (reinterpret_cast<uint64_t>(arena) != guest_arena_base)
+            {
+                ::munmap(arena, guest_arena_size);
+                return;
+            }
+
+            this->guest_arena_ = guest_arena_base;
         }
 #endif
 
@@ -2886,31 +3055,16 @@ namespace sogen::fex
         // a PE section's initial file content before its final permission is locked in. Needed because
         // this backend enforces the declared permission through real host protection, unlike Unicorn's
         // uc_mem_write, which operates on emulated memory independent of any host mprotect state.
-        void set_temporary_write_access(uint64_t address, size_t size, bool enable)
+        void set_temporary_access(uint64_t address, size_t size, const memory_permission added, bool enable) const
         {
 #ifdef __APPLE__
             const uint64_t start = host_page_align_down_apple(address);
             const uint64_t end = host_page_align_up_apple(address + size);
             for (uint64_t host_page = start; host_page < end; host_page += host_page_size_apple)
             {
-                if (!enable)
-                {
-                    // Restores via sync_host_page_apple, which re-derives the declared permissions
-                    // from the shadow table.
-                    this->sync_host_page_apple(host_page);
-                    continue;
-                }
-
-                memory_permission effective = memory_permission::none;
-                for (uint64_t page = host_page; page < host_page + host_page_size_apple; page += page_size)
-                {
-                    const auto it = this->page_shadow_apple_.find(page);
-                    if (it != this->page_shadow_apple_.end())
-                    {
-                        effective = effective | it->second;
-                    }
-                }
-                ::mprotect(reinterpret_cast<void*>(host_page), host_page_size_apple, to_prot_apple(effective | memory_permission::write));
+                // The page stays claimed while it is accessible, so only its protection changes.
+                const auto declared = this->shadow_permission_apple(host_page).value_or(memory_permission::none);
+                ::mprotect(reinterpret_cast<void*>(host_page), host_page_size_apple, to_prot_apple(enable ? declared | added : declared));
             }
 #else
             // The range can span several regions_ entries with different declared permissions, so
@@ -2933,7 +3087,7 @@ namespace sogen::fex
 
                 const uint64_t sub_start = std::max(it->first, address & ~(page_size - 1));
                 const uint64_t sub_end = std::min(region_end, (end + page_size - 1) & ~(page_size - 1));
-                const memory_permission perm = enable ? (it->second.permissions | memory_permission::write) : it->second.permissions;
+                const memory_permission perm = enable ? (it->second.permissions | added) : it->second.permissions;
                 this->for_each_host_span(sub_start, static_cast<size_t>(sub_end - sub_start),
                                          [&](const uint64_t host_address, const size_t span_size, size_t) {
                                              ::mprotect(reinterpret_cast<void*>(host_address), span_size, to_prot(perm));
@@ -3094,24 +3248,10 @@ namespace sogen::fex
         // PROT_NONE page without breaking a legitimate access from a stricter neighbor.
         void sync_host_page_apple(uint64_t host_page_addr)
         {
-            memory_permission effective = memory_permission::none;
-            bool any_slot_present = false;
-
-            for (uint64_t page = host_page_addr; page < host_page_addr + host_page_size_apple; page += page_size)
-            {
-                const auto it = this->page_shadow_apple_.find(page);
-                if (it == this->page_shadow_apple_.end())
-                {
-                    continue;
-                }
-                any_slot_present = true;
-                effective = effective | it->second;
-            }
-
-            void* host_ptr = reinterpret_cast<void*>(host_page_addr);
+            const auto effective = this->shadow_permission_apple(host_page_addr);
             const bool currently_mapped = this->host_range_is_claimed(host_page_addr, host_page_size_apple);
 
-            if (!any_slot_present)
+            if (!effective)
             {
                 if (currently_mapped)
                 {
@@ -3130,10 +3270,25 @@ namespace sogen::fex
                 this->claim_host_range(host_page_addr, host_page_size_apple);
             }
 
-            if (::mprotect(host_ptr, host_page_size_apple, to_prot_apple(effective)) != 0)
+            if (::mprotect(reinterpret_cast<void*>(host_page_addr), host_page_size_apple, to_prot_apple(*effective)) != 0)
             {
                 throw std::runtime_error("FEX backend failed to change memory protection");
             }
+        }
+
+        std::optional<memory_permission> shadow_permission_apple(const uint64_t host_page_addr) const
+        {
+            std::optional<memory_permission> effective{};
+            for (uint64_t page = host_page_addr; page < host_page_addr + host_page_size_apple; page += page_size)
+            {
+                const auto it = this->page_shadow_apple_.find(page);
+                if (it != this->page_shadow_apple_.end())
+                {
+                    effective = effective.value_or(memory_permission::none) | it->second;
+                }
+            }
+
+            return effective;
         }
 
         void sync_host_pages_covering_apple(uint64_t address, size_t size)
@@ -4196,14 +4351,17 @@ namespace sogen::fex
 #ifdef __linux__
         uint64_t host_address_end_{find_host_address_end()};
 #endif
+        uint64_t guest_arena_{};
 
         std::vector<mmio_region> mmio_regions_;
-        std::map<uint64_t, tracked_range> tracked_ranges_;
+        // Bringing a stale chunk up to date only changes host protections and caches, which reads do as well.
+        mutable std::map<uint64_t, tracked_range> tracked_ranges_;
 
         // Every per-logical-thread call-ret buffer ever allocated by ensure_callret_buffer, so the
         // destructor can release them - these live outside regions_ (host allocator space, not the
         // guest address space) and outlive any individual CPUState snapshot they were allocated for.
         std::unordered_map<uint64_t, callret_buffer_record> callret_buffers_;
+        uint64_t instance_id_{std::random_device{}() | (static_cast<uint64_t>(std::random_device{}()) << 32)};
 
         std::map<uint64_t, size_t> claimed_host_ranges_;
 

@@ -151,7 +151,7 @@ namespace sogen::test
             memory_manager memory_{machine_->memory()};
             utils::clock clock_{};
             process_context::callbacks callbacks_{};
-            process_context process_{machine_->memory(), memory_, clock_, callbacks_, architecture};
+            process_context process_{machine_->memory(), memory_, clock_, callbacks_, true, architecture};
             const windows_arch_abi& abi_ = windows_abi_for(architecture);
             file_system file_sys_{{}};
             module_manager::callbacks module_callbacks_{};

@@ -385,13 +385,13 @@ namespace sogen
             }
         };
 
-        process_context(memory_interface& emu, memory_manager& memory, utils::clock& clock, callbacks& cb,
+        process_context(memory_interface& emu, memory_manager& memory, utils::clock& clock, callbacks& cb, const bool intercept_kusd,
                         const windows_guest_architecture architecture = windows_guest_architecture::x86_64)
             : callbacks_(&cb),
               base_allocator(emu),
               peb64(emu),
               process_params64(emu),
-              kusd(memory, clock),
+              kusd(memory, clock, intercept_kusd),
               user_handles(memory)
         {
             (void)windows_abi_for(architecture);
@@ -403,8 +403,7 @@ namespace sogen
         }
 
         void setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
-                   const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr,
-                   bool intercept_kusd = true);
+                   const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
 
         static emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name);
 

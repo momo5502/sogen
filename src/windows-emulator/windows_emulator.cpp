@@ -847,7 +847,7 @@ namespace sogen
                        ? registry_manager{emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"}
                        : registry_manager{}),
           mod_manager(memory, file_sys, this->callbacks, guest_architecture_of(*this->emu_)),
-          process(*this->emu_, memory, *this->clock_, this->callbacks, guest_architecture_of(*this->emu_)),
+          process(*this->emu_, memory, *this->clock_, this->callbacks, settings.intercept_kusd, guest_architecture_of(*this->emu_)),
           use_relative_time_(settings.use_relative_time),
           // Instruction precision runs through a global execution hook; backends that only count instructions
           // (single-stepping) cannot provide it.
@@ -940,8 +940,7 @@ namespace sogen
         const auto apiset_data =
             apiset::obtain(this->file_sys.translate(this->version.get_system_root() / "System32" / "apisetschema.dll"));
 
-        this->process.setup(*this, this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32,
-                            this->intercept_kusd_);
+        this->process.setup(*this, this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
 
         const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
         const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));

@@ -213,6 +213,15 @@ namespace sogen
         std::unique_ptr<console_backend> console_backend_{};
         bool setup_completed_{false};
 
+        // Host threads owned by the process, such as audio streams, signal the guest through these, so they have to
+        // outlive it.
+        std::mutex idle_wakeup_mutex_{};
+        std::condition_variable idle_wakeup_cv_{};
+        uint32_t pending_idle_wakeups_{};
+        std::atomic<uint32_t> idle_vcpus_{0};
+        std::mutex pending_event_signals_mutex_{};
+        std::map<uint64_t, uint32_t> pending_event_signals_{};
+
       public:
         const std::filesystem::path emulation_root{};
         const fake_environment_config fake_env{};
@@ -630,16 +639,9 @@ namespace sogen
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
         kernel_lock kernel_lock_{};
-        std::mutex idle_wakeup_mutex_{};
-        std::condition_variable idle_wakeup_cv_{};
-        uint32_t pending_idle_wakeups_{};
-        std::atomic<uint32_t> idle_vcpus_{0};
 
         void credit_idle_wakeup();
         bool wait_for_idle_wakeup(std::chrono::milliseconds timeout);
-
-        std::mutex pending_event_signals_mutex_{};
-        std::map<uint64_t, uint32_t> pending_event_signals_{};
 
         // The vCPU currently running a handler under the kernel lock; drives
         // current_thread(). See scoped_dispatch.
