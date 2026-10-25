@@ -306,6 +306,8 @@ namespace sogen
                 return 0x2A;
             case VK_CONTROL:
                 return 0x1D;
+            case VK_MENU:
+                return 0x38;
             case VK_UP:
                 return 0x48;
             case VK_DOWN:
@@ -2601,6 +2603,9 @@ namespace sogen
                 .wParam = key,
                 .lParam = release_flags | (static_cast<uint64_t>(vk_to_scan_code(static_cast<uint16_t>(key))) << 16),
             });
+
+            // Delivering the release does not clear the key when there is no window to deliver it to.
+            this->process.key_state[key] = 0;
         }
     }
 
