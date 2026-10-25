@@ -129,6 +129,8 @@ namespace sogen
         {
         }
 
+        // These two wait for the UI thread, which takes the emulator's kernel lock to deliver input. Callers must not
+        // hold it.
         virtual std::vector<std::string> vulkan_instance_extensions()
         {
             return {};
