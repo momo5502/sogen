@@ -1711,7 +1711,7 @@ namespace sogen::fex
             return false;
         }
 
-        void serialize_state(utils::buffer_serializer& buffer, bool /*is_snapshot*/) const override
+        void ensure_restorable_in_new_process() const override
         {
             const auto ensure_restorable = [this](const uint64_t address, const uint64_t size) {
                 const bool in_low_window = this->low_guest_window_ != 0 && address + size <= low_guest_window_size;
@@ -1736,7 +1736,10 @@ namespace sogen::fex
             {
                 ensure_restorable(address, size);
             }
+        }
 
+        void serialize_state(utils::buffer_serializer& buffer, bool /*is_snapshot*/) const override
+        {
             buffer.write_vector(this->save_registers());
             buffer.write(this->guest_arena_);
             buffer.write(this->low_guest_window_ != 0);

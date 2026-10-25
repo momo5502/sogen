@@ -95,6 +95,7 @@ namespace sogen
 
         std::vector<std::byte> create_emulator_snapshot(windows_emulator& win_emu, const std::string_view configuration)
         {
+            win_emu.emu().ensure_restorable_in_new_process();
             win_emu.prepare_serialization();
             const auto state = get_compressed_emulator_state(win_emu, configuration);
 
