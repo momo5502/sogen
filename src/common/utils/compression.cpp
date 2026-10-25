@@ -45,8 +45,8 @@ namespace sogen
                 }
 
                 std::vector<std::byte> buffer(decompressed_size);
-                ZSTD_inBuffer input{data.data(), data.size(), 0};
-                ZSTD_outBuffer output{buffer.data(), buffer.size(), 0};
+                ZSTD_inBuffer input{.src = data.data(), .size = data.size(), .pos = 0};
+                ZSTD_outBuffer output{.dst = buffer.data(), .size = buffer.size(), .pos = 0};
                 size_t result = 1;
                 while (result != 0 && output.pos < output.size && input.pos < input.size)
                 {
@@ -61,7 +61,7 @@ namespace sogen
                 std::byte extra{};
                 while (result != 0 && input.pos < input.size)
                 {
-                    ZSTD_outBuffer scratch{&extra, sizeof(extra), 0};
+                    ZSTD_outBuffer scratch{.dst = &extra, .size = sizeof(extra), .pos = 0};
                     result = ZSTD_decompressStream(context.get(), &scratch, &input);
                     if (ZSTD_isError(result) || scratch.pos != 0)
                     {
@@ -112,12 +112,12 @@ namespace sogen
             void stream_compressor::compress(const std::span<const std::byte> data, const bool end)
             {
                 auto* context = static_cast<ZSTD_CCtx*>(this->context_.get());
-                ZSTD_inBuffer input{data.data(), data.size(), 0};
+                ZSTD_inBuffer input{.src = data.data(), .size = data.size(), .pos = 0};
                 const auto directive = end ? ZSTD_e_end : ZSTD_e_continue;
 
                 while (true)
                 {
-                    ZSTD_outBuffer output{this->out_buffer_.data(), this->out_buffer_.size(), 0};
+                    ZSTD_outBuffer output{.dst = this->out_buffer_.data(), .size = this->out_buffer_.size(), .pos = 0};
                     const auto remaining = ZSTD_compressStream2(context, &output, &input, directive);
                     if (ZSTD_isError(remaining))
                     {
@@ -156,7 +156,7 @@ namespace sogen
 
             void stream_decompressor::read(const std::span<std::byte> data)
             {
-                ZSTD_outBuffer output{data.data(), data.size(), 0};
+                ZSTD_outBuffer output{.dst = data.data(), .size = data.size(), .pos = 0};
                 while (output.pos < output.size)
                 {
                     if (this->frame_complete_)
@@ -173,7 +173,7 @@ namespace sogen
                 std::byte extra{};
                 while (!this->frame_complete_)
                 {
-                    ZSTD_outBuffer output{&extra, sizeof(extra), 0};
+                    ZSTD_outBuffer output{.dst = &extra, .size = sizeof(extra), .pos = 0};
                     this->decompress(output);
                     if (output.pos != 0)
                     {
@@ -205,7 +205,7 @@ namespace sogen
                     throw std::runtime_error("The compressed data ended early");
                 }
 
-                ZSTD_inBuffer input{this->in_buffer_.data(), this->in_size_, this->in_position_};
+                ZSTD_inBuffer input{.src = this->in_buffer_.data(), .size = this->in_size_, .pos = this->in_position_};
                 const auto result = ZSTD_decompressStream(static_cast<ZSTD_DCtx*>(this->context_.get()), &output, &input);
                 this->in_position_ = input.pos;
                 if (ZSTD_isError(result))

@@ -66,7 +66,8 @@ namespace sogen
             std::vector<std::byte> get_decompressed_emulator_state(const std::span<const std::byte> snapshot)
             {
                 const auto header = read_header(snapshot);
-                auto state = utils::compression::zstd::decompress(snapshot.subspan(sizeof(snapshot_header)), header.state_size);
+                auto state =
+                    utils::compression::zstd::decompress(snapshot.subspan(sizeof(snapshot_header)), static_cast<size_t>(header.state_size));
                 if (state.size() != header.state_size)
                 {
                     throw std::runtime_error("Failed to decompress snapshot");
