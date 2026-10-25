@@ -157,7 +157,7 @@ CALL :collect pdh.dll
 CALL :collect powrprof.dll
 CALL :collect profapi.dll
 CALL :collect propsys.dll
-CALL :collect_file "%WINDIR%\SystemResources", PROPSYS.dll.mun, %EMU_SYSTEMRESOURCESDIR%
+CALL :collect_file "%WINDIR%\SystemResources", propsys.dll.mun, %EMU_SYSTEMRESOURCESDIR%
 CALL :collect psapi.dll
 CALL :collect rasadhlp.dll
 CALL :collect resampledmo.dll
