@@ -262,8 +262,13 @@ namespace sogen
             void prepare_serialization(windows_emulator& win_emu) override
             {
                 this->vulkan_.quiesce();
-                this->flush_imported_memory(win_emu);
-                this->vulkan_.invalidate_imported_memory(this->imported_ranges());
+                const auto flushed = this->flush_imported_memory(win_emu);
+                const auto invalidated = this->vulkan_.invalidate_imported_memory(this->imported_ranges());
+                if (flushed != vk_success || invalidated != vk_success)
+                {
+                    throw std::runtime_error("[gpu-bridge] Cannot save imported GPU memory: VkResult " +
+                                             std::to_string(flushed != vk_success ? flushed : invalidated));
+                }
             }
 
             std::vector<vulkan_host::memory_range> imported_ranges() const
@@ -413,7 +418,10 @@ namespace sogen
                 }
 
                 // The restored guest memory was written without the guest, so no tracked write flushes it to the GPU.
-                this->vulkan_.flush_imported_memory(this->imported_ranges());
+                if (const auto flushed = this->vulkan_.flush_imported_memory(this->imported_ranges()); flushed != vk_success)
+                {
+                    throw std::runtime_error("[gpu-bridge] Cannot restore imported GPU memory: VkResult " + std::to_string(flushed));
+                }
 
                 for (auto& [memory, mapping] : this->direct_mappings_)
                 {
@@ -473,7 +481,7 @@ namespace sogen
 
             std::vector<std::byte> restored_vulkan_state_{};
 
-            void flush_imported_memory(windows_emulator& win_emu)
+            int32_t flush_imported_memory(windows_emulator& win_emu)
             {
                 std::vector<vulkan_host::memory_range> ranges{};
                 for (const auto& [memory, imported] : this->imported_memory_)
@@ -490,10 +498,7 @@ namespace sogen
                         });
                 }
 
-                if (!ranges.empty())
-                {
-                    this->vulkan_.flush_imported_memory(ranges);
-                }
+                return ranges.empty() ? vk_success : this->vulkan_.flush_imported_memory(ranges);
             }
 
             void invalidate_imported_memory(windows_emulator& win_emu)
@@ -2027,7 +2032,7 @@ namespace sogen
 
                 if (const auto existing = this->direct_mappings_.find(request.memory); existing != this->direct_mappings_.end())
                 {
-                    response.vk_result = 0; // VK_SUCCESS
+                    response.vk_result = 0; // vk_success
                     // Only hand back an aliased address for offsets inside the mapping; an out-of-range
                     // offset returns guest_address = 0 so the shim falls back to the bounded staging path.
                     response.guest_address =
@@ -2037,7 +2042,7 @@ namespace sogen
 
                 if (const auto placed = this->map_memory_placed(win_emu, request.device, request.memory))
                 {
-                    response.vk_result = 0; // VK_SUCCESS
+                    response.vk_result = 0; // vk_success
                     response.guest_address = (request.offset < placed->size) ? (placed->guest_address + request.offset) : 0;
                     this->direct_mappings_[request.memory] = *placed;
                     return write_output(win_emu, context, response);
@@ -3259,7 +3264,7 @@ namespace sogen
                 std::vector<std::byte> buffer(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, buffer.data(), buffer.size());
 
-                int32_t result = 0; // VK_SUCCESS
+                int32_t result = 0; // vk_success
                 size_t offset = 0;
                 while (offset + sizeof(gpu_bridge::update_descriptor_sets_request) <= buffer.size())
                 {

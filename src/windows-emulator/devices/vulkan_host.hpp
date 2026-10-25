@@ -251,8 +251,8 @@ namespace sogen
         // flushes. These make guest writes visible to the device and device writes visible to the guest. Ranges of coherent
         // memory are skipped, and ranges the host wrote must be flushed before invalidating.
         bool is_non_coherent_import(uint64_t memory) const;
-        void flush_imported_memory(std::span<const memory_range> ranges);
-        void invalidate_imported_memory(std::span<const memory_range> ranges);
+        int32_t flush_imported_memory(std::span<const memory_range> ranges);
+        int32_t invalidate_imported_memory(std::span<const memory_range> ranges);
         uint64_t allocation_size(uint64_t memory) const;
         // Maps the whole memory object at address, a range the caller has reserved. Unmapping leaves the range reserved
         // unless the driver fails to, in which case it is unmapped.

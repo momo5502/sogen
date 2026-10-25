@@ -1655,12 +1655,13 @@ namespace sogen::fex
             std::memcpy(&restored, register_data.data(), sizeof(restored));
             std::memcpy(&instance_id, register_data.data() + sizeof(restored), sizeof(instance_id));
 
-            // The call-ret buffer and descriptor tables are host memory of the emulator that saved the state, so a
-            // state from a saved process gets its own.
+            // The call-ret buffer, descriptor tables and JIT blocks are host memory of the emulator that saved the state,
+            // so a state from a saved process gets its own.
             if (instance_id != this->instance_id_)
             {
                 restored._pad1 = 0;
                 restored.callret_sp = 0;
+                restored.InlineJITBlockHeader = 0;
             }
 
             if (this->thread_ == nullptr)
@@ -1712,11 +1713,10 @@ namespace sogen::fex
 
         void serialize_state(utils::buffer_serializer& buffer, bool /*is_snapshot*/) const override
         {
-            for (const auto& [address, region] : this->regions_)
-            {
-                const bool in_low_window = this->low_guest_window_ != 0 && address + region.size <= low_guest_window_size;
-                const bool in_arena = this->guest_arena_ != 0 && address >= this->guest_arena_ &&
-                                      address + region.size <= this->guest_arena_ + guest_arena_size;
+            const auto ensure_restorable = [this](const uint64_t address, const uint64_t size) {
+                const bool in_low_window = this->low_guest_window_ != 0 && address + size <= low_guest_window_size;
+                const bool in_arena =
+                    this->guest_arena_ != 0 && address >= this->guest_arena_ && address + size <= this->guest_arena_ + guest_arena_size;
                 if (!in_low_window && !in_arena)
                 {
                     std::array<char, 128> message{};
@@ -1724,6 +1724,17 @@ namespace sogen::fex
                              static_cast<unsigned long long>(address));
                     throw std::runtime_error(message.data());
                 }
+            };
+
+            for (const auto& [address, region] : this->regions_)
+            {
+                ensure_restorable(address, region.size);
+            }
+
+            // Reserved but uncommitted guest memory has no region, and a new process has to claim it as well.
+            for (const auto& [address, size] : this->claimed_host_ranges_)
+            {
+                ensure_restorable(address, size);
             }
 
             buffer.write_vector(this->save_registers());
