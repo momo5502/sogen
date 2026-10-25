@@ -289,7 +289,7 @@ namespace sogen
 
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
-                // Written in bounded chunks ending with an empty one, so the GPU contents never have to be held in memory at once.
+                // Written in bounded chunks ending with an empty one, so saving never holds all GPU contents in memory at once.
                 constexpr size_t chunk_size = 16 * 1024 * 1024;
                 utils::buffer_serializer vulkan{[&](const std::span<const std::byte> data) {
                     for (size_t offset = 0; offset < data.size(); offset += chunk_size)
