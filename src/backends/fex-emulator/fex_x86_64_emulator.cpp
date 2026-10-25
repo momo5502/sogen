@@ -67,6 +67,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -1604,27 +1605,31 @@ namespace sogen::fex
             }
         }
 
+        // The whole architectural state lives in a single CPUState struct, followed by the id of the emulator it came from.
         std::vector<std::byte> save_registers() const override
         {
-            // The whole architectural state lives in a single CPUState struct; snapshot it verbatim.
             const auto& state = this->cpu_state();
-            std::vector<std::byte> data(sizeof(FEXCore::Core::CPUState));
+            std::vector<std::byte> data(sizeof(FEXCore::Core::CPUState) + sizeof(this->instance_id_));
             std::memcpy(data.data(), &state, sizeof(state));
+            std::memcpy(data.data() + sizeof(state), &this->instance_id_, sizeof(this->instance_id_));
             return data;
         }
 
         // Preserves the fields that are per-FEXCore-thread-global rather than per-logical-guest-thread:
         // FEXCore rewrites L1Pointer/L1Mask itself whenever the JIT lookup cache reallocates, so the
-        // live values are always the correct ones and a stale snapshot must not clobber them.
+        // live values are always the correct ones and a stale snapshot must not clobber them. The
+        // segment_arrays point at the process-wide descriptor tables that load_gdt installs.
         // callret_sp/_pad1 are handled by ensure_callret_buffer.
-        void restore_state_into(FEXCore::Core::InternalThreadState* thread, const std::byte* src)
+        void restore_state_into(FEXCore::Core::InternalThreadState* thread, const FEXCore::Core::CPUState& restored)
         {
             auto& state = thread->CurrentFrame->State;
             const auto l1_pointer = state.L1Pointer;
             const auto l1_mask = state.L1Mask;
-            std::memcpy(&state, src, sizeof(FEXCore::Core::CPUState));
+            const auto segment_arrays = std::to_array(state.segment_arrays);
+            std::memcpy(&state, &restored, sizeof(state));
             state.L1Pointer = l1_pointer;
             state.L1Mask = l1_mask;
+            std::ranges::copy(segment_arrays, std::begin(state.segment_arrays));
             this->ensure_callret_buffer(state);
             thread->CallRetStackBase = reinterpret_cast<void*>(state._pad1);
 
@@ -1640,21 +1645,36 @@ namespace sogen::fex
 
         void restore_registers(const std::vector<std::byte>& register_data) override
         {
-            if (register_data.size() != sizeof(FEXCore::Core::CPUState))
+            FEXCore::Core::CPUState restored{};
+            uint64_t instance_id{};
+            if (register_data.size() != sizeof(restored) + sizeof(instance_id))
             {
                 throw std::runtime_error("FEX register snapshot has unexpected size");
+            }
+
+            std::memcpy(&restored, register_data.data(), sizeof(restored));
+            std::memcpy(&instance_id, register_data.data() + sizeof(restored), sizeof(instance_id));
+
+            // The call-ret buffer and descriptor tables are host memory of the emulator that saved the state, so a
+            // state from a saved process gets its own.
+            if (instance_id != this->instance_id_)
+            {
+                restored._pad1 = 0;
+                restored.callret_sp = 0;
             }
 
             if (this->thread_ == nullptr)
             {
                 // No thread yet: writing into staged_state_, which create_thread() will seed the
                 // real thread from (including installing L1Pointer/L1Mask/callret_sp correctly
-                // itself afterward) - a verbatim copy here is fine.
-                std::memcpy(&this->staged_state_, register_data.data(), sizeof(FEXCore::Core::CPUState));
+                // itself afterward).
+                const auto segment_arrays = std::to_array(this->staged_state_.segment_arrays);
+                std::memcpy(&this->staged_state_, &restored, sizeof(restored));
+                std::ranges::copy(segment_arrays, std::begin(this->staged_state_.segment_arrays));
                 return;
             }
 
-            this->restore_state_into(this->thread_, register_data.data());
+            this->restore_state_into(this->thread_, restored);
         }
 
         bool has_violation() const override
@@ -1709,24 +1729,37 @@ namespace sogen::fex
             buffer.write_vector(this->save_registers());
             buffer.write(this->guest_arena_);
             buffer.write(this->low_guest_window_ != 0);
+            buffer.write(this->gdt_base_);
+            buffer.write(this->gdt_limit_);
         }
 
         void deserialize_state(utils::buffer_deserializer& buffer, bool /*is_snapshot*/) override
         {
-            this->restore_registers(buffer.read_vector<std::byte>());
+            const auto registers = buffer.read_vector<std::byte>();
             if (buffer.read<uint64_t>() != this->guest_arena_)
             {
                 throw std::runtime_error("The guest memory window the process was saved with is not available");
             }
 
+            const auto low_guest_window = buffer.read<bool>();
+            const auto gdt_base = buffer.read<uint64_t>();
+            const auto gdt_limit = buffer.read<uint32_t>();
+
 #ifndef __APPLE__
-            if (buffer.read<bool>() && this->low_guest_window_ == 0)
+            if (low_guest_window && this->low_guest_window_ == 0)
             {
                 this->enable_low_guest_window();
             }
 #else
-            (void)buffer.read<bool>();
+            (void)low_guest_window;
 #endif
+
+            // The descriptor table's host address depends on the low window, so it is set again once that exists.
+            if (gdt_base != 0)
+            {
+                this->load_gdt(gdt_base, gdt_limit);
+            }
+            this->restore_registers(registers);
         }
 
         // x86_emulator
@@ -4326,6 +4359,7 @@ namespace sogen::fex
         // destructor can release them - these live outside regions_ (host allocator space, not the
         // guest address space) and outlive any individual CPUState snapshot they were allocated for.
         std::unordered_map<uint64_t, callret_buffer_record> callret_buffers_;
+        uint64_t instance_id_{std::random_device{}() | (static_cast<uint64_t>(std::random_device{}()) << 32)};
 
         std::map<uint64_t, size_t> claimed_host_ranges_;
 
