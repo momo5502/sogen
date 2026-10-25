@@ -157,7 +157,6 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     );
   }
 
-  // In relative mode a touch steers like a trackpad, with its movement sent as deltas.
   bool _isTrackpadTouch(PointerEvent event) => (widget.trackpad || _relative) && event.kind == PointerDeviceKind.touch;
 
   void _onDown(PointerDownEvent event) {

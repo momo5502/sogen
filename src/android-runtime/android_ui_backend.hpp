@@ -125,6 +125,8 @@ namespace sogen::android
 
         void queue_event(hwnd window, uint32_t message, uint64_t w_param, uint64_t l_param);
         bool activate(hwnd window);
+        bool is_relative(hwnd window) const;
+        void queue_relative_event(hwnd window, uint32_t message, uint64_t w_param);
         hwnd top_level_ancestor(hwnd window) const;
         window_state* find_top_level(hwnd window);
         void release_surfaces();
