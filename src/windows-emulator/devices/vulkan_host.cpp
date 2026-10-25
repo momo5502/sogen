@@ -2421,48 +2421,51 @@ namespace sogen
         {
             if constexpr (sizeof(size_t) != 8)
             {
+                (void)external_get_instance_proc_addr;
                 return;
-            }
-
-            if (this->loaded)
-            {
-                return;
-            }
-
-            this->loaded = true;
-
-            if (external_get_instance_proc_addr)
-            {
-                this->get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(external_get_instance_proc_addr);
             }
             else
             {
-                for (const auto* name : vulkan_loader_names)
-                {
-                    this->loader = load_library(name);
-                    if (this->loader)
-                    {
-                        break;
-                    }
-                }
-
-                if (!this->loader)
+                if (this->loaded)
                 {
                     return;
                 }
 
-                this->get_instance_proc_addr =
-                    reinterpret_cast<PFN_vkGetInstanceProcAddr>(get_symbol(this->loader, "vkGetInstanceProcAddr"));
-            }
+                this->loaded = true;
 
-            if (!this->get_instance_proc_addr)
-            {
-                return;
-            }
+                if (external_get_instance_proc_addr)
+                {
+                    this->get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(external_get_instance_proc_addr);
+                }
+                else
+                {
+                    for (const auto* name : vulkan_loader_names)
+                    {
+                        this->loader = load_library(name);
+                        if (this->loader)
+                        {
+                            break;
+                        }
+                    }
 
-            this->create_instance = reinterpret_cast<PFN_vkCreateInstance>(this->get_instance_proc_addr(nullptr, "vkCreateInstance"));
-            this->enumerate_instance_version =
-                reinterpret_cast<PFN_vkEnumerateInstanceVersion>(this->get_instance_proc_addr(nullptr, "vkEnumerateInstanceVersion"));
+                    if (!this->loader)
+                    {
+                        return;
+                    }
+
+                    this->get_instance_proc_addr =
+                        reinterpret_cast<PFN_vkGetInstanceProcAddr>(get_symbol(this->loader, "vkGetInstanceProcAddr"));
+                }
+
+                if (!this->get_instance_proc_addr)
+                {
+                    return;
+                }
+
+                this->create_instance = reinterpret_cast<PFN_vkCreateInstance>(this->get_instance_proc_addr(nullptr, "vkCreateInstance"));
+                this->enumerate_instance_version =
+                    reinterpret_cast<PFN_vkEnumerateInstanceVersion>(this->get_instance_proc_addr(nullptr, "vkEnumerateInstanceVersion"));
+            }
         }
 
         ~impl()
