@@ -55,6 +55,11 @@ namespace sogen
                                              "(needed: " + std::to_string(default_header.version) + ")");
                 }
 
+                if (header.reserved != 0)
+                {
+                    throw std::runtime_error("Invalid snapshot");
+                }
+
                 return header;
             }
 
@@ -190,7 +195,8 @@ namespace sogen
                 stream.seekp(0);
                 write(header_bytes(make_header(win_emu, serializer.size())));
 
-                if (!stream.flush())
+                stream.close();
+                if (stream.fail())
                 {
                     throw std::runtime_error("Failed to write snapshot: " + snapshot_file.string());
                 }

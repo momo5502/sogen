@@ -48,10 +48,22 @@ namespace sogen
                 ZSTD_inBuffer input{data.data(), data.size(), 0};
                 ZSTD_outBuffer output{buffer.data(), buffer.size(), 0};
                 size_t result = 1;
-                while (result != 0 && input.pos < input.size)
+                while (result != 0 && output.pos < output.size && input.pos < input.size)
                 {
                     result = ZSTD_decompressStream(context.get(), &output, &input);
-                    if (ZSTD_isError(result) || (result != 0 && output.pos == output.size))
+                    if (ZSTD_isError(result))
+                    {
+                        return {};
+                    }
+                }
+
+                // A streamed frame can still end with an empty block once all of its data has been produced.
+                std::byte extra{};
+                while (result != 0 && input.pos < input.size)
+                {
+                    ZSTD_outBuffer scratch{&extra, sizeof(extra), 0};
+                    result = ZSTD_decompressStream(context.get(), &scratch, &input);
+                    if (ZSTD_isError(result) || scratch.pos != 0)
                     {
                         return {};
                     }

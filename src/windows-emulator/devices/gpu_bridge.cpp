@@ -293,8 +293,14 @@ namespace sogen
                     throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
                 }
 
-                // Written in chunks ending with an empty one, so the GPU contents never have to be held in memory at once.
-                utils::buffer_serializer vulkan{[&](const std::span<const std::byte> chunk) { buffer.write_span(chunk); }};
+                // Written in bounded chunks ending with an empty one, so the GPU contents never have to be held in memory at once.
+                constexpr size_t chunk_size = 16 * 1024 * 1024;
+                utils::buffer_serializer vulkan{[&](const std::span<const std::byte> data) {
+                    for (size_t offset = 0; offset < data.size(); offset += chunk_size)
+                    {
+                        buffer.write_span(data.subspan(offset, std::min(chunk_size, data.size() - offset)));
+                    }
+                }};
                 this->vulkan_.serialize(vulkan);
                 vulkan.flush();
                 buffer.write_span(std::span<const std::byte>{});
