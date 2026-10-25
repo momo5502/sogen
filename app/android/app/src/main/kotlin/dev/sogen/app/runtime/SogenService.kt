@@ -143,12 +143,28 @@ class SogenService : Service() {
             return VulkanDriver(hookDirectory)
         }
 
-        val directory = java.io.File(filesDir, "turnip").apply { mkdirs() }
-        val driver = java.io.File(directory, TURNIP_LIBRARY)
-        bundled.use { descriptor ->
-            if (driver.length() != descriptor.length) {
-                descriptor.createInputStream().use { input -> driver.outputStream().use { input.copyTo(it) } }
+        val directory = File(filesDir, "turnip")
+        val driver = File(directory, TURNIP_LIBRARY)
+        try {
+            bundled.use { descriptor ->
+                // A driver from an older install can have the same size, so the copy is renewed with every APK.
+                val current = driver.length() == descriptor.length &&
+                    driver.lastModified() >= File(applicationInfo.sourceDir).lastModified()
+                if (!current) {
+                    if (!directory.isDirectory && !directory.mkdirs()) {
+                        throw java.io.IOException("Cannot create $directory")
+                    }
+
+                    val partial = File(directory, "$TURNIP_LIBRARY.partial")
+                    descriptor.createInputStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
+                    if (!partial.renameTo(driver)) {
+                        throw java.io.IOException("Cannot replace $driver")
+                    }
+                }
             }
+        } catch (e: java.io.IOException) {
+            Log.w(TAG, "Could not extract the bundled Vulkan driver, using the system driver", e)
+            return VulkanDriver(hookDirectory)
         }
 
         return VulkanDriver(hookDirectory, directory.absolutePath, TURNIP_LIBRARY)

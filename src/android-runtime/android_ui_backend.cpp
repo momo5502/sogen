@@ -7,6 +7,7 @@
 
 #include <android/native_window.h>
 #include <android/hardware_buffer.h>
+#include <android/log.h>
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_android.h>
 
@@ -145,6 +146,10 @@ namespace sogen::android
                 {
                     return library;
                 }
+
+                const char* error = dlerror();
+                __android_log_print(ANDROID_LOG_WARN, "sogen", "Loading %s failed, using the system Vulkan driver: %s",
+                                    driver.custom_name.c_str(), error ? error : "unknown error");
             }
 #else
             (void)driver;
