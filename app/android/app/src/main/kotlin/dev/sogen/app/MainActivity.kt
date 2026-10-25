@@ -14,6 +14,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private var events: EventChannel.EventSink? = null
@@ -93,6 +94,7 @@ class MainActivity : FlutterActivity() {
         when (call.method) {
             "start" -> result.success(session.start(parseRunConfig(call)))
             "stop" -> session.stop().also { result.success(null) }
+            "suspend" -> session.suspend(call.argument<String>("destination").orEmpty()).also { result.success(null) }
             "consoleInput" -> session.consoleInput(call.argument<ByteArray>("data") ?: ByteArray(0)).also { result.success(null) }
             "consoleResize" -> session.consoleResize(int("columns"), int("rows")).also { result.success(null) }
             "setInputWindow" -> {
@@ -126,6 +128,8 @@ class MainActivity : FlutterActivity() {
         workingDirectory = call.argument<String>("workingDirectory").orEmpty(),
         backend = call.argument<String>("backend").orEmpty(),
         liveNetwork = call.argument<Boolean>("liveNetwork") == true,
+        snapshotDirectory = File(filesDir, "snapshots").path,
+        resumeFile = call.argument<String>("resumeFile").orEmpty(),
     )
 
     // Games are run in place from shared storage, and native code needs plain file paths for that.

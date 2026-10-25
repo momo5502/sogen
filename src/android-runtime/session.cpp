@@ -2,6 +2,7 @@
 #include "session.hpp"
 
 #include <backend_selection.hpp>
+#include <snapshot.hpp>
 #include <subprocess_process_manager.hpp>
 #include <windows_emulator.hpp>
 
@@ -89,6 +90,18 @@ namespace sogen::android
             return settings;
         }
 
+        // What a saved process depends on outside of itself, which a resume has to find unchanged.
+        std::string describe_configuration(const run_config& config)
+        {
+            std::string configuration = "emulation-root=" + config.emulation_root.string() + "\nbackend=" + config.backend +
+                                        "\nnetwork=" + (config.live_network ? "live" : "offline") + "\n";
+            for (const auto& [guest, host] : config.path_mappings)
+            {
+                configuration += "mount=" + host.string() + ":" + guest + "\n";
+            }
+            return configuration;
+        }
+
         std::vector<std::string> create_child_arguments(const emulator_settings& settings, const uint16_t port, const std::string& token)
         {
             std::vector<std::string> arguments{
@@ -133,6 +146,7 @@ namespace sogen::android
             .on_window_visibility_changed = env.GetMethodID(listener_class, "onWindowVisibilityChanged", "(JZ)V"),
             .on_window_title_changed = env.GetMethodID(listener_class, "onWindowTitleChanged", "(JLjava/lang/String;)V"),
             .on_cursor_moved = env.GetMethodID(listener_class, "onCursorMoved", "(JII)V"),
+            .on_snapshot = env.GetMethodID(listener_class, "onSnapshot", "(Ljava/lang/String;Ljava/lang/String;)V"),
         };
         env.DeleteLocalRef(listener_class);
 
@@ -181,9 +195,14 @@ namespace sogen::android
                     });
             }
 
-            windows_emulator win_emu{create_x86_64_emulator(parse_backend(config.backend)), create_application_settings(config),
-                                     std::move(settings), std::move(callbacks),
-                                     emulator_interfaces{.ui = std::move(ui), .processes = processes.get()}};
+            auto emulator = create_x86_64_emulator(parse_backend(config.backend));
+            emulator_interfaces interfaces{.ui = std::move(ui), .processes = processes.get()};
+            auto win_emu_ptr = config.resume_file.empty()
+                                   ? std::make_unique<windows_emulator>(std::move(emulator), create_application_settings(config),
+                                                                        std::move(settings), std::move(callbacks), std::move(interfaces))
+                                   : std::make_unique<windows_emulator>(std::move(emulator), std::move(settings), std::move(callbacks),
+                                                                        std::move(interfaces));
+            auto& win_emu = *win_emu_ptr;
 
             win_emu.log.disable_output(true);
             win_emu.log.set_sink([this](const color c, const std::string_view message) {
@@ -195,6 +214,15 @@ namespace sogen::android
 
             win_emu.log.info("Using emulator backend: %s\n", win_emu.emu().get_name().c_str());
 
+            const auto configuration = describe_configuration(config);
+            if (!config.resume_file.empty())
+            {
+                snapshot::load_emulator_snapshot(win_emu, config.resume_file, configuration);
+            }
+
+            snapshot::controller snapshots{win_emu, configuration, config.snapshot_directory,
+                                           [this](const snapshot::snapshot_outcome& outcome) { this->report_snapshot(outcome); }};
+
             {
                 const std::lock_guard lock{this->mutex_};
                 if (this->stop_requested_)
@@ -203,15 +231,22 @@ namespace sogen::android
                 }
 
                 this->emulator_ = &win_emu;
+                this->snapshots_ = &snapshots;
                 this->ui_ = ui_backend;
             }
 
-            win_emu.start();
+            const bool saved = snapshots.run();
 
             {
                 const std::lock_guard lock{this->mutex_};
                 this->emulator_ = nullptr;
+                this->snapshots_ = nullptr;
                 this->ui_ = nullptr;
+            }
+
+            if (saved)
+            {
+                return 0;
             }
 
             const auto exit_status = win_emu.process.exit_status;
@@ -225,6 +260,7 @@ namespace sogen::android
         {
             const std::lock_guard lock{this->mutex_};
             this->emulator_ = nullptr;
+            this->snapshots_ = nullptr;
             this->ui_ = nullptr;
         }
 
@@ -236,10 +272,27 @@ namespace sogen::android
         const std::lock_guard lock{this->mutex_};
 
         this->stop_requested_ = true;
-        if (this->emulator_)
+        if (this->snapshots_)
         {
-            this->emulator_->stop();
+            this->snapshots_->stop();
         }
+    }
+
+    bool session::suspend(std::filesystem::path destination)
+    {
+        const std::lock_guard lock{this->mutex_};
+        return this->snapshots_ && this->snapshots_->request(std::move(destination));
+    }
+
+    void session::report_snapshot(const snapshot::snapshot_outcome& outcome)
+    {
+        this->dispatcher_.post([this, path = outcome.path.u16string(), error = u8_to_u16(outcome.error)](JNIEnv& env) {
+            auto* java_path = make_java_string(env, path);
+            auto* java_error = make_java_string(env, error);
+            env.CallVoidMethod(this->listener_, this->methods_.on_snapshot, java_path, java_error);
+            env.DeleteLocalRef(java_path);
+            env.DeleteLocalRef(java_error);
+        });
     }
 
     void session::with_ui(const std::function<void(android_ui_backend&)>& action)

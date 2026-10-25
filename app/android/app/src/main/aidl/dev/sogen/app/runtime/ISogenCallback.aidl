@@ -9,5 +9,8 @@ oneway interface ISogenCallback {
     void onWindowVisibilityChanged(long window, boolean visible);
     void onWindowTitleChanged(long window, String title);
     void onCursorMoved(long window, int x, int y);
+
+    /** [error] is empty once the process was saved to [path]. */
+    void onSnapshot(String path, String error);
     void onExit(int exitCode);
 }
