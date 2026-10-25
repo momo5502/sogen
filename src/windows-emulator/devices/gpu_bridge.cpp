@@ -262,12 +262,15 @@ namespace sogen
             void prepare_serialization(windows_emulator& win_emu) override
             {
                 this->vulkan_.quiesce();
-                const auto flushed = this->flush_imported_memory(win_emu);
-                const auto invalidated = this->vulkan_.invalidate_imported_memory(this->imported_ranges());
-                if (flushed != vk_success || invalidated != vk_success)
+                // Invalidating after a failed flush would discard what the guest wrote, and the process keeps running.
+                if (const auto flushed = this->flush_imported_memory(win_emu); flushed != vk_success)
                 {
-                    throw std::runtime_error("[gpu-bridge] Cannot save imported GPU memory: VkResult " +
-                                             std::to_string(flushed != vk_success ? flushed : invalidated));
+                    throw std::runtime_error("[gpu-bridge] Cannot save imported GPU memory: VkResult " + std::to_string(flushed));
+                }
+
+                if (const auto invalidated = this->vulkan_.invalidate_imported_memory(this->imported_ranges()); invalidated != vk_success)
+                {
+                    throw std::runtime_error("[gpu-bridge] Cannot save imported GPU memory: VkResult " + std::to_string(invalidated));
                 }
             }
 
