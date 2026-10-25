@@ -289,12 +289,6 @@ namespace sogen
 
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
-                if (std::ranges::any_of(this->direct_mappings_ | std::views::values,
-                                        [](const direct_mapping& mapping) { return mapping.placed; }))
-                {
-                    throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
-                }
-
                 utils::buffer_serializer vulkan{};
                 this->vulkan_.serialize(vulkan);
                 buffer.write_vector(vulkan.get_buffer());
@@ -434,6 +428,26 @@ namespace sogen
                 for (auto& [memory, mapping] : this->direct_mappings_)
                 {
                     void* host_ptr = nullptr;
+                    if (mapping.placed)
+                    {
+                        const auto place = [&](void* host_address) {
+                            if (this->vulkan_.map_memory_placed(mapping.device, memory, host_address) != 0)
+                            {
+                                return false;
+                            }
+                            host_ptr = host_address;
+                            return true;
+                        };
+                        if (!win_emu.memory.allocate_placed_host_memory_at(mapping.guest_address, static_cast<size_t>(mapping.size),
+                                                                           memory_permission::read_write, place))
+                        {
+                            throw std::runtime_error("Placing a Vulkan memory mapping at its guest address failed");
+                        }
+
+                        mapping.host_ptr = host_ptr;
+                        continue;
+                    }
+
                     uint64_t host_size = 0;
                     constexpr uint64_t page = 0x1000;
                     if (this->vulkan_.map_memory(mapping.device, memory, host_ptr, host_size) != vk_success ||
