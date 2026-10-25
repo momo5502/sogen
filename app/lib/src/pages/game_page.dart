@@ -22,14 +22,12 @@ const _keyboardSentinel = '​';
 
 const _orientation = MethodChannel('dev.sogen.app/orientation');
 
-/// Pops with the session when the game is suspended, which keeps saving in the background.
 class GamePage extends StatefulWidget {
   const GamePage({super.key, required this.game, required this.emulationRoot, this.session});
 
   final Game game;
   final String emulationRoot;
 
-  /// A session that is already running, which the page shows instead of starting the game.
   final GameSession? session;
 
   @override

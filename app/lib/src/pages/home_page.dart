@@ -24,7 +24,6 @@ class _HomePageState extends State<HomePage> {
   double? _progress;
   String? _error;
 
-  /// Suspended games whose session is still saving, by game id.
   final Map<String, GameSession> _saving = {};
 
   @override
