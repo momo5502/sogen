@@ -80,10 +80,8 @@ class GameSession extends ChangeNotifier {
   /// Why the game could not be started, if it never ran.
   String? error;
 
-  /// Where the game was saved when it was suspended.
   String? savedTo;
 
-  /// Why suspending the game failed; it keeps running then.
   String? saveError;
 
   List<GuestWindow> get windows => _windows.values.toList(growable: false);

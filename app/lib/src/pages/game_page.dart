@@ -22,18 +22,22 @@ const _keyboardSentinel = '​';
 
 const _orientation = MethodChannel('dev.sogen.app/orientation');
 
+/// Pops with the session when the game is suspended, which keeps saving in the background.
 class GamePage extends StatefulWidget {
-  const GamePage({super.key, required this.game, required this.emulationRoot});
+  const GamePage({super.key, required this.game, required this.emulationRoot, this.session});
 
   final Game game;
   final String emulationRoot;
+
+  /// A session that is already running, which the page shows instead of starting the game.
+  final GameSession? session;
 
   @override
   State<GamePage> createState() => _GamePageState();
 }
 
 class _GamePageState extends State<GamePage> {
-  final GameSession _session = GameSession();
+  late final GameSession _session = widget.session ?? GameSession();
   final TextEditingController _keyboard = TextEditingController(text: _keyboardSentinel);
   final FocusNode _keyboardFocus = FocusNode();
 
@@ -42,6 +46,7 @@ class _GamePageState extends State<GamePage> {
   bool _trackpad = false;
   bool _showControls = true;
   String? _shownSaveError;
+  bool _suspending = false;
 
   @override
   void initState() {
@@ -49,27 +54,37 @@ class _GamePageState extends State<GamePage> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _orientation.invokeMethod('followSensor', {'enabled': true});
     _session.addListener(_onSessionChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _begin());
+    if (widget.session == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _begin());
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _onSessionChanged());
+    }
   }
 
   Future<void> _begin() async {
     final saved = await savedStateFile(widget.game);
     var resume = false;
     if (saved.existsSync() && mounted) {
-      resume =
-          await showDialog<bool>(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              title: Text('Resume ${widget.game.name}?'),
-              content: const Text('The game was suspended. Starting over discards where you left off.'),
-              actions: [
-                TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Start over')),
-                FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Resume')),
-              ],
-            ),
-          ) ??
-          false;
+      final choice = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Text('Resume ${widget.game.name}?'),
+          content: const Text('The game was suspended. Starting over discards where you left off.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Start over')),
+            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Resume')),
+          ],
+        ),
+      );
+      if (choice == null) {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+        return;
+      }
+
+      resume = choice;
       if (!resume) {
         await saved.delete();
       }
@@ -93,16 +108,22 @@ class _GamePageState extends State<GamePage> {
     final saved = await savedStateFile(widget.game);
     await saved.parent.create(recursive: true);
     await _session.suspend(saved.path);
+    if (mounted) {
+      _suspending = true;
+      Navigator.of(context).pop(_session);
+    }
   }
 
   @override
   void dispose() {
-    if (_session.state case SessionState.starting || SessionState.running) {
-      _session.stop();
-    }
     _session.setInputWindow(null);
     _session.removeListener(_onSessionChanged);
-    _session.dispose();
+    if (!_suspending) {
+      if (_session.state case SessionState.starting || SessionState.running) {
+        _session.stop();
+      }
+      _session.dispose();
+    }
     _keyboard.dispose();
     _keyboardFocus.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -206,7 +227,7 @@ class _GamePageState extends State<GamePage> {
 
   Widget _confirmingStop(Widget child) {
     return PopScope(
-      canPop: _session.state != SessionState.running,
+      canPop: _suspending || _session.state != SessionState.running,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
           _confirmStop();
