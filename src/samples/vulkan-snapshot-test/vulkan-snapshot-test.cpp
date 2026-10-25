@@ -3,10 +3,12 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include <algorithm>
 #include <array>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
+#include <span>
 #include <vector>
 
 // Keeps GPU state alive across iterations and prints a checksum per iteration, so that a run suspended and resumed in
@@ -16,7 +18,8 @@
 // results of the iteration before the previous one, and so does an image that rests in a shader-read layout. A
 // timestamp query written once has to keep its result, and so does a multisampled image, checked through a resolve.
 // Multisampled depth/stencil and integer images, which cannot be resolved, rely on the check a restore makes itself. An
-// image is also passed between two queues in the opposite order of the submissions, through a timeline semaphore.
+// image is also passed between two queues in the opposite order of the submissions, through a timeline semaphore, and
+// another one is handed between two queue families every iteration, starting on the one that is not the device's first.
 namespace
 {
     constexpr VkDeviceSize half_size = 16 * 1024;
@@ -75,6 +78,18 @@ namespace
         for (uint32_t i = 0; i < families.size(); ++i)
         {
             if ((families[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT)) != 0)
+            {
+                return i;
+            }
+        }
+        return UINT32_MAX;
+    }
+
+    uint32_t find_other_family(const std::vector<VkQueueFamilyProperties>& families, const uint32_t family)
+    {
+        for (uint32_t i = 0; i < families.size(); ++i)
+        {
+            if (i != family && (families[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT)) != 0)
             {
                 return i;
             }
@@ -210,12 +225,19 @@ int main(const int argc, char** argv)
 
     const std::array priorities{1.0F, 1.0F};
     const uint32_t queue_count = (std::min)(2U, families[family].queueCount);
-    std::printf("[snapshot-test] %u devices, using %u queues\n", device_count, queue_count);
-    VkDeviceQueueCreateInfo queue_info{};
-    queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queue_info.queueFamilyIndex = family;
-    queue_info.queueCount = queue_count;
-    queue_info.pQueuePriorities = priorities.data();
+    const uint32_t other_family = find_other_family(families, family);
+    std::printf("[snapshot-test] %u devices, using %u queues and %u families\n", device_count, queue_count,
+                other_family == UINT32_MAX ? 1 : 2);
+    std::array<VkDeviceQueueCreateInfo, 2> queue_infos{};
+    for (auto& queue_info : queue_infos)
+    {
+        queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queue_info.queueCount = 1;
+        queue_info.pQueuePriorities = priorities.data();
+    }
+    queue_infos[0].queueFamilyIndex = family;
+    queue_infos[0].queueCount = queue_count;
+    queue_infos[1].queueFamilyIndex = other_family;
 
     VkPhysicalDeviceVulkan12Features timeline_features{};
     timeline_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -224,8 +246,8 @@ int main(const int argc, char** argv)
     VkDeviceCreateInfo device_info{};
     device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     device_info.pNext = &timeline_features;
-    device_info.queueCreateInfoCount = 1;
-    device_info.pQueueCreateInfos = &queue_info;
+    device_info.queueCreateInfoCount = other_family == UINT32_MAX ? 1 : 2;
+    device_info.pQueueCreateInfos = queue_infos.data();
 
     VkDevice device{};
     if (vkCreateDevice(physical_device, &device_info, nullptr, &device) != VK_SUCCESS)
@@ -238,6 +260,11 @@ int main(const int argc, char** argv)
     VkQueue second_queue{};
     vkGetDeviceQueue(device, family, 0, &queue);
     vkGetDeviceQueue(device, family, queue_count - 1, &second_queue);
+    VkQueue other_queue{};
+    if (other_family != UINT32_MAX)
+    {
+        vkGetDeviceQueue(device, other_family, 0, &other_queue);
+    }
 
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -412,6 +439,45 @@ int main(const int argc, char** argv)
         return 1;
     }
 
+    const std::array both_families{family, other_family};
+    VkBufferCreateInfo travel_buffer_info = buffer_info;
+    travel_buffer_info.size = half_size;
+    travel_buffer_info.sharingMode = other_family == UINT32_MAX ? VK_SHARING_MODE_EXCLUSIVE : VK_SHARING_MODE_CONCURRENT;
+    travel_buffer_info.queueFamilyIndexCount = other_family == UINT32_MAX ? 0 : 2;
+    travel_buffer_info.pQueueFamilyIndices = both_families.data();
+
+    VkImage travelling{};
+    VkBuffer travel_source{};
+    VkBuffer travel_readback{};
+    std::array<VkDeviceMemory, 3> travel_memory{};
+    void* travel_mapped = nullptr;
+    if (vkCreateImage(device, &image_info, nullptr, &travelling) != VK_SUCCESS ||
+        vkCreateBuffer(device, &travel_buffer_info, nullptr, &travel_source) != VK_SUCCESS ||
+        vkCreateBuffer(device, &travel_buffer_info, nullptr, &travel_readback) != VK_SUCCESS)
+    {
+        std::printf("[snapshot-test] travelling image setup failed\n");
+        return 1;
+    }
+    constexpr VkMemoryPropertyFlags host_coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    vkGetImageMemoryRequirements(device, travelling, &needs);
+    bound = bind_new_memory(travel_memory[0], needs, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+            vkBindImageMemory(device, travelling, travel_memory[0], 0) == VK_SUCCESS;
+    vkGetBufferMemoryRequirements(device, travel_source, &needs);
+    bound = bound && bind_new_memory(travel_memory[1], needs, host_coherent) &&
+            vkBindBufferMemory(device, travel_source, travel_memory[1], 0) == VK_SUCCESS;
+    vkGetBufferMemoryRequirements(device, travel_readback, &needs);
+    bound = bound && bind_new_memory(travel_memory[2], needs, host_coherent) &&
+            vkBindBufferMemory(device, travel_readback, travel_memory[2], 0) == VK_SUCCESS;
+    void* travel_source_mapped = nullptr;
+    if (!bound || vkMapMemory(device, travel_memory[1], 0, VK_WHOLE_SIZE, 0, &travel_source_mapped) != VK_SUCCESS ||
+        vkMapMemory(device, travel_memory[2], 0, VK_WHOLE_SIZE, 0, &travel_mapped) != VK_SUCCESS)
+    {
+        std::printf("[snapshot-test] travelling memory setup failed\n");
+        return 1;
+    }
+    auto* travel_source_data = static_cast<uint32_t*>(travel_source_mapped);
+    const auto* travel_data = static_cast<const uint32_t*>(travel_mapped);
+
     VkImage image{};
     VkMemoryRequirements image_requirements{};
     VkDeviceMemory image_memory{};
@@ -441,7 +507,11 @@ int main(const int argc, char** argv)
     pool_info.queueFamilyIndex = family;
 
     VkCommandPool pool{};
-    if (vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS)
+    VkCommandPool other_pool{};
+    VkCommandPoolCreateInfo other_pool_info = pool_info;
+    other_pool_info.queueFamilyIndex = other_family;
+    if (vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS ||
+        (other_family != UINT32_MAX && vkCreateCommandPool(device, &other_pool_info, nullptr, &other_pool) != VK_SUCCESS))
     {
         std::printf("[snapshot-test] vkCreateCommandPool failed\n");
         return 1;
@@ -461,6 +531,18 @@ int main(const int argc, char** argv)
     VkCommandBuffer query_copy_command_buffer{};
     VkCommandBuffer hand_back_command_buffer{};
     VkCommandBuffer hand_over_command_buffer{};
+    std::array<VkCommandBuffer, 2> travel_command_buffers{};
+    if (other_family != UINT32_MAX)
+    {
+        VkCommandBufferAllocateInfo other_info = command_buffer_info;
+        other_info.commandPool = other_pool;
+        if (vkAllocateCommandBuffers(device, &command_buffer_info, &travel_command_buffers[0]) != VK_SUCCESS ||
+            vkAllocateCommandBuffers(device, &other_info, &travel_command_buffers[1]) != VK_SUCCESS)
+        {
+            std::printf("[snapshot-test] travelling command buffer setup failed\n");
+            return 1;
+        }
+    }
     if (vkAllocateCommandBuffers(device, &command_buffer_info, &query_copy_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &hand_back_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &hand_over_command_buffer) != VK_SUCCESS ||
@@ -495,7 +577,9 @@ int main(const int argc, char** argv)
 
     VkFence fence{};
     VkSemaphore results_ready{};
+    VkSemaphore travelled{};
     if (vkCreateFence(device, &fence_info, nullptr, &fence) != VK_SUCCESS ||
+        vkCreateSemaphore(device, &semaphore_info, nullptr, &travelled) != VK_SUCCESS ||
         vkCreateSemaphore(device, &semaphore_info, nullptr, &results_ready) != VK_SUCCESS)
     {
         std::printf("[snapshot-test] synchronization setup failed\n");
@@ -612,6 +696,77 @@ int main(const int argc, char** argv)
         submit_info.pSignalSemaphores = &signal;
         return vkQueueSubmit(queue, 1, &submit_info, fence) == VK_SUCCESS &&
                vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS && vkResetFences(device, 1, &fence) == VK_SUCCESS;
+    };
+
+    const auto hand_travelling = [&](const VkCommandBuffer recorded, const uint32_t from_family, const uint32_t to_family,
+                                     const bool release) {
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.srcAccessMask = release ? VK_ACCESS_TRANSFER_WRITE_BIT : 0;
+        barrier.dstAccessMask = release ? 0 : VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcQueueFamilyIndex = from_family;
+        barrier.dstQueueFamilyIndex = to_family;
+        barrier.image = travelling;
+        barrier.subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+        vkCmdPipelineBarrier(recorded, release ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             release ? VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT : VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                             &barrier);
+    };
+
+    // The owning family reads back what the previous iteration wrote, writes this iteration's value and hands the image
+    // to the other family.
+    const auto travel = [&](const uint32_t iteration) {
+        const uint32_t owner = iteration % 2 == 0 ? 1 : 0;
+        const std::array travel_families{family, other_family};
+        const std::array travel_queues{queue, other_queue};
+        const VkCommandBuffer owning = travel_command_buffers[owner];
+        const VkCommandBuffer receiving = travel_command_buffers[1 - owner];
+
+        vkBeginCommandBuffer(owning, &begin_info);
+        if (iteration == 0)
+        {
+            transition_image(owning, travelling, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        }
+        else
+        {
+            vkCmdCopyImageToBuffer(owning, travelling, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, travel_readback, 1, &image_region);
+            transition_image(owning, travelling, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        }
+        vkCmdCopyBufferToImage(owning, travel_source, travelling, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &image_region);
+        hand_travelling(owning, travel_families[owner], travel_families[1 - owner], true);
+        vkEndCommandBuffer(owning);
+
+        vkBeginCommandBuffer(receiving, &begin_info);
+        hand_travelling(receiving, travel_families[owner], travel_families[1 - owner], false);
+        vkEndCommandBuffer(receiving);
+
+        for (size_t i = 0; i < half_count; ++i)
+        {
+            travel_source_data[i] = source_value(iteration);
+        }
+
+        constexpr VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        VkSubmitInfo release_info{};
+        release_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        release_info.commandBufferCount = 1;
+        release_info.pCommandBuffers = &owning;
+        release_info.signalSemaphoreCount = 1;
+        release_info.pSignalSemaphores = &travelled;
+        VkSubmitInfo acquire_info{};
+        acquire_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        acquire_info.waitSemaphoreCount = 1;
+        acquire_info.pWaitSemaphores = &travelled;
+        acquire_info.pWaitDstStageMask = &wait_stage;
+        acquire_info.commandBufferCount = 1;
+        acquire_info.pCommandBuffers = &receiving;
+        return vkQueueSubmit(travel_queues[owner], 1, &release_info, VK_NULL_HANDLE) == VK_SUCCESS &&
+               vkQueueSubmit(travel_queues[1 - owner], 1, &acquire_info, fence) == VK_SUCCESS &&
+               vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS && vkResetFences(device, 1, &fence) == VK_SUCCESS &&
+               (iteration == 0 || std::ranges::all_of(std::span(travel_data, half_count),
+                                                      [&](const uint32_t texel) { return texel == source_value(iteration - 1); }));
     };
 
     std::printf("[snapshot-test] mapped at %p\n", mapped);
@@ -747,6 +902,13 @@ int main(const int argc, char** argv)
         {
             std::printf("[snapshot-test] iteration %u: handing the image between queues failed\n", iteration);
             return 3;
+        }
+
+        if (other_family != UINT32_MAX && !travel(iteration))
+        {
+            std::printf("[snapshot-test] iteration %u: the image handed between queue families lost what iteration %u wrote\n", iteration,
+                        iteration - 1);
+            return 6;
         }
 
         if (!submit_and_wait(command_buffer, VK_NULL_HANDLE, results_ready) || read_timestamp(1) == 0)

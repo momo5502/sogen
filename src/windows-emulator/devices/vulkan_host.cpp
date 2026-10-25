@@ -298,6 +298,8 @@ namespace sogen
         struct instance_data
         {
             VkInstance handle{};
+            // Whether the instance extensions present fences need are enabled, which the guest never asked for.
+            bool surface_maintenance1{};
             PFN_vkDestroyInstance destroy_instance{};
             PFN_vkEnumeratePhysicalDevices enumerate_physical_devices{};
             PFN_vkGetPhysicalDeviceProperties get_physical_device_properties{};
@@ -415,6 +417,8 @@ namespace sogen
             PFN_vkDestroyFence destroy_fence{};
             PFN_vkResetFences reset_fences{};
             PFN_vkGetFenceStatus get_fence_status{};
+            PFN_vkWaitForFences wait_for_fences{};
+            bool present_fences{};
             PFN_vkCreateEvent create_event{};
             PFN_vkDestroyEvent destroy_event{};
             PFN_vkGetEventStatus get_event_status{};
@@ -631,6 +635,10 @@ namespace sogen
             swapchain_params create{};
             // Which images the guest acquired and has not presented yet.
             std::vector<bool> acquired{};
+            // Returning from a present does not mean the presentation engine is done with the swapchain, which has to
+            // outlive what it still presents. Each present therefore signals a fence when it is.
+            std::vector<VkFence> presenting{};
+            std::vector<VkFence> spare_present_fences{};
         };
 
         object_table<instance_data> instances{&this->recording_references};
@@ -663,6 +671,7 @@ namespace sogen
             uint32_t layer_count{};
             uint32_t new_layout{};
             bool transfers_ownership{};
+            uint32_t source_family{VK_QUEUE_FAMILY_IGNORED};
             uint32_t destination_family{VK_QUEUE_FAMILY_IGNORED};
             // Set instead of the above where a primary executes a secondary command buffer.
             uint64_t secondary{};
@@ -776,7 +785,9 @@ namespace sogen
             std::vector<std::pair<uint64_t, uint64_t>> signals{};
         };
 
+        // A present does not delay later submissions to its queue, so presents wait in an order of their own.
         std::unordered_map<VkQueue, std::deque<pending_submission>> pending_submissions{};
+        std::unordered_map<VkQueue, std::deque<pending_submission>> pending_presents{};
 
         void collect_effects(const uint64_t command_buffer, pending_submission& submission, const uint32_t depth = 0)
         {
@@ -837,13 +848,16 @@ namespace sogen
             for (bool progress = true; progress;)
             {
                 progress = false;
-                for (auto& queue : this->pending_submissions | std::views::values)
+                for (auto* pending : {&this->pending_submissions, &this->pending_presents})
                 {
-                    while (!queue.empty() && this->can_run(queue.front()))
+                    for (auto& queue : *pending | std::views::values)
                     {
-                        this->run_modeled(queue.front());
-                        queue.pop_front();
-                        progress = true;
+                        while (!queue.empty() && this->can_run(queue.front()))
+                        {
+                            this->run_modeled(queue.front());
+                            queue.pop_front();
+                            progress = true;
+                        }
                     }
                 }
             }
@@ -891,7 +905,10 @@ namespace sogen
 
         bool has_pending_submissions() const
         {
-            return std::ranges::any_of(this->pending_submissions | std::views::values, [](const auto& queue) { return !queue.empty(); });
+            const auto any_pending = [](const auto& pending) {
+                return std::ranges::any_of(pending | std::views::values, [](const auto& queue) { return !queue.empty(); });
+            };
+            return any_pending(this->pending_submissions) || any_pending(this->pending_presents);
         }
 
         void apply_layout_transition(const uint64_t queue_id, const layout_transition& transition)
@@ -903,11 +920,9 @@ namespace sogen
             }
 
             auto& data = image->second;
-            if (transition.transfers_ownership)
-            {
-                data.owner_family = transition.destination_family;
-            }
             data.last_queue_id = queue_id;
+            const auto queue = this->queues.find(queue_id);
+            const auto family = queue == this->queues.end() ? VK_QUEUE_FAMILY_IGNORED : queue->second.queue_family_index;
 
             const auto aspects = get_vulkan_format_aspects(data.create.format);
             const auto mip_end = transition.level_count == VK_REMAINING_MIP_LEVELS
@@ -931,7 +946,9 @@ namespace sogen
                     {
                         for (uint32_t layer = transition.base_array_layer; layer < layer_end; ++layer)
                         {
-                            data.layouts[data.subresource_index(aspect, mip, layer)] = transition.new_layout;
+                            const auto index = data.subresource_index(aspect, mip, layer);
+                            data.layouts[index] = transition.new_layout;
+                            data.transfer_ownership(index, transition, family);
                         }
                     }
                 }
@@ -1035,8 +1052,11 @@ namespace sogen
             // The layout of each aspect, mip level and array layer as of the last submission, in the order of
             // subresource_index. Vulkan cannot report it.
             std::vector<uint32_t> layouts{};
-            // The queue family a release and acquire handed the image to, if any.
-            uint32_t owner_family{VK_QUEUE_FAMILY_IGNORED};
+            // Per subresource, the queue family that owns it and the family a release handed it to that has not acquired
+            // it yet. An exclusive image belongs to the family that first used it until a release and acquire move it.
+            std::vector<uint32_t> owners{};
+            std::vector<uint32_t> released_to{};
+            bool ownership_unknown{};
             uint64_t last_queue_id{};
             // A re-created swapchain image is undefined, while the guest believes it is in its saved layout. It is
             // transitioned there when the guest first acquires it, before the guest can use it.
@@ -1050,6 +1070,38 @@ namespace sogen
             size_t subresource_index(const uint32_t aspect, const uint32_t mip, const uint32_t layer) const
             {
                 return (static_cast<size_t>(aspect) * this->create.mip_levels + mip) * this->create.array_layers + layer;
+            }
+
+            void transfer_ownership(const size_t index, const layout_transition& transition, const uint32_t family)
+            {
+                auto& owner = this->owners[index];
+                auto& released = this->released_to[index];
+                if (!transition.transfers_ownership)
+                {
+                    owner = family;
+                }
+                else if (family == transition.source_family)
+                {
+                    this->ownership_unknown |= owner != VK_QUEUE_FAMILY_IGNORED && owner != family;
+                    owner = family;
+                    released = transition.destination_family;
+                }
+                else if (family == transition.destination_family && released == family && owner == transition.source_family)
+                {
+                    owner = family;
+                    released = VK_QUEUE_FAMILY_IGNORED;
+                }
+                else
+                {
+                    this->ownership_unknown = true;
+                }
+            }
+
+            void reset_subresources(const size_t count)
+            {
+                this->layouts.assign(count, VK_IMAGE_LAYOUT_UNDEFINED);
+                this->owners.assign(count, VK_QUEUE_FAMILY_IGNORED);
+                this->released_to.assign(count, VK_QUEUE_FAMILY_IGNORED);
             }
         };
 
@@ -1921,11 +1973,50 @@ namespace sogen
             }
             sc.image_ids.clear();
 
+            const auto& dev = dev_it->second;
+            if (!sc.presenting.empty())
+            {
+                constexpr uint64_t present_timeout = 1'000'000'000;
+                dev.wait_for_fences(dev.handle, static_cast<uint32_t>(sc.presenting.size()), sc.presenting.data(), VK_TRUE,
+                                    present_timeout);
+            }
+            for (auto* present_fences : {&sc.presenting, &sc.spare_present_fences})
+            {
+                for (const auto fence : *present_fences)
+                {
+                    dev.destroy_fence(dev.handle, fence, nullptr);
+                }
+                present_fences->clear();
+            }
+
             if (sc.handle && dev_it->second.destroy_swapchain)
             {
                 dev_it->second.destroy_swapchain(dev_it->second.handle, sc.handle, nullptr);
             }
             sc.handle = VK_NULL_HANDLE;
+        }
+
+        VkResult take_present_fence(const device_data& dev, swapchain_data& sc, VkFence& out_fence)
+        {
+            std::erase_if(sc.presenting, [&](const VkFence fence) {
+                if (dev.get_fence_status(dev.handle, fence) != VK_SUCCESS || dev.reset_fences(dev.handle, 1, &fence) != VK_SUCCESS)
+                {
+                    return false;
+                }
+                sc.spare_present_fences.push_back(fence);
+                return true;
+            });
+
+            if (!sc.spare_present_fences.empty())
+            {
+                out_fence = sc.spare_present_fences.back();
+                sc.spare_present_fences.pop_back();
+                return VK_SUCCESS;
+            }
+
+            VkFenceCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            return dev.create_fence(dev.handle, &info, nullptr, &out_fence);
         }
 
         void erase_device(uint64_t device_id)
@@ -2264,6 +2355,7 @@ namespace sogen
 #endif
         }
 
+        bool surface_maintenance1 = false;
         VkInstanceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         create_info.flags = instance_flags;
@@ -2298,6 +2390,28 @@ namespace sogen
                 extension_names.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
                 create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
             }
+
+            const auto enabled = [&](const std::string_view name) {
+                return std::ranges::any_of(extension_names, [&](const char* extension) { return name == extension; });
+            };
+            const auto offered = [&](const std::string_view name) {
+                return std::ranges::any_of(
+                    available, [&](const VkExtensionProperties& ext) { return name == static_cast<const char*>(ext.extensionName); });
+            };
+            constexpr std::array present_fence_extensions{VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME,
+                                                          VK_EXT_SURFACE_MAINTENANCE_1_EXTENSION_NAME};
+            if (api_version >= VK_API_VERSION_1_1 && enabled(VK_KHR_SURFACE_EXTENSION_NAME) &&
+                std::ranges::all_of(present_fence_extensions, offered))
+            {
+                for (const char* name : present_fence_extensions)
+                {
+                    if (!enabled(name))
+                    {
+                        extension_names.push_back(name);
+                    }
+                }
+                surface_maintenance1 = true;
+            }
         }
         create_info.enabledExtensionCount = static_cast<uint32_t>(extension_names.size());
         create_info.ppEnabledExtensionNames = extension_names.empty() ? nullptr : extension_names.data();
@@ -2311,6 +2425,7 @@ namespace sogen
 
         impl::instance_data data{};
         data.handle = instance;
+        data.surface_maintenance1 = surface_maintenance1;
         data.destroy_instance = this->impl_->load_instance_proc<PFN_vkDestroyInstance>(instance, "vkDestroyInstance");
         data.enumerate_physical_devices =
             this->impl_->load_instance_proc<PFN_vkEnumeratePhysicalDevices>(instance, "vkEnumeratePhysicalDevices");
@@ -3411,6 +3526,28 @@ namespace sogen
             }
         }
 
+        VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT present_fence_features{};
+        present_fence_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT;
+        bool present_fences = false;
+        if (instance->second.surface_maintenance1 && instance->second.get_physical_device_features2 &&
+            std::ranges::any_of(extensions, [](const char* name) { return std::strcmp(name, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0; }) &&
+            impl::has_device_extension(instance->second, pd->second.handle, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
+        {
+            VkPhysicalDeviceFeatures2 supported{};
+            supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            supported.pNext = &present_fence_features;
+            instance->second.get_physical_device_features2(pd->second.handle, &supported);
+
+            if (present_fence_features.swapchainMaintenance1)
+            {
+                present_fence_features.pNext = nullptr;
+                feature_tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&present_fence_features);
+                feature_tail = reinterpret_cast<VkBaseOutStructure*>(&present_fence_features);
+                extensions.push_back(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+                present_fences = true;
+            }
+        }
+
         VkDeviceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
@@ -3419,7 +3556,7 @@ namespace sogen
         create_info.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
         // Enabled features ride the pNext chain (VkPhysicalDeviceFeatures2 + the chained structs); a
         // chain present means pEnabledFeatures must stay null.
-        if (has_feature_chain || placed_map_alignment != 0)
+        if (has_feature_chain || placed_map_alignment != 0 || present_fences)
         {
             create_info.pNext = &features2;
         }
@@ -3456,6 +3593,7 @@ namespace sogen
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
+        data.present_fences = present_fences;
 
         if (spoof_missing_features && instance->second.get_physical_device_features2)
         {
@@ -3497,6 +3635,7 @@ namespace sogen
             data.wait_semaphores = reinterpret_cast<PFN_vkWaitSemaphores>(resolve("vkWaitSemaphores"));
             data.get_buffer_device_address = reinterpret_cast<PFN_vkGetBufferDeviceAddress>(resolve("vkGetBufferDeviceAddress"));
             data.get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(resolve("vkGetFenceStatus"));
+            data.wait_for_fences = reinterpret_cast<PFN_vkWaitForFences>(resolve("vkWaitForFences"));
             data.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(resolve("vkQueueSubmit"));
             data.queue_submit2 = reinterpret_cast<PFN_vkQueueSubmit2>(resolve("vkQueueSubmit2"));
             data.create_swapchain = reinterpret_cast<PFN_vkCreateSwapchainKHR>(resolve("vkCreateSwapchainKHR"));
@@ -5375,7 +5514,7 @@ namespace sogen
             .image_type = image_type,
             .flags = flags,
         };
-        data.layouts.assign(static_cast<size_t>(data.aspect_count()) * info.mipLevels * info.arrayLayers, VK_IMAGE_LAYOUT_UNDEFINED);
+        data.reset_subresources(static_cast<size_t>(data.aspect_count()) * info.mipLevels * info.arrayLayers);
         this->impl_->images.emplace(id, std::move(data));
         out_image = id;
         return VK_SUCCESS;
@@ -5535,6 +5674,7 @@ namespace sogen
             .layer_count = range.layer_count,
             .new_layout = static_cast<uint32_t>(barrier.newLayout),
             .transfers_ownership = src_queue_family_index != dst_queue_family_index && src_queue_family_index != VK_QUEUE_FAMILY_IGNORED,
+            .source_family = src_queue_family_index,
             .destination_family = dst_queue_family_index,
         });
         return VK_SUCCESS;
@@ -6194,7 +6334,7 @@ namespace sogen
                                                     .tiling = VK_IMAGE_TILING_OPTIMAL,
                                                     .image_type = VK_IMAGE_TYPE_2D,
                                                     .flags = 0};
-            data.layouts.assign(data.create.array_layers, VK_IMAGE_LAYOUT_UNDEFINED);
+            data.reset_subresources(data.create.array_layers);
             this->impl_->images.emplace(image_id, std::move(data));
             sc.image_ids.push_back(image_id);
         }
@@ -6333,6 +6473,23 @@ namespace sogen
         info.pSwapchains = &native_swapchain;
         info.pImageIndices = &image_index;
 
+        const uint64_t present_device = queue_it->second.device_id;
+        VkFence present_fence{};
+        VkSwapchainPresentFenceInfoEXT present_fence_info{};
+        if (dev_it->second.present_fences)
+        {
+            if (const VkResult fence_result = this->impl_->take_present_fence(dev_it->second, sc_it->second, present_fence);
+                fence_result != VK_SUCCESS)
+            {
+                return fence_result;
+            }
+
+            present_fence_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_PRESENT_FENCE_INFO_EXT;
+            present_fence_info.swapchainCount = 1;
+            present_fence_info.pFences = &present_fence;
+            info.pNext = &present_fence_info;
+        }
+
         const auto native_present = dev_it->second.queue_present;
         auto* const native_queue = queue_it->second.handle;
         const auto queue_lock = this->impl_->queue_lock(native_queue);
@@ -6352,7 +6509,23 @@ namespace sogen
         });
 
         // Only these leave the present unqueued, with the image still acquired and the semaphores untouched.
-        if (result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY)
+        const bool queued = result != VK_ERROR_OUT_OF_HOST_MEMORY && result != VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        if (present_fence)
+        {
+            if (const auto presented = this->impl_->swapchains.find(swapchain); presented != this->impl_->swapchains.end())
+            {
+                (queued ? presented->second.presenting : presented->second.spare_present_fences).push_back(present_fence);
+            }
+            else if (const auto device_it = this->impl_->devices.find(present_device); device_it != this->impl_->devices.end())
+            {
+                constexpr uint64_t present_timeout = 1'000'000'000;
+                const auto& dev = device_it->second;
+                dev.wait_for_fences(dev.handle, 1, &present_fence, VK_TRUE, present_timeout);
+                dev.destroy_fence(dev.handle, present_fence, nullptr);
+            }
+        }
+
+        if (queued)
         {
             if (const auto presented = this->impl_->swapchains.find(swapchain); presented != this->impl_->swapchains.end())
             {
@@ -6372,7 +6545,7 @@ namespace sogen
             {
                 present.waits.emplace_back(semaphore, 0);
             }
-            this->impl_->pending_submissions[queue_it->second.handle].push_back(std::move(present));
+            this->impl_->pending_presents[native_queue].push_back(std::move(present));
             this->impl_->run_modeled();
         }
         return result;
@@ -9330,7 +9503,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 13;
+        constexpr uint32_t snapshot_version = 14;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -10589,7 +10762,13 @@ namespace sogen
             buffer.write(image.memory_id);
             buffer.write(image.memory_offset);
             buffer.write_vector(image.layouts);
-            buffer.write(image.owner_family);
+            buffer.write_vector(image.owners);
+
+            if (image.ownership_unknown ||
+                std::ranges::any_of(image.released_to, [](const uint32_t family) { return family != VK_QUEUE_FAMILY_IGNORED; }))
+            {
+                throw std::runtime_error("Vulkan image " + std::to_string(id) + " is being handed between queue families");
+            }
 
             const auto aspects = get_vulkan_format_aspects(create.format);
             uint32_t aspect = 0;
@@ -10610,11 +10789,13 @@ namespace sogen
                             continue;
                         }
 
-                        const bool layouts_match =
-                            aspect == 0 || layout == static_cast<VkImageLayout>(image.layouts[image.subresource_index(0, mip, layer)]);
+                        const auto first_aspect = image.subresource_index(0, mip, layer);
+                        const auto owner = image.owners[first_aspect];
+                        const bool layouts_match = aspect == 0 || (layout == static_cast<VkImageLayout>(image.layouts[first_aspect]) &&
+                                                                   owner == image.owners[image.subresource_index(aspect, mip, layer)]);
                         // Multisampled contents are read and written by shaders, which the device's first queue family runs.
-                        const bool owner_runs_shaders = image.samples == 1 || image.owner_family == VK_QUEUE_FAMILY_IGNORED ||
-                                                        image.owner_family == impl.devices.at(image.device_id).queue_family_index;
+                        const bool owner_runs_shaders = image.samples == 1 || owner == VK_QUEUE_FAMILY_IGNORED ||
+                                                        owner == impl.devices.at(image.device_id).queue_family_index;
                         if (!image.copyable || !layouts_match || !owner_runs_shaders)
                         {
                             throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) + " yet");
@@ -10625,7 +10806,7 @@ namespace sogen
                             const VkExtent2D extent{.width = create.width, .height = create.height};
                             std::vector<std::byte> contents(static_cast<size_t>(extent.width) * extent.height * image.samples *
                                                             snapshot_transfer<impl::device_data>::sample_size);
-                            if (!transfer_for(image.device_id, image.owner_family)
+                            if (!transfer_for(image.device_id, owner)
                                      .read_samples(image.handle, create.format, image.samples, static_cast<VkImageAspectFlagBits>(bit),
                                                    aspects, layer, extent, layout, contents))
                             {
@@ -10654,7 +10835,7 @@ namespace sogen
                                               ((extent.height + block->height - 1) / block->height) * extent.depth * block->size;
 
                         std::vector<std::byte> contents(size);
-                        if (!transfer_for(image.device_id, image.owner_family)
+                        if (!transfer_for(image.device_id, owner)
                                  .copy_image(image.handle, static_cast<VkImageAspectFlagBits>(bit), aspects, mip, layer, extent, *block,
                                              layout, layout, true, contents, false))
                         {
@@ -11131,6 +11312,19 @@ namespace sogen
             buffer.read(create.feature_count);
             buffer.read(create.spoof_missing_features);
 
+            const auto& physical_device = impl.physical_devices.at(create.physical_device);
+            const auto& instance = impl.instances.at(physical_device.instance_id);
+            uint32_t family_count = 0;
+            instance.get_queue_family_properties(physical_device.handle, &family_count, nullptr);
+            std::vector<VkQueueFamilyProperties> families(family_count);
+            instance.get_queue_family_properties(physical_device.handle, &family_count, families.data());
+            if (std::ranges::any_of(create.queues, [&](const auto& queue) {
+                    return queue.queue_family_index >= family_count || queue.queue_count > families[queue.queue_family_index].queueCount;
+                }))
+            {
+                throw std::runtime_error("This GPU no longer offers the queues of Vulkan device " + std::to_string(id));
+            }
+
             uint64_t device{};
             impl.forced_ids = {id};
             const auto result =
@@ -11232,7 +11426,7 @@ namespace sogen
             const auto memory = buffer.read<uint64_t>();
             const auto memory_offset = buffer.read<uint64_t>();
             auto layouts = buffer.read_vector<uint32_t>();
-            const auto owner_family = buffer.read<uint32_t>();
+            auto owners = buffer.read_vector<uint32_t>();
 
             uint64_t image{};
             impl.forced_ids = {id};
@@ -11242,8 +11436,7 @@ namespace sogen
             expect_restored(result, image, id, "image");
 
             auto& restored = impl.images.at(id);
-            restored.owner_family = owner_family;
-            if (layouts.size() != restored.layouts.size() ||
+            if (layouts.size() != restored.layouts.size() || owners.size() != restored.owners.size() ||
                 (memory != 0 && this->bind_image_memory(device, id, memory, memory_offset) != VK_SUCCESS))
             {
                 throw std::runtime_error("Restoring Vulkan image " + std::to_string(id) + " failed");
@@ -11283,6 +11476,7 @@ namespace sogen
                 });
 
                 const auto saved_layout = static_cast<VkImageLayout>(layouts[restored.subresource_index(0, entry.mip, entry.layer)]);
+                const auto owner_family = owners[restored.subresource_index(0, entry.mip, entry.layer)];
                 if (restored.samples > 1)
                 {
                     if (!transfer_for(device, owner_family)
@@ -11311,6 +11505,7 @@ namespace sogen
             }
 
             restored.layouts = std::move(layouts);
+            restored.owners = std::move(owners);
         }
 
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)

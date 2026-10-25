@@ -24,13 +24,17 @@ code is shared with Android's single-vCPU FEX backend.
       verified bit for bit on restore
 - [x] Settlers II suspended on a map and resumed in a new process
 - [x] Performance of the shadow state measured in game (below)
-- [x] Present completion does not need confirming: a suspend never destroys presentation objects in the
-      running process (the snapshot is written and the process exits, or saving fails and it keeps running),
-      and a restore starts in a fresh process with nothing pending
+- [x] Present completion: where the GPU offers `VK_EXT_swapchain_maintenance1`, the bridge enables it on the host
+      only and gives every present a fence. A swapchain is destroyed (by the guest, when it is retired, or in the
+      teardown after a snapshot) only once its presents signalled their fences, waiting at most a second.
+      Without the extension, teardown stays best effort
 - [x] Images and swapchain images used from several queues: what each submission does to layouts, ownership
       and queries waits until the submissions, acquires and host signals before it provide its semaphore waits,
-      so the tracked state follows the order the queues run in. Contents are copied on a queue of the family
-      that owns the image. A snapshot is refused while a modelled wait is still unsatisfied
+      so the tracked state follows the order the queues run in. Presents wait in an order of their own, since
+      they do not hold back later submissions to their queue. Ownership is tracked per subresource: an exclusive
+      image belongs to the family that first used it until a release and its matching acquire move it, and its
+      contents are copied on a queue of that family. A snapshot is refused while a modelled wait is unsatisfied or
+      a release has not been acquired
 - [ ] Several vCPUs on WHP
 - [ ] Child processes
 - [ ] Android integration
