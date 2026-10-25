@@ -442,18 +442,12 @@ namespace sogen
                     void* host_ptr = nullptr;
                     if (mapping.placed)
                     {
-                        const auto place = [&](void* host_address) {
-                            if (this->vulkan_.map_memory_placed(mapping.device, memory, host_address) != 0)
-                            {
-                                return false;
-                            }
-                            host_ptr = host_address;
-                            return true;
-                        };
                         if (!win_emu.memory.allocate_placed_host_memory_at(mapping.guest_address, static_cast<size_t>(mapping.size),
-                                                                           memory_permission::read_write, place))
+                                                                           memory_permission::read_write,
+                                                                           this->placer(mapping.device, memory, host_ptr)))
                         {
-                            throw std::runtime_error("Placing a Vulkan memory mapping at its guest address failed");
+                            throw std::runtime_error("Placing Vulkan memory " + std::to_string(memory) + " (" +
+                                                     std::to_string(mapping.size) + " bytes) at its guest address failed");
                         }
 
                         mapping.host_ptr = host_ptr;
@@ -1850,7 +1844,7 @@ namespace sogen
             static uint64_t highest_wow64_address(const windows_emulator& win_emu)
             {
                 const auto* executable = win_emu.mod_manager.executable;
-                return executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) ? 0xFFFEFFFF : 0x7FFEFFFF;
+                return (executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) ? 0xFFFEFFFF : 0x7FFEFFFF;
             }
 
             // A WoW64 guest can only reach memory below its address limit, and drivers without placed mappings map
@@ -2120,6 +2114,19 @@ namespace sogen
                 return write_output(win_emu, context, response);
             }
 
+            std::function<bool(void*)> placer(const uint64_t device, const uint64_t memory, void*& host_ptr)
+            {
+                return [this, device, memory, &host_ptr](void* host_address) {
+                    if (this->vulkan_.map_memory_placed(device, memory, host_address) != 0)
+                    {
+                        return false;
+                    }
+
+                    host_ptr = host_address;
+                    return true;
+                };
+            }
+
             // A WoW64 guest can only reach memory below its address limit, where the driver's own mapping generally is
             // not. On backends whose guest memory lives at fixed host addresses, the driver then maps the memory right
             // where a free guest range is backed, instead of the bridge aliasing a mapping the driver placed elsewhere
@@ -2143,15 +2150,9 @@ namespace sogen
                 const uint64_t wow64_highest_address = highest_wow64_address(win_emu);
 
                 void* host_ptr = nullptr;
-                const uint64_t guest_address = win_emu.memory.allocate_placed_host_memory(
-                    static_cast<size_t>(size), memory_permission::read_write, wow64_highest_address, [&](void* host_address) {
-                        if (this->vulkan_.map_memory_placed(device, memory, host_address) != 0)
-                        {
-                            return false;
-                        }
-                        host_ptr = host_address;
-                        return true;
-                    });
+                const uint64_t guest_address =
+                    win_emu.memory.allocate_placed_host_memory(static_cast<size_t>(size), memory_permission::read_write,
+                                                               wow64_highest_address, this->placer(device, memory, host_ptr));
                 if (guest_address == 0)
                 {
                     return std::nullopt;
