@@ -726,9 +726,9 @@ namespace sogen
                 this->sink_ = std::move(sink);
             }
 
-            void set_snapshot_request_sink(std::function<void()> sink) override
+            void set_snapshot_request_sink(const std::function<void()>& sink) override
             {
-                this->snapshot_request_sink_ = std::move(sink);
+                this->snapshot_request_sink_ = sink;
             }
 
             void pump_events() override

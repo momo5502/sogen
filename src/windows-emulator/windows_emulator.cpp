@@ -2573,6 +2573,35 @@ namespace sogen
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
         this->apply_cursor_capture();
+        this->release_held_input();
+    }
+
+    // Nothing is held when a saved process continues, so what was held when it was saved is released, the way the guest
+    // would have seen it happen.
+    void windows_emulator::release_held_input()
+    {
+        for (uint32_t key = 0; key < this->process.key_state.size(); ++key)
+        {
+            if ((this->process.key_state[key] & 0x80) == 0)
+            {
+                continue;
+            }
+
+            if (key == VK_LBUTTON || key == VK_RBUTTON || key == VK_MBUTTON || key == VK_XBUTTON1 || key == VK_XBUTTON2)
+            {
+                this->process.key_state[key] = 0;
+                continue;
+            }
+
+            const bool alt_held = (this->process.key_state[VK_MENU] & 0x80) != 0;
+            constexpr uint64_t release_flags = 0xC0000001;
+            this->handle_ui_event(ui_event{
+                .window = this->process.foreground_window,
+                .message = static_cast<uint32_t>(alt_held ? WM_SYSKEYUP : WM_KEYUP),
+                .wParam = key,
+                .lParam = release_flags | (static_cast<uint64_t>(vk_to_scan_code(static_cast<uint16_t>(key))) << 16),
+            });
+        }
     }
 
     // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while

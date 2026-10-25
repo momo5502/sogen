@@ -84,7 +84,6 @@ namespace sogen
             {
             };
 
-            // Elements that are written as their bytes, which a vector of them can write as one block.
             template <typename T>
             constexpr bool is_plain_v = std::is_trivially_copyable_v<T> && std::is_default_constructible_v<T> && !Serializable<T> &&
                                         !has_serialize_function<T>::value && !has_deserialize_function<T>::value &&
