@@ -113,12 +113,14 @@ namespace sogen
             }
 
             uint64_t section_backing_address = 0;
+            uint32_t section_mapped_views = 0;
             if (value.type == handle_types::section)
             {
                 auto* section = c.proc.sections.get(h);
                 if (section && section->ref_count == 1)
                 {
                     section_backing_address = section->backing_address;
+                    section_mapped_views = section->mapped_view_count;
                 }
             }
 
@@ -126,7 +128,14 @@ namespace sogen
             {
                 if (section_backing_address != 0)
                 {
-                    c.win_emu.memory.release_memory(section_backing_address, 0);
+                    if (section_mapped_views == 0)
+                    {
+                        c.win_emu.memory.release_memory(section_backing_address, 0);
+                    }
+                    else
+                    {
+                        c.proc.orphaned_section_backings[section_backing_address] = section_mapped_views;
+                    }
                 }
                 return STATUS_SUCCESS;
             }

@@ -816,8 +816,9 @@ namespace sogen
         uint32_t allocation_attributes{};
         // Shared backing for a pagefile-backed section: allocated once (lazily, on first map) and reused by
         // every view, so all views of the section see the same memory and section offsets resolve correctly.
-        // 0 until allocated. Freed when last section handle is closed.
+        // 0 until allocated. Freed once the last section handle is closed and no mapped view remains.
         uint64_t backing_address{};
+        uint32_t mapped_view_count{};
         std::optional<winpe::pe_image_basic_info> cached_image_info{};
 
         bool is_image() const
@@ -867,6 +868,7 @@ namespace sogen
             buffer.write(this->section_page_protection);
             buffer.write(this->allocation_attributes);
             buffer.write(this->backing_address);
+            buffer.write(this->mapped_view_count);
             buffer.write_optional<winpe::pe_image_basic_info>(this->cached_image_info);
         }
 
@@ -878,6 +880,7 @@ namespace sogen
             buffer.read(this->section_page_protection);
             buffer.read(this->allocation_attributes);
             buffer.read(this->backing_address);
+            buffer.read(this->mapped_view_count);
             buffer.read_optional(this->cached_image_info);
         }
     };
