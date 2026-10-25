@@ -2215,6 +2215,8 @@ namespace sogen::fex
             {
                 throw std::runtime_error("FEX backend failed to alias host memory into the guest");
             }
+
+            this->set_shadow_range_apple(address, size, permissions);
 #else
             const uint64_t source_address = get_untagged_pointer_address(host_pointer);
             std::vector<std::pair<uint64_t, size_t>> aliased_spans{};
