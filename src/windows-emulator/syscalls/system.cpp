@@ -9,10 +9,10 @@ namespace sogen
     {
         namespace
         {
-            // The simulated physical memory, about 50 GB, which every memory query reports consistently.
+            // Physical memory has holes, so the page numbers span more than the simulated page count.
             constexpr uint32_t lowest_physical_page = 0x00000001;
             constexpr uint32_t highest_physical_page = 0x00c9c7ff;
-            constexpr uint32_t physical_page_count = highest_physical_page - lowest_physical_page + 1;
+            constexpr uint32_t physical_page_count = simulated_physical_page_count;
 
             constexpr uint64_t wow64_large_address_aware_maximum = 0xFFFEFFFF;
 
