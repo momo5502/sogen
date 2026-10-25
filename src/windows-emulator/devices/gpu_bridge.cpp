@@ -1819,7 +1819,7 @@ namespace sogen
             static uint64_t highest_wow64_address(const windows_emulator& win_emu)
             {
                 const auto* executable = win_emu.mod_manager.executable;
-                return executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE) ? 0xFFFEFFFF : 0x7FFEFFFF;
+                return (executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) ? 0xFFFEFFFF : 0x7FFEFFFF;
             }
 
             // A WoW64 guest can only reach memory below its address limit, and drivers without placed mappings map
