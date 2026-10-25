@@ -48,7 +48,7 @@ namespace sogen
                 ZSTD_inBuffer input{data.data(), data.size(), 0};
                 ZSTD_outBuffer output{buffer.data(), buffer.size(), 0};
                 size_t result = 1;
-                while (input.pos < input.size)
+                while (result != 0 && input.pos < input.size)
                 {
                     result = ZSTD_decompressStream(context.get(), &output, &input);
                     if (ZSTD_isError(result) || (result != 0 && output.pos == output.size))
@@ -57,7 +57,7 @@ namespace sogen
                     }
                 }
 
-                if (result != 0 || output.pos != buffer.size())
+                if (result != 0 || input.pos != input.size || output.pos != buffer.size())
                 {
                     return {};
                 }
