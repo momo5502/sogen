@@ -82,12 +82,13 @@ namespace sogen
 #ifdef _WIN32
         using library_handle = HMODULE;
 
-        library_handle load_library(const char* name)
+        // Unused on 32-bit hosts, which load no Vulkan driver.
+        [[maybe_unused]] library_handle load_library(const char* name)
         {
             return ::LoadLibraryA(name);
         }
 
-        void* get_symbol(library_handle handle, const char* name)
+        [[maybe_unused]] void* get_symbol(library_handle handle, const char* name)
         {
             return reinterpret_cast<void*>(::GetProcAddress(handle, name));
         }
@@ -101,12 +102,13 @@ namespace sogen
 #else
         using library_handle = void*;
 
-        library_handle load_library(const char* name)
+        // Unused on 32-bit hosts, which load no Vulkan driver.
+        [[maybe_unused]] library_handle load_library(const char* name)
         {
             return ::dlopen(name, RTLD_NOW | RTLD_LOCAL);
         }
 
-        void* get_symbol(library_handle handle, const char* name)
+        [[maybe_unused]] void* get_symbol(library_handle handle, const char* name)
         {
             return ::dlsym(handle, name);
         }
