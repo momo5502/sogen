@@ -11,6 +11,7 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+#include <thread>
 
 namespace sogen
 {
@@ -180,7 +181,10 @@ namespace sogen
             {
                 std::ofstream stream{temporary_file, std::ios::binary | std::ios::trunc};
                 const auto write = [&](const std::span<const std::byte> data) {
-                    stream.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+                    if (!stream.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size())))
+                    {
+                        throw std::runtime_error("Failed to write snapshot: " + snapshot_file.string());
+                    }
                 };
 
                 // The state is streamed to the file rather than held in memory, so its size is filled into the header last.

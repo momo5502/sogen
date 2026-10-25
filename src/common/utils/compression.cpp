@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <stdexcept>
 #include <thread>
 
@@ -44,7 +45,22 @@ namespace sogen
                     return {};
                 }
 
-                std::vector<std::byte> buffer(decompressed_size);
+                // The size comes from a file, so a corrupt one must fail like corrupt data instead of escaping as an
+                // allocation error.
+                std::vector<std::byte> buffer{};
+                try
+                {
+                    buffer.resize(decompressed_size);
+                }
+                catch (const std::bad_alloc&)
+                {
+                    return {};
+                }
+                catch (const std::length_error&)
+                {
+                    return {};
+                }
+
                 ZSTD_inBuffer input{.src = data.data(), .size = data.size(), .pos = 0};
                 ZSTD_outBuffer output{.dst = buffer.data(), .size = buffer.size(), .pos = 0};
                 size_t result = 1;
