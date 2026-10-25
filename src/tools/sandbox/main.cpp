@@ -85,7 +85,7 @@ namespace sogen::sandbox
                 const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
                 const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
-                const bool spoof_gpu_features, const std::filesystem::path& suspend_file, const std::filesystem::path& resume_file,
+                const bool spoof_gpu_features, const std::filesystem::path& snapshot_directory, const std::filesystem::path& resume_file,
                 managed_process_connection* managed_connection)
         {
             application_settings app_settings{
@@ -116,16 +116,16 @@ namespace sogen::sandbox
 #ifdef _WIN32
             // One vCPU per host core; WHP supports at most 64 per partition. EMULATOR_VCPU_COUNT overrides. Snapshots only
             // support a single vCPU so far.
-            const auto uses_snapshots = !suspend_file.empty() || !resume_file.empty();
-            auto vcpu_count = uses_snapshots ? 1u : std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
+            const auto resumes = !resume_file.empty();
+            auto vcpu_count = resumes ? 1u : std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
             if (const char* env = std::getenv("EMULATOR_VCPU_COUNT"); env != nullptr && env[0] != '\0')
             {
                 vcpu_count = std::clamp(static_cast<uint32_t>(std::strtoul(env, nullptr, 10)), 1u, 64u);
             }
 
-            if (uses_snapshots && vcpu_count != 1)
+            if (resumes && vcpu_count != 1)
             {
-                throw std::runtime_error("Suspending and resuming support only one vCPU");
+                throw std::runtime_error("Resuming supports only one vCPU");
             }
 #endif
 
@@ -240,6 +240,20 @@ namespace sogen::sandbox
                 }
             });
 
+            snapshot::controller snapshots{win_emu, configuration, snapshot_directory, [](const snapshot::snapshot_outcome& outcome) {
+                                               if (outcome.error.empty())
+                                               {
+                                                   fprintf(stderr, "Saved the process to %s\n", outcome.path.string().c_str());
+                                               }
+                                               else
+                                               {
+                                                   fprintf(stderr, "Saving the process failed, it keeps running: %s\n",
+                                                           outcome.error.c_str());
+                                               }
+                                           }};
+            win_emu.ui().set_snapshot_request_sink([&] { snapshots.request(); });
+            const auto snapshot_sink_guard = utils::finally([&] { win_emu.ui().set_snapshot_request_sink({}); });
+
             std::atomic_uint32_t signals_received{0};
             utils::interupt_handler interrupt_guard{[&] {
                 if (signals_received++ >= 2)
@@ -248,84 +262,35 @@ namespace sogen::sandbox
                 }
             }};
 
-            // A signal handler cannot take the locks stopping or suspending the process needs, so a thread watching the
-            // interrupts does that. A suspend that waits for the end of a frame stops the process where it is if no frame
-            // ends within two seconds.
-            std::mutex suspend_mutex{};
-            std::condition_variable suspend_changed{};
+            // A signal handler cannot take the locks stopping the process needs, so a thread watching the interrupts does.
+            std::mutex signal_mutex{};
+            std::condition_variable signal_changed{};
             bool watching = true;
-            bool running = false;
-            bool suspend_requested = false;
-            uint32_t signals_handled = 0;
             std::thread signal_watcher([&] {
-                std::unique_lock lock(suspend_mutex);
-                auto deadline = std::chrono::steady_clock::time_point::max();
+                std::unique_lock lock(signal_mutex);
                 while (watching)
                 {
-                    suspend_changed.wait_for(lock, std::chrono::milliseconds(50));
-                    const auto received = signals_received.load();
-                    if (received > signals_handled)
+                    signal_changed.wait_for(lock, std::chrono::milliseconds(50));
+                    if (signals_received > 0)
                     {
-                        signals_handled = received;
-                        if (suspend_file.empty() || received > 1)
-                        {
-                            win_emu.stop();
-                        }
-                        else
-                        {
-                            suspend_requested = true;
-                            win_emu.request_suspend();
-                            deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-                        }
-                    }
-                    else if (suspend_requested && running && std::chrono::steady_clock::now() >= deadline)
-                    {
-                        win_emu.stop();
-                        deadline = std::chrono::steady_clock::time_point::max();
+                        snapshots.stop();
+                        return;
                     }
                 }
             });
 
             const auto signal_watcher_guard = utils::finally([&] {
                 {
-                    const std::scoped_lock lock(suspend_mutex);
+                    const std::scoped_lock lock(signal_mutex);
                     watching = false;
                 }
-                suspend_changed.notify_all();
+                signal_changed.notify_all();
                 signal_watcher.join();
             });
 
-            const auto set_running = [&](const bool value) {
-                const std::scoped_lock lock(suspend_mutex);
-                running = value;
-            };
-
-            while (true)
+            if (snapshots.run())
             {
-                set_running(true);
-                win_emu.start();
-                set_running(false);
-
-                // A second interrupt stops the process without saving it.
-                if (win_emu.process.exit_status.has_value() || suspend_file.empty() || signals_received != 1)
-                {
-                    break;
-                }
-
-                try
-                {
-                    snapshot::write_emulator_snapshot(win_emu, suspend_file, configuration);
-                    return 0;
-                }
-                catch (const std::exception& e)
-                {
-                    fprintf(stderr, "Suspending failed, the process keeps running: %s\n", e.what());
-                    const std::scoped_lock lock(suspend_mutex);
-                    win_emu.cancel_suspend_request();
-                    signals_received = 0;
-                    signals_handled = 0;
-                    suspend_requested = false;
-                }
+                return 0;
             }
 
             const auto exit_status = win_emu.process.exit_status;
@@ -383,11 +348,12 @@ namespace sogen::sandbox
             bool spoof_gpu_features{};
             app.add_flag("--spoof-gpu-features", spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
-            std::filesystem::path suspend_file{};
+            std::filesystem::path snapshot_directory{"snapshots"};
             std::filesystem::path resume_file{};
-            app.add_option("--suspend-to", suspend_file, "Save the process to this file instead of exiting when interrupted")
-                ->type_name("FILE");
-            app.add_option("--resume", resume_file, "Continue a process saved with --suspend-to")->type_name("FILE");
+            app.add_option("--snapshot-dir", snapshot_directory, "Where Ctrl+Alt+Shift+S saves the process")
+                ->capture_default_str()
+                ->type_name("DIR");
+            app.add_option("--resume", resume_file, "Continue a saved process")->type_name("FILE");
             app.add_option("--managed-process-port", managed_process_port)->group("");
             app.add_option("--managed-process-token", managed_process_token)->group("");
 
@@ -443,7 +409,7 @@ namespace sogen::sandbox
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_filesystem_mode(root_mode).value(), std::move(mounts), emulation_root, registry_directory,
-                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features, suspend_file,
+                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features, snapshot_directory,
                            resume_file, managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)

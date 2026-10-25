@@ -351,6 +351,7 @@ namespace sogen
 
         void handle_ui_event(const ui_event& event);
         void apply_cursor_capture();
+        void release_held_input();
 
         // Input held for low-level hooks: the next hook the given thread has to run, marked as running.
         std::optional<std::pair<process_context::low_level_input, user_low_level_hook>> begin_low_level_hook(emulator_thread& thread);

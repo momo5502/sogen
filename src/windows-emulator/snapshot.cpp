@@ -8,6 +8,8 @@
 
 #include <array>
 #include <fstream>
+#include <random>
+#include <sstream>
 
 namespace sogen
 {
@@ -20,7 +22,7 @@ namespace sogen
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
                 char magic[4] = {'S', 'N', 'A', 'P'};
-                uint32_t version{4};
+                uint32_t version{5};
                 uint32_t machine{static_cast<uint32_t>(PEMachineType::AMD64)};
             };
 
@@ -64,13 +66,19 @@ namespace sogen
                 serializer.write_string(configuration);
                 win_emu.serialize(serializer);
 
-                return utils::compression::zstd::compress(serializer.get_buffer());
+                return utils::compression::zstd::compress(serializer.get_buffer(), 1);
             }
 
             std::vector<std::byte> get_decompressed_emulator_state(const std::span<const std::byte> snapshot)
             {
                 const auto data = validate_header(snapshot);
                 return utils::compression::zstd::decompress(data);
+            }
+
+            std::string random_suffix()
+            {
+                std::random_device device{};
+                return (std::stringstream{} << std::hex << device() << device()).str();
             }
 
             std::string get_main_executable_name(const windows_emulator& win_emu)
@@ -117,13 +125,13 @@ namespace sogen
         }
 
         void write_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
-                                     const std::string_view configuration)
+                                     const std::string_view configuration, const std::function<bool()>& should_commit)
         {
             const auto snapshot = create_emulator_snapshot(win_emu, configuration);
 
             // Written next to the destination and moved over it, so a failed write never leaves a truncated snapshot behind.
             auto temporary_file = snapshot_file;
-            temporary_file += ".tmp";
+            temporary_file += "." + random_suffix() + ".tmp";
 
             auto remove_temporary_file = utils::finally([&] {
                 std::error_code ec{};
@@ -133,6 +141,11 @@ namespace sogen
             if (!utils::io::write_file(temporary_file, snapshot))
             {
                 throw std::runtime_error("Failed to write snapshot: " + snapshot_file.string());
+            }
+
+            if (should_commit && !should_commit())
+            {
+                throw std::runtime_error("The process was stopped while it was saved");
             }
 
             std::filesystem::rename(temporary_file, snapshot_file);
@@ -175,6 +188,170 @@ namespace sogen
             }
 
             load_emulator_snapshot(win_emu, data, configuration);
+        }
+
+        controller::controller(windows_emulator& win_emu, std::string configuration, std::filesystem::path directory,
+                               outcome_callback on_outcome)
+            : win_emu_(win_emu),
+              configuration_(std::move(configuration)),
+              directory_(std::move(directory)),
+              on_outcome_(std::move(on_outcome)),
+              watcher_([this] { this->watch(); })
+        {
+        }
+
+        controller::~controller()
+        {
+            {
+                const std::scoped_lock lock(this->mutex_);
+                this->watching_ = false;
+            }
+            this->changed_.notify_all();
+            this->watcher_.join();
+        }
+
+        bool controller::request(std::filesystem::path destination)
+        {
+            {
+                const std::scoped_lock lock(this->mutex_);
+                if (this->pending_)
+                {
+                    return false;
+                }
+                this->pending_ = std::move(destination);
+            }
+            this->changed_.notify_all();
+            return true;
+        }
+
+        void controller::stop()
+        {
+            const std::scoped_lock lock(this->mutex_);
+            this->stop_requested_ = true;
+            this->win_emu_.stop();
+        }
+
+        // Requesting a suspend takes locks the emulator may hold while it handles input, so it happens on this thread. Starting
+        // the emulator clears a stop that came just before, so stops and requests are repeated until the run ends.
+        void controller::watch()
+        {
+            std::unique_lock lock(this->mutex_);
+            while (this->watching_)
+            {
+                this->changed_.wait_for(lock, std::chrono::milliseconds(50));
+                if (!this->running_)
+                {
+                    continue;
+                }
+
+                if (this->stop_requested_)
+                {
+                    this->win_emu_.stop();
+                    continue;
+                }
+
+                if (!this->pending_)
+                {
+                    continue;
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                if (!this->suspend_requested_)
+                {
+                    this->suspend_requested_ = true;
+                    this->deadline_ = now + std::chrono::seconds(2);
+                }
+
+                if (now >= this->deadline_)
+                {
+                    this->win_emu_.stop();
+                }
+                else
+                {
+                    this->win_emu_.request_suspend();
+                }
+            }
+        }
+
+        std::filesystem::path controller::next_snapshot_path() const
+        {
+            return this->directory_ /
+                   (get_main_executable_name(this->win_emu_) + "-" + std::to_string(time(nullptr)) + "-" + random_suffix() + ".snap");
+        }
+
+        bool controller::run()
+        {
+            while (true)
+            {
+                {
+                    const std::scoped_lock lock(this->mutex_);
+                    if (this->stop_requested_)
+                    {
+                        return false;
+                    }
+                    this->running_ = true;
+                }
+
+                this->win_emu_.start();
+
+                std::unique_lock lock(this->mutex_);
+                this->running_ = false;
+                if (!this->pending_)
+                {
+                    return false;
+                }
+
+                snapshot_outcome outcome{.path = this->pending_->empty() ? this->next_snapshot_path() : *this->pending_};
+                bool ended = this->stop_requested_ || this->win_emu_.process.exit_status.has_value();
+                lock.unlock();
+
+                if (ended)
+                {
+                    outcome.error = "The process ended before it was saved";
+                }
+                else
+                {
+                    try
+                    {
+                        if (outcome.path.has_parent_path())
+                        {
+                            std::filesystem::create_directories(outcome.path.parent_path());
+                        }
+                        write_emulator_snapshot(this->win_emu_, outcome.path, this->configuration_, [this] {
+                            const std::scoped_lock commit_lock(this->mutex_);
+                            return !this->stop_requested_;
+                        });
+                    }
+                    catch (const std::exception& e)
+                    {
+                        outcome.error = e.what();
+                    }
+
+                    if (!outcome.error.empty())
+                    {
+                        lock.lock();
+                        ended = this->stop_requested_;
+                        lock.unlock();
+                    }
+                }
+
+                lock.lock();
+                this->pending_.reset();
+                this->suspend_requested_ = false;
+                this->deadline_ = std::chrono::steady_clock::time_point::max();
+                this->win_emu_.cancel_suspend_request();
+                lock.unlock();
+
+                if (this->on_outcome_)
+                {
+                    this->on_outcome_(outcome);
+                }
+
+                if (ended || outcome.error.empty())
+                {
+                    return outcome.error.empty();
+                }
+            }
         }
     }
 
