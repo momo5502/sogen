@@ -114,7 +114,9 @@ namespace sogen::fex
 
         // Guest memory above 4GB is placed in one window that every process reserves at the same address, so a saved
         // process finds its addresses free again in a new one. Android's 39-bit address space leaves this range alone.
+#ifndef __APPLE__
         constexpr uint64_t guest_arena_base = 0x1000000000ULL;
+#endif
         constexpr uint64_t guest_arena_size = 0x4000000000ULL;
 
 #ifdef __linux__
