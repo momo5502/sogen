@@ -84,6 +84,10 @@ class SogenService : Service() {
             native?.mouseMove(window, x, y)
         }
 
+        override fun mouseMotion(window: Long, dx: Int, dy: Int) {
+            native?.mouseMotion(window, dx, dy)
+        }
+
         override fun mouseButton(window: Long, button: Int, down: Boolean, x: Int, y: Int) {
             native?.mouseButton(window, button, down, x, y)
         }
@@ -146,6 +150,9 @@ class SogenService : Service() {
             deliver { callback.onWindowTitleChanged(window, title) }
 
         override fun onCursorMoved(window: Long, x: Int, y: Int) = deliver { callback.onCursorMoved(window, x, y) }
+
+        override fun onRelativeMouseChanged(window: Long, relative: Boolean) =
+            deliver { callback.onRelativeMouseChanged(window, relative) }
 
         override fun onSnapshot(path: String, error: String) = deliver { callback.onSnapshot(path, error) }
 

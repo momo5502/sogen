@@ -72,6 +72,7 @@ namespace sogen::android
         void on_window_visibility_changed(hwnd window, bool visible) override;
         void on_window_title_changed(hwnd window, std::u16string_view title) override;
         void on_cursor_moved(hwnd window, int32_t x, int32_t y) override;
+        void on_relative_mouse_changed(hwnd window, bool relative) override;
 
       private:
         int run_emulator(const run_config& config);
@@ -87,6 +88,7 @@ namespace sogen::android
             jmethodID on_window_visibility_changed{};
             jmethodID on_window_title_changed{};
             jmethodID on_cursor_moved{};
+            jmethodID on_relative_mouse_changed{};
             jmethodID on_snapshot{};
         };
 

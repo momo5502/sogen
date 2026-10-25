@@ -27,6 +27,8 @@ namespace sogen::android
         virtual void on_window_title_changed(hwnd window, std::u16string_view title) = 0;
         // The guest moved the cursor itself, e.g. with SetCursorPos; x and y are in the window's client coordinates.
         virtual void on_cursor_moved(hwnd window, int32_t x, int32_t y) = 0;
+        // The guest confined and hid the cursor of [window], whose input should then move the mouse by deltas.
+        virtual void on_relative_mouse_changed(hwnd window, bool relative) = 0;
     };
 
     enum class mouse_button : uint8_t
@@ -51,6 +53,7 @@ namespace sogen::android
         void detach_surface(hwnd window);
 
         void post_mouse_move(hwnd window, int32_t x, int32_t y);
+        void post_mouse_motion(hwnd window, int32_t dx, int32_t dy);
         void post_mouse_button(hwnd window, mouse_button button, bool down, int32_t x, int32_t y);
         void post_mouse_wheel(hwnd window, int32_t delta, int32_t x, int32_t y);
         void post_key(hwnd window, int32_t keycode, bool down);
@@ -68,6 +71,7 @@ namespace sogen::android
         void set_window_title(hwnd window, std::u16string_view title) override;
         void present_surface(hwnd window, const ui_surface_desc& surface) override;
         void set_cursor_position(hwnd window, int32_t screen_x, int32_t screen_y) override;
+        void set_cursor_clip(hwnd window, const std::optional<ui_rect>& screen_rect, bool relative) override;
 
         std::vector<std::string> vulkan_instance_extensions() override;
         uint64_t create_vulkan_surface(hwnd window, uint64_t instance) override;
@@ -99,6 +103,7 @@ namespace sogen::android
         std::unordered_map<uint8_t, std::chrono::steady_clock::time_point> key_down_since_{};
         hwnd active_window_{};
         uint16_t mouse_buttons_{};
+        hwnd relative_window_{};
 
         void queue_event(hwnd window, uint32_t message, uint64_t w_param, uint64_t l_param);
         void activate(hwnd window);
