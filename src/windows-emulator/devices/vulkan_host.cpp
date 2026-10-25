@@ -10749,11 +10749,6 @@ namespace sogen
             {
                 throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
             }
-
-            if (memory.imported && memory.non_coherent)
-            {
-                throw std::runtime_error("Snapshots do not support non-coherent imported Vulkan memory yet");
-            }
         }
 
         // Waiting for a device to go idle never returns while a queue waits for something only later guest work would

@@ -257,10 +257,23 @@ namespace sogen
                 return this->vulkan_.has_swapchains();
             }
 
+            // Guest memory is saved as the CPU sees it, so what the GPU wrote into non-coherent imported memory has to reach
+            // the CPU first, and what the guest wrote must not be discarded on the way.
             void prepare_serialization(windows_emulator& win_emu) override
             {
                 this->vulkan_.quiesce();
-                this->invalidate_imported_memory(win_emu);
+                this->flush_imported_memory(win_emu);
+                this->vulkan_.invalidate_imported_memory(this->imported_ranges());
+            }
+
+            std::vector<vulkan_host::memory_range> imported_ranges() const
+            {
+                std::vector<vulkan_host::memory_range> ranges{};
+                for (const auto& [memory, imported] : this->imported_memory_)
+                {
+                    ranges.push_back({.memory = memory, .offset = 0, .size = imported.size});
+                }
+                return ranges;
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override
@@ -398,6 +411,9 @@ namespace sogen
                         imported.access_tracked = win_emu.memory.track_access(imported.guest_address, static_cast<size_t>(imported.size));
                     }
                 }
+
+                // The restored guest memory was written without the guest, so no tracked write flushes it to the GPU.
+                this->vulkan_.flush_imported_memory(this->imported_ranges());
 
                 for (auto& [memory, mapping] : this->direct_mappings_)
                 {

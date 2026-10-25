@@ -1766,12 +1766,33 @@ namespace sogen::fex
             {
                 return false;
             }
+
+#ifndef __APPLE__
+            // A stale chunk of tracked memory is inaccessible until it is brought up to date, which the fault handler only
+            // does for the guest's own accesses.
+            this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
+                this->require_up_to_date(chunk, chunk_address, chunk_size);
+            });
+#endif
+
+            // Host-side reads, e.g. of a snapshot, also cover memory the guest made inaccessible to itself.
+            const bool needs_temporary_read = !this->range_has_permission(address, size, memory_permission::read);
+            if (needs_temporary_read)
+            {
+                this->set_temporary_access(address, size, memory_permission::read, true);
+            }
+
             // memmove, not memcpy: callers (e.g. the PE loader's section copy) can hand this a source
             // buffer that overlaps the guest destination range - overlapping memcpy is undefined
             // behaviour. This is a generic guest memory-copy primitive with no non-overlap contract.
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
                 std::memmove(static_cast<std::byte*>(data) + offset, reinterpret_cast<const void*>(host_address), span_size);
             });
+
+            if (needs_temporary_read)
+            {
+                this->set_temporary_access(address, size, memory_permission::read, false);
+            }
             return true;
         }
 
@@ -1802,7 +1823,7 @@ namespace sogen::fex
 
             if (needs_temporary_write)
             {
-                this->set_temporary_write_access(address, size, true);
+                this->set_temporary_access(address, size, memory_permission::write, true);
             }
 
             // memmove, not memcpy: see try_read_memory - the source may overlap the guest destination.
@@ -1812,7 +1833,7 @@ namespace sogen::fex
 
             if (needs_temporary_write)
             {
-                this->set_temporary_write_access(address, size, false);
+                this->set_temporary_access(address, size, memory_permission::write, false);
             }
 
             if (this->range_has_code(address, size))
@@ -2278,6 +2299,11 @@ namespace sogen::fex
 
         void flush_host_memory_cache(const void* host_pointer, size_t size) override
         {
+            flush_cache_lines(host_pointer, size);
+        }
+
+        static void flush_cache_lines(const void* host_pointer, size_t size)
+        {
             if (host_pointer == nullptr || size == 0)
             {
                 return;
@@ -2431,7 +2457,7 @@ namespace sogen::fex
         // access tracking
 
         template <typename F>
-        void for_each_tracked_chunk(const uint64_t address, const size_t size, F&& f)
+        void for_each_tracked_chunk(const uint64_t address, const size_t size, F&& f) const
         {
             const uint64_t end = address + size;
             auto it = this->tracked_ranges_.upper_bound(address);
@@ -2482,7 +2508,7 @@ namespace sogen::fex
         }
 
         // Applies the guest's protection to the mapped parts of a range, limited to access.
-        bool restrict_protection(const uint64_t address, const size_t size, const tracked_access access)
+        bool restrict_protection(const uint64_t address, const size_t size, const tracked_access access) const
         {
             bool restricted = true;
             this->for_each_mapped_piece(
@@ -2515,7 +2541,7 @@ namespace sogen::fex
         // Cleans and invalidates a stale chunk's cache lines, and leaves it write-protected unless the chunk is written
         // already, so that a write still marks it written. Cleaning makes the guest's unflushed writes visible as well,
         // but the chunk keeps counting as written so that they are still flushed through the device.
-        bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
+        bool bring_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) const
         {
             chunk.stale = false;
             const auto access = chunk.written ? tracked_access::full : tracked_access::read_only;
@@ -2531,14 +2557,14 @@ namespace sogen::fex
                     {
                         this->for_each_host_span(piece_address, piece_size,
                                                  [&](const uint64_t host_address, const size_t span_size, size_t) {
-                                                     this->flush_host_memory_cache(reinterpret_cast<const void*>(host_address), span_size);
+                                                     flush_cache_lines(reinterpret_cast<const void*>(host_address), span_size);
                                                  });
                     }
                 });
             return true;
         }
 
-        void require_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size)
+        void require_up_to_date(tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) const
         {
             if (chunk.stale && !this->bring_up_to_date(chunk, chunk_address, chunk_size))
             {
@@ -2886,7 +2912,7 @@ namespace sogen::fex
         // a PE section's initial file content before its final permission is locked in. Needed because
         // this backend enforces the declared permission through real host protection, unlike Unicorn's
         // uc_mem_write, which operates on emulated memory independent of any host mprotect state.
-        void set_temporary_write_access(uint64_t address, size_t size, bool enable)
+        void set_temporary_access(uint64_t address, size_t size, const memory_permission added, bool enable) const
         {
 #ifdef __APPLE__
             const uint64_t start = host_page_align_down_apple(address);
@@ -2910,7 +2936,7 @@ namespace sogen::fex
                         effective = effective | it->second;
                     }
                 }
-                ::mprotect(reinterpret_cast<void*>(host_page), host_page_size_apple, to_prot_apple(effective | memory_permission::write));
+                ::mprotect(reinterpret_cast<void*>(host_page), host_page_size_apple, to_prot_apple(effective | added));
             }
 #else
             // The range can span several regions_ entries with different declared permissions, so
@@ -2933,7 +2959,7 @@ namespace sogen::fex
 
                 const uint64_t sub_start = std::max(it->first, address & ~(page_size - 1));
                 const uint64_t sub_end = std::min(region_end, (end + page_size - 1) & ~(page_size - 1));
-                const memory_permission perm = enable ? (it->second.permissions | memory_permission::write) : it->second.permissions;
+                const memory_permission perm = enable ? (it->second.permissions | added) : it->second.permissions;
                 this->for_each_host_span(sub_start, static_cast<size_t>(sub_end - sub_start),
                                          [&](const uint64_t host_address, const size_t span_size, size_t) {
                                              ::mprotect(reinterpret_cast<void*>(host_address), span_size, to_prot(perm));
@@ -4198,7 +4224,8 @@ namespace sogen::fex
 #endif
 
         std::vector<mmio_region> mmio_regions_;
-        std::map<uint64_t, tracked_range> tracked_ranges_;
+        // Bringing a stale chunk up to date only changes host protections and caches, which reads do as well.
+        mutable std::map<uint64_t, tracked_range> tracked_ranges_;
 
         // Every per-logical-thread call-ret buffer ever allocated by ensure_callret_buffer, so the
         // destructor can release them - these live outside regions_ (host allocator space, not the
