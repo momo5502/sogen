@@ -689,6 +689,7 @@ namespace sogen
         NTSTATUS handle_NtUserSetForegroundWindow();
         hwnd handle_NtUserGetForegroundWindow(const syscall_context& c);
         hwnd handle_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserZapActiveAndFocus(const syscall_context& c);
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL Ansi);
         emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
@@ -1879,6 +1880,7 @@ namespace sogen
         add_handler(NtUserSetForegroundWindow);
         add_handler(NtUserGetForegroundWindow);
         add_handler(NtUserSetFocus);
+        add_handler(NtUserZapActiveAndFocus);
         add_handler(NtUserSetWindowLongPtr);
         add_handler(NtUserSetClassLongPtr);
         add_handler(NtUserSetWindowLong);

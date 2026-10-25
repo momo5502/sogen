@@ -3387,6 +3387,12 @@ namespace sogen
             {
                 win.name = read_large_string(window_name);
             }
+
+            if (c.win_emu.callbacks.on_generic_activity && !win.name.empty())
+            {
+                c.win_emu.callbacks.on_generic_activity("CreateWindowEx class='" + u16_to_u8(cls_name) + "' name='" + u16_to_u8(win.name) +
+                                                        "'");
+            }
             win.wnd_proc = wnd_class->lpfnWndProc;
 
             win.guest.access([&](USER_WINDOW& guest_win) {
@@ -5334,6 +5340,14 @@ namespace sogen
                 set_thread_window_context(c, hwnd);
             }
             return previous;
+        }
+
+        BOOL handle_NtUserZapActiveAndFocus(const syscall_context& c)
+        {
+            auto& thread = c.thread();
+            thread.set_active_window(0);
+            thread.set_focus_window(0);
+            return TRUE;
         }
 
         emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
