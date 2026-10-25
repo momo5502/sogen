@@ -2028,20 +2028,30 @@ namespace sogen
             sc.image_ids.clear();
 
             const auto& dev = dev_it->second;
-            // The swapchain and the fences must outlive the presents. The wait only ends early when the device is lost,
-            // after which nothing uses them anymore.
+            for (auto* const fence : sc.spare_present_fences)
+            {
+                dev.destroy_fence(dev.handle, fence, nullptr);
+            }
+            sc.spare_present_fences.clear();
+
+            // The swapchain and its present fences must outlive the presents. When waiting for them fails for another
+            // reason than a lost device, they may still be in use and are left alive.
             if (!sc.presenting.empty())
             {
-                dev.wait_for_fences(dev.handle, static_cast<uint32_t>(sc.presenting.size()), sc.presenting.data(), VK_TRUE, UINT64_MAX);
-            }
-            for (auto* present_fences : {&sc.presenting, &sc.spare_present_fences})
-            {
-                for (auto* const fence : *present_fences)
+                const VkResult waited =
+                    dev.wait_for_fences(dev.handle, static_cast<uint32_t>(sc.presenting.size()), sc.presenting.data(), VK_TRUE, UINT64_MAX);
+                if (waited != VK_SUCCESS && waited != VK_ERROR_DEVICE_LOST)
                 {
-                    dev.destroy_fence(dev.handle, fence, nullptr);
+                    sc.presenting.clear();
+                    sc.handle = VK_NULL_HANDLE;
+                    return;
                 }
-                present_fences->clear();
             }
+            for (auto* const fence : sc.presenting)
+            {
+                dev.destroy_fence(dev.handle, fence, nullptr);
+            }
+            sc.presenting.clear();
 
             if (sc.handle && dev_it->second.destroy_swapchain)
             {
@@ -6573,8 +6583,11 @@ namespace sogen
             else if (const auto device_it = this->impl_->devices.find(present_device); device_it != this->impl_->devices.end())
             {
                 const auto& dev = device_it->second;
-                dev.wait_for_fences(dev.handle, 1, &present_fence, VK_TRUE, UINT64_MAX);
-                dev.destroy_fence(dev.handle, present_fence, nullptr);
+                if (const VkResult waited = dev.wait_for_fences(dev.handle, 1, &present_fence, VK_TRUE, UINT64_MAX);
+                    waited == VK_SUCCESS || waited == VK_ERROR_DEVICE_LOST)
+                {
+                    dev.destroy_fence(dev.handle, present_fence, nullptr);
+                }
             }
         }
 
@@ -10183,11 +10196,18 @@ namespace sogen
 
                 const VkComputePipelineCreateInfo info{
                     .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                    .pNext = nullptr,
+                    .flags = 0,
                     .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                              .pNext = nullptr,
+                              .flags = 0,
                               .stage = VK_SHADER_STAGE_COMPUTE_BIT,
                               .module = module,
-                              .pName = "main"},
+                              .pName = "main",
+                              .pSpecializationInfo = nullptr},
                     .layout = this->sample_pipeline_layout_,
+                    .basePipelineHandle = VK_NULL_HANDLE,
+                    .basePipelineIndex = -1,
                 };
 
                 if (this->device_.create_compute_pipelines(this->device_.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) !=
@@ -10264,15 +10284,18 @@ namespace sogen
                     }
                 }();
 
+                const auto shader_stage = [](const VkShaderStageFlagBits stage, const VkShaderModule module) {
+                    return VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                           .pNext = nullptr,
+                                                           .flags = 0,
+                                                           .stage = stage,
+                                                           .module = module,
+                                                           .pName = "main",
+                                                           .pSpecializationInfo = nullptr};
+                };
                 const std::array stages{
-                    VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                                                    .stage = VK_SHADER_STAGE_VERTEX_BIT,
-                                                    .module = this->shader_module("fullscreen", snapshot_shaders::fullscreen),
-                                                    .pName = "main"},
-                    VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                                                    .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-                                                    .module = fragment,
-                                                    .pName = "main"},
+                    shader_stage(VK_SHADER_STAGE_VERTEX_BIT, this->shader_module("fullscreen", snapshot_shaders::fullscreen)),
+                    shader_stage(VK_SHADER_STAGE_FRAGMENT_BIT, fragment),
                 };
 
                 VkPipelineVertexInputStateCreateInfo vertex_input{};
@@ -10296,8 +10319,14 @@ namespace sogen
                 const std::array<VkSampleMask, 2> sample_mask{sample < 32 ? 1U << sample : 0U, sample >= 32 ? 1U << (sample - 32) : 0U};
                 const VkPipelineMultisampleStateCreateInfo multisample{
                     .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                    .pNext = nullptr,
+                    .flags = 0,
                     .rasterizationSamples = static_cast<VkSampleCountFlagBits>(samples),
+                    .sampleShadingEnable = VK_FALSE,
+                    .minSampleShading = 0.0F,
                     .pSampleMask = sample_mask.data(),
+                    .alphaToCoverageEnable = VK_FALSE,
+                    .alphaToOneEnable = VK_FALSE,
                 };
 
                 VkPipelineDepthStencilStateCreateInfo depth_stencil{};

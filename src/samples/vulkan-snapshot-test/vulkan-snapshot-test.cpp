@@ -353,6 +353,8 @@ int main(const int argc, char** argv)
 
     const VkImageCreateInfo image_info{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = VK_FORMAT_R8G8B8A8_UNORM,
         .extent = {.width = image_size, .height = image_size, .depth = 1},
@@ -362,6 +364,8 @@ int main(const int argc, char** argv)
         .tiling = VK_IMAGE_TILING_OPTIMAL,
         .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = nullptr,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
 
@@ -457,9 +461,12 @@ int main(const int argc, char** argv)
     const auto create_view = [&](const VkImage target, const VkFormat format, const VkImageAspectFlags aspect, VkImageView& view) {
         const VkImageViewCreateInfo info{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
             .image = target,
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .format = format,
+            .components = {},
             .subresourceRange = {.aspectMask = aspect, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1},
         };
         return vkCreateImageView(device, &info, nullptr, &view) == VK_SUCCESS;
@@ -499,37 +506,49 @@ int main(const int argc, char** argv)
         VkDescriptorSetLayoutBinding{.binding = 0,
                                      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                                      .descriptorCount = 1,
-                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                                     .pImmutableSamplers = nullptr},
         VkDescriptorSetLayoutBinding{.binding = 1,
                                      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                                      .descriptorCount = 1,
-                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                                     .pImmutableSamplers = nullptr},
         VkDescriptorSetLayoutBinding{.binding = 2,
                                      .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
                                      .descriptorCount = 1,
-                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                                     .pImmutableSamplers = nullptr},
         VkDescriptorSetLayoutBinding{.binding = 3,
                                      .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                                      .descriptorCount = 1,
-                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                                     .pImmutableSamplers = nullptr},
     };
     const VkDescriptorSetLayoutCreateInfo check_set_layout_info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                                                .pNext = nullptr,
+                                                                .flags = 0,
                                                                 .bindingCount = static_cast<uint32_t>(check_bindings.size()),
                                                                 .pBindings = check_bindings.data()};
     VkDescriptorSetLayout check_set_layout{};
     const VkPushConstantRange check_push_range{.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .offset = 0, .size = sizeof(expected_samples)};
     const VkPipelineLayoutCreateInfo check_layout_info{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                                                       .pNext = nullptr,
+                                                       .flags = 0,
                                                        .setLayoutCount = 1,
                                                        .pSetLayouts = &check_set_layout,
                                                        .pushConstantRangeCount = 1,
                                                        .pPushConstantRanges = &check_push_range};
     VkPipelineLayout check_layout{};
     const VkShaderModuleCreateInfo check_module_info{.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                                                     .pNext = nullptr,
+                                                     .flags = 0,
                                                      .codeSize = check_samples_shader.size() * sizeof(uint32_t),
                                                      .pCode = check_samples_shader.data()};
     VkShaderModule check_module{};
     VkPipeline check_pipeline{};
     const VkDescriptorPoolCreateInfo check_pool_info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                                     .pNext = nullptr,
+                                                     .flags = 0,
                                                      .maxSets = 1,
                                                      .poolSizeCount = static_cast<uint32_t>(check_pool_sizes.size()),
                                                      .pPoolSizes = check_pool_sizes.data()};
@@ -543,13 +562,21 @@ int main(const int argc, char** argv)
     {
         const VkComputePipelineCreateInfo pipeline_info{
             .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
             .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                      .pNext = nullptr,
+                      .flags = 0,
                       .stage = VK_SHADER_STAGE_COMPUTE_BIT,
                       .module = check_module,
-                      .pName = "main"},
+                      .pName = "main",
+                      .pSpecializationInfo = nullptr},
             .layout = check_layout,
+            .basePipelineHandle = VK_NULL_HANDLE,
+            .basePipelineIndex = -1,
         };
         const VkDescriptorSetAllocateInfo set_info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                                   .pNext = nullptr,
                                                    .descriptorPool = check_pool,
                                                    .descriptorSetCount = 1,
                                                    .pSetLayouts = &check_set_layout};
@@ -969,6 +996,7 @@ int main(const int argc, char** argv)
             vkBeginCommandBuffer(check_command_buffer, &begin_info);
             vkCmdFillBuffer(check_command_buffer, check_buffer, 0, VK_WHOLE_SIZE, 0);
             const VkMemoryBarrier to_shader{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                            .pNext = nullptr,
                                             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
                                             .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
             vkCmdPipelineBarrier(check_command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
@@ -978,6 +1006,7 @@ int main(const int argc, char** argv)
             vkCmdPushConstants(check_command_buffer, check_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(expected), &expected);
             vkCmdDispatch(check_command_buffer, (image_size * image_size + 63) / 64, 1, 1);
             const VkMemoryBarrier to_host{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                          .pNext = nullptr,
                                           .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
                                           .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
             vkCmdPipelineBarrier(check_command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &to_host, 0,
