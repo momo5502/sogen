@@ -425,8 +425,7 @@ namespace sogen
     bool memory_manager::allocate_placed_host_memory_at(const uint64_t address, const size_t size, const nt_memory_permission permissions,
                                                         const std::function<bool(void* host_address)>& place)
     {
-        if (size == 0 || this->memory_->host_placement_address(MIN_ALLOCATION_ADDRESS) == 0 ||
-            this->overlaps_reserved_region(address, size, false))
+        if (size == 0 || this->memory_->host_placement_address(address) == 0 || this->overlaps_reserved_region(address, size, false))
         {
             return false;
         }
