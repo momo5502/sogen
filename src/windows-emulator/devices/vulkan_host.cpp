@@ -837,7 +837,8 @@ namespace sogen
                         for (const auto& [signaled, signal_value] : pending[i].signals)
                         {
                             const uint64_t reached = timeline ? signal_value : 0;
-                            if (signaled == semaphore && (!timeline || signal_value >= value) && reached < signaled_value)
+                            if (signaled == semaphore && (!timeline || signal_value >= value) &&
+                                (!signaling_queue || reached < signaled_value))
                             {
                                 signaling_queue = &pending;
                                 signaler = i;
