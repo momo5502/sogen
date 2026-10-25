@@ -23,17 +23,19 @@ const _keyboardSentinel = '​';
 const _orientation = MethodChannel('dev.sogen.app/orientation');
 
 class GamePage extends StatefulWidget {
-  const GamePage({super.key, required this.game, required this.emulationRoot});
+  const GamePage({super.key, required this.game, required this.emulationRoot, this.session});
 
   final Game game;
   final String emulationRoot;
+
+  final GameSession? session;
 
   @override
   State<GamePage> createState() => _GamePageState();
 }
 
 class _GamePageState extends State<GamePage> {
-  final GameSession _session = GameSession();
+  late final GameSession _session = widget.session ?? GameSession();
   final TextEditingController _keyboard = TextEditingController(text: _keyboardSentinel);
   final FocusNode _keyboardFocus = FocusNode();
 
@@ -41,6 +43,8 @@ class _GamePageState extends State<GamePage> {
   MouseButton _touchButton = MouseButton.left;
   bool _trackpad = false;
   bool _showControls = true;
+  String? _shownSaveError;
+  bool _suspending = false;
 
   @override
   void initState() {
@@ -48,21 +52,76 @@ class _GamePageState extends State<GamePage> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _orientation.invokeMethod('followSensor', {'enabled': true});
     _session.addListener(_onSessionChanged);
-    _session.start(widget.game, emulationRoot: widget.emulationRoot).then((started) {
-      if (!started && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Another game is still running')));
+    if (widget.session == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _begin());
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _onSessionChanged());
+    }
+  }
+
+  Future<void> _begin() async {
+    final saved = await savedStateFile(widget.game);
+    var resume = false;
+    if (saved.existsSync() && mounted) {
+      final choice = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: Text('Resume ${widget.game.name}?'),
+          content: const Text('The game was suspended. Starting over discards where you left off.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Start over')),
+            FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Resume')),
+          ],
+        ),
+      );
+      if (choice == null) {
+        if (mounted) {
+          Navigator.of(context).pop();
+        }
+        return;
       }
-    });
+
+      resume = choice;
+      if (!resume) {
+        await saved.delete();
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    final started = await _session.start(
+      widget.game,
+      emulationRoot: widget.emulationRoot,
+      resumeFile: resume ? saved.path : null,
+    );
+    if (!started && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Another game is still running')));
+    }
+  }
+
+  Future<void> _suspend() async {
+    final saved = await savedStateFile(widget.game);
+    await saved.parent.create(recursive: true);
+    await _session.suspend(saved.path);
+    if (mounted) {
+      _suspending = true;
+      Navigator.of(context).pop(_session);
+    }
   }
 
   @override
   void dispose() {
-    if (_session.state case SessionState.starting || SessionState.running) {
-      _session.stop();
-    }
     _session.setInputWindow(null);
     _session.removeListener(_onSessionChanged);
-    _session.dispose();
+    if (!_suspending) {
+      if (_session.state case SessionState.starting || SessionState.running) {
+        _session.stop();
+      }
+      _session.dispose();
+    }
     _keyboard.dispose();
     _keyboardFocus.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -76,6 +135,12 @@ class _GamePageState extends State<GamePage> {
       _inputWindow = primary;
       _session.setInputWindow(primary);
     }
+
+    final saveError = _session.saveError;
+    if (saveError != null && saveError != _shownSaveError) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Suspending failed: $saveError')));
+    }
+    _shownSaveError = saveError;
     setState(() {});
   }
 
@@ -160,7 +225,7 @@ class _GamePageState extends State<GamePage> {
 
   Widget _confirmingStop(Widget child) {
     return PopScope(
-      canPop: _session.state != SessionState.running,
+      canPop: _suspending || _session.state != SessionState.running,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
           _confirmStop();
@@ -184,7 +249,12 @@ class _GamePageState extends State<GamePage> {
             ),
             Align(
               alignment: Alignment.topRight,
-              child: _Toolbar(running: _session.state == SessionState.running, onLog: _showLog, onStop: _confirmStop),
+              child: _Toolbar(
+                running: _session.state == SessionState.running,
+                onLog: _showLog,
+                onStop: _confirmStop,
+                onSuspend: _suspend,
+              ),
             ),
           ],
         ),
@@ -255,6 +325,7 @@ class _GamePageState extends State<GamePage> {
                   onTrackpad: () => setState(() => _trackpad = !_trackpad),
                   onLog: _showLog,
                   onStop: _confirmStop,
+                  onSuspend: _suspend,
                 ),
               ),
             ),
@@ -270,6 +341,7 @@ class _Toolbar extends StatelessWidget {
     required this.running,
     required this.onLog,
     required this.onStop,
+    required this.onSuspend,
     this.rightClick = false,
     this.trackpad = false,
     this.controls = false,
@@ -291,6 +363,7 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback? onTrackpad;
   final VoidCallback onLog;
   final VoidCallback onStop;
+  final VoidCallback onSuspend;
 
   @override
   Widget build(BuildContext context) {
@@ -329,6 +402,7 @@ class _Toolbar extends StatelessWidget {
                 ),
               ],
               _ToolbarButton(tooltip: 'Log', icon: LucideIcons.squareTerminal, onPressed: onLog),
+              if (running) _ToolbarButton(tooltip: 'Suspend', icon: LucideIcons.pause, onPressed: onSuspend),
               _ToolbarButton(
                 tooltip: running ? 'Stop' : 'Close',
                 icon: running ? LucideIcons.circleStop : LucideIcons.x,
@@ -371,6 +445,7 @@ class _StatusView extends StatelessWidget {
     final theme = Theme.of(context);
 
     final (IconData icon, String status, String headline) = switch (session.state) {
+      SessionState.exited when session.savedTo != null => (LucideIcons.save, 'Suspended, resumes next time', game.name),
       SessionState.exited when session.error != null => (LucideIcons.triangleAlert, 'Failed to start', game.name),
       SessionState.exited when session.exitCode == null => (LucideIcons.triangleAlert, 'Crashed', game.name),
       SessionState.exited => (LucideIcons.circleCheck, 'Exited with code ${session.exitCode}', game.name),

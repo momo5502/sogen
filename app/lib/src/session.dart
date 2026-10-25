@@ -80,6 +80,10 @@ class GameSession extends ChangeNotifier {
   /// Why the game could not be started, if it never ran.
   String? error;
 
+  String? savedTo;
+
+  String? saveError;
+
   List<GuestWindow> get windows => _windows.values.toList(growable: false);
 
   /// The window that is shown and receives input: the most recently created visible top-level window.
@@ -94,11 +98,13 @@ class GameSession extends ChangeNotifier {
   final ValueNotifier<GuestCursor?> guestCursor = ValueNotifier(null);
 
   /// Returns false if another game is still running. Any other failure ends the session with [error] set.
-  Future<bool> start(Game game, {required String emulationRoot}) async {
+  Future<bool> start(Game game, {required String emulationRoot, String? resumeFile}) async {
     _windows.clear();
     _output.clear();
     exitCode = null;
     error = null;
+    savedTo = null;
+    saveError = null;
     state = SessionState.starting;
 
     final String backend;
@@ -127,6 +133,7 @@ class GameSession extends ChangeNotifier {
           'workingDirectory': game.guestWorkingDirectory,
           'backend': backend,
           'liveNetwork': game.liveNetwork,
+          'resumeFile': resumeFile ?? '',
         }) ??
         false;
 
@@ -142,6 +149,12 @@ class GameSession extends ChangeNotifier {
   Future<void> stop() {
     _stopRequested = true;
     return _methods.invokeMethod('stop');
+  }
+
+  /// Saves the game to [destination] and ends the session; a failure leaves it running and sets [saveError].
+  Future<void> suspend(String destination) {
+    saveError = null;
+    return _methods.invokeMethod('suspend', {'destination': destination});
   }
 
   void consoleInput(String data) => _methods.invokeMethod('consoleInput', {'data': utf8.encode(data)});
@@ -213,6 +226,13 @@ class GameSession extends ChangeNotifier {
         _windows[window]?.visible = event['visible'] as bool;
       case 'windowTitle':
         _windows[window]?.title = event['title'] as String;
+      case 'snapshot':
+        final saveFailure = event['error'] as String;
+        if (saveFailure.isEmpty) {
+          savedTo = event['path'] as String;
+        } else {
+          saveError = saveFailure;
+        }
       case 'exit':
         _windows.clear();
         exitCode = event['exitCode'] as int?;

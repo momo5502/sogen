@@ -8,6 +8,9 @@ oneway interface ISogenSession {
     void start(in Bundle config, ISogenCallback callback);
     void stop();
 
+    /** Saves the process to [destination], or to a new file when it is empty, and ends the session. */
+    void suspend(String destination);
+
     void consoleInput(in byte[] data);
     void consoleResize(int columns, int rows);
 

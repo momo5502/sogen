@@ -100,7 +100,8 @@ extern "C"
     JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(
         JNIEnv* env, jobject /*self*/, const jlong handle, jstring root, jstring application, jobjectArray arguments,
         jobjectArray environment, jobjectArray path_mappings, jstring working_directory, jstring backend, const jboolean live_network,
-        jstring sandbox_executable, jstring vulkan_hook_directory, jstring vulkan_driver_directory, jstring vulkan_driver_name)
+        jstring sandbox_executable, jstring vulkan_hook_directory, jstring vulkan_driver_directory, jstring vulkan_driver_name,
+        jstring snapshot_directory, jstring resume_file)
     {
         const sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -118,6 +119,8 @@ extern "C"
                     .custom_directory = to_string(*env, vulkan_driver_directory),
                     .custom_name = to_string(*env, vulkan_driver_name),
                 },
+            .snapshot_directory = to_string(*env, snapshot_directory),
+            .resume_file = to_string(*env, resume_file),
         };
 
         return get_session(handle).run(config);
@@ -126,6 +129,12 @@ extern "C"
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeStop(JNIEnv* /*env*/, jobject /*self*/, const jlong handle)
     {
         get_session(handle).stop();
+    }
+
+    JNIEXPORT jboolean JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeSuspend(JNIEnv* env, jobject /*self*/, const jlong handle,
+                                                                                    jstring destination)
+    {
+        return get_session(handle).suspend(to_string(*env, destination)) ? JNI_TRUE : JNI_FALSE;
     }
 
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeConsoleInput(JNIEnv* env, jobject /*self*/, const jlong handle,

@@ -20,6 +20,9 @@ class SogenService : Service() {
     @Volatile
     private var native: SogenNative? = null
 
+    @Volatile
+    private var callbackListener: NativeListener? = null
+
     private val binder = object : ISogenSession.Stub() {
         override fun start(config: Bundle, callback: ISogenCallback) {
             synchronized(this@SogenService) {
@@ -28,7 +31,9 @@ class SogenService : Service() {
                 }
 
                 try {
-                    native = SogenNative(CallbackListener(callback))
+                    val listener = CallbackListener(callback)
+                    callbackListener = listener
+                    native = SogenNative(listener)
                 } catch (e: UnsatisfiedLinkError) {
                     Log.e(TAG, "Could not load the emulator library", e)
                     try {
@@ -46,6 +51,16 @@ class SogenService : Service() {
 
         override fun stop() {
             native?.stop()
+        }
+
+        override fun suspend(destination: String) {
+            if (native?.suspend(destination) != true) {
+                try {
+                    callbackListener?.onSnapshot(destination, "Nothing is running that could be saved, or a save is under way")
+                } catch (_: RemoteException) {
+                    // The launcher is gone.
+                }
+            }
         }
 
         override fun consoleInput(data: ByteArray) {
@@ -155,6 +170,8 @@ class SogenService : Service() {
             deliver { callback.onWindowTitleChanged(window, title) }
 
         override fun onCursorMoved(window: Long, x: Int, y: Int) = deliver { callback.onCursorMoved(window, x, y) }
+
+        override fun onSnapshot(path: String, error: String) = deliver { callback.onSnapshot(path, error) }
 
         private inline fun deliver(action: () -> Unit) {
             try {

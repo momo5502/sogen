@@ -3,6 +3,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../emulation_root.dart';
 import '../game_library.dart';
+import '../session.dart';
 import '../theme.dart';
 import '../widgets/sogen_widgets.dart';
 import 'add_game_page.dart';
@@ -22,6 +23,16 @@ class _HomePageState extends State<HomePage> {
   bool _installing = false;
   double? _progress;
   String? _error;
+
+  final Map<String, GameSession> _saving = {};
+
+  @override
+  void dispose() {
+    for (final session in _saving.values) {
+      session.dispose();
+    }
+    super.dispose();
+  }
 
   Future<void> _installRoot() async {
     setState(() {
@@ -48,12 +59,33 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _play(Game game) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => GamePage(game: game, emulationRoot: widget.root.path),
+  Future<void> _play(Game game, {GameSession? session}) async {
+    final suspended = await Navigator.of(context).push<GameSession>(
+      MaterialPageRoute(
+        builder: (_) => GamePage(game: game, emulationRoot: widget.root.path, session: session),
       ),
     );
+    if (suspended == null || !mounted) {
+      return;
+    }
+
+    setState(() => _saving[game.id] = suspended);
+    void onChanged() {
+      if (suspended.state != SessionState.exited && suspended.saveError == null) {
+        return;
+      }
+
+      suspended.removeListener(onChanged);
+      setState(() => _saving.remove(game.id));
+      if (suspended.saveError != null && suspended.state != SessionState.exited) {
+        _play(game, session: suspended);
+      } else {
+        suspended.dispose();
+      }
+    }
+
+    suspended.addListener(onChanged);
+    onChanged();
   }
 
   Future<void> _confirmRemove(Game game) async {
@@ -153,6 +185,7 @@ class _HomePageState extends State<HomePage> {
                           game: games[index],
                           accent: SogenColors.accents[index % SogenColors.accents.length],
                           enabled: !_installing,
+                          saving: _saving.containsKey(games[index].id),
                           onPlay: () => _play(games[index]),
                           onRemove: () => _confirmRemove(games[index]),
                         ),
@@ -247,6 +280,7 @@ class _GameCard extends StatelessWidget {
     required this.game,
     required this.accent,
     required this.enabled,
+    required this.saving,
     required this.onPlay,
     required this.onRemove,
   });
@@ -254,6 +288,7 @@ class _GameCard extends StatelessWidget {
   final Game game;
   final Color accent;
   final bool enabled;
+  final bool saving;
   final VoidCallback onPlay;
   final VoidCallback onRemove;
 
@@ -261,11 +296,11 @@ class _GameCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Card(
+    final card = Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: enabled ? onPlay : null,
-        onLongPress: onRemove,
+        onTap: enabled && !saving ? onPlay : null,
+        onLongPress: saving ? null : onRemove,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -279,19 +314,24 @@ class _GameCard extends StatelessWidget {
                     Text(game.name, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 4),
                     Text(
-                      game.executable,
+                      saving ? 'Suspending…' : game.executable,
                       overflow: TextOverflow.ellipsis,
                       style: monospace(fontSize: 12, color: SogenColors.neutral400),
                     ),
                   ],
                 ),
               ),
-              const Icon(LucideIcons.play, color: SogenColors.neutral300),
+              if (saving)
+                const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
+              else
+                const Icon(LucideIcons.play, color: SogenColors.neutral300),
             ],
           ),
         ),
       ),
     );
+
+    return saving ? Opacity(opacity: 0.6, child: card) : card;
   }
 }
 

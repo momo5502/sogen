@@ -78,6 +78,8 @@ class SessionController(
         call { session?.stop() }
     }
 
+    fun suspend(destination: String) = call { session?.suspend(destination) }
+
     fun consoleInput(data: ByteArray) = call { session?.consoleInput(data) }
 
     /** Takes effect once the session starts when it is not running yet. */
@@ -155,6 +157,10 @@ class SessionController(
 
         override fun onCursorMoved(window: Long, x: Int, y: Int) = post {
             emit(mapOf("event" to "cursorMoved", "window" to window, "x" to x, "y" to y))
+        }
+
+        override fun onSnapshot(path: String, error: String) = post {
+            emit(mapOf("event" to "snapshot", "path" to path, "error" to error))
         }
 
         override fun onExit(exitCode: Int) = post { this@SessionController.onExit(exitCode) }

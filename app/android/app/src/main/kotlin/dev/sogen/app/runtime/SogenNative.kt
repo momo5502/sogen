@@ -23,6 +23,9 @@ interface NativeListener {
 
     /** The guest moved the cursor itself, e.g. with SetCursorPos; [x] and [y] are window client coordinates. */
     fun onCursorMoved(window: Long, x: Int, y: Int)
+
+    /** [error] is empty once the process was saved to [path]. */
+    fun onSnapshot(path: String, error: String)
 }
 
 /** Owns one native emulation session. Only used inside the `:sogen` process. */
@@ -44,9 +47,14 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkan.hookDirectory,
         vulkan.driverDirectory,
         vulkan.driverName,
+        config.snapshotDirectory,
+        config.resumeFile,
     )
 
     fun stop() = nativeStop(handle)
+
+    /** Returns false while nothing runs or a save is already under way. */
+    fun suspend(destination: String): Boolean = nativeSuspend(handle, destination)
     fun consoleInput(data: ByteArray) = nativeConsoleInput(handle, data)
     fun consoleResize(columns: Int, rows: Int) = nativeConsoleResize(handle, columns, rows)
     fun attachSurface(window: Long, surface: Surface) = nativeAttachSurface(handle, window, surface)
@@ -78,9 +86,12 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkanHookDirectory: String,
         vulkanDriverDirectory: String,
         vulkanDriverName: String,
+        snapshotDirectory: String,
+        resumeFile: String,
     ): Int
 
     private external fun nativeStop(handle: Long)
+    private external fun nativeSuspend(handle: Long, destination: String): Boolean
     private external fun nativeConsoleInput(handle: Long, data: ByteArray)
     private external fun nativeConsoleResize(handle: Long, columns: Int, rows: Int)
     private external fun nativeAttachSurface(handle: Long, window: Long, surface: Surface)

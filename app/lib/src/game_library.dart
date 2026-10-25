@@ -113,6 +113,12 @@ class Game {
   };
 }
 
+/// Where a suspended game is saved, to continue from there when it is started again.
+Future<File> savedStateFile(Game game) async {
+  final support = await getApplicationSupportDirectory();
+  return File(p.join(support.path, 'snapshots', '${game.id}.snap'));
+}
+
 class GameLibrary extends ChangeNotifier {
   GameLibrary._(this._file, this._games);
 
