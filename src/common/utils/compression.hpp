@@ -62,9 +62,7 @@ namespace sogen
                 stream_decompressor(stream_decompressor&&) = delete;
                 stream_decompressor& operator=(stream_decompressor&&) = delete;
 
-                // Fills the whole span, or throws if the compressed data ends or is corrupt.
                 void read(std::span<std::byte> data);
-                // Throws unless the compressed data ends with its frame right after what was read.
                 void finish();
 
               private:
