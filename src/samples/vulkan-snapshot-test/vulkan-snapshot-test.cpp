@@ -3,6 +3,8 @@
 
 #include <vulkan/vulkan_core.h>
 
+#include "check_samples.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cinttypes>
@@ -17,8 +19,8 @@
 // recorded once before the loop is waiting to be submitted again. A buffer in memory the host cannot map carries the
 // results of the iteration before the previous one, and so does an image that rests in a shader-read layout. A
 // timestamp query written once has to keep its result, and so does a multisampled image, checked through a resolve.
-// Multisampled depth/stencil and integer images, which cannot be resolved, rely on the check a restore makes itself. An
-// image is also passed between two queues in the opposite order of the submissions, through a timeline semaphore, and
+// Multisampled depth/stencil and integer images, which cannot be resolved, are read sample by sample by a compute shader
+// of the test's own. An image is also passed between two queues in the opposite order of the submissions, through a timeline semaphore, and
 // another one is handed between two queue families every iteration, starting on the one that is not the device's first.
 namespace
 {
@@ -172,6 +174,18 @@ int main(const int argc, char** argv)
     LOAD(instance, vkGetImageMemoryRequirements);
     LOAD(instance, vkBindImageMemory);
     LOAD(instance, vkCmdPipelineBarrier);
+    LOAD(instance, vkCreateImageView);
+    LOAD(instance, vkCreateShaderModule);
+    LOAD(instance, vkCreateDescriptorSetLayout);
+    LOAD(instance, vkCreatePipelineLayout);
+    LOAD(instance, vkCreateComputePipelines);
+    LOAD(instance, vkCreateDescriptorPool);
+    LOAD(instance, vkAllocateDescriptorSets);
+    LOAD(instance, vkUpdateDescriptorSets);
+    LOAD(instance, vkCmdBindPipeline);
+    LOAD(instance, vkCmdBindDescriptorSets);
+    LOAD(instance, vkCmdPushConstants);
+    LOAD(instance, vkCmdDispatch);
     LOAD(instance, vkCmdCopyImageToBuffer);
     LOAD(instance, vkCmdCopyBufferToImage);
     LOAD(instance, vkCreateQueryPool);
@@ -399,10 +413,10 @@ int main(const int argc, char** argv)
 
     VkImageCreateInfo depth_info = multisampled_info;
     depth_info.format = VK_FORMAT_D32_SFLOAT_S8_UINT;
-    depth_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    depth_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     VkImageCreateInfo integer_info = multisampled_info;
     integer_info.format = VK_FORMAT_R32_UINT;
-    integer_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    integer_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
     VkImage shared{};
     VkImage depth_stencil{};
@@ -439,6 +453,135 @@ int main(const int argc, char** argv)
         std::printf("[snapshot-test] multisampled attachment memory setup failed\n");
         return 1;
     }
+
+    const auto create_view = [&](const VkImage target, const VkFormat format, const VkImageAspectFlags aspect, VkImageView& view) {
+        const VkImageViewCreateInfo info{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = target,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = format,
+            .subresourceRange = {.aspectMask = aspect, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1},
+        };
+        return vkCreateImageView(device, &info, nullptr, &view) == VK_SUCCESS;
+    };
+
+    std::array<VkImageView, 3> check_views{};
+    VkBuffer check_buffer{};
+    VkDeviceMemory check_memory{};
+    void* check_mapped = nullptr;
+    VkBufferCreateInfo check_buffer_info = buffer_info;
+    check_buffer_info.size = 3 * sizeof(uint32_t);
+    check_buffer_info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bound = create_view(integer, integer_info.format, VK_IMAGE_ASPECT_COLOR_BIT, check_views[0]) &&
+            create_view(depth_stencil, depth_info.format, VK_IMAGE_ASPECT_DEPTH_BIT, check_views[1]) &&
+            create_view(depth_stencil, depth_info.format, VK_IMAGE_ASPECT_STENCIL_BIT, check_views[2]) &&
+            vkCreateBuffer(device, &check_buffer_info, nullptr, &check_buffer) == VK_SUCCESS;
+    if (bound)
+    {
+        vkGetBufferMemoryRequirements(device, check_buffer, &needs);
+        bound = bind_new_memory(check_memory, needs, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) &&
+                vkBindBufferMemory(device, check_buffer, check_memory, 0) == VK_SUCCESS &&
+                vkMapMemory(device, check_memory, 0, VK_WHOLE_SIZE, 0, &check_mapped) == VK_SUCCESS;
+    }
+
+    struct expected_samples
+    {
+        uint32_t integer_value;
+        float depth_value;
+        uint32_t stencil_value;
+        uint32_t size;
+        int32_t samples;
+    };
+
+    constexpr std::array check_pool_sizes{VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, .descriptorCount = 3},
+                                          VkDescriptorPoolSize{.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1}};
+    const std::array check_bindings{
+        VkDescriptorSetLayoutBinding{.binding = 0,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                     .descriptorCount = 1,
+                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+        VkDescriptorSetLayoutBinding{.binding = 1,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                     .descriptorCount = 1,
+                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+        VkDescriptorSetLayoutBinding{.binding = 2,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+                                     .descriptorCount = 1,
+                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+        VkDescriptorSetLayoutBinding{.binding = 3,
+                                     .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                     .descriptorCount = 1,
+                                     .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+    };
+    const VkDescriptorSetLayoutCreateInfo check_set_layout_info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+                                                                .bindingCount = static_cast<uint32_t>(check_bindings.size()),
+                                                                .pBindings = check_bindings.data()};
+    VkDescriptorSetLayout check_set_layout{};
+    const VkPushConstantRange check_push_range{.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .offset = 0, .size = sizeof(expected_samples)};
+    const VkPipelineLayoutCreateInfo check_layout_info{.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+                                                       .setLayoutCount = 1,
+                                                       .pSetLayouts = &check_set_layout,
+                                                       .pushConstantRangeCount = 1,
+                                                       .pPushConstantRanges = &check_push_range};
+    VkPipelineLayout check_layout{};
+    const VkShaderModuleCreateInfo check_module_info{.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+                                                     .codeSize = check_samples_shader.size() * sizeof(uint32_t),
+                                                     .pCode = check_samples_shader.data()};
+    VkShaderModule check_module{};
+    VkPipeline check_pipeline{};
+    const VkDescriptorPoolCreateInfo check_pool_info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+                                                     .maxSets = 1,
+                                                     .poolSizeCount = static_cast<uint32_t>(check_pool_sizes.size()),
+                                                     .pPoolSizes = check_pool_sizes.data()};
+    VkDescriptorPool check_pool{};
+    VkDescriptorSet check_set{};
+    bound = bound && vkCreateDescriptorSetLayout(device, &check_set_layout_info, nullptr, &check_set_layout) == VK_SUCCESS &&
+            vkCreatePipelineLayout(device, &check_layout_info, nullptr, &check_layout) == VK_SUCCESS &&
+            vkCreateShaderModule(device, &check_module_info, nullptr, &check_module) == VK_SUCCESS &&
+            vkCreateDescriptorPool(device, &check_pool_info, nullptr, &check_pool) == VK_SUCCESS;
+    if (bound)
+    {
+        const VkComputePipelineCreateInfo pipeline_info{
+            .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                      .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                      .module = check_module,
+                      .pName = "main"},
+            .layout = check_layout,
+        };
+        const VkDescriptorSetAllocateInfo set_info{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                                   .descriptorPool = check_pool,
+                                                   .descriptorSetCount = 1,
+                                                   .pSetLayouts = &check_set_layout};
+        bound = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &check_pipeline) == VK_SUCCESS &&
+                vkAllocateDescriptorSets(device, &set_info, &check_set) == VK_SUCCESS;
+    }
+    if (!bound)
+    {
+        std::printf("[snapshot-test] multisampled check setup failed\n");
+        return 1;
+    }
+
+    std::array<VkDescriptorImageInfo, 3> check_images{};
+    std::array<VkWriteDescriptorSet, 4> check_writes{};
+    for (uint32_t i = 0; i < check_writes.size(); ++i)
+    {
+        check_writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        check_writes[i].dstSet = check_set;
+        check_writes[i].dstBinding = i;
+        check_writes[i].descriptorCount = 1;
+        check_writes[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        if (i < check_images.size())
+        {
+            check_images[i] = {.sampler = VK_NULL_HANDLE, .imageView = check_views[i], .imageLayout = VK_IMAGE_LAYOUT_GENERAL};
+            check_writes[i].pImageInfo = &check_images[i];
+        }
+    }
+    const VkDescriptorBufferInfo check_buffer_descriptor{.buffer = check_buffer, .offset = 0, .range = VK_WHOLE_SIZE};
+    check_writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    check_writes[3].pBufferInfo = &check_buffer_descriptor;
+    vkUpdateDescriptorSets(device, static_cast<uint32_t>(check_writes.size()), check_writes.data(), 0, nullptr);
+    const auto* check_mismatches = static_cast<const uint32_t*>(check_mapped);
 
     const std::array both_families{family, other_family};
     VkBufferCreateInfo travel_buffer_info = buffer_info;
@@ -530,6 +673,7 @@ int main(const int argc, char** argv)
     VkCommandBuffer image_command_buffer{};
     VkCommandBuffer setup_command_buffer{};
     VkCommandBuffer query_copy_command_buffer{};
+    VkCommandBuffer check_command_buffer{};
     VkCommandBuffer hand_back_command_buffer{};
     VkCommandBuffer hand_over_command_buffer{};
     std::array<VkCommandBuffer, 2> travel_command_buffers{};
@@ -545,6 +689,7 @@ int main(const int argc, char** argv)
         }
     }
     if (vkAllocateCommandBuffers(device, &command_buffer_info, &query_copy_command_buffer) != VK_SUCCESS ||
+        vkAllocateCommandBuffers(device, &command_buffer_info, &check_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &hand_back_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &hand_over_command_buffer) != VK_SUCCESS ||
         vkAllocateCommandBuffers(device, &command_buffer_info, &image_command_buffer) != VK_SUCCESS ||
@@ -810,6 +955,48 @@ int main(const int argc, char** argv)
         {
             std::printf("[snapshot-test] iteration %u: the timestamp query lost its result\n", iteration);
             return 4;
+        }
+
+        if (iteration > 0)
+        {
+            const uint32_t previous = fill_value(iteration - 1);
+            const expected_samples expected{.integer_value = previous,
+                                            .depth_value = static_cast<float>((iteration - 1) % 100) / 100.0F,
+                                            .stencil_value = previous & 0xFF,
+                                            .size = image_size,
+                                            .samples = 4};
+
+            vkBeginCommandBuffer(check_command_buffer, &begin_info);
+            vkCmdFillBuffer(check_command_buffer, check_buffer, 0, VK_WHOLE_SIZE, 0);
+            const VkMemoryBarrier to_shader{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                                            .dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT};
+            vkCmdPipelineBarrier(check_command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                                 &to_shader, 0, nullptr, 0, nullptr);
+            vkCmdBindPipeline(check_command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, check_pipeline);
+            vkCmdBindDescriptorSets(check_command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, check_layout, 0, 1, &check_set, 0, nullptr);
+            vkCmdPushConstants(check_command_buffer, check_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(expected), &expected);
+            vkCmdDispatch(check_command_buffer, (image_size * image_size + 63) / 64, 1, 1);
+            const VkMemoryBarrier to_host{.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                                          .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+                                          .dstAccessMask = VK_ACCESS_HOST_READ_BIT};
+            vkCmdPipelineBarrier(check_command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &to_host, 0,
+                                 nullptr, 0, nullptr);
+            vkEndCommandBuffer(check_command_buffer);
+
+            if (!submit_and_wait(check_command_buffer, VK_NULL_HANDLE, VK_NULL_HANDLE))
+            {
+                std::printf("[snapshot-test] iteration %u: checking the multisampled images failed\n", iteration);
+                return 3;
+            }
+
+            if (check_mismatches[0] != 0 || check_mismatches[1] != 0 || check_mismatches[2] != 0)
+            {
+                std::printf("[snapshot-test] iteration %u: multisampled samples differ from what iteration %u cleared: integer %u, depth "
+                            "%u, stencil %u\n",
+                            iteration, iteration - 1, check_mismatches[0], check_mismatches[1], check_mismatches[2]);
+                return 5;
+            }
         }
 
         vkBeginCommandBuffer(command_buffer, &begin_info);

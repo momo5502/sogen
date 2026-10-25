@@ -26,7 +26,7 @@ code is shared with Android's single-vCPU FEX backend.
 - [x] Performance of the shadow state measured in game (below)
 - [x] Present completion: where the GPU offers `VK_EXT_swapchain_maintenance1`, the bridge enables it on the host
       only and gives every present a fence. A swapchain is destroyed (by the guest, when it is retired, or in the
-      teardown after a snapshot) only once its presents signalled their fences, waiting at most a second.
+      teardown after a snapshot) only once its presents signalled their fences.
       Without the extension, teardown stays best effort
 - [x] Images and swapchain images used from several queues: what each submission does to layouts, ownership
       and queries waits until the submissions, acquires and host signals before it provide its semaphore waits,

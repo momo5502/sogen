@@ -2028,11 +2028,11 @@ namespace sogen
             sc.image_ids.clear();
 
             const auto& dev = dev_it->second;
+            // The swapchain and the fences must outlive the presents. The wait only ends early when the device is lost,
+            // after which nothing uses them anymore.
             if (!sc.presenting.empty())
             {
-                constexpr uint64_t present_timeout = 1'000'000'000;
-                dev.wait_for_fences(dev.handle, static_cast<uint32_t>(sc.presenting.size()), sc.presenting.data(), VK_TRUE,
-                                    present_timeout);
+                dev.wait_for_fences(dev.handle, static_cast<uint32_t>(sc.presenting.size()), sc.presenting.data(), VK_TRUE, UINT64_MAX);
             }
             for (auto* present_fences : {&sc.presenting, &sc.spare_present_fences})
             {
@@ -6572,9 +6572,8 @@ namespace sogen
             }
             else if (const auto device_it = this->impl_->devices.find(present_device); device_it != this->impl_->devices.end())
             {
-                constexpr uint64_t present_timeout = 1'000'000'000;
                 const auto& dev = device_it->second;
-                dev.wait_for_fences(dev.handle, 1, &present_fence, VK_TRUE, present_timeout);
+                dev.wait_for_fences(dev.handle, 1, &present_fence, VK_TRUE, UINT64_MAX);
                 dev.destroy_fence(dev.handle, present_fence, nullptr);
             }
         }

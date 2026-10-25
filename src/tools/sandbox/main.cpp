@@ -242,59 +242,57 @@ namespace sogen::sandbox
 
             std::atomic_uint32_t signals_received{0};
             utils::interupt_handler interrupt_guard{[&] {
-                const auto value = signals_received++;
-                if (value >= 2)
+                if (signals_received++ >= 2)
                 {
                     _Exit(1);
                 }
-
-                if (suspend_file.empty() || value > 0)
-                {
-                    win_emu.stop();
-                }
             }};
 
-            // A signal handler cannot take the locks a suspend request needs, so a thread watching for the first interrupt
-            // requests it. If no frame ends within two seconds, it stops the process where it is.
+            // A signal handler cannot take the locks stopping or suspending the process needs, so a thread watching the
+            // interrupts does that. A suspend that waits for the end of a frame stops the process where it is if no frame
+            // ends within two seconds.
             std::mutex suspend_mutex{};
             std::condition_variable suspend_changed{};
-            bool watching = !suspend_file.empty();
+            bool watching = true;
             bool running = false;
             bool suspend_requested = false;
-            std::thread suspend_watcher{};
-            if (watching)
-            {
-                suspend_watcher = std::thread([&] {
-                    std::unique_lock lock(suspend_mutex);
-                    auto deadline = std::chrono::steady_clock::time_point::max();
-                    while (watching)
+            uint32_t signals_handled = 0;
+            std::thread signal_watcher([&] {
+                std::unique_lock lock(suspend_mutex);
+                auto deadline = std::chrono::steady_clock::time_point::max();
+                while (watching)
+                {
+                    suspend_changed.wait_for(lock, std::chrono::milliseconds(50));
+                    const auto received = signals_received.load();
+                    if (received > signals_handled)
                     {
-                        suspend_changed.wait_for(lock, std::chrono::milliseconds(50));
-                        if (!suspend_requested && signals_received > 0)
+                        signals_handled = received;
+                        if (suspend_file.empty() || received > 1)
+                        {
+                            win_emu.stop();
+                        }
+                        else
                         {
                             suspend_requested = true;
                             win_emu.request_suspend();
                             deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
                         }
-                        else if (suspend_requested && running && std::chrono::steady_clock::now() >= deadline)
-                        {
-                            win_emu.stop();
-                            deadline = std::chrono::steady_clock::time_point::max();
-                        }
                     }
-                });
-            }
-
-            const auto suspend_watcher_guard = utils::finally([&] {
-                if (suspend_watcher.joinable())
-                {
+                    else if (suspend_requested && running && std::chrono::steady_clock::now() >= deadline)
                     {
-                        const std::scoped_lock lock(suspend_mutex);
-                        watching = false;
+                        win_emu.stop();
+                        deadline = std::chrono::steady_clock::time_point::max();
                     }
-                    suspend_changed.notify_all();
-                    suspend_watcher.join();
                 }
+            });
+
+            const auto signal_watcher_guard = utils::finally([&] {
+                {
+                    const std::scoped_lock lock(suspend_mutex);
+                    watching = false;
+                }
+                suspend_changed.notify_all();
+                signal_watcher.join();
             });
 
             const auto set_running = [&](const bool value) {
@@ -325,6 +323,7 @@ namespace sogen::sandbox
                     const std::scoped_lock lock(suspend_mutex);
                     win_emu.cancel_suspend_request();
                     signals_received = 0;
+                    signals_handled = 0;
                     suspend_requested = false;
                 }
             }
