@@ -384,6 +384,8 @@ namespace sogen
                     return;
                 }
 
+                this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
+
                 utils::buffer_deserializer buffer{this->restored_vulkan_state_};
                 this->vulkan_.deserialize(
                     buffer,
