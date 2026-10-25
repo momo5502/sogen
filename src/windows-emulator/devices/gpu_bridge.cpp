@@ -277,6 +277,7 @@ namespace sogen
             std::vector<vulkan_host::memory_range> imported_ranges() const
             {
                 std::vector<vulkan_host::memory_range> ranges{};
+                ranges.reserve(this->imported_memory_.size());
                 for (const auto& [memory, imported] : this->imported_memory_)
                 {
                     ranges.push_back({.memory = memory, .offset = 0, .size = imported.size});
