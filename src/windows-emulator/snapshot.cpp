@@ -85,8 +85,9 @@ namespace sogen
             }
         }
 
-        std::vector<std::byte> create_emulator_snapshot(const windows_emulator& win_emu, const std::string_view configuration)
+        std::vector<std::byte> create_emulator_snapshot(windows_emulator& win_emu, const std::string_view configuration)
         {
+            win_emu.prepare_serialization();
             const auto state = get_compressed_emulator_state(win_emu, configuration);
 
             snapshot_header header{};
@@ -102,7 +103,7 @@ namespace sogen
             return snapshot;
         }
 
-        std::filesystem::path write_emulator_snapshot(const windows_emulator& win_emu, const bool log)
+        std::filesystem::path write_emulator_snapshot(windows_emulator& win_emu, const bool log)
         {
             std::filesystem::path snapshot_file = get_main_executable_name(win_emu) + "-" + std::to_string(time(nullptr)) + ".snap";
 
@@ -115,7 +116,7 @@ namespace sogen
             return snapshot_file;
         }
 
-        void write_emulator_snapshot(const windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
+        void write_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
                                      const std::string_view configuration)
         {
             const auto snapshot = create_emulator_snapshot(win_emu, configuration);

@@ -532,6 +532,7 @@ namespace sogen
         bool take_suspend_request();
         void cancel_suspend_request();
 
+        void prepare_serialization();
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
 
@@ -680,7 +681,7 @@ namespace sogen
         void track_section_first_execution(uint64_t address);
 
         void register_factories(utils::buffer_deserializer& buffer);
-        void ensure_snapshot_support() const;
+        void ensure_serialization_support() const;
     };
 
 } // namespace sogen

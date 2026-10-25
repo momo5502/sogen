@@ -30,6 +30,7 @@ lines = [
     "",
     "namespace sogen::snapshot_shaders",
     "{",
+    "    // clang-format off",
 ]
 
 with tempfile.TemporaryDirectory() as temporary:
@@ -42,5 +43,5 @@ with tempfile.TemporaryDirectory() as temporary:
         body = ", ".join(f"0x{word:08x}" for word in words)
         lines.append(f"    inline constexpr std::array<uint32_t, {len(words)}> {name}{{{body}}};")
 
-lines += ["}", ""]
+lines += ["    // clang-format on", "}", ""]
 (directory.parent / "snapshot_shaders.hpp").write_text("\n".join(lines), newline="\n")

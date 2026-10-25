@@ -257,6 +257,12 @@ namespace sogen
                 return this->vulkan_.has_swapchains();
             }
 
+            void prepare_serialization(windows_emulator& win_emu) override
+            {
+                this->vulkan_.quiesce();
+                this->invalidate_imported_memory(win_emu);
+            }
+
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
                 if (std::ranges::any_of(this->direct_mappings_ | std::views::values,
@@ -4123,15 +4129,14 @@ namespace sogen
                 std::vector<std::byte> stream(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, stream.data(), stream.size());
 
-                const int32_t result = this->execute_recorded_commands(win_emu, stream, true, std::nullopt).result;
+                const int32_t result = this->execute_recorded_commands(win_emu, stream, true, std::nullopt).first_failure;
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
             // Every recorded command starts with the command buffer it is recorded into.
             struct recorded_commands_result
             {
-                // The first failure.
-                int32_t result{};
+                int32_t first_failure{};
                 bool matches_expected{true};
             };
 
@@ -4162,9 +4167,9 @@ namespace sogen
                     }
 
                     const int32_t r = this->execute_recorded_command(win_emu, header.command, stream.data() + offset, header.size);
-                    if (r != 0 && outcome.result == 0)
+                    if (r != 0 && outcome.first_failure == 0)
                     {
-                        outcome.result = r;
+                        outcome.first_failure = r;
                     }
 
                     if (command_buffer != 0)

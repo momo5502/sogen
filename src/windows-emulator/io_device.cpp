@@ -301,10 +301,16 @@ namespace sogen
         this->file_->device->restore_after_state_restore(win_emu);
     }
 
-    bool io_device_container::supports_snapshots() const
+    bool io_device_container::supports_serialization() const
     {
         this->assert_validity();
-        return this->file_->device->supports_snapshots();
+        return this->file_->device->supports_serialization();
+    }
+
+    void io_device_container::prepare_serialization(windows_emulator& win_emu)
+    {
+        this->assert_validity();
+        this->file_->device->prepare_serialization(win_emu);
     }
 
     bool io_device_container::suspends_at_frame_end() const

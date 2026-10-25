@@ -181,9 +181,15 @@ namespace sogen
             (void)win_emu;
         }
 
-        virtual bool supports_snapshots() const
+        virtual bool supports_serialization() const
         {
             return true;
+        }
+
+        // Runs before any emulator state is captured, so that work still writing guest memory can finish first.
+        virtual void prepare_serialization(windows_emulator& win_emu)
+        {
+            (void)win_emu;
         }
 
         // Whether a suspend waits until the device reached the end of a frame.
@@ -267,7 +273,8 @@ namespace sogen
 
         void work(windows_emulator& win_emu) override;
         void restore_after_state_restore(windows_emulator& win_emu) override;
-        bool supports_snapshots() const override;
+        bool supports_serialization() const override;
+        void prepare_serialization(windows_emulator& win_emu) override;
         bool suspends_at_frame_end() const override;
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
         io_device_context prepare_io_context(const io_device_context& context) const override;

@@ -24,10 +24,10 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
-#include <mutex>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -241,8 +241,6 @@ namespace sogen::sandbox
             });
 
             std::atomic_uint32_t signals_received{0};
-            std::mutex suspend_mutex{};
-            std::condition_variable_any suspend_requested{};
             utils::interupt_handler interrupt_guard{[&] {
                 const auto value = signals_received++;
                 if (value >= 2)
@@ -253,37 +251,65 @@ namespace sogen::sandbox
                 if (suspend_file.empty() || value > 0)
                 {
                     win_emu.stop();
-                    return;
                 }
-
-                win_emu.request_suspend();
-                suspend_requested.notify_all();
             }};
 
-            // A suspend that waits for the end of a frame stops the process where it is if no frame ends in time.
-            std::jthread suspend_timeout([&](const std::stop_token& stop) {
-                std::unique_lock lock(suspend_mutex);
-                while (!stop.stop_requested())
+            // A signal handler cannot take the locks a suspend request needs, so a thread watching for the first interrupt
+            // requests it. If no frame ends within two seconds, it stops the process where it is.
+            std::mutex suspend_mutex{};
+            std::condition_variable suspend_changed{};
+            bool watching = !suspend_file.empty();
+            bool running = false;
+            bool suspend_requested = false;
+            std::thread suspend_watcher{};
+            if (watching)
+            {
+                suspend_watcher = std::thread([&] {
+                    std::unique_lock lock(suspend_mutex);
+                    auto deadline = std::chrono::steady_clock::time_point::max();
+                    while (watching)
+                    {
+                        suspend_changed.wait_for(lock, std::chrono::milliseconds(50));
+                        if (!suspend_requested && signals_received > 0)
+                        {
+                            suspend_requested = true;
+                            win_emu.request_suspend();
+                            deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+                        }
+                        else if (suspend_requested && running && std::chrono::steady_clock::now() >= deadline)
+                        {
+                            win_emu.stop();
+                            deadline = std::chrono::steady_clock::time_point::max();
+                        }
+                    }
+                });
+            }
+
+            const auto suspend_watcher_guard = utils::finally([&] {
+                if (suspend_watcher.joinable())
                 {
-                    if (!suspend_requested.wait(lock, stop, [&] { return signals_received > 0; }))
                     {
-                        return;
+                        const std::scoped_lock lock(suspend_mutex);
+                        watching = false;
                     }
-
-                    if (!suspend_requested.wait_for(lock, stop, std::chrono::seconds(2), [] { return false; }))
-                    {
-                        win_emu.stop();
-                    }
-
-                    suspend_requested.wait(lock, stop, [&] { return signals_received == 0; });
+                    suspend_changed.notify_all();
+                    suspend_watcher.join();
                 }
             });
 
+            const auto set_running = [&](const bool value) {
+                const std::scoped_lock lock(suspend_mutex);
+                running = value;
+            };
+
             while (true)
             {
+                set_running(true);
                 win_emu.start();
+                set_running(false);
 
-                if (win_emu.process.exit_status.has_value() || suspend_file.empty() || signals_received == 0)
+                // A second interrupt stops the process without saving it.
+                if (win_emu.process.exit_status.has_value() || suspend_file.empty() || signals_received != 1)
                 {
                     break;
                 }
@@ -296,10 +322,10 @@ namespace sogen::sandbox
                 catch (const std::exception& e)
                 {
                     fprintf(stderr, "Suspending failed, the process keeps running: %s\n", e.what());
-                    win_emu.cancel_suspend_request();
                     const std::scoped_lock lock(suspend_mutex);
+                    win_emu.cancel_suspend_request();
                     signals_received = 0;
-                    suspend_requested.notify_all();
+                    suspend_requested = false;
                 }
             }
 
@@ -392,6 +418,11 @@ namespace sogen::sandbox
                 {
                     puts(app.help().c_str());
                     return 1;
+                }
+
+                if (!application.empty() && !resume_file.empty())
+                {
+                    throw std::runtime_error("--resume continues the saved application and takes no other");
                 }
 
                 std::vector<mount_spec> mounts{};

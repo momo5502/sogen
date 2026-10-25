@@ -63,6 +63,8 @@ namespace sogen
                 replay_commands{};
         };
 
+        // Waits for all submitted GPU work, which serialize requires. It throws if that work waits for later guest work.
+        void quiesce();
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer, const restore_callbacks& callbacks);
 

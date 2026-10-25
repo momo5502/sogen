@@ -1,5 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
+#include <windows.h>
 
 #include <vulkan/vulkan_core.h>
 
@@ -200,7 +200,7 @@ int main(const int argc, char** argv)
     VkPhysicalDevice physical_device{};
     std::vector<VkQueueFamilyProperties> families{};
     uint32_t family = UINT32_MAX;
-    for (const auto candidate : physical_devices)
+    for (auto* const candidate : physical_devices)
     {
         uint32_t family_count = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(candidate, &family_count, nullptr);
@@ -337,18 +337,19 @@ int main(const int argc, char** argv)
     const auto* mirror_data = reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(mapped) + (2 * stride));
     const auto* image_data = reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(mapped) + (3 * stride));
 
-    VkImageCreateInfo image_info{};
-    image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    image_info.imageType = VK_IMAGE_TYPE_2D;
-    image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-    image_info.extent = {.width = image_size, .height = image_size, .depth = 1};
-    image_info.mipLevels = 1;
-    image_info.arrayLayers = 1;
-    image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-    image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    image_info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-    image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    const VkImageCreateInfo image_info{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .extent = {.width = image_size, .height = image_size, .depth = 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
 
     VkImageCreateInfo multisampled_info = image_info;
     multisampled_info.samples = VK_SAMPLE_COUNT_4_BIT;

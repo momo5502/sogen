@@ -2496,20 +2496,29 @@ namespace sogen
         this->suspend_requested_ = false;
     }
 
-    void windows_emulator::ensure_snapshot_support() const
+    void windows_emulator::ensure_serialization_support() const
     {
         for (const auto& device : this->process.devices | std::views::values)
         {
-            if (!device.supports_snapshots())
+            if (!device.supports_serialization())
             {
                 throw std::runtime_error("The device " + u16_to_u8(device.get_device_path()) + " does not support snapshots");
             }
         }
     }
 
+    void windows_emulator::prepare_serialization()
+    {
+        this->ensure_serialization_support();
+        for (auto& device : this->process.devices | std::views::values)
+        {
+            device.prepare_serialization(*this);
+        }
+    }
+
     void windows_emulator::serialize(utils::buffer_serializer& buffer) const
     {
-        this->ensure_snapshot_support();
+        this->ensure_serialization_support();
 
         buffer.write(this->application_settings_);
         buffer.write(this->setup_completed_);
@@ -2582,7 +2591,7 @@ namespace sogen
 
     void windows_emulator::save_snapshot()
     {
-        this->ensure_snapshot_support();
+        this->prepare_serialization();
 
         utils::buffer_serializer buffer{};
 

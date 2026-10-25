@@ -759,13 +759,64 @@ namespace sogen
             });
         }
 
+        std::vector<uint64_t> executed_secondaries(const command_buffer_data& command_buffer) const
+        {
+            std::vector<uint64_t> secondaries{};
+            for (const auto& transition : command_buffer.layout_transitions)
+            {
+                if (transition.secondary != 0)
+                {
+                    secondaries.push_back(transition.secondary);
+                }
+            }
+            return secondaries;
+        }
+
         bool rerecord_changed(const uint64_t* submitted, const uint32_t count, const std::function<bool(uint64_t command_buffer)>& rerecord)
         {
+            const auto rerecord_one = [&](const uint64_t command_buffer) { return rerecord && rerecord(command_buffer); };
+
             for (uint32_t i = 0; i < count; ++i)
             {
                 const auto cb = this->command_buffers.find(submitted[i]);
-                if (cb != this->command_buffers.end() && this->depends_on_changed_state(cb->second) &&
-                    (!rerecord || !rerecord(submitted[i])))
+                if (cb == this->command_buffers.end())
+                {
+                    continue;
+                }
+
+                bool stale = this->depends_on_changed_state(cb->second);
+                for (const uint64_t secondary : this->executed_secondaries(cb->second))
+                {
+                    const auto executed = this->command_buffers.find(secondary);
+                    if (executed == this->command_buffers.end() || !this->depends_on_changed_state(executed->second))
+                    {
+                        continue;
+                    }
+
+                    if (!rerecord_one(secondary))
+                    {
+                        return false;
+                    }
+
+                    // Recording a secondary again invalidates every primary that executes it.
+                    std::vector<uint64_t> invalidated{};
+                    for (const auto& [id, other] : this->command_buffers)
+                    {
+                        if (id != submitted[i] && std::ranges::any_of(other.layout_transitions, [&](const layout_transition& transition) {
+                                return transition.secondary == secondary;
+                            }))
+                        {
+                            invalidated.push_back(id);
+                        }
+                    }
+                    if (!std::ranges::all_of(invalidated, rerecord_one))
+                    {
+                        return false;
+                    }
+                    stale = true;
+                }
+
+                if (stale && !rerecord_one(submitted[i]))
                 {
                     return false;
                 }
@@ -788,6 +839,8 @@ namespace sogen
         // A present does not delay later submissions to its queue, so presents wait in an order of their own.
         std::unordered_map<VkQueue, std::deque<pending_submission>> pending_submissions{};
         std::unordered_map<VkQueue, std::deque<pending_submission>> pending_presents{};
+        // Whether all submitted work finished and nothing was submitted since.
+        bool quiesced{};
 
         void collect_effects(const uint64_t command_buffer, pending_submission& submission, const uint32_t depth = 0)
         {
@@ -830,6 +883,7 @@ namespace sogen
             }
 
             this->pending_submissions[queue].push_back(std::move(submission));
+            this->quiesced = false;
             this->run_modeled();
         }
 
@@ -1982,7 +2036,7 @@ namespace sogen
             }
             for (auto* present_fences : {&sc.presenting, &sc.spare_present_fences})
             {
-                for (const auto fence : *present_fences)
+                for (auto* const fence : *present_fences)
                 {
                     dev.destroy_fence(dev.handle, fence, nullptr);
                 }
@@ -2155,7 +2209,7 @@ namespace sogen
             }
             // A fence still pending here belongs to a queue that never finished: no teardown of it is valid, so it is left to
             // the device's destruction.
-            for (const auto fence : it->second.abandoned_drain_fences)
+            for (auto* const fence : it->second.abandoned_drain_fences)
             {
                 if (it->second.get_fence_status(it->second.handle, fence) == VK_SUCCESS)
                 {
@@ -6546,6 +6600,7 @@ namespace sogen
                 present.waits.emplace_back(semaphore, 0);
             }
             this->impl_->pending_presents[native_queue].push_back(std::move(present));
+            this->impl_->quiesced = false;
             this->impl_->run_modeled();
         }
         return result;
@@ -6918,9 +6973,9 @@ namespace sogen
                     continue;
                 }
 
-                const VkResult single =
-                    dev->second.get_query_pool_results(dev->second.handle, qp->second.handle, first_query + i, 1, element_size, element,
-                                                       element_size, static_cast<VkQueryResultFlags>(flags));
+                const VkResult single = dev->second.get_query_pool_results(dev->second.handle, qp->second.handle, first_query + i, 1,
+                                                                           static_cast<size_t>(element_size), element, element_size,
+                                                                           static_cast<VkQueryResultFlags>(flags));
                 if (single != VK_SUCCESS && result == VK_SUCCESS)
                 {
                     result = single;
@@ -10059,9 +10114,13 @@ namespace sogen
                         VK_SUCCESS ||
                     device.create_pipeline_layout(device.handle, &pipeline_layout_info, nullptr, &this->sample_pipeline_layout_) !=
                         VK_SUCCESS ||
-                    device.create_descriptor_pool(device.handle, &pool_info, nullptr, &this->sample_descriptor_pool_) != VK_SUCCESS ||
-                    (set_info.descriptorPool = this->sample_descriptor_pool_,
-                     device.allocate_descriptor_sets(device.handle, &set_info, &this->sample_descriptor_set_)) != VK_SUCCESS)
+                    device.create_descriptor_pool(device.handle, &pool_info, nullptr, &this->sample_descriptor_pool_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot shader layouts failed");
+                }
+
+                set_info.descriptorPool = this->sample_descriptor_pool_;
+                if (device.allocate_descriptor_sets(device.handle, &set_info, &this->sample_descriptor_set_) != VK_SUCCESS)
                 {
                     throw std::runtime_error("Creating the Vulkan snapshot shader layouts failed");
                 }
@@ -10094,26 +10153,43 @@ namespace sogen
             {
                 this->create_sample_layouts();
 
-                const auto read_variant = variant == sample_shader::stencil ? sample_shader::unsigned_integer
-                                          : variant == sample_shader::depth ? sample_shader::floating
-                                                                            : variant;
+                const auto read_variant = [&] {
+                    switch (variant)
+                    {
+                    case sample_shader::stencil:
+                        return sample_shader::unsigned_integer;
+                    case sample_shader::depth:
+                        return sample_shader::floating;
+                    default:
+                        return variant;
+                    }
+                }();
                 auto& pipeline = this->sample_pipelines_[{VK_NULL_HANDLE, 0, 0, read_variant, 0}];
                 if (pipeline)
                 {
                     return pipeline;
                 }
 
-                VkComputePipelineCreateInfo info{};
-                info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-                info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-                info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-                info.stage.pName = "main";
-                info.stage.module = read_variant == sample_shader::unsigned_integer
-                                        ? this->shader_module("read_samples_uint", snapshot_shaders::read_samples_uint)
-                                    : read_variant == sample_shader::signed_integer
-                                        ? this->shader_module("read_samples_sint", snapshot_shaders::read_samples_sint)
-                                        : this->shader_module("read_samples_float", snapshot_shaders::read_samples_float);
-                info.layout = this->sample_pipeline_layout_;
+                const VkShaderModule module = [&] {
+                    switch (read_variant)
+                    {
+                    case sample_shader::unsigned_integer:
+                        return this->shader_module("read_samples_uint", snapshot_shaders::read_samples_uint);
+                    case sample_shader::signed_integer:
+                        return this->shader_module("read_samples_sint", snapshot_shaders::read_samples_sint);
+                    default:
+                        return this->shader_module("read_samples_float", snapshot_shaders::read_samples_float);
+                    }
+                }();
+
+                const VkComputePipelineCreateInfo info{
+                    .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                    .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                              .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                              .module = module,
+                              .pName = "main"},
+                    .layout = this->sample_pipeline_layout_,
+                };
 
                 if (this->device_.create_compute_pipelines(this->device_.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline) !=
                     VK_SUCCESS)
@@ -10189,16 +10265,16 @@ namespace sogen
                     }
                 }();
 
-                std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-                for (auto& stage : stages)
-                {
-                    stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-                    stage.pName = "main";
-                }
-                stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-                stages[0].module = this->shader_module("fullscreen", snapshot_shaders::fullscreen);
-                stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-                stages[1].module = fragment;
+                const std::array stages{
+                    VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                    .stage = VK_SHADER_STAGE_VERTEX_BIT,
+                                                    .module = this->shader_module("fullscreen", snapshot_shaders::fullscreen),
+                                                    .pName = "main"},
+                    VkPipelineShaderStageCreateInfo{.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                                    .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+                                                    .module = fragment,
+                                                    .pName = "main"},
+                };
 
                 VkPipelineVertexInputStateCreateInfo vertex_input{};
                 vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -10219,10 +10295,11 @@ namespace sogen
                 rasterization.lineWidth = 1.0F;
 
                 const std::array<VkSampleMask, 2> sample_mask{sample < 32 ? 1U << sample : 0U, sample >= 32 ? 1U << (sample - 32) : 0U};
-                VkPipelineMultisampleStateCreateInfo multisample{};
-                multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-                multisample.rasterizationSamples = static_cast<VkSampleCountFlagBits>(samples);
-                multisample.pSampleMask = sample_mask.data();
+                const VkPipelineMultisampleStateCreateInfo multisample{
+                    .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                    .rasterizationSamples = static_cast<VkSampleCountFlagBits>(samples),
+                    .pSampleMask = sample_mask.data(),
+                };
 
                 VkPipelineDepthStencilStateCreateInfo depth_stencil{};
                 depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -10343,9 +10420,13 @@ namespace sogen
                 command_buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
                 command_buffer_info.commandBufferCount = 1;
 
-                if (!this->queue_ || device.create_command_pool(device.handle, &pool_info, nullptr, &this->pool_) != VK_SUCCESS ||
-                    (command_buffer_info.commandPool = this->pool_,
-                     device.allocate_command_buffers(device.handle, &command_buffer_info, &this->command_buffer_)) != VK_SUCCESS)
+                if (!this->queue_ || device.create_command_pool(device.handle, &pool_info, nullptr, &this->pool_) != VK_SUCCESS)
+                {
+                    throw std::runtime_error("Creating the Vulkan snapshot transfer queue failed");
+                }
+
+                command_buffer_info.commandPool = this->pool_;
+                if (device.allocate_command_buffers(device.handle, &command_buffer_info, &this->command_buffer_) != VK_SUCCESS)
                 {
                     throw std::runtime_error("Creating the Vulkan snapshot transfer queue failed");
                 }
@@ -10485,7 +10566,7 @@ namespace sogen
         }
     }
 
-    void vulkan_host::serialize(utils::buffer_serializer& buffer) const
+    void vulkan_host::quiesce()
     {
         auto& impl = *this->impl_;
 
@@ -10600,6 +10681,17 @@ namespace sogen
             }
         }
 
+        impl.quiesced = true;
+    }
+
+    void vulkan_host::serialize(utils::buffer_serializer& buffer) const
+    {
+        auto& impl = *this->impl_;
+        if (!impl.quiesced)
+        {
+            throw std::runtime_error("Vulkan state can only be saved after the GPU finished its work");
+        }
+
         std::map<std::pair<uint64_t, uint32_t>, std::unique_ptr<snapshot_transfer<impl::device_data>>> transfers{};
         const auto transfer_for = [&](const uint64_t device_id,
                                       const uint32_t family = VK_QUEUE_FAMILY_IGNORED) -> snapshot_transfer<impl::device_data>& {
@@ -10704,7 +10796,7 @@ namespace sogen
             const auto property_flags = memory_property_flags(device, memory.memory_type_index);
             if ((property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
             {
-                std::vector<std::byte> contents(memory.allocation_size);
+                std::vector<std::byte> contents(static_cast<size_t>(memory.allocation_size));
                 if (!transfer_for(memory.device_id)
                          .copy(memory.handle, impl.substitute_cached_memory_type(device, memory.memory_type_index), contents, false))
                 {
@@ -10834,7 +10926,7 @@ namespace sogen
                         const uint64_t size = ((extent.width + block->width - 1) / block->width) *
                                               ((extent.height + block->height - 1) / block->height) * extent.depth * block->size;
 
-                        std::vector<std::byte> contents(size);
+                        std::vector<std::byte> contents(static_cast<size_t>(size));
                         if (!transfer_for(image.device_id, owner)
                                  .copy_image(image.handle, static_cast<VkImageAspectFlagBits>(bit), aspects, mip, layer, extent, *block,
                                              layout, layout, true, contents, false))
@@ -11175,9 +11267,9 @@ namespace sogen
 
         std::vector<std::function<void()>> temporaries{};
         const auto destroy_temporaries = utils::finally([&] {
-            for (auto it = temporaries.rbegin(); it != temporaries.rend(); ++it)
+            for (const auto& destroy : std::views::reverse(temporaries))
             {
-                (*it)();
+                destroy();
             }
         });
 
@@ -11198,6 +11290,7 @@ namespace sogen
 
         const auto set_layout_ids = [&](const uint64_t device, const impl::pipeline_layout_params& create) {
             std::vector<uint64_t> ids{};
+            ids.reserve(create.set_layouts.size());
             for (size_t i = 0; i < create.set_layouts.size(); ++i)
             {
                 ids.push_back(ensure_set_layout(device, create.set_layouts[i], *create.set_layout_creates[i]));
@@ -11262,7 +11355,7 @@ namespace sogen
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
         {
             const auto id = buffer.read<uint64_t>();
-            std::vector<std::string> extensions(buffer.read<uint64_t>());
+            std::vector<std::string> extensions(static_cast<size_t>(buffer.read<uint64_t>()));
             for (auto& extension : extensions)
             {
                 extension = buffer.read_string<char>();
@@ -11777,14 +11870,14 @@ namespace sogen
             const auto has_variable_count = buffer.read<bool>();
             const auto variable_count = buffer.read<uint32_t>();
 
-            std::vector<std::pair<uint64_t, impl::descriptor_slot>> slots(buffer.read<uint64_t>());
+            std::vector<std::pair<uint64_t, impl::descriptor_slot>> slots(static_cast<size_t>(buffer.read<uint64_t>()));
             for (auto& [key, slot] : slots)
             {
                 buffer.read(key);
                 buffer.read(slot);
             }
 
-            std::vector<std::pair<uint32_t, std::vector<std::byte>>> inline_blocks(buffer.read<uint64_t>());
+            std::vector<std::pair<uint32_t, std::vector<std::byte>>> inline_blocks(static_cast<size_t>(buffer.read<uint64_t>()));
             for (auto& [binding, block] : inline_blocks)
             {
                 buffer.read(binding);
@@ -11805,6 +11898,7 @@ namespace sogen
             restored.layout_id = layout_id;
 
             std::vector<descriptor_write> writes{};
+            writes.reserve(slots.size() + inline_blocks.size());
             for (const auto& [key, slot] : slots)
             {
                 writes.push_back(descriptor_write{.dst_set = id,
