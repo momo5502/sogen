@@ -652,8 +652,8 @@ namespace sogen
 
                     // The cursors are guest memory, so a corrupt write cursor must not make the host replay the ring
                     // without end: at most one ring is new since the last poll, a cursor that went backwards starts
-                    // over, and the device never holds more than a second of this stream. Whatever does not fit is
-                    // dropped, keeping the newest whole frames.
+                    // over, and a device that reports its queue never holds more than a second of this stream. Whatever
+                    // does not fit is dropped, keeping the newest whole frames.
                     const uint64_t ring_bytes = this->buffer_bytes_;
                     const uint64_t pending = write >= this->submitted_ ? write - this->submitted_ : write;
                     const auto maximum_queued =
