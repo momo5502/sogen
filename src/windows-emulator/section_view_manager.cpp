@@ -45,12 +45,20 @@ namespace sogen
             return 0;
         }
 
-        this->views_.emplace(address, view{
-                                          .storage_id = storage_id,
-                                          .offset = offset,
-                                          .size = size,
-                                          .permissions = permissions,
-                                      });
+        try
+        {
+            this->views_.emplace(address, view{
+                                              .storage_id = storage_id,
+                                              .offset = offset,
+                                              .size = size,
+                                              .permissions = permissions,
+                                          });
+        }
+        catch (...)
+        {
+            memory.release_memory(address, 0);
+            throw;
+        }
         ++entry->second.references;
         return address;
     }
@@ -70,7 +78,10 @@ namespace sogen
             return false;
         }
 
-        memory.release_memory(base, static_cast<size_t>(mapped.size));
+        if (!memory.release_memory(base, 0))
+        {
+            throw std::runtime_error("Failed to release a section view");
+        }
         this->views_.erase(entry);
         this->release_storage(mapped.storage_id);
         return true;
@@ -115,6 +126,16 @@ namespace sogen
         }
 
         buffer.read_map(this->views_);
+
+        for (const auto& mapped : this->views_ | std::views::values)
+        {
+            const auto stored = this->storages_.find(mapped.storage_id);
+            if (stored == this->storages_.end() || mapped.size == 0 || mapped.offset > stored->second.memory.size() ||
+                mapped.size > stored->second.memory.size() - mapped.offset)
+            {
+                throw std::runtime_error("Section view does not fit its saved section memory");
+            }
+        }
     }
 
     void section_view_manager::restore_views(memory_manager& memory) const
