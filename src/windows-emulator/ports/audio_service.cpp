@@ -159,6 +159,10 @@ namespace sogen
         // latency to roughly this plus that buffer.
         constexpr uint64_t k_host_queue_cushion_ms = 60;
 
+        // A stream stops feeding the host while the device still holds a second of it. The byte rate comes from the
+        // guest's format, so the limit also has an absolute ceiling (a second of 8-channel float at 192 kHz is 6 MiB).
+        constexpr uint64_t k_maximum_host_queue_bytes = 16ull * 1024 * 1024;
+
         // The engine period reported by handle_get_device_period, and the same span expressed in bytes. An
         // event-driven client is woken once per period consumed, so this also paces how often we signal it.
         constexpr int64_t k_device_period_hns = 100000; // 10 ms
@@ -646,9 +650,23 @@ namespace sogen
 
                     uint64_t play{};
 
+                    // The cursors are guest memory, so a corrupt write cursor must not make the host replay the ring
+                    // without end: at most one ring is new since the last poll, a cursor that went backwards starts
+                    // over, and nothing is queued while the device still holds a second of this stream.
+                    const uint64_t ring_bytes = this->buffer_bytes_;
+                    const uint64_t pending = write >= this->submitted_ ? write - this->submitted_ : write;
+                    const uint64_t start = write - std::min(pending, ring_bytes);
+                    const auto maximum_queued =
+                        std::min<uint64_t>(this->stream_format_.average_bytes_per_second, k_maximum_host_queue_bytes);
+
                     const auto fed =
                         this->sink_.feed(this->win_emu_.audio(), this->id_, this->stream_format_.host_format, [&](audio_backend& audio) {
-                            for (uint64_t pos = this->submitted_; pos < write;)
+                            if (const auto queued = audio.queued_bytes(); queued && *queued > maximum_queued)
+                            {
+                                return;
+                            }
+
+                            for (uint64_t pos = start; pos < write;)
                             {
                                 const uint64_t ring_offset = pos % this->buffer_bytes_;
                                 const uint64_t chunk = std::min<uint64_t>(write - pos, this->buffer_bytes_ - ring_offset);
