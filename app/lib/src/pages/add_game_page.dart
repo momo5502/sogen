@@ -119,6 +119,22 @@ class _AddGamePageState extends State<AddGamePage> {
     return result;
   }
 
+  static Map<String, String> _parseEnvironment(String text) {
+    final environment = <String, String>{};
+    for (final line in text.split('\n')) {
+      final separator = line.indexOf('=');
+      if (separator < 0) {
+        continue;
+      }
+
+      final name = line.substring(0, separator).trim();
+      if (name.isNotEmpty) {
+        environment[name] = line.substring(separator + 1).trim();
+      }
+    }
+    return environment;
+  }
+
   void _save() {
     final directory = _directory;
     final executable = _executable;
@@ -127,11 +143,7 @@ class _AddGamePageState extends State<AddGamePage> {
     }
 
     final arguments = _arguments.text.trim();
-    final environment = {
-      for (final line in _environment.text.split('\n'))
-        if (line.indexOf('=') > 0)
-          line.substring(0, line.indexOf('=')).trim(): line.substring(line.indexOf('=') + 1).trim(),
-    };
+    final environment = _parseEnvironment(_environment.text);
     Navigator.of(context).pop(
       Game(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
