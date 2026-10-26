@@ -225,9 +225,6 @@ CALL :collect wshbth.dll
 CALL :collect wsock32.dll
 CALL :collect wtsapi32.dll
 CALL :collect xmllite.dll
-CALL :collect x3daudio1_7.dll
-CALL :collect xapofx1_5.dll
-CALL :collect xaudio2_9.dll
 CALL :collect xinput1_3.dll
 CALL :collect xinput1_4.dll
 CALL :collect xinput9_1_0.dll
@@ -238,6 +235,9 @@ CALL :collect_matching d3dx9_*.dll
 CALL :collect_matching d3dx10_*.dll
 CALL :collect_matching d3dx11_*.dll
 CALL :collect_matching d3dcompiler_*.dll
+CALL :collect_matching xaudio2_*.dll
+CALL :collect_matching x3daudio1_*.dll
+CALL :collect_matching xapofx1_*.dll
 CALL :collect_file "%WINDIR%\System32\en-US", user32.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect_file "%WINDIR%\SysWOW64\en-US", user32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 

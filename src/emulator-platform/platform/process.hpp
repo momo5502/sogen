@@ -774,6 +774,20 @@ namespace sogen
     } CONTEXT_EX, *PCONTEXT_EX;
 
     template <typename Traits>
+    struct EMU_QUOTA_LIMITS
+    {
+        Traits::SIZE_T PagedPoolLimit;
+        Traits::SIZE_T NonPagedPoolLimit;
+        Traits::SIZE_T MinimumWorkingSetSize;
+        Traits::SIZE_T MaximumWorkingSetSize;
+        Traits::SIZE_T PagefileLimit;
+        std::int64_t TimeLimit;
+    };
+
+    static_assert(sizeof(EMU_QUOTA_LIMITS<EmulatorTraits<Emu32>>) == 0x20);
+    static_assert(sizeof(EMU_QUOTA_LIMITS<EmulatorTraits<Emu64>>) == 0x30);
+
+    template <typename Traits>
     struct EMU_EXCEPTION_RECORD
     {
         DWORD ExceptionCode;
@@ -834,6 +848,26 @@ namespace sogen
         EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, KAFFINITY) ActiveProcessorsAffinityMask;
         char NumberOfProcessors;
     } SYSTEM_BASIC_INFORMATION64, *PSYSTEM_BASIC_INFORMATION64;
+
+    // The memory counters at the start of SYSTEM_PERFORMANCE_INFORMATION; the rest of it changes between Windows versions.
+    struct SYSTEM_PERFORMANCE_MEMORY_INFORMATION64
+    {
+        LONGLONG IdleProcessTime;
+        LONGLONG IoReadTransferCount;
+        LONGLONG IoWriteTransferCount;
+        LONGLONG IoOtherTransferCount;
+        ULONG IoReadOperationCount;
+        ULONG IoWriteOperationCount;
+        ULONG IoOtherOperationCount;
+        ULONG AvailablePages;
+        ULONG CommittedPages;
+        ULONG CommitLimit;
+        ULONG PeakCommitment;
+    };
+
+    static_assert(offsetof(SYSTEM_PERFORMANCE_MEMORY_INFORMATION64, AvailablePages) == 44);
+    static_assert(offsetof(SYSTEM_PERFORMANCE_MEMORY_INFORMATION64, PeakCommitment) == 56);
+    static_assert(sizeof(SYSTEM_PERFORMANCE_MEMORY_INFORMATION64) == 64);
 
     typedef struct _SYSTEM_CODEINTEGRITY_INFORMATION
     {

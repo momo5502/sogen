@@ -82,12 +82,13 @@ namespace sogen
 #ifdef _WIN32
         using library_handle = HMODULE;
 
-        library_handle load_library(const char* name)
+        // Unused on 32-bit hosts, which load no Vulkan driver.
+        [[maybe_unused]] library_handle load_library(const char* name)
         {
             return ::LoadLibraryA(name);
         }
 
-        void* get_symbol(library_handle handle, const char* name)
+        [[maybe_unused]] void* get_symbol(library_handle handle, const char* name)
         {
             return reinterpret_cast<void*>(::GetProcAddress(handle, name));
         }
@@ -101,12 +102,13 @@ namespace sogen
 #else
         using library_handle = void*;
 
-        library_handle load_library(const char* name)
+        // Unused on 32-bit hosts, which load no Vulkan driver.
+        [[maybe_unused]] library_handle load_library(const char* name)
         {
             return ::dlopen(name, RTLD_NOW | RTLD_LOCAL);
         }
 
-        void* get_symbol(library_handle handle, const char* name)
+        [[maybe_unused]] void* get_symbol(library_handle handle, const char* name)
         {
             return ::dlsym(handle, name);
         }
@@ -290,6 +292,7 @@ namespace sogen
         // The command buffer whose recorded command is running, which notes every object looked up.
         std::unordered_set<uint64_t>* recording_references{};
 
+        bool loaded{};
         library_handle loader{};
         PFN_vkGetInstanceProcAddr get_instance_proc_addr{};
         PFN_vkCreateInstance create_instance{};
@@ -2416,36 +2419,55 @@ namespace sogen
             this->devices.erase(it);
         }
 
-        impl()
+        void load(void* external_get_instance_proc_addr)
         {
             if constexpr (sizeof(size_t) != 8)
             {
+                (void)external_get_instance_proc_addr;
                 return;
             }
-
-            for (const auto* name : vulkan_loader_names)
+            else
             {
-                this->loader = load_library(name);
-                if (this->loader)
+                if (this->loaded)
                 {
-                    break;
+                    return;
                 }
-            }
 
-            if (!this->loader)
-            {
-                return;
-            }
+                this->loaded = true;
 
-            this->get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(get_symbol(this->loader, "vkGetInstanceProcAddr"));
-            if (!this->get_instance_proc_addr)
-            {
-                return;
-            }
+                if (external_get_instance_proc_addr)
+                {
+                    this->get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(external_get_instance_proc_addr);
+                }
+                else
+                {
+                    for (const auto* name : vulkan_loader_names)
+                    {
+                        this->loader = load_library(name);
+                        if (this->loader)
+                        {
+                            break;
+                        }
+                    }
 
-            this->create_instance = reinterpret_cast<PFN_vkCreateInstance>(this->get_instance_proc_addr(nullptr, "vkCreateInstance"));
-            this->enumerate_instance_version =
-                reinterpret_cast<PFN_vkEnumerateInstanceVersion>(this->get_instance_proc_addr(nullptr, "vkEnumerateInstanceVersion"));
+                    if (!this->loader)
+                    {
+                        return;
+                    }
+
+                    this->get_instance_proc_addr =
+                        reinterpret_cast<PFN_vkGetInstanceProcAddr>(get_symbol(this->loader, "vkGetInstanceProcAddr"));
+                }
+
+                if (!this->get_instance_proc_addr)
+                {
+                    return;
+                }
+
+                this->create_instance = reinterpret_cast<PFN_vkCreateInstance>(this->get_instance_proc_addr(nullptr, "vkCreateInstance"));
+                this->enumerate_instance_version =
+                    reinterpret_cast<PFN_vkEnumerateInstanceVersion>(this->get_instance_proc_addr(nullptr, "vkEnumerateInstanceVersion"));
+            }
         }
 
         ~impl()
@@ -2492,6 +2514,11 @@ namespace sogen
     }
 
     vulkan_host::~vulkan_host() = default;
+
+    void vulkan_host::load(void* get_instance_proc_addr)
+    {
+        this->impl_->load(get_instance_proc_addr);
+    }
 
     bool vulkan_host::available() const
     {

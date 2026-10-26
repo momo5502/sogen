@@ -59,12 +59,18 @@ namespace sogen::sandbox
             return wide_args;
         }
 
+        // Without an emulation root the path is empty, which absolute() rejects on Windows.
+        std::string describe_path(const std::filesystem::path& path)
+        {
+            return path.empty() ? std::string{} : std::filesystem::absolute(path).string();
+        }
+
         std::string describe_configuration(const emulator_settings& settings, const std::vector<std::filesystem::path>& registry_files)
         {
             std::string configuration{};
-            configuration += "emulation-root=" + std::filesystem::absolute(settings.emulation_root).string() + "\n";
+            configuration += "emulation-root=" + describe_path(settings.emulation_root) + "\n";
             configuration += "root-mode=" + std::string{to_string(settings.root_mode)} + "\n";
-            configuration += "registry=" + std::filesystem::absolute(settings.registry_directory).string() + "\n";
+            configuration += "registry=" + describe_path(settings.registry_directory) + "\n";
             configuration += "network=" + std::string{network::to_string(settings.network)} + "\n";
             configuration += std::string{"spoof-gpu-features="} + (settings.spoof_gpu_features ? "on" : "off") + "\n";
 
@@ -75,7 +81,7 @@ namespace sogen::sandbox
 
             for (const auto& file : registry_files)
             {
-                configuration += "reg-file=" + std::filesystem::absolute(file).string() + "\n";
+                configuration += "reg-file=" + describe_path(file) + "\n";
             }
 
             return configuration;
