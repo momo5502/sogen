@@ -765,6 +765,7 @@ namespace sogen
         NTSTATUS handle_NtUserSelectPalette();
         BOOL handle_NtUserSwapMouseButton();
         hwnd handle_NtUserWindowFromPoint(const syscall_context& c, int32_t x, int32_t y);
+        hwnd handle_NtUserChildWindowFromPointEx(const syscall_context& c, hwnd parent, uint64_t point, uint32_t flags);
         BOOL handle_NtUserGetKeyboardState(const syscall_context& c, emulator_pointer key_state);
         uint32_t handle_NtUserGetDoubleClickTime();
         uint32_t handle_NtUserGetCaretBlinkTime();
@@ -2006,6 +2007,7 @@ namespace sogen
         add_handler(NtGdiCreateDIBSection);
         add_handler(NtUserGetKeyNameText);
         add_handler(NtUserWindowFromPoint);
+        add_handler(NtUserChildWindowFromPointEx);
         add_handler(NtUserSwapMouseButton);
         add_handler(NtUserGetDoubleClickTime);
         add_handler(NtUserGetCaretBlinkTime);

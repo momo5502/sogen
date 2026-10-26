@@ -6979,6 +6979,43 @@ namespace sogen
             return c.proc.foreground_window;
         }
 
+        hwnd handle_NtUserChildWindowFromPointEx(const syscall_context& c, const hwnd parent, const uint64_t point, const uint32_t flags)
+        {
+            constexpr uint32_t cwp_skip_invisible = 1;
+            constexpr uint32_t cwp_skip_disabled = 2;
+
+            const auto* parent_window = c.proc.windows.get(parent);
+            if (!parent_window)
+            {
+                return 0;
+            }
+
+            const auto x = static_cast<int32_t>(point);
+            const auto y = static_cast<int32_t>(point >> 32);
+            if (x < 0 || y < 0 || x >= parent_window->client_width() || y >= parent_window->client_height())
+            {
+                return 0;
+            }
+
+            hwnd found = parent;
+            for (const auto& [index, child] : c.proc.windows)
+            {
+                (void)index;
+                if (child.parent_handle != parent || ((flags & cwp_skip_invisible) && !(child.style & WS_VISIBLE)) ||
+                    ((flags & cwp_skip_disabled) && (child.style & WS_DISABLED)))
+                {
+                    continue;
+                }
+
+                if (x >= child.x && x < child.x + child.width && y >= child.y && y < child.y + child.height)
+                {
+                    found = child.handle;
+                }
+            }
+
+            return found;
+        }
+
         BOOL handle_NtUserGetKeyboardState(const syscall_context& c, const emulator_pointer key_state)
         {
             if (key_state == 0)
