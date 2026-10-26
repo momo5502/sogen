@@ -1,5 +1,7 @@
 #include "host_directory_provider.hpp"
 
+#include <cwctype>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
 
@@ -123,6 +125,49 @@ namespace sogen
             return resolved;
         }
 
+        // Case recovery can only help where the host distinguishes case, and a miss costs a full directory scan,
+        // so the mount is probed once. Flipping the case of the target's own name keeps this read-only, unlike
+        // writing a probe file into a mount that may be mounted read-only. NTFS carries the flag per directory,
+        // so a subdirectory can disagree; recovery is then skipped where it would have helped, which is exactly
+        // the behaviour before recovery existed.
+        bool host_lookup_ignores_case(const std::filesystem::path& target)
+        {
+            const auto name = target.filename().u16string();
+
+            std::u16string flipped{};
+            flipped.reserve(name.size());
+            bool flipped_any = false;
+
+            for (const auto c : name)
+            {
+                const auto lower = utils::string::char_to_lower(c);
+                const auto upper = static_cast<char16_t>(std::towupper(static_cast<std::wint_t>(c)));
+
+                if (lower != c)
+                {
+                    flipped.push_back(lower);
+                    flipped_any = true;
+                }
+                else if (upper != c)
+                {
+                    flipped.push_back(upper);
+                    flipped_any = true;
+                }
+                else
+                {
+                    flipped.push_back(c);
+                }
+            }
+
+            if (!flipped_any)
+            {
+                return false;
+            }
+
+            std::error_code ec{};
+            return std::filesystem::exists(target.parent_path() / std::filesystem::path(flipped), ec);
+        }
+
 #ifdef OS_WINDOWS
         struct find_handle_deleter
         {
@@ -211,7 +256,8 @@ namespace sogen
     }
 
     host_directory_provider::host_directory_provider(std::filesystem::path target)
-        : target_(std::move(target))
+        : target_(std::move(target)),
+          lookup_ignores_case_(host_lookup_ignores_case(this->target_))
     {
     }
 
@@ -232,7 +278,7 @@ namespace sogen
         }
 
         std::error_code ec{};
-        if (!std::filesystem::exists(candidate, ec))
+        if (!this->lookup_ignores_case_ && !std::filesystem::exists(candidate, ec))
         {
             candidate = recover_host_case(root, candidate);
         }

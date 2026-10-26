@@ -46,6 +46,7 @@ namespace sogen
 
       private:
         std::filesystem::path target_{};
+        bool lookup_ignores_case_{};
     };
 
 } // namespace sogen

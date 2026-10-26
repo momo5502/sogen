@@ -33,9 +33,14 @@ namespace sogen::test
         bool host_directory_is_case_sensitive(const std::filesystem::path& directory)
         {
             const auto probe = directory / "SogenCaseProbe";
-            write_host_file(probe, "probe");
-
             std::error_code ec{};
+
+            write_host_file(probe, "probe");
+            if (!std::filesystem::exists(probe, ec))
+            {
+                return false;
+            }
+
             const auto lowercase_resolves = std::filesystem::exists(directory / "sogencaseprobe", ec);
             std::filesystem::remove(probe, ec);
 
