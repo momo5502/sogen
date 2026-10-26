@@ -2206,6 +2206,35 @@ extern "C"
         record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::depth_clip_enable, depthClipEnable);
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetAlphaToCoverageEnableEXT(VkCommandBuffer commandBuffer,
+                                                                                      VkBool32 alphaToCoverageEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::alpha_to_coverage_enable, alphaToCoverageEnable);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetRasterizationSamplesEXT(VkCommandBuffer commandBuffer,
+                                                                                     VkSampleCountFlagBits rasterizationSamples)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::rasterization_samples, static_cast<uint32_t>(rasterizationSamples));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetLineRasterizationModeEXT(VkCommandBuffer commandBuffer,
+                                                                                      VkLineRasterizationModeEXT lineRasterizationMode)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::line_rasterization_mode, static_cast<uint32_t>(lineRasterizationMode));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetSampleMaskEXT(VkCommandBuffer commandBuffer, VkSampleCountFlagBits samples,
+                                                                           const VkSampleMask* pSampleMask)
+    {
+        gb::cmd_set_sample_mask_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.samples = static_cast<uint32_t>(samples);
+        const size_t words = std::min<size_t>((request.samples + 31u) / 32u, request.mask.size());
+        std::copy_n(pSampleMask, words, request.mask.begin());
+        record_command(request.command_buffer, gb::command::cmd_set_sample_mask, &request, sizeof(request));
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilTestEnable(VkCommandBuffer commandBuffer, VkBool32 stencilTestEnable)
     {
         record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::stencil_test_enable, stencilTestEnable);
@@ -6338,6 +6367,10 @@ extern "C"
             {.name = "vkCmdSetDepthBoundsTestEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBoundsTestEnable)},
             {.name = "vkCmdSetDepthBoundsTestEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBoundsTestEnable)},
             {.name = "vkCmdSetDepthClipEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthClipEnableEXT)},
+            {.name = "vkCmdSetAlphaToCoverageEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetAlphaToCoverageEnableEXT)},
+            {.name = "vkCmdSetRasterizationSamplesEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetRasterizationSamplesEXT)},
+            {.name = "vkCmdSetLineRasterizationModeEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetLineRasterizationModeEXT)},
+            {.name = "vkCmdSetSampleMaskEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetSampleMaskEXT)},
             {.name = "vkCmdSetStencilTestEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilTestEnable)},
             {.name = "vkCmdSetStencilTestEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilTestEnable)},
             {.name = "vkCmdSetRasterizerDiscardEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetRasterizerDiscardEnable)},

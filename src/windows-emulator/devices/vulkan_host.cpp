@@ -563,6 +563,10 @@ namespace sogen
             PFN_vkCmdSetDepthCompareOp cmd_set_depth_compare_op{};
             PFN_vkCmdSetDepthBoundsTestEnable cmd_set_depth_bounds_test_enable{};
             PFN_vkCmdSetDepthClipEnableEXT cmd_set_depth_clip_enable{};
+            PFN_vkCmdSetAlphaToCoverageEnableEXT cmd_set_alpha_to_coverage_enable{};
+            PFN_vkCmdSetRasterizationSamplesEXT cmd_set_rasterization_samples{};
+            PFN_vkCmdSetLineRasterizationModeEXT cmd_set_line_rasterization_mode{};
+            PFN_vkCmdSetSampleMaskEXT cmd_set_sample_mask{};
             PFN_vkCmdSetStencilTestEnable cmd_set_stencil_test_enable{};
             PFN_vkCmdSetRasterizerDiscardEnable cmd_set_rasterizer_discard_enable{};
             PFN_vkCmdSetDepthBiasEnable cmd_set_depth_bias_enable{};
@@ -3280,6 +3284,21 @@ namespace sogen
                 // TODO: Expose geometry-stream support after geometry shaders are bridged.
                 features->geometryStreams = VK_FALSE;
             }
+            else if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT)
+            {
+                // The shim only bridges these setters; any other state a driver offers would hand the guest a null
+                // vkCmdSet* pointer.
+                const auto* reported = reinterpret_cast<const VkPhysicalDeviceExtendedDynamicState3FeaturesEXT*>(buffer.data());
+                VkPhysicalDeviceExtendedDynamicState3FeaturesEXT bridged{};
+                bridged.sType = reported->sType;
+                bridged.pNext = reported->pNext;
+                bridged.extendedDynamicState3DepthClipEnable = reported->extendedDynamicState3DepthClipEnable;
+                bridged.extendedDynamicState3AlphaToCoverageEnable = reported->extendedDynamicState3AlphaToCoverageEnable;
+                bridged.extendedDynamicState3RasterizationSamples = reported->extendedDynamicState3RasterizationSamples;
+                bridged.extendedDynamicState3SampleMask = reported->extendedDynamicState3SampleMask;
+                bridged.extendedDynamicState3LineRasterizationMode = reported->extendedDynamicState3LineRasterizationMode;
+                std::memcpy(buffer.data(), &bridged, sizeof(bridged));
+            }
         }
 
         // DXVK refuses adapters without these, but Mali GPUs lack them and older Adreno 6xx GPUs lack the 16- and
@@ -4022,6 +4041,13 @@ namespace sogen
             data.cmd_set_depth_bounds_test_enable =
                 reinterpret_cast<PFN_vkCmdSetDepthBoundsTestEnable>(resolve("vkCmdSetDepthBoundsTestEnable"));
             data.cmd_set_depth_clip_enable = reinterpret_cast<PFN_vkCmdSetDepthClipEnableEXT>(resolve("vkCmdSetDepthClipEnableEXT"));
+            data.cmd_set_alpha_to_coverage_enable =
+                reinterpret_cast<PFN_vkCmdSetAlphaToCoverageEnableEXT>(resolve("vkCmdSetAlphaToCoverageEnableEXT"));
+            data.cmd_set_rasterization_samples =
+                reinterpret_cast<PFN_vkCmdSetRasterizationSamplesEXT>(resolve("vkCmdSetRasterizationSamplesEXT"));
+            data.cmd_set_line_rasterization_mode =
+                reinterpret_cast<PFN_vkCmdSetLineRasterizationModeEXT>(resolve("vkCmdSetLineRasterizationModeEXT"));
+            data.cmd_set_sample_mask = reinterpret_cast<PFN_vkCmdSetSampleMaskEXT>(resolve("vkCmdSetSampleMaskEXT"));
             data.cmd_set_stencil_test_enable = reinterpret_cast<PFN_vkCmdSetStencilTestEnable>(resolve("vkCmdSetStencilTestEnable"));
             data.cmd_set_rasterizer_discard_enable =
                 reinterpret_cast<PFN_vkCmdSetRasterizerDiscardEnable>(resolve("vkCmdSetRasterizerDiscardEnable"));
@@ -9556,6 +9582,22 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    int32_t vulkan_host::cmd_set_sample_mask(uint64_t command_buffer, uint32_t samples, const std::array<uint32_t, 2>& mask)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_set_sample_mask)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_set_sample_mask(cb->second.handle, static_cast<VkSampleCountFlagBits>(samples), mask.data());
+        return VK_SUCCESS;
+    }
+
     int32_t vulkan_host::cmd_set_depth_bounds(uint64_t command_buffer, float min_depth_bounds, float max_depth_bounds)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
@@ -9719,6 +9761,27 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             dev->second.cmd_set_depth_clip_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::alpha_to_coverage_enable:
+            if (!dev->second.cmd_set_alpha_to_coverage_enable)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_alpha_to_coverage_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::rasterization_samples:
+            if (!dev->second.cmd_set_rasterization_samples)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_rasterization_samples(handle, static_cast<VkSampleCountFlagBits>(value));
+            break;
+        case gpu_bridge::dynamic_state_u32::line_rasterization_mode:
+            if (!dev->second.cmd_set_line_rasterization_mode)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_line_rasterization_mode(handle, static_cast<VkLineRasterizationModeEXT>(value));
             break;
         case gpu_bridge::dynamic_state_u32::stencil_test_enable:
             if (!dev->second.cmd_set_stencil_test_enable)
