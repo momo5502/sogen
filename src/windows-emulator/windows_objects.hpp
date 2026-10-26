@@ -336,6 +336,22 @@ namespace sogen
             return client_bottom - client_top;
         }
 
+        void sync_guest_rects()
+        {
+            const RECT window_rect{.left = this->x, .top = this->y, .right = this->x + this->width, .bottom = this->y + this->height};
+            const RECT client_rect{
+                .left = this->client_x(),
+                .top = this->client_y(),
+                .right = this->client_x() + this->client_width(),
+                .bottom = this->client_y() + this->client_height(),
+            };
+
+            this->guest.access([&](USER_WINDOW& guest_win) {
+                guest_win.rcWindow = window_rect;
+                guest_win.rcClient = client_rect;
+            });
+        }
+
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             user_object::serialize_object(buffer);

@@ -414,22 +414,6 @@ namespace sogen
             return {.left = insets.left, .top = insets.top, .right = insets.right, .bottom = insets.bottom};
         }
 
-        void sync_guest_window_rects(window& win)
-        {
-            const auto window_rect = get_window_rect(win);
-            const RECT client_rect{
-                .left = win.client_x(),
-                .top = win.client_y(),
-                .right = win.client_x() + win.client_width(),
-                .bottom = win.client_y() + win.client_height(),
-            };
-
-            win.guest.access([&](USER_WINDOW& guest_win) {
-                guest_win.rcWindow = window_rect;
-                guest_win.rcClient = client_rect;
-            });
-        }
-
         void update_window_geometry(const syscall_context& c, window& win, const int x, const int y, const int width, const int height,
                                     const bool repaint)
         {
@@ -438,7 +422,7 @@ namespace sogen
             win.y = y;
             win.width = width;
             win.height = height;
-            sync_guest_window_rects(win);
+            win.sync_guest_rects();
 
             if (win.host_surface_window)
             {
