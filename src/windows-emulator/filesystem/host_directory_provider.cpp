@@ -125,14 +125,9 @@ namespace sogen
             return resolved;
         }
 
-        // Case recovery can only help where the host distinguishes case, and a miss costs a full directory scan,
-        // so the mount is probed once. Flipping the case of the target's own name keeps this read-only, unlike
-        // writing a probe file into a mount that may be mounted read-only. NTFS carries the flag per directory,
-        // so a subdirectory can disagree; recovery is then skipped where it would have helped, which is exactly
-        // the behaviour before recovery existed.
-        bool host_lookup_ignores_case(const std::filesystem::path& target)
+        bool entry_lookup_ignores_case(const std::filesystem::path& entry)
         {
-            const auto name = target.filename().u16string();
+            const auto name = entry.filename().u16string();
 
             std::u16string flipped{};
             flipped.reserve(name.size());
@@ -165,7 +160,26 @@ namespace sogen
             }
 
             std::error_code ec{};
-            return std::filesystem::exists(target.parent_path() / std::filesystem::path(flipped), ec);
+            return std::filesystem::equivalent(entry, entry.parent_path() / std::filesystem::path(flipped), ec);
+        }
+
+        bool host_lookup_ignores_case(const std::filesystem::path& target)
+        {
+            std::error_code ec{};
+            if (!std::filesystem::is_directory(target, ec))
+            {
+                return entry_lookup_ignores_case(target);
+            }
+
+            for (const auto& entry : std::filesystem::directory_iterator(target, ec))
+            {
+                if (!entry.is_symlink(ec) && entry_lookup_ignores_case(entry.path()))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
 #ifdef OS_WINDOWS

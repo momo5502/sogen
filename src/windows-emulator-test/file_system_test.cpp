@@ -4,6 +4,7 @@
 #include <file_system.hpp>
 #include <filesystem/guest_file.hpp>
 
+#include <cstdlib>
 #include <fstream>
 #include <random>
 
@@ -371,6 +372,40 @@ namespace sogen::test
 
         EXPECT_TRUE(fs.stat(windows_path{'c', {u"propsys.dll.mun"}}));
     }
+
+    TEST_F(CaseSensitiveFileSystemTest, ADistinctCasedSiblingDoesNotDisableRecovery)
+    {
+        std::filesystem::create_directory(this->root / "C");
+        write_host_file(this->root / "c" / "Mixed.txt", "content");
+        file_system fs{this->root};
+
+        EXPECT_EQ(this->root / "c" / "Mixed.txt", fs.translate(windows_path{'c', {u"mixed.txt"}}));
+    }
+
+    TEST_F(CaseSensitiveFileSystemTest, ADirectoryMountWithATrailingSeparatorRecoversCase)
+    {
+        write_host_file(this->root / "c" / "Mixed.txt", "content");
+        file_system fs{this->root};
+        fs.map(windows_path{'d', {}}, this->root / "c" / "");
+
+        EXPECT_EQ(this->root / "c" / "Mixed.txt", fs.translate(windows_path{'d', {u"mixed.txt"}}));
+    }
+
+#ifdef OS_WINDOWS
+    TEST_F(FileSystemTest, DriveRootCanBeMounted)
+    {
+        const auto* windows_directory_name = std::getenv("WINDIR");
+        ASSERT_NE(nullptr, windows_directory_name);
+        const std::filesystem::path windows_directory{windows_directory_name};
+        const auto drive_root = windows_directory.root_path();
+        std::error_code ec{};
+        file_system fs{this->root};
+        fs.map(windows_path{'d', {}}, drive_root);
+        const auto host_path = fs.translate(windows_path{'d', {windows_directory.filename().u16string()}});
+
+        EXPECT_TRUE(std::filesystem::equivalent(host_path, windows_directory, ec));
+    }
+#endif
 
     TEST_F(CaseSensitiveFileSystemTest, IntermediateDirectoriesResolveRegardlessOfCase)
     {
