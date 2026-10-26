@@ -114,6 +114,7 @@ namespace sogen
 
             uint64_t section_backing_address = 0;
             uint32_t section_mapped_views = 0;
+            uint64_t section_view_storage_id = 0;
             if (value.type == handle_types::section)
             {
                 auto* section = c.proc.sections.get(h);
@@ -121,11 +122,16 @@ namespace sogen
                 {
                     section_backing_address = section->backing_address;
                     section_mapped_views = section->mapped_view_count;
+                    section_view_storage_id = section->view_storage_id;
                 }
             }
 
             if (handle_store && handle_store->erase(h))
             {
+                if (section_view_storage_id != 0)
+                {
+                    c.proc.section_views.release_storage(section_view_storage_id);
+                }
                 if (section_backing_address != 0)
                 {
                     if (section_mapped_views == 0)

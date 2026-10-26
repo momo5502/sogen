@@ -117,7 +117,10 @@ namespace sogen
         bool allocate_host_memory_at(uint64_t address, size_t size, void* host_pointer, nt_memory_permission permissions);
         // Chooses a compatible guest address and aliases it onto caller-owned host memory (e.g. a host Vulkan
         // mapping). The region is treated like MMIO: not serialized, host_pointer not owned. Returns 0 on failure.
-        uint64_t allocate_host_memory(size_t size, void* host_pointer, nt_memory_permission permissions);
+        uint64_t allocate_host_memory(size_t size, void* host_pointer, nt_memory_permission permissions,
+                                      uint64_t highest_address = MAX_ALLOCATION_END_EXCL - 1);
+        // False on backends that can only show host memory at its own host address (see allocate_host_memory).
+        bool can_alias_host_memory_anywhere() const;
         // Maps host memory into the guest on backends that need it at a fixed host address (see
         // memory_interface::host_placement_address): picks a free guest range below highest_address, and place maps the
         // memory at the host address backing it. Returns the guest address, or 0 if the backend has no such addresses or

@@ -372,7 +372,8 @@ namespace sogen
         return true;
     }
 
-    uint64_t memory_manager::allocate_host_memory(const size_t size, void* host_pointer, const nt_memory_permission permissions)
+    uint64_t memory_manager::allocate_host_memory(const size_t size, void* host_pointer, const nt_memory_permission permissions,
+                                                  const uint64_t highest_address)
     {
         if (size == 0 || host_pointer == nullptr)
         {
@@ -380,10 +381,11 @@ namespace sogen
         }
 
         const bool uses_existing_host_mapping = this->memory_->host_memory_mapping_requires_identity();
-        const uint64_t address =
-            uses_existing_host_mapping ? get_untagged_pointer_address(host_pointer) : this->find_free_host_allocation_base(size, 0);
+        const uint64_t address = uses_existing_host_mapping ? get_untagged_pointer_address(host_pointer)
+                                                            : this->find_free_host_allocation_base(size, 0, highest_address);
 
-        if (address < MIN_ALLOCATION_ADDRESS || address >= MAX_ALLOCATION_END_EXCL || size > MAX_ALLOCATION_END_EXCL - address)
+        if (address < MIN_ALLOCATION_ADDRESS || address >= MAX_ALLOCATION_END_EXCL || size > MAX_ALLOCATION_END_EXCL - address ||
+            address + size - 1 > highest_address)
         {
             return 0;
         }
@@ -394,6 +396,11 @@ namespace sogen
         }
 
         return address;
+    }
+
+    bool memory_manager::can_alias_host_memory_anywhere() const
+    {
+        return !this->memory_->host_memory_mapping_requires_identity();
     }
 
     uint64_t memory_manager::allocate_placed_host_memory(const size_t size, const nt_memory_permission permissions,

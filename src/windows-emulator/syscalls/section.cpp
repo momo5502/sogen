@@ -183,6 +183,43 @@ namespace sogen
                 });
             }
 
+            NTSTATUS map_section_storage_view(const syscall_context& c, const section& section_entry, const uint64_t offset,
+                                              const nt_memory_permission protection, const uint64_t highest_address,
+                                              const emulator_object<uint64_t> base_address,
+                                              const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size)
+            {
+                const auto storage_size = c.proc.section_views.storage_size(section_entry.view_storage_id);
+                if (offset >= storage_size)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto aligned_offset = page_align_down(offset);
+                uint64_t size = storage_size - aligned_offset;
+                if (const auto requested_size = view_size ? static_cast<uint64_t>(view_size.read()) : 0; requested_size != 0)
+                {
+                    if (requested_size > storage_size - offset)
+                    {
+                        return STATUS_INVALID_VIEW_SIZE;
+                    }
+                    size = page_align_up(offset + requested_size) - aligned_offset;
+                }
+
+                const auto address = c.proc.section_views.map_view(c.win_emu.memory, section_entry.view_storage_id, aligned_offset,
+                                                                   static_cast<size_t>(size), protection, highest_address);
+                if (address == 0)
+                {
+                    return STATUS_NO_MEMORY;
+                }
+
+                if (view_size)
+                {
+                    view_size.write(size);
+                }
+                base_address.write(address);
+                return STATUS_SUCCESS;
+            }
+
             void release_pagefile_view(const syscall_context& c, const uint64_t backing)
             {
                 for (auto& [_, section_entry] : c.proc.sections)
@@ -481,10 +518,6 @@ namespace sogen
             const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
             const auto highest_address = highest_address_for_zero_bits(zero_bits);
 
-            // Pagefile-backed section: keep ONE persistent backing per section and hand out views into it
-            // (view = backing + offset). Real Windows shares the section's pages across every view; allocating
-            // a fresh region per map (the old behavior) broke view coherency and exhausted the 32-bit address
-            // space for callers like DXVK's D3D9 memory allocator, which maps one large section at many offsets.
             if (section_entry->file_name.empty())
             {
                 const auto backing_size = static_cast<size_t>(page_align_up(section_entry->maximum_size));
@@ -493,6 +526,20 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                if (section_entry->view_storage_id == 0 && section_entry->backing_address == 0 &&
+                    section_entry->allocation_attributes != SEC_RESERVE && c.win_emu.memory.can_alias_host_memory_anywhere())
+                {
+                    section_entry->view_storage_id = c.proc.section_views.create_storage(backing_size);
+                }
+
+                if (section_entry->view_storage_id != 0)
+                {
+                    return map_section_storage_view(c, *section_entry, static_cast<uint64_t>(offset), protection, highest_address,
+                                                    base_address, view_size);
+                }
+
+                // Without host memory that can be aliased anywhere, all views share ONE persistent guest backing
+                // (view = backing + offset), which keeps them coherent at the cost of address space.
                 if (section_entry->backing_address == 0)
                 {
                     const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
@@ -703,6 +750,11 @@ namespace sogen
                 const auto address = c.proc.dbwin_buffer;
                 c.proc.dbwin_buffer = 0;
                 c.win_emu.memory.release_memory(address, static_cast<size_t>(c.proc.dbwin_buffer_size));
+                return STATUS_SUCCESS;
+            }
+
+            if (c.proc.section_views.unmap_view(c.win_emu.memory, base_address))
+            {
                 return STATUS_SUCCESS;
             }
 

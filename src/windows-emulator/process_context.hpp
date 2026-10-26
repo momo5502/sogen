@@ -1,4 +1,5 @@
 #pragma once
+#include "section_view_manager.hpp"
 #include "arch/windows_abi.hpp"
 
 #include "emulator_utils.hpp"
@@ -462,6 +463,7 @@ namespace sogen
         uint64_t dbwin_buffer{0};
         uint64_t dbwin_buffer_size{0};
         std::map<uint64_t, uint32_t> orphaned_section_backings{};
+        section_view_manager section_views{};
 
         std::optional<NTSTATUS> exit_status{};
 
