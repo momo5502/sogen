@@ -764,6 +764,18 @@ namespace sogen
                 return ret(STATUS_INVALID_PARAMETER);
             }
 
+            if (info_class == FileCaseSensitiveInformation)
+            {
+                constexpr auto required_length = sizeof(FILE_CASE_SENSITIVE_INFORMATION);
+                if (length < required_length)
+                {
+                    return ret(STATUS_INFO_LENGTH_MISMATCH);
+                }
+
+                c.emu.write_memory(file_information, FILE_CASE_SENSITIVE_INFORMATION{});
+                return ret(STATUS_SUCCESS, required_length);
+            }
+
             if (info_class == FileIdInformation)
             {
                 if (!f->handle)
