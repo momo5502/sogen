@@ -157,6 +157,18 @@ namespace sogen
                     }
                 };
 
+                const auto write_package = [&](const uint64_t output_buffer) {
+                    EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
+                    proc_info.Size = core_size;
+                    proc_info.Relationship = RelationProcessorPackage;
+                    c.emu.write_memory(output_buffer, &proc_info, core_root_size);
+
+                    EMU_PROCESSOR_RELATIONSHIP64 package{};
+                    package.GroupCount = 1;
+                    package.GroupMask[0].Mask = active_processor_mask;
+                    c.emu.write_memory(output_buffer + core_root_size, package);
+                };
+
                 if (input_buffer_length != sizeof(LOGICAL_PROCESSOR_RELATIONSHIP))
                 {
                     return STATUS_INVALID_PARAMETER;
@@ -167,7 +179,7 @@ namespace sogen
                 if (request == RelationAll)
                 {
                     const auto core_total_size = static_cast<uint32_t>(core_size * active_processor_count);
-                    const auto required_size = static_cast<uint32_t>(core_total_size + group_size + numa_size);
+                    const auto required_size = static_cast<uint32_t>(core_total_size + core_size + group_size + numa_size);
 
                     if (return_length)
                     {
@@ -180,8 +192,25 @@ namespace sogen
                     }
 
                     write_cores(system_information);
-                    write_numa(system_information + core_total_size);
-                    write_group(system_information + core_total_size + numa_size);
+                    write_package(system_information + core_total_size);
+                    write_numa(system_information + core_total_size + core_size);
+                    write_group(system_information + core_total_size + core_size + numa_size);
+                    return STATUS_SUCCESS;
+                }
+
+                if (request == RelationProcessorPackage)
+                {
+                    if (return_length)
+                    {
+                        return_length.write(core_size);
+                    }
+
+                    if (system_information_length < core_size)
+                    {
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
+
+                    write_package(system_information);
                     return STATUS_SUCCESS;
                 }
 
