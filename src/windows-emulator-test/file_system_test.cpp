@@ -4,6 +4,7 @@
 #include <file_system.hpp>
 #include <filesystem/guest_file.hpp>
 
+#include <cstdlib>
 #include <fstream>
 #include <random>
 
@@ -28,6 +29,23 @@ namespace sogen::test
             std::string contents(size, '\0');
             contents.resize(file.read(std::as_writable_bytes(std::span(contents))));
             return contents;
+        }
+
+        bool host_directory_is_case_sensitive(const std::filesystem::path& directory)
+        {
+            const auto probe = directory / "SogenCaseProbe";
+            std::error_code ec{};
+
+            write_host_file(probe, "probe");
+            if (!std::filesystem::exists(probe, ec))
+            {
+                return false;
+            }
+
+            const auto lowercase_resolves = std::filesystem::exists(directory / "sogencaseprobe", ec);
+            std::filesystem::remove(probe, ec);
+
+            return !lowercase_resolves;
         }
 
         class FileSystemTest : public testing::Test
@@ -56,6 +74,20 @@ namespace sogen::test
             }
 
             std::filesystem::path root{};
+        };
+
+        class CaseSensitiveFileSystemTest : public FileSystemTest
+        {
+          protected:
+            void SetUp() override
+            {
+                FileSystemTest::SetUp();
+
+                if (!host_directory_is_case_sensitive(this->root))
+                {
+                    GTEST_SKIP() << "host filesystem is case insensitive";
+                }
+            }
         };
     }
 
@@ -311,5 +343,107 @@ namespace sogen::test
         guest_file renamer{saved_fs, path, u"rb", saved_fs.open(path, u"rb").file};
         renamer.defer_rename(windows_path{'c', {u"renamed.txt"}});
         EXPECT_NE(std::string::npos, get_restore_error(renamer, read_only_fs).find("with a pending rename"));
+    }
+
+    TEST_F(FileSystemTest, MissingPathsKeepTheRequestedSpelling)
+    {
+        file_system fs{this->root, filesystem_mode::read_write};
+
+        EXPECT_EQ(this->root / "c" / "new.txt", fs.translate(windows_path{'c', {u"new.txt"}}));
+        EXPECT_EQ(this->root / "c" / "absent" / "deeper" / "new.txt", fs.translate(windows_path{'c', {u"absent", u"deeper", u"new.txt"}}));
+
+        ASSERT_TRUE(fs.open(windows_path{'c', {u"new.txt"}}, u"wb").file);
+        EXPECT_TRUE(std::filesystem::exists(this->root / "c" / "new.txt"));
+
+        EXPECT_EQ(STATUS_SUCCESS, fs.create_directory(windows_path{'c', {u"made"}}));
+        EXPECT_TRUE(std::filesystem::is_directory(this->root / "c" / "made"));
+    }
+
+    TEST_F(CaseSensitiveFileSystemTest, HostFilesResolveRegardlessOfCase)
+    {
+        write_host_file(this->root / "c" / "PROPSYS.dll.mun", "resource");
+        file_system fs{this->root};
+
+        EXPECT_EQ(this->root / "c" / "PROPSYS.dll.mun", fs.translate(windows_path{'c', {u"propsys.dll.mun"}}));
+
+        const auto result = fs.open(windows_path{'c', {u"propsys.dll.mun"}}, u"rb");
+        ASSERT_TRUE(result.file);
+        EXPECT_EQ(8, result.file->size());
+
+        EXPECT_TRUE(fs.stat(windows_path{'c', {u"propsys.dll.mun"}}));
+    }
+
+    TEST_F(CaseSensitiveFileSystemTest, ADistinctCasedSiblingDoesNotDisableRecovery)
+    {
+        std::filesystem::create_directory(this->root / "C");
+        write_host_file(this->root / "c" / "Mixed.txt", "content");
+        file_system fs{this->root};
+
+        EXPECT_EQ(this->root / "c" / "Mixed.txt", fs.translate(windows_path{'c', {u"mixed.txt"}}));
+    }
+
+    TEST_F(CaseSensitiveFileSystemTest, ADirectoryMountWithATrailingSeparatorRecoversCase)
+    {
+        write_host_file(this->root / "c" / "Mixed.txt", "content");
+        file_system fs{this->root};
+        fs.map(windows_path{'d', {}}, this->root / "c" / "");
+
+        EXPECT_EQ(this->root / "c" / "Mixed.txt", fs.translate(windows_path{'d', {u"mixed.txt"}}));
+    }
+
+#ifdef OS_WINDOWS
+    TEST_F(FileSystemTest, DriveRootCanBeMounted)
+    {
+        const auto* windows_directory_name = std::getenv("WINDIR");
+        ASSERT_NE(nullptr, windows_directory_name);
+        const std::filesystem::path windows_directory{windows_directory_name};
+        const auto drive_root = windows_directory.root_path();
+        std::error_code ec{};
+        file_system fs{this->root};
+        fs.map(windows_path{'d', {}}, drive_root);
+        const auto host_path = fs.translate(windows_path{'d', {windows_directory.filename().u16string()}});
+
+        EXPECT_TRUE(std::filesystem::equivalent(host_path, windows_directory, ec));
+    }
+#endif
+
+    TEST_F(CaseSensitiveFileSystemTest, IntermediateDirectoriesResolveRegardlessOfCase)
+    {
+        std::filesystem::create_directories(this->root / "c" / "WinSxS" / "Manifests");
+        write_host_file(this->root / "c" / "WinSxS" / "Manifests" / "Common-Controls.manifest", "manifest");
+        file_system fs{this->root, filesystem_mode::read_write};
+
+        EXPECT_EQ(this->root / "c" / "WinSxS" / "Manifests" / "Common-Controls.manifest",
+                  fs.translate(windows_path{'c', {u"winsxs", u"manifests", u"common-controls.manifest"}}));
+        EXPECT_TRUE(fs.open(windows_path{'c', {u"winsxs", u"manifests", u"common-controls.manifest"}}, u"rb").file);
+
+        EXPECT_EQ(this->root / "c" / "WinSxS" / "Manifests" / "new.manifest",
+                  fs.translate(windows_path{'c', {u"winsxs", u"manifests", u"new.manifest"}}));
+        EXPECT_EQ(STATUS_SUCCESS, fs.create_directory(windows_path{'c', {u"winsxs", u"policies"}}));
+        EXPECT_TRUE(std::filesystem::is_directory(this->root / "c" / "WinSxS" / "policies"));
+    }
+
+    TEST_F(CaseSensitiveFileSystemTest, AmbiguousMatchesResolveDeterministically)
+    {
+        write_host_file(this->root / "c" / "Ambiguous.txt", "upper");
+        write_host_file(this->root / "c" / "aMBIGUOUS.txt", "lower");
+        file_system fs{this->root};
+
+        EXPECT_EQ(this->root / "c" / "Ambiguous.txt", fs.translate(windows_path{'c', {u"ambiguous.txt"}}));
+
+        write_host_file(this->root / "c" / "ambiguous.txt", "exact");
+        EXPECT_EQ(this->root / "c" / "ambiguous.txt", fs.translate(windows_path{'c', {u"ambiguous.txt"}}));
+        EXPECT_EQ("exact", read_host_file(fs.translate(windows_path{'c', {u"ambiguous.txt"}})));
+    }
+
+    TEST_F(CaseSensitiveFileSystemTest, CaseRecoveryStaysInsideTheMount)
+    {
+        std::filesystem::create_directories(this->root / "Escape");
+        write_host_file(this->root / "Escape" / "secret.txt", "secret");
+        file_system fs{this->root};
+
+        const windows_path escaping{'c', {u"..", u"escape", u"secret.txt"}};
+        EXPECT_EQ(this->root / "c" / "escape" / "secret.txt", fs.translate(escaping));
+        EXPECT_FALSE(fs.open(escaping, u"rb").file);
     }
 } // namespace sogen::test
