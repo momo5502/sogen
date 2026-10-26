@@ -60,10 +60,7 @@ class Game {
   final String executable;
 
   final List<String> arguments;
-
-  /// Variables added to the guest's environment.
   final Map<String, String> environment;
-
   final bool liveNetwork;
   final CpuBackend backend;
 
