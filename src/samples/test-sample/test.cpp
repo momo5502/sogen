@@ -2496,7 +2496,7 @@ namespace
         return true;
     }
 
-    bool test_set_dib_bits_to_device()
+    bool test_dib_blits()
     {
         constexpr int width = 4;
         constexpr int height = 1;
@@ -2543,19 +2543,17 @@ namespace
             DeleteDC(dc);
         });
 
-        for (const auto& d : dibs)
-        {
-            info.header.biBitCount = d.bpp;
+        const auto* bitmap_info = reinterpret_cast<const BITMAPINFO*>(&info);
+        const auto check = [&](const char* function, const dib& d, const auto& blit) {
             for (int x = 0; x < width; ++x)
             {
                 SetPixel(dc, x, 0, RGB(0, 0, 0));
             }
 
-            const int copied = SetDIBitsToDevice(dc, 0, 0, width, height, 0, 0, 0, height, d.bits.data(),
-                                                 reinterpret_cast<const BITMAPINFO*>(&info), DIB_RGB_COLORS);
+            const int copied = blit();
             if (copied != height)
             {
-                printf("SetDIBitsToDevice(%ubpp) copied %d scanlines\n", d.bpp, copied);
+                printf("%s(%ubpp) copied %d scanlines\n", function, d.bpp, copied);
                 return false;
             }
 
@@ -2565,10 +2563,28 @@ namespace
                 const COLORREF expected = palette[d.expected_index[x]];
                 if (actual != expected)
                 {
-                    printf("SetDIBitsToDevice(%ubpp) pixel %d is %06lX, expected %06lX\n", d.bpp, x, static_cast<unsigned long>(actual),
+                    printf("%s(%ubpp) pixel %d is %06lX, expected %06lX\n", function, d.bpp, x, static_cast<unsigned long>(actual),
                            static_cast<unsigned long>(expected));
                     return false;
                 }
+            }
+
+            return true;
+        };
+
+        for (const auto& d : dibs)
+        {
+            info.header.biBitCount = d.bpp;
+
+            const bool set_bits_ok = check("SetDIBitsToDevice", d, [&] {
+                return SetDIBitsToDevice(dc, 0, 0, width, height, 0, 0, 0, height, d.bits.data(), bitmap_info, DIB_RGB_COLORS);
+            });
+            const bool stretch_ok = check("StretchDIBits", d, [&] {
+                return StretchDIBits(dc, 0, 0, width, height, 0, 0, width, height, d.bits.data(), bitmap_info, DIB_RGB_COLORS, SRCCOPY);
+            });
+            if (!set_bits_ok || !stretch_ok)
+            {
+                return false;
             }
         }
 
@@ -2660,7 +2676,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_bcrypt_random, "BCrypt Random")
     RUN_TEST(test_ansi_oem_translation, "ANSI/OEM Translation")
     RUN_TEST(test_crypt_protect, "CryptProtect")
-    RUN_TEST(test_set_dib_bits_to_device, "GDI DIB")
+    RUN_TEST(test_dib_blits, "GDI DIB")
 
     return valid ? 0 : 1;
 }
