@@ -755,6 +755,11 @@ namespace sogen
                 return palette;
             }
 
+            size_t dib_stride(const uint64_t width, const uint32_t bit_count)
+            {
+                return static_cast<size_t>(((width * bit_count + 31u) / 32u) * 4u);
+            }
+
             uint32_t dib_pixel_to_bgra32(const uint8_t* row, const uint32_t x, const uint16_t bpp, const std::vector<uint32_t>& palette)
             {
                 switch (bpp)
@@ -2223,7 +2228,7 @@ namespace sogen
             const auto abs_height = header.biHeight > 0 ? static_cast<uint32_t>(header.biHeight)
                                                         : static_cast<uint32_t>(-static_cast<int64_t>(header.biHeight));
 
-            const auto stride = static_cast<uint32_t>(((static_cast<uint64_t>(width) * header.biBitCount + 31u) / 32u) * 4u);
+            const auto stride = static_cast<uint32_t>(dib_stride(width, header.biBitCount));
 
             const auto allocation_bytes = static_cast<uint64_t>(stride) * abs_height;
 
@@ -2301,7 +2306,7 @@ namespace sogen
             const uint16_t planes = 1;
             const uint16_t bit_count = surface.guest_bpp == 1 ? 1 : 32;
             const uint32_t compression = 0; // BI_RGB
-            const auto stride = ((static_cast<size_t>(surface.width) * bit_count + 31u) / 32u) * 4u;
+            const auto stride = dib_stride(surface.width, bit_count);
             const auto size_image = static_cast<uint32_t>(stride * surface.height);
             c.emu.write_memory(info + 4, &bi_width, sizeof(bi_width));
             c.emu.write_memory(info + 8, &bi_height, sizeof(bi_height));
@@ -2394,8 +2399,7 @@ namespace sogen
             const auto src_width = static_cast<uint32_t>(header->biWidth);
             const auto src_height = static_cast<uint32_t>(top_down ? -header->biHeight : header->biHeight);
             const auto stored_rows = std::min(scan_lines, src_height);
-            // DIB scanlines are DWORD-aligned, not tightly packed.
-            const size_t stride = ((static_cast<size_t>(src_width) * bit_count + 31u) / 32u) * 4u;
+            const size_t stride = dib_stride(src_width, bit_count);
 
             const auto palette = read_dib_palette(c, info, *header);
 
@@ -2486,8 +2490,7 @@ namespace sogen
             const auto img_width = static_cast<uint32_t>(header->biWidth);
             const auto img_height = static_cast<uint32_t>(top_down ? -header->biHeight : header->biHeight);
 
-            // DIB scanlines are DWORD-aligned, not tightly packed.
-            const size_t stride = ((static_cast<size_t>(img_width) * bit_count + 31u) / 32u) * 4u;
+            const size_t stride = dib_stride(img_width, bit_count);
 
             const auto palette = read_dib_palette(c, info, *header);
 
@@ -2711,9 +2714,8 @@ namespace sogen
                 {
                     const auto& surface = bmp_it->second;
                     const auto bpp = static_cast<uint16_t>(surface.guest_bpp != 0 ? surface.guest_bpp : 32u);
-                    const auto width_bytes = surface.guest_stride != 0
-                                                 ? surface.guest_stride
-                                                 : static_cast<uint32_t>(((static_cast<uint64_t>(surface.width) * bpp + 31u) / 32u) * 4u);
+                    const auto width_bytes =
+                        surface.guest_stride != 0 ? surface.guest_stride : static_cast<uint32_t>(dib_stride(surface.width, bpp));
 
                     // BITMAP (32-bit layout): bmType@0, bmWidth@4, bmHeight@8, bmWidthBytes@12,
                     // bmPlanes@16 (WORD), bmBitsPixel@18 (WORD), bmBits@20 (PVOID32).
