@@ -70,7 +70,14 @@ class SessionController(
         }
 
         connection = serviceConnection
-        return context.bindService(Intent(context, SogenService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
+        if (!context.bindService(Intent(context, SogenService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)) {
+            // Android keeps the connection registered even when binding fails.
+            context.unbindService(serviceConnection)
+            connection = null
+            return false
+        }
+
+        return true
     }
 
     fun stop() {
