@@ -75,7 +75,7 @@ namespace sogen
                 // that wake the client writes one pre-roll buffer and then blocks forever waiting on the event.
                 if (c.send_handle)
                 {
-                    win_emu.process.audio_render_event.store(c.send_handle, std::memory_order_relaxed);
+                    win_emu.process.pending_audio_render_events[win_emu.current_thread().id] = c.send_handle;
                 }
 
                 std::vector<uint8_t> payload(c.send_buffer_length, 0);

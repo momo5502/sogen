@@ -381,6 +381,7 @@ namespace sogen
             {
                 uint32_t id{};
                 bool claimed_sink{};
+                uint64_t render_event{};
                 stream_audio_format format{};
                 uint32_t buffer_bytes{};
                 uint64_t section_size{};
@@ -392,6 +393,7 @@ namespace sogen
                 {
                     buffer.write(this->id);
                     buffer.write(this->claimed_sink);
+                    buffer.write(this->render_event);
                     buffer.write(this->format);
                     buffer.write(this->buffer_bytes);
                     buffer.write(this->section_size);
@@ -404,6 +406,7 @@ namespace sogen
                 {
                     buffer.read(this->id);
                     buffer.read(this->claimed_sink);
+                    buffer.read(this->render_event);
                     buffer.read(this->format);
                     buffer.read(this->buffer_bytes);
                     buffer.read(this->section_size);
@@ -443,6 +446,7 @@ namespace sogen
                   sink_(sink),
                   id_(restored.id),
                   claimed_sink_(restored.claimed_sink),
+                  render_event_(restored.render_event),
                   stream_format_(restored.format),
                   buffer_bytes_(restored.buffer_bytes),
                   section_size_(restored.section_size),
@@ -500,6 +504,11 @@ namespace sogen
                 this->thread_ = std::thread(&render_stream::run, this);
             }
 
+            void set_render_event(const uint64_t event)
+            {
+                this->render_event_.store(event, std::memory_order_relaxed);
+            }
+
             state snapshot_state() const
             {
                 auto status = worker_status::running;
@@ -537,6 +546,7 @@ namespace sogen
                 state result{};
                 result.id = this->id_;
                 result.claimed_sink = this->claimed_sink_;
+                result.render_event = this->render_event_.load(std::memory_order_relaxed);
                 result.format = this->stream_format_;
                 result.buffer_bytes = this->buffer_bytes_;
                 result.section_size = this->section_size_;
@@ -687,8 +697,8 @@ namespace sogen
                     // rate and starves the sink. A bounded lag lets late wakes catch up without bursting after a
                     // long stall.
                     const auto now = std::chrono::steady_clock::now();
-                    const auto render_event = this->win_emu_.process.audio_render_event.load(std::memory_order_relaxed);
-                    if (render_event && now >= next_signal && this->sink_.owner() == this->id_)
+                    const auto render_event = this->render_event_.load(std::memory_order_relaxed);
+                    if (render_event && now >= next_signal)
                     {
                         this->win_emu_.request_guest_event_signal(make_handle(render_event), k_maximum_pending_render_wakes);
                         next_signal = std::max(next_signal + k_device_period, now - k_maximum_render_event_lag);
@@ -704,6 +714,7 @@ namespace sogen
             audio_sink& sink_;
             uint32_t id_{};
             bool claimed_sink_{};
+            std::atomic<uint64_t> render_event_{};
             stream_audio_format stream_format_{};
             uint32_t buffer_bytes_{};
             uint64_t section_size_{};
@@ -746,6 +757,7 @@ namespace sogen
                     case k_audio_opnum_create_stream:
                         return handle_create_stream(win_emu, c, writer, reply_handles);
                     case k_audio_opnum_start_stream:
+                        this->bind_render_event(win_emu, c);
                         return handle_post_create(writer);
                     case k_audio_opnum_stop_stream:
                         return handle_post_create(writer);
@@ -883,6 +895,31 @@ namespace sogen
                     section->backing_address = 0;
                 }
                 stream.section = {};
+            }
+
+            // An EVENTCALLBACK client registers its render event right before starting the stream, on the same thread.
+            // A lone pending event still belongs to the stream when the client started it from another thread.
+            void bind_render_event(windows_emulator& win_emu, const lpc_request_context& c)
+            {
+                const auto id = read_stream_id(win_emu, c);
+                const auto stream = id ? this->streams_.find(*id) : this->streams_.end();
+                if (stream == this->streams_.end() || !stream->second.render)
+                {
+                    return;
+                }
+
+                auto& pending = win_emu.process.pending_audio_render_events;
+                auto event = pending.find(win_emu.current_thread().id);
+                if (event == pending.end() && pending.size() == 1)
+                {
+                    event = pending.begin();
+                }
+
+                if (event != pending.end())
+                {
+                    stream->second.render->set_render_event(event->second);
+                    pending.erase(event);
+                }
             }
 
             void destroy_stream(windows_emulator& win_emu, const lpc_request_context& c)
