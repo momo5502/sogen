@@ -9,6 +9,45 @@ namespace sogen
 
     namespace syscalls
     {
+        namespace
+        {
+            // Keys are stored in canonical lower case, but Windows reports a key's name as it was created. Activating a WinRT
+            // class fails when combase reads its class key's name back in lower case.
+            std::u16string get_key_name(windows_emulator& win_emu, const registry_key& key)
+            {
+                const auto& path = key.path.get();
+                auto name = path.filename().u16string();
+                if (name.empty())
+                {
+                    return key.hive.get().filename().u16string();
+                }
+
+                const auto parent = win_emu.registry.get_key(utils::path_key{key.hive.get() / path.parent_path()});
+                if (!parent)
+                {
+                    return name;
+                }
+
+                const auto lower_name = utils::string::to_lower(name);
+                for (size_t index = 0; index < win_emu.registry.get_sub_key_count(*parent); ++index)
+                {
+                    const auto sub_key_name = win_emu.registry.get_sub_key_name(*parent, index);
+                    if (!sub_key_name)
+                    {
+                        continue;
+                    }
+
+                    auto display_name = u8_to_u16(*sub_key_name);
+                    if (utils::string::to_lower(display_name) == lower_name)
+                    {
+                        return display_name;
+                    }
+                }
+
+                return name;
+            }
+        }
+
         NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<handle> key_handle, const ACCESS_MASK /*desired_access*/,
                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
@@ -86,11 +125,7 @@ namespace sogen
 
             if (key_information_class == KeyBasicInformation)
             {
-                auto key_name = std::filesystem::path(key->path.get()).filename().u16string();
-                if (key_name.empty())
-                {
-                    key_name = std::filesystem::path(key->hive.get()).filename().u16string();
-                }
+                const auto key_name = get_key_name(c.win_emu, *key);
 
                 const auto required_size = offsetof(KEY_BASIC_INFORMATION, Name) + (key_name.size() * 2);
                 result_length.write(static_cast<ULONG>(required_size));
