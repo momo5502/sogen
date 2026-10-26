@@ -652,19 +652,19 @@ namespace sogen
 
                     // The cursors are guest memory, so a corrupt write cursor must not make the host replay the ring
                     // without end: at most one ring is new since the last poll, a cursor that went backwards starts
-                    // over, and nothing is queued while the device still holds a second of this stream.
+                    // over, and the device never holds more than a second of this stream. Whatever does not fit is
+                    // dropped, keeping the newest whole frames.
                     const uint64_t ring_bytes = this->buffer_bytes_;
                     const uint64_t pending = write >= this->submitted_ ? write - this->submitted_ : write;
-                    const uint64_t start = write - std::min(pending, ring_bytes);
                     const auto maximum_queued =
                         std::min<uint64_t>(this->stream_format_.average_bytes_per_second, k_maximum_host_queue_bytes);
 
                     const auto fed =
                         this->sink_.feed(this->win_emu_.audio(), this->id_, this->stream_format_.host_format, [&](audio_backend& audio) {
-                            if (const auto queued = audio.queued_bytes(); queued && *queued > maximum_queued)
-                            {
-                                return;
-                            }
+                            const auto queued = audio.queued_bytes().value_or(0);
+                            auto budget = queued < maximum_queued ? maximum_queued - queued : 0;
+                            budget -= budget % this->stream_format_.block_align;
+                            const uint64_t start = write - std::min({pending, ring_bytes, budget});
 
                             for (uint64_t pos = start; pos < write;)
                             {
