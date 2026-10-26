@@ -140,7 +140,7 @@ namespace sogen
 
                 if (const auto* f = c.files.get(h))
                 {
-                    return f->change_watch ? wait_state::not_signaled : wait_state::signaled;
+                    return f->change_watches.empty() ? wait_state::signaled : wait_state::not_signaled;
                 }
 
                 break;
@@ -272,7 +272,7 @@ namespace sogen
                 }
 
                 const auto* f = c.files.get(h);
-                if (!f || f->change_watch)
+                if (!f || !f->change_watches.empty())
                 {
                     return std::nullopt;
                 }

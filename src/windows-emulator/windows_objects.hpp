@@ -798,7 +798,7 @@ namespace sogen
         ACCESS_MASK access_mask{};
         uint32_t file_mode{}; // FileModeInformation
         uint8_t drive_number{'c' - 'a' + 1};
-        std::optional<directory_change_watch> change_watch{};
+        std::vector<directory_change_watch> change_watches{};
 
         bool is_file() const
         {
@@ -818,7 +818,7 @@ namespace sogen
             buffer.write(this->file_mode);
             buffer.write(this->drive_number);
             buffer.write(this->handle);
-            buffer.write_optional(this->change_watch);
+            buffer.write_vector(this->change_watches);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -829,7 +829,7 @@ namespace sogen
             buffer.read(this->file_mode);
             buffer.read(this->drive_number);
             buffer.read(this->handle);
-            buffer.read_optional(this->change_watch);
+            buffer.read_vector(this->change_watches);
         }
     };
 

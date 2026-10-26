@@ -1474,33 +1474,48 @@ namespace sogen
 
         namespace
         {
-            // Completes a pending change watch the way a cancelled request completes, so that waits on its event or on the
-            // directory itself end.
-            void cancel_change_watch(const syscall_context& c, file& directory)
+            void write_io_status_block(const syscall_context& c, const uint64_t address, const NTSTATUS status)
             {
-                const auto watch = *directory.change_watch;
-                directory.change_watch.reset();
-
-                if (watch.io_status_block != 0)
+                if (c.proc.is_wow64_process)
                 {
-                    if (c.proc.is_wow64_process)
+                    emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu32>>>{c.emu, address}.write({.Status = status, .Information = 0});
+                }
+                else
+                {
+                    emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>{c.emu, address}.write({.Status = status, .Information = 0});
+                }
+            }
+
+            // Completes the matching change watches the way cancelled requests complete, so that waits on their events or
+            // on the directory itself end.
+            template <typename Predicate>
+            size_t cancel_change_watches(const syscall_context& c, file& directory, const Predicate& matches)
+            {
+                const auto cancelled = std::erase_if(directory.change_watches, [&](const directory_change_watch& watch) {
+                    if (!matches(watch))
                     {
-                        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu32>>>{c.emu, watch.io_status_block}.write(
-                            {.Status = STATUS_CANCELLED, .Information = 0});
+                        return false;
                     }
-                    else
+
+                    if (watch.io_status_block != 0)
                     {
-                        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>{c.emu, watch.io_status_block}.write(
-                            {.Status = STATUS_CANCELLED, .Information = 0});
+                        write_io_status_block(c, watch.io_status_block, STATUS_CANCELLED);
                     }
+
+                    if (auto* event = c.proc.events.get(watch.event))
+                    {
+                        event->signaled = true;
+                    }
+
+                    return true;
+                });
+
+                if (cancelled != 0)
+                {
+                    c.win_emu.wake_idle_vcpu();
                 }
 
-                if (auto* event = c.proc.events.get(watch.event))
-                {
-                    event->signaled = true;
-                }
-
-                c.win_emu.wake_idle_vcpu();
+                return cancelled;
             }
         }
 
@@ -1518,10 +1533,7 @@ namespace sogen
             }
             else if (auto* f = c.proc.files.get(resolved))
             {
-                if (f->change_watch && f->change_watch->thread_id == c.thread().id)
-                {
-                    cancel_change_watch(c, *f);
-                }
+                cancel_change_watches(c, *f, [&](const directory_change_watch& watch) { return watch.thread_id == c.thread().id; });
             }
             else if (resolved != STDIN_HANDLE && resolved != STDOUT_HANDLE && resolved != CONSOLE_HANDLE && resolved != NUL_HANDLE)
             {
@@ -1557,25 +1569,17 @@ namespace sogen
                     return STATUS_INVALID_HANDLE;
                 }
 
-                if (!f->change_watch || (io_request_to_cancel && io_request_to_cancel.value() != f->change_watch->io_status_block))
-                {
-                    io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_NOT_FOUND, .Information = 0});
-                    return STATUS_NOT_FOUND;
-                }
-
-                cancel_change_watch(c, *f);
-                io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_SUCCESS, .Information = 0});
-                return STATUS_SUCCESS;
+                const auto request = io_request_to_cancel.value();
+                const auto cancelled = cancel_change_watches(
+                    c, *f, [&](const directory_change_watch& watch) { return request == 0 || watch.io_status_block == request; });
+                const auto status = cancelled != 0 ? STATUS_SUCCESS : STATUS_NOT_FOUND;
+                write_io_status_block(c, io_status_block.value(), status);
+                return status;
             }
 
-            if (!device->cancel_io(c.win_emu, io_request_to_cancel.value()))
-            {
-                io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_NOT_FOUND, .Information = 0});
-                return STATUS_NOT_FOUND;
-            }
-
-            io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_SUCCESS, .Information = 0});
-            return STATUS_SUCCESS;
+            const auto status = device->cancel_io(c.win_emu, io_request_to_cancel.value()) ? STATUS_SUCCESS : STATUS_NOT_FOUND;
+            write_io_status_block(c, io_status_block.value(), status);
+            return status;
         }
 
         NTSTATUS handle_NtWriteFile(const syscall_context& c, const handle file_handle, const uint64_t event, const uint64_t apc_routine,

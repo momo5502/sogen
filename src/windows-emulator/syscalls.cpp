@@ -1480,11 +1480,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            directory->change_watch = directory_change_watch{
+            directory->change_watches.push_back({
                 .thread_id = c.thread().id,
                 .event = event_handle.bits,
                 .io_status_block = io_status_block,
-            };
+            });
             if (event)
             {
                 event->signaled = false;
