@@ -674,12 +674,17 @@ namespace sogen
         std::vector<alpc_reply_handle> pending_alpc_message_handles{};
         std::map<uint32_t, std::vector<std::array<uint64_t, 2>>> pending_alpc_reply_views{};
 
-        // The guest event a WASAPI EVENTCALLBACK client registered via SetEventHandle on its render endpoint.
-        // The audio render thread signals it at the device rate so the client's render loop wakes and refills the
-        // shared buffer. Stored as a handle rather than a pointer: the render thread is host-owned, so it signals
-        // this through windows_emulator::request_guest_event_signal, which resolves it under the kernel lock instead
-        // of racing a close on an emulator thread.
-        std::atomic<uint64_t> audio_render_event{};
+        // Guest events WASAPI EVENTCALLBACK clients registered via SetEventHandle, keyed by the stream whose endpoint
+        // port received them. The audio service hands each to its stream when the stream starts.
+        std::map<uint32_t, uint64_t> audio_render_events_by_stream{};
+
+        // Events registered through an unnamed endpoint port, keyed by the registering thread instead, which also
+        // starts the stream. An entry whose stream is never started stays until that thread registers again.
+        std::map<uint32_t, uint64_t> pending_audio_render_events{};
+
+        // Audio streams are numbered per process, so an endpoint port name identifies one stream across every
+        // audio-service connection.
+        uint32_t next_audio_stream_id{1};
 
         // Extended parameters from last NtMapViewOfSectionEx call
         // These can be used by other syscalls like NtAllocateVirtualMemoryEx

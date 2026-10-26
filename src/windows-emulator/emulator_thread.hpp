@@ -108,10 +108,9 @@ namespace sogen
         uint64_t apc_argument2{};
         uint64_t apc_argument3{};
 
-        // For a WoW64 I/O completion APC: the WoW64 layer's 64-bit I/O status block (apc_argument2) is a
-        // reused per-thread scratch buffer. A syscall issued between this APC being queued and dispatched
-        // overwrites it, so the completion routine would read a stale byte count. Re-stamp the 32-bit status
-        // block right before the APC runs to guarantee the correct result reaches the guest.
+        // For a WoW64 I/O completion APC: apc_argument2 is the caller's 32-bit I/O status block. The kernel writes
+        // it as it dispatches the completion APC, so whatever the caller left there while the request was pending
+        // is superseded; re-stamp it right before the APC runs.
         bool restamp_io_status_block{false};
         int32_t io_status{};
         uint32_t io_information{};

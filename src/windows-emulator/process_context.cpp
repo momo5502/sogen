@@ -813,7 +813,9 @@ namespace sogen
         buffer.write(this->drop_low_level_characters);
         buffer.write_map(this->raw_inputs);
         buffer.write(this->next_raw_input_token);
-        buffer.write_atomic(this->audio_render_event);
+        buffer.write_map(this->audio_render_events_by_stream);
+        buffer.write_map(this->pending_audio_render_events);
+        buffer.write(this->next_audio_stream_id);
 
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
@@ -935,7 +937,9 @@ namespace sogen
         buffer.read(this->drop_low_level_characters);
         buffer.read_map(this->raw_inputs);
         buffer.read(this->next_raw_input_token);
-        buffer.read_atomic(this->audio_render_event);
+        buffer.read_map(this->audio_render_events_by_stream);
+        buffer.read_map(this->pending_audio_render_events);
+        buffer.read(this->next_audio_stream_id);
 
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);

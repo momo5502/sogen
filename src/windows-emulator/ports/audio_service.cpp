@@ -39,11 +39,41 @@ namespace sogen
         constexpr uint32_t k_audio_opnum_derive_stream_category = 122; // {D574D111} AudioServerDeriveStreamCategory
 
         constexpr NTSTATUS k_hr_ok = 0;
+        constexpr NTSTATUS k_hr_false = 1;
 
         // An NDR [out] context handle: a 4-byte attributes field + a 16-byte UUID identifying the stream. The
-        // client stores this and passes it back as the binding for the follow-on stream RPCs.
-        constexpr std::array<uint8_t, 16> k_stream_context_uuid = {0x53, 0x6f, 0x67, 0x65, 0x6e, 0x41, 0x75, 0x64,
-                                                                   0x69, 0x6f, 0x53, 0x74, 0x72, 0x6d, 0x00, 0x01};
+        // client stores this and passes it back as the binding for the follow-on stream RPCs, at the start of their
+        // request. Its last four bytes carry the stream id, since one client can hold several streams at once.
+        constexpr std::array<uint8_t, 12> k_stream_context_uuid_prefix = {0x53, 0x6f, 0x67, 0x65, 0x6e, 0x41,
+                                                                          0x75, 0x64, 0x69, 0x6f, 0x53, 0x74};
+
+        std::array<uint8_t, 16> make_stream_context_uuid(const uint32_t stream_id)
+        {
+            std::array<uint8_t, 16> uuid{};
+            std::memcpy(uuid.data(), k_stream_context_uuid_prefix.data(), k_stream_context_uuid_prefix.size());
+            std::memcpy(uuid.data() + k_stream_context_uuid_prefix.size(), &stream_id, sizeof(stream_id));
+            return uuid;
+        }
+
+        std::optional<uint32_t> read_stream_id(windows_emulator& win_emu, const lpc_request_context& c)
+        {
+            constexpr size_t context_attributes_size = 4;
+            std::array<uint8_t, 16> uuid{};
+            if (!c.send_buffer || c.send_buffer_length < context_attributes_size + uuid.size())
+            {
+                return std::nullopt;
+            }
+
+            win_emu.emu().read_memory(c.send_buffer + context_attributes_size, uuid.data(), uuid.size());
+            if (!std::equal(k_stream_context_uuid_prefix.begin(), k_stream_context_uuid_prefix.end(), uuid.begin()))
+            {
+                return std::nullopt;
+            }
+
+            uint32_t stream_id{};
+            std::memcpy(&stream_id, uuid.data() + k_stream_context_uuid_prefix.size(), sizeof(stream_id));
+            return stream_id;
+        }
 
         // The audio-session context handle handed back by AudioServerGetAudioSession (opnum 6) and round-tripped
         // by the AudioSession* opnums (e.g. AudioSessionGetState, opnum 27). Opaque to the client, which only
@@ -129,6 +159,10 @@ namespace sogen
         // latency to roughly this plus that buffer.
         constexpr uint64_t k_host_queue_cushion_ms = 60;
 
+        // A stream stops feeding the host while the device still holds a second of it. The byte rate comes from the
+        // guest's format, so the limit also has an absolute ceiling (a second of 8-channel float at 192 kHz is 6 MiB).
+        constexpr uint64_t k_maximum_host_queue_bytes = 16ull * 1024 * 1024;
+
         // The engine period reported by handle_get_device_period, and the same span expressed in bytes. An
         // event-driven client is woken once per period consumed, so this also paces how often we signal it.
         constexpr int64_t k_device_period_hns = 100000; // 10 ms
@@ -162,14 +196,22 @@ namespace sogen
             uint16_t block_align{};
         };
 
-        std::optional<stream_audio_format> read_stream_audio_format(windows_emulator& win_emu, const lpc_request_context& c,
-                                                                    const size_t pointer_size)
+        // Where AudioClientRpc v2.8 places the deferred WAVEFORMATEXTENSIBLE of a request, in NDR32 and NDR64.
+        struct request_format_offsets
         {
-            // AudioClientRpc v2.8 opnum 4 places its deferred WAVEFORMATEXTENSIBLE at byte 136 in NDR32 and byte
-            // 152 in NDR64. These offsets and the 40-byte extent were confirmed against native audiosrv traffic.
-            constexpr size_t format_offset_32 = 136;
-            constexpr size_t format_offset_64 = 152;
-            const auto format_offset = pointer_size == utils::aligned_binary_writer::pointer_size_32 ? format_offset_32 : format_offset_64;
+            size_t ndr32{};
+            size_t ndr64{};
+        };
+
+        // Opnum 4 offsets were confirmed against native audiosrv traffic, opnum 1 offsets against the requests of 32- and
+        // 64-bit IAudioClient::IsFormatSupported callers.
+        constexpr request_format_offsets k_open_stream_format_offsets{.ndr32 = 136, .ndr64 = 152};
+        constexpr request_format_offsets k_is_format_supported_format_offsets{.ndr32 = 308, .ndr64 = 336};
+
+        std::optional<stream_audio_format> read_stream_audio_format(windows_emulator& win_emu, const lpc_request_context& c,
+                                                                    const size_t pointer_size, const request_format_offsets& offsets)
+        {
+            const auto format_offset = pointer_size == utils::aligned_binary_writer::pointer_size_32 ? offsets.ndr32 : offsets.ndr64;
             constexpr uint16_t wave_format_extensible_tag = 0xFFFE;
             constexpr uint16_t extensible_size = 22;
             constexpr uint32_t subtype_pcm = 1;
@@ -227,6 +269,100 @@ namespace sogen
             return result;
         }
 
+        // The host device behind every stream of an audio-service port. The host plays a single format, so the most
+        // recently started stream owns it and the others are drained without sound; once the owner goes away, the next
+        // stream that still plays takes the device over. XAudio2 briefly opens a second stream next to its first and
+        // then destroys it, so neither stream may feed or stop the device while the other one owns it.
+        class audio_sink
+        {
+          public:
+            void take_over(audio_backend& audio, const uint32_t stream_id, const audio_format& format)
+            {
+                const std::lock_guard lock{this->mutex_};
+                if (this->owner_ != 0 && this->owner_ != stream_id)
+                {
+                    audio.stop();
+                }
+
+                this->owner_ = stream_id;
+                this->reopen_pending_ = false;
+                this->has_device_ = audio.start(format);
+            }
+
+            struct feed_result
+            {
+                bool submitted{};
+                std::optional<uint64_t> queued_bytes{};
+            };
+
+            // Hands the PCM to the device if the stream still owns it, along with how much the device has not played
+            // yet when it can report that.
+            template <typename Submit>
+            feed_result feed(audio_backend& audio, const uint32_t stream_id, const audio_format& format, const Submit& submit)
+            {
+                const std::lock_guard lock{this->mutex_};
+                if (this->owner_ == 0)
+                {
+                    this->owner_ = stream_id;
+                    this->reopen_pending_ = true;
+                }
+
+                if (this->owner_ != stream_id)
+                {
+                    return {};
+                }
+
+                if (this->reopen_pending_)
+                {
+                    this->reopen_pending_ = false;
+                    this->has_device_ = audio.start(format);
+                }
+
+                if (!this->has_device_)
+                {
+                    return {};
+                }
+
+                submit(audio);
+                return {.submitted = true, .queued_bytes = audio.queued_bytes()};
+            }
+
+            void release(audio_backend& audio, const uint32_t stream_id)
+            {
+                const std::lock_guard lock{this->mutex_};
+                if (this->owner_ != stream_id)
+                {
+                    return;
+                }
+
+                audio.stop();
+                this->owner_ = 0;
+                this->has_device_ = false;
+                this->reopen_pending_ = false;
+            }
+
+            uint32_t owner() const
+            {
+                const std::lock_guard lock{this->mutex_};
+                return this->owner_;
+            }
+
+            // The device was not carried over from the snapshot, so a restored owner reopens it on its next feed.
+            void restore_owner(const uint32_t stream_id)
+            {
+                const std::lock_guard lock{this->mutex_};
+                this->owner_ = stream_id;
+                this->has_device_ = false;
+                this->reopen_pending_ = stream_id != 0;
+            }
+
+          private:
+            mutable std::mutex mutex_{};
+            uint32_t owner_{};
+            bool has_device_{};
+            bool reopen_pending_{};
+        };
+
         // Emulates the audio endpoint's hardware DMA. The render section handed to the guest is backed by a
         // host-owned buffer aliased into the guest address space (allocate_host_memory), so the guest and this
         // object share the exact same memory. A host thread drains that buffer at the device rate: it forwards
@@ -247,6 +383,9 @@ namespace sogen
           public:
             struct state
             {
+                uint32_t id{};
+                bool claimed_sink{};
+                uint64_t render_event{};
                 stream_audio_format format{};
                 uint32_t buffer_bytes{};
                 uint64_t section_size{};
@@ -256,6 +395,9 @@ namespace sogen
 
                 void serialize(utils::buffer_serializer& buffer) const
                 {
+                    buffer.write(this->id);
+                    buffer.write(this->claimed_sink);
+                    buffer.write(this->render_event);
                     buffer.write(this->format);
                     buffer.write(this->buffer_bytes);
                     buffer.write(this->section_size);
@@ -266,6 +408,9 @@ namespace sogen
 
                 void deserialize(utils::buffer_deserializer& buffer)
                 {
+                    buffer.read(this->id);
+                    buffer.read(this->claimed_sink);
+                    buffer.read(this->render_event);
                     buffer.read(this->format);
                     buffer.read(this->buffer_bytes);
                     buffer.read(this->section_size);
@@ -275,9 +420,12 @@ namespace sogen
                 }
             };
 
-            render_stream(windows_emulator& win_emu, const stream_audio_format& format, const uint32_t buffer_bytes,
-                          const uint64_t section_size, const uint8_t* control_header, const size_t control_header_size)
+            render_stream(windows_emulator& win_emu, audio_sink& sink, const uint32_t id, const stream_audio_format& format,
+                          const uint32_t buffer_bytes, const uint64_t section_size, const uint8_t* control_header,
+                          const size_t control_header_size)
                 : win_emu_(win_emu),
+                  sink_(sink),
+                  id_(id),
                   stream_format_(format),
                   buffer_bytes_(buffer_bytes),
                   section_size_(section_size),
@@ -297,8 +445,12 @@ namespace sogen
                 this->start();
             }
 
-            render_stream(windows_emulator& win_emu, state restored)
+            render_stream(windows_emulator& win_emu, audio_sink& sink, state restored)
                 : win_emu_(win_emu),
+                  sink_(sink),
+                  id_(restored.id),
+                  claimed_sink_(restored.claimed_sink),
+                  render_event_(restored.render_event),
                   stream_format_(restored.format),
                   buffer_bytes_(restored.buffer_bytes),
                   section_size_(restored.section_size),
@@ -334,9 +486,9 @@ namespace sogen
                     this->thread_.join();
                 }
 
+                this->sink_.release(this->win_emu_.audio(), this->id_);
                 if (this->mapped_)
                 {
-                    this->win_emu_.audio().stop();
                     this->win_emu_.memory.release_memory(this->guest_address_, static_cast<size_t>(this->section_size_));
                 }
             }
@@ -356,7 +508,13 @@ namespace sogen
                 this->thread_ = std::thread(&render_stream::run, this);
             }
 
-            state snapshot_state() const
+            void set_render_event(const uint64_t event)
+            {
+                this->render_event_.store(event, std::memory_order_relaxed);
+            }
+
+            // Holds the render thread between two polls, so its state stays put until resume_worker().
+            void pause_worker() const
             {
                 auto status = worker_status::running;
                 while (!this->worker_status_.compare_exchange_strong(status, worker_status::pause_requested, std::memory_order_acq_rel,
@@ -382,15 +540,22 @@ namespace sogen
                 {
                     throw std::runtime_error("[audio-service] Render stream stopped while taking a snapshot");
                 }
+            }
 
-                const auto resume_worker = utils::finally([this] {
-                    auto expected = worker_status::paused;
-                    this->worker_status_.compare_exchange_strong(expected, worker_status::running, std::memory_order_release,
-                                                                 std::memory_order_relaxed);
-                    this->worker_status_.notify_all();
-                });
+            void resume_worker() const
+            {
+                auto expected = worker_status::paused;
+                this->worker_status_.compare_exchange_strong(expected, worker_status::running, std::memory_order_release,
+                                                             std::memory_order_relaxed);
+                this->worker_status_.notify_all();
+            }
 
+            state paused_state() const
+            {
                 state result{};
+                result.id = this->id_;
+                result.claimed_sink = this->claimed_sink_;
+                result.render_event = this->render_event_.load(std::memory_order_relaxed);
                 result.format = this->stream_format_;
                 result.buffer_bytes = this->buffer_bytes_;
                 result.section_size = this->section_size_;
@@ -434,8 +599,7 @@ namespace sogen
 
             void run()
             {
-                bool tried_start = false;
-                bool has_device = false;
+                bool started = false;
                 uint64_t play_base{};
                 std::chrono::steady_clock::time_point anchor{};
                 std::chrono::steady_clock::time_point next_signal{};
@@ -471,26 +635,48 @@ namespace sogen
                         continue;
                     }
 
-                    if (!tried_start)
+                    if (!started)
                     {
-                        has_device = this->win_emu_.audio().start(this->stream_format_.host_format);
-                        tried_start = true;
+                        started = true;
                         play_base = this->read_cursor(k_play_cursor_offset);
                         anchor = std::chrono::steady_clock::now();
                     }
 
+                    if (!this->claimed_sink_)
+                    {
+                        this->claimed_sink_ = true;
+                        this->sink_.take_over(this->win_emu_.audio(), this->id_, this->stream_format_.host_format);
+                    }
+
                     uint64_t play{};
 
-                    if (has_device)
-                    {
-                        for (uint64_t pos = this->submitted_; pos < write;)
-                        {
-                            const uint64_t ring_offset = pos % this->buffer_bytes_;
-                            const uint64_t chunk = std::min<uint64_t>(write - pos, this->buffer_bytes_ - ring_offset);
-                            this->win_emu_.audio().submit(this->host_ptr_ + k_render_data_offset + ring_offset, static_cast<size_t>(chunk));
-                            pos += chunk;
-                        }
+                    // The cursors are guest memory, so a corrupt write cursor must not make the host replay the ring
+                    // without end: at most one ring is new since the last poll, a cursor that went backwards starts
+                    // over, and a device that reports its queue never holds more than a second of this stream. Whatever
+                    // does not fit is dropped, keeping the newest whole frames.
+                    const uint64_t ring_bytes = this->buffer_bytes_;
+                    const uint64_t pending = write >= this->submitted_ ? write - this->submitted_ : write;
+                    const auto maximum_queued =
+                        std::min<uint64_t>(this->stream_format_.average_bytes_per_second, k_maximum_host_queue_bytes);
 
+                    const auto fed =
+                        this->sink_.feed(this->win_emu_.audio(), this->id_, this->stream_format_.host_format, [&](audio_backend& audio) {
+                            const auto queued = audio.queued_bytes().value_or(0);
+                            auto budget = queued < maximum_queued ? maximum_queued - queued : 0;
+                            budget -= budget % this->stream_format_.block_align;
+                            const uint64_t start = write - std::min({pending, ring_bytes, budget});
+
+                            for (uint64_t pos = start; pos < write;)
+                            {
+                                const uint64_t ring_offset = pos % this->buffer_bytes_;
+                                const uint64_t chunk = std::min<uint64_t>(write - pos, this->buffer_bytes_ - ring_offset);
+                                audio.submit(this->host_ptr_ + k_render_data_offset + ring_offset, static_cast<size_t>(chunk));
+                                pos += chunk;
+                            }
+                        });
+
+                    if (fed.submitted)
+                    {
                         // Advance the play cursor so the guest sees genuine backpressure. Prefer deriving it from
                         // what the device actually played (everything submitted minus what is still queued) plus a
                         // fixed cushion: a wall-clock estimate drifts ahead of the device clock, so the host queue
@@ -498,7 +684,7 @@ namespace sogen
                         // cushion keeps the sink from starving, since the guest's own buffer is far too small to
                         // serve as one. Fall back to the clock when the sink cannot report its queue.
                         uint64_t played{};
-                        if (const auto queued = this->win_emu_.audio().queued_bytes())
+                        if (const auto queued = fed.queued_bytes)
                         {
                             const auto consumed = write > *queued ? write - *queued : 0;
                             const auto cushion = this->stream_format_.average_bytes_per_second * k_host_queue_cushion_ms / 1000;
@@ -515,8 +701,9 @@ namespace sogen
                     }
                     else
                     {
-                        // No host audio device (e.g. headless / CI): keep the play cursor level with the write
-                        // cursor so the guest's render loop never blocks waiting for a buffer that nothing drains.
+                        // No host audio device (e.g. headless / CI), or another stream owns it: keep the play cursor
+                        // level with the write cursor so the guest's render loop never blocks waiting for a buffer that
+                        // nothing drains.
                         play = write;
                     }
 
@@ -533,7 +720,7 @@ namespace sogen
                     // rate and starves the sink. A bounded lag lets late wakes catch up without bursting after a
                     // long stall.
                     const auto now = std::chrono::steady_clock::now();
-                    const auto render_event = this->win_emu_.process.audio_render_event.load(std::memory_order_relaxed);
+                    const auto render_event = this->render_event_.load(std::memory_order_relaxed);
                     if (render_event && now >= next_signal)
                     {
                         this->win_emu_.request_guest_event_signal(make_handle(render_event), k_maximum_pending_render_wakes);
@@ -547,6 +734,10 @@ namespace sogen
             static constexpr uint64_t k_ns_per_second = 1'000'000'000ULL;
 
             windows_emulator& win_emu_;
+            audio_sink& sink_;
+            uint32_t id_{};
+            bool claimed_sink_{};
+            std::atomic<uint64_t> render_event_{};
             stream_audio_format stream_format_{};
             uint32_t buffer_bytes_{};
             uint64_t section_size_{};
@@ -572,12 +763,11 @@ namespace sogen
                     case k_audio_opnum_get_mix_format:
                         return handle_get_mix_format(writer);
                     case k_audio_opnum_is_format_supported:
-                        return handle_is_format_supported(writer);
+                        return handle_is_format_supported(win_emu, c, writer);
                     case k_audio_opnum_get_device_period:
                         return handle_get_device_period(writer);
                     case k_audio_opnum_destroy_stream:
-                        this->discard_render_stream(win_emu);
-                        this->stream_format_.reset();
+                        this->destroy_stream(win_emu, c);
                         return handle_post_create(writer);
                     case k_audio_opnum_open_stream:
                         return handle_open_stream(win_emu, c, writer);
@@ -590,6 +780,7 @@ namespace sogen
                     case k_audio_opnum_create_stream:
                         return handle_create_stream(win_emu, c, writer, reply_handles);
                     case k_audio_opnum_start_stream:
+                        this->bind_render_event(win_emu, c);
                         return handle_post_create(writer);
                     case k_audio_opnum_stop_stream:
                         return handle_post_create(writer);
@@ -618,99 +809,200 @@ namespace sogen
                 }
             }
 
+            // Every render thread is held before anything is recorded: a stream taking the device over between two
+            // streams' states would otherwise save an owner that does not match them.
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
-                rpc_port::serialize_object(buffer);
-                buffer.write_optional(this->stream_format_);
-                buffer.write(this->render_stream_ != nullptr);
-                if (this->render_stream_)
+                std::vector<const render_stream*> paused{};
+                paused.reserve(this->streams_.size());
+                const auto resume = utils::finally([&] {
+                    for (const auto* stream : paused)
+                    {
+                        stream->resume_worker();
+                    }
+                });
+
+                for (const auto& stream : this->streams_ | std::views::values)
                 {
-                    buffer.write(this->render_stream_->snapshot_state());
+                    if (stream.render)
+                    {
+                        stream.render->pause_worker();
+                        paused.push_back(stream.render.get());
+                    }
                 }
-                buffer.write(this->render_section_handle_);
+
+                rpc_port::serialize_object(buffer);
+                buffer.write(this->sink_.owner());
+                buffer.write(static_cast<uint64_t>(this->streams_.size()));
+                for (const auto& [id, stream] : this->streams_)
+                {
+                    buffer.write(id);
+                    buffer.write_optional(stream.format);
+                    buffer.write(stream.render != nullptr);
+                    if (stream.render)
+                    {
+                        buffer.write(stream.render->paused_state());
+                    }
+                    buffer.write(stream.section);
+                }
             }
 
             void deserialize_object(utils::buffer_deserializer& buffer) override
             {
                 rpc_port::deserialize_object(buffer);
-                buffer.read_optional(this->stream_format_);
-                this->render_stream_.reset();
-                this->restored_stream_.reset();
-                if (buffer.read<bool>())
+                buffer.read(this->restored_sink_owner_);
+                this->streams_.clear();
+                const auto stream_count = buffer.read<uint64_t>();
+                for (uint64_t i = 0; i < stream_count; ++i)
                 {
-                    this->restored_stream_.emplace(buffer.read<render_stream::state>());
+                    auto& stream = this->streams_[buffer.read<uint32_t>()];
+                    buffer.read_optional(stream.format);
+                    if (buffer.read<bool>())
+                    {
+                        stream.restored.emplace(buffer.read<render_stream::state>());
+                    }
+                    buffer.read(stream.section);
                 }
-                buffer.read(this->render_section_handle_);
             }
 
             void prepare_for_state_restore(windows_emulator& win_emu) override
             {
-                this->render_stream_.reset();
-                this->restored_stream_.reset();
-                if (auto* section = win_emu.process.sections.get(this->render_section_handle_))
+                for (auto& stream : this->streams_ | std::views::values)
                 {
-                    section->backing_address = 0;
+                    detach_render_stream(win_emu, stream);
                 }
-                this->render_section_handle_ = {};
+                this->streams_.clear();
             }
 
             void restore_after_state_restore(windows_emulator& win_emu) override
             {
-                if (!this->restored_stream_)
+                for (auto& stream : this->streams_ | std::views::values)
                 {
-                    if (this->render_section_handle_.bits != 0)
+                    if (!stream.restored)
                     {
-                        throw std::runtime_error("[audio-service] Cannot restore render stream: section exists without stream state");
+                        if (stream.section.bits != 0)
+                        {
+                            throw std::runtime_error("[audio-service] Cannot restore render stream: section exists without stream state");
+                        }
+                        continue;
+                    }
+
+                    if (!stream.format)
+                    {
+                        throw std::runtime_error("[audio-service] Cannot restore render stream: negotiated format is missing");
+                    }
+
+                    auto* section = win_emu.process.sections.get(stream.section);
+                    if (!section || section->backing_address != stream.restored->guest_address)
+                    {
+                        throw std::runtime_error("[audio-service] Cannot restore render stream: section metadata is inconsistent");
+                    }
+
+                    stream.render = std::make_unique<render_stream>(win_emu, this->sink_, std::move(*stream.restored));
+                    section->backing_address = stream.render->guest_address();
+                    stream.restored.reset();
+                }
+
+                this->sink_.restore_owner(this->restored_sink_owner_);
+                for (auto& stream : this->streams_ | std::views::values)
+                {
+                    if (stream.render)
+                    {
+                        stream.render->start();
+                    }
+                }
+            }
+
+          private:
+            struct audio_stream
+            {
+                std::optional<stream_audio_format> format{};
+                std::unique_ptr<render_stream> render{};
+                std::optional<render_stream::state> restored{};
+                handle section{};
+            };
+
+            audio_sink sink_{};
+            std::map<uint32_t, audio_stream> streams_{};
+            uint32_t restored_sink_owner_{};
+
+            static void detach_render_stream(windows_emulator& win_emu, audio_stream& stream)
+            {
+                stream.render.reset();
+                stream.restored.reset();
+                if (auto* section = win_emu.process.sections.get(stream.section))
+                {
+                    section->backing_address = 0;
+                }
+                stream.section = {};
+            }
+
+            // The endpoint control message carrying the render event does not name its stream. IAudioClient::Start fails
+            // unless an EVENTCALLBACK client set its event first, and audioses forwards SetEventHandle on the calling
+            // thread, so the event this thread registered belongs to the stream it now starts (XAudio2 does both on one
+            // thread per stream). A lone pending event is unambiguous even when Start comes from another thread; with
+            // several, binding a guess could wake the wrong client.
+            void bind_render_event(windows_emulator& win_emu, const lpc_request_context& c)
+            {
+                const auto id = read_stream_id(win_emu, c);
+                const auto stream = id ? this->streams_.find(*id) : this->streams_.end();
+                if (stream == this->streams_.end() || !stream->second.render)
+                {
+                    win_emu.log.warn("[audio-service] StartStream for an unknown or unopened stream\n");
+                    return;
+                }
+
+                auto& by_stream = win_emu.process.audio_render_events_by_stream;
+                if (const auto registered = by_stream.find(*id); registered != by_stream.end())
+                {
+                    stream->second.render->set_render_event(registered->second);
+                    by_stream.erase(registered);
+                    return;
+                }
+
+                auto& pending = win_emu.process.pending_audio_render_events;
+                auto event = pending.find(win_emu.current_thread().id);
+                if (event == pending.end() && pending.size() == 1)
+                {
+                    event = pending.begin();
+                }
+
+                if (event == pending.end())
+                {
+                    if (!pending.empty())
+                    {
+                        win_emu.log.error("[audio-service] Cannot tell which of %zu pending render events belongs to stream %u\n",
+                                          pending.size(), *id);
                     }
                     return;
                 }
 
-                if (!this->stream_format_)
-                {
-                    throw std::runtime_error("[audio-service] Cannot restore render stream: negotiated format is missing");
-                }
-
-                auto* section = win_emu.process.sections.get(this->render_section_handle_);
-                if (!section || section->backing_address != this->restored_stream_->guest_address)
-                {
-                    throw std::runtime_error("[audio-service] Cannot restore render stream: section metadata is inconsistent");
-                }
-
-                auto restored = std::make_unique<render_stream>(win_emu, std::move(*this->restored_stream_));
-
-                section->backing_address = restored->guest_address();
-
-                this->render_stream_ = std::move(restored);
-                this->restored_stream_.reset();
-
-                this->render_stream_->start();
+                stream->second.render->set_render_event(event->second);
+                pending.erase(event);
             }
 
-          private:
-            std::unique_ptr<render_stream> render_stream_{};
-            std::optional<stream_audio_format> stream_format_{};
-            std::optional<render_stream::state> restored_stream_{};
-            handle render_section_handle_{};
-
-            void discard_render_stream(windows_emulator& win_emu)
+            void destroy_stream(windows_emulator& win_emu, const lpc_request_context& c)
             {
-                this->render_stream_.reset();
-                this->restored_stream_.reset();
-                if (auto* section = win_emu.process.sections.get(this->render_section_handle_))
+                const auto id = read_stream_id(win_emu, c);
+                const auto stream = id ? this->streams_.find(*id) : this->streams_.end();
+                if (stream == this->streams_.end())
                 {
-                    section->backing_address = 0;
+                    win_emu.log.warn("[audio-service] DestroyStream for an unknown stream\n");
+                    return;
                 }
-                this->render_section_handle_ = {};
+
+                // An event the client registered for this stream but never started it with must not outlive it.
+                win_emu.process.audio_render_events_by_stream.erase(stream->first);
+                detach_render_stream(win_emu, stream->second);
+                this->streams_.erase(stream);
             }
 
-            // {D574D111} opnum 0: AudioServerGetMixFormat(endpointId, VadServerSettings*, [out] WAVEFORMATEX**).
-            // The [out] format is an FC_CSTRUCT (18-byte WAVEFORMATEX base + cbSize-conformant tail) behind a
-            // unique pointer. The WASAPI shared-mode mix format is a WAVEFORMATEXTENSIBLE IEEE-float format;
-            // report 48 kHz / 2-channel / 32-bit float.
-            static NTSTATUS handle_get_mix_format(utils::aligned_binary_writer& writer)
+            // The WASAPI shared-mode mix format: a 44.1 kHz / 2-channel / 32-bit IEEE-float WAVEFORMATEXTENSIBLE, written as
+            // an FC_CSTRUCT (18-byte WAVEFORMATEX base + cbSize-conformant tail) behind a unique pointer. 44100 Hz matches
+            // the real captured device mix format; CreateRemoteStream reports the same nAvgBytesPerSec, so the stream
+            // format the client negotiates stays self-consistent.
+            static void write_mix_format(utils::aligned_binary_writer& writer)
             {
-                // 44100 Hz matches the real captured device mix format; CreateRemoteStream reports the same
-                // nAvgBytesPerSec, so the stream format the client negotiates stays self-consistent.
                 constexpr uint32_t sample_rate = 44100;
                 constexpr uint16_t channels = 2;
                 constexpr uint16_t bits = 32;
@@ -738,7 +1030,12 @@ namespace sogen
                 writer.write_ndr_pointer(true);      // unique pointer referent
                 writer.write_pointer_sized(cb_size); // conformance: length of the conformant tail
                 writer.write(fmt.data(), fmt.size(), 1);
+            }
 
+            // {D574D111} opnum 0: AudioServerGetMixFormat(endpointId, VadServerSettings*, [out] WAVEFORMATEX**).
+            static NTSTATUS handle_get_mix_format(utils::aligned_binary_writer& writer)
+            {
+                write_mix_format(writer);
                 writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok); // return HRESULT
                 return STATUS_SUCCESS;
@@ -747,13 +1044,24 @@ namespace sogen
             // {D574D111} opnum 1: AudioServerIsFormatSupported(endpointId, shareMode, mixParams, format,
             //   [in,out,unique] closestMatch). DirectSound probes its buffer format here before activating the
             //   render client; failing (or not answering) the call makes audioses map the RPC error to
-            //   AUDCLNT_E_DEVICE_INVALIDATED. The emulated shared-mode engine accepts the requested format, so
-            //   report S_OK with no suggested closest match.
-            static NTSTATUS handle_is_format_supported(utils::aligned_binary_writer& writer)
+            //   AUDCLNT_E_DEVICE_INVALIDATED. Like the native engine, accept a format the stream can play and suggest
+            //   the mix format for any other: XAudio2 probes an incomplete format first and only moves on to a
+            //   playable one when the engine declines it.
+            static NTSTATUS handle_is_format_supported(windows_emulator& win_emu, const lpc_request_context& c,
+                                                       utils::aligned_binary_writer& writer)
             {
-                writer.write_ndr_pointer(false); // [out] closest-match format: null (format accepted as-is)
+                if (read_stream_audio_format(win_emu, c, writer.pointer_size(), k_is_format_supported_format_offsets))
+                {
+                    writer.write_ndr_pointer(false); // [out] closest-match format: null (format accepted as-is)
+                    writer.align_to(sizeof(uint32_t));
+                    writer.write(k_hr_ok);
+                    return STATUS_SUCCESS;
+                }
+
+                writer.write_ndr_pointer(true); // closestMatch is a WAVEFORMATEX**: its outer referent comes first
+                write_mix_format(writer);
                 writer.align_to(sizeof(uint32_t));
-                writer.write(k_hr_ok); // return S_OK
+                writer.write(k_hr_false);
                 return STATUS_SUCCESS;
             }
 
@@ -795,8 +1103,8 @@ namespace sogen
             //   returns HRESULT
             NTSTATUS handle_open_stream(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer& writer)
             {
-                this->stream_format_ = read_stream_audio_format(win_emu, c, writer.pointer_size());
-                if (!this->stream_format_)
+                const auto format = read_stream_audio_format(win_emu, c, writer.pointer_size(), k_open_stream_format_offsets);
+                if (!format)
                 {
                     win_emu.log.warn("[audio-service] Failed to read the RPC stream format or the requested format is unsupported\n");
                     return STATUS_INVALID_PARAMETER;
@@ -806,8 +1114,12 @@ namespace sogen
                 writer.write_ndr_u16string(u"SogenAudioStream", true);
                 writer.align_to(sizeof(uint32_t));
 
-                writer.write<uint32_t>(0);                                                   // context handle: attributes
-                writer.write(k_stream_context_uuid.data(), k_stream_context_uuid.size(), 1); // context handle: uuid
+                const auto id = win_emu.process.next_audio_stream_id++;
+                this->streams_[id].format = format;
+
+                const auto context_uuid = make_stream_context_uuid(id);
+                writer.write<uint32_t>(0);                                 // context handle: attributes
+                writer.write(context_uuid.data(), context_uuid.size(), 1); // context handle: uuid
 
                 writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok); // return HRESULT
@@ -823,11 +1135,14 @@ namespace sogen
             NTSTATUS handle_create_stream(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer& writer,
                                           std::vector<alpc_reply_handle>& reply_handles)
             {
-                if (!this->stream_format_)
+                const auto id = read_stream_id(win_emu, c);
+                const auto entry = id ? this->streams_.find(*id) : this->streams_.end();
+                if (entry == this->streams_.end() || !entry->second.format)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                const auto& format = *this->stream_format_;
+                auto& stream = entry->second;
+                const auto& format = *stream.format;
 
                 // The client negotiates the render-buffer duration; the reply must describe a buffer of exactly
                 // that size. The op7 [in] carries the requested duration (100-ns units) as a hyper right after the
@@ -911,25 +1226,38 @@ namespace sogen
                 patch32(0x04, buffer_extent);
                 patch32(0x170, buffer_extent);
                 patch32(0x174, buffer_extent);
+
+                // The static control data (length at +0xCC) carries the name of the port SetEventHandle connects to, as
+                // up to 64 UTF-16 code units at +0xD0 (audioses CCrossProcessBaseClientEndpoint::SetEventHandle).
+                // Naming it per stream is what tells the engine which stream an event belongs to.
+                constexpr size_t endpoint_name_offset = 0xD0;
+                constexpr size_t endpoint_name_capacity = 64;
+                static_assert(endpoint_name_offset + endpoint_name_capacity * sizeof(char16_t) <= 0x154);
+                const auto endpoint_name = audio_endpoint_port_name(*id);
+                if (endpoint_name.size() >= endpoint_name_capacity)
+                {
+                    return STATUS_INTERNAL_ERROR;
+                }
+                std::memcpy(&render_control_header[endpoint_name_offset], endpoint_name.data(), endpoint_name.size() * sizeof(char16_t));
                 std::memcpy(&render_control_header[0x154], &duration_hns, sizeof(duration_hns));
                 std::memcpy(&render_control_header[0x180], &format.wave_format, sizeof(format.wave_format));
 
                 // Back the render section with a host-owned buffer aliased into the guest and drained by a host
                 // thread (see render_stream). The guest maps this same memory as the shared audio buffer, so the
                 // drain thread reads the committed PCM and advances the play cursor without any CPU-backend hooks.
-                this->discard_render_stream(win_emu);
-                this->render_stream_ = std::make_unique<render_stream>(win_emu, format, buffer_bytes, render_section_size,
-                                                                       render_control_header.data(), render_control_header.size());
-                const auto backing = this->render_stream_->guest_address();
+                detach_render_stream(win_emu, stream);
+                stream.render = std::make_unique<render_stream>(win_emu, this->sink_, *id, format, buffer_bytes, render_section_size,
+                                                                render_control_header.data(), render_control_header.size());
+                const auto backing = stream.render->guest_address();
                 if (backing == 0)
                 {
-                    this->render_stream_.reset();
+                    stream.render.reset();
                     return STATUS_NO_MEMORY;
                 }
                 render_section.backing_address = backing;
 
                 const auto section_handle = win_emu.process.sections.store(std::move(render_section));
-                this->render_section_handle_ = section_handle;
+                stream.section = section_handle;
 
                 // Deliver the render section. The op7 NDR references it as an sh_section handle (the _Struct_9
                 // union arm). rpcrt4!LRPC_SYSTEM_HANDLE_DATA::GetSystemHandle requires the handle's ObjectType
@@ -1085,6 +1413,48 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
         };
+    }
+
+    namespace
+    {
+        constexpr std::u16string_view k_endpoint_port_prefix = u"\\RPC Control\\SogenAudioEndpoint-";
+    }
+
+    std::u16string audio_endpoint_port_name(const uint32_t stream_id)
+    {
+        const auto digits = std::to_string(stream_id);
+        return std::u16string(k_endpoint_port_prefix) + std::u16string(digits.begin(), digits.end());
+    }
+
+    std::optional<uint32_t> parse_audio_endpoint_port_name(const std::u16string_view name)
+    {
+        if (!name.starts_with(k_endpoint_port_prefix))
+        {
+            return std::nullopt;
+        }
+
+        const auto digits = name.substr(k_endpoint_port_prefix.size());
+        if (digits.empty() || digits.size() > 10 || (digits.size() > 1 && digits.front() == u'0'))
+        {
+            return std::nullopt;
+        }
+
+        uint64_t value = 0;
+        for (const auto digit : digits)
+        {
+            if (digit < u'0' || digit > u'9')
+            {
+                return std::nullopt;
+            }
+            value = value * 10 + static_cast<uint64_t>(digit - u'0');
+        }
+
+        if (value == 0 || value > std::numeric_limits<uint32_t>::max())
+        {
+            return std::nullopt;
+        }
+
+        return static_cast<uint32_t>(value);
     }
 
     std::unique_ptr<port> create_audio_service_port()
