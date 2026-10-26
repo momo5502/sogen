@@ -14,9 +14,9 @@ namespace sogen
     {
         constexpr std::u16string_view unc_prefix = u"\\??\\";
 
-        // Win32 long-path prefix. Ntdll converts "\\?\C:\..." to "\??\C:\..." before it reaches a
-        // syscall, but paths that come straight from guest user-mode code (LdrLoadDll's search of a
-        // module name, for instance) still carry it.
+        // Win32 long-path prefix. Ntdll converts "\\?\C:\..." to "\??\C:\..." before a path reaches a
+        // syscall, so filesystem lookups never deliver this spelling. It arrives through kernel32's
+        // SxS activation-context request, which passes the caller's path through unconverted.
         constexpr std::u16string_view long_path_prefix = u"\\\\?\\";
 
         inline std::u16string_view strip_unc_prefix(const std::u16string_view path)
