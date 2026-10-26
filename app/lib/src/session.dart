@@ -131,7 +131,7 @@ class GameSession extends ChangeNotifier {
           'emulationRoot': emulationRoot,
           'application': game.guestExecutable,
           'arguments': game.arguments,
-          'environment': <String, String>{},
+          'environment': game.environment,
           'pathMappings': {guestGameDirectory: game.directory},
           'workingDirectory': game.guestWorkingDirectory,
           'backend': backend,

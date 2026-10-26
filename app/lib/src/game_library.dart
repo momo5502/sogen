@@ -32,6 +32,7 @@ class Game {
     required this.directory,
     required this.executable,
     this.arguments = const [],
+    this.environment = const {},
     this.liveNetwork = false,
     this.backend = CpuBackend.automatic,
     this.console = false,
@@ -43,6 +44,7 @@ class Game {
     directory: json['directory'] as String,
     executable: json['executable'] as String,
     arguments: (json['arguments'] as List<dynamic>? ?? const []).cast<String>(),
+    environment: (json['environment'] as Map<String, dynamic>? ?? const {}).cast<String, String>(),
     liveNetwork: json['liveNetwork'] as bool? ?? false,
     backend: CpuBackend.fromId(json['backend'] as String?),
     console: json['console'] as bool? ?? false,
@@ -58,6 +60,7 @@ class Game {
   final String executable;
 
   final List<String> arguments;
+  final Map<String, String> environment;
   final bool liveNetwork;
   final CpuBackend backend;
 
@@ -107,6 +110,7 @@ class Game {
     'directory': directory,
     'executable': executable,
     'arguments': arguments,
+    'environment': environment,
     'liveNetwork': liveNetwork,
     'backend': backend.id,
     'console': console,
