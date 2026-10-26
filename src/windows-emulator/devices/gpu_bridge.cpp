@@ -20,6 +20,7 @@ namespace sogen
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
                 this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
+                this->vulkan_.set_conserve_guest_address_space(win_emu.process.is_wow64_process);
 
                 switch (context.io_control_code)
                 {
@@ -391,6 +392,7 @@ namespace sogen
                 }
 
                 this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
+                this->vulkan_.set_conserve_guest_address_space(win_emu.process.is_wow64_process);
 
                 utils::buffer_deserializer buffer{this->restored_vulkan_state_};
                 this->vulkan_.deserialize(
