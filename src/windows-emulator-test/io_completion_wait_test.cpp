@@ -169,4 +169,98 @@ namespace sogen::test
     }
 
     INSTANTIATE_TEST_SUITE_P(ProcessAndThread, ManagedWaitCompletionTest, testing::Bool());
+
+    namespace
+    {
+        class stdin_console_backend final : public console_backend
+        {
+          public:
+            bool available{false};
+
+            bool input_available() override
+            {
+                return this->available;
+            }
+
+            std::optional<console_key_event> read_input_event(bool /*wait*/, bool /*remove*/) override
+            {
+                return std::nullopt;
+            }
+
+            std::string read_input(size_t /*length*/) override
+            {
+                return {};
+            }
+
+            void set_input_mode(const console_input_mode& /*mode*/) override
+            {
+            }
+
+            void reset() override
+            {
+            }
+        };
+
+        class ConsoleWaitCompletionTest : public testing::Test
+        {
+          protected:
+            void SetUp() override
+            {
+                auto backend = std::make_unique<stdin_console_backend>();
+                this->console = backend.get();
+
+                emulator_interfaces interfaces{};
+                interfaces.ui = std::make_unique<null_ui_backend>();
+                interfaces.audio = std::make_unique<null_audio_backend>();
+                interfaces.console = std::move(backend);
+                this->emu = std::make_unique<windows_emulator>(
+                    create_x86_64_emulator_from_environment(),
+                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                    emulator_callbacks{}, std::move(interfaces));
+                this->completion = this->emu->process.io_completions.store(io_completion{});
+                this->packet = this->emu->process.wait_completion_packets.store(wait_completion_packet{});
+                this->signaled =
+                    emulator_object<BOOLEAN>{this->emu->memory, this->emu->memory.allocate_memory(0x1000, memory_permission::read_write)};
+            }
+
+            syscall_context context()
+            {
+                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            }
+
+            NTSTATUS associate(const handle target)
+            {
+                return syscalls::handle_NtAssociateWaitCompletionPacket(this->context(), this->packet, this->completion, target, 0x1234,
+                                                                        0x5678, STATUS_SUCCESS, 42, *this->signaled);
+            }
+
+            stdin_console_backend* console{};
+            std::unique_ptr<windows_emulator> emu{};
+            handle completion{};
+            handle packet{};
+            std::optional<emulator_object<BOOLEAN>> signaled{};
+        };
+    }
+
+    // libuv registers a thread-pool wait on the console input handle to read a raw TTY, so a guest
+    // cannot start a terminal UI unless a wait packet can target stdin.
+    TEST_F(ConsoleWaitCompletionTest, StdinPacketCompletesOnlyOnceInputArrives)
+    {
+        ASSERT_EQ(this->associate(STDIN_HANDLE), STATUS_SUCCESS);
+        EXPECT_FALSE(this->signaled->read());
+
+        io_completion_message message{};
+        EXPECT_FALSE(io_completion_wait::dequeue_io_completion_message(*this->emu, this->completion, message));
+
+        this->console->available = true;
+        ASSERT_TRUE(io_completion_wait::dequeue_io_completion_message(*this->emu, this->completion, message));
+        EXPECT_EQ(message.key_context, 0x1234u);
+        EXPECT_EQ(message.apc_context, 0x5678u);
+    }
+
+    TEST_F(ConsoleWaitCompletionTest, RealFileHandleStaysUnsupported)
+    {
+        const auto file_handle = this->emu->process.files.store(file{});
+        EXPECT_EQ(this->associate(file_handle), STATUS_OBJECT_TYPE_MISMATCH);
+    }
 }

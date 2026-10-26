@@ -338,6 +338,8 @@ namespace sogen
                     return c.proc.mutants.get(resolved_target_handle) != nullptr;
                 case handle_types::timer:
                     return c.proc.timers.get(resolved_target_handle) != nullptr;
+                case handle_types::file:
+                    return resolved_target_handle.value.is_pseudo;
                 default:
                     return false;
                 }
