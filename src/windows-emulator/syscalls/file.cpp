@@ -1319,16 +1319,46 @@ namespace sogen
 
         // WoW64 hands the native syscall a scratch status block of its own and keeps the address of the caller's
         // 32-bit block in its Pointer field. That 32-bit block is what an overlapped caller and its completion routine
-        // read, so it has to be fetched before the scratch block is written.
+        // read, so it has to be fetched before the scratch block is written. Only calls through the WoW64 thunks follow
+        // this convention; 64-bit code in the same process leaves Pointer undefined. wow64.dll does not export its
+        // NtReadFile/NtWriteFile thunks, so a call counts as thunked when the 64-bit syscall stub returns into wow64.dll,
+        // and the 32-bit block must still be writable memory the 32-bit side can reach.
         uint64_t wow64_io_status_block_address(const syscall_context& c,
                                                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)
         {
-            if (!c.proc.is_wow64_process || !io_status_block)
+            auto* cpu = dynamic_cast<x86_64_cpu*>(&c.emu);
+            if (!c.proc.is_wow64_process || !io_status_block || !cpu)
             {
                 return 0;
             }
 
-            return io_status_block.read().Pointer;
+            uint64_t return_address{};
+            if (!cpu->try_read_memory(cpu->read_stack_pointer(), &return_address, sizeof(return_address)))
+            {
+                return 0;
+            }
+
+            const auto* caller = c.win_emu.mod_manager.find_by_address(return_address);
+            if (!caller || !utils::string::equals_ignore_case(std::string_view{caller->name}, std::string_view{"wow64.dll"}))
+            {
+                return 0;
+            }
+
+            const uint64_t address = io_status_block.read().Pointer;
+            constexpr uint64_t status_block_size = sizeof(IO_STATUS_BLOCK<EmulatorTraits<Emu32>>);
+            if (address == 0 || address > std::numeric_limits<uint32_t>::max() - status_block_size + 1)
+            {
+                return 0;
+            }
+
+            const auto region = c.win_emu.memory.get_region_info(address);
+            if (!region.is_committed || region.start + region.length < address + status_block_size ||
+                !is_writable(region.permissions.common))
+            {
+                return 0;
+            }
+
+            return address;
         }
 
         // Completion of an asynchronous (overlapped) file operation: signal the optional completion event and,
