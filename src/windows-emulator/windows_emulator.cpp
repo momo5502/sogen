@@ -2573,6 +2573,7 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
         this->release_held_input();
     }
@@ -2678,6 +2679,7 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
     }
 

@@ -17,6 +17,9 @@ interface NativeListener {
     /** The guest moved the cursor itself, e.g. with SetCursorPos; [x] and [y] are window client coordinates. */
     fun onCursorMoved(window: Long, x: Int, y: Int)
 
+    /** While [relative], input to [window] should move the mouse by deltas, since the guest confined and hid the cursor. */
+    fun onRelativeMouseChanged(window: Long, relative: Boolean)
+
     /** [error] is empty once the process was saved to [path]. */
     fun onSnapshot(path: String, error: String)
 }
@@ -50,6 +53,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     fun attachSurface(window: Long, surface: Surface) = nativeAttachSurface(handle, window, surface)
     fun detachSurface(window: Long) = nativeDetachSurface(handle, window)
     fun mouseMove(window: Long, x: Int, y: Int) = nativeMouseMove(handle, window, x, y)
+    fun mouseMotion(window: Long, dx: Int, dy: Int) = nativeMouseMotion(handle, window, dx, dy)
     fun mouseButton(window: Long, button: Int, down: Boolean, x: Int, y: Int) =
         nativeMouseButton(handle, window, button, down, x, y)
 
@@ -84,6 +88,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     private external fun nativeAttachSurface(handle: Long, window: Long, surface: Surface)
     private external fun nativeDetachSurface(handle: Long, window: Long)
     private external fun nativeMouseMove(handle: Long, window: Long, x: Int, y: Int)
+    private external fun nativeMouseMotion(handle: Long, window: Long, dx: Int, dy: Int)
     private external fun nativeMouseButton(handle: Long, window: Long, button: Int, down: Boolean, x: Int, y: Int)
     private external fun nativeMouseWheel(handle: Long, window: Long, delta: Int, x: Int, y: Int)
     private external fun nativeKey(handle: Long, window: Long, keyCode: Int, down: Boolean)
