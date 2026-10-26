@@ -509,7 +509,8 @@ namespace sogen
                 this->render_event_.store(event, std::memory_order_relaxed);
             }
 
-            state snapshot_state() const
+            // Holds the render thread between two polls, so its state stays put until resume_worker().
+            void pause_worker() const
             {
                 auto status = worker_status::running;
                 while (!this->worker_status_.compare_exchange_strong(status, worker_status::pause_requested, std::memory_order_acq_rel,
@@ -535,14 +536,18 @@ namespace sogen
                 {
                     throw std::runtime_error("[audio-service] Render stream stopped while taking a snapshot");
                 }
+            }
 
-                const auto resume_worker = utils::finally([this] {
-                    auto expected = worker_status::paused;
-                    this->worker_status_.compare_exchange_strong(expected, worker_status::running, std::memory_order_release,
-                                                                 std::memory_order_relaxed);
-                    this->worker_status_.notify_all();
-                });
+            void resume_worker() const
+            {
+                auto expected = worker_status::paused;
+                this->worker_status_.compare_exchange_strong(expected, worker_status::running, std::memory_order_release,
+                                                             std::memory_order_relaxed);
+                this->worker_status_.notify_all();
+            }
 
+            state paused_state() const
+            {
                 state result{};
                 result.id = this->id_;
                 result.claimed_sink = this->claimed_sink_;
@@ -786,8 +791,27 @@ namespace sogen
                 }
             }
 
+            // Every render thread is held before anything is recorded: a stream taking the device over between two
+            // streams' states would otherwise save an owner that does not match them.
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
+                std::vector<const render_stream*> paused{};
+                const auto resume = utils::finally([&] {
+                    for (const auto* stream : paused)
+                    {
+                        stream->resume_worker();
+                    }
+                });
+
+                for (const auto& stream : this->streams_ | std::views::values)
+                {
+                    if (stream.render)
+                    {
+                        stream.render->pause_worker();
+                        paused.push_back(stream.render.get());
+                    }
+                }
+
                 rpc_port::serialize_object(buffer);
                 buffer.write(this->next_stream_id_);
                 buffer.write(this->sink_.owner());
@@ -799,7 +823,7 @@ namespace sogen
                     buffer.write(stream.render != nullptr);
                     if (stream.render)
                     {
-                        buffer.write(stream.render->snapshot_state());
+                        buffer.write(stream.render->paused_state());
                     }
                     buffer.write(stream.section);
                 }
@@ -897,8 +921,11 @@ namespace sogen
                 stream.section = {};
             }
 
-            // An EVENTCALLBACK client registers its render event right before starting the stream, on the same thread.
-            // A lone pending event still belongs to the stream when the client started it from another thread.
+            // The endpoint control message carrying the render event does not name its stream. IAudioClient::Start fails
+            // unless an EVENTCALLBACK client set its event first, and audioses forwards SetEventHandle on the calling
+            // thread, so the event this thread registered belongs to the stream it now starts (XAudio2 does both on one
+            // thread per stream). A lone pending event is unambiguous even when Start comes from another thread; with
+            // several, binding a guess could wake the wrong client.
             void bind_render_event(windows_emulator& win_emu, const lpc_request_context& c)
             {
                 const auto id = read_stream_id(win_emu, c);
@@ -915,11 +942,18 @@ namespace sogen
                     event = pending.begin();
                 }
 
-                if (event != pending.end())
+                if (event == pending.end())
                 {
-                    stream->second.render->set_render_event(event->second);
-                    pending.erase(event);
+                    if (!pending.empty())
+                    {
+                        win_emu.log.error("[audio-service] Cannot tell which of %zu pending render events belongs to stream %u\n",
+                                          pending.size(), *id);
+                    }
+                    return;
                 }
+
+                stream->second.render->set_render_event(event->second);
+                pending.erase(event);
             }
 
             void destroy_stream(windows_emulator& win_emu, const lpc_request_context& c)
