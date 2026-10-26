@@ -107,6 +107,7 @@ CALL :collect gdiplus.dll
 CALL :collect glu32.dll
 CALL :collect hal.dll
 CALL :collect hid.dll
+CALL :collect imageres.dll
 CALL :collect imm32.dll
 CALL :collect imagehlp.dll
 CALL :collect inputhost.dll
@@ -164,6 +165,9 @@ CALL :collect powrprof.dll
 CALL :collect profapi.dll
 CALL :collect propsys.dll
 CALL :collect_file "%WINDIR%\SystemResources", PROPSYS.dll.mun, %EMU_SYSTEMRESOURCESDIR%
+CALL :collect_file "%WINDIR%\SystemResources", imageres.dll.mun, %EMU_SYSTEMRESOURCESDIR%
+CALL :collect_file "%WINDIR%\SystemResources", shell32.dll.mun, %EMU_SYSTEMRESOURCESDIR%
+CALL :collect_file "%WINDIR%", WindowsShell.Manifest, %EMU_WINDIR%
 CALL :collect psapi.dll
 CALL :collect rasadhlp.dll
 CALL :collect resampledmo.dll
