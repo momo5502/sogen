@@ -323,11 +323,12 @@ namespace sogen::android
         if (down)
         {
             // A release that is still held back has to reach the guest before the key's next press.
-            if (const auto held = std::ranges::find_if(this->delayed_events_,
-                                                       [&](const delayed_event& delayed) {
-                                                           return delayed.event.message == up_message &&
-                                                                  delayed.event.wParam == key->virtual_key;
-                                                       });
+            if (const auto held =
+                    std::ranges::find_if(this->delayed_events_,
+                                         [&](const delayed_event& delayed) {
+                                             return (delayed.event.message == WM_KEYUP || delayed.event.message == WM_SYSKEYUP) &&
+                                                    delayed.event.wParam == key->virtual_key;
+                                         });
                 held != this->delayed_events_.end())
             {
                 this->events_.push_back(held->event);
