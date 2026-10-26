@@ -406,9 +406,20 @@ namespace sogen
         }
 
         const uint64_t address = this->find_free_host_allocation_base(size, 0, highest_address);
-        if (address == 0)
+        if (address == 0 || !this->allocate_placed_host_memory_at(address, size, permissions, place))
         {
             return 0;
+        }
+
+        return address;
+    }
+
+    bool memory_manager::allocate_placed_host_memory_at(const uint64_t address, const size_t size, const nt_memory_permission permissions,
+                                                        const std::function<bool(void* host_address)>& place)
+    {
+        if (size == 0 || this->memory_->host_placement_address(address) == 0 || this->overlaps_reserved_region(address, size, false))
+        {
+            return false;
         }
 
         auto* host_address = reinterpret_cast<void*>(this->memory_->host_placement_address(address));
@@ -416,7 +427,7 @@ namespace sogen
         if (!place(host_address))
         {
             this->release_host_claims(address + size);
-            return 0;
+            return false;
         }
 
         if (!this->register_host_memory(address, size, host_address, permissions))
@@ -424,7 +435,7 @@ namespace sogen
             throw std::runtime_error("Failed to register placed host memory in a free guest range");
         }
 
-        return address;
+        return true;
     }
 
     uint64_t memory_manager::host_placement_address(const uint64_t address) const

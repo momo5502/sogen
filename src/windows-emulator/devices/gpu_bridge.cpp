@@ -289,12 +289,6 @@ namespace sogen
 
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
-                if (std::ranges::any_of(this->direct_mappings_ | std::views::values,
-                                        [](const direct_mapping& mapping) { return mapping.placed; }))
-                {
-                    throw std::runtime_error("Snapshots do not support placed Vulkan memory mappings yet");
-                }
-
                 // Written in bounded chunks ending with an empty one, so saving never holds all GPU contents in memory at once.
                 constexpr size_t chunk_size = 16 * 1024 * 1024;
                 utils::buffer_serializer vulkan{[&](const std::span<const std::byte> data) {
@@ -446,6 +440,20 @@ namespace sogen
                 for (auto& [memory, mapping] : this->direct_mappings_)
                 {
                     void* host_ptr = nullptr;
+                    if (mapping.placed)
+                    {
+                        if (!win_emu.memory.allocate_placed_host_memory_at(mapping.guest_address, static_cast<size_t>(mapping.size),
+                                                                           memory_permission::read_write,
+                                                                           this->placer(mapping.device, memory, host_ptr)))
+                        {
+                            throw std::runtime_error("Placing Vulkan memory " + std::to_string(memory) + " (" +
+                                                     std::to_string(mapping.size) + " bytes) at its guest address failed");
+                        }
+
+                        mapping.host_ptr = host_ptr;
+                        continue;
+                    }
+
                     uint64_t host_size = 0;
                     constexpr uint64_t page = 0x1000;
                     if (this->vulkan_.map_memory(mapping.device, memory, host_ptr, host_size) != vk_success ||
@@ -2106,6 +2114,19 @@ namespace sogen
                 return write_output(win_emu, context, response);
             }
 
+            std::function<bool(void*)> placer(const uint64_t device, const uint64_t memory, void*& host_ptr)
+            {
+                return [this, device, memory, &host_ptr](void* host_address) {
+                    if (this->vulkan_.map_memory_placed(device, memory, host_address) != 0)
+                    {
+                        return false;
+                    }
+
+                    host_ptr = host_address;
+                    return true;
+                };
+            }
+
             // A WoW64 guest can only reach memory below its address limit, where the driver's own mapping generally is
             // not. On backends whose guest memory lives at fixed host addresses, the driver then maps the memory right
             // where a free guest range is backed, instead of the bridge aliasing a mapping the driver placed elsewhere
@@ -2129,15 +2150,9 @@ namespace sogen
                 const uint64_t wow64_highest_address = highest_wow64_address(win_emu);
 
                 void* host_ptr = nullptr;
-                const uint64_t guest_address = win_emu.memory.allocate_placed_host_memory(
-                    static_cast<size_t>(size), memory_permission::read_write, wow64_highest_address, [&](void* host_address) {
-                        if (this->vulkan_.map_memory_placed(device, memory, host_address) != 0)
-                        {
-                            return false;
-                        }
-                        host_ptr = host_address;
-                        return true;
-                    });
+                const uint64_t guest_address =
+                    win_emu.memory.allocate_placed_host_memory(static_cast<size_t>(size), memory_permission::read_write,
+                                                               wow64_highest_address, this->placer(device, memory, host_ptr));
                 if (guest_address == 0)
                 {
                     return std::nullopt;

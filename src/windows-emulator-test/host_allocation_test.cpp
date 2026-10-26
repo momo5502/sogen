@@ -343,6 +343,25 @@ namespace sogen::test
         ASSERT_LE(address + size - 1, 0xFFFEFFFFu);
     }
 
+    TEST(HostAllocationTest, PlacedHostMemoryIsPlacedAtAGivenFreeAddressOnlyOnce)
+    {
+        fake_host_memory host{};
+        host.placement_offset = 0x100000000000;
+        memory_manager mm{host};
+
+        constexpr uint64_t address = 0x40000000;
+        constexpr size_t size = 0x2000;
+        void* placed_at = nullptr;
+        ASSERT_TRUE(mm.allocate_placed_host_memory_at(address, size, memory_permission::read_write, [&](void* host_address) {
+            placed_at = host_address;
+            return true;
+        }));
+
+        ASSERT_EQ(placed_at, reinterpret_cast<void*>(address + *host.placement_offset));
+        ASSERT_EQ(host.mapped_host_address, address);
+        ASSERT_FALSE(mm.allocate_placed_host_memory_at(address, size, memory_permission::read_write, [](void*) { return true; }));
+    }
+
     // Pins the windowed half of find_free_host_allocation_base's rescan: for a range the full scan
     // omits, a full-only rescan records nothing new and the same occupied pick is chosen every
     // iteration until the retry cap.
