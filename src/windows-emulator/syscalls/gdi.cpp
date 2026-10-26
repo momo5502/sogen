@@ -707,31 +707,42 @@ namespace sogen
                 surface.pixels[static_cast<size_t>(y) * surface.width + static_cast<size_t>(x)] = color;
             }
 
-            bool is_supported_dib(const uint16_t bit_count, const uint32_t compression, const uint32_t color_use, const uint32_t bi_size)
+            // BITMAPCOREHEADER is only 12 bytes and lays out its fields differently, so the BITMAPINFOHEADER
+            // offsets are only valid once biSize says the header is at least that large.
+            std::optional<EMU_BITMAPINFOHEADER> read_bitmap_info_header(const syscall_context& c, const emulator_pointer info)
+            {
+                if (c.emu.read_memory<uint32_t>(info) < sizeof(EMU_BITMAPINFOHEADER))
+                {
+                    return std::nullopt;
+                }
+
+                return c.emu.read_memory<EMU_BITMAPINFOHEADER>(info);
+            }
+
+            bool is_supported_dib(const EMU_BITMAPINFOHEADER& header, const uint32_t color_use)
             {
                 constexpr uint32_t bi_rgb = 0;
                 constexpr uint32_t dib_rgb_colors = 0;
-                constexpr uint32_t bitmapinfoheader_size = 40;
+                const auto bit_count = header.biBitCount;
                 const bool valid_bit_count =
                     bit_count == 1 || bit_count == 4 || bit_count == 8 || bit_count == 16 || bit_count == 24 || bit_count == 32;
-                // A colour table is only an RGBQUAD array for DIB_RGB_COLORS with a BITMAPINFOHEADER or later;
-                // DIB_PAL_COLORS stores 16-bit logical-palette indices and BITMAPCOREHEADER stores RGBTRIPLEs.
-                const bool valid_color_table = bit_count > 8 || (color_use == dib_rgb_colors && bi_size >= bitmapinfoheader_size);
-                return valid_bit_count && valid_color_table && compression == bi_rgb;
+                // DIB_PAL_COLORS colour tables hold 16-bit logical-palette indices, not RGBQUADs.
+                const bool valid_color_table = bit_count > 8 || color_use == dib_rgb_colors;
+                return valid_bit_count && valid_color_table && header.biCompression == bi_rgb && header.biWidth > 0;
             }
 
-            std::vector<uint32_t> read_dib_palette(const syscall_context& c, const emulator_pointer info, const uint32_t bi_size,
-                                                   const uint16_t bit_count, const uint32_t clr_used)
+            std::vector<uint32_t> read_dib_palette(const syscall_context& c, const emulator_pointer info,
+                                                   const EMU_BITMAPINFOHEADER& header)
             {
-                if (bit_count > 8)
+                if (header.biBitCount > 8)
                 {
                     return {};
                 }
 
-                const uint32_t max_colors = 1u << bit_count;
-                const uint32_t palette_entries = clr_used != 0 ? std::min(clr_used, max_colors) : max_colors;
+                const uint32_t max_colors = 1u << header.biBitCount;
+                const uint32_t palette_entries = header.biClrUsed != 0 ? std::min<uint32_t>(header.biClrUsed, max_colors) : max_colors;
                 constexpr size_t rgbquad_size = 4;
-                const auto color_table = c.emu.read_memory(info + bi_size, static_cast<size_t>(palette_entries) * rgbquad_size);
+                const auto color_table = c.emu.read_memory(info + header.biSize, static_cast<size_t>(palette_entries) * rgbquad_size);
 
                 // Pixel data may index past biClrUsed, so size the palette by bit depth rather than by the table.
                 std::vector<uint32_t> palette(max_colors, 0xFF000000u);
@@ -2364,35 +2375,29 @@ namespace sogen
                 return 0;
             }
 
-            int32_t bi_width = 0;
-            int32_t bi_height = 0;
-            uint16_t bit_count = 0;
-            uint32_t compression = 0;
-            c.emu.read_memory(info + 4, &bi_width, sizeof(bi_width));
-            c.emu.read_memory(info + 8, &bi_height, sizeof(bi_height));
-            c.emu.read_memory(info + 14, &bit_count, sizeof(bit_count));
-            c.emu.read_memory(info + 16, &compression, sizeof(compression));
-
-            uint32_t bi_size = 0;
-            uint32_t clr_used = 0;
-            c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
-            c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used));
-
-            if (!is_supported_dib(bit_count, compression, color_use, bi_size) || bi_width <= 0)
+            const auto header = read_bitmap_info_header(c, info);
+            if (!header)
             {
-                c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u usage=%u width=%d)\n", bit_count,
-                                   compression, color_use, bi_width);
+                c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB header (size=%u)\n", c.emu.read_memory<uint32_t>(info));
                 return 0;
             }
 
-            const bool top_down = bi_height < 0;
-            const auto src_width = static_cast<uint32_t>(bi_width);
-            const auto src_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
+            const auto bit_count = header->biBitCount;
+            if (!is_supported_dib(*header, color_use))
+            {
+                c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u usage=%u width=%d)\n", bit_count,
+                                   header->biCompression, color_use, header->biWidth);
+                return 0;
+            }
+
+            const bool top_down = header->biHeight < 0;
+            const auto src_width = static_cast<uint32_t>(header->biWidth);
+            const auto src_height = static_cast<uint32_t>(top_down ? -header->biHeight : header->biHeight);
             const auto stored_rows = std::min(scan_lines, src_height);
             // DIB scanlines are DWORD-aligned, not tightly packed.
             const size_t stride = ((static_cast<size_t>(src_width) * bit_count + 31u) / 32u) * 4u;
 
-            const auto palette = read_dib_palette(c, info, bi_size, bit_count, clr_used);
+            const auto palette = read_dib_palette(c, info, *header);
 
             std::vector<uint8_t> data(stride * stored_rows);
             if (data.empty())
@@ -2462,35 +2467,29 @@ namespace sogen
                 return 0;
             }
 
-            int32_t bi_width = 0;
-            int32_t bi_height = 0;
-            uint16_t bit_count = 0;
-            uint32_t compression = 0;
-            c.emu.read_memory(info + 4, &bi_width, sizeof(bi_width));
-            c.emu.read_memory(info + 8, &bi_height, sizeof(bi_height));
-            c.emu.read_memory(info + 14, &bit_count, sizeof(bit_count));
-            c.emu.read_memory(info + 16, &compression, sizeof(compression));
-
-            uint32_t bi_size = 0;
-            uint32_t clr_used = 0;
-            c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
-            c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used)); // BITMAPINFOHEADER.biClrUsed
-
-            if (!is_supported_dib(bit_count, compression, color_use, bi_size) || bi_width <= 0 || bi_height == 0)
+            const auto header = read_bitmap_info_header(c, info);
+            if (!header)
             {
-                c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u usage=%u width=%d)\n", bit_count,
-                                   compression, color_use, bi_width);
+                c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB header (size=%u)\n", c.emu.read_memory<uint32_t>(info));
                 return 0;
             }
 
-            const bool top_down = bi_height < 0;
-            const auto img_width = static_cast<uint32_t>(bi_width);
-            const auto img_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
+            const auto bit_count = header->biBitCount;
+            if (!is_supported_dib(*header, color_use) || header->biHeight == 0)
+            {
+                c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u usage=%u width=%d)\n", bit_count,
+                                   header->biCompression, color_use, header->biWidth);
+                return 0;
+            }
+
+            const bool top_down = header->biHeight < 0;
+            const auto img_width = static_cast<uint32_t>(header->biWidth);
+            const auto img_height = static_cast<uint32_t>(top_down ? -header->biHeight : header->biHeight);
 
             // DIB scanlines are DWORD-aligned, not tightly packed.
             const size_t stride = ((static_cast<size_t>(img_width) * bit_count + 31u) / 32u) * 4u;
 
-            const auto palette = read_dib_palette(c, info, bi_size, bit_count, clr_used);
+            const auto palette = read_dib_palette(c, info, *header);
 
             std::vector<uint8_t> data(stride * img_height);
             if (data.empty())
