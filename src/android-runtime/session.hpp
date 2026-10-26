@@ -38,6 +38,7 @@ namespace sogen::android
         std::string backend{};
         bool live_network{};
         std::filesystem::path sandbox_executable{};
+        vulkan_driver vulkan{};
         // Where a suspend without a destination saves the process.
         std::filesystem::path snapshot_directory{};
         // A saved process to continue instead of starting the application.

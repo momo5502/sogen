@@ -7,10 +7,15 @@
 
 #include <android/native_window.h>
 #include <android/hardware_buffer.h>
+#include <android/log.h>
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_android.h>
 
 #include <dlfcn.h>
+
+#ifdef SOGEN_HAS_ADRENOTOOLS
+#include <adrenotools/driver.h>
+#endif
 
 namespace sogen::android
 {
@@ -126,13 +131,38 @@ namespace sogen::android
                 }
             }
         }
+
+        // The library stays loaded for the life of the process; each session process runs a single game.
+        void* load_vulkan_library(const vulkan_driver& driver)
+        {
+#ifdef SOGEN_HAS_ADRENOTOOLS
+            // Turnip only drives Adreno GPUs, which Qualcomm's kernel driver exposes as kgsl.
+            if (!driver.custom_name.empty() && std::filesystem::exists("/dev/kgsl-3d0"))
+            {
+                const auto hook_directory = driver.hook_directory + "/";
+                const auto custom_directory = driver.custom_directory + "/";
+                if (void* library = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, nullptr, hook_directory.c_str(),
+                                                               custom_directory.c_str(), driver.custom_name.c_str(), nullptr, nullptr))
+                {
+                    return library;
+                }
+
+                const char* error = dlerror();
+                __android_log_print(ANDROID_LOG_WARN, "sogen", "Loading %s failed, using the system Vulkan driver: %s",
+                                    driver.custom_name.c_str(), error ? error : "unknown error");
+            }
+#else
+            (void)driver;
+#endif
+
+            return dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+        }
     }
 
-    android_ui_backend::android_ui_backend(ui_host& host)
+    android_ui_backend::android_ui_backend(ui_host& host, const vulkan_driver& driver)
         : host_(&host)
     {
-        // The library stays loaded for the life of the process; each session process runs a single game.
-        if (void* library = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL))
+        if (void* library = load_vulkan_library(driver))
         {
             this->vulkan_get_instance_proc_addr_ = dlsym(library, "vkGetInstanceProcAddr");
         }
@@ -696,6 +726,11 @@ namespace sogen::android
         ANativeWindow_release(target);
 
         return result == VK_SUCCESS ? pack_vulkan_handle(surface) : 0;
+    }
+
+    void* android_ui_backend::vulkan_get_instance_proc_addr()
+    {
+        return this->vulkan_get_instance_proc_addr_;
     }
 
     // An Android surface reports the size of the buffers its consumer was created with, which stays at the window's

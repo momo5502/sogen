@@ -2,6 +2,13 @@ package dev.sogen.app.runtime
 
 import android.view.Surface
 
+/** Where the Vulkan driver comes from. An empty [driverName] keeps the system driver. */
+data class VulkanDriver(
+    val hookDirectory: String,
+    val driverDirectory: String = "",
+    val driverName: String = "",
+)
+
 interface NativeListener {
     /** [color] is the emulator's logger color index. */
     fun onOutput(text: String, color: Int)
@@ -29,7 +36,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     private val handle: Long = nativeCreate(listener)
 
     /** Child processes run in [sandboxExecutable]; an empty path leaves the guest unable to create them. */
-    fun run(config: RunConfig, sandboxExecutable: String): Int = nativeRun(
+    fun run(config: RunConfig, sandboxExecutable: String, vulkan: VulkanDriver): Int = nativeRun(
         handle,
         config.emulationRoot,
         config.application,
@@ -40,6 +47,9 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         config.backend,
         config.liveNetwork,
         sandboxExecutable,
+        vulkan.hookDirectory,
+        vulkan.driverDirectory,
+        vulkan.driverName,
         config.snapshotDirectory,
         config.resumeFile,
     )
@@ -77,6 +87,9 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         backend: String,
         liveNetwork: Boolean,
         sandboxExecutable: String,
+        vulkanHookDirectory: String,
+        vulkanDriverDirectory: String,
+        vulkanDriverName: String,
         snapshotDirectory: String,
         resumeFile: String,
     ): Int
