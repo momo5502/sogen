@@ -768,6 +768,7 @@ namespace sogen
         BOOL handle_NtUserGetKeyboardState(const syscall_context& c, emulator_pointer key_state);
         uint32_t handle_NtUserGetDoubleClickTime();
         uint32_t handle_NtUserGetCaretBlinkTime();
+        BOOL handle_NtUserFlashWindowEx();
         BOOL handle_NtUserModifyWindowTouchCapability();
         uint32_t handle_NtUserGetClipboardSequenceNumber();
         BOOL handle_NtUserOpenClipboard();
@@ -2008,6 +2009,7 @@ namespace sogen
         add_handler(NtUserSwapMouseButton);
         add_handler(NtUserGetDoubleClickTime);
         add_handler(NtUserGetCaretBlinkTime);
+        add_handler(NtUserFlashWindowEx);
         add_handler(NtGdiSetIcmMode);
         add_handler(NtUserGetKeyboardState);
         add_handler(NtUserSetKeyboardState);

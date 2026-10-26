@@ -7004,6 +7004,11 @@ namespace sogen
             return 530;
         }
 
+        BOOL handle_NtUserFlashWindowEx()
+        {
+            return FALSE;
+        }
+
         BOOL handle_NtUserModifyWindowTouchCapability()
         {
             return TRUE;
