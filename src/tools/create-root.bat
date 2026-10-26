@@ -22,6 +22,7 @@ SET EMU_SYSDIR=%EMU_WINDIR%\system32
 SET EMU_SYSDIR_WOW64=%EMU_WINDIR%\syswow64
 SET EMU_SYSTEMRESOURCESDIR=%EMU_WINDIR%\systemresources
 SET EMU_CURSORDIR=%EMU_WINDIR%\cursors
+SET EMU_FONTDIR=%EMU_WINDIR%\fonts
 SET EMU_SORTDIR=%EMU_WINDIR%\globalization\sorting
 SET EMU_WINSXSDIR=%EMU_WINDIR%\winsxs
 SET EMU_WINSXSMANIFESTDIR=%EMU_WINSXSDIR%\manifests
@@ -32,6 +33,7 @@ SET EMU_STEAMDIR=%EMU_FILESYS%\c\steam
 MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
 MKDIR %EMU_CURSORDIR%
+MKDIR %EMU_FONTDIR%
 MKDIR %EMU_SYSDIR%\en-us
 MKDIR %EMU_SYSDIR_WOW64%\en-us
 MKDIR %EMU_SYSTEMRESOURCESDIR%
@@ -52,6 +54,7 @@ CALL :collect advapi32.dll
 CALL :collect apisetschema.dll
 CALL :collect audioeng.dll
 CALL :collect audiokse.dll
+CALL :collect authz.dll
 CALL :collect avifil32.dll
 CALL :collect bcrypt.dll
 CALL :collect bcryptprimitives.dll
@@ -93,6 +96,7 @@ CALL :collect dpapi.dll
 CALL :collect dsound.dll
 CALL :collect dsparse.dll
 CALL :collect dwmapi.dll
+CALL :collect dwrite.dll
 CALL :collect dxcore.dll
 CALL :collect dxgi.dll
 CALL :collect dxva2.dll
@@ -129,6 +133,8 @@ CALL :collect mscoree.dll
 CALL :collect msdmo.dll
 CALL :collect mskeyprotect.dll
 CALL :collect msvcp140.dll
+CALL :collect msvcp140_1.dll
+CALL :collect msvcp140_2.dll
 CALL :collect msvcp140_atomic_wait.dll
 CALL :collect msvcp140d.dll
 CALL :collect msvcp60.dll
@@ -201,6 +207,8 @@ CALL :collect wer.dll
 CALL :collect win32u.dll
 CALL :collect windows.internal.graphics.display.displaycolormanagement.dll
 CALL :collect windows.storage.dll
+CALL :collect windows.ui.dll
+CALL :collect windows.ui.immersive.dll
 CALL :collect windowscodecs.dll
 CALL :collect winhttp.dll
 CALL :collect wininet.dll
@@ -249,8 +257,12 @@ CALL :collect c_850.nls
 CALL :collect_file "%WINDIR%\Globalization\Sorting", sortdefault.nls, %EMU_SORTDIR%
 
 CALL :collect wdmaud.drv
+CALL :collect winspool.drv
 
 CALL :collect_file "%WINDIR%\Cursors", aero_arrow.cur, %EMU_CURSORDIR%
+
+REM DirectWrite cannot reach the font cache service in the emulator and reads these files instead.
+FOR %%F IN ("%WINDIR%\Fonts\segoeui*.ttf" "%WINDIR%\Fonts\consola*.ttf" "%WINDIR%\Fonts\cour*.ttf") DO CALL :collect_file "%WINDIR%\Fonts", %%~nxF, %EMU_FONTDIR%
 
 CALL :collect_winsxs_directories %SXS_NATIVE%_microsoft.windows.common-controls_*
 CALL :collect_winsxs_directories x86_microsoft.windows.common-controls_*
