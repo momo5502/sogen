@@ -948,6 +948,7 @@ namespace sogen
                 const auto stream = id ? this->streams_.find(*id) : this->streams_.end();
                 if (stream == this->streams_.end() || !stream->second.render)
                 {
+                    win_emu.log.warn("[audio-service] StartStream for an unknown or unopened stream\n");
                     return;
                 }
 
@@ -986,9 +987,12 @@ namespace sogen
                 const auto stream = id ? this->streams_.find(*id) : this->streams_.end();
                 if (stream == this->streams_.end())
                 {
+                    win_emu.log.warn("[audio-service] DestroyStream for an unknown stream\n");
                     return;
                 }
 
+                // An event the client registered for this stream but never started it with must not outlive it.
+                win_emu.process.audio_render_events_by_stream.erase(stream->first);
                 detach_render_stream(win_emu, stream->second);
                 this->streams_.erase(stream);
             }

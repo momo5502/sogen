@@ -679,7 +679,7 @@ namespace sogen
         std::map<uint32_t, uint64_t> audio_render_events_by_stream{};
 
         // Events registered through an unnamed endpoint port, keyed by the registering thread instead, which also
-        // starts the stream.
+        // starts the stream. An entry whose stream is never started stays until that thread registers again.
         std::map<uint32_t, uint64_t> pending_audio_render_events{};
 
         // Audio streams are numbered per process, so an endpoint port name identifies one stream across every
