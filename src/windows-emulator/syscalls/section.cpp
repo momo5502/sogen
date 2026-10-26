@@ -365,7 +365,7 @@ namespace sogen
 
         NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, const handle section_handle, const handle process_handle,
                                            const emulator_object<uint64_t> base_address,
-                                           const EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) /*zero_bits*/,
+                                           const EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) zero_bits,
                                            const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) /*commit_size*/,
                                            const emulator_object<LARGE_INTEGER> section_offset,
                                            const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
@@ -479,6 +479,7 @@ namespace sogen
             }
 
             const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
+            const auto highest_address = highest_address_for_zero_bits(zero_bits);
 
             // Pagefile-backed section: keep ONE persistent backing per section and hand out views into it
             // (view = backing + offset). Real Windows shares the section's pages across every view; allocating
@@ -496,12 +497,18 @@ namespace sogen
                 {
                     const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
                     const auto backing = c.win_emu.memory.allocate_memory(backing_size, protection, reserve_only, 0,
-                                                                          memory_region_kind::pagefile_section_view);
+                                                                          memory_region_kind::pagefile_section_view, highest_address);
                     if (!backing)
                     {
                         return STATUS_NO_MEMORY;
                     }
                     section_entry->backing_address = backing;
+                }
+
+                // Every view shares the one backing, so a caller whose pointers cannot reach it gets no view at all.
+                if (section_entry->backing_address + backing_size - 1 > highest_address)
+                {
+                    return STATUS_NO_MEMORY;
                 }
 
                 const auto aligned_offset = page_align_down(static_cast<uint64_t>(offset));
@@ -536,8 +543,12 @@ namespace sogen
             const auto size = static_cast<size_t>(file_data.size() - offset);
             const auto aligned_size = static_cast<size_t>(page_align_up(size));
             const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
-            const auto address =
-                c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, memory_region_kind::file_section_view);
+            const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0,
+                                                                  memory_region_kind::file_section_view, highest_address);
+            if (!address)
+            {
+                return STATUS_NO_MEMORY;
+            }
             c.win_emu.memory.set_region_mapped_filename(address, section_entry->file_name);
 
             if (!reserve_only && !file_data.empty())
