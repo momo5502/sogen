@@ -68,12 +68,21 @@ namespace sogen
         // (STATUS_NOT_SUPPORTED -> AUDCLNT NOT_SUPPORTED) and Initialize fails.
         struct endpoint_control_port : port
         {
+            explicit endpoint_control_port(const std::optional<uint32_t> stream_id)
+                : stream_id_(stream_id)
+            {
+            }
+
             lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
             {
                 // SetEventHandle delivers the client's render event as a client->server ALPC handle attribute.
                 // Remember it so the audio render thread can signal it at the device rate (EVENTCALLBACK); without
                 // that wake the client writes one pre-roll buffer and then blocks forever waiting on the event.
-                if (c.send_handle)
+                if (c.send_handle && this->stream_id_)
+                {
+                    win_emu.process.audio_render_events_by_stream[*this->stream_id_] = c.send_handle;
+                }
+                else if (c.send_handle)
                 {
                     win_emu.process.pending_audio_render_events[win_emu.current_thread().id] = c.send_handle;
                 }
@@ -92,6 +101,9 @@ namespace sogen
 
                 return {STATUS_SUCCESS, std::move(payload)};
             }
+
+          private:
+            std::optional<uint32_t> stream_id_{};
         };
 
         // Minimal RPC stub: completes the LRPC bind and answers every call with an S_OK return and no [out]
@@ -356,10 +368,16 @@ namespace sogen
             return std::make_unique<stub_rpc_port>();
         }
 
+        if (const auto stream_id = parse_audio_endpoint_port_name(port))
+        {
+            return std::make_unique<endpoint_control_port>(stream_id);
+        }
+
         if (port.empty())
         {
-            // Unnamed ALPC ports in the audio stack are the per-stream WASAPI endpoint control channel.
-            return std::make_unique<endpoint_control_port>();
+            // Unnamed ALPC ports in the audio stack are the per-stream WASAPI endpoint control channel of a client
+            // whose control data carries no port name.
+            return std::make_unique<endpoint_control_port>(std::nullopt);
         }
 
         return std::make_unique<dummy_port>(std::u16string(port));

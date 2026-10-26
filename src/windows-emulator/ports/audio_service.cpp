@@ -832,7 +832,6 @@ namespace sogen
                 }
 
                 rpc_port::serialize_object(buffer);
-                buffer.write(this->next_stream_id_);
                 buffer.write(this->sink_.owner());
                 buffer.write(static_cast<uint64_t>(this->streams_.size()));
                 for (const auto& [id, stream] : this->streams_)
@@ -851,7 +850,6 @@ namespace sogen
             void deserialize_object(utils::buffer_deserializer& buffer) override
             {
                 rpc_port::deserialize_object(buffer);
-                buffer.read(this->next_stream_id_);
                 buffer.read(this->restored_sink_owner_);
                 this->streams_.clear();
                 const auto stream_count = buffer.read<uint64_t>();
@@ -926,7 +924,6 @@ namespace sogen
 
             audio_sink sink_{};
             std::map<uint32_t, audio_stream> streams_{};
-            uint32_t next_stream_id_{1};
             uint32_t restored_sink_owner_{};
 
             static void detach_render_stream(windows_emulator& win_emu, audio_stream& stream)
@@ -951,6 +948,14 @@ namespace sogen
                 const auto stream = id ? this->streams_.find(*id) : this->streams_.end();
                 if (stream == this->streams_.end() || !stream->second.render)
                 {
+                    return;
+                }
+
+                auto& by_stream = win_emu.process.audio_render_events_by_stream;
+                if (const auto registered = by_stream.find(*id); registered != by_stream.end())
+                {
+                    stream->second.render->set_render_event(registered->second);
+                    by_stream.erase(registered);
                     return;
                 }
 
@@ -1105,7 +1110,7 @@ namespace sogen
                 writer.write_ndr_u16string(u"SogenAudioStream", true);
                 writer.align_to(sizeof(uint32_t));
 
-                const auto id = this->next_stream_id_++;
+                const auto id = win_emu.process.next_audio_stream_id++;
                 this->streams_[id].format = format;
 
                 const auto context_uuid = make_stream_context_uuid(id);
@@ -1217,6 +1222,19 @@ namespace sogen
                 patch32(0x04, buffer_extent);
                 patch32(0x170, buffer_extent);
                 patch32(0x174, buffer_extent);
+
+                // The static control data (length at +0xCC) carries the name of the port SetEventHandle connects to, as
+                // up to 64 UTF-16 code units at +0xD0 (audioses CCrossProcessBaseClientEndpoint::SetEventHandle).
+                // Naming it per stream is what tells the engine which stream an event belongs to.
+                constexpr size_t endpoint_name_offset = 0xD0;
+                constexpr size_t endpoint_name_capacity = 64;
+                static_assert(endpoint_name_offset + endpoint_name_capacity * sizeof(char16_t) <= 0x154);
+                const auto endpoint_name = audio_endpoint_port_name(*id);
+                if (endpoint_name.size() >= endpoint_name_capacity)
+                {
+                    return STATUS_INTERNAL_ERROR;
+                }
+                std::memcpy(&render_control_header[endpoint_name_offset], endpoint_name.data(), endpoint_name.size() * sizeof(char16_t));
                 std::memcpy(&render_control_header[0x154], &duration_hns, sizeof(duration_hns));
                 std::memcpy(&render_control_header[0x180], &format.wave_format, sizeof(format.wave_format));
 
@@ -1391,6 +1409,48 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
         };
+    }
+
+    namespace
+    {
+        constexpr std::u16string_view k_endpoint_port_prefix = u"\\RPC Control\\SogenAudioEndpoint-";
+    }
+
+    std::u16string audio_endpoint_port_name(const uint32_t stream_id)
+    {
+        const auto digits = std::to_string(stream_id);
+        return std::u16string(k_endpoint_port_prefix) + std::u16string(digits.begin(), digits.end());
+    }
+
+    std::optional<uint32_t> parse_audio_endpoint_port_name(const std::u16string_view name)
+    {
+        if (!name.starts_with(k_endpoint_port_prefix))
+        {
+            return std::nullopt;
+        }
+
+        const auto digits = name.substr(k_endpoint_port_prefix.size());
+        if (digits.empty() || digits.size() > 10 || (digits.size() > 1 && digits.front() == u'0'))
+        {
+            return std::nullopt;
+        }
+
+        uint64_t value = 0;
+        for (const auto digit : digits)
+        {
+            if (digit < u'0' || digit > u'9')
+            {
+                return std::nullopt;
+            }
+            value = value * 10 + static_cast<uint64_t>(digit - u'0');
+        }
+
+        if (value == 0 || value > std::numeric_limits<uint32_t>::max())
+        {
+            return std::nullopt;
+        }
+
+        return static_cast<uint32_t>(value);
     }
 
     std::unique_ptr<port> create_audio_service_port()
