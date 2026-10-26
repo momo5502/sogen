@@ -68,13 +68,17 @@ namespace sogen::android
             }
         }
 
-        uint64_t make_key_lparam(const windows_key& key, const bool was_down, const bool key_up)
+        uint64_t make_key_lparam(const windows_key& key, const bool was_down, const bool key_up, const bool alt_context)
         {
             uint64_t value = 1;
             value |= static_cast<uint64_t>(key.scan_code) << 16;
             if (key.extended)
             {
                 value |= 1ull << 24;
+            }
+            if (alt_context)
+            {
+                value |= 1ull << 29;
             }
             if (was_down)
             {
@@ -338,7 +342,8 @@ namespace sogen::android
 
         activated = this->activate(window);
 
-        const bool system_key = key->virtual_key == VK_MENU || key->virtual_key == VK_F10;
+        const bool alt_context = key->virtual_key != VK_MENU && this->key_down_since_.contains(VK_MENU);
+        const bool system_key = key->virtual_key == VK_MENU || key->virtual_key == VK_F10 || alt_context;
         const uint32_t down_message = system_key ? WM_SYSKEYDOWN : WM_KEYDOWN;
         const uint32_t up_message = system_key ? WM_SYSKEYUP : WM_KEYUP;
         const auto now = std::chrono::steady_clock::now();
@@ -348,11 +353,12 @@ namespace sogen::android
         if (down)
         {
             // A release that is still held back has to reach the guest before the key's next press.
-            if (const auto held = std::ranges::find_if(this->delayed_events_,
-                                                       [&](const delayed_event& delayed) {
-                                                           return delayed.event.message == up_message &&
-                                                                  delayed.event.wParam == key->virtual_key;
-                                                       });
+            if (const auto held =
+                    std::ranges::find_if(this->delayed_events_,
+                                         [&](const delayed_event& delayed) {
+                                             return (delayed.event.message == WM_KEYUP || delayed.event.message == WM_SYSKEYUP) &&
+                                                    delayed.event.wParam == key->virtual_key;
+                                         });
                 held != this->delayed_events_.end())
             {
                 this->events_.push_back(held->event);
@@ -364,7 +370,7 @@ namespace sogen::android
                 this->key_down_since_.emplace(key->virtual_key, now);
             }
 
-            const auto lparam = make_key_lparam(*key, was_down, false);
+            const auto lparam = make_key_lparam(*key, was_down, false, alt_context);
             this->queue_event(window, down_message, key->virtual_key, lparam);
 
             // Sogen's TranslateMessage does not synthesize WM_CHAR, so the backend delivers it. Printable characters
@@ -380,7 +386,7 @@ namespace sogen::android
             .window = window,
             .message = up_message,
             .wParam = key->virtual_key,
-            .lParam = make_key_lparam(*key, true, true),
+            .lParam = make_key_lparam(*key, true, true, alt_context),
         };
 
         const auto due = was_down ? pressed->second + minimum_key_press_duration : now;
