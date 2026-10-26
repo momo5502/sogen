@@ -775,6 +775,7 @@ namespace sogen
         ACCESS_MASK access_mask{};
         uint32_t file_mode{}; // FileModeInformation
         uint8_t drive_number{'c' - 'a' + 1};
+        bool change_watch_pending{};
 
         bool is_file() const
         {
@@ -794,6 +795,7 @@ namespace sogen
             buffer.write(this->file_mode);
             buffer.write(this->drive_number);
             buffer.write(this->handle);
+            buffer.write(this->change_watch_pending);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -804,6 +806,7 @@ namespace sogen
             buffer.read(this->file_mode);
             buffer.read(this->drive_number);
             buffer.read(this->handle);
+            buffer.read(this->change_watch_pending);
         }
     };
 

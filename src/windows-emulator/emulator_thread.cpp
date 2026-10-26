@@ -133,9 +133,14 @@ namespace sogen
                     return win_emu.console().input_available() ? wait_state::signaled : wait_state::not_signaled;
                 }
 
-                if (h.value.is_pseudo || c.files.get(h))
+                if (h.value.is_pseudo)
                 {
                     return wait_state::signaled;
+                }
+
+                if (const auto* f = c.files.get(h))
+                {
+                    return f->change_watch_pending ? wait_state::not_signaled : wait_state::signaled;
                 }
 
                 break;
@@ -261,7 +266,13 @@ namespace sogen
             }
 
             case handle_types::file: {
-                if (!h.value.is_pseudo && !c.files.get(h))
+                if (h.value.is_pseudo)
+                {
+                    return wait_state::signaled;
+                }
+
+                const auto* f = c.files.get(h);
+                if (!f || f->change_watch_pending)
                 {
                     return std::nullopt;
                 }
