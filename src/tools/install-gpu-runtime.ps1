@@ -1,6 +1,7 @@
 # Provisions the guest GPU runtime into an emulation root: drops the latest DXVK
-# D3D->Vulkan translation DLLs over the bundled DirectX ones and installs the GPU-bridge
-# Vulkan shim as vulkan-1.dll. 64-bit files go to system32, 32-bit files to syswow64.
+# D3D->Vulkan translation DLLs over the bundled DirectX ones, replaces opengl32.dll with
+# Mesa's, and installs the GPU-bridge Vulkan shim as vulkan-1.dll. 64-bit files go to
+# system32, 32-bit files to syswow64.
 
 [CmdletBinding()]
 param(
@@ -51,6 +52,26 @@ try {
 
     Install-Dxvk (Join-Path $dxvkRoot.FullName 'x64') $system32
     Install-Dxvk (Join-Path $dxvkRoot.FullName 'x32') $syswow64
+
+    # Windows' opengl32 needs a vendor OpenGL driver, which the guest does not have. Mesa's picks the first
+    # driver it can start, Zink on the Vulkan shim or llvmpipe on the CPU.
+    $mesaRelease = Invoke-RestMethod -Uri 'https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest' -Headers $apiHeaders
+    $mesaAsset = $mesaRelease.assets | Where-Object { $_.name -like 'mesa3d-*-release-msvc.7z' } | Select-Object -First 1
+    if (-not $mesaAsset) { throw "No Mesa MSVC release archive found in $($mesaRelease.tag_name)" }
+
+    Write-Host "Downloading Mesa $($mesaRelease.tag_name): $($mesaAsset.name)"
+    $mesaArchive = Join-Path $work $mesaAsset.name
+    Invoke-WebRequest -Uri $mesaAsset.browser_download_url -OutFile $mesaArchive
+
+    $mesaRoot = Join-Path $work 'mesa'
+    7z x -y "-o$mesaRoot" $mesaArchive | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to extract $mesaArchive" }
+
+    foreach ($file in 'opengl32.dll', 'libgallium_wgl.dll') {
+        Copy-Item -Path (Join-Path $mesaRoot "x64/$file") -Destination (Join-Path $system32 $file) -Force
+        Copy-Item -Path (Join-Path $mesaRoot "x86/$file") -Destination (Join-Path $syswow64 $file) -Force
+    }
+    Write-Host 'Mesa OpenGL installed (system32 + syswow64)'
 
     # Install the GPU-bridge Vulkan shim as the system vulkan-1.dll DXVK loads.
     Copy-Item -Path $Shim64 -Destination (Join-Path $system32 'vulkan-1.dll') -Force

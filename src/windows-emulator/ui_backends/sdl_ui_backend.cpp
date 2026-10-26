@@ -788,13 +788,19 @@ namespace sogen
                     case SDL_EVENT_WINDOW_RESIZED:
                     case SDL_EVENT_WINDOW_MAXIMIZED:
                     case SDL_EVENT_WINDOW_RESTORED:
-                    case SDL_EVENT_WINDOW_EXPOSED:
-                        if (auto* state = this->resolve_window(this->resolve_guest(event.window.windowID)))
+                    case SDL_EVENT_WINDOW_EXPOSED: {
+                        const auto guest = this->resolve_guest(event.window.windowID);
+                        if (auto* state = this->resolve_window(guest))
                         {
                             render_window(*state);
+                            if (event.type != SDL_EVENT_WINDOW_EXPOSED)
+                            {
+                                this->post_host_resize(guest, *state);
+                            }
                         }
                         this->apply_cursor_capture();
                         break;
+                    }
 
                     case SDL_EVENT_KEY_DOWN: {
                         const auto guest = this->resolve_guest(event.key.windowID);
@@ -1752,6 +1758,27 @@ namespace sogen
                     this->post_event(window, WM_ACTIVATE, WA_INACTIVE, 0);
                     this->post_event(window, WM_KILLFOCUS, 0, 0);
                 }
+            }
+
+            // A window the user can resize takes the host size as its new client size, like a sizing border on Windows.
+            // Fixed-size windows keep their size and are scaled to fit.
+            void post_host_resize(const hwnd guest, const window_state& state) const
+            {
+                const auto flags = SDL_GetWindowFlags(state.window);
+                if ((flags & SDL_WINDOW_RESIZABLE) == 0 || (flags & SDL_WINDOW_MINIMIZED) != 0)
+                {
+                    return;
+                }
+
+                int width{};
+                int height{};
+                if (!SDL_GetWindowSize(state.window, &width, &height))
+                {
+                    return;
+                }
+
+                const uint64_t size = (static_cast<uint64_t>(static_cast<uint16_t>(height)) << 16) | static_cast<uint16_t>(width);
+                this->post_event(guest, WM_SIZE, (flags & SDL_WINDOW_MAXIMIZED) != 0 ? SIZE_MAXIMIZED : SIZE_RESTORED, size);
             }
 
             void post_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param,

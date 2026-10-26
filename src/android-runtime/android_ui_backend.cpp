@@ -2,14 +2,20 @@
 #include "android_ui_backend.hpp"
 #include "android_keymap.hpp"
 
+#include <utils/finally.hpp>
 #include <vulkan_handle_utils.hpp>
 
 #include <android/native_window.h>
 #include <android/hardware_buffer.h>
+#include <android/log.h>
 #include <vulkan/vulkan_core.h>
 #include <vulkan/vulkan_android.h>
 
 #include <dlfcn.h>
+
+#ifdef SOGEN_HAS_ADRENOTOOLS
+#include <adrenotools/driver.h>
+#endif
 
 namespace sogen::android
 {
@@ -62,13 +68,17 @@ namespace sogen::android
             }
         }
 
-        uint64_t make_key_lparam(const windows_key& key, const bool was_down, const bool key_up)
+        uint64_t make_key_lparam(const windows_key& key, const bool was_down, const bool key_up, const bool alt_context)
         {
             uint64_t value = 1;
             value |= static_cast<uint64_t>(key.scan_code) << 16;
             if (key.extended)
             {
                 value |= 1ull << 24;
+            }
+            if (alt_context)
+            {
+                value |= 1ull << 29;
             }
             if (was_down)
             {
@@ -125,13 +135,38 @@ namespace sogen::android
                 }
             }
         }
+
+        // The library stays loaded for the life of the process; each session process runs a single game.
+        void* load_vulkan_library(const vulkan_driver& driver)
+        {
+#ifdef SOGEN_HAS_ADRENOTOOLS
+            // Turnip only drives Adreno GPUs, which Qualcomm's kernel driver exposes as kgsl.
+            if (!driver.custom_name.empty() && std::filesystem::exists("/dev/kgsl-3d0"))
+            {
+                const auto hook_directory = driver.hook_directory + "/";
+                const auto custom_directory = driver.custom_directory + "/";
+                if (void* library = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, nullptr, hook_directory.c_str(),
+                                                               custom_directory.c_str(), driver.custom_name.c_str(), nullptr, nullptr))
+                {
+                    return library;
+                }
+
+                const char* error = dlerror();
+                __android_log_print(ANDROID_LOG_WARN, "sogen", "Loading %s failed, using the system Vulkan driver: %s",
+                                    driver.custom_name.c_str(), error ? error : "unknown error");
+            }
+#else
+            (void)driver;
+#endif
+
+            return dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+        }
     }
 
-    android_ui_backend::android_ui_backend(ui_host& host)
+    android_ui_backend::android_ui_backend(ui_host& host, const vulkan_driver& driver)
         : host_(&host)
     {
-        // The library stays loaded for the life of the process; each session process runs a single game.
-        if (void* library = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL))
+        if (void* library = load_vulkan_library(driver))
         {
             this->vulkan_get_instance_proc_addr_ = dlsym(library, "vkGetInstanceProcAddr");
         }
@@ -179,12 +214,80 @@ namespace sogen::android
         this->queue_event(window, WM_MOUSEMOVE, this->mouse_buttons_, pack_point(x, y));
     }
 
+    void android_ui_backend::post_mouse_motion(const hwnd window, const int32_t dx, const int32_t dy)
+    {
+        const std::lock_guard lock{this->mutex_};
+        this->events_.push_back(ui_event{
+            .window = window,
+            .message = WM_MOUSEMOVE,
+            .wParam = this->mouse_buttons_,
+            .lParam = 0,
+            .relative_motion = std::pair{dx, dy},
+        });
+    }
+
+    void android_ui_backend::set_cursor_clip(const hwnd window, const std::optional<ui_rect>& /*screen_rect*/, const bool relative)
+    {
+        {
+            const std::lock_guard lock{this->mutex_};
+            this->clip_relative_window_ = relative ? this->top_level_ancestor(window) : 0;
+        }
+
+        this->update_relative_mouse();
+    }
+
+    void android_ui_backend::set_cursor_visibility(const bool visible)
+    {
+        {
+            const std::lock_guard lock{this->mutex_};
+            this->cursor_hidden_ = !visible;
+        }
+
+        this->update_relative_mouse();
+    }
+
+    void android_ui_backend::update_relative_mouse()
+    {
+        hwnd previous{};
+        hwnd current{};
+
+        {
+            const std::lock_guard lock{this->mutex_};
+
+            current = this->clip_relative_window_ != 0 ? this->clip_relative_window_ : (this->cursor_hidden_ ? this->active_window_ : 0);
+            if (current == this->relative_window_)
+            {
+                return;
+            }
+
+            previous = std::exchange(this->relative_window_, current);
+        }
+
+        if (previous != 0)
+        {
+            this->host_->on_relative_mouse_changed(previous, false);
+        }
+
+        if (current != 0)
+        {
+            this->host_->on_relative_mouse_changed(current, true);
+        }
+    }
+
     void android_ui_backend::post_mouse_button(const hwnd window, const mouse_button button, const bool down, const int32_t x,
                                                const int32_t y)
     {
+        bool activated{};
+        const auto update = utils::finally([&] {
+            if (activated)
+            {
+                this->update_relative_mouse();
+            }
+        });
+
         const std::lock_guard lock{this->mutex_};
 
-        this->activate(window);
+        activated = this->activate(window);
 
         if (down)
         {
@@ -193,6 +296,12 @@ namespace sogen::android
         else
         {
             this->mouse_buttons_ &= static_cast<uint16_t>(~button_mask(button));
+        }
+
+        if (this->is_relative(window))
+        {
+            this->queue_relative_event(window, button_message(button, down), this->mouse_buttons_);
+            return;
         }
 
         this->queue_event(window, WM_MOUSEMOVE, this->mouse_buttons_, pack_point(x, y));
@@ -204,6 +313,12 @@ namespace sogen::android
         const std::lock_guard lock{this->mutex_};
 
         const auto w_param = (static_cast<uint64_t>(static_cast<uint16_t>(delta)) << 16) | this->mouse_buttons_;
+        if (this->is_relative(window))
+        {
+            this->queue_relative_event(window, WM_MOUSEWHEEL, w_param);
+            return;
+        }
+
         this->queue_event(window, WM_MOUSEWHEEL, w_param, pack_point(x, y));
     }
 
@@ -215,11 +330,20 @@ namespace sogen::android
             return;
         }
 
+        bool activated{};
+        const auto update = utils::finally([&] {
+            if (activated)
+            {
+                this->update_relative_mouse();
+            }
+        });
+
         const std::lock_guard lock{this->mutex_};
 
-        this->activate(window);
+        activated = this->activate(window);
 
-        const bool system_key = key->virtual_key == VK_MENU || key->virtual_key == VK_F10;
+        const bool alt_context = key->virtual_key != VK_MENU && this->key_down_since_.contains(VK_MENU);
+        const bool system_key = key->virtual_key == VK_MENU || key->virtual_key == VK_F10 || alt_context;
         const uint32_t down_message = system_key ? WM_SYSKEYDOWN : WM_KEYDOWN;
         const uint32_t up_message = system_key ? WM_SYSKEYUP : WM_KEYUP;
         const auto now = std::chrono::steady_clock::now();
@@ -229,11 +353,12 @@ namespace sogen::android
         if (down)
         {
             // A release that is still held back has to reach the guest before the key's next press.
-            if (const auto held = std::ranges::find_if(this->delayed_events_,
-                                                       [&](const delayed_event& delayed) {
-                                                           return delayed.event.message == up_message &&
-                                                                  delayed.event.wParam == key->virtual_key;
-                                                       });
+            if (const auto held =
+                    std::ranges::find_if(this->delayed_events_,
+                                         [&](const delayed_event& delayed) {
+                                             return (delayed.event.message == WM_KEYUP || delayed.event.message == WM_SYSKEYUP) &&
+                                                    delayed.event.wParam == key->virtual_key;
+                                         });
                 held != this->delayed_events_.end())
             {
                 this->events_.push_back(held->event);
@@ -245,7 +370,7 @@ namespace sogen::android
                 this->key_down_since_.emplace(key->virtual_key, now);
             }
 
-            const auto lparam = make_key_lparam(*key, was_down, false);
+            const auto lparam = make_key_lparam(*key, was_down, false, alt_context);
             this->queue_event(window, down_message, key->virtual_key, lparam);
 
             // Sogen's TranslateMessage does not synthesize WM_CHAR, so the backend delivers it. Printable characters
@@ -261,7 +386,7 @@ namespace sogen::android
             .window = window,
             .message = up_message,
             .wParam = key->virtual_key,
-            .lParam = make_key_lparam(*key, true, true),
+            .lParam = make_key_lparam(*key, true, true, alt_context),
         };
 
         const auto due = was_down ? pressed->second + minimum_key_press_duration : now;
@@ -347,6 +472,8 @@ namespace sogen::android
 
     void android_ui_backend::create_window(const ui_window_desc& desc)
     {
+        bool activated{};
+
         {
             const std::lock_guard lock{this->mutex_};
 
@@ -358,11 +485,15 @@ namespace sogen::android
 
             if (desc.visible && this->active_window_ == 0)
             {
-                this->activate(desc.handle);
+                activated = this->activate(desc.handle);
             }
         }
 
         this->host_->on_window_created(desc.handle, client_width(desc), client_height(desc), desc.title, desc.visible);
+        if (activated)
+        {
+            this->update_relative_mouse();
+        }
     }
 
     void android_ui_backend::destroy_window(const hwnd window)
@@ -388,6 +519,16 @@ namespace sogen::android
             if (this->active_window_ == window)
             {
                 this->active_window_ = 0;
+            }
+
+            if (this->relative_window_ == window)
+            {
+                this->relative_window_ = 0;
+            }
+
+            if (this->clip_relative_window_ == window)
+            {
+                this->clip_relative_window_ = 0;
             }
         }
 
@@ -449,6 +590,8 @@ namespace sogen::android
 
     void android_ui_backend::set_window_visible(const hwnd window, const bool visible)
     {
+        bool activated{};
+
         {
             const std::lock_guard lock{this->mutex_};
 
@@ -466,11 +609,15 @@ namespace sogen::android
 
             if (visible)
             {
-                this->activate(window);
+                activated = this->activate(window);
             }
         }
 
         this->host_->on_window_visibility_changed(window, visible);
+        if (activated)
+        {
+            this->update_relative_mouse();
+        }
     }
 
     void android_ui_backend::set_window_title(const hwnd window, const std::u16string_view title)
@@ -587,6 +734,11 @@ namespace sogen::android
         return result == VK_SUCCESS ? pack_vulkan_handle(surface) : 0;
     }
 
+    void* android_ui_backend::vulkan_get_instance_proc_addr()
+    {
+        return this->vulkan_get_instance_proc_addr_;
+    }
+
     // An Android surface reports the size of the buffers its consumer was created with, which stays at the window's
     // initial size. Swapchains follow the guest window instead, and Flutter scales whatever buffer size arrives.
     std::optional<ui_extent> android_ui_backend::vulkan_surface_extent(const hwnd window)
@@ -610,12 +762,30 @@ namespace sogen::android
         this->events_.push_back(ui_event{.window = window, .message = message, .wParam = w_param, .lParam = l_param});
     }
 
-    void android_ui_backend::activate(const hwnd window)
+    // Touches only send deltas while the cursor is captured, so the position the app knows is stale. A motion of
+    // nothing keeps the guest's own cursor position.
+    void android_ui_backend::queue_relative_event(const hwnd window, const uint32_t message, const uint64_t w_param)
+    {
+        this->events_.push_back(ui_event{
+            .window = window,
+            .message = message,
+            .wParam = w_param,
+            .lParam = 0,
+            .relative_motion = std::pair{0, 0},
+        });
+    }
+
+    bool android_ui_backend::is_relative(const hwnd window) const
+    {
+        return this->relative_window_ != 0 && this->relative_window_ == this->top_level_ancestor(window);
+    }
+
+    bool android_ui_backend::activate(const hwnd window)
     {
         const auto top_level = this->top_level_ancestor(window);
         if (top_level == 0 || top_level == this->active_window_)
         {
-            return;
+            return false;
         }
 
         if (this->active_window_ != 0)
@@ -627,6 +797,7 @@ namespace sogen::android
         this->active_window_ = top_level;
         this->queue_event(top_level, WM_SETFOCUS, 0, 0);
         this->queue_event(top_level, WM_ACTIVATE, WA_ACTIVE, 0);
+        return true;
     }
 
     hwnd android_ui_backend::top_level_ancestor(hwnd window) const

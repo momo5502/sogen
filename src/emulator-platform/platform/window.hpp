@@ -238,7 +238,11 @@ namespace sogen
 #define WS_MAXIMIZEBOX              0x00010000L
 
 #define WS_EX_NOPARENTNOTIFY        0x00000004L
+#define WS_EX_TRANSPARENT           0x00000020L
 #define WS_EX_CLIENTEDGE            0x00000200L
+
+#define SIZE_RESTORED               0
+#define SIZE_MAXIMIZED              2
 
 #define SWP_NOSIZE                  0x0001
 #define SWP_NOMOVE                  0x0002

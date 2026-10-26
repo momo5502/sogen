@@ -50,8 +50,8 @@ namespace sogen
             kusd.DismountCount = 0x00000006;
             kusd.ComPlusPackage = 0x00000001;
             kusd.LastSystemRITEventTickCount = 0x01ec1fd3;
-            kusd.NumberOfPhysicalPages = 0x00bf0958;
-            kusd.FullNumberOfPhysicalPages = 0x0000000000bf0958;
+            kusd.NumberOfPhysicalPages = simulated_physical_page_count;
+            kusd.FullNumberOfPhysicalPages = simulated_physical_page_count;
             kusd.TickCount.TickCount.LowPart = 0x001f7f05;
             kusd.TickCount.TickCountQuad = 0x00000000001f7f05;
             kusd.Cookie = 0;

@@ -25,6 +25,7 @@ class AddGamePage extends StatefulWidget {
 class _AddGamePageState extends State<AddGamePage> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _arguments = TextEditingController();
+  final TextEditingController _environment = TextEditingController();
 
   String? _directory;
   List<String> _executables = const [];
@@ -38,6 +39,7 @@ class _AddGamePageState extends State<AddGamePage> {
   void dispose() {
     _name.dispose();
     _arguments.dispose();
+    _environment.dispose();
     super.dispose();
   }
 
@@ -117,6 +119,22 @@ class _AddGamePageState extends State<AddGamePage> {
     return result;
   }
 
+  static Map<String, String> _parseEnvironment(String text) {
+    final environment = <String, String>{};
+    for (final line in text.split('\n')) {
+      final separator = line.indexOf('=');
+      if (separator < 0) {
+        continue;
+      }
+
+      final name = line.substring(0, separator).trim();
+      if (name.isNotEmpty) {
+        environment[name] = line.substring(separator + 1).trim();
+      }
+    }
+    return environment;
+  }
+
   void _save() {
     final directory = _directory;
     final executable = _executable;
@@ -125,6 +143,7 @@ class _AddGamePageState extends State<AddGamePage> {
     }
 
     final arguments = _arguments.text.trim();
+    final environment = _parseEnvironment(_environment.text);
     Navigator.of(context).pop(
       Game(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -132,6 +151,7 @@ class _AddGamePageState extends State<AddGamePage> {
         directory: directory,
         executable: executable,
         arguments: arguments.isEmpty ? const [] : arguments.split(RegExp(r'\s+')),
+        environment: environment,
         liveNetwork: _liveNetwork,
         backend: _backend,
         console: _console,
@@ -215,6 +235,13 @@ class _AddGamePageState extends State<AddGamePage> {
             TextField(
               controller: _arguments,
               decoration: const InputDecoration(labelText: 'Arguments'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _environment,
+              minLines: 1,
+              maxLines: 4,
+              decoration: const InputDecoration(labelText: 'Environment', hintText: 'One NAME=value per line'),
             ),
             const SizedBox(height: 8),
             SwitchListTile(

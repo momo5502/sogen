@@ -84,6 +84,10 @@ class SogenService : Service() {
             native?.mouseMove(window, x, y)
         }
 
+        override fun mouseMotion(window: Long, dx: Int, dy: Int) {
+            native?.mouseMotion(window, dx, dy)
+        }
+
         override fun mouseButton(window: Long, button: Int, down: Boolean, x: Int, y: Int) {
             native?.mouseButton(window, button, down, x, y)
         }
@@ -117,13 +121,53 @@ class SogenService : Service() {
     private fun runSession(config: RunConfig, callback: ISogenCallback) {
         val session = native ?: return
         val sandbox = File(applicationInfo.nativeLibraryDir, SANDBOX_LIBRARY)
-        val exitCode = session.run(config, if (sandbox.exists()) sandbox.path else "")
+        val exitCode = session.run(config, if (sandbox.exists()) sandbox.path else "", prepareVulkanDriver())
 
         try {
             callback.onExit(exitCode)
         } catch (e: RemoteException) {
             Log.w(TAG, "Could not report exit code $exitCode", e)
         }
+    }
+
+    /**
+     * Copies the bundled Turnip driver into private storage, since libadrenotools only loads drivers from
+     * there. The native side uses it on Adreno GPUs only.
+     */
+    private fun prepareVulkanDriver(): VulkanDriver {
+        val hookDirectory = applicationInfo.nativeLibraryDir
+
+        val bundled = try {
+            assets.openFd(TURNIP_ASSET)
+        } catch (_: java.io.IOException) {
+            return VulkanDriver(hookDirectory)
+        }
+
+        val directory = File(filesDir, "turnip")
+        val driver = File(directory, TURNIP_LIBRARY)
+        try {
+            bundled.use { descriptor ->
+                // A driver from an older install can have the same size, so the copy is renewed with every APK.
+                val current = driver.length() == descriptor.length &&
+                    driver.lastModified() >= File(applicationInfo.sourceDir).lastModified()
+                if (!current) {
+                    if (!directory.isDirectory && !directory.mkdirs()) {
+                        throw java.io.IOException("Cannot create $directory")
+                    }
+
+                    val partial = File(directory, "$TURNIP_LIBRARY.partial")
+                    descriptor.createInputStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
+                    if (!partial.renameTo(driver)) {
+                        throw java.io.IOException("Cannot replace $driver")
+                    }
+                }
+            }
+        } catch (e: java.io.IOException) {
+            Log.w(TAG, "Could not extract the bundled Vulkan driver, using the system driver", e)
+            return VulkanDriver(hookDirectory)
+        }
+
+        return VulkanDriver(hookDirectory, directory.absolutePath, TURNIP_LIBRARY)
     }
 
     private class CallbackListener(private val callback: ISogenCallback) : NativeListener {
@@ -147,6 +191,9 @@ class SogenService : Service() {
 
         override fun onCursorMoved(window: Long, x: Int, y: Int) = deliver { callback.onCursorMoved(window, x, y) }
 
+        override fun onRelativeMouseChanged(window: Long, relative: Boolean) =
+            deliver { callback.onRelativeMouseChanged(window, relative) }
+
         override fun onSnapshot(path: String, error: String) = deliver { callback.onSnapshot(path, error) }
 
         private inline fun deliver(action: () -> Unit) {
@@ -164,5 +211,8 @@ class SogenService : Service() {
 
         /** The sandbox executable, packaged as a library so that it is extracted to a directory apps may execute from. */
         const val SANDBOX_LIBRARY = "libsandbox.so"
+
+        const val TURNIP_LIBRARY = "vulkan.ad07xx.so"
+        const val TURNIP_ASSET = "turnip/$TURNIP_LIBRARY"
     }
 }

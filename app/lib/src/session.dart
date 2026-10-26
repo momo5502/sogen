@@ -86,6 +86,9 @@ class GameSession extends ChangeNotifier {
 
   List<GuestWindow> get windows => _windows.values.toList(growable: false);
 
+  /// Windows whose cursor the guest confined and hid, so that input moves the mouse by deltas, as for mouse-look.
+  final Set<int> relativeMouseWindows = {};
+
   /// The window that is shown and receives input: the most recently created visible top-level window.
   GuestWindow? get primaryWindow => _windows.values.where((window) => window.visible).lastOrNull;
 
@@ -128,7 +131,7 @@ class GameSession extends ChangeNotifier {
           'emulationRoot': emulationRoot,
           'application': game.guestExecutable,
           'arguments': game.arguments,
-          'environment': <String, String>{},
+          'environment': game.environment,
           'pathMappings': {guestGameDirectory: game.directory},
           'workingDirectory': game.guestWorkingDirectory,
           'backend': backend,
@@ -175,6 +178,9 @@ class GameSession extends ChangeNotifier {
   void mouseMove(GuestWindow window, int x, int y) =>
       _methods.invokeMethod('mouseMove', {'window': window.handle, 'x': x, 'y': y});
 
+  void mouseMotion(GuestWindow window, int dx, int dy) =>
+      _methods.invokeMethod('mouseMotion', {'window': window.handle, 'dx': dx, 'dy': dy});
+
   void mouseButton(GuestWindow window, MouseButton button, {required bool down, required int x, required int y}) =>
       _methods.invokeMethod('mouseButton', {
         'window': window.handle,
@@ -218,6 +224,13 @@ class GameSession extends ChangeNotifier {
         );
       case 'windowDestroyed':
         _windows.remove(window);
+        relativeMouseWindows.remove(window);
+      case 'relativeMouse':
+        if (event['relative'] as bool) {
+          relativeMouseWindows.add(window!);
+        } else {
+          relativeMouseWindows.remove(window);
+        }
       case 'windowResized':
         _windows[window]
           ?..width = event['width'] as int
@@ -235,6 +248,7 @@ class GameSession extends ChangeNotifier {
         }
       case 'exit':
         _windows.clear();
+        relativeMouseWindows.clear();
         exitCode = event['exitCode'] as int?;
         state = SessionState.exited;
         terminal.write(exitCode == null ? '\r\n[Crashed]\r\n' : '\r\n[Exited with code $exitCode]\r\n');

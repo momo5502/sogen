@@ -93,27 +93,50 @@ namespace sogen
         class buffer_serializer
         {
           public:
+            using sink = std::function<void(std::span<const std::byte> data)>;
+
             buffer_serializer() = default;
+
+            // get_buffer() then holds only what was not flushed to the sink yet.
+            explicit buffer_serializer(sink output)
+                : sink_(std::move(output))
+            {
+            }
 
             void write(const void* buffer, const size_t length)
             {
-                const auto old_size_remainder = static_cast<uint8_t>(length);
-                constexpr auto check_size = sizeof(old_size_remainder);
+                this->begin_entry(length);
+                this->append(static_cast<const std::byte*>(buffer), length);
+            }
 
-                if (this->break_offset_ && this->buffer_.size() <= *this->break_offset_ &&
-                    this->buffer_.size() + length + check_size > *this->break_offset_)
+            void write_chunked(const size_t length, const std::function<void(size_t offset, std::span<std::byte> chunk)>& read_chunk)
+            {
+                this->begin_entry(length);
+
+                std::vector<std::byte> chunk(std::min(length, chunk_size));
+                for (size_t offset = 0; offset < length; offset += chunk.size())
                 {
-                    throw std::runtime_error("Break offset reached!");
+                    const auto piece = std::span(chunk).first(std::min(chunk.size(), length - offset));
+                    read_chunk(offset, piece);
+                    this->append(piece.data(), piece.size());
+                }
+            }
+
+            size_t size() const
+            {
+                return this->flushed_ + this->buffer_.size();
+            }
+
+            void flush()
+            {
+                if (!this->sink_ || this->buffer_.empty())
+                {
+                    return;
                 }
 
-                const auto* security_buffer = reinterpret_cast<const std::byte*>(&old_size_remainder);
-                this->buffer_.insert(this->buffer_.end(), security_buffer, security_buffer + check_size);
-
-                if (length > 0)
-                {
-                    const auto* byte_buffer = static_cast<const std::byte*>(buffer);
-                    this->buffer_.insert(this->buffer_.end(), byte_buffer, byte_buffer + length);
-                }
+                this->sink_(this->buffer_);
+                this->flushed_ += this->buffer_.size();
+                this->buffer_.clear();
             }
 
             void write(const buffer_serializer& object)
@@ -330,19 +353,69 @@ namespace sogen
             }
 
           private:
+            static constexpr size_t chunk_size = 16 * 1024 * 1024;
+
+            sink sink_{};
+            size_t flushed_{};
             std::vector<std::byte> buffer_{};
             std::optional<size_t> break_offset_{};
             std::unordered_map<const void*, uint64_t> shared_objects_{};
+
+            void begin_entry(const size_t length)
+            {
+                const auto old_size_remainder = static_cast<uint8_t>(length);
+                constexpr auto check_size = sizeof(old_size_remainder);
+
+                if (this->break_offset_ && this->size() <= *this->break_offset_ &&
+                    this->size() + length + check_size > *this->break_offset_)
+                {
+                    throw std::runtime_error("Break offset reached!");
+                }
+
+                this->append(reinterpret_cast<const std::byte*>(&old_size_remainder), check_size);
+            }
+
+            void append(const std::byte* data, const size_t length)
+            {
+                if (length == 0)
+                {
+                    return;
+                }
+
+                if (this->sink_ && length >= chunk_size)
+                {
+                    this->flush();
+                    this->sink_(std::span(data, length));
+                    this->flushed_ += length;
+                    return;
+                }
+
+                this->buffer_.insert(this->buffer_.end(), data, data + length);
+                if (this->sink_ && this->buffer_.size() >= chunk_size)
+                {
+                    this->flush();
+                }
+            }
         };
 
         class buffer_deserializer
         {
           public:
+            using source = std::function<void(std::span<std::byte> data)>;
+
             template <typename T>
             buffer_deserializer(const std::span<T> buffer)
-                : buffer_(reinterpret_cast<const std::byte*>(buffer.data()), buffer.size() * sizeof(T))
+                : size_(buffer.size() * sizeof(T)),
+                  buffer_(reinterpret_cast<const std::byte*>(buffer.data()), buffer.size() * sizeof(T))
             {
                 static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable");
+            }
+
+            // Spans it returns stay valid only until the next read.
+            buffer_deserializer(source input, const size_t size)
+                : source_(std::move(input)),
+                  size_(size)
+            {
             }
 
             template <typename T>
@@ -358,25 +431,20 @@ namespace sogen
 
             std::span<const std::byte> read_data(const size_t length)
             {
-                const auto length_rest = static_cast<uint8_t>(length);
-                constexpr auto check_size = sizeof(length_rest);
+                this->begin_entry(length);
+                return this->take(length);
+            }
 
-                if (this->offset_ + (length + check_size) > this->buffer_.size())
+            void read_chunked(const size_t length, const std::function<void(size_t offset, std::span<const std::byte> chunk)>& consume)
+            {
+                this->begin_entry(length);
+
+                for (size_t offset = 0; offset < length;)
                 {
-                    throw std::runtime_error("Out of bounds read from byte buffer");
+                    const auto chunk = this->take(this->source_ ? std::min(length - offset, chunk_size) : length - offset);
+                    consume(offset, chunk);
+                    offset += chunk.size();
                 }
-
-                if (static_cast<uint8_t>(this->buffer_.subspan(this->offset_, check_size).front()) != length_rest)
-                {
-                    throw std::runtime_error("Reading from serialized buffer mismatches written data!");
-                }
-
-                this->offset_ += check_size;
-
-                const std::span result(this->buffer_.data() + this->offset_, length);
-                this->offset_ += length;
-
-                return result;
             }
 
             void read(void* data, const size_t length)
@@ -474,7 +542,7 @@ namespace sogen
 
                 if constexpr (detail::is_plain_v<T>)
                 {
-                    if (size > (this->buffer_.size() - this->offset_) / sizeof(T))
+                    if (size > this->get_remaining_size() / sizeof(T))
                     {
                         throw std::runtime_error("Out of bounds read from byte buffer");
                     }
@@ -590,7 +658,7 @@ namespace sogen
 
             size_t get_remaining_size() const
             {
-                return this->buffer_.size() - offset_;
+                return this->size_ - this->consumed_ - this->offset_;
             }
 
             std::span<const std::byte> get_remaining_data()
@@ -600,7 +668,7 @@ namespace sogen
 
             size_t get_offset() const
             {
-                return this->offset_;
+                return this->consumed_ + this->offset_;
             }
 
             template <typename T, typename F>
@@ -643,9 +711,66 @@ namespace sogen
             }
 
           private:
+            static constexpr size_t chunk_size = 16 * 1024 * 1024;
+
+            source source_{};
+            size_t size_{};
+            size_t consumed_{};
+            std::vector<std::byte> window_{};
             size_t offset_{0};
             std::span<const std::byte> buffer_{};
             std::unordered_map<std::type_index, std::function<void*()>> factories_{};
+
+            void begin_entry(const size_t length)
+            {
+                const auto length_rest = static_cast<uint8_t>(length);
+                constexpr auto check_size = sizeof(length_rest);
+
+                if (length > this->get_remaining_size() || this->get_remaining_size() - length < check_size)
+                {
+                    throw std::runtime_error("Out of bounds read from byte buffer");
+                }
+
+                if (static_cast<uint8_t>(this->take(check_size).front()) != length_rest)
+                {
+                    throw std::runtime_error("Reading from serialized buffer mismatches written data!");
+                }
+            }
+
+            std::span<const std::byte> take(const size_t length)
+            {
+                if (length > this->get_remaining_size())
+                {
+                    throw std::runtime_error("Out of bounds read from byte buffer");
+                }
+
+                if (this->offset_ + length > this->buffer_.size())
+                {
+                    this->refill(length);
+                }
+
+                const std::span result(this->buffer_.data() + this->offset_, length);
+                this->offset_ += length;
+                return result;
+            }
+
+            void refill(const size_t length)
+            {
+                const auto kept = this->buffer_.size() - this->offset_;
+                const auto wanted = std::max(length, std::min(chunk_size, this->get_remaining_size()));
+
+                if (kept > 0)
+                {
+                    std::memmove(this->window_.data(), this->window_.data() + this->offset_, kept);
+                }
+                this->consumed_ += this->offset_;
+                this->offset_ = 0;
+
+                this->window_.resize(wanted);
+                this->source_(std::span(this->window_).subspan(kept));
+                this->buffer_ = this->window_;
+            }
+
             std::unordered_map<uint64_t, std::pair<std::type_index, std::weak_ptr<void>>> shared_objects_{};
 
             template <typename T>

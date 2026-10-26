@@ -1231,6 +1231,8 @@ jobs:
         with:
           api-level: 29
           arch: ${{matrix.architecture}}
+          # The artifacts are pushed as a tar of about 3 GB and unpacked next to it, which overflows the default disk.
+          disk-size: 10G
           script: |
             tar -cf build/${{matrix.preset}}/artifacts.tar -C build/${{matrix.preset}}/artifacts .
             adb push build/${{matrix.preset}}/artifacts.tar /data/local/tmp/
@@ -1334,6 +1336,14 @@ jobs:
             mkdir -p app/android/app/src/main/jniLibs/$abi
             cp build/android/$abi/*.so app/android/app/src/main/jniLibs/$abi/
           done
+
+      # Mesa's Turnip, loaded through libadrenotools in place of Adreno's stock driver.
+      - name: Download Turnip Driver
+        run: |
+          curl -fsSL -o turnip.zip https://github.com/K11MCH1/AdrenoToolsDrivers/releases/download/v26.0.0-rc08/Turnip_v26.0.0_R8.zip
+          echo "e634db0f929e2205e95511c769071817d0390180ec72c8e690bc76375e813715  turnip.zip" | sha256sum -c
+          mkdir -p app/android/app/src/main/assets/turnip
+          unzip -j turnip.zip vulkan.ad07xx.so -d app/android/app/src/main/assets/turnip
 
       - name: Set up Java
         uses: actions/setup-java@v5

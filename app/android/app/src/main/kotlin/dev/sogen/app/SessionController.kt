@@ -70,7 +70,14 @@ class SessionController(
         }
 
         connection = serviceConnection
-        return context.bindService(Intent(context, SogenService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)
+        if (!context.bindService(Intent(context, SogenService::class.java), serviceConnection, Context.BIND_AUTO_CREATE)) {
+            // Android keeps the connection registered even when binding fails.
+            context.unbindService(serviceConnection)
+            connection = null
+            return false
+        }
+
+        return true
     }
 
     fun stop() {
@@ -89,6 +96,7 @@ class SessionController(
     }
 
     fun mouseMove(window: Long, x: Int, y: Int) = call { session?.mouseMove(window, x, y) }
+    fun mouseMotion(window: Long, dx: Int, dy: Int) = call { session?.mouseMotion(window, dx, dy) }
 
     fun mouseButton(window: Long, button: Int, down: Boolean, x: Int, y: Int) =
         call { session?.mouseButton(window, button, down, x, y) }
@@ -153,6 +161,10 @@ class SessionController(
 
         override fun onWindowTitleChanged(window: Long, title: String) = post {
             emit(mapOf("event" to "windowTitle", "window" to window, "title" to title))
+        }
+
+        override fun onRelativeMouseChanged(window: Long, relative: Boolean) = post {
+            emit(mapOf("event" to "relativeMouse", "window" to window, "relative" to relative))
         }
 
         override fun onCursorMoved(window: Long, x: Int, y: Int) = post {

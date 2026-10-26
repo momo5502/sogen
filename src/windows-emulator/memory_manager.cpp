@@ -177,8 +177,6 @@ namespace sogen
             return;
         }
 
-        std::vector<uint8_t> data{};
-
         for (const auto& reserved_region : this->reserved_regions_)
         {
             if (reserved_region.second.kind == memory_region_kind::mmio)
@@ -188,11 +186,9 @@ namespace sogen
 
             for (const auto& region : reserved_region.second.committed_regions)
             {
-                data.resize(region.second.length);
-
-                this->read_memory(region.first, data.data(), region.second.length);
-
-                buffer.write(data.data(), region.second.length);
+                buffer.write_chunked(region.second.length, [&](const size_t offset, const std::span<std::byte> chunk) {
+                    this->read_memory(region.first + offset, chunk.data(), chunk.size());
+                });
             }
         }
     }
@@ -214,8 +210,6 @@ namespace sogen
             return;
         }
 
-        std::vector<uint8_t> data{};
-
         for (auto i = this->reserved_regions_.begin(); i != this->reserved_regions_.end();)
         {
             auto& reserved_region = i->second;
@@ -229,13 +223,11 @@ namespace sogen
 
             for (const auto& region : reserved_region.committed_regions)
             {
-                data.resize(region.second.length);
-
-                buffer.read(data.data(), region.second.length);
-
                 const auto effective_permission = this->get_effective_permissions(region.second.permissions);
                 this->map_memory(region.first, region.second.length, effective_permission);
-                this->write_memory(region.first, data.data(), region.second.length);
+                buffer.read_chunked(region.second.length, [&](const size_t offset, const std::span<const std::byte> chunk) {
+                    this->write_memory(region.first + offset, chunk.data(), chunk.size());
+                });
             }
         }
     }
@@ -414,9 +406,20 @@ namespace sogen
         }
 
         const uint64_t address = this->find_free_host_allocation_base(size, 0, highest_address);
-        if (address == 0)
+        if (address == 0 || !this->allocate_placed_host_memory_at(address, size, permissions, place))
         {
             return 0;
+        }
+
+        return address;
+    }
+
+    bool memory_manager::allocate_placed_host_memory_at(const uint64_t address, const size_t size, const nt_memory_permission permissions,
+                                                        const std::function<bool(void* host_address)>& place)
+    {
+        if (size == 0 || this->memory_->host_placement_address(address) == 0 || this->overlaps_reserved_region(address, size, false))
+        {
+            return false;
         }
 
         auto* host_address = reinterpret_cast<void*>(this->memory_->host_placement_address(address));
@@ -424,7 +427,7 @@ namespace sogen
         if (!place(host_address))
         {
             this->release_host_claims(address + size);
-            return 0;
+            return false;
         }
 
         if (!this->register_host_memory(address, size, host_address, permissions))
@@ -432,7 +435,7 @@ namespace sogen
             throw std::runtime_error("Failed to register placed host memory in a free guest range");
         }
 
-        return address;
+        return true;
     }
 
     uint64_t memory_manager::host_placement_address(const uint64_t address) const

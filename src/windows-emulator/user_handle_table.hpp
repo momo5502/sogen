@@ -44,31 +44,38 @@ namespace sogen
                 srv.dpi96DialogBaseUnitHeight = 16;
                 srv.asyncKeyStateGeneration = 1;
                 srv.systemDpi = 96;
-                srv.systemMetrics[0] = 1920;            // SM_CXSCREEN
-                srv.systemMetrics[1] = 1080;            // SM_CYSCREEN
-                srv.systemMetrics[2] = 17;              // SM_CXVSCROLL
-                srv.systemMetrics[3] = 17;              // SM_CYHSCROLL
-                srv.systemMetrics[10] = 17;             // SM_CXHTHUMB
-                srv.systemMetrics[11] = 32;             // SM_CXICON
-                srv.systemMetrics[12] = 32;             // SM_CYICON
-                srv.systemMetrics[13] = 32;             // SM_CXCURSOR
-                srv.systemMetrics[14] = 32;             // SM_CYCURSOR
-                srv.systemMetrics[15] = 19;             // SM_CYMENU
-                srv.dpiDependentSystemMetrics[13] = 32; // SM_CXCURSOR
-                srv.dpiDependentSystemMetrics[14] = 32; // SM_CYCURSOR
-                srv.dpiDependentSystemMetrics[15] = 19; // SM_CYMENU
-                srv.systemMetrics[19] = 1;              // SM_MOUSEPRESENT
-                srv.systemMetrics[20] = 17;             // SM_CYVSCROLL
-                srv.systemMetrics[21] = 17;             // SM_CXHSCROLL
-                srv.systemMetrics[43] = 3;              // SM_CMOUSEBUTTONS
-                srv.systemMetrics[49] = 16;             // SM_CXSMICON
-                srv.systemMetrics[50] = 16;             // SM_CYSMICON
-                srv.dpiDependentSystemMetrics[20] = 17; // SM_CYVSCROLL
-                srv.dpiDependentSystemMetrics[21] = 17; // SM_CXHSCROLL
-                srv.systemMetrics[75] = 1;              // SM_MOUSEWHEELPRESENT
-                srv.systemMetrics[78] = 1920;           // SM_CXVIRTUALSCREEN
-                srv.systemMetrics[79] = 1080;           // SM_CYVIRTUALSCREEN
-                srv.systemMetrics[91] = 1;              // SM_MOUSEHORIZONTALWHEELPRESENT
+                srv.systemMetrics[0] = 1920;  // SM_CXSCREEN
+                srv.systemMetrics[1] = 1080;  // SM_CYSCREEN
+                srv.systemMetrics[2] = 17;    // SM_CXVSCROLL
+                srv.systemMetrics[3] = 17;    // SM_CYHSCROLL
+                srv.systemMetrics[10] = 17;   // SM_CXHTHUMB
+                srv.systemMetrics[11] = 32;   // SM_CXICON
+                srv.systemMetrics[12] = 32;   // SM_CYICON
+                srv.systemMetrics[13] = 32;   // SM_CXCURSOR
+                srv.systemMetrics[14] = 32;   // SM_CYCURSOR
+                srv.systemMetrics[15] = 19;   // SM_CYMENU
+                srv.systemMetrics[19] = 1;    // SM_MOUSEPRESENT
+                srv.systemMetrics[20] = 17;   // SM_CYVSCROLL
+                srv.systemMetrics[21] = 17;   // SM_CXHSCROLL
+                srv.systemMetrics[43] = 3;    // SM_CMOUSEBUTTONS
+                srv.systemMetrics[49] = 16;   // SM_CXSMICON
+                srv.systemMetrics[50] = 16;   // SM_CYSMICON
+                srv.systemMetrics[75] = 1;    // SM_MOUSEWHEELPRESENT
+                srv.systemMetrics[78] = 1920; // SM_CXVIRTUALSCREEN
+                srv.systemMetrics[79] = 1080; // SM_CYVIRTUALSCREEN
+                srv.systemMetrics[91] = 1;    // SM_MOUSEHORIZONTALWHEELPRESENT
+
+                // user32 reads the DPI-scaled metrics from a cache indexed by slot rather than by metric
+                // (GetDpiDepSysMetCacheMetricSlot); the first 30 slots hold the values for the system DPI.
+                constexpr std::array<std::pair<size_t, size_t>, 30> dpi_dependent_metric_slots{{
+                    {2, 0},   {3, 1},   {4, 2},   {9, 3},   {10, 4},  {11, 5},  {12, 6},  {13, 7},  {14, 8},  {15, 9},
+                    {20, 10}, {21, 11}, {30, 12}, {31, 13}, {32, 14}, {33, 15}, {34, 16}, {35, 17}, {38, 18}, {39, 19},
+                    {49, 20}, {50, 21}, {51, 22}, {52, 23}, {53, 24}, {54, 25}, {55, 26}, {71, 27}, {72, 28}, {92, 29},
+                }};
+                for (const auto& [metric, slot] : dpi_dependent_metric_slots)
+                {
+                    srv.dpiDependentSystemMetrics[slot] = srv.systemMetrics[metric];
+                }
             });
 
             const auto handle_table_size = static_cast<size_t>(page_align_up(sizeof(USER_HANDLEENTRY) * MAX_HANDLES));

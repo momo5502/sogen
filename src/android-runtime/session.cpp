@@ -146,6 +146,7 @@ namespace sogen::android
             .on_window_visibility_changed = env.GetMethodID(listener_class, "onWindowVisibilityChanged", "(JZ)V"),
             .on_window_title_changed = env.GetMethodID(listener_class, "onWindowTitleChanged", "(JLjava/lang/String;)V"),
             .on_cursor_moved = env.GetMethodID(listener_class, "onCursorMoved", "(JII)V"),
+            .on_relative_mouse_changed = env.GetMethodID(listener_class, "onRelativeMouseChanged", "(JZ)V"),
             .on_snapshot = env.GetMethodID(listener_class, "onSnapshot", "(Ljava/lang/String;Ljava/lang/String;)V"),
         };
         env.DeleteLocalRef(listener_class);
@@ -179,7 +180,7 @@ namespace sogen::android
     {
         try
         {
-            auto ui = std::make_unique<android_ui_backend>(*this);
+            auto ui = std::make_unique<android_ui_backend>(*this, config.vulkan);
             auto* ui_backend = ui.get();
 
             emulator_callbacks callbacks{};
@@ -350,6 +351,14 @@ namespace sogen::android
     {
         this->dispatcher_.post([this, window, x, y](JNIEnv& env) {
             env.CallVoidMethod(this->listener_, this->methods_.on_cursor_moved, static_cast<jlong>(window), x, y);
+        });
+    }
+
+    void session::on_relative_mouse_changed(const hwnd window, const bool relative)
+    {
+        this->dispatcher_.post([this, window, relative](JNIEnv& env) {
+            env.CallVoidMethod(this->listener_, this->methods_.on_relative_mouse_changed, static_cast<jlong>(window),
+                               static_cast<jboolean>(relative));
         });
     }
 

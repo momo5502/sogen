@@ -2128,6 +2128,12 @@ namespace sogen
 
     void windows_emulator::deliver_ui_event(const ui_event& event)
     {
+        if (event.message == WM_SIZE)
+        {
+            this->resize_window_from_host(event.window, event.wParam == SIZE_MAXIMIZED, point_x(event.lParam), point_y(event.lParam));
+            return;
+        }
+
         const auto* win = this->process.windows.get(event.window);
         if (!win)
         {
@@ -2286,6 +2292,48 @@ namespace sogen
         {
             this->apply_cursor_capture();
         }
+    }
+
+    void windows_emulator::resize_window_from_host(const hwnd window_handle, const bool maximized, const int32_t client_width,
+                                                   const int32_t client_height)
+    {
+        auto* win = this->process.windows.get(window_handle);
+        if (!win)
+        {
+            return;
+        }
+
+        const bool was_maximized = (win->style & WS_MAXIMIZE) != 0;
+        if (win->client_width() == client_width && win->client_height() == client_height && was_maximized == maximized)
+        {
+            return;
+        }
+
+        auto* thread = get_thread_by_id(this->process, win->thread_id);
+        if (!thread)
+        {
+            return;
+        }
+
+        const auto insets = win->nonclient_insets();
+        win->width = client_width + insets.left + insets.right;
+        win->height = client_height + insets.top + insets.bottom;
+        win->style = maximized ? (win->style | WS_MAXIMIZE) : (win->style & ~WS_MAXIMIZE);
+        win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win->style; });
+        win->sync_guest_rects();
+
+        win->update_rect = RECT{.left = 0, .top = 0, .right = win->client_width(), .bottom = win->client_height()};
+        win->update_pending = true;
+        win->erase_pending = true;
+        thread->mark_queue_status_changed(QS_PAINT);
+
+        msg m{};
+        m.window = window_handle;
+        m.message = WM_SIZE;
+        m.wParam = maximized ? SIZE_MAXIMIZED : SIZE_RESTORED;
+        m.lParam = pack_point(win->client_width(), win->client_height());
+        thread->post_message(*this, m, true);
+        this->wake_thread(*thread);
     }
 
     void windows_emulator::dump_exception_trace()
@@ -2573,6 +2621,7 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
         this->release_held_input();
     }
@@ -2678,6 +2727,7 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
     }
 
