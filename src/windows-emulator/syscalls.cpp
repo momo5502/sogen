@@ -1467,8 +1467,19 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (!directory->is_directory())
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto* event = c.proc.events.get(event_handle);
+            if (event_handle != 0 && !event)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
             directory->change_watch_pending = true;
-            if (auto* event = c.proc.events.get(event_handle))
+            if (event)
             {
                 event->signaled = false;
             }
