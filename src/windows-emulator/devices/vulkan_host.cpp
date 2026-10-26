@@ -11020,8 +11020,7 @@ namespace sogen
                 throw std::runtime_error("Mapping Vulkan memory for a snapshot failed");
             }
 
-            const auto* contents = static_cast<const std::byte*>(mapped);
-            buffer.write_vector(std::vector<std::byte>(contents, contents + memory.allocation_size));
+            buffer.write_span(std::span(static_cast<const std::byte*>(mapped), static_cast<size_t>(memory.allocation_size)));
 
             if (!memory.persistent_host_pointer)
             {

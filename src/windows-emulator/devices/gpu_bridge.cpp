@@ -289,9 +289,17 @@ namespace sogen
 
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
-                utils::buffer_serializer vulkan{};
+                // Written in bounded chunks ending with an empty one, so saving never holds all GPU contents in memory at once.
+                constexpr size_t chunk_size = 16 * 1024 * 1024;
+                utils::buffer_serializer vulkan{[&](const std::span<const std::byte> data) {
+                    for (size_t offset = 0; offset < data.size(); offset += chunk_size)
+                    {
+                        buffer.write_span(data.subspan(offset, std::min(chunk_size, data.size() - offset)));
+                    }
+                }};
                 this->vulkan_.serialize(vulkan);
-                buffer.write_vector(vulkan.get_buffer());
+                vulkan.flush();
+                buffer.write_span(std::span<const std::byte>{});
 
                 buffer.write(static_cast<uint64_t>(this->direct_mappings_.size()));
                 for (const auto& [memory, mapping] : this->direct_mappings_)
@@ -331,7 +339,11 @@ namespace sogen
 
             void deserialize_object(utils::buffer_deserializer& buffer) override
             {
-                buffer.read_vector(this->restored_vulkan_state_);
+                this->restored_vulkan_state_.clear();
+                for (auto chunk = buffer.read_vector<std::byte>(); !chunk.empty(); chunk = buffer.read_vector<std::byte>())
+                {
+                    this->restored_vulkan_state_.insert(this->restored_vulkan_state_.end(), chunk.begin(), chunk.end());
+                }
 
                 this->direct_mappings_.clear();
                 for (auto count = buffer.read<uint64_t>(); count > 0; --count)
