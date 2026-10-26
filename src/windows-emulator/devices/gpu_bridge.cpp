@@ -19,6 +19,8 @@ namespace sogen
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
+                this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
+
                 switch (context.io_control_code)
                 {
                 case gpu_bridge::ioctl_get_version:
@@ -381,6 +383,8 @@ namespace sogen
                 {
                     return;
                 }
+
+                this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
 
                 utils::buffer_deserializer buffer{this->restored_vulkan_state_};
                 this->vulkan_.deserialize(
@@ -1816,6 +1820,13 @@ namespace sogen
                                     gpu_bridge::allocate_memory_response{.vk_result = result, .reserved = 0, .memory = memory});
             }
 
+            // 32-bit code can only reach the low 2GB, unless the executable is large-address aware.
+            static uint64_t highest_wow64_address(const windows_emulator& win_emu)
+            {
+                const auto* executable = win_emu.mod_manager.executable;
+                return (executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) ? 0xFFFEFFFF : 0x7FFEFFFF;
+            }
+
             // A WoW64 guest can only reach memory below its address limit, and drivers without placed mappings map
             // device memory wherever they like, which an alias into that range cannot always reach. Host-visible
             // memory is therefore allocated as guest memory there and imported into the device, so it is already
@@ -1823,7 +1834,7 @@ namespace sogen
             bool allocate_imported_memory(windows_emulator& win_emu, const gpu_bridge::allocate_memory_request& request, uint64_t& memory)
             {
                 constexpr uint64_t page = 0x1000;
-                constexpr uint64_t wow64_highest_address = 0x7FFEFFFF;
+                const uint64_t wow64_highest_address = highest_wow64_address(win_emu);
 
                 const uint64_t import_alignment = this->vulkan_.host_import_alignment(request.device);
                 const uint64_t alignment = std::max(page, import_alignment);
@@ -2103,8 +2114,7 @@ namespace sogen
                 const uint64_t alignment = std::max(page, placed_alignment);
                 const uint64_t size = (allocation_size + alignment - 1) & ~(alignment - 1);
 
-                // 32-bit code can only reach the low 2GB, unless it is large-address aware.
-                constexpr uint64_t wow64_highest_address = 0x7FFEFFFF;
+                const uint64_t wow64_highest_address = highest_wow64_address(win_emu);
 
                 void* host_ptr = nullptr;
                 const uint64_t guest_address = win_emu.memory.allocate_placed_host_memory(

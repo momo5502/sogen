@@ -49,3 +49,4 @@ app.*.map.json
 
 # Native libraries staged from the sogen CMake build, see README.md
 /android/app/src/main/jniLibs/
+/android/app/src/main/assets/turnip/

@@ -103,6 +103,7 @@ class MainActivity : FlutterActivity() {
             }
 
             "mouseMove" -> session.mouseMove(window, int("x"), int("y")).also { result.success(null) }
+            "mouseMotion" -> session.mouseMotion(window, int("dx"), int("dy")).also { result.success(null) }
             "mouseButton" -> session.mouseButton(
                 window,
                 int("button"),

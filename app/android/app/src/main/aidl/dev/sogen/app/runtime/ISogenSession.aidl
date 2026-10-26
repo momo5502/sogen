@@ -18,6 +18,7 @@ oneway interface ISogenSession {
     void detachSurface(long window);
 
     void mouseMove(long window, int x, int y);
+    void mouseMotion(long window, int dx, int dy);
     void mouseButton(long window, int button, boolean down, int x, int y);
     void mouseWheel(long window, int delta, int x, int y);
     void key(long window, int keyCode, boolean down);

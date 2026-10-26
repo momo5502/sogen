@@ -97,12 +97,11 @@ extern "C"
         delete reinterpret_cast<session*>(handle);
     }
 
-    JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(JNIEnv* env, jobject /*self*/, const jlong handle, jstring root,
-                                                                            jstring application, jobjectArray arguments,
-                                                                            jobjectArray environment, jobjectArray path_mappings,
-                                                                            jstring working_directory, jstring backend,
-                                                                            const jboolean live_network, jstring sandbox_executable,
-                                                                            jstring snapshot_directory, jstring resume_file)
+    JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(
+        JNIEnv* env, jobject /*self*/, const jlong handle, jstring root, jstring application, jobjectArray arguments,
+        jobjectArray environment, jobjectArray path_mappings, jstring working_directory, jstring backend, const jboolean live_network,
+        jstring sandbox_executable, jstring vulkan_hook_directory, jstring vulkan_driver_directory, jstring vulkan_driver_name,
+        jstring snapshot_directory, jstring resume_file)
     {
         const sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -114,6 +113,12 @@ extern "C"
             .backend = to_string(*env, backend),
             .live_network = live_network == JNI_TRUE,
             .sandbox_executable = to_string(*env, sandbox_executable),
+            .vulkan =
+                {
+                    .hook_directory = to_string(*env, vulkan_hook_directory),
+                    .custom_directory = to_string(*env, vulkan_driver_directory),
+                    .custom_name = to_string(*env, vulkan_driver_name),
+                },
             .snapshot_directory = to_string(*env, snapshot_directory),
             .resume_file = to_string(*env, resume_file),
         };
@@ -178,6 +183,13 @@ extern "C"
     {
         get_session(handle).with_ui(
             [&](sogen::android::android_ui_backend& ui) { ui.post_mouse_move(static_cast<sogen::hwnd>(window), x, y); });
+    }
+
+    JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeMouseMotion(JNIEnv* /*env*/, jobject /*self*/, const jlong handle,
+                                                                                    const jlong window, const jint dx, const jint dy)
+    {
+        get_session(handle).with_ui(
+            [&](sogen::android::android_ui_backend& ui) { ui.post_mouse_motion(static_cast<sogen::hwnd>(window), dx, dy); });
     }
 
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeMouseButton(JNIEnv* /*env*/, jobject /*self*/, const jlong handle,

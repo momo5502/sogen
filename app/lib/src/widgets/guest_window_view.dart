@@ -37,10 +37,16 @@ class _GuestWindowViewState extends State<GuestWindowView> {
   // Long enough for games that poll the button state once per frame to see a tap's click.
   static const _clickDuration = Duration(milliseconds: 60);
 
+  // A finger travels far less than a mouse, so mouse-look would turn slowly at one count per guest pixel.
+  static const _relativeSensitivity = 3.0;
+
   final Map<int, MouseButton> _pressed = {};
 
   final ValueNotifier<Offset?> _cursor = ValueNotifier(null);
   _TrackpadTouch? _touch;
+  Offset _relativeRemainder = Offset.zero;
+
+  bool get _relative => widget.session.relativeMouseWindows.contains(widget.window.handle);
 
   @override
   void initState() {
@@ -60,7 +66,7 @@ class _GuestWindowViewState extends State<GuestWindowView> {
   @override
   void dispose() {
     widget.session.guestCursor.removeListener(_onGuestCursor);
-    _touch?.dragTimer.cancel();
+    _touch?.dragTimer?.cancel();
     _cursor.dispose();
     super.dispose();
   }
@@ -91,7 +97,7 @@ class _GuestWindowViewState extends State<GuestWindowView> {
                     child: Texture(textureId: window.textureId, filterQuality: FilterQuality.medium),
                   ),
                   // The Windows cursor is not drawn, so a trackpad would otherwise steer an invisible one.
-                  if (widget.trackpad)
+                  if (widget.trackpad && !_relative)
                     ValueListenableBuilder<Offset?>(
                       valueListenable: _cursor,
                       builder: (context, cursor, _) {
@@ -151,7 +157,7 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     );
   }
 
-  bool _isTrackpadTouch(PointerEvent event) => widget.trackpad && event.kind == PointerDeviceKind.touch;
+  bool _isTrackpadTouch(PointerEvent event) => (widget.trackpad || _relative) && event.kind == PointerDeviceKind.touch;
 
   void _onDown(PointerDownEvent event) {
     if (_isTrackpadTouch(event)) {
@@ -205,20 +211,25 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     }
 
     final pointer = event.pointer;
+    // A look gesture often starts with a pause, which must not turn into holding the button while looking around.
+    final relative = _relative;
+    _relativeRemainder = Offset.zero;
     _touch = _TrackpadTouch(
       pointer: pointer,
       start: event.timeStamp,
-      dragTimer: Timer(_dragDelay, () {
-        final touch = _touch;
-        if (touch == null || touch.pointer != pointer || touch.moved) {
-          return;
-        }
+      dragTimer: relative
+          ? null
+          : Timer(_dragDelay, () {
+              final touch = _touch;
+              if (touch == null || touch.pointer != pointer || touch.moved) {
+                return;
+              }
 
-        touch.dragging = true;
-        HapticFeedback.selectionClick();
-        final (x, y) = _cursorPosition();
-        widget.session.mouseButton(widget.window, widget.touchButton, down: true, x: x, y: y);
-      }),
+              touch.dragging = true;
+              HapticFeedback.selectionClick();
+              final (x, y) = _cursorPosition();
+              widget.session.mouseButton(widget.window, widget.touchButton, down: true, x: x, y: y);
+            }),
     );
   }
 
@@ -234,6 +245,18 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     }
 
     final window = widget.window;
+    if (_relative) {
+      // Inside the FittedBox, the delta is already in guest pixels; the fraction carries over so slow movement adds up.
+      final motion = _relativeRemainder + event.localDelta * _relativeSensitivity;
+      final dx = motion.dx.truncate();
+      final dy = motion.dy.truncate();
+      _relativeRemainder = Offset(motion.dx - dx, motion.dy - dy);
+      if (dx != 0 || dy != 0) {
+        widget.session.mouseMotion(window, dx, dy);
+      }
+      return;
+    }
+
     final moved = (_cursor.value ?? Offset(window.width / 2, window.height / 2)) + event.localDelta;
     _cursor.value = Offset(moved.dx.clamp(0, window.width - 1), moved.dy.clamp(0, window.height - 1));
 
@@ -244,7 +267,7 @@ class _GuestWindowViewState extends State<GuestWindowView> {
   void _onTrackpadUp(PointerEvent event) {
     final touch = _touch!;
     _touch = null;
-    touch.dragTimer.cancel();
+    touch.dragTimer?.cancel();
 
     final window = widget.window;
     final button = widget.touchButton;
@@ -282,7 +305,7 @@ class _TrackpadTouch {
 
   final int pointer;
   final Duration start;
-  final Timer dragTimer;
+  final Timer? dragTimer;
   double travel = 0;
   bool moved = false;
   bool dragging = false;

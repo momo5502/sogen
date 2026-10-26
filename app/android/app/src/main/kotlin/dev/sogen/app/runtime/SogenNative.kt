@@ -2,6 +2,13 @@ package dev.sogen.app.runtime
 
 import android.view.Surface
 
+/** Where the Vulkan driver comes from. An empty [driverName] keeps the system driver. */
+data class VulkanDriver(
+    val hookDirectory: String,
+    val driverDirectory: String = "",
+    val driverName: String = "",
+)
+
 interface NativeListener {
     /** [color] is the emulator's logger color index. */
     fun onOutput(text: String, color: Int)
@@ -17,6 +24,9 @@ interface NativeListener {
     /** The guest moved the cursor itself, e.g. with SetCursorPos; [x] and [y] are window client coordinates. */
     fun onCursorMoved(window: Long, x: Int, y: Int)
 
+    /** While [relative], input to [window] should move the mouse by deltas, since the guest confined and hid the cursor. */
+    fun onRelativeMouseChanged(window: Long, relative: Boolean)
+
     /** [error] is empty once the process was saved to [path]. */
     fun onSnapshot(path: String, error: String)
 }
@@ -26,7 +36,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     private val handle: Long = nativeCreate(listener)
 
     /** Child processes run in [sandboxExecutable]; an empty path leaves the guest unable to create them. */
-    fun run(config: RunConfig, sandboxExecutable: String): Int = nativeRun(
+    fun run(config: RunConfig, sandboxExecutable: String, vulkan: VulkanDriver): Int = nativeRun(
         handle,
         config.emulationRoot,
         config.application,
@@ -37,6 +47,9 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         config.backend,
         config.liveNetwork,
         sandboxExecutable,
+        vulkan.hookDirectory,
+        vulkan.driverDirectory,
+        vulkan.driverName,
         config.snapshotDirectory,
         config.resumeFile,
     )
@@ -50,6 +63,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     fun attachSurface(window: Long, surface: Surface) = nativeAttachSurface(handle, window, surface)
     fun detachSurface(window: Long) = nativeDetachSurface(handle, window)
     fun mouseMove(window: Long, x: Int, y: Int) = nativeMouseMove(handle, window, x, y)
+    fun mouseMotion(window: Long, dx: Int, dy: Int) = nativeMouseMotion(handle, window, dx, dy)
     fun mouseButton(window: Long, button: Int, down: Boolean, x: Int, y: Int) =
         nativeMouseButton(handle, window, button, down, x, y)
 
@@ -73,6 +87,9 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         backend: String,
         liveNetwork: Boolean,
         sandboxExecutable: String,
+        vulkanHookDirectory: String,
+        vulkanDriverDirectory: String,
+        vulkanDriverName: String,
         snapshotDirectory: String,
         resumeFile: String,
     ): Int
@@ -84,6 +101,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     private external fun nativeAttachSurface(handle: Long, window: Long, surface: Surface)
     private external fun nativeDetachSurface(handle: Long, window: Long)
     private external fun nativeMouseMove(handle: Long, window: Long, x: Int, y: Int)
+    private external fun nativeMouseMotion(handle: Long, window: Long, dx: Int, dy: Int)
     private external fun nativeMouseButton(handle: Long, window: Long, button: Int, down: Boolean, x: Int, y: Int)
     private external fun nativeMouseWheel(handle: Long, window: Long, delta: Int, x: Int, y: Int)
     private external fun nativeKey(handle: Long, window: Long, keyCode: Int, down: Boolean)
