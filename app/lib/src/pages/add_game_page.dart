@@ -128,8 +128,9 @@ class _AddGamePageState extends State<AddGamePage> {
 
     final arguments = _arguments.text.trim();
     final environment = {
-      for (final entry in _environment.text.trim().split(RegExp(r'\s+')))
-        if (entry.indexOf('=') > 0) entry.substring(0, entry.indexOf('=')): entry.substring(entry.indexOf('=') + 1),
+      for (final line in _environment.text.split('\n'))
+        if (line.indexOf('=') > 0)
+          line.substring(0, line.indexOf('=')).trim(): line.substring(line.indexOf('=') + 1).trim(),
     };
     Navigator.of(context).pop(
       Game(
@@ -226,7 +227,9 @@ class _AddGamePageState extends State<AddGamePage> {
             const SizedBox(height: 16),
             TextField(
               controller: _environment,
-              decoration: const InputDecoration(labelText: 'Environment', hintText: 'NAME=value NAME=value'),
+              minLines: 1,
+              maxLines: 4,
+              decoration: const InputDecoration(labelText: 'Environment', hintText: 'One NAME=value per line'),
             ),
             const SizedBox(height: 8),
             SwitchListTile(
