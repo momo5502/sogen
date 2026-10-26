@@ -1405,7 +1405,7 @@ namespace sogen
 
         NTSTATUS handle_pipe_io(const syscall_context& c, const handle file_handle, const uint64_t event, const uint64_t apc_routine,
                                 const uint64_t apc_context, const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
-                                const uint64_t buffer, const ULONG length, const bool reading)
+                                const uint64_t wow64_io_status_block, const uint64_t buffer, const ULONG length, const bool reading)
         {
             auto* container = c.proc.devices.get(file_handle);
             auto* pipe = container ? container->get_internal_device<named_pipe>() : nullptr;
@@ -1424,9 +1424,9 @@ namespace sogen
             context.output_buffer = buffer;
             context.output_buffer_length = length;
             context.vcpu = &c.vcpu;
-            if (c.proc.is_wow64_process && io_status_block)
+            if (wow64_io_status_block)
             {
-                context.wow64_io_status_block.set_address(io_status_block.read().Pointer);
+                context.wow64_io_status_block.set_address(wow64_io_status_block);
             }
             return pipe->start_io(c.win_emu, container->prepare_io_context(context), reading);
         }
@@ -1463,7 +1463,8 @@ namespace sogen
 
             if (const auto* container = c.proc.devices.get(file_handle); container && container->get_internal_device<named_pipe>())
             {
-                return handle_pipe_io(c, file_handle, event, apc_routine, apc_context, io_status_block, buffer, length, true);
+                return handle_pipe_io(c, file_handle, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, buffer,
+                                      length, true);
             }
 
             const auto* f = c.proc.files.get(file_handle);
@@ -1665,7 +1666,8 @@ namespace sogen
 
             if (const auto* container = c.proc.devices.get(file_handle); container && container->get_internal_device<named_pipe>())
             {
-                return handle_pipe_io(c, file_handle, event, apc_routine, apc_context, io_status_block, buffer, length, false);
+                return handle_pipe_io(c, file_handle, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, buffer,
+                                      length, false);
             }
 
             const auto* f = c.proc.files.get(file_handle);
