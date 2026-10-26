@@ -796,6 +796,7 @@ namespace sogen
             void serialize_object(utils::buffer_serializer& buffer) const override
             {
                 std::vector<const render_stream*> paused{};
+                paused.reserve(this->streams_.size());
                 const auto resume = utils::finally([&] {
                     for (const auto* stream : paused)
                     {
