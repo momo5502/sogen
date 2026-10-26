@@ -1231,6 +1231,8 @@ jobs:
         with:
           api-level: 29
           arch: ${{matrix.architecture}}
+          # The artifacts are pushed as a tar of about 3 GB and unpacked next to it, which overflows the default disk.
+          disk-size: 10G
           script: |
             tar -cf build/${{matrix.preset}}/artifacts.tar -C build/${{matrix.preset}}/artifacts .
             adb push build/${{matrix.preset}}/artifacts.tar /data/local/tmp/
