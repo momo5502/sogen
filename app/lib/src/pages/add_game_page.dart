@@ -25,6 +25,7 @@ class AddGamePage extends StatefulWidget {
 class _AddGamePageState extends State<AddGamePage> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _arguments = TextEditingController();
+  final TextEditingController _environment = TextEditingController();
 
   String? _directory;
   List<String> _executables = const [];
@@ -38,6 +39,7 @@ class _AddGamePageState extends State<AddGamePage> {
   void dispose() {
     _name.dispose();
     _arguments.dispose();
+    _environment.dispose();
     super.dispose();
   }
 
@@ -125,6 +127,10 @@ class _AddGamePageState extends State<AddGamePage> {
     }
 
     final arguments = _arguments.text.trim();
+    final environment = {
+      for (final entry in _environment.text.trim().split(RegExp(r'\s+')))
+        if (entry.indexOf('=') > 0) entry.substring(0, entry.indexOf('=')): entry.substring(entry.indexOf('=') + 1),
+    };
     Navigator.of(context).pop(
       Game(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -132,6 +138,7 @@ class _AddGamePageState extends State<AddGamePage> {
         directory: directory,
         executable: executable,
         arguments: arguments.isEmpty ? const [] : arguments.split(RegExp(r'\s+')),
+        environment: environment,
         liveNetwork: _liveNetwork,
         backend: _backend,
         console: _console,
@@ -215,6 +222,11 @@ class _AddGamePageState extends State<AddGamePage> {
             TextField(
               controller: _arguments,
               decoration: const InputDecoration(labelText: 'Arguments'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _environment,
+              decoration: const InputDecoration(labelText: 'Environment', hintText: 'NAME=value NAME=value'),
             ),
             const SizedBox(height: 8),
             SwitchListTile(
