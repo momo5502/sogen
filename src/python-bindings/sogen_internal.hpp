@@ -136,7 +136,7 @@ namespace sogen::py
 
       private:
         nb::list resolve_params(const api_hook_entry& entry) const;
-        void return_from_api(const api_call_info& call) const;
+        void return_from_api(const api_call_info& call, const api_hook_entry& entry) const;
         void invoke_hook(const api_hook_hit& hit);
         void refresh_index();
         void sync_address_hooks();

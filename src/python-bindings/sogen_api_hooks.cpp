@@ -54,6 +54,11 @@ namespace sogen::py
 
             return expected == name || expected == stem;
         }
+
+        size_t parameter_count(const api_hook_entry& entry)
+        {
+            return entry.params.is_none() ? size_t{} : static_cast<size_t>(nb::len(entry.params));
+        }
     }
 
     // ----- hook_handle -----
@@ -186,7 +191,7 @@ namespace sogen::py
     nb::list api_hook_registry::resolve_params(const api_hook_entry& entry) const
     {
         nb::list params{};
-        const auto count = entry.params.is_none() ? size_t{} : static_cast<size_t>(nb::len(entry.params));
+        const auto count = parameter_count(entry);
         auto& cpu = this->win_emu->active_cpu();
         auto* x64 = dynamic_cast<x86_64_cpu*>(&cpu);
         if (!x64)
@@ -206,14 +211,25 @@ namespace sogen::py
         return params;
     }
 
-    void api_hook_registry::return_from_api(const api_call_info& call) const
+    void api_hook_registry::return_from_api(const api_call_info& call, const api_hook_entry& entry) const
     {
         auto& cpu = this->win_emu->active_cpu();
         const auto& abi = this->win_emu->abi();
         abi.return_value(cpu, call.return_value);
         if (auto* x64 = dynamic_cast<x86_64_cpu*>(&cpu))
         {
-            const auto stack_adjust = is_32bit_code_segment(*x64) ? sizeof(uint32_t) : sizeof(uint64_t);
+            auto stack_adjust = static_cast<uint64_t>(sizeof(uint64_t));
+            if (is_32bit_code_segment(*x64))
+            {
+                // Intercepting replaces the callee, so the return has to do the callee's cleanup itself.
+                // A stdcall callee pops its arguments; a cdecl one leaves them to the caller.
+                stack_adjust = sizeof(uint32_t);
+                if (entry.cc == function_calling_convention::x86_stdcall)
+                {
+                    stack_adjust += sizeof(uint32_t) * parameter_count(entry);
+                }
+            }
+
             abi.stack_pointer(cpu, call.stack_pointer + stack_adjust);
         }
         abi.instruction_pointer(cpu, call.return_address);
@@ -243,7 +259,7 @@ namespace sogen::py
             const auto result = coerce_api_continuation(entry.callback(nb::cast(call), params));
             if (result == api_call_continuation::intercept)
             {
-                this->return_from_api(*call);
+                this->return_from_api(*call, entry);
             }
         }
         catch (const std::exception& e)
@@ -346,9 +362,14 @@ namespace sogen::py
         {
             return_address = arm64->reg(arm64_register::lr);
         }
-        else if (!cpu.try_read_memory(cpu.read_stack_pointer(), &return_address, sizeof(return_address)))
+        else
         {
-            return;
+            auto* x64 = dynamic_cast<x86_64_cpu*>(&cpu);
+            const auto pointer_size = (x64 && is_32bit_code_segment(*x64)) ? sizeof(uint32_t) : sizeof(uint64_t);
+            if (!cpu.try_read_memory(cpu.read_stack_pointer(), &return_address, pointer_size))
+            {
+                return;
+            }
         }
 
         auto hits = it->second;
