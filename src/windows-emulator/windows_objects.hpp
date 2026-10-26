@@ -336,6 +336,22 @@ namespace sogen
             return client_bottom - client_top;
         }
 
+        void sync_guest_rects()
+        {
+            const RECT window_rect{.left = this->x, .top = this->y, .right = this->x + this->width, .bottom = this->y + this->height};
+            const RECT client_rect{
+                .left = this->client_x(),
+                .top = this->client_y(),
+                .right = this->client_x() + this->client_width(),
+                .bottom = this->client_y() + this->client_height(),
+            };
+
+            this->guest.access([&](USER_WINDOW& guest_win) {
+                guest_win.rcWindow = window_rect;
+                guest_win.rcClient = client_rect;
+            });
+        }
+
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             user_object::serialize_object(buffer);
@@ -767,6 +783,13 @@ namespace sogen
         }
     };
 
+    struct directory_change_watch
+    {
+        uint32_t thread_id{};
+        uint64_t event{};
+        uint64_t io_status_block{};
+    };
+
     struct file : ref_counted_object
     {
         guest_file handle{};
@@ -775,6 +798,7 @@ namespace sogen
         ACCESS_MASK access_mask{};
         uint32_t file_mode{}; // FileModeInformation
         uint8_t drive_number{'c' - 'a' + 1};
+        std::vector<directory_change_watch> change_watches{};
 
         bool is_file() const
         {
@@ -794,6 +818,7 @@ namespace sogen
             buffer.write(this->file_mode);
             buffer.write(this->drive_number);
             buffer.write(this->handle);
+            buffer.write_vector(this->change_watches);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -804,6 +829,7 @@ namespace sogen
             buffer.read(this->file_mode);
             buffer.read(this->drive_number);
             buffer.read(this->handle);
+            buffer.read_vector(this->change_watches);
         }
     };
 

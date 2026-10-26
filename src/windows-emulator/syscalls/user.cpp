@@ -414,22 +414,6 @@ namespace sogen
             return {.left = insets.left, .top = insets.top, .right = insets.right, .bottom = insets.bottom};
         }
 
-        void sync_guest_window_rects(window& win)
-        {
-            const auto window_rect = get_window_rect(win);
-            const RECT client_rect{
-                .left = win.client_x(),
-                .top = win.client_y(),
-                .right = win.client_x() + win.client_width(),
-                .bottom = win.client_y() + win.client_height(),
-            };
-
-            win.guest.access([&](USER_WINDOW& guest_win) {
-                guest_win.rcWindow = window_rect;
-                guest_win.rcClient = client_rect;
-            });
-        }
-
         void update_window_geometry(const syscall_context& c, window& win, const int x, const int y, const int width, const int height,
                                     const bool repaint)
         {
@@ -438,7 +422,7 @@ namespace sogen
             win.y = y;
             win.width = width;
             win.height = height;
-            sync_guest_window_rects(win);
+            win.sync_guest_rects();
 
             if (win.host_surface_window)
             {
@@ -6979,6 +6963,51 @@ namespace sogen
             return c.proc.foreground_window;
         }
 
+        hwnd handle_NtUserChildWindowFromPointEx(const syscall_context& c, const hwnd parent, const uint64_t point, const uint32_t flags)
+        {
+            constexpr uint32_t cwp_skip_invisible = 1;
+            constexpr uint32_t cwp_skip_disabled = 2;
+            constexpr uint32_t cwp_skip_transparent = 4;
+
+            const auto* parent_window = c.proc.windows.get(parent);
+            if (!parent_window)
+            {
+                return 0;
+            }
+
+            const auto x = static_cast<int32_t>(point);
+            const auto y = static_cast<int32_t>(point >> 32);
+            if (x < 0 || y < 0 || x >= parent_window->client_width() || y >= parent_window->client_height())
+            {
+                return 0;
+            }
+
+            // The guest's child list runs from the top of the Z order down, so the first match is the one in front.
+            uint64_t next = 0;
+            parent_window->guest.access([&](const USER_WINDOW& guest_parent) { next = guest_parent.spwndChild; });
+            for (size_t guard = 0; next != 0 && guard < c.proc.windows.size(); ++guard)
+            {
+                USER_WINDOW guest_child{};
+                c.emu.read_memory(next, &guest_child, sizeof(guest_child));
+                next = guest_child.spwndNext;
+
+                const auto* child = c.proc.windows.get(guest_child.hWnd);
+                if (!child || ((flags & cwp_skip_invisible) && !(child->style & WS_VISIBLE)) ||
+                    ((flags & cwp_skip_disabled) && (child->style & WS_DISABLED)) ||
+                    ((flags & cwp_skip_transparent) && (child->ex_style & WS_EX_TRANSPARENT)))
+                {
+                    continue;
+                }
+
+                if (x >= child->x && x < child->x + child->width && y >= child->y && y < child->y + child->height)
+                {
+                    return child->handle;
+                }
+            }
+
+            return parent;
+        }
+
         BOOL handle_NtUserGetKeyboardState(const syscall_context& c, const emulator_pointer key_state)
         {
             if (key_state == 0)
@@ -6997,6 +7026,16 @@ namespace sogen
         uint32_t handle_NtUserGetDoubleClickTime()
         {
             return 500;
+        }
+
+        uint32_t handle_NtUserGetCaretBlinkTime()
+        {
+            return 530;
+        }
+
+        BOOL handle_NtUserFlashWindowEx()
+        {
+            return FALSE;
         }
 
         BOOL handle_NtUserModifyWindowTouchCapability()

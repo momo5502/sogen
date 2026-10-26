@@ -765,8 +765,11 @@ namespace sogen
         NTSTATUS handle_NtUserSelectPalette();
         BOOL handle_NtUserSwapMouseButton();
         hwnd handle_NtUserWindowFromPoint(const syscall_context& c, int32_t x, int32_t y);
+        hwnd handle_NtUserChildWindowFromPointEx(const syscall_context& c, hwnd parent, uint64_t point, uint32_t flags);
         BOOL handle_NtUserGetKeyboardState(const syscall_context& c, emulator_pointer key_state);
         uint32_t handle_NtUserGetDoubleClickTime();
+        uint32_t handle_NtUserGetCaretBlinkTime();
+        BOOL handle_NtUserFlashWindowEx();
         BOOL handle_NtUserModifyWindowTouchCapability();
         uint32_t handle_NtUserGetClipboardSequenceNumber();
         BOOL handle_NtUserOpenClipboard();
@@ -1453,9 +1456,41 @@ namespace sogen
             }
         }
 
-        NTSTATUS handle_NtNotifyChangeDirectoryFile()
+        // Directory changes are not tracked, so a watch stays pending, and so does the directory handle callers without an
+        // event wait on. Completing it at once reports a change that never happened, and watchers that rescan and watch
+        // again then spin forever.
+        NTSTATUS handle_NtNotifyChangeDirectoryFile(const syscall_context& c, const handle file_handle, const handle event_handle,
+                                                    const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
+                                                    const uint64_t io_status_block)
         {
-            return STATUS_SUCCESS;
+            auto* directory = c.proc.files.get(file_handle);
+            if (!directory)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            if (!directory->is_directory())
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto* event = c.proc.events.get(event_handle);
+            if (event_handle != 0 && !event)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            directory->change_watches.push_back({
+                .thread_id = c.thread().id,
+                .event = event_handle.bits,
+                .io_status_block = io_status_block,
+            });
+            if (event)
+            {
+                event->signaled = false;
+            }
+
+            return STATUS_PENDING;
         }
 
     }
@@ -2004,8 +2039,11 @@ namespace sogen
         add_handler(NtGdiCreateDIBSection);
         add_handler(NtUserGetKeyNameText);
         add_handler(NtUserWindowFromPoint);
+        add_handler(NtUserChildWindowFromPointEx);
         add_handler(NtUserSwapMouseButton);
         add_handler(NtUserGetDoubleClickTime);
+        add_handler(NtUserGetCaretBlinkTime);
+        add_handler(NtUserFlashWindowEx);
         add_handler(NtGdiSetIcmMode);
         add_handler(NtUserGetKeyboardState);
         add_handler(NtUserSetKeyboardState);

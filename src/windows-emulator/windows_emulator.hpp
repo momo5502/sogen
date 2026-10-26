@@ -623,6 +623,7 @@ namespace sogen
       private:
         void set_foreground_window(hwnd window);
         void deliver_ui_event(const ui_event& event);
+        void resize_window_from_host(hwnd window_handle, bool maximized, int32_t client_width, int32_t client_height);
         std::pair<int32_t, int32_t> cursor_after_pointer_event(const ui_event& event) const;
         std::pair<emulator_thread*, const user_low_level_hook*> find_low_level_hook(uint64_t handle);
         void wake_thread(emulator_thread& thread);

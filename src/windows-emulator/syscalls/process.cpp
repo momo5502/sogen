@@ -871,6 +871,7 @@ namespace sogen
                 || info_class == ProcessQuotaLimits                          //
                 || info_class == ProcessPriorityClass                        //
                 || info_class == ProcessAffinityMask                         //
+                || info_class == ProcessMitigationPolicy                     //
                 || info_class == ProcessTelemetryCoverage)
             {
                 return STATUS_SUCCESS;
