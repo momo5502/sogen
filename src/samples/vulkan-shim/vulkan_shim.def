@@ -82,6 +82,7 @@ EXPORTS
     vkCmdPipelineBarrier2
     vkCmdPushConstants
     vkCmdPushConstants2KHR
+    vkCmdSetAlphaToCoverageEnableEXT
     vkCmdSetBlendConstants
     vkCmdSetCullMode
     vkCmdSetDepthBias
@@ -93,10 +94,13 @@ EXPORTS
     vkCmdSetDepthTestEnable
     vkCmdSetDepthWriteEnable
     vkCmdSetFrontFace
+    vkCmdSetLineRasterizationModeEXT
     vkCmdSetLineWidth
     vkCmdSetPrimitiveRestartEnable
     vkCmdSetPrimitiveTopology
+    vkCmdSetRasterizationSamplesEXT
     vkCmdSetRasterizerDiscardEnable
+    vkCmdSetSampleMaskEXT
     vkCmdSetScissor
     vkCmdSetScissorWithCount
     vkCmdSetStencilCompareMask

@@ -729,6 +729,7 @@ namespace sogen
         int32_t cmd_set_scissor(uint64_t command_buffer, uint32_t first, bool with_count, std::span<const scissor_entry> scissors);
         int32_t cmd_set_depth_bias(uint64_t command_buffer, float constant_factor, float clamp, float slope_factor);
         int32_t cmd_set_blend_constants(uint64_t command_buffer, const std::array<float, 4>& constants);
+        int32_t cmd_set_sample_mask(uint64_t command_buffer, uint32_t samples, const std::array<uint32_t, 2>& mask);
         int32_t cmd_set_depth_bounds(uint64_t command_buffer, float min_depth_bounds, float max_depth_bounds);
         int32_t cmd_set_line_width(uint64_t command_buffer, float line_width);
         int32_t cmd_set_stencil(uint64_t command_buffer, uint32_t which, uint32_t face_mask, uint32_t value);

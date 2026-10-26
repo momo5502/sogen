@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 36;
+    inline constexpr uint32_t protocol_version = 37;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -203,6 +203,7 @@ namespace sogen::gpu_bridge
         get_surface_support = 0x8A4,
         get_surface_formats = 0x8A5,
         get_surface_present_modes = 0x8A6,
+        cmd_set_sample_mask = 0x8A7,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -221,6 +222,9 @@ namespace sogen::gpu_bridge
         depth_bias_enable = 9,
         primitive_restart_enable = 10,
         depth_clip_enable = 11,
+        alpha_to_coverage_enable = 12,
+        rasterization_samples = 13,
+        line_rasterization_mode = 14,
     };
 
     // Discriminator for cmd_set_stencil: which of the three single-value stencil dynamic states to set.
@@ -2154,6 +2158,15 @@ namespace sogen::gpu_bridge
         uint32_t value;
     };
 
+    // cmd_set_sample_mask: `mask` holds ceil(samples / 32) words, which is at most two for 64 samples.
+    struct cmd_set_sample_mask_request
+    {
+        object_id command_buffer;
+        uint32_t samples;
+        std::array<uint32_t, 2> mask{};
+        uint32_t reserved;
+    };
+
     struct cmd_bind_index_buffer_request
     {
         object_id command_buffer;
@@ -2495,6 +2508,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_set_stencil_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_set_stencil_op_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_set_dynamic_u32_request) == 16, "wire layout drift");
+    static_assert(sizeof(cmd_set_sample_mask_request) == 24, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 20, "wire layout drift");
     static_assert(sizeof(get_descriptor_set_layout_support_request) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_support_response) == 12, "wire layout drift");

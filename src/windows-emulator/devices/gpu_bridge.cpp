@@ -3543,6 +3543,14 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_set_dynamic_u32(req.command_buffer, req.state, req.value);
                 }
+                case gpu_bridge::command::cmd_set_sample_mask: {
+                    gpu_bridge::cmd_set_sample_mask_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_set_sample_mask(req.command_buffer, req.samples, req.mask);
+                }
                 case gpu_bridge::command::end_command_buffer: {
                     gpu_bridge::end_command_buffer_request req{};
                     if (!read(req))
