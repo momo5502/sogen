@@ -6967,6 +6967,7 @@ namespace sogen
         {
             constexpr uint32_t cwp_skip_invisible = 1;
             constexpr uint32_t cwp_skip_disabled = 2;
+            constexpr uint32_t cwp_skip_transparent = 4;
 
             const auto* parent_window = c.proc.windows.get(parent);
             if (!parent_window)
@@ -6981,23 +6982,30 @@ namespace sogen
                 return 0;
             }
 
-            hwnd found = parent;
-            for (const auto& [index, child] : c.proc.windows)
+            // The guest's child list runs from the top of the Z order down, so the first match is the one in front.
+            uint64_t next = 0;
+            parent_window->guest.access([&](const USER_WINDOW& guest_parent) { next = guest_parent.spwndChild; });
+            for (size_t guard = 0; next != 0 && guard < c.proc.windows.size(); ++guard)
             {
-                (void)index;
-                if (child.parent_handle != parent || ((flags & cwp_skip_invisible) && !(child.style & WS_VISIBLE)) ||
-                    ((flags & cwp_skip_disabled) && (child.style & WS_DISABLED)))
+                USER_WINDOW guest_child{};
+                c.emu.read_memory(next, &guest_child, sizeof(guest_child));
+                next = guest_child.spwndNext;
+
+                const auto* child = c.proc.windows.get(guest_child.hWnd);
+                if (!child || ((flags & cwp_skip_invisible) && !(child->style & WS_VISIBLE)) ||
+                    ((flags & cwp_skip_disabled) && (child->style & WS_DISABLED)) ||
+                    ((flags & cwp_skip_transparent) && (child->ex_style & WS_EX_TRANSPARENT)))
                 {
                     continue;
                 }
 
-                if (x >= child.x && x < child.x + child.width && y >= child.y && y < child.y + child.height)
+                if (x >= child->x && x < child->x + child->width && y >= child->y && y < child->y + child->height)
                 {
-                    found = child.handle;
+                    return child->handle;
                 }
             }
 
-            return found;
+            return parent;
         }
 
         BOOL handle_NtUserGetKeyboardState(const syscall_context& c, const emulator_pointer key_state)
