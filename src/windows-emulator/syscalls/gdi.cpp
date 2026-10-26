@@ -2391,7 +2391,7 @@ namespace sogen
             if (!is_supported_dib(*header, color_use))
             {
                 c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u usage=%u width=%d)\n", bit_count,
-                                   header->biCompression, color_use, header->biWidth);
+                                   static_cast<uint32_t>(header->biCompression), color_use, static_cast<int32_t>(header->biWidth));
                 return 0;
             }
 
@@ -2482,7 +2482,7 @@ namespace sogen
             if (!is_supported_dib(*header, color_use) || header->biHeight == 0)
             {
                 c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u usage=%u width=%d)\n", bit_count,
-                                   header->biCompression, color_use, header->biWidth);
+                                   static_cast<uint32_t>(header->biCompression), color_use, static_cast<int32_t>(header->biWidth));
                 return 0;
             }
 
