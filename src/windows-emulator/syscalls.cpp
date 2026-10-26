@@ -1459,7 +1459,9 @@ namespace sogen
         // Directory changes are not tracked, so a watch stays pending, and so does the directory handle callers without an
         // event wait on. Completing it at once reports a change that never happened, and watchers that rescan and watch
         // again then spin forever.
-        NTSTATUS handle_NtNotifyChangeDirectoryFile(const syscall_context& c, const handle file_handle, const handle event_handle)
+        NTSTATUS handle_NtNotifyChangeDirectoryFile(const syscall_context& c, const handle file_handle, const handle event_handle,
+                                                    const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
+                                                    const uint64_t io_status_block)
         {
             auto* directory = c.proc.files.get(file_handle);
             if (!directory)
@@ -1478,7 +1480,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            directory->change_watch_pending = true;
+            directory->change_watch = directory_change_watch{
+                .thread_id = c.thread().id,
+                .event = event_handle.bits,
+                .io_status_block = io_status_block,
+            };
             if (event)
             {
                 event->signaled = false;

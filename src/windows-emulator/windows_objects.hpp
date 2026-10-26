@@ -783,6 +783,13 @@ namespace sogen
         }
     };
 
+    struct directory_change_watch
+    {
+        uint32_t thread_id{};
+        uint64_t event{};
+        uint64_t io_status_block{};
+    };
+
     struct file : ref_counted_object
     {
         guest_file handle{};
@@ -791,7 +798,7 @@ namespace sogen
         ACCESS_MASK access_mask{};
         uint32_t file_mode{}; // FileModeInformation
         uint8_t drive_number{'c' - 'a' + 1};
-        bool change_watch_pending{};
+        std::optional<directory_change_watch> change_watch{};
 
         bool is_file() const
         {
@@ -811,7 +818,7 @@ namespace sogen
             buffer.write(this->file_mode);
             buffer.write(this->drive_number);
             buffer.write(this->handle);
-            buffer.write(this->change_watch_pending);
+            buffer.write_optional(this->change_watch);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -822,7 +829,7 @@ namespace sogen
             buffer.read(this->file_mode);
             buffer.read(this->drive_number);
             buffer.read(this->handle);
-            buffer.read(this->change_watch_pending);
+            buffer.read_optional(this->change_watch);
         }
     };
 

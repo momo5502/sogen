@@ -1472,6 +1472,38 @@ namespace sogen
             return status;
         }
 
+        namespace
+        {
+            // Completes a pending change watch the way a cancelled request completes, so that waits on its event or on the
+            // directory itself end.
+            void cancel_change_watch(const syscall_context& c, file& directory)
+            {
+                const auto watch = *directory.change_watch;
+                directory.change_watch.reset();
+
+                if (watch.io_status_block != 0)
+                {
+                    if (c.proc.is_wow64_process)
+                    {
+                        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu32>>>{c.emu, watch.io_status_block}.write(
+                            {.Status = STATUS_CANCELLED, .Information = 0});
+                    }
+                    else
+                    {
+                        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>{c.emu, watch.io_status_block}.write(
+                            {.Status = STATUS_CANCELLED, .Information = 0});
+                    }
+                }
+
+                if (auto* event = c.proc.events.get(watch.event))
+                {
+                    event->signaled = true;
+                }
+
+                c.win_emu.wake_idle_vcpu();
+            }
+        }
+
         NTSTATUS handle_NtCancelIoFile(const syscall_context& c, const handle file_handle,
                                        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)
         {
@@ -1484,8 +1516,14 @@ namespace sogen
             {
                 device->cancel_io(c.win_emu, 0, c.thread().id);
             }
-            else if (!c.proc.files.get(resolved) && resolved != STDIN_HANDLE && resolved != STDOUT_HANDLE && resolved != CONSOLE_HANDLE &&
-                     resolved != NUL_HANDLE)
+            else if (auto* f = c.proc.files.get(resolved))
+            {
+                if (f->change_watch && f->change_watch->thread_id == c.thread().id)
+                {
+                    cancel_change_watch(c, *f);
+                }
+            }
+            else if (resolved != STDIN_HANDLE && resolved != STDOUT_HANDLE && resolved != CONSOLE_HANDLE && resolved != NUL_HANDLE)
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -1513,7 +1551,21 @@ namespace sogen
             auto* device = c.proc.devices.get(resolved_handle);
             if (!device)
             {
-                return STATUS_INVALID_HANDLE;
+                auto* f = c.proc.files.get(resolved_handle);
+                if (!f)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                if (!f->change_watch || (io_request_to_cancel && io_request_to_cancel.value() != f->change_watch->io_status_block))
+                {
+                    io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_NOT_FOUND, .Information = 0});
+                    return STATUS_NOT_FOUND;
+                }
+
+                cancel_change_watch(c, *f);
+                io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_SUCCESS, .Information = 0});
+                return STATUS_SUCCESS;
             }
 
             if (!device->cancel_io(c.win_emu, io_request_to_cancel.value()))
