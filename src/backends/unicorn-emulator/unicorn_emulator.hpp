@@ -269,6 +269,11 @@ namespace sogen::unicorn
             template <typename F>
             void for_each_overlap(const uint64_t begin, const uint64_t end, F&& function) const
             {
+                if (begin >= end)
+                {
+                    return;
+                }
+
                 for (auto entry = this->first_overlap(begin); entry != this->ranges_.end() && entry->first < end; ++entry)
                 {
                     function(std::max(entry->first, begin), std::min(entry->second, end));

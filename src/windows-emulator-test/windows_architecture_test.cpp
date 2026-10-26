@@ -267,6 +267,24 @@ namespace sogen::test
 
     TYPED_TEST_SUITE(WindowsArchitectureTest, guest_architectures, guest_name);
 
+#if !defined(_M_ARM64)
+    TEST(UnicornMemoryTest, ZeroLengthWriteToExecutablePage)
+    {
+        auto machine = create_x86_64_emulator(backend_type::unicorn);
+        memory_manager memory{machine->memory()};
+
+        constexpr uint64_t address = 0x10000;
+        ASSERT_TRUE(memory.allocate_memory(address, 0x1000, memory_permission::all));
+
+        constexpr uint8_t value = 0x90;
+        machine->write_memory(address + 0x10, &value, sizeof(value));
+
+        EXPECT_NO_THROW(machine->write_memory(address + 0x10, &value, 0));
+        EXPECT_TRUE(machine->try_write_memory(address + 0x10, &value, 0));
+        EXPECT_EQ(machine->read_memory<uint8_t>(address + 0x10), value);
+    }
+#endif
+
     TYPED_TEST(WindowsArchitectureTest, Pe64MachineIsPreservedAndRelocationsUseTheSharedMapper)
     {
         constexpr auto machine = TypeParam::pe_machine;
