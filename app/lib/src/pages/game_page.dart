@@ -12,6 +12,7 @@ import '../theme.dart';
 import '../widgets/console_view.dart';
 import '../widgets/guest_window_view.dart';
 import '../widgets/session_overlay.dart';
+import '../widgets/touch_layout_editor.dart';
 import '../widgets/sogen_widgets.dart';
 import '../widgets/terminal_log.dart';
 import '../widgets/virtual_controls.dart';
@@ -60,6 +61,7 @@ class _GamePageState extends State<GamePage> {
   Timer? _settingsSave;
   Future<void> _settingsWrite = Future.value();
   bool _panelOpen = false;
+  bool _editingLayout = false;
   String? _shownSaveError;
   bool _suspending = false;
 
@@ -152,7 +154,9 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _onBack() {
-    if (_keyboardFocus.hasFocus) {
+    if (_editingLayout) {
+      setState(() => _editingLayout = false);
+    } else if (_keyboardFocus.hasFocus) {
       _keyboardFocus.unfocus();
     } else {
       setState(() => _panelOpen = !_panelOpen);
@@ -306,6 +310,10 @@ class _GamePageState extends State<GamePage> {
 
   List<Widget> _overlay(SessionActions actions, {bool withSettings = false}) {
     final running = _session.state == SessionState.running;
+    if (_editingLayout) {
+      return const [];
+    }
+
     return [
       if (!_panelOpen)
         SafeArea(
@@ -358,7 +366,8 @@ class _GamePageState extends State<GamePage> {
               )
             else
               _StatusView(session: _session, game: widget.game),
-            if (window != null && _settings.showControls) VirtualControls(session: _session, window: window),
+            if (window != null && _settings.showControls && !_editingLayout)
+              VirtualControls(session: _session, window: window, layout: _settings.layout),
             Positioned(
               left: 0,
               top: 0,
@@ -379,9 +388,24 @@ class _GamePageState extends State<GamePage> {
               ),
             ),
             ..._overlay(
-              SessionActions(onLog: _showLog, onStop: _confirmStop, onSuspend: _suspend, onKeyboard: _toggleKeyboard),
+              SessionActions(
+                onLog: _showLog,
+                onStop: _confirmStop,
+                onSuspend: _suspend,
+                onKeyboard: _toggleKeyboard,
+                onEditLayout: () => setState(() => _editingLayout = true),
+              ),
               withSettings: true,
             ),
+            if (_editingLayout)
+              TouchLayoutEditor(
+                layout: _settings.layout,
+                onCancel: () => setState(() => _editingLayout = false),
+                onDone: (layout) {
+                  _changeSettings(_settings.copyWith(layout: layout, showControls: true));
+                  setState(() => _editingLayout = false);
+                },
+              ),
           ],
         ),
       ),

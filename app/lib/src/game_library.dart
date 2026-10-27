@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'touch_layout.dart';
+
 /// Where a game's folder appears inside the emulated file system.
 const String guestGameDirectory = r'C:\game';
 
@@ -30,6 +32,7 @@ class GameSettings {
     this.orientation = ScreenOrientation.sensor,
     this.showControls = true,
     this.handlePosition = 0.5,
+    this.layout = TouchLayout.standard,
   });
 
   // A finger travels far less than a mouse, so mouse-look would turn slowly at one count per guest pixel.
@@ -41,6 +44,9 @@ class GameSettings {
     orientation: ScreenOrientation.fromName(json['orientation'] as String?),
     showControls: json['showControls'] as bool? ?? true,
     handlePosition: (json['handlePosition'] as num?)?.toDouble() ?? 0.5,
+    layout: json['layout'] is List<dynamic>
+        ? TouchLayout.fromJson(json['layout'] as List<dynamic>)
+        : TouchLayout.standard,
   );
 
   /// Whether touches start out moving the cursor like a trackpad instead of clicking where they land.
@@ -57,18 +63,22 @@ class GameSettings {
   /// Where the handle that opens the session panel sits, as a fraction of the screen height.
   final double handlePosition;
 
+  final TouchLayout layout;
+
   GameSettings copyWith({
     bool? trackpad,
     double? mouseSensitivity,
     ScreenOrientation? orientation,
     bool? showControls,
     double? handlePosition,
+    TouchLayout? layout,
   }) => GameSettings(
     trackpad: trackpad ?? this.trackpad,
     mouseSensitivity: mouseSensitivity ?? this.mouseSensitivity,
     orientation: orientation ?? this.orientation,
     showControls: showControls ?? this.showControls,
     handlePosition: handlePosition ?? this.handlePosition,
+    layout: layout ?? this.layout,
   );
 
   Map<String, dynamic> toJson() => {
@@ -77,6 +87,7 @@ class GameSettings {
     'orientation': orientation.name,
     'showControls': showControls,
     'handlePosition': handlePosition,
+    'layout': layout.toJson(),
   };
 }
 
