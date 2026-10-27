@@ -44,10 +44,20 @@ class GameSettings {
     orientation: ScreenOrientation.fromName(json['orientation'] as String?),
     showControls: json['showControls'] as bool? ?? true,
     handlePosition: (json['handlePosition'] as num?)?.toDouble() ?? 0.5,
-    layout: json['layout'] is List<dynamic>
-        ? TouchLayout.fromJson(json['layout'] as List<dynamic>)
-        : TouchLayout.standard,
+    layout: _layoutFromJson(json['layout']),
   );
+
+  /// A layout that cannot be read falls back to the standard one, so that it never keeps the library from loading.
+  static TouchLayout _layoutFromJson(Object? json) {
+    if (json == null) {
+      return TouchLayout.standard;
+    }
+    try {
+      return TouchLayout.fromJson(json);
+    } on FormatException {
+      return TouchLayout.standard;
+    }
+  }
 
   /// Whether touches start out moving the cursor like a trackpad instead of clicking where they land.
   final bool trackpad;

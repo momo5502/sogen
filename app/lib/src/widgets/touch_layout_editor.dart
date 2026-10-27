@@ -34,9 +34,9 @@ class _TouchLayoutEditorState extends State<TouchLayoutEditor> {
       isScrollControlled: true,
       builder: (context) => _AddControlSheet(center: Offset(screen.width / 2, screen.height / 2), screen: screen),
     );
-    if (control != null) {
+    if (control != null && mounted) {
       setState(() {
-        _controls.add(control);
+        _controls.add(control.fitting(screen));
         _selected = _controls.length - 1;
       });
     }
@@ -49,14 +49,19 @@ class _TouchLayoutEditorState extends State<TouchLayoutEditor> {
 
   Future<void> _paste() async {
     final text = (await Clipboard.getData(Clipboard.kTextPlain))?.text;
+    final TouchLayout layout;
     try {
-      final layout = TouchLayout.fromJson(jsonDecode(text ?? '') as List<dynamic>);
+      layout = TouchLayout.fromJson(jsonDecode(text ?? ''));
+    } on FormatException {
+      _showMessage('The clipboard does not hold a layout');
+      return;
+    }
+
+    if (mounted) {
       setState(() {
         _controls = [...layout.controls];
         _selected = null;
       });
-    } on Object {
-      _showMessage('The clipboard does not hold a layout');
     }
   }
 
@@ -87,20 +92,22 @@ class _TouchLayoutEditorState extends State<TouchLayoutEditor> {
                 ),
                 for (var i = 0; i < _controls.length; ++i)
                   placeControl(
-                    _controls[i],
+                    _controls[i].fitting(screen),
                     screen,
                     GestureDetector(
                       onTap: () => setState(() => _selected = i),
                       onPanStart: (_) => setState(() => _selected = i),
-                      onPanUpdate: (details) =>
-                          _update(i, _controls[i].movedTo(_controls[i].center(screen) + details.delta, screen)),
+                      onPanUpdate: (details) => _update(
+                        i,
+                        _controls[i].movedTo(_controls[i].fitting(screen).center(screen) + details.delta, screen),
+                      ),
                       child: DecoratedBox(
                         position: DecorationPosition.foreground,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           border: i == selected ? Border.all(color: SogenColors.accents[0], width: 3) : null,
                         ),
-                        child: Opacity(opacity: _controls[i].opacity, child: controlFace(_controls[i])),
+                        child: Opacity(opacity: _controls[i].opacity, child: controlFace(_controls[i].fitting(screen))),
                       ),
                     ),
                   ),
@@ -123,6 +130,7 @@ class _TouchLayoutEditorState extends State<TouchLayoutEditor> {
                       if (selected != null)
                         _ControlSettings(
                           control: _controls[selected],
+                          maxSize: _controls[selected].copyWith(size: TouchControl.maxSize).fitting(screen).size,
                           onChanged: (control) => _update(selected, control),
                           onDelete: () => setState(() {
                             _controls.removeAt(selected);
@@ -194,9 +202,17 @@ class _Toolbar extends StatelessWidget {
 }
 
 class _ControlSettings extends StatelessWidget {
-  const _ControlSettings({required this.control, required this.onChanged, required this.onDelete});
+  const _ControlSettings({
+    required this.control,
+    required this.maxSize,
+    required this.onChanged,
+    required this.onDelete,
+  });
 
   final TouchControl control;
+
+  /// The largest size that still fits on the screen.
+  final double maxSize;
   final ValueChanged<TouchControl> onChanged;
   final VoidCallback onDelete;
 
@@ -232,9 +248,9 @@ class _ControlSettings extends StatelessWidget {
                   const SizedBox(width: 64, child: Text('Size')),
                   Expanded(
                     child: Slider(
-                      value: control.size.clamp(32, 128),
-                      min: 32,
-                      max: 128,
+                      value: control.size.clamp(TouchControl.minSize, maxSize),
+                      min: TouchControl.minSize,
+                      max: maxSize,
                       onChanged: (value) => onChanged(control.copyWith(size: value)),
                     ),
                   ),
@@ -245,8 +261,8 @@ class _ControlSettings extends StatelessWidget {
                   const SizedBox(width: 64, child: Text('Opacity')),
                   Expanded(
                     child: Slider(
-                      value: control.opacity.clamp(0.2, 1),
-                      min: 0.2,
+                      value: control.opacity.clamp(TouchControl.minOpacity, 1),
+                      min: TouchControl.minOpacity,
                       max: 1,
                       onChanged: (value) => onChanged(control.copyWith(opacity: value)),
                     ),

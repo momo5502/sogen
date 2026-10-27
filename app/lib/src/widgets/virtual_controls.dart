@@ -27,7 +27,7 @@ class VirtualControls extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) => Stack(
           children: [
-            for (final control in layout.controls)
+            for (final control in layout.controls.map((control) => control.fitting(constraints.biggest)))
               placeControl(
                 control,
                 constraints.biggest,
