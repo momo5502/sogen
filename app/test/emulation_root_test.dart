@@ -42,6 +42,27 @@ void main() {
     expect(Directory('${base.path}.previous').existsSync(), isFalse);
   });
 
+  test('swapIn rejects a staged tree without a registry and keeps the installed root', () async {
+    rootTree('emulation', 'old');
+    final staging = rootTree('staging', 'new');
+    Directory(p.join(staging.path, 'root', 'registry')).deleteSync();
+
+    await expectLater(root.swapIn(staging), throwsA(isA<FormatException>()));
+
+    expect(marker(), 'old');
+    expect(root.isInstalled, isTrue);
+  });
+
+  test('swapIn rejects a staged tree without a filesys directory and keeps the installed root', () async {
+    rootTree('emulation', 'old');
+    final staging = rootTree('staging', 'new');
+    Directory(p.join(staging.path, 'root', 'filesys')).deleteSync();
+
+    await expectLater(root.swapIn(staging), throwsA(isA<FormatException>()));
+
+    expect(marker(), 'old');
+  });
+
   test('swapIn keeps the installed root when the new one cannot be moved in', () async {
     rootTree('emulation', 'old');
 

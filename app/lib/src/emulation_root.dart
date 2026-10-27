@@ -28,8 +28,11 @@ class EmulationRoot {
   /// The directory passed to the emulator; root.zip contains a single top-level `root` folder.
   String get path => p.join(_baseDirectory.path, 'root');
 
-  bool get isInstalled =>
-      Directory(p.join(path, 'filesys')).existsSync() && Directory(p.join(path, 'registry')).existsSync();
+  bool get isInstalled => _containsRoot(_baseDirectory);
+
+  static bool _containsRoot(Directory base) =>
+      Directory(p.join(base.path, 'root', 'filesys')).existsSync() &&
+      Directory(p.join(base.path, 'root', 'registry')).existsSync();
 
   /// Downloads and extracts the root, replacing any existing one. [onProgress] receives a value between 0 and 1
   /// while downloading, or null when the total size is unknown or extraction is running.
@@ -48,10 +51,6 @@ class EmulationRoot {
 
       await Isolate.run(() => extractFileToDisk(download.path, staging.path));
 
-      if (!Directory(p.join(staging.path, 'root', 'filesys')).existsSync()) {
-        throw const FormatException('root.zip does not contain an emulation root');
-      }
-
       await swapIn(staging);
     } finally {
       if (download.existsSync()) {
@@ -62,10 +61,12 @@ class EmulationRoot {
 
   Directory get _previous => Directory('${_baseDirectory.path}.previous');
 
-  /// Replaces the installed root with [staging]. The old root is only deleted once the new one is in place, and it is
-  /// moved back if the final rename fails, so a failure leaves the previous root usable.
   @visibleForTesting
   Future<void> swapIn(Directory staging) async {
+    if (!_containsRoot(staging)) {
+      throw const FormatException('root.zip does not contain an emulation root');
+    }
+
     final previous = _previous;
     if (previous.existsSync()) {
       await previous.delete(recursive: true);
@@ -94,7 +95,6 @@ class EmulationRoot {
     }
   }
 
-  /// Puts the old root back if the app died between moving it aside and moving the new one in.
   @visibleForTesting
   Future<void> restoreInterruptedSwap() async {
     if (!_baseDirectory.existsSync() && _previous.existsSync()) {
