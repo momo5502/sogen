@@ -508,7 +508,7 @@ namespace sogen
                 // so a larger buffer is valid.
                 if (process_information_length < required_length)
                 {
-                    return STATUS_INFO_LENGTH_MISMATCH;
+                    return STATUS_BUFFER_TOO_SMALL;
                 }
 
                 const emulator_object<USHORT> info{c.emu, process_information};
