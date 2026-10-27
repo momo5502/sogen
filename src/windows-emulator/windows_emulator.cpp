@@ -2584,6 +2584,7 @@ namespace sogen
         this->mod_manager.serialize(buffer);
         this->dispatcher.serialize(buffer);
         this->process.serialize(buffer, this->vcpus_[0]->active_thread);
+        this->process.section_views.serialize(buffer, this->memory);
     }
 
     void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
@@ -2620,6 +2621,7 @@ namespace sogen
         this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
+        this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
@@ -2691,6 +2693,7 @@ namespace sogen
         this->mod_manager.serialize(buffer);
         this->dispatcher.serialize(buffer);
         this->process.serialize(buffer, this->vcpus_[0]->active_thread);
+        this->process.section_views.serialize(buffer, this->memory);
 
         this->process_snapshot_ = buffer.move_buffer();
     }
@@ -2726,6 +2729,7 @@ namespace sogen
         this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
+        this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();

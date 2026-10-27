@@ -117,7 +117,9 @@ namespace sogen
         bool allocate_host_memory_at(uint64_t address, size_t size, void* host_pointer, nt_memory_permission permissions);
         // Chooses a compatible guest address and aliases it onto caller-owned host memory (e.g. a host Vulkan
         // mapping). The region is treated like MMIO: not serialized, host_pointer not owned. Returns 0 on failure.
-        uint64_t allocate_host_memory(size_t size, void* host_pointer, nt_memory_permission permissions);
+        uint64_t allocate_host_memory(size_t size, void* host_pointer, nt_memory_permission permissions,
+                                      uint64_t highest_address = MAX_ALLOCATION_END_EXCL - 1);
+        bool can_alias_host_memory_anywhere() const;
         // Maps host memory into the guest on backends that need it at a fixed host address (see
         // memory_interface::host_placement_address): picks a free guest range below highest_address, and place maps the
         // memory at the host address backing it. Returns the guest address, or 0 if the backend has no such addresses or
@@ -175,6 +177,7 @@ namespace sogen
         uint64_t find_free_host_allocation_base(size_t size, uint64_t start, uint64_t highest_address);
 
         region_info get_region_info(uint64_t address);
+        std::vector<basic_memory_region<nt_memory_permission>> get_committed_regions(uint64_t region_base) const;
         std::optional<std::u16string> get_region_mapped_filename(uint64_t address) const;
         void set_region_mapped_filename(uint64_t address, std::u16string filename);
 

@@ -845,6 +845,8 @@ namespace sogen
         // 0 until allocated. Freed once the last section handle is closed and no mapped view remains.
         uint64_t backing_address{};
         uint32_t mapped_view_count{};
+        // Set instead of backing_address for a section whose views each get their own guest range (see section_views).
+        uint64_t view_storage_id{};
         std::optional<winpe::pe_image_basic_info> cached_image_info{};
 
         bool is_image() const
@@ -895,6 +897,7 @@ namespace sogen
             buffer.write(this->allocation_attributes);
             buffer.write(this->backing_address);
             buffer.write(this->mapped_view_count);
+            buffer.write(this->view_storage_id);
             buffer.write_optional<winpe::pe_image_basic_info>(this->cached_image_info);
         }
 
@@ -907,6 +910,7 @@ namespace sogen
             buffer.read(this->allocation_attributes);
             buffer.read(this->backing_address);
             buffer.read(this->mapped_view_count);
+            buffer.read(this->view_storage_id);
             buffer.read_optional(this->cached_image_info);
         }
     };

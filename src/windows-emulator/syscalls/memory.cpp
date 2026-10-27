@@ -515,7 +515,8 @@ namespace sogen
 
                 const auto region_info = c.win_emu.memory.get_region_info(reset_base);
                 const auto is_valid_kind = region_info.kind == memory_region_kind::private_allocation ||
-                                           region_info.kind == memory_region_kind::pagefile_section_view;
+                                           region_info.kind == memory_region_kind::pagefile_section_view ||
+                                           c.proc.section_views.contains(reset_base, reset_size);
                 if (!region_info.is_reserved || !is_valid_kind || region_info.allocation_base > reset_base)
                 {
                     return STATUS_MEMORY_NOT_ALLOCATED;

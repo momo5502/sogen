@@ -1018,6 +1018,8 @@ namespace sogen
 
     void process_context::restore_after_state_restore(windows_emulator& win_emu)
     {
+        this->section_views.restore_views(win_emu.memory);
+
         restore_windows_after_state_restore(win_emu);
 
         for (auto& device : this->devices | std::views::values)

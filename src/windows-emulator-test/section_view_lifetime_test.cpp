@@ -125,4 +125,46 @@ namespace sogen::test
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), section));
         EXPECT_FALSE(this->is_committed(view));
     }
+
+    TEST_F(SectionViewLifetimeTest, OverlappingViewsShareMemory)
+    {
+        const auto section = this->create_section();
+        const auto whole = this->map_view(section, 0, section_size);
+        const auto tail = this->map_view(section, 0x1000, 0x1000);
+        ASSERT_NE(whole, 0u);
+        ASSERT_NE(tail, 0u);
+
+        this->emu->memory.write_memory<uint32_t>(whole + 0x1000, 0x600df00d);
+        EXPECT_EQ(0x600df00du, this->emu->memory.read_memory<uint32_t>(tail));
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtUnmapViewOfSection(this->context(), CURRENT_PROCESS, whole));
+        this->emu->memory.write_memory<uint32_t>(tail + 4, 0x1badb002);
+        EXPECT_EQ(0x600df00du, this->emu->memory.read_memory<uint32_t>(tail));
+        EXPECT_EQ(0x1badb002u, this->emu->memory.read_memory<uint32_t>(tail + 4));
+    }
+
+    TEST_F(SectionViewLifetimeTest, OverlappingViewsSurviveASnapshot)
+    {
+        const auto section = this->create_section();
+        const auto whole = this->map_view(section, 0, section_size);
+        const auto tail = this->map_view(section, 0x1000, 0x1000);
+        ASSERT_NE(whole, 0u);
+        ASSERT_NE(tail, 0u);
+        this->emu->memory.write_memory<uint32_t>(tail, 0x600df00d);
+        ASSERT_TRUE(this->emu->memory.protect_memory(whole, 0x1000, memory_permission::read, nullptr));
+
+        this->emu->save_snapshot();
+        this->emu->memory.write_memory<uint32_t>(tail, 0x1badb002);
+        this->emu->restore_snapshot();
+
+        EXPECT_EQ(0x600df00du, this->emu->memory.read_memory<uint32_t>(whole + 0x1000));
+        EXPECT_EQ(nt_memory_permission{memory_permission::read}, this->emu->memory.get_region_info(whole).permissions);
+        EXPECT_EQ(nt_memory_permission{memory_permission::read_write}, this->emu->memory.get_region_info(tail).permissions);
+        this->emu->memory.write_memory<uint32_t>(whole + 0x1004, 0xcafef00d);
+        EXPECT_EQ(0xcafef00du, this->emu->memory.read_memory<uint32_t>(tail + 4));
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), section));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtUnmapViewOfSection(this->context(), CURRENT_PROCESS, whole));
+        EXPECT_EQ(0x600df00du, this->emu->memory.read_memory<uint32_t>(tail));
+    }
 }
