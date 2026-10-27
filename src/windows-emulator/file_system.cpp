@@ -69,14 +69,29 @@ namespace sogen
 
         const auto canonical_root = canonical(root);
 
+        // On a case-sensitive host, "c" and "C" can both exist and name the same drive. Directory order is
+        // unspecified, so the lowercase spelling, which emulation roots use, is chosen explicitly.
+        std::map<char, std::filesystem::path> drives{};
         std::error_code ec{};
         for (const auto& entry : std::filesystem::directory_iterator(canonical_root, ec))
         {
             const auto filename = entry.path().filename().string();
-            if (filename.size() == 1 && entry.is_directory(ec))
+            if (filename.size() != 1 || !entry.is_directory(ec))
             {
-                this->mount(windows_path{filename.front(), {}}, std::make_unique<host_directory_provider>(entry.path()), root_mode);
+                continue;
             }
+
+            const auto letter = static_cast<char>(std::tolower(static_cast<unsigned char>(filename.front())));
+            const auto existing = drives.find(letter);
+            if (existing == drives.end() || filename.front() == letter)
+            {
+                drives.insert_or_assign(letter, entry.path());
+            }
+        }
+
+        for (auto& [letter, path] : drives)
+        {
+            this->mount(windows_path{letter, {}}, std::make_unique<host_directory_provider>(std::move(path)), root_mode);
         }
     }
 
