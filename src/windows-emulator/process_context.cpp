@@ -266,13 +266,15 @@ namespace sogen
             env_map[u"TEMP"] = user_profile + u"\\AppData\\Local\\Temp";
             env_map[u"USERPROFILE"] = user_profile;
 
-            const auto home_path = user_profile.size() >= 2 && user_profile[1] == u':' ? user_profile.substr(2) : user_profile;
+            const auto profile_on_drive = user_profile.size() >= 2 && user_profile[1] == u':';
+            const auto home_drive = profile_on_drive ? user_profile.substr(0, 2) : system_drive;
+            const auto home_path = profile_on_drive ? user_profile.substr(2) : user_profile;
             const auto program_files = system_drive + u"\\Program Files";
             const auto program_files_x86 = program_files + u" (x86)";
             const auto program_data = system_drive + u"\\ProgramData";
             env_map.try_emplace(u"APPDATA", user_profile + u"\\AppData\\Roaming");
             env_map.try_emplace(u"LOCALAPPDATA", user_profile + u"\\AppData\\Local");
-            env_map.try_emplace(u"HOMEDRIVE", system_drive);
+            env_map.try_emplace(u"HOMEDRIVE", home_drive);
             env_map.try_emplace(u"HOMEPATH", home_path);
             env_map.try_emplace(u"ProgramData", program_data);
             env_map.try_emplace(u"ALLUSERSPROFILE", program_data);
