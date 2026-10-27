@@ -90,14 +90,34 @@ namespace sogen
     };
 
     // The ZeroBits of NtAllocateVirtualMemory/NtMapViewOfSection as the highest address an allocator-chosen range may end at.
-    // Up to 32 it counts high-order bits of the address that must be zero. Above that it is a mask, of which only the
-    // leading zero bits count (Wine's tests confirm this on Windows with 0x1aaaaaaa). The WoW64 thunks pass 0xFFFEFFFF
-    // for every request of 32-bit code, which keeps that code's memory where its pointers reach.
+    // Below 32 it counts zero bits on top of the 32 high-order bits that are always zero, so 1 keeps a range below 2 GB,
+    // which 64-bit LuaJIT relies on (checked on Windows 11). From 32 it is a mask, of which only the leading zero bits
+    // count (Wine's tests confirm this on Windows with 0x1aaaaaaa). The WoW64 thunks pass 0xFFFEFFFF for every request of
+    // 32-bit code, which keeps that code's memory where its pointers reach.
     inline uint64_t highest_address_for_zero_bits(const uint64_t zero_bits)
     {
         constexpr uint64_t unrestricted = MAX_ALLOCATION_END_EXCL - 1;
-        const auto high_zero_bits = zero_bits <= 32 ? static_cast<int>(zero_bits) : std::countl_zero(zero_bits);
+        if (zero_bits == 0)
+        {
+            return unrestricted;
+        }
+
+        const auto high_zero_bits = zero_bits < 32 ? 32 + static_cast<int>(zero_bits) : std::countl_zero(zero_bits);
         return std::min(~uint64_t{0} >> high_zero_bits, unrestricted);
+    }
+
+    // What NtAllocateVirtualMemory answers a ZeroBits that leaves no room below the first 64 KiB: a ceiling of exactly 64 KiB
+    // finds no free range, anything lower is rejected outright (measured on Windows 11 for every value up to 0x30000).
+    inline NTSTATUS check_zero_bits_of_allocation(const uint64_t zero_bits)
+    {
+        constexpr uint64_t lowest_allocation_end = 0x10000;
+        const auto highest_address = highest_address_for_zero_bits(zero_bits);
+        if (highest_address + 1 < lowest_allocation_end)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        return highest_address + 1 == lowest_allocation_end ? STATUS_CONFLICTING_ADDRESSES : STATUS_SUCCESS;
     }
 
     inline uint64_t get_syscall_argument(const syscall_context& context, const size_t index)
