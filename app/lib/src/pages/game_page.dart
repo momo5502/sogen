@@ -43,7 +43,7 @@ class _GamePageState extends State<GamePage> {
 
   GuestWindow? _inputWindow;
   MouseButton _touchButton = MouseButton.left;
-  bool _trackpad = false;
+  late bool _trackpad = widget.game.settings.trackpad;
   bool _showControls = true;
   String? _shownSaveError;
   bool _suspending = false;
@@ -52,7 +52,7 @@ class _GamePageState extends State<GamePage> {
   void initState() {
     super.initState();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _orientation.invokeMethod('followSensor', {'enabled': true});
+    _orientation.invokeMethod('set', {'orientation': widget.game.settings.orientation.name});
     _session.addListener(_onSessionChanged);
     widget.ads.preloadInterstitial();
     if (widget.session == null) {
@@ -130,7 +130,7 @@ class _GamePageState extends State<GamePage> {
     _keyboard.dispose();
     _keyboardFocus.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    _orientation.invokeMethod('followSensor', {'enabled': false});
+    _orientation.invokeMethod('set', {'orientation': 'unspecified'});
     super.dispose();
   }
 
@@ -290,6 +290,7 @@ class _GamePageState extends State<GamePage> {
                   window: window,
                   touchButton: _touchButton,
                   trackpad: _trackpad,
+                  mouseSensitivity: widget.game.settings.mouseSensitivity,
                 ),
               )
             else

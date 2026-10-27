@@ -14,6 +14,7 @@ class GuestWindowView extends StatefulWidget {
     required this.window,
     this.touchButton = MouseButton.left,
     this.trackpad = false,
+    required this.mouseSensitivity,
   });
 
   final GameSession session;
@@ -26,6 +27,9 @@ class GuestWindowView extends StatefulWidget {
   /// is, and holding still before moving drags with the button held.
   final bool trackpad;
 
+  /// Guest mouse counts per logical pixel a finger moves, while the guest captures the mouse.
+  final double mouseSensitivity;
+
   @override
   State<GuestWindowView> createState() => _GuestWindowViewState();
 }
@@ -36,9 +40,6 @@ class _GuestWindowViewState extends State<GuestWindowView> {
 
   // Long enough for games that poll the button state once per frame to see a tap's click.
   static const _clickDuration = Duration(milliseconds: 60);
-
-  // A finger travels far less than a mouse, so mouse-look would turn slowly at one count per guest pixel.
-  static const _relativeSensitivity = 3.0;
 
   final Map<int, MouseButton> _pressed = {};
 
@@ -247,7 +248,7 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     final window = widget.window;
     if (_relative) {
       // Inside the FittedBox, the delta is already in guest pixels; the fraction carries over so slow movement adds up.
-      final motion = _relativeRemainder + event.localDelta * _relativeSensitivity;
+      final motion = _relativeRemainder + event.localDelta * widget.mouseSensitivity;
       final dx = motion.dx.truncate();
       final dy = motion.dy.truncate();
       _relativeRemainder = Offset(motion.dx - dx, motion.dy - dy);

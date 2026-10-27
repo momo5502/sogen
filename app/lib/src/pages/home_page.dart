@@ -8,7 +8,7 @@ import '../session.dart';
 import '../settings.dart';
 import '../theme.dart';
 import '../widgets/sogen_widgets.dart';
-import 'add_game_page.dart';
+import 'game_editor_page.dart';
 import 'game_page.dart';
 import 'settings_page.dart';
 
@@ -58,7 +58,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _addGame() async {
-    final game = await Navigator.of(context).push<Game>(MaterialPageRoute(builder: (_) => const AddGamePage()));
+    final game = await Navigator.of(context).push<Game>(MaterialPageRoute(builder: (_) => const GameEditorPage()));
     if (game != null) {
       await widget.library.add(game);
     }
@@ -95,6 +95,44 @@ class _HomePageState extends State<HomePage> {
 
     suspended.addListener(onChanged);
     onChanged();
+  }
+
+  Future<void> _edit(Game game) async {
+    final edited = await Navigator.of(context)
+        .push<Game>(MaterialPageRoute(builder: (_) => GameEditorPage(game: game)));
+    if (edited != null) {
+      await widget.library.update(edited);
+    }
+  }
+
+  void _showGameMenu(Game game) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: SogenColors.card,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(LucideIcons.pencil),
+              title: const Text('Edit'),
+              onTap: () {
+                Navigator.of(context).pop();
+                _edit(game);
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.trash2),
+              title: const Text('Remove'),
+              onTap: () {
+                Navigator.of(context).pop();
+                _confirmRemove(game);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _confirmRemove(Game game) async {
@@ -197,7 +235,7 @@ class _HomePageState extends State<HomePage> {
                           enabled: !_installing,
                           saving: _saving.containsKey(games[index].id),
                           onPlay: () => _play(games[index]),
-                          onRemove: () => _confirmRemove(games[index]),
+                          onMenu: () => _showGameMenu(games[index]),
                         ),
                       ),
                     ),
@@ -292,7 +330,7 @@ class _GameCard extends StatelessWidget {
     required this.enabled,
     required this.saving,
     required this.onPlay,
-    required this.onRemove,
+    required this.onMenu,
   });
 
   final Game game;
@@ -300,7 +338,7 @@ class _GameCard extends StatelessWidget {
   final bool enabled;
   final bool saving;
   final VoidCallback onPlay;
-  final VoidCallback onRemove;
+  final VoidCallback onMenu;
 
   @override
   Widget build(BuildContext context) {
@@ -310,7 +348,7 @@ class _GameCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: enabled && !saving ? onPlay : null,
-        onLongPress: saving ? null : onRemove,
+        onLongPress: saving ? null : onMenu,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
