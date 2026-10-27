@@ -2,7 +2,10 @@
 
 #include "memory_permission_ext.hpp"
 
+#include <memory_region.hpp>
+
 #include <map>
+#include <vector>
 #include <cstdint>
 
 #include <utils/serialization.hpp>
@@ -27,11 +30,11 @@ namespace sogen
         uint64_t map_view(memory_manager& memory, uint64_t storage_id, uint64_t offset, size_t size, nt_memory_permission permissions,
                           uint64_t highest_address);
         bool unmap_view(memory_manager& memory, uint64_t address);
+        bool contains(uint64_t address, uint64_t size) const;
 
-        void serialize(utils::buffer_serializer& buffer) const;
+        void serialize(utils::buffer_serializer& buffer, const memory_manager& memory) const;
         void deserialize(utils::buffer_deserializer& buffer);
-        // After a restore, maps every view back at its saved address.
-        void restore_views(memory_manager& memory) const;
+        void restore_views(memory_manager& memory);
 
       private:
         struct storage
@@ -51,6 +54,9 @@ namespace sogen
         uint64_t next_storage_id_{1};
         std::map<uint64_t, storage> storages_{};
         std::map<uint64_t, view> views_{};
+        std::map<uint64_t, std::vector<basic_memory_region<nt_memory_permission>>> restored_protections_{};
+
+        std::map<uint64_t, view>::const_iterator find_view(uint64_t address) const;
 
         void drop_reference(std::map<uint64_t, storage>::iterator entry);
     };

@@ -68,20 +68,33 @@ namespace sogen
         return address;
     }
 
-    bool section_view_manager::unmap_view(memory_manager& memory, const uint64_t address)
+    std::map<uint64_t, section_view_manager::view>::const_iterator section_view_manager::find_view(const uint64_t address) const
     {
         auto entry = this->views_.upper_bound(address);
         if (entry == this->views_.begin())
         {
-            return false;
+            return this->views_.end();
         }
 
         --entry;
-        const auto [base, mapped] = *entry;
-        if (address - base >= mapped.size)
+        return address - entry->first < entry->second.size ? entry : this->views_.end();
+    }
+
+    bool section_view_manager::contains(const uint64_t address, const uint64_t size) const
+    {
+        const auto entry = this->find_view(address);
+        return entry != this->views_.end() && size <= entry->second.size - (address - entry->first);
+    }
+
+    bool section_view_manager::unmap_view(memory_manager& memory, const uint64_t address)
+    {
+        const auto entry = this->find_view(address);
+        if (entry == this->views_.end())
         {
             return false;
         }
+
+        const auto [base, mapped] = *entry;
 
         if (!memory.release_memory(base, 0))
         {
@@ -92,7 +105,7 @@ namespace sogen
         return true;
     }
 
-    void section_view_manager::serialize(utils::buffer_serializer& buffer) const
+    void section_view_manager::serialize(utils::buffer_serializer& buffer, const memory_manager& memory) const
     {
         buffer.write(this->next_storage_id_);
         buffer.write(this->storages_.size());
@@ -121,6 +134,10 @@ namespace sogen
         }
 
         buffer.write_map(this->views_);
+        for (const auto address : this->views_ | std::views::keys)
+        {
+            buffer.write_vector(memory.get_committed_regions(address));
+        }
     }
 
     void section_view_manager::deserialize(utils::buffer_deserializer& buffer)
@@ -151,6 +168,11 @@ namespace sogen
         }
 
         buffer.read_map(this->views_);
+        this->restored_protections_.clear();
+        for (const auto address : this->views_ | std::views::keys)
+        {
+            this->restored_protections_[address] = buffer.read_vector<basic_memory_region<nt_memory_permission>>();
+        }
 
         for (const auto& mapped : this->views_ | std::views::values)
         {
@@ -163,7 +185,7 @@ namespace sogen
         }
     }
 
-    void section_view_manager::restore_views(memory_manager& memory) const
+    void section_view_manager::restore_views(memory_manager& memory)
     {
         for (const auto& [address, mapped] : this->views_)
         {
@@ -173,7 +195,18 @@ namespace sogen
             {
                 throw std::runtime_error("Cannot restore a section view at its saved address");
             }
+
+            for (const auto& region : this->restored_protections_[address])
+            {
+                if (region.permissions != mapped.permissions &&
+                    !memory.protect_memory(region.start, region.length, region.permissions, nullptr))
+                {
+                    throw std::runtime_error("Cannot restore the protection of a section view");
+                }
+            }
         }
+
+        this->restored_protections_.clear();
     }
 
     void section_view_manager::drop_reference(const std::map<uint64_t, storage>::iterator entry)

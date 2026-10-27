@@ -398,6 +398,22 @@ namespace sogen
         return address;
     }
 
+    std::vector<basic_memory_region<nt_memory_permission>> memory_manager::get_committed_regions(const uint64_t region_base) const
+    {
+        std::vector<basic_memory_region<nt_memory_permission>> regions{};
+        const auto entry = this->reserved_regions_.find(region_base);
+        if (entry == this->reserved_regions_.end())
+        {
+            return regions;
+        }
+
+        for (const auto& [address, region] : entry->second.committed_regions)
+        {
+            regions.push_back({.start = address, .length = region.length, .permissions = region.permissions});
+        }
+        return regions;
+    }
+
     bool memory_manager::can_alias_host_memory_anywhere() const
     {
         return this->memory_->supports_host_memory_mapping() && !this->memory_->host_memory_mapping_requires_identity();

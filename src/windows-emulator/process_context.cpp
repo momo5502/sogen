@@ -762,7 +762,6 @@ namespace sogen
         buffer.write(this->dbwin_buffer);
         buffer.write(this->dbwin_buffer_size);
         buffer.write_map(this->orphaned_section_backings);
-        this->section_views.serialize(buffer);
         buffer.write_optional(this->exit_status);
         buffer.write(this->base_allocator);
         buffer.write(this->peb64);
@@ -880,7 +879,6 @@ namespace sogen
         buffer.read(this->dbwin_buffer);
         buffer.read(this->dbwin_buffer_size);
         buffer.read_map(this->orphaned_section_backings);
-        this->section_views.deserialize(buffer);
         buffer.read_optional(this->exit_status);
         buffer.read(this->base_allocator);
         buffer.read(this->peb64);

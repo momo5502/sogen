@@ -177,6 +177,7 @@ namespace sogen
         uint64_t find_free_host_allocation_base(size_t size, uint64_t start, uint64_t highest_address);
 
         region_info get_region_info(uint64_t address);
+        std::vector<basic_memory_region<nt_memory_permission>> get_committed_regions(uint64_t region_base) const;
         std::optional<std::u16string> get_region_mapped_filename(uint64_t address) const;
         void set_region_mapped_filename(uint64_t address, std::u16string filename);
 
