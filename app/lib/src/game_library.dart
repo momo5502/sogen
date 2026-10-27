@@ -8,22 +8,6 @@ import 'package:path_provider/path_provider.dart';
 /// Where a game's folder appears inside the emulated file system.
 const String guestGameDirectory = r'C:\game';
 
-/// The CPU backend a game runs on. [automatic] lets the launcher pick one that can run the executable.
-enum CpuBackend {
-  automatic('Automatic', ''),
-  fex('FEX', 'fex'),
-  unicorn('Unicorn', 'unicorn');
-
-  const CpuBackend(this.label, this.id);
-
-  final String label;
-
-  /// The name the native runtime expects; empty selects its platform default.
-  final String id;
-
-  static CpuBackend fromId(String? id) => values.firstWhere((backend) => backend.id == id, orElse: () => automatic);
-}
-
 @immutable
 class Game {
   const Game({
@@ -34,7 +18,6 @@ class Game {
     this.arguments = const [],
     this.environment = const {},
     this.liveNetwork = false,
-    this.backend = CpuBackend.automatic,
     this.console = false,
   });
 
@@ -46,7 +29,6 @@ class Game {
     arguments: (json['arguments'] as List<dynamic>? ?? const []).cast<String>(),
     environment: (json['environment'] as Map<String, dynamic>? ?? const {}).cast<String, String>(),
     liveNetwork: json['liveNetwork'] as bool? ?? false,
-    backend: CpuBackend.fromId(json['backend'] as String?),
     console: json['console'] as bool? ?? false,
   );
 
@@ -62,7 +44,6 @@ class Game {
   final List<String> arguments;
   final Map<String, String> environment;
   final bool liveNetwork;
-  final CpuBackend backend;
 
   /// Command-line programs show a terminal instead of a window.
   final bool console;
@@ -70,30 +51,6 @@ class Game {
   String get guestExecutable => _toGuestPath(executable);
 
   String get hostExecutable => p.join(directory, executable);
-
-  /// Whether the executable is a 32-bit (i386) PE image, read from its COFF header.
-  Future<bool> isThirtyTwoBit() async {
-    const machineI386 = 0x014C;
-
-    final file = await File(hostExecutable).open();
-    try {
-      final dos = await file.read(0x40);
-      if (dos.length < 0x40) {
-        return false;
-      }
-
-      final peOffset = ByteData.sublistView(dos).getUint32(0x3C, Endian.little);
-      await file.setPosition(peOffset);
-      final header = await file.read(6);
-      if (header.length < 6 || header[0] != 0x50 || header[1] != 0x45) {
-        return false;
-      }
-
-      return ByteData.sublistView(header).getUint16(4, Endian.little) == machineI386;
-    } finally {
-      await file.close();
-    }
-  }
 
   String get guestWorkingDirectory => _toGuestPath(p.posix.dirname(executable));
 
@@ -112,7 +69,6 @@ class Game {
     'arguments': arguments,
     'environment': environment,
     'liveNetwork': liveNetwork,
-    'backend': backend.id,
     'console': console,
   };
 }
