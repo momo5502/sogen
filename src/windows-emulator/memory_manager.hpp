@@ -157,7 +157,6 @@ namespace sogen
         uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only = false, uint64_t start = 0,
                                  memory_region_kind kind = memory_region_kind::private_allocation);
 
-        // Same, but the whole range ends at or below highest_address.
         uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only, uint64_t start, memory_region_kind kind,
                                  uint64_t highest_address);
 

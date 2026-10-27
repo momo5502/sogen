@@ -15,9 +15,10 @@ namespace sogen::test
         EXPECT_EQ(highest_address_for_zero_bits(32), 0xFFFFFFFFull);
     }
 
-    TEST(ZeroBitsTest, LargerValuesAreAddressMasks)
+    TEST(ZeroBitsTest, LargerValuesAreMasksWhoseLeadingZeroBitsCount)
     {
-        EXPECT_EQ(highest_address_for_zero_bits(0xFFFEFFFF), 0xFFFEFFFFull);
-        EXPECT_EQ(highest_address_for_zero_bits(0x7FFEFFFF), 0x7FFEFFFFull);
+        EXPECT_EQ(highest_address_for_zero_bits(0xFFFEFFFF), 0xFFFFFFFFull);
+        EXPECT_EQ(highest_address_for_zero_bits(0x7FFEFFFF), 0x7FFFFFFFull);
+        EXPECT_EQ(highest_address_for_zero_bits(0x1AAAAAAA), 0x1FFFFFFFull);
     }
 }
