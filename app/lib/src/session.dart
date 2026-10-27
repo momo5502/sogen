@@ -27,7 +27,6 @@ class GuestWindow {
 
 enum MouseButton { left, right, middle }
 
-/// One report of how the game performs, see [GameSession.stats].
 class SessionStats {
   const SessionStats({
     required this.framesPerSecond,

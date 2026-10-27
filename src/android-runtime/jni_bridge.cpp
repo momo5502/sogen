@@ -3,6 +3,7 @@
 
 #include <android/native_window_jni.h>
 
+#include <algorithm>
 #include <array>
 
 namespace
