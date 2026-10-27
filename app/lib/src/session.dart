@@ -101,6 +101,10 @@ class GameSession extends ChangeNotifier {
   /// Updated separately from the other session state, since games may move the cursor every frame.
   final ValueNotifier<GuestCursor?> guestCursor = ValueNotifier(null);
 
+  /// The latest cursor position, whether the guest moved the cursor or the player did.
+  GuestCursor? get pointer => _pointer;
+  GuestCursor? _pointer;
+
   /// Returns false if another game is still running. Any other failure ends the session with [error] set.
   Future<bool> start(Game game, {required String emulationRoot, String? resumeFile}) async {
     _windows.clear();
@@ -158,20 +162,24 @@ class GameSession extends ChangeNotifier {
   Future<void> setInputWindow(GuestWindow? window) =>
       _methods.invokeMethod('setInputWindow', {'window': window?.handle ?? 0});
 
-  void mouseMove(GuestWindow window, int x, int y) =>
-      _methods.invokeMethod('mouseMove', {'window': window.handle, 'x': x, 'y': y});
+  void mouseMove(GuestWindow window, int x, int y) {
+    _pointer = GuestCursor(window.handle, x, y);
+    _methods.invokeMethod('mouseMove', {'window': window.handle, 'x': x, 'y': y});
+  }
 
   void mouseMotion(GuestWindow window, int dx, int dy) =>
       _methods.invokeMethod('mouseMotion', {'window': window.handle, 'dx': dx, 'dy': dy});
 
-  void mouseButton(GuestWindow window, MouseButton button, {required bool down, required int x, required int y}) =>
-      _methods.invokeMethod('mouseButton', {
-        'window': window.handle,
-        'button': button.index,
-        'down': down,
-        'x': x,
-        'y': y,
-      });
+  void mouseButton(GuestWindow window, MouseButton button, {required bool down, required int x, required int y}) {
+    _pointer = GuestCursor(window.handle, x, y);
+    _methods.invokeMethod('mouseButton', {
+      'window': window.handle,
+      'button': button.index,
+      'down': down,
+      'x': x,
+      'y': y,
+    });
+  }
 
   void mouseWheel(GuestWindow window, int delta, int x, int y) =>
       _methods.invokeMethod('mouseWheel', {'window': window.handle, 'delta': delta, 'x': x, 'y': y});
@@ -187,7 +195,7 @@ class GameSession extends ChangeNotifier {
     final window = (event['window'] as num?)?.toInt();
 
     if (event['event'] == 'cursorMoved') {
-      guestCursor.value = GuestCursor(window!, event['x'] as int, event['y'] as int);
+      _pointer = guestCursor.value = GuestCursor(window!, event['x'] as int, event['y'] as int);
       return;
     }
 
