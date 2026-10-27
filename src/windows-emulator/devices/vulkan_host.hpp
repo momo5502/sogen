@@ -50,8 +50,6 @@ namespace sogen
         // embedder loaded. Later calls have no effect.
         void load(void* get_instance_proc_addr);
 
-        // Set for a guest whose address space cannot hold every host-visible allocation (a 32-bit process importing
-        // host memory). Device-local memory that happens to be host visible is then offered to it as device-local only.
         void set_conserve_guest_address_space(bool conserve);
 
         // False if no Vulkan driver could be loaded on the host.

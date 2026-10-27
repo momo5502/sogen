@@ -390,6 +390,18 @@ namespace sogen
             bool spoof_missing_features{};
         };
 
+        // The memory types a guest sees for a physical device. On devices where all memory is host visible (unified memory,
+        // e.g. Mali), a 32-bit guest imports every host-visible allocation into its own address space, including the
+        // images and buffers it never maps, and runs out of it. There, each device-local, host-visible type stays at its
+        // index as device-local only, and its host-visible form is appended; first-match device-local picks then take the
+        // former. Both forms are backed by the same host type.
+        struct guest_memory_types
+        {
+            VkPhysicalDeviceMemoryProperties properties{};
+            std::array<uint32_t, VK_MAX_MEMORY_TYPES> host_index{};
+            std::array<uint32_t, VK_MAX_MEMORY_TYPES> host_visible_index{};
+        };
+
         struct device_data
         {
             VkDevice handle{};
@@ -400,7 +412,8 @@ namespace sogen
             std::shared_ptr<std::shared_mutex> presents = std::make_shared<std::shared_mutex>();
             uint64_t instance_id{};
             VkPhysicalDevice physical_device{}; // the device this was created from (for memory queries)
-            uint32_t queue_family_index{};      // the single family this device was created with
+            guest_memory_types memory_types{};
+            uint32_t queue_family_index{}; // the single family this device was created with
             // The driver lacks these features although the guest was told otherwise; shaders are rewritten.
             bool strip_clip_distance{};
             bool strip_cull_distance{};
@@ -1954,18 +1967,6 @@ namespace sogen
             return this->next_id++;
         }
 
-        // The memory types a guest sees for a physical device. On devices where all memory is host visible (unified memory,
-        // e.g. Mali), a 32-bit guest imports every host-visible allocation into its own address space, including the
-        // images and buffers it never maps, and runs out of it. There, each device-local, host-visible type stays at its
-        // index as device-local only, and its host-visible form is appended; first-match device-local picks then take the
-        // former. Both forms are backed by the same host type.
-        struct guest_memory_types
-        {
-            VkPhysicalDeviceMemoryProperties properties{};
-            std::array<uint32_t, VK_MAX_MEMORY_TYPES> host_index{};
-            std::array<uint32_t, VK_MAX_MEMORY_TYPES> host_visible_index{};
-        };
-
         guest_memory_types get_guest_memory_types(const instance_data& instance, const VkPhysicalDevice physical_device) const
         {
             guest_memory_types types{};
@@ -2020,26 +2021,21 @@ namespace sogen
             return types;
         }
 
-        guest_memory_types get_guest_memory_types(const device_data& dev) const
+        static const guest_memory_types& get_guest_memory_types(const device_data& dev)
         {
-            const auto instance = this->instances.find(dev.instance_id);
-            if (instance == this->instances.end())
-            {
-                return {};
-            }
-            return this->get_guest_memory_types(instance->second, dev.physical_device);
+            return dev.memory_types;
         }
 
         // An index outside the guest's types is passed on unchanged, for the caller's own range check.
         uint32_t to_host_memory_type(const device_data& dev, const uint32_t guest_index) const
         {
-            const auto types = this->get_guest_memory_types(dev);
+            const auto& types = get_guest_memory_types(dev);
             return guest_index < types.properties.memoryTypeCount ? types.host_index[guest_index] : guest_index;
         }
 
         uint32_t to_guest_memory_type_bits(const device_data& dev, const uint32_t host_bits) const
         {
-            const auto types = this->get_guest_memory_types(dev);
+            const auto& types = get_guest_memory_types(dev);
             uint32_t guest_bits = host_bits;
             for (uint32_t i = 0; i < VK_MAX_MEMORY_TYPES; ++i)
             {
@@ -2053,7 +2049,7 @@ namespace sogen
 
         bool is_guest_host_visible(const device_data& dev, const uint32_t guest_index) const
         {
-            const auto types = this->get_guest_memory_types(dev);
+            const auto& types = get_guest_memory_types(dev);
             return guest_index < types.properties.memoryTypeCount &&
                    (types.properties.memoryTypes[guest_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
         }
@@ -4165,6 +4161,8 @@ namespace sogen
             data.cmd_set_primitive_restart_enable =
                 reinterpret_cast<PFN_vkCmdSetPrimitiveRestartEnable>(resolve("vkCmdSetPrimitiveRestartEnable"));
         }
+
+        data.memory_types = this->impl_->get_guest_memory_types(instance->second, pd->second.handle);
 
         const uint64_t id = this->impl_->allocate_id();
         this->impl_->devices.emplace(id, data);
@@ -9931,7 +9929,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 14;
+        constexpr uint32_t snapshot_version = 15;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -11141,6 +11139,7 @@ namespace sogen
             buffer.write_vector(device.create.features);
             buffer.write(device.create.feature_count);
             buffer.write(device.create.spoof_missing_features);
+            buffer.write_span(std::span(device.memory_types.properties.memoryTypes, device.memory_types.properties.memoryTypeCount));
         }
 
         buffer.write(static_cast<uint64_t>(impl.queues.size()));
@@ -11170,7 +11169,8 @@ namespace sogen
 
             const auto& device = impl.devices.at(memory.device_id);
             const auto property_flags = memory_property_flags(device, memory.memory_type_index);
-            if ((property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
+            if (!impl.is_guest_host_visible(device, memory.memory_type_index) ||
+                (property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
             {
                 std::vector<std::byte> contents(static_cast<size_t>(memory.allocation_size));
                 if (!transfer_for(memory.device_id)
@@ -11802,6 +11802,17 @@ namespace sogen
                                     create.extensions.size(), create.extension_count, create.features.data(), create.features.size(),
                                     create.feature_count, create.spoof_missing_features, device);
             expect_restored(result, device, id, "device");
+
+            const auto& restored_types = impl.devices.at(id).memory_types.properties;
+            const auto saved_types = buffer.read_vector<VkMemoryType>();
+            if (saved_types.size() != restored_types.memoryTypeCount ||
+                !std::equal(saved_types.begin(), saved_types.end(), restored_types.memoryTypes,
+                            [](const VkMemoryType& a, const VkMemoryType& b) {
+                                return a.propertyFlags == b.propertyFlags && a.heapIndex == b.heapIndex;
+                            }))
+            {
+                throw std::runtime_error("This GPU no longer offers the memory types of Vulkan device " + std::to_string(id));
+            }
         }
 
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
@@ -11850,7 +11861,8 @@ namespace sogen
 
             const auto memory_type = impl.substitute_cached_memory_type(dev, impl.to_host_memory_type(dev, memory_type_index));
             VkPhysicalDeviceMemoryProperties host_properties{};
-            if (!impl.query_memory_properties(dev, host_properties) || memory_type >= host_properties.memoryTypeCount ||
+            if (!impl.is_guest_host_visible(dev, memory_type_index) || !impl.query_memory_properties(dev, host_properties) ||
+                memory_type >= host_properties.memoryTypeCount ||
                 (host_properties.memoryTypes[memory_type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
             {
                 if (!transfer_for(device).copy(mem.handle, memory_type, contents, true))
