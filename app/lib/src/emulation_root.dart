@@ -51,7 +51,7 @@ class EmulationRoot {
 
       await Isolate.run(() => extractFileToDisk(download.path, staging.path));
 
-      await swapIn(staging);
+      await replaceWith(staging);
     } finally {
       if (download.existsSync()) {
         await download.delete();
@@ -62,11 +62,16 @@ class EmulationRoot {
   Directory get _previous => Directory('${_baseDirectory.path}.previous');
 
   @visibleForTesting
-  Future<void> swapIn(Directory staging) async {
+  Future<void> replaceWith(Directory staging) async {
     if (!_containsRoot(staging)) {
       throw const FormatException('root.zip does not contain an emulation root');
     }
 
+    await swapIn(staging);
+  }
+
+  @visibleForTesting
+  Future<void> swapIn(Directory staging) async {
     final previous = _previous;
     if (previous.existsSync()) {
       await previous.delete(recursive: true);

@@ -27,38 +27,38 @@ void main() {
 
   tearDown(() => temp.deleteSync(recursive: true));
 
-  test('swapIn installs into an empty location', () async {
-    await root.swapIn(rootTree('staging', 'new'));
+  test('replaceWith installs into an empty location', () async {
+    await root.replaceWith(rootTree('staging', 'new'));
 
     expect(root.isInstalled, isTrue);
     expect(marker(), 'new');
   });
 
-  test('swapIn replaces the installed root and removes the old one', () async {
+  test('replaceWith replaces the installed root and removes the old one', () async {
     rootTree('emulation', 'old');
-    await root.swapIn(rootTree('staging', 'new'));
+    await root.replaceWith(rootTree('staging', 'new'));
 
     expect(marker(), 'new');
     expect(Directory('${base.path}.previous').existsSync(), isFalse);
   });
 
-  test('swapIn rejects a staged tree without a registry and keeps the installed root', () async {
+  test('replaceWith rejects a staged tree without a registry and keeps the installed root', () async {
     rootTree('emulation', 'old');
     final staging = rootTree('staging', 'new');
     Directory(p.join(staging.path, 'root', 'registry')).deleteSync();
 
-    await expectLater(root.swapIn(staging), throwsA(isA<FormatException>()));
+    await expectLater(root.replaceWith(staging), throwsA(isA<FormatException>()));
 
     expect(marker(), 'old');
     expect(root.isInstalled, isTrue);
   });
 
-  test('swapIn rejects a staged tree without a filesys directory and keeps the installed root', () async {
+  test('replaceWith rejects a staged tree without a filesys directory and keeps the installed root', () async {
     rootTree('emulation', 'old');
     final staging = rootTree('staging', 'new');
     Directory(p.join(staging.path, 'root', 'filesys')).deleteSync();
 
-    await expectLater(root.swapIn(staging), throwsA(isA<FormatException>()));
+    await expectLater(root.replaceWith(staging), throwsA(isA<FormatException>()));
 
     expect(marker(), 'old');
   });
@@ -72,10 +72,10 @@ void main() {
     expect(Directory('${base.path}.previous').existsSync(), isFalse);
   });
 
-  test('swapIn discards a root left over from an earlier swap', () async {
+  test('replaceWith discards a root left over from an earlier swap', () async {
     rootTree('emulation', 'old');
     rootTree('emulation.previous', 'stale');
-    await root.swapIn(rootTree('staging', 'new'));
+    await root.replaceWith(rootTree('staging', 'new'));
 
     expect(marker(), 'new');
     expect(Directory('${base.path}.previous').existsSync(), isFalse);
