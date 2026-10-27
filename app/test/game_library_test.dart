@@ -43,4 +43,13 @@ void main() {
     expect(edited.name, 'Renamed');
     expect(edited.executable, 'other.exe');
   });
+
+  test('a stored sensitivity outside the slider range is clamped', () {
+    expect(GameSettings.fromJson({'mouseSensitivity': 100}).mouseSensitivity, GameSettings.maxMouseSensitivity);
+    expect(GameSettings.fromJson({'mouseSensitivity': 0}).mouseSensitivity, GameSettings.minMouseSensitivity);
+  });
+
+  test('an unknown orientation falls back to following the device', () {
+    expect(GameSettings.fromJson({'orientation': 'sideways'}).orientation, ScreenOrientation.sensor);
+  });
 }
