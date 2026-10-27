@@ -3031,6 +3031,39 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, const hdc dc, const emulator_pointer /*text*/, const ULONG char_count,
+                                          const ULONG max_extent, const emulator_object<ULONG> fit, const emulator_pointer extents,
+                                          const emulator_pointer size, const ULONG /*flags*/)
+        {
+            if (dc == 0 || size == 0)
+            {
+                return FALSE;
+            }
+
+            const SIZE text_size{
+                .cx = static_cast<LONG>(k_default_font_width * char_count),
+                .cy = static_cast<LONG>(k_default_font_height),
+            };
+            c.emu.write_memory(size, &text_size, sizeof(text_size));
+
+            if (fit)
+            {
+                fit.write(std::min<ULONG>(char_count, max_extent / k_default_font_width));
+            }
+
+            if (extents != 0 && char_count != 0)
+            {
+                std::vector<ULONG> partial_extents(char_count);
+                for (ULONG i = 0; i < char_count; ++i)
+                {
+                    partial_extents[i] = static_cast<ULONG>(k_default_font_width * (i + 1));
+                }
+                c.emu.write_memory(extents, partial_extents.data(), partial_extents.size() * sizeof(ULONG));
+            }
+
+            return TRUE;
+        }
+
         BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
                                        const emulator_pointer /*chars*/, const UINT /*flags*/, const emulator_pointer buffer)
         {
