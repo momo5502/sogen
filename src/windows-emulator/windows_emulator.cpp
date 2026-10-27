@@ -1975,8 +1975,9 @@ namespace sogen
         return {};
     }
 
-    // Windows passes input on when a low-level hook does not return within LowLevelHooksTimeout, and ignores the
-    // result of a hook that returns later.
+    // Windows passes input on to the next hook when a low-level hook does not return within LowLevelHooksTimeout, and
+    // ignores the result of a hook that returns later. Since Windows 7 it also silently removes that hook, so a thread
+    // that installs one and never pumps messages delays only the first input, not every one.
     emulator_thread* windows_emulator::drain_low_level_input()
     {
         constexpr auto low_level_hooks_timeout = std::chrono::seconds(1);
@@ -1997,7 +1998,25 @@ namespace sogen
                 front.hooks.erase(front.hooks.begin());
             }
 
-            if (front.hooks.empty() || timed_out)
+            if (timed_out && !front.hooks.empty())
+            {
+                const auto stalled = front.hooks.front();
+                for (auto& thread : this->process.threads | std::views::values)
+                {
+                    if (std::erase_if(thread.low_level_hooks,
+                                      [stalled](const user_low_level_hook& hook) { return hook.handle == stalled; }) != 0)
+                    {
+                        std::erase(thread.running_low_level_inputs, front.id);
+                    }
+                }
+
+                front.hooks.erase(front.hooks.begin());
+                front.in_progress = false;
+                front.waiting_since = now;
+                continue;
+            }
+
+            if (front.hooks.empty())
             {
                 const auto event = front.event;
                 pending.erase(pending.begin());
