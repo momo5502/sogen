@@ -58,6 +58,7 @@ class _GamePageState extends State<GamePage> {
   MouseButton _touchButton = MouseButton.left;
   late GameSettings _settings = widget.game.settings;
   Timer? _settingsSave;
+  Future<void> _settingsWrite = Future.value();
   bool _panelOpen = false;
   String? _shownSaveError;
   bool _suspending = false;
@@ -135,14 +136,19 @@ class _GamePageState extends State<GamePage> {
   void _changeSettings(GameSettings settings) {
     setState(() => _settings = settings);
     _settingsSave?.cancel();
-    _settingsSave = Timer(const Duration(milliseconds: 500), () => widget.onSettingsChanged(_settings));
+    _settingsSave = Timer(
+      const Duration(milliseconds: 500),
+      () => _settingsWrite = widget.onSettingsChanged(_settings),
+    );
   }
 
+  /// Stores a change that is still waiting to settle, and waits for the write that stores the latest settings.
   Future<void> _flushSettings() async {
     if (_settingsSave?.isActive ?? false) {
       _settingsSave!.cancel();
-      await widget.onSettingsChanged(_settings);
+      _settingsWrite = widget.onSettingsChanged(_settings);
     }
+    await _settingsWrite;
   }
 
   void _onBack() {
@@ -241,6 +247,7 @@ class _GamePageState extends State<GamePage> {
 
     if (stop == true) {
       await _session.stop();
+      await _flushSettings();
     }
   }
 
