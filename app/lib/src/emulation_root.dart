@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:archive/archive_io.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -10,13 +11,18 @@ import 'package:path_provider/path_provider.dart';
 class EmulationRoot {
   EmulationRoot._(this._baseDirectory);
 
+  @visibleForTesting
+  EmulationRoot.at(Directory baseDirectory) : _baseDirectory = baseDirectory;
+
   static final Uri downloadUrl = Uri.parse('https://sogen.dev/root.zip');
 
   final Directory _baseDirectory;
 
   static Future<EmulationRoot> open() async {
     final support = await getApplicationSupportDirectory();
-    return EmulationRoot._(Directory(p.join(support.path, 'emulation')));
+    final root = EmulationRoot._(Directory(p.join(support.path, 'emulation')));
+    await root.restoreInterruptedSwap();
+    return root;
   }
 
   /// The directory passed to the emulator; root.zip contains a single top-level `root` folder.
@@ -46,14 +52,53 @@ class EmulationRoot {
         throw const FormatException('root.zip does not contain an emulation root');
       }
 
-      if (_baseDirectory.existsSync()) {
-        await _baseDirectory.delete(recursive: true);
-      }
-      await staging.rename(_baseDirectory.path);
+      await swapIn(staging);
     } finally {
       if (download.existsSync()) {
         await download.delete();
       }
+    }
+  }
+
+  Directory get _previous => Directory('${_baseDirectory.path}.previous');
+
+  /// Replaces the installed root with [staging]. The old root is only deleted once the new one is in place, and it is
+  /// moved back if the final rename fails, so a failure leaves the previous root usable.
+  @visibleForTesting
+  Future<void> swapIn(Directory staging) async {
+    final previous = _previous;
+    if (previous.existsSync()) {
+      await previous.delete(recursive: true);
+    }
+
+    final hadRoot = _baseDirectory.existsSync();
+    if (hadRoot) {
+      await _baseDirectory.rename(previous.path);
+    }
+
+    try {
+      await staging.rename(_baseDirectory.path);
+    } catch (_) {
+      if (hadRoot) {
+        await previous.rename(_baseDirectory.path);
+      }
+      rethrow;
+    }
+
+    if (hadRoot) {
+      try {
+        await previous.delete(recursive: true);
+      } on FileSystemException {
+        // Left behind; the next install removes it.
+      }
+    }
+  }
+
+  /// Puts the old root back if the app died between moving it aside and moving the new one in.
+  @visibleForTesting
+  Future<void> restoreInterruptedSwap() async {
+    if (!_baseDirectory.existsSync() && _previous.existsSync()) {
+      await _previous.rename(_baseDirectory.path);
     }
   }
 
@@ -76,6 +121,10 @@ class EmulationRoot {
         }
       } finally {
         await sink.close();
+      }
+
+      if (total != null && received != total) {
+        throw HttpException('Download incomplete: received $received of $total bytes', uri: downloadUrl);
       }
     } finally {
       client.close();
