@@ -400,6 +400,31 @@ namespace sogen
             VkPhysicalDeviceMemoryProperties properties{};
             std::array<uint32_t, VK_MAX_MEMORY_TYPES> host_index{};
             std::array<uint32_t, VK_MAX_MEMORY_TYPES> host_visible_index{};
+
+            // An index outside the guest's types is passed on unchanged, for the caller's own range check.
+            uint32_t to_host(const uint32_t guest_index) const
+            {
+                return guest_index < this->properties.memoryTypeCount ? this->host_index[guest_index] : guest_index;
+            }
+
+            uint32_t to_guest_bits(const uint32_t host_bits) const
+            {
+                uint32_t guest_bits = host_bits;
+                for (uint32_t i = 0; i < VK_MAX_MEMORY_TYPES; ++i)
+                {
+                    if ((host_bits & (1u << i)) != 0 && this->host_visible_index[i] != UINT32_MAX)
+                    {
+                        guest_bits |= 1u << this->host_visible_index[i];
+                    }
+                }
+                return guest_bits;
+            }
+
+            bool is_host_visible(const uint32_t guest_index) const
+            {
+                return guest_index < this->properties.memoryTypeCount &&
+                       (this->properties.memoryTypes[guest_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
+            }
         };
 
         struct device_data
@@ -2019,39 +2044,6 @@ namespace sogen
             }
 
             return types;
-        }
-
-        static const guest_memory_types& get_guest_memory_types(const device_data& dev)
-        {
-            return dev.memory_types;
-        }
-
-        // An index outside the guest's types is passed on unchanged, for the caller's own range check.
-        uint32_t to_host_memory_type(const device_data& dev, const uint32_t guest_index) const
-        {
-            const auto& types = get_guest_memory_types(dev);
-            return guest_index < types.properties.memoryTypeCount ? types.host_index[guest_index] : guest_index;
-        }
-
-        uint32_t to_guest_memory_type_bits(const device_data& dev, const uint32_t host_bits) const
-        {
-            const auto& types = get_guest_memory_types(dev);
-            uint32_t guest_bits = host_bits;
-            for (uint32_t i = 0; i < VK_MAX_MEMORY_TYPES; ++i)
-            {
-                if ((host_bits & (1u << i)) != 0 && types.host_visible_index[i] != UINT32_MAX)
-                {
-                    guest_bits |= 1u << types.host_visible_index[i];
-                }
-            }
-            return guest_bits;
-        }
-
-        bool is_guest_host_visible(const device_data& dev, const uint32_t guest_index) const
-        {
-            const auto& types = get_guest_memory_types(dev);
-            return guest_index < types.properties.memoryTypeCount &&
-                   (types.properties.memoryTypes[guest_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
         }
 
         // Picks the first memory type set in `type_bits` that has all `required` property flags, using
@@ -5166,7 +5158,7 @@ namespace sogen
         const bool have_props = this->impl_->query_memory_properties(dev->second, mem_props);
         // The spec requires memoryTypeIndex < memoryTypeCount; drivers index their internal type/heap arrays
         // with it unchecked, so an out-of-range guest value is an OOB read inside the host driver.
-        const auto host_type_index = this->impl_->to_host_memory_type(dev->second, memory_type_index);
+        const auto host_type_index = dev->second.memory_types.to_host(memory_type_index);
         if (have_props && host_type_index >= mem_props.memoryTypeCount)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
@@ -5355,7 +5347,7 @@ namespace sogen
 
         out_size = requirements.size;
         out_alignment = requirements.alignment;
-        out_memory_type_bits = this->impl_->to_guest_memory_type_bits(dev->second, requirements.memoryTypeBits);
+        out_memory_type_bits = dev->second.memory_types.to_guest_bits(requirements.memoryTypeBits);
         return VK_SUCCESS;
     }
 
@@ -5526,7 +5518,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        if (!this->impl_->is_guest_host_visible(dev->second, mem->second.memory_type_index))
+        if (!dev->second.memory_types.is_host_visible(mem->second.memory_type_index))
         {
             return VK_ERROR_MEMORY_MAP_FAILED;
         }
@@ -5578,7 +5570,7 @@ namespace sogen
     bool vulkan_host::is_host_visible_memory_type(uint64_t device, uint32_t memory_type_index) const
     {
         const auto dev = this->impl_->devices.find(device);
-        return dev != this->impl_->devices.end() && this->impl_->is_guest_host_visible(dev->second, memory_type_index);
+        return dev != this->impl_->devices.end() && dev->second.memory_types.is_host_visible(memory_type_index);
     }
 
     int32_t vulkan_host::import_host_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint32_t flags,
@@ -5594,7 +5586,7 @@ namespace sogen
         }
 
         const auto type_index =
-            this->impl_->substitute_cached_memory_type(dev->second, this->impl_->to_host_memory_type(dev->second, memory_type_index));
+            this->impl_->substitute_cached_memory_type(dev->second, dev->second.memory_types.to_host(memory_type_index));
 
         VkMemoryHostPointerPropertiesEXT pointer_properties{};
         pointer_properties.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT;
@@ -5746,7 +5738,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        if (!this->impl_->is_guest_host_visible(dev->second, mem->second.memory_type_index))
+        if (!dev->second.memory_types.is_host_visible(mem->second.memory_type_index))
         {
             return VK_ERROR_MEMORY_MAP_FAILED;
         }
@@ -5942,7 +5934,7 @@ namespace sogen
 
         out_size = requirements.size;
         out_alignment = requirements.alignment;
-        out_memory_type_bits = this->impl_->to_guest_memory_type_bits(dev->second, requirements.memoryTypeBits);
+        out_memory_type_bits = dev->second.memory_types.to_guest_bits(requirements.memoryTypeBits);
         return VK_SUCCESS;
     }
 
@@ -11089,7 +11081,7 @@ namespace sogen
                 return 0;
             }
 
-            const auto index = impl.substitute_cached_memory_type(device, impl.to_host_memory_type(device, memory_type_index));
+            const auto index = impl.substitute_cached_memory_type(device, device.memory_types.to_host(memory_type_index));
             return index < properties.memoryTypeCount ? properties.memoryTypes[index].propertyFlags : 0;
         };
 
@@ -11169,14 +11161,14 @@ namespace sogen
 
             const auto& device = impl.devices.at(memory.device_id);
             const auto property_flags = memory_property_flags(device, memory.memory_type_index);
-            if (!impl.is_guest_host_visible(device, memory.memory_type_index) ||
+            if (!device.memory_types.is_host_visible(memory.memory_type_index) ||
                 (property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
             {
                 std::vector<std::byte> contents(static_cast<size_t>(memory.allocation_size));
                 if (!transfer_for(memory.device_id)
                          .copy(memory.handle,
-                               impl.substitute_cached_memory_type(device, impl.to_host_memory_type(device, memory.memory_type_index)),
-                               contents, false))
+                               impl.substitute_cached_memory_type(device, device.memory_types.to_host(memory.memory_type_index)), contents,
+                               false))
                 {
                     throw std::runtime_error("Snapshots do not save Vulkan memory only images can use yet");
                 }
@@ -11859,9 +11851,9 @@ namespace sogen
                 throw std::runtime_error("The snapshot holds the wrong size for Vulkan memory " + std::to_string(id));
             }
 
-            const auto memory_type = impl.substitute_cached_memory_type(dev, impl.to_host_memory_type(dev, memory_type_index));
+            const auto memory_type = impl.substitute_cached_memory_type(dev, dev.memory_types.to_host(memory_type_index));
             VkPhysicalDeviceMemoryProperties host_properties{};
-            if (!impl.is_guest_host_visible(dev, memory_type_index) || !impl.query_memory_properties(dev, host_properties) ||
+            if (!dev.memory_types.is_host_visible(memory_type_index) || !impl.query_memory_properties(dev, host_properties) ||
                 memory_type >= host_properties.memoryTypeCount ||
                 (host_properties.memoryTypes[memory_type].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0)
             {
