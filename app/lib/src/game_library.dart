@@ -21,7 +21,6 @@ enum ScreenOrientation {
       values.firstWhere((orientation) => orientation.name == name, orElse: () => sensor);
 }
 
-/// How a game is played on the device, as opposed to how it is launched.
 @immutable
 class GameSettings {
   const GameSettings({
