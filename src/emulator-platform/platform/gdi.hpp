@@ -203,6 +203,8 @@ namespace sogen
 
 #define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
 
+#define CBM_INIT             0x04
+
     struct GDI_SHARED_MEMORY64
     {
         GDI_HANDLE_ENTRY64 Handles[GDI_MAX_HANDLE_COUNT];

@@ -2273,21 +2273,63 @@ namespace sogen
             return handle_value;
         }
 
-        uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height,
-                                                    const uint32_t /*usage*/, const emulator_pointer bits, const emulator_pointer /*info*/,
-                                                    const uint32_t /*info_header_size*/, const uint32_t /*init*/, const uint32_t /*offset*/,
-                                                    const uint32_t /*cj*/, const uint32_t /*i_usage*/)
+        uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, const hdc /*dc*/, const int32_t width, const int32_t height,
+                                                    const uint32_t init, const emulator_pointer bits, const emulator_pointer info,
+                                                    const uint32_t usage, const uint32_t /*max_info*/, const uint32_t max_bits,
+                                                    const uint32_t /*flags*/, const uint64_t /*color_transform*/)
         {
-            gdi_bitmap_surface* surface = nullptr;
-            const auto handle_value = create_gdi_bitmap_surface(c, width, height, k_default_bitmap_fill, &surface);
-            if (surface != nullptr)
+            // CreateDIBitmap passes the DIB's height through, which is negative for a top-down DIB.
+            if (width <= 0 || height == 0)
             {
-                if (bits != 0)
+                return 0;
+            }
+
+            const auto surface_width = static_cast<uint32_t>(width);
+            const auto surface_height = static_cast<uint32_t>(std::abs(static_cast<int64_t>(height)));
+            gdi_bitmap_surface* surface = nullptr;
+            const auto handle_value = create_gdi_bitmap_surface(c, surface_width, surface_height, k_default_bitmap_fill, &surface);
+            if (!surface || (init & CBM_INIT) == 0 || bits == 0 || info == 0)
+            {
+                return handle_value;
+            }
+
+            const auto header = read_bitmap_info_header(c, info);
+            if (!header || !is_supported_dib(*header, usage) || header->biHeight == 0)
+            {
+                c.win_emu.log.warn("NtGdiCreateDIBitmapInternal: unsupported initial DIB (usage=%u)\n", usage);
+                return handle_value;
+            }
+
+            const bool top_down = header->biHeight < 0;
+            const auto src_width = static_cast<uint32_t>(header->biWidth);
+            const auto src_height = static_cast<uint32_t>(std::abs(static_cast<int64_t>(header->biHeight)));
+            const auto bit_count = header->biBitCount;
+            const auto stride = dib_stride(src_width, bit_count);
+            const auto palette = read_dib_palette(c, info, *header);
+
+            std::vector<uint8_t> data(stride * src_height);
+            if (max_bits != 0 && data.size() > max_bits)
+            {
+                data.resize(max_bits);
+            }
+            c.emu.read_memory(bits, data.data(), data.size());
+            const auto available_rows = static_cast<uint32_t>(data.size() / stride);
+
+            for (uint32_t y = 0; y < std::min(surface_height, src_height); ++y)
+            {
+                const auto stored_row = top_down ? y : (src_height - 1 - y);
+                if (stored_row >= available_rows)
                 {
-                    const auto byte_count = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(uint32_t);
-                    c.emu.read_memory(bits, surface->pixels.data(), byte_count);
+                    continue;
+                }
+
+                const uint8_t* row = data.data() + static_cast<size_t>(stored_row) * stride;
+                for (uint32_t x = 0; x < std::min(surface_width, src_width); ++x)
+                {
+                    set_surface_pixel(*surface, static_cast<int>(x), static_cast<int>(y), dib_pixel_to_bgra32(row, x, bit_count, palette));
                 }
             }
+
             return handle_value;
         }
 
