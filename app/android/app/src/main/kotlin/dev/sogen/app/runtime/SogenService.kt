@@ -128,7 +128,7 @@ class SogenService : Service() {
             synchronized(statsSampler) {
                 statsReports?.cancel(false)
                 statsReports = if (milliseconds > 0 && !statsSampler.isShutdown) {
-                    // A fixed delay, so that a slow launcher never gets a backlog of reports.
+                    // A fixed delay, so that sampling runs never overlap when one is slow.
                     statsSampler.scheduleWithFixedDelay(::reportStats, 0, milliseconds.toLong(), TimeUnit.MILLISECONDS)
                 } else {
                     null

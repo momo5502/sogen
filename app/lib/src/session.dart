@@ -124,7 +124,7 @@ class GameSession extends ChangeNotifier {
   /// Reported while [setStatsInterval] is above zero.
   final ValueNotifier<SessionStats?> stats = ValueNotifier(null);
   int? _reportedFrames;
-  DateTime? _reportedAt;
+  final Stopwatch _sinceReport = Stopwatch();
 
   /// Returns false if another game is still running. Any other failure ends the session with [error] set.
   Future<bool> start(Game game, {required String emulationRoot, String? resumeFile}) async {
@@ -293,16 +293,16 @@ class GameSession extends ChangeNotifier {
 
   void _onStats(Map<Object?, Object?> event) {
     final frames = (event['frames'] as num).toInt();
-    final now = DateTime.now();
     final previousFrames = _reportedFrames;
-    final previousAt = _reportedAt;
+    final elapsed = _sinceReport.elapsedMicroseconds;
     _reportedFrames = frames;
-    _reportedAt = now;
-    if (previousFrames == null || previousAt == null) {
+    _sinceReport
+      ..reset()
+      ..start();
+    if (previousFrames == null) {
       return;
     }
 
-    final elapsed = now.difference(previousAt).inMicroseconds;
     stats.value = SessionStats(
       framesPerSecond: elapsed > 0 ? (frames - previousFrames) * Duration.microsecondsPerSecond / elapsed : 0,
       worstPresentInterval: Duration(microseconds: (event['worstPresentIntervalNs'] as num).toInt() ~/ 1000),
