@@ -18,7 +18,6 @@ namespace sogen::android
         backend_type parse_backend(const std::string_view name)
         {
             static const std::map<std::string_view, backend_type> backends{
-                {"unicorn", backend_type::unicorn},
                 {"icicle", backend_type::icicle},
                 {"fex", backend_type::fex},
             };
@@ -28,7 +27,7 @@ namespace sogen::android
 #if defined(__aarch64__)
                 return backend_type::fex;
 #else
-                return backend_type::unicorn;
+                return backend_type::icicle;
 #endif
             }
 

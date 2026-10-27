@@ -1178,9 +1178,6 @@ jobs:
         architecture:
           - x86_64
           #- arm64-v8a
-        emulator:
-          - Unicorn
-          - Icicle
         emulation-root:
           - Windows 2025
           #- Windows 2022
@@ -1236,7 +1233,7 @@ jobs:
           script: |
             tar -cf build/${{matrix.preset}}/artifacts.tar -C build/${{matrix.preset}}/artifacts .
             adb push build/${{matrix.preset}}/artifacts.tar /data/local/tmp/
-            adb shell "cd /data/local/tmp && tar xf artifacts.tar --no-same-owner && rm artifacts.tar && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer --network live -e ./root --root-mode rw c:/test-sample.exe"
+            adb shell "cd /data/local/tmp && tar xf artifacts.tar --no-same-owner && rm artifacts.tar && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && ./analyzer --network live -e ./root --root-mode rw c:/test-sample.exe"
 
   build-page:
     name: Build Page

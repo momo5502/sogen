@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -61,7 +60,6 @@ class GameSession extends ChangeNotifier {
   static const _events = EventChannel('dev.sogen.app/session/events');
   static const _maxOutputLines = 2000;
   static const _maxTerminalLines = 10000;
-  static const _loggerColorRed = 1;
   static const _stdoutColor = -1;
 
   late final StreamSubscription<dynamic> _subscription;
@@ -110,17 +108,7 @@ class GameSession extends ChangeNotifier {
     saveError = null;
     state = SessionState.starting;
 
-    final String backend;
-    try {
-      // FEX, the default backend on arm64, cannot run WoW64 processes yet; Unicorn can.
-      backend = switch (game.backend) {
-        CpuBackend.automatic when await game.isThirtyTwoBit() => CpuBackend.unicorn.id,
-        final selected => selected.id,
-      };
-    } on FileSystemException catch (e) {
-      _fail('Could not read ${game.hostExecutable}: ${e.osError?.message ?? e.message}');
-      return true;
-    }
+    final backend = game.backend.id;
 
     if (_stopRequested) {
       return true;
@@ -161,16 +149,6 @@ class GameSession extends ChangeNotifier {
   }
 
   void consoleInput(String data) => _methods.invokeMethod('consoleInput', {'data': utf8.encode(data)});
-
-  void _fail(String message) {
-    error = message;
-    state = SessionState.exited;
-    _output.add(OutputLine(message, _loggerColorRed));
-    terminal.write('$message\r\n');
-    if (!_disposed) {
-      notifyListeners();
-    }
-  }
 
   Future<void> setInputWindow(GuestWindow? window) =>
       _methods.invokeMethod('setInputWindow', {'window': window?.handle ?? 0});

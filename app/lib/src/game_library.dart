@@ -11,8 +11,7 @@ const String guestGameDirectory = r'C:\game';
 /// The CPU backend a game runs on. [automatic] lets the launcher pick one that can run the executable.
 enum CpuBackend {
   automatic('Automatic', ''),
-  fex('FEX', 'fex'),
-  unicorn('Unicorn', 'unicorn');
+  fex('FEX', 'fex');
 
   const CpuBackend(this.label, this.id);
 
@@ -70,30 +69,6 @@ class Game {
   String get guestExecutable => _toGuestPath(executable);
 
   String get hostExecutable => p.join(directory, executable);
-
-  /// Whether the executable is a 32-bit (i386) PE image, read from its COFF header.
-  Future<bool> isThirtyTwoBit() async {
-    const machineI386 = 0x014C;
-
-    final file = await File(hostExecutable).open();
-    try {
-      final dos = await file.read(0x40);
-      if (dos.length < 0x40) {
-        return false;
-      }
-
-      final peOffset = ByteData.sublistView(dos).getUint32(0x3C, Endian.little);
-      await file.setPosition(peOffset);
-      final header = await file.read(6);
-      if (header.length < 6 || header[0] != 0x50 || header[1] != 0x45) {
-        return false;
-      }
-
-      return ByteData.sublistView(header).getUint16(4, Endian.little) == machineI386;
-    } finally {
-      await file.close();
-    }
-  }
 
   String get guestWorkingDirectory => _toGuestPath(p.posix.dirname(executable));
 

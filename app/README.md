@@ -37,4 +37,4 @@ cd app
 flutter build apk
 ```
 
-arm64 devices run games through FEX, x86_64 devices and emulators through Unicorn.
+arm64 devices run games through FEX, x86_64 devices and emulators through Icicle.

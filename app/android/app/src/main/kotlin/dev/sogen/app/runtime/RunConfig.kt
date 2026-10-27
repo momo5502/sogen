@@ -10,7 +10,7 @@ data class RunConfig(
     /** Guest Windows path to host path, e.g. `C:\game` to the folder the executable lives in. */
     val pathMappings: Map<String, String> = emptyMap(),
     val workingDirectory: String = "",
-    /** Empty selects the platform default: FEX on arm64, Unicorn elsewhere. */
+    /** Empty selects the platform default: FEX on arm64, Icicle on x86_64. */
     val backend: String = "",
     val liveNetwork: Boolean = false,
     /** Where a suspend without a destination saves the process. */
