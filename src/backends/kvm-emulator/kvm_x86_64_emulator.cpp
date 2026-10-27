@@ -1168,9 +1168,9 @@ namespace sogen::kvm
                     const auto chunk = (std::min)(static_cast<size_t>(page_size), size - offset);
                     region.read_cb(offset, page->host_page, chunk);
                     this->ensure_virtual_mapping(guest_address, this->ensure_guest_physical_page(*page));
+                    this->update_desired_memslot_page(*page->physical_page);
                 }
 
-                this->rebuild_mappings();
                 this->mmio_regions_[address] = std::move(region);
             }
 
@@ -1210,9 +1210,9 @@ namespace sogen::kvm
                         page->host_page = backing_base + offset;
                         page->permissions = permissions;
                         this->ensure_virtual_mapping(guest_address, this->ensure_guest_physical_page(*page));
+                        this->update_desired_memslot_page(*page->physical_page);
                     }
 
-                    this->rebuild_mappings();
                     return;
                 }
 
@@ -1234,9 +1234,8 @@ namespace sogen::kvm
 
                     page->permissions = permissions;
                     this->ensure_virtual_mapping(guest_address, this->ensure_guest_physical_page(*page));
+                    this->update_desired_memslot_page(*page->physical_page);
                 }
-
-                this->rebuild_mappings();
             }
 
             bool supports_host_memory_mapping() const override
@@ -1272,9 +1271,9 @@ namespace sogen::kvm
                     page->host_page = host_base + offset;
                     page->permissions = permissions;
                     this->ensure_virtual_mapping(guest_address, this->ensure_guest_physical_page(*page));
+                    this->update_desired_memslot_page(*page->physical_page);
                 }
 
-                this->rebuild_mappings();
                 return true;
             }
 
@@ -1307,7 +1306,9 @@ namespace sogen::kvm
                     }
                     if (entry->second && entry->second->physical_page)
                     {
-                        this->gpa_pages_.erase(*entry->second->physical_page);
+                        const auto gpa = *entry->second->physical_page;
+                        this->gpa_pages_.erase(gpa);
+                        this->update_desired_memslot_page(gpa);
                     }
                     this->mapped_pages_.erase(entry);
                 }
@@ -1326,8 +1327,6 @@ namespace sogen::kvm
                         ++it;
                     }
                 }
-
-                this->rebuild_mappings();
             }
 
             void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) override
@@ -1339,11 +1338,6 @@ namespace sogen::kvm
 
                 // Only presence and writability (read-only vs read-write) are projected into KVM memslots;
                 // finer protection bits (NX, read-vs-execute) are enforced elsewhere and never change a memslot.
-                // A protection change that leaves the memslot projection identical (the common case, e.g. the
-                // game's frequent NtProtectVirtualMemory) needs no reconciliation, so skip the O(total mappings)
-                // rebuild unless a page's memslot contribution actually changes.
-                constexpr uint32_t absent = ~0u;
-                bool memslot_change = false;
                 for (size_t offset = 0; offset < size; offset += page_size)
                 {
                     const auto it = this->mapped_pages_.find(address + offset);
@@ -1353,21 +1347,11 @@ namespace sogen::kvm
                     }
 
                     auto& page = *it->second;
-                    const bool present = page.host_page != nullptr;
-                    const auto old_key =
-                        (present && page.permissions != memory_permission::none) ? this->to_kvm_map_flags(page.permissions) : absent;
-                    const auto new_key = (present && permissions != memory_permission::none) ? this->to_kvm_map_flags(permissions) : absent;
-                    if (old_key != new_key)
-                    {
-                        memslot_change = true;
-                    }
-
                     page.permissions = permissions;
-                }
-
-                if (memslot_change)
-                {
-                    this->rebuild_mappings();
+                    if (page.physical_page)
+                    {
+                        this->update_desired_memslot_page(*page.physical_page);
+                    }
                 }
             }
 
@@ -1636,7 +1620,7 @@ namespace sogen::kvm
                     this->ensure_virtual_mapping(result, page_gpa, false);
                 }
 
-                this->rebuild_mappings();
+                this->update_desired_memslot_page(page_gpa);
                 return result;
             }
 
@@ -1676,13 +1660,100 @@ namespace sogen::kvm
                     guest_address, physical_page, user_accessible);
             }
 
-            // Defer the (O(total mappings)) memslot reconciliation. A single high-level memory operation can
-            // allocate several page-table pages, each of which would otherwise trigger its own full rebuild,
-            // making memory mapping quadratic. Mark the layout dirty here and flush it once before the next
-            // KVM_RUN: the memslots are only consumed by the guest (the emulator accesses guest memory through
-            // host pointers, not memslots), so they need only be current when the vCPU actually runs.
-            void rebuild_mappings()
+            struct installed_memslot
             {
+                int id = -1;
+                size_t size = 0;
+                void* host = nullptr;
+                uint32_t flags = 0;
+            };
+
+            static bool can_coalesce_memslots(const uint64_t left_gpa, const installed_memslot& left, const uint64_t right_gpa,
+                                              const installed_memslot& right)
+            {
+                return left_gpa + left.size == right_gpa &&
+                       reinterpret_cast<uintptr_t>(left.host) + left.size == reinterpret_cast<uintptr_t>(right.host) &&
+                       left.flags == right.flags;
+            }
+
+            void update_desired_memslot_page(const uint64_t gpa)
+            {
+                const auto page_entry = this->gpa_pages_.find(gpa);
+                const auto* const page = page_entry == this->gpa_pages_.end() ? nullptr : page_entry->second;
+                const bool mapped = page && page->host_page && page->permissions != memory_permission::none;
+                auto* const host = mapped ? static_cast<uint8_t*>(page->host_page) : nullptr;
+                const auto flags = mapped ? this->to_kvm_map_flags(page->permissions) : 0;
+
+                auto existing = this->desired_slots_.end();
+                const auto after = this->desired_slots_.upper_bound(gpa);
+                if (after != this->desired_slots_.begin())
+                {
+                    const auto candidate = std::prev(after);
+                    if (gpa - candidate->first < candidate->second.size)
+                    {
+                        existing = candidate;
+                    }
+                }
+
+                if (existing != this->desired_slots_.end())
+                {
+                    const auto& run = existing->second;
+                    if (mapped && reinterpret_cast<uintptr_t>(run.host) + (gpa - existing->first) == reinterpret_cast<uintptr_t>(host) &&
+                        run.flags == flags)
+                    {
+                        return;
+                    }
+
+                    const auto run_gpa = existing->first;
+                    const auto old = existing->second;
+                    const auto run_end = run_gpa + old.size;
+                    this->desired_slots_.erase(existing);
+                    if (run_gpa < gpa)
+                    {
+                        this->desired_slots_.emplace(run_gpa,
+                                                     installed_memslot{.size = gpa - run_gpa, .host = old.host, .flags = old.flags});
+                    }
+                    if (gpa + page_size < run_end)
+                    {
+                        auto* const right_host = static_cast<uint8_t*>(old.host) + (gpa + page_size - run_gpa);
+                        this->desired_slots_.emplace(
+                            gpa + page_size, installed_memslot{.size = run_end - gpa - page_size, .host = right_host, .flags = old.flags});
+                    }
+                }
+                else if (!mapped)
+                {
+                    return;
+                }
+
+                if (mapped)
+                {
+                    auto [current, inserted] =
+                        this->desired_slots_.emplace(gpa, installed_memslot{.size = page_size, .host = host, .flags = flags});
+                    if (!inserted)
+                    {
+                        throw std::logic_error("Overlapping KVM desired memory slots");
+                    }
+
+                    if (current != this->desired_slots_.begin())
+                    {
+                        const auto previous = std::prev(current);
+                        if (can_coalesce_memslots(previous->first, previous->second, current->first, current->second))
+                        {
+                            previous->second.size += current->second.size;
+                            this->desired_slots_.erase(current);
+                            current = previous;
+                        }
+                    }
+
+                    const auto next = std::next(current);
+                    if (next != this->desired_slots_.end() &&
+                        can_coalesce_memslots(current->first, current->second, next->first, next->second))
+                    {
+                        current->second.size += next->second.size;
+                        this->desired_slots_.erase(next);
+                    }
+                }
+
                 this->mappings_dirty_ = true;
             }
 
@@ -1699,55 +1770,7 @@ namespace sogen::kvm
 
             void synchronize_memslots()
             {
-                // Project mapped_pages_ onto the desired memslot layout (physically contiguous,
-                // host-contiguous runs of pages with the same flags become one memslot), then reconcile it
-                // against the slots that are already installed, only deleting/creating the ones that
-                // actually change. Every KVM_SET_USER_MEMORY_REGION forces an NPT/TLB rebuild, so leaving
-                // unchanged slots in place is what keeps a memory operation from costing O(total mappings)
-                // each time.
-                struct desired_page
-                {
-                    uint64_t gpa = 0;
-                    uint8_t* host = nullptr;
-                    uint32_t flags = 0;
-                };
-
-                // Iterate the GPA-sorted view directly: it is already ordered and deduplicated (unique
-                // physical addresses), so no per-flush sort or std::map rebuild is needed even with
-                // hundreds of thousands of mapped pages.
-                std::vector<desired_page> pages{};
-                pages.reserve(this->gpa_pages_.size());
-                for (const auto& [gpa, page] : this->gpa_pages_)
-                {
-                    if (!page || page->host_page == nullptr || page->permissions == memory_permission::none)
-                    {
-                        continue;
-                    }
-
-                    pages.push_back(desired_page{
-                        .gpa = gpa, .host = static_cast<uint8_t*>(page->host_page), .flags = this->to_kvm_map_flags(page->permissions)});
-                }
-
-                std::map<uint64_t, installed_memslot> desired{};
-                for (size_t i = 0; i < pages.size();)
-                {
-                    const auto run_gpa = pages[i].gpa;
-                    auto* const run_host_base = pages[i].host;
-                    const auto run_flags = pages[i].flags;
-
-                    size_t run_size = page_size;
-                    size_t j = i + 1;
-                    while (j < pages.size() && pages[j].gpa == run_gpa + run_size && pages[j].host == run_host_base + run_size &&
-                           pages[j].flags == run_flags)
-                    {
-                        run_size += page_size;
-                        ++j;
-                    }
-
-                    desired[run_gpa] = installed_memslot{.size = run_size, .host = run_host_base, .flags = run_flags};
-                    i = j;
-                }
-
+                auto desired = this->desired_slots_;
                 for (auto it = this->current_slots_.begin(); it != this->current_slots_.end();)
                 {
                     const auto entry = desired.find(it->first);
@@ -2559,25 +2582,16 @@ namespace sogen::kvm
             bool regs_cache_dirty_ = false;
             bool sregs_cache_dirty_ = false;
 
-            struct installed_memslot
-            {
-                int id = -1;
-                size_t size = 0;
-                void* host = nullptr;
-                uint32_t flags = 0;
-            };
-
             int max_memslots_ = 0;
             bool readonly_mem_supported_ = false;
             bool xsave_supported_ = false;
             int next_slot_id_ = 0;
             std::map<uint64_t, installed_memslot> current_slots_{};
+            std::map<uint64_t, installed_memslot> desired_slots_{};
             bool mappings_dirty_ = false;
             std::vector<int> free_slot_ids_{};
             std::map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::map<uint64_t, std::unique_ptr<mapped_page>> internal_pages_{};
-            // GPA-sorted view of mapped_pages_ (guest physical address -> page), kept in sync so
-            // synchronize_memslots can project in memslot order without re-sorting every flush.
             std::map<uint64_t, mapped_page*> gpa_pages_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;

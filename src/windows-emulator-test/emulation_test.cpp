@@ -42,6 +42,80 @@ namespace sogen::test
 
         EXPECT_TRUE(reached_syscall);
     }
+
+    TEST(EmulationTest, KvmMemslotsFollowMemoryChanges)
+    {
+        if (::access("/dev/kvm", R_OK | W_OK) != 0)
+        {
+            GTEST_SKIP();
+        }
+
+        auto machine = create_x86_64_emulator(backend_type::kvm);
+        memory_manager memory{*machine};
+        constexpr uint64_t code_address = 0x10000;
+        constexpr uint64_t data_address = 0x20000;
+        constexpr std::array<uint8_t, 5> read_code{0x48, 0x8B, 0x07, 0x0F, 0x05};
+        constexpr std::array<uint8_t, 5> write_code{0x48, 0x89, 0x07, 0x0F, 0x05};
+        ASSERT_TRUE(memory.allocate_memory(code_address, 0x1000, memory_permission::all));
+        ASSERT_TRUE(memory.allocate_memory(data_address, 0x3000, memory_permission::read_write));
+        machine->write_memory(code_address, read_code.data(), read_code.size());
+        machine->write_memory(code_address + 0x10, write_code.data(), write_code.size());
+
+        constexpr std::array<uint64_t, 3> values{0x12345678, 0xABCDEF01, 0xFEDCBA98};
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            machine->write_memory<uint64_t>(data_address + i * 0x1000, values[i]);
+        }
+
+        auto& cpu = machine->get_cpu(0);
+        bool reached_syscall = false;
+        machine->hook_instruction(x86_hookable_instructions::syscall, [&](cpu_interface& acting, uint64_t) {
+            reached_syscall = true;
+            acting.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        const auto read_guest = [&](const uint64_t address) {
+            reached_syscall = false;
+            cpu.reg(x86_register::rip, code_address);
+            cpu.reg(x86_register::rdi, address);
+            cpu.start();
+            EXPECT_TRUE(reached_syscall);
+            return cpu.reg<uint64_t>(x86_register::rax);
+        };
+        const auto write_guest = [&](const uint64_t address, const uint64_t value) {
+            reached_syscall = false;
+            cpu.reg(x86_register::rip, code_address + 0x10);
+            cpu.reg(x86_register::rdi, address);
+            cpu.reg(x86_register::rax, value);
+            cpu.start();
+            EXPECT_TRUE(reached_syscall);
+        };
+
+        EXPECT_EQ(read_guest(data_address), values[0]);
+        EXPECT_EQ(read_guest(data_address + 0x1000), values[1]);
+        EXPECT_EQ(read_guest(data_address + 0x2000), values[2]);
+
+        ASSERT_TRUE(memory.protect_memory(data_address + 0x1000, 0x1000, memory_permission::read));
+        EXPECT_EQ(read_guest(data_address + 0x1000), values[1]);
+
+        ASSERT_TRUE(memory.protect_memory(data_address + 0x1000, 0x1000, memory_permission::none));
+        EXPECT_EQ(read_guest(data_address), values[0]);
+        EXPECT_EQ(read_guest(data_address + 0x2000), values[2]);
+
+        ASSERT_TRUE(memory.protect_memory(data_address + 0x1000, 0x1000, memory_permission::read_write));
+        constexpr uint64_t updated_value = 0xC0FFEE12;
+        write_guest(data_address + 0x1000, updated_value);
+        EXPECT_EQ(read_guest(data_address + 0x1000), updated_value);
+
+        ASSERT_TRUE(memory.decommit_memory(data_address + 0x1000, 0x1000));
+        EXPECT_EQ(read_guest(data_address), values[0]);
+        EXPECT_EQ(read_guest(data_address + 0x2000), values[2]);
+
+        ASSERT_TRUE(memory.commit_memory(data_address + 0x1000, 0x1000, memory_permission::read_write));
+        write_guest(data_address + 0x1000, values[1]);
+        EXPECT_EQ(read_guest(data_address + 0x1000), values[1]);
+    }
 #endif
 
     TEST(EmulationTest, IntegerDivideErrorsReachTheInterruptHook)
