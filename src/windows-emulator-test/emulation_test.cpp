@@ -10,6 +10,41 @@ namespace sogen::test
 {
 #if !defined(_M_ARM64)
 #if defined(__linux__) && !defined(__ANDROID__) && (defined(__x86_64__) || defined(__amd64__))
+    TEST(EmulationTest, KvmSynchronizesRegistersAcrossRuns)
+    {
+        if (::access("/dev/kvm", R_OK | W_OK) != 0)
+        {
+            GTEST_SKIP();
+        }
+
+        auto machine = create_x86_64_emulator(backend_type::kvm);
+        constexpr uint64_t code_address = 0x10000;
+        constexpr std::array<uint8_t, 5> code{0x48, 0x89, 0xD8, 0x0F, 0x05};
+        memory_manager memory{*machine};
+        ASSERT_TRUE(memory.allocate_memory(code_address, 0x1000, memory_permission::all));
+        machine->write_memory(code_address, code.data(), code.size());
+
+        auto& cpu = machine->get_cpu(0);
+        const auto code_segment = cpu.reg<uint16_t>(x86_register::cs);
+        size_t syscall_count = 0;
+        machine->hook_instruction(x86_hookable_instructions::syscall, [&](cpu_interface& acting, uint64_t) {
+            ++syscall_count;
+            acting.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        for (const uint64_t value : {uint64_t{0x12345678}, uint64_t{0xABCDEF01}})
+        {
+            cpu.reg(x86_register::rip, code_address);
+            cpu.reg(x86_register::rbx, value);
+            cpu.start();
+            EXPECT_EQ(cpu.reg<uint64_t>(x86_register::rax), value);
+            EXPECT_EQ(cpu.reg<uint16_t>(x86_register::cs), code_segment);
+        }
+
+        EXPECT_EQ(syscall_count, 2);
+    }
+
     TEST(EmulationTest, KvmExecutesXrstor)
     {
         if (::access("/dev/kvm", R_OK | W_OK) != 0 || !__builtin_cpu_supports("xsave"))

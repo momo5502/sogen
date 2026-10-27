@@ -479,11 +479,12 @@ namespace sogen::kvm
                     this->refresh_mmio_pages();
                     this->flush_dirty_mappings();
                     this->flush_register_cache();
+                    this->run_->kvm_valid_regs = this->sync_registers_mask_;
 
                     this->run_active_ = true;
                     const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_RUN, 0);
                     this->run_active_ = false;
-                    this->invalidate_register_cache();
+                    this->refresh_register_cache_after_run(rc == 0);
 
                     if (rc < 0)
                     {
@@ -1382,6 +1383,11 @@ namespace sogen::kvm
                 }
 
                 this->readonly_mem_supported_ = ::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_READONLY_MEM) > 0;
+                const auto supported_sync_registers = ::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_SYNC_REGS);
+                if (supported_sync_registers > 0)
+                {
+                    this->sync_registers_mask_ = static_cast<uint64_t>(supported_sync_registers) & (KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS);
+                }
                 static std::atomic_bool readonly_mem_warning_emitted{false};
                 if (!this->readonly_mem_supported_ && !readonly_mem_warning_emitted.exchange(true, std::memory_order_relaxed))
                 {
@@ -2346,12 +2352,6 @@ namespace sogen::kvm
                 }
             }
 
-            // The general and segment registers are accessed many times per exit (syscall arguments,
-            // results, the run loop's RIP checks, ...). KVM_GET_REGS/KVM_SET_REGS fetch and store the
-            // whole register file, so doing one ioctl per single-register access is the dominant cost.
-            // Cache both register sets: read fetches once and serves subsequent reads from the cache,
-            // write updates the cache and marks it dirty, and the run loop flushes dirty state once
-            // before KVM_RUN and invalidates the cache afterwards (the guest may have changed it).
             kvm_regs get_regs() const
             {
                 if (!this->regs_cache_valid_)
@@ -2390,20 +2390,62 @@ namespace sogen::kvm
             {
                 if (this->regs_cache_dirty_)
                 {
-                    check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_REGS, &this->regs_cache_), "KVM_SET_REGS");
+                    if (this->sync_registers_mask_ & KVM_SYNC_X86_REGS)
+                    {
+                        this->run_->s.regs.regs = this->regs_cache_;
+                        this->run_->kvm_dirty_regs |= KVM_SYNC_X86_REGS;
+                    }
+                    else
+                    {
+                        check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_REGS, &this->regs_cache_), "KVM_SET_REGS");
+                    }
                     this->regs_cache_dirty_ = false;
                 }
                 if (this->sregs_cache_dirty_)
                 {
-                    check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_SREGS, &this->sregs_cache_), "KVM_SET_SREGS");
+                    if (this->sync_registers_mask_ & KVM_SYNC_X86_SREGS)
+                    {
+                        this->run_->s.regs.sregs = this->sregs_cache_;
+                        this->run_->kvm_dirty_regs |= KVM_SYNC_X86_SREGS;
+                    }
+                    else
+                    {
+                        check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_SREGS, &this->sregs_cache_), "KVM_SET_SREGS");
+                    }
                     this->sregs_cache_dirty_ = false;
                 }
             }
 
-            void invalidate_register_cache()
+            void refresh_register_cache_after_run(const bool completed)
             {
                 this->regs_cache_valid_ = false;
                 this->sregs_cache_valid_ = false;
+                if (!completed)
+                {
+                    if (this->run_->kvm_dirty_regs & KVM_SYNC_X86_REGS)
+                    {
+                        this->regs_cache_ = this->run_->s.regs.regs;
+                        this->regs_cache_valid_ = true;
+                    }
+                    if (this->run_->kvm_dirty_regs & KVM_SYNC_X86_SREGS)
+                    {
+                        this->sregs_cache_ = this->run_->s.regs.sregs;
+                        this->sregs_cache_valid_ = true;
+                    }
+                    return;
+                }
+
+                if (this->run_->kvm_valid_regs & KVM_SYNC_X86_REGS)
+                {
+                    this->regs_cache_ = this->run_->s.regs.regs;
+                    this->regs_cache_valid_ = true;
+                }
+
+                if (this->run_->kvm_valid_regs & KVM_SYNC_X86_SREGS)
+                {
+                    this->sregs_cache_ = this->run_->s.regs.sregs;
+                    this->sregs_cache_valid_ = true;
+                }
             }
 
             kvm_fpu get_fpu() const
@@ -2590,6 +2632,7 @@ namespace sogen::kvm
             int max_memslots_ = 0;
             bool readonly_mem_supported_ = false;
             bool xsave_supported_ = false;
+            uint64_t sync_registers_mask_ = 0;
             int next_slot_id_ = 0;
             std::map<uint64_t, installed_memslot> current_slots_{};
             std::map<uint64_t, installed_memslot> desired_slots_{};
