@@ -21,6 +21,7 @@ namespace sogen
             write_console = 0x01000006,
             get_console_locale = 0x01000008,
             fill_console_output = 0x02000000,
+            get_console_cursor_info = 0x02000005,
             set_console_cursor_position = 0x0200000A,
             set_console_text_attribute = 0x0200000D,
             get_console_title = 0x02000014,
@@ -59,6 +60,14 @@ namespace sogen
         };
 
         static_assert(sizeof(fill_console_output_request) == 16);
+
+        struct console_cursor_info_response
+        {
+            uint32_t size;
+            uint32_t visible;
+        };
+
+        static_assert(sizeof(console_cursor_info_response) == 8);
 
         struct console_screen_buffer_info_response
         {
@@ -593,6 +602,17 @@ namespace sogen
                     }
 
                     return STATUS_INVALID_PARAMETER;
+                }
+
+                case console_api::get_console_cursor_info: {
+                    if (is_input_endpoint(endpoint) || message.data_size != sizeof(console_cursor_info_response))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    constexpr console_cursor_info_response cursor_info{.size = 25, .visible = 1};
+                    win_emu.emu().write_memory(header.data, cursor_info);
+                    return STATUS_SUCCESS;
                 }
 
                 case console_api::set_console_cursor_position:
