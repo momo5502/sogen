@@ -1,4 +1,4 @@
-# Provisions the guest GPU runtime into an emulation root: drops the latest DXVK
+# Provisions the guest GPU runtime into an emulation root: drops pinned DXVK
 # D3D->Vulkan translation DLLs over the bundled DirectX ones, replaces opengl32.dll with
 # Mesa's, and installs the GPU-bridge Vulkan shim as vulkan-1.dll. 64-bit files go to
 # system32, 32-bit files to syswow64.
@@ -25,25 +25,29 @@ function Install-Dxvk([string]$srcDir, [string]$dstDir) {
     }
 }
 
-# Auth only raises the api.github.com rate limit; it is never sent to the asset CDN below.
-$apiHeaders = @{ 'User-Agent' = 'sogen-ci' }
-if ($env:GITHUB_TOKEN) { $apiHeaders['Authorization'] = "Bearer $env:GITHUB_TOKEN" }
+# Pinned so that rebuilding the emulation root reproduces the same guest GPU runtime.
+$dxvk = @{
+    Url    = 'https://github.com/doitsujin/dxvk/releases/download/v3.1.1/dxvk-3.1.1.tar.gz'
+    Sha256 = '40565b4a724aadc4433fa4e010b4b23916d9b1f1baeee64e17186db94f54e608'
+}
+$mesa = @{
+    Url    = 'https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z'
+    Sha256 = '351fc8c8b695878ffb3eaa044b3ead08672a48b1a045e3c3e3975811df0f6695'
+}
 
-# Resolve the latest DXVK release tarball (skip the *-native Linux build).
-$release = Invoke-RestMethod -Uri 'https://api.github.com/repos/doitsujin/dxvk/releases/latest' -Headers $apiHeaders
-$asset = $release.assets |
-    Where-Object { $_.name -like 'dxvk-*.tar.gz' -and $_.name -notlike '*native*' } |
-    Select-Object -First 1
-if (-not $asset) { throw "No DXVK release tarball found in $($release.tag_name)" }
+function Get-PinnedArchive([hashtable]$archive, [string]$dir) {
+    $path = Join-Path $dir ([System.IO.Path]::GetFileName($archive.Url))
+    Write-Host "Downloading $($archive.Url)"
+    Invoke-WebRequest -Uri $archive.Url -OutFile $path
+    $hash = (Get-FileHash -Path $path -Algorithm SHA256).Hash
+    if ($hash -ne $archive.Sha256) { throw "SHA-256 mismatch for $path`: expected $($archive.Sha256), got $hash" }
+    return $path
+}
 
-Write-Host "Downloading DXVK $($release.tag_name): $($asset.name)"
 $work = Join-Path ([System.IO.Path]::GetTempPath()) ('dxvk-' + [System.IO.Path]::GetRandomFileName())
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 try {
-    $tarball = Join-Path $work $asset.name
-    # browser_download_url redirects to a public CDN; don't forward the API auth header to it.
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tarball
-
+    $tarball = Get-PinnedArchive $dxvk $work
     tar -xzf $tarball -C $work
     if ($LASTEXITCODE -ne 0) { throw "Failed to extract $tarball" }
 
@@ -55,14 +59,7 @@ try {
 
     # Windows' opengl32 needs a vendor OpenGL driver, which the guest does not have. Mesa's picks the first
     # driver it can start, Zink on the Vulkan shim or llvmpipe on the CPU.
-    $mesaRelease = Invoke-RestMethod -Uri 'https://api.github.com/repos/pal1000/mesa-dist-win/releases/latest' -Headers $apiHeaders
-    $mesaAsset = $mesaRelease.assets | Where-Object { $_.name -like 'mesa3d-*-release-msvc.7z' } | Select-Object -First 1
-    if (-not $mesaAsset) { throw "No Mesa MSVC release archive found in $($mesaRelease.tag_name)" }
-
-    Write-Host "Downloading Mesa $($mesaRelease.tag_name): $($mesaAsset.name)"
-    $mesaArchive = Join-Path $work $mesaAsset.name
-    Invoke-WebRequest -Uri $mesaAsset.browser_download_url -OutFile $mesaArchive
-
+    $mesaArchive = Get-PinnedArchive $mesa $work
     $mesaRoot = Join-Path $work 'mesa'
     7z x -y "-o$mesaRoot" $mesaArchive | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Failed to extract $mesaArchive" }

@@ -244,8 +244,6 @@ jobs:
       - name: Install DXVK and Vulkan Shim
         shell: pwsh
         run: ./src/tools/install-gpu-runtime.ps1 -WindowsDir root/filesys/c/windows -Shim64 build/release/artifacts/vulkan-shim-x64.dll -Shim32 build/release/artifacts/vulkan-shim-x86.dll
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Install Steam Shim
         shell: pwsh
