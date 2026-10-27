@@ -240,7 +240,14 @@ namespace
 
         const auto blub = read_env("BLUB");
 
-        return !computername.empty() && blub == "LUL";
+        const auto profile = read_env("USERPROFILE");
+        const auto app_data = read_env("APPDATA");
+        const auto local_app_data = read_env("LOCALAPPDATA");
+        const auto has_profile_directories =
+            !profile.empty() && app_data == profile + "\\AppData\\Roaming" && local_app_data == profile + "\\AppData\\Local";
+
+        return !computername.empty() && blub == "LUL" && has_profile_directories && !read_env("ProgramData").empty() &&
+               !read_env("ProgramFiles").empty();
     }
 
     bool test_critical_section_timeout()
