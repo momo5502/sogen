@@ -23,7 +23,6 @@ enum ScreenOrientation {
       values.firstWhere((orientation) => orientation.name == name, orElse: () => sensor);
 }
 
-/// How a game is played on the device, as opposed to how it is launched.
 @immutable
 class GameSettings {
   const GameSettings({
@@ -74,7 +73,7 @@ class GameSettings {
 
   final bool showControls;
 
-  /// Where the handle that opens the session panel sits, as a fraction of the screen height.
+  /// Where the handle that opens the session panel sits, as a fraction of how far it can travel.
   final double handlePosition;
 
   final TouchLayout layout;
