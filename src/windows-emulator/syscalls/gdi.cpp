@@ -1958,6 +1958,39 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
+        {
+            if (process.bits != static_cast<uint64_t>(GR_GLOBAL) && !c.proc.is_current_process_handle(process))
+            {
+                return 0;
+            }
+
+            // Peaks are not tracked, so they report the current count.
+            switch (flags)
+            {
+            case GR_USEROBJECTS:
+            case GR_USEROBJECTS_PEAK:
+                return static_cast<DWORD>(c.proc.user_handles.used_handle_count());
+            case GR_GDIOBJECTS:
+            case GR_GDIOBJECTS_PEAK: {
+                uint64_t table = 0;
+                c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
+                if (table == 0)
+                {
+                    return 0;
+                }
+
+                std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
+                c.emu.read_memory(table, entries.data(), entries.size() * sizeof(GDI_HANDLE_ENTRY64));
+                return static_cast<DWORD>(std::ranges::count_if(entries, [&](const GDI_HANDLE_ENTRY64& entry) {
+                    return entry.Type != 0 && entry.Owner.ProcessId == static_cast<uint16_t>(c.proc.process_id);
+                }));
+            }
+            default:
+                return 0;
+            }
+        }
+
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, const hdc /*dc*/)
         {
             uint64_t dc_attr = 0;
