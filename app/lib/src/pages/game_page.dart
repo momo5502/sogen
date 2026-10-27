@@ -41,7 +41,7 @@ class GamePage extends StatefulWidget {
   final Ads ads;
 
   /// Stores settings changed while playing, so the next launch starts with them.
-  final ValueChanged<GameSettings> onSettingsChanged;
+  final Future<void> Function(GameSettings settings) onSettingsChanged;
 
   final GameSession? session;
 
@@ -120,6 +120,7 @@ class _GamePageState extends State<GamePage> {
   }
 
   Future<void> _suspend() async {
+    await _flushSettings();
     final saved = await savedStateFile(widget.game);
     await saved.parent.create(recursive: true);
     await _session.suspend(saved.path);
@@ -137,6 +138,13 @@ class _GamePageState extends State<GamePage> {
     _settingsSave = Timer(const Duration(milliseconds: 500), () => widget.onSettingsChanged(_settings));
   }
 
+  Future<void> _flushSettings() async {
+    if (_settingsSave?.isActive ?? false) {
+      _settingsSave!.cancel();
+      await widget.onSettingsChanged(_settings);
+    }
+  }
+
   void _onBack() {
     if (_keyboardFocus.hasFocus) {
       _keyboardFocus.unfocus();
@@ -147,10 +155,7 @@ class _GamePageState extends State<GamePage> {
 
   @override
   void dispose() {
-    if (_settingsSave?.isActive ?? false) {
-      _settingsSave!.cancel();
-      widget.onSettingsChanged(_settings);
-    }
+    unawaited(_flushSettings());
     _session.setInputWindow(null);
     _session.removeListener(_onSessionChanged);
     if (!_suspending) {

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -68,6 +70,19 @@ class _HomePageState extends State<HomePage> {
     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SettingsPage(settings: widget.settings)));
   }
 
+  /// The library outlives the game page, so it reports failed writes even after the page is gone.
+  Future<void> _storeSettings(Game game, GameSettings settings) async {
+    try {
+      await widget.library.updateSettings(game.id, settings);
+    } on FileSystemException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save the settings of ${game.name}: ${e.osError?.message ?? e.message}')),
+        );
+      }
+    }
+  }
+
   Future<void> _play(Game game, {GameSession? session}) async {
     final suspended = await Navigator.of(context).push<GameSession>(
       MaterialPageRoute(
@@ -75,7 +90,7 @@ class _HomePageState extends State<HomePage> {
           game: game,
           emulationRoot: widget.root.path,
           ads: widget.ads,
-          onSettingsChanged: (settings) => widget.library.updateSettings(game.id, settings),
+          onSettingsChanged: (settings) => _storeSettings(game, settings),
           session: session,
         ),
       ),
@@ -93,7 +108,7 @@ class _HomePageState extends State<HomePage> {
       suspended.removeListener(onChanged);
       setState(() => _saving.remove(game.id));
       if (suspended.saveError != null && suspended.state != SessionState.exited) {
-        _play(game, session: suspended);
+        _play(widget.library.games.firstWhere((entry) => entry.id == game.id, orElse: () => game), session: suspended);
       } else {
         suspended.dispose();
       }
