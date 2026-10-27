@@ -40,7 +40,6 @@ class GamePage extends StatefulWidget {
   final String emulationRoot;
   final Ads ads;
 
-  /// Stores settings changed while playing, so the next launch starts with them.
   final Future<void> Function(GameSettings settings) onSettingsChanged;
 
   final GameSession? session;
@@ -161,7 +160,7 @@ class _GamePageState extends State<GamePage> {
 
   @override
   void dispose() {
-    unawaited(_flushSettings());
+    _flushSettings().ignore();
     _session.setInputWindow(null);
     _session.removeListener(_onSessionChanged);
     if (!_suspending) {
@@ -246,8 +245,11 @@ class _GamePageState extends State<GamePage> {
     );
 
     if (stop == true) {
-      await _session.stop();
-      await _flushSettings();
+      try {
+        await _session.stop();
+      } finally {
+        await _flushSettings();
+      }
     }
   }
 

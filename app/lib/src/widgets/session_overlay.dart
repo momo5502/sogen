@@ -4,8 +4,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../game_library.dart';
 import '../theme.dart';
 
-/// A small tab on the right edge that opens the session panel. It sits off the system's edge gesture area and can be
-/// dragged up and down, so it does not have to cover the part of the game that matters.
+/// A small tab on the right edge that opens the session panel. It opens with a tap rather than a swipe, since a swipe
+/// from the edge is the system's Back gesture, and it can be dragged up and down off the part of the game that matters.
 class OverlayHandle extends StatefulWidget {
   const OverlayHandle({super.key, required this.position, required this.onPressed, required this.onMoved});
 
@@ -20,6 +20,7 @@ class OverlayHandle extends StatefulWidget {
 
 class _OverlayHandleState extends State<OverlayHandle> {
   static const _width = 20.0;
+  static const _touchWidth = 48.0;
   static const _height = 64.0;
 
   late double _position = widget.position;
@@ -50,15 +51,23 @@ class _OverlayHandleState extends State<OverlayHandle> {
                     ? (details) => setState(() => _position = (_position + details.delta.dy / travel).clamp(0, 1))
                     : null,
                 onVerticalDragEnd: (_) => widget.onMoved(_position),
-                child: Container(
-                  width: _width,
+                onVerticalDragCancel: () => widget.onMoved(_position),
+                child: SizedBox(
+                  width: _touchWidth,
                   height: _height,
-                  decoration: BoxDecoration(
-                    color: SogenColors.neutral900.withValues(alpha: 0.5),
-                    borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
-                    border: Border.all(color: SogenColors.neutral600.withValues(alpha: 0.6)),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Container(
+                      width: _width,
+                      height: _height,
+                      decoration: BoxDecoration(
+                        color: SogenColors.neutral900.withValues(alpha: 0.5),
+                        borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
+                        border: Border.all(color: SogenColors.neutral600.withValues(alpha: 0.6)),
+                      ),
+                      child: const Icon(LucideIcons.chevronLeft, size: 14, color: SogenColors.neutral300),
+                    ),
                   ),
-                  child: const Icon(LucideIcons.chevronLeft, size: 14, color: SogenColors.neutral300),
                 ),
               ),
             ),
@@ -69,7 +78,7 @@ class _OverlayHandleState extends State<OverlayHandle> {
   }
 }
 
-/// What the session panel can do. Actions that do not apply are left null and hidden.
+/// Actions that do not apply are left null and hidden.
 class SessionActions {
   const SessionActions({required this.onLog, required this.onStop, this.onSuspend, this.onKeyboard});
 
@@ -192,9 +201,9 @@ class SessionPanel extends StatelessWidget {
                     ),
                   ),
                   Slider(
-                    value: settings.mouseSensitivity.clamp(0.5, 8),
-                    min: 0.5,
-                    max: 8,
+                    value: settings.mouseSensitivity,
+                    min: GameSettings.minMouseSensitivity,
+                    max: GameSettings.maxMouseSensitivity,
                     divisions: 15,
                     onChanged: (value) => onSettingsChanged(settings.copyWith(mouseSensitivity: value)),
                   ),
