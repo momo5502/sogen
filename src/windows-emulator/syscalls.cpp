@@ -1221,11 +1221,18 @@ namespace sogen
             constexpr ULONG extended_limit_information_size = 144;
             constexpr uint64_t limit_flags_offset = 16;
             constexpr uint32_t kill_on_job_close = 0x2000;
+            constexpr uint32_t breakaway_ok = 0x0800;
+            constexpr uint32_t silent_breakaway_ok = 0x1000;
+            constexpr uint32_t die_on_unhandled_exception = 0x0400;
+            constexpr uint32_t supported_limit_flags = kill_on_job_close | breakaway_ok | silent_breakaway_ok | die_on_unhandled_exception;
 
 #ifdef _WIN32
             static_assert(extended_limit_information_class == JobObjectExtendedLimitInformation);
             static_assert(limit_flags_offset == offsetof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION, BasicLimitInformation.LimitFlags));
             static_assert(kill_on_job_close == JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
+            static_assert(breakaway_ok == JOB_OBJECT_LIMIT_BREAKAWAY_OK);
+            static_assert(silent_breakaway_ok == JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK);
+            static_assert(die_on_unhandled_exception == JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION);
 #ifdef _WIN64
             static_assert(extended_limit_information_size == sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
 #endif
@@ -1247,12 +1254,27 @@ namespace sogen
             }
 
             const auto limit_flags = c.emu.read_memory<uint32_t>(info + limit_flags_offset);
-            if (limit_flags & ~kill_on_job_close)
+            if (limit_flags & ~supported_limit_flags)
             {
                 return STATUS_NOT_SUPPORTED;
             }
 
             job->limit_flags = limit_flags;
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtAssignProcessToJobObject(const syscall_context& c, const handle job_handle, const handle process_handle)
+        {
+            if (!c.proc.jobs.get(job_handle))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            if (!c.proc.is_current_process_handle(process_handle) && !c.proc.processes.get(process_handle))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
             return STATUS_SUCCESS;
         }
 
@@ -1693,6 +1715,7 @@ namespace sogen
         add_handler(NtQueryInformationJobObject);
         add_handler(NtCreateJobObject);
         add_handler(NtSetInformationJobObject);
+        add_handler(NtAssignProcessToJobObject);
         add_handler(NtSetSystemInformation);
         add_handler(NtQueryInformationFile);
         add_handler(NtCreateThreadEx);
