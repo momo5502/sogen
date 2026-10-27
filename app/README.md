@@ -9,7 +9,7 @@ textures, and touch, mouse and keyboard input is forwarded to the guest.
 
 The emulator itself is `libsogen.so` (`src/android-runtime`), built by the regular CMake build for Android, together
 with the shared libraries it links (the CPU backends and, on arm64, FEXCore). All `.so` files from the build's
-artifacts directory go into `android/app/src/main/jniLibs/<abi>/`, which is not checked in. CI does this in the `build-android-app` job from the `Android arm64` and `Android x86_64` build artifacts.
+artifacts directory go into `android/app/src/main/jniLibs/<abi>/`, which is not checked in. CI does this in the `build-android-app` job from the `Android arm64` build artifacts.
 
 Building them locally needs a Linux host, since parts of the dependency tree configure through shell scripts:
 
@@ -37,4 +37,4 @@ cd app
 flutter build apk
 ```
 
-arm64 devices run games through FEX, x86_64 devices and emulators through Unicorn.
+The app supports arm64 devices only, since games run through FEX.

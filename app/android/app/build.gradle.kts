@@ -120,7 +120,8 @@ android {
         versionName = flutter.versionName
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // Games run on FEX, which only exists for ARM64 hosts.
+            abiFilters += listOf("arm64-v8a")
         }
     }
 
