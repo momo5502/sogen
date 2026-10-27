@@ -182,7 +182,7 @@ namespace sogen
                 RECT rect{};
                 DWORD code_page{};
                 UINT count{};
-                UINT dx_size{};
+                UINT dx_offset{};
                 uint64_t font{};
                 FLONG text_align{};
                 POINTL viewport_org{};
@@ -1156,20 +1156,22 @@ namespace sogen
                                       colorref_to_bgra(text_out->background));
                         }
 
-                        // The guest controls the batch contents: the variable payload after
-                        // `string` holds the dx array (dx_size bytes) followed by the text
-                        // (count * sizeof(char16_t) bytes). Validate both fit inside this
-                        // command before dereferencing, otherwise a malformed count/dx_size
-                        // would read past header->size and beyond batch.Buffer.
+                        // The payload after `string` holds the text, then the advances. dx_offset is 0 without advances and
+                        // otherwise the text size rounded up to a ULONG (GDIBSTEXTOUT::Size). The guest controls the batch, so
+                        // both parts are checked to fit inside this command before being read.
                         const auto payload_capacity = static_cast<size_t>(header->size) - offsetof(gdi_batch_text_out, string);
-                        const auto dx_bytes = static_cast<size_t>(text_out->dx_size);
+                        const auto dx_offset = static_cast<size_t>(text_out->dx_offset);
                         const auto text_bytes = static_cast<size_t>(text_out->count) * sizeof(char16_t);
-                        if (dx_bytes <= payload_capacity && text_bytes <= payload_capacity - dx_bytes)
+                        const auto dx_bytes = dx_offset != 0 ? static_cast<size_t>(text_out->count) * sizeof(uint32_t) : 0;
+                        if (text_bytes <= payload_capacity &&
+                            (dx_offset == 0 ||
+                             (dx_offset >= text_bytes && dx_offset <= payload_capacity && dx_bytes <= payload_capacity - dx_offset)))
                         {
-                            const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string.data());
-                            const auto* text =
-                                reinterpret_cast<const char16_t*>(text_out->string.data() + text_out->dx_size / sizeof(char16_t));
-                            const auto* advances = text_out->dx_size >= text_out->count * sizeof(uint32_t) ? dx : nullptr;
+                            const auto* text = reinterpret_cast<const char16_t*>(text_out->string.data());
+                            const auto* advances = dx_offset != 0
+                                                       ? reinterpret_cast<const uint32_t*>(
+                                                             reinterpret_cast<const std::byte*>(text_out->string.data()) + dx_offset)
+                                                       : nullptr;
                             const auto top_left = text_top_left(text_out->x + text_out->viewport_org.x + origin_x,
                                                                 text_out->y + text_out->viewport_org.y + origin_y, text_out->text_align,
                                                                 text_out->count, advances);
