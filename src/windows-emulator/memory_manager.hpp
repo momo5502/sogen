@@ -135,6 +135,7 @@ namespace sogen
         // the GPU bridge uses these to make guest writes visible to the host GPU on backends (e.g. KVM) that
         // alias host memory into the guest non-coherently.
         bool host_memory_aliasing_is_coherent() const override;
+        bool host_cached_memory_aliasing_is_coherent() const override;
         void flush_host_memory_cache(const void* host_pointer, size_t size) override;
         bool track_access(uint64_t address, size_t size) override;
         void take_written_ranges(uint64_t address, size_t size,

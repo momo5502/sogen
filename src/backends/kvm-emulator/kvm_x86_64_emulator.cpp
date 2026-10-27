@@ -1285,6 +1285,11 @@ namespace sogen::kvm
                 return false;
             }
 
+            bool host_cached_memory_aliasing_is_coherent() const override
+            {
+                return true;
+            }
+
             void flush_host_memory_cache(const void* host_pointer, size_t size) override
             {
                 flush_cache_line_range(host_pointer, size);
