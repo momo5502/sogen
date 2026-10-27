@@ -1324,18 +1324,10 @@ jobs:
           name: Android arm64 Release Artifacts
           path: build/android/arm64-v8a
 
-      - name: Download Android x86_64 Artifacts
-        uses: pyTooling/download-artifact@v8
-        with:
-          name: Android x86_64 Release Artifacts
-          path: build/android/x86_64
-
       - name: Stage Native Libraries
         run: |
-          for abi in arm64-v8a x86_64; do
-            mkdir -p app/android/app/src/main/jniLibs/$abi
-            cp build/android/$abi/*.so app/android/app/src/main/jniLibs/$abi/
-          done
+          mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
+          cp build/android/arm64-v8a/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 
       # Mesa's Turnip, loaded through libadrenotools in place of Adreno's stock driver.
       - name: Download Turnip Driver
