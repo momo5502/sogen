@@ -59,7 +59,7 @@ class _SettingsPageState extends State<SettingsPage> {
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Show ads'),
-              subtitle: Text('An ad when the app starts', style: subtitleStyle),
+              subtitle: Text('When the app starts and after you leave a game', style: subtitleStyle),
               value: widget.settings.showAds,
               onChanged: _setShowAds,
             ),

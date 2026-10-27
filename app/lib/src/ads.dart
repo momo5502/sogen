@@ -28,33 +28,43 @@ class Ads {
 
   /// Loads the startup ad, after asking for consent where the user's region requires it.
   ///
-  /// AdMob only allows this format on the loading screen, so an ad that takes longer than [timeout] to load is
-  /// dropped instead of appearing over the library.
+  /// AdMob only allows this format on the loading screen, so if the ad is not ready within [timeout], not counting
+  /// the time the user spends in the consent form, it is dropped instead of appearing over the library.
   Future<AppOpenAd?> loadStartupAd({Duration timeout = const Duration(seconds: 4)}) async {
-    if (!_settings.showAds || !await _gatherConsent()) {
+    if (!_settings.showAds) {
       return null;
     }
 
-    await MobileAds.instance.initialize();
+    final waited = Stopwatch()..start();
+    if (!await _gatherConsent(timeout, waited)) {
+      return null;
+    }
+
+    final remaining = timeout - waited.elapsed;
+    if (remaining <= Duration.zero) {
+      return null;
+    }
 
     final loaded = Completer<AppOpenAd?>();
-    unawaited(
-      AppOpenAd.load(
-        adUnitId: _appOpenAdUnit,
-        request: const AdRequest(),
-        adLoadCallback: AppOpenAdLoadCallback(
-          onAdLoaded: loaded.complete,
-          onAdFailedToLoad: (_) => loaded.complete(null),
-        ),
-      ),
-    );
-
+    unawaited(_loadAppOpenAd(loaded));
     return loaded.future.timeout(
-      timeout,
+      remaining,
       onTimeout: () {
         unawaited(loaded.future.then((ad) => ad?.dispose()));
         return null;
       },
+    );
+  }
+
+  Future<void> _loadAppOpenAd(Completer<AppOpenAd?> loaded) async {
+    await MobileAds.instance.initialize();
+    await AppOpenAd.load(
+      adUnitId: _appOpenAdUnit,
+      request: const AdRequest(),
+      adLoadCallback: AppOpenAdLoadCallback(
+        onAdLoaded: loaded.complete,
+        onAdFailedToLoad: (_) => loaded.complete(null),
+      ),
     );
   }
 
@@ -112,16 +122,21 @@ class Ads {
       ..show();
   }
 
-  Future<bool> _gatherConsent() async {
-    final updated = Completer<void>();
+  /// Without a timely consent update, falls back to the consent stored from earlier launches.
+  Future<bool> _gatherConsent(Duration timeout, Stopwatch waited) async {
+    final updated = Completer<bool>();
     ConsentInformation.instance.requestConsentInfoUpdate(
       ConsentRequestParameters(),
-      updated.complete,
-      (_) => updated.complete(),
+      () => updated.complete(true),
+      (_) => updated.complete(false),
     );
-    await updated.future;
 
-    await ConsentForm.loadAndShowConsentFormIfRequired((_) {});
+    if (await updated.future.timeout(timeout, onTimeout: () => false)) {
+      waited.stop();
+      await ConsentForm.loadAndShowConsentFormIfRequired((_) {});
+      waited.start();
+    }
+
     return ConsentInformation.instance.canRequestAds();
   }
 }
