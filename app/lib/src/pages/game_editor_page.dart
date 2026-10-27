@@ -36,6 +36,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
   bool _liveNetwork = false;
   bool _console = false;
   bool _scanning = false;
+  int _scanGeneration = 0;
   GameSettings _settings = const GameSettings();
 
   @override
@@ -98,6 +99,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
   }
 
   Future<void> _scan(String directory, {String? selected}) async {
+    final generation = ++_scanGeneration;
     setState(() {
       _directory = directory;
       _executables = const [];
@@ -106,7 +108,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
     });
 
     final executables = await _findExecutables(Directory(directory));
-    if (!mounted) {
+    if (!mounted || generation != _scanGeneration) {
       return;
     }
 
