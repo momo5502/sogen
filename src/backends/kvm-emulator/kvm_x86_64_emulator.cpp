@@ -64,6 +64,7 @@ namespace sogen::kvm
         constexpr int invalid_opcode_interrupt = 6;
         constexpr std::byte int3_opcode{0xCC};
         constexpr uint64_t syscall_instruction_size = 2;
+        constexpr uint64_t cr4_osxsave = 1ull << 18;
 
         constexpr uintptr_t cache_line_size = 64;
         constexpr uint64_t guest_physical_page_base = 0x0000000100000000ull;
@@ -1442,6 +1443,9 @@ namespace sogen::kvm
                 auto* cpuid = reinterpret_cast<kvm_cpuid2*>(buffer.data());
                 cpuid->nent = cpuid_entries;
                 check_ioctl_result(::ioctl(this->kvm_fd_.get(), KVM_GET_SUPPORTED_CPUID, cpuid), "KVM_GET_SUPPORTED_CPUID");
+                this->xsave_supported_ = std::any_of(cpuid->entries, cpuid->entries + cpuid->nent, [](const kvm_cpuid_entry2& entry) {
+                    return entry.function == 1 && (entry.ecx & (1u << 26)) != 0;
+                });
                 check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_CPUID2, cpuid), "KVM_SET_CPUID2");
             }
 
@@ -1454,8 +1458,8 @@ namespace sogen::kvm
                 sregs.es = make_segment(0x2B, false, true);
                 sregs.fs = make_segment(0x53, false, true);
                 sregs.gs = make_segment(0x2B, false, true);
-                sregs.cr0 = 0x80000033ull; // PE | MP | ET | NE | PG
-                sregs.cr4 = 0x620ull;      // PAE | OSFXSR | OSXMMEXCPT
+                sregs.cr0 = 0x80000033ull;                                         // PE | MP | ET | NE | PG
+                sregs.cr4 = 0x620ull | (this->xsave_supported_ ? cr4_osxsave : 0); // PAE | OSFXSR | OSXMMEXCPT | OSXSAVE
                 sregs.cr3 = this->pml4_gpa_;
                 sregs.efer = (1ull << 0) | (1ull << 8) | (1ull << 10); // SCE | LME | LMA
                 this->set_sregs(sregs);
@@ -2565,6 +2569,7 @@ namespace sogen::kvm
 
             int max_memslots_ = 0;
             bool readonly_mem_supported_ = false;
+            bool xsave_supported_ = false;
             int next_slot_id_ = 0;
             std::map<uint64_t, installed_memslot> current_slots_{};
             bool mappings_dirty_ = false;
