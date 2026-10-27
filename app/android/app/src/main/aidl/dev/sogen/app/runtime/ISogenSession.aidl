@@ -24,4 +24,10 @@ oneway interface ISogenSession {
     void key(long window, int keyCode, boolean down);
     void text(long window, String text);
     void close(long window);
+
+    /** 0 turns the limit off. */
+    void setFrameLimit(int framesPerSecond);
+
+    /** While [milliseconds] is above 0, [ISogenCallback.onStats] reports that often. */
+    void setStatsInterval(int milliseconds);
 }

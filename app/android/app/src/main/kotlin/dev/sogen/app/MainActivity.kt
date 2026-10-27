@@ -57,6 +57,18 @@ class MainActivity : FlutterActivity() {
             }
         }
 
+        // Trades peak speed for clocks the device can hold, so long sessions do not slow down once it heats up.
+        MethodChannel(messenger, "dev.sogen.app/performance").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "sustained" -> {
+                    window.setSustainedPerformanceMode(call.argument<Boolean>("enabled") == true)
+                    result.success(null)
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+
         MethodChannel(messenger, "dev.sogen.app/storage").setMethodCallHandler { call, result ->
             when (call.method) {
                 "hasAccess" -> result.success(hasStorageAccess())
@@ -116,6 +128,8 @@ class MainActivity : FlutterActivity() {
             "mouseWheel" -> session.mouseWheel(window, int("delta"), int("x"), int("y")).also { result.success(null) }
             "key" -> session.key(window, int("keyCode"), call.argument<Boolean>("down") == true).also { result.success(null) }
             "text" -> session.text(window, call.argument<String>("text").orEmpty()).also { result.success(null) }
+            "setFrameLimit" -> session.setFrameLimit(int("framesPerSecond")).also { result.success(null) }
+            "setStatsInterval" -> session.setStatsInterval(int("milliseconds")).also { result.success(null) }
             "close" -> session.close(window).also { result.success(null) }
             else -> result.notImplemented()
         }

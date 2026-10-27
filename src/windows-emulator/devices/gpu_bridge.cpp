@@ -2490,11 +2490,22 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                if (win_emu.frames().limited())
+                {
+                    win_emu.run_without_kernel_lock([&win_emu] { win_emu.frames().wait(); });
+                }
+
                 // The host driver may block in vkQueuePresentKHR for frame pacing; holding the kernel lock meanwhile
                 // would stall every other vCPU.
                 const int32_t result = this->vulkan_.queue_present(
                     request.queue, request.swapchain, request.image_index, wait_semaphores,
                     [&](const std::function<int32_t()>& present) { return win_emu.run_without_kernel_lock(present); });
+                constexpr int32_t vk_success = 0;
+                constexpr int32_t vk_suboptimal_khr = 1000001003; // VK_SUBOPTIMAL_KHR (no vulkan.h here)
+                if (result == vk_success || result == vk_suboptimal_khr)
+                {
+                    win_emu.frames().presented();
+                }
 
                 // The end of a frame is where a requested suspend happens, once this call has returned to the guest.
                 if (win_emu.take_suspend_request())

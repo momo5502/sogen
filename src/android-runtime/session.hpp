@@ -4,6 +4,8 @@
 #include "java_dispatcher.hpp"
 #include "pseudo_terminal.hpp"
 
+#include <frame_pacer.hpp>
+
 #include <jni.h>
 
 #include <filesystem>
@@ -62,6 +64,12 @@ namespace sogen::android
         // Saves the process and ends the session. Returns false while it is not running or already being saved.
         bool suspend(std::filesystem::path destination);
 
+        // 0 turns the limit off. Applies to the running emulator and to one started later.
+        void set_frame_limit(uint32_t frames_per_second);
+
+        // Empty while no emulator runs.
+        std::optional<frame_pacer::statistics> frame_statistics();
+
         void with_ui(const std::function<void(android_ui_backend&)>& action);
 
         void console_input(std::string_view data) const;
@@ -102,6 +110,7 @@ namespace sogen::android
         snapshot::controller* snapshots_{};
         android_ui_backend* ui_{};
         bool stop_requested_{};
+        uint32_t frame_limit_{};
 
         std::optional<pseudo_terminal> terminal_{};
 

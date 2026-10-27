@@ -27,6 +27,26 @@ class GuestWindow {
 
 enum MouseButton { left, right, middle }
 
+/// One report of how the game performs, see [GameSession.stats].
+class SessionStats {
+  const SessionStats({
+    required this.framesPerSecond,
+    required this.worstPresentInterval,
+    required this.residentBytes,
+    this.thermalStatus,
+  });
+
+  final double framesPerSecond;
+
+  /// The longest time between two presented frames since the previous report; not the GPU's render time.
+  final Duration worstPresentInterval;
+
+  final int residentBytes;
+
+  /// Android's PowerManager.THERMAL_STATUS_*, null where the device does not report it.
+  final int? thermalStatus;
+}
+
 /// Where the guest put the cursor itself, in client coordinates of [window].
 class GuestCursor {
   const GuestCursor(this.window, this.x, this.y);
@@ -100,6 +120,11 @@ class GameSession extends ChangeNotifier {
 
   /// Updated separately from the other session state, since games may move the cursor every frame.
   final ValueNotifier<GuestCursor?> guestCursor = ValueNotifier(null);
+
+  /// Reported while [setStatsInterval] is above zero.
+  final ValueNotifier<SessionStats?> stats = ValueNotifier(null);
+  int? _reportedFrames;
+  DateTime? _reportedAt;
 
   /// Returns false if another game is still running. Any other failure ends the session with [error] set.
   Future<bool> start(Game game, {required String emulationRoot, String? resumeFile}) async {
@@ -186,6 +211,11 @@ class GameSession extends ChangeNotifier {
   void _handle(Map<Object?, Object?> event) {
     final window = (event['window'] as num?)?.toInt();
 
+    if (event['event'] == 'stats') {
+      _onStats(event);
+      return;
+    }
+
     if (event['event'] == 'cursorMoved') {
       guestCursor.value = GuestCursor(window!, event['x'] as int, event['y'] as int);
       return;
@@ -252,12 +282,42 @@ class GameSession extends ChangeNotifier {
     _addOutput(text, _stdoutColor);
   }
 
+  void setFrameLimit(int framesPerSecond) =>
+      _methods.invokeMethod('setFrameLimit', {'framesPerSecond': framesPerSecond});
+
+  void setStatsInterval(Duration interval) {
+    _reportedFrames = null;
+    stats.value = null;
+    _methods.invokeMethod('setStatsInterval', {'milliseconds': interval.inMilliseconds});
+  }
+
+  void _onStats(Map<Object?, Object?> event) {
+    final frames = (event['frames'] as num).toInt();
+    final now = DateTime.now();
+    final previousFrames = _reportedFrames;
+    final previousAt = _reportedAt;
+    _reportedFrames = frames;
+    _reportedAt = now;
+    if (previousFrames == null || previousAt == null) {
+      return;
+    }
+
+    final elapsed = now.difference(previousAt).inMicroseconds;
+    stats.value = SessionStats(
+      framesPerSecond: elapsed > 0 ? (frames - previousFrames) * Duration.microsecondsPerSecond / elapsed : 0,
+      worstPresentInterval: Duration(microseconds: (event['worstPresentIntervalNs'] as num).toInt() ~/ 1000),
+      residentBytes: (event['residentBytes'] as num).toInt(),
+      thermalStatus: (event['thermalStatus'] as num?)?.toInt(),
+    );
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _subscription.cancel();
     _console.close();
     guestCursor.dispose();
+    stats.dispose();
     super.dispose();
   }
 }

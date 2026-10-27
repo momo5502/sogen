@@ -11,6 +11,7 @@ import '../session.dart';
 import '../theme.dart';
 import '../widgets/console_view.dart';
 import '../widgets/guest_window_view.dart';
+import '../widgets/performance_hud.dart';
 import '../widgets/session_overlay.dart';
 import '../widgets/touch_layout_editor.dart';
 import '../widgets/sogen_widgets.dart';
@@ -26,6 +27,7 @@ const _keyCodeDelete = 67;
 const _keyboardSentinel = '​';
 
 const _orientation = MethodChannel('dev.sogen.app/orientation');
+const _performance = MethodChannel('dev.sogen.app/performance');
 
 class GamePage extends StatefulWidget {
   const GamePage({
@@ -72,6 +74,7 @@ class _GamePageState extends State<GamePage> {
     _orientation.invokeMethod('set', {'orientation': widget.game.settings.orientation.name});
     _session.addListener(_onSessionChanged);
     widget.ads.preloadInterstitial();
+    _applyPerformanceSettings(_settings, previous: null);
     if (widget.session == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _begin());
     } else {
@@ -134,8 +137,21 @@ class _GamePageState extends State<GamePage> {
     }
   }
 
+  void _applyPerformanceSettings(GameSettings settings, {required GameSettings? previous}) {
+    if (settings.frameLimit != previous?.frameLimit) {
+      _session.setFrameLimit(settings.frameLimit);
+    }
+    if (settings.performanceOverlay != previous?.performanceOverlay) {
+      _session.setStatsInterval(settings.performanceOverlay ? const Duration(seconds: 1) : Duration.zero);
+    }
+    if (settings.sustainedPerformance != previous?.sustainedPerformance) {
+      _performance.invokeMethod('sustained', {'enabled': settings.sustainedPerformance});
+    }
+  }
+
   // A slider reports every step, so changes are stored once they settle.
   void _changeSettings(GameSettings settings) {
+    _applyPerformanceSettings(settings, previous: _settings);
     setState(() => _settings = settings);
     _settingsSave?.cancel();
     _settingsSave = Timer(
@@ -166,6 +182,7 @@ class _GamePageState extends State<GamePage> {
   @override
   void dispose() {
     unawaited(_flushSettings());
+    _performance.invokeMethod('sustained', {'enabled': false});
     _session.setInputWindow(null);
     _session.removeListener(_onSessionChanged);
     if (!_suspending) {
@@ -366,6 +383,7 @@ class _GamePageState extends State<GamePage> {
               )
             else
               _StatusView(session: _session, game: widget.game),
+            if (_settings.performanceOverlay) PerformanceHud(stats: _session.stats),
             if (window != null && _settings.showControls && !_editingLayout)
               VirtualControls(session: _session, window: window, layout: _settings.layout),
             Positioned(

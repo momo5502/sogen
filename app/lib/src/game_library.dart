@@ -33,6 +33,9 @@ class GameSettings {
     this.showControls = true,
     this.handlePosition = 0.5,
     this.layout = TouchLayout.standard,
+    this.performanceOverlay = false,
+    this.frameLimit = 0,
+    this.sustainedPerformance = false,
   });
 
   // A finger travels far less than a mouse, so mouse-look would turn slowly at one count per guest pixel.
@@ -45,7 +48,13 @@ class GameSettings {
     showControls: json['showControls'] as bool? ?? true,
     handlePosition: (json['handlePosition'] as num?)?.toDouble() ?? 0.5,
     layout: _layoutFromJson(json['layout']),
+    performanceOverlay: json['performanceOverlay'] as bool? ?? false,
+    frameLimit: frameLimits.contains(json['frameLimit']) ? json['frameLimit'] as int : 0,
+    sustainedPerformance: json['sustainedPerformance'] as bool? ?? false,
   );
+
+  /// The frame limits on offer; 0 is no limit.
+  static const frameLimits = [0, 30, 60];
 
   /// A layout that cannot be read falls back to the standard one, so that it never keeps the library from loading.
   static TouchLayout _layoutFromJson(Object? json) {
@@ -75,6 +84,14 @@ class GameSettings {
 
   final TouchLayout layout;
 
+  final bool performanceOverlay;
+
+  /// Frames per second the game's Vulkan presents are held to, or 0 for no limit.
+  final int frameLimit;
+
+  /// Whether the device runs at clocks it can hold, instead of its peak, while the game plays.
+  final bool sustainedPerformance;
+
   GameSettings copyWith({
     bool? trackpad,
     double? mouseSensitivity,
@@ -82,6 +99,9 @@ class GameSettings {
     bool? showControls,
     double? handlePosition,
     TouchLayout? layout,
+    bool? performanceOverlay,
+    int? frameLimit,
+    bool? sustainedPerformance,
   }) => GameSettings(
     trackpad: trackpad ?? this.trackpad,
     mouseSensitivity: mouseSensitivity ?? this.mouseSensitivity,
@@ -89,6 +109,9 @@ class GameSettings {
     showControls: showControls ?? this.showControls,
     handlePosition: handlePosition ?? this.handlePosition,
     layout: layout ?? this.layout,
+    performanceOverlay: performanceOverlay ?? this.performanceOverlay,
+    frameLimit: frameLimit ?? this.frameLimit,
+    sustainedPerformance: sustainedPerformance ?? this.sustainedPerformance,
   );
 
   Map<String, dynamic> toJson() => {
@@ -98,6 +121,9 @@ class GameSettings {
     'showControls': showControls,
     'handlePosition': handlePosition,
     'layout': layout.toJson(),
+    'performanceOverlay': performanceOverlay,
+    'frameLimit': frameLimit,
+    'sustainedPerformance': sustainedPerformance,
   };
 }
 

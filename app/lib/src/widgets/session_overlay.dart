@@ -182,6 +182,35 @@ class SessionPanel extends StatelessWidget {
                     ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
+                    title: const Text('Performance overlay'),
+                    value: settings.performanceOverlay,
+                    onChanged: (value) => onSettingsChanged(settings.copyWith(performanceOverlay: value)),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Sustained performance'),
+                    subtitle: Text('Steadier speed in long sessions, below the peak', style: subtitleStyle),
+                    value: settings.sustainedPerformance,
+                    onChanged: (value) => onSettingsChanged(settings.copyWith(sustainedPerformance: value)),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Vulkan frame limit'),
+                    subtitle: Text('Saves power in games that render with Vulkan', style: subtitleStyle),
+                  ),
+                  SegmentedButton<int>(
+                    segments: [
+                      for (final limit in GameSettings.frameLimits)
+                        ButtonSegment(value: limit, label: Text(limit == 0 ? 'Off' : '$limit')),
+                    ],
+                    selected: {settings.frameLimit},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (selection) =>
+                        onSettingsChanged(settings.copyWith(frameLimit: selection.first)),
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
                     title: const Text('Trackpad'),
                     subtitle: Text('Touch moves the cursor', style: subtitleStyle),
                     value: settings.trackpad,
