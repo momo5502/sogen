@@ -215,8 +215,17 @@ class _GameEditorPageState extends State<GameEditorPage> {
       return false;
     }
 
-    await saved.delete();
-    return true;
+    try {
+      await saved.delete();
+      return true;
+    } on FileSystemException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not discard the suspended game: ${e.osError?.message ?? e.message}')),
+        );
+      }
+      return false;
+    }
   }
 
   @override
