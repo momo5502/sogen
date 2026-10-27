@@ -179,6 +179,7 @@ class TouchControl {
 
   /// The control moved so that its center is at [center], measured from the corner nearest to it.
   TouchControl movedTo(Offset center, Size screen) {
+    center = Offset(center.dx.clamp(0, screen.width), center.dy.clamp(0, screen.height));
     final right = center.dx > screen.width / 2;
     final bottom = center.dy > screen.height / 2;
     return copyWith(

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -186,6 +187,7 @@ abstract final class _DPadGeometry {
   }
 }
 
+const _arrowKeys = [AndroidKeyCode.up, AndroidKeyCode.down, AndroidKeyCode.left, AndroidKeyCode.right];
 const _dPadIcons = [LucideIcons.chevronUp, LucideIcons.chevronDown, LucideIcons.chevronLeft, LucideIcons.chevronRight];
 
 class _DPadFace extends StatelessWidget {
@@ -201,7 +203,7 @@ class _DPadFace extends StatelessWidget {
   Widget build(BuildContext context) {
     final padSize = _DPadGeometry.padSize(keySize);
     final origins = _DPadGeometry.keyOrigins(keySize);
-    final arrows = keyCodes.length == 4 && keyCodes[0] == AndroidKeyCode.up;
+    final arrows = listEquals(keyCodes, _arrowKeys);
 
     return SizedBox(
       width: padSize,
@@ -354,7 +356,6 @@ class _DPadState extends State<_DPad> {
   }
 }
 
-/// A mouse button, pressed where the guest's cursor is.
 class _MouseKey extends StatefulWidget {
   const _MouseKey({
     required this.session,
