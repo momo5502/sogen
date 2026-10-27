@@ -68,14 +68,23 @@ class Ads {
     );
   }
 
-  void showStartupAd(AppOpenAd ad) {
+  /// Completes once the ad is closed again, or could not be shown.
+  Future<void> showStartupAd(AppOpenAd ad) {
     _lastShown = DateTime.now();
+    final closed = Completer<void>();
     ad
       ..fullScreenContentCallback = FullScreenContentCallback(
-        onAdDismissedFullScreenContent: (ad) => ad.dispose(),
-        onAdFailedToShowFullScreenContent: (ad, _) => ad.dispose(),
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          closed.complete();
+        },
+        onAdFailedToShowFullScreenContent: (ad, _) {
+          ad.dispose();
+          closed.complete();
+        },
       )
       ..show();
+    return closed.future;
   }
 
   /// Loads the interstitial while a game runs, so it is ready when the user leaves it.

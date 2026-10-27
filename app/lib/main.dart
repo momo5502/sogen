@@ -39,8 +39,8 @@ class SogenApp extends StatelessWidget {
   }
 }
 
-/// The loading screen, shown while the consent form and the startup ad load. Both need a drawn Flutter view: on some
-/// devices the consent form stays invisible over the native launch screen.
+/// The loading screen, shown while the consent form and the startup ad load, and under the ad until it is closed. Both
+/// need a drawn Flutter view: on some devices the consent form stays invisible over the native launch screen.
 class _StartupScreen extends StatefulWidget {
   const _StartupScreen({required this.ads, required this.child});
 
@@ -57,17 +57,23 @@ class _StartupScreenState extends State<_StartupScreen> {
   @override
   void initState() {
     super.initState();
-    widget.ads.loadStartupAd().then((ad) {
-      if (!mounted) {
-        ad?.dispose();
-        return;
-      }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showStartupAd());
+  }
 
+  Future<void> _showStartupAd() async {
+    final ad = await widget.ads.loadStartupAd();
+    if (!mounted) {
+      await ad?.dispose();
+      return;
+    }
+
+    if (ad != null) {
+      await widget.ads.showStartupAd(ad);
+    }
+
+    if (mounted) {
       setState(() => _loaded = true);
-      if (ad != null) {
-        widget.ads.showStartupAd(ad);
-      }
-    });
+    }
   }
 
   @override
