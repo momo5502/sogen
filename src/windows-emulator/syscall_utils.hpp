@@ -106,8 +106,9 @@ namespace sogen
         return std::min(~uint64_t{0} >> high_zero_bits, unrestricted);
     }
 
-    // What NtAllocateVirtualMemory answers a ZeroBits that leaves no room below the first 64 KiB: a ceiling of exactly 64 KiB
-    // finds no free range, anything lower is rejected outright (measured on Windows 11 for every value up to 0x30000).
+    // What NtAllocateVirtualMemory answers, when it chooses the address, a ZeroBits that leaves no room below the first 64 KiB:
+    // a ceiling of exactly 64 KiB finds no free range, anything lower is rejected outright (measured on Windows 11 for every
+    // value up to 0x30000). With an explicit base address Windows ignores most of these values.
     inline NTSTATUS check_zero_bits_of_allocation(const uint64_t zero_bits)
     {
         constexpr uint64_t lowest_allocation_end = 0x10000;

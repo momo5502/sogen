@@ -659,9 +659,12 @@ namespace sogen
                                                 const emulator_object<uint64_t> bytes_to_allocate, const uint32_t allocation_type,
                                                 const uint32_t page_protection)
         {
-            if (const auto status = check_zero_bits_of_allocation(zero_bits); status != STATUS_SUCCESS)
+            if (base_address.read() == 0)
             {
-                return status;
+                if (const auto status = check_zero_bits_of_allocation(zero_bits); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
             }
 
             return allocate_virtual_memory(c, process_handle, base_address, bytes_to_allocate, allocation_type, page_protection,
