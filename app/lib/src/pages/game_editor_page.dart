@@ -15,7 +15,6 @@ const _storage = MethodChannel('dev.sogen.app/storage');
 // Deep enough for launchers that keep the real executable in a bin/ or similar subfolder.
 const _maxSearchDepth = 3;
 
-/// Adds a game to the library, or edits [game] when one is given.
 class GameEditorPage extends StatefulWidget {
   const GameEditorPage({super.key, this.game});
 
@@ -36,6 +35,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
   bool _liveNetwork = false;
   bool _console = false;
   bool _scanning = false;
+  bool _saving = false;
   int _scanGeneration = 0;
   GameSettings _settings = const GameSettings();
 
@@ -174,10 +174,21 @@ class _GameEditorPageState extends State<GameEditorPage> {
   Future<void> _save() async {
     final directory = _directory;
     final executable = _executable;
-    if (directory == null || executable == null) {
+    if (directory == null || executable == null || _saving) {
       return;
     }
 
+    setState(() => _saving = true);
+    try {
+      await _store(directory, executable);
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Future<void> _store(String directory, String executable) async {
     final game = Game(
       id: widget.game?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       name: _name.text.trim().isEmpty ? p.basenameWithoutExtension(executable) : _name.text.trim(),
@@ -197,10 +208,13 @@ class _GameEditorPageState extends State<GameEditorPage> {
     Navigator.of(context).pop(game);
   }
 
-  /// A suspended game resumes the process it saved, so it cannot follow a change to the folder or executable.
+  /// A suspended game resumes the process it saved, which was set up for its folder, executable and network access.
   Future<bool> _keepOrDiscardSuspendedState(Game game) async {
     final previous = widget.game;
-    if (previous == null || (previous.directory == game.directory && previous.executable == game.executable)) {
+    if (previous == null ||
+        (previous.directory == game.directory &&
+            previous.executable == game.executable &&
+            previous.liveNetwork == game.liveNetwork)) {
       return true;
     }
 
@@ -214,7 +228,8 @@ class _GameEditorPageState extends State<GameEditorPage> {
       builder: (context) => AlertDialog(
         title: Text('Discard the suspended ${previous.name}?'),
         content: const Text(
-          'The game was suspended with a different folder or executable, so it cannot resume after this change.',
+          'The game was suspended with a different folder, executable or network access, so it cannot resume after '
+          'this change.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
@@ -374,9 +389,9 @@ class _GameEditorPageState extends State<GameEditorPage> {
                 ),
               ),
               Slider(
-                value: _settings.mouseSensitivity.clamp(0.5, 8),
-                min: 0.5,
-                max: 8,
+                value: _settings.mouseSensitivity,
+                min: GameSettings.minMouseSensitivity,
+                max: GameSettings.maxMouseSensitivity,
                 divisions: 15,
                 onChanged: (value) => setState(() => _settings = _settings.copyWith(mouseSensitivity: value)),
               ),
@@ -398,7 +413,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
               label: widget.game == null ? 'Add to library' : 'Save',
               icon: widget.game == null ? LucideIcons.plus : LucideIcons.check,
               expand: true,
-              onPressed: _save,
+              onPressed: _saving ? null : _save,
             ),
           ],
         ],

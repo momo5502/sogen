@@ -2500,7 +2500,6 @@ namespace sogen
                 const int32_t result = this->vulkan_.queue_present(
                     request.queue, request.swapchain, request.image_index, wait_semaphores,
                     [&](const std::function<int32_t()>& present) { return win_emu.run_without_kernel_lock(present); });
-                constexpr int32_t vk_success = 0;
                 constexpr int32_t vk_suboptimal_khr = 1000001003; // VK_SUBOPTIMAL_KHR (no vulkan.h here)
                 if (result == vk_success || result == vk_suboptimal_khr)
                 {

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../session.dart';
 import '../theme.dart';
 
-/// A small readout of how the game performs, in the top left corner.
 class PerformanceHud extends StatelessWidget {
   const PerformanceHud({super.key, required this.stats});
 
