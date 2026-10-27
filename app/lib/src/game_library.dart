@@ -57,7 +57,7 @@ class GameSettings {
 
   final bool showControls;
 
-  /// Where the handle that opens the session panel sits, as a fraction of the screen height.
+  /// Where the handle that opens the session panel sits, as a fraction of how far it can travel.
   final double handlePosition;
 
   GameSettings copyWith({
