@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string_view>
-#if defined(SOGEN_ENABLE_UNICORN)
+#if !defined(_M_ARM64)
 #include <unicorn_x86_64_emulator.hpp>
 #include <unicorn_arm64_emulator.hpp>
 #endif
@@ -41,7 +41,7 @@ namespace sogen
         {
             switch (backend)
             {
-#if defined(SOGEN_ENABLE_UNICORN)
+#if !defined(_M_ARM64)
             case backend_type::unicorn:
                 return unicorn::create_x86_64_emulator();
 #endif
@@ -102,7 +102,7 @@ namespace sogen
         std::unique_ptr<arm64_emulator> emulator{};
         switch (backend)
         {
-#if defined(SOGEN_ENABLE_UNICORN)
+#if !defined(_M_ARM64)
         case backend_type::unicorn:
             emulator = unicorn::create_arm64_emulator();
             break;
@@ -182,13 +182,7 @@ namespace sogen
 #if defined(_M_ARM64) && !SOGEN_ENABLE_RUST_CODE
         throw std::runtime_error("No x86-64 guest backend is available in this Windows ARM64 build");
 #else
-#if defined(SOGEN_ENABLE_UNICORN)
         auto backend = backend_type::unicorn;
-#elif defined(SOGEN_ENABLE_FEX)
-        auto backend = backend_type::fex;
-#else
-        auto backend = backend_type::icicle;
-#endif
 
         {
             const auto* env = getenv("EMULATOR_WHP");

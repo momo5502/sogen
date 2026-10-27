@@ -58,9 +58,9 @@ endif()
 
 ##########################################
 
-# Unicorn's MSVC build only targets x86 and x86-64 hosts. Android uses FEX and Icicle instead.
+# Unicorn's MSVC build only targets x86 and x86-64 hosts.
 set(SOGEN_ENABLE_UNICORN ON)
-if(ANDROID OR (MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64"))
+if(MSVC AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
   set(SOGEN_ENABLE_UNICORN OFF)
 endif()
 

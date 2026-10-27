@@ -120,6 +120,7 @@ class GameSession extends ChangeNotifier {
           'environment': game.environment,
           'pathMappings': {guestGameDirectory: game.directory},
           'workingDirectory': game.guestWorkingDirectory,
+          'backend': 'fex',
           'liveNetwork': game.liveNetwork,
           'resumeFile': resumeFile ?? '',
         }) ??

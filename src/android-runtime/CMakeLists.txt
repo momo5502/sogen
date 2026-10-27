@@ -1,7 +1,3 @@
-if(NOT SOGEN_ENABLE_FEX AND NOT SOGEN_ENABLE_RUST)
-  message(FATAL_ERROR "The Android runtime needs FEX (ARM64 hosts) or Icicle (Rust) to run x86-64 guests")
-endif()
-
 file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
   *.cpp
   *.hpp
