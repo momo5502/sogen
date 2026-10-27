@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -9,6 +11,7 @@ import '../session.dart';
 import '../theme.dart';
 import '../widgets/console_view.dart';
 import '../widgets/guest_window_view.dart';
+import '../widgets/session_overlay.dart';
 import '../widgets/sogen_widgets.dart';
 import '../widgets/terminal_log.dart';
 import '../widgets/virtual_controls.dart';
@@ -24,11 +27,21 @@ const _keyboardSentinel = '​';
 const _orientation = MethodChannel('dev.sogen.app/orientation');
 
 class GamePage extends StatefulWidget {
-  const GamePage({super.key, required this.game, required this.emulationRoot, required this.ads, this.session});
+  const GamePage({
+    super.key,
+    required this.game,
+    required this.emulationRoot,
+    required this.ads,
+    required this.onSettingsChanged,
+    this.session,
+  });
 
   final Game game;
   final String emulationRoot;
   final Ads ads;
+
+  /// Stores settings changed while playing, so the next launch starts with them.
+  final ValueChanged<GameSettings> onSettingsChanged;
 
   final GameSession? session;
 
@@ -43,8 +56,9 @@ class _GamePageState extends State<GamePage> {
 
   GuestWindow? _inputWindow;
   MouseButton _touchButton = MouseButton.left;
-  late bool _trackpad = widget.game.settings.trackpad;
-  bool _showControls = true;
+  late GameSettings _settings = widget.game.settings;
+  Timer? _settingsSave;
+  bool _panelOpen = false;
   String? _shownSaveError;
   bool _suspending = false;
 
@@ -116,8 +130,27 @@ class _GamePageState extends State<GamePage> {
     }
   }
 
+  // A slider reports every step, so changes are stored once they settle.
+  void _changeSettings(GameSettings settings) {
+    setState(() => _settings = settings);
+    _settingsSave?.cancel();
+    _settingsSave = Timer(const Duration(milliseconds: 500), () => widget.onSettingsChanged(_settings));
+  }
+
+  void _onBack() {
+    if (_keyboardFocus.hasFocus) {
+      _keyboardFocus.unfocus();
+    } else {
+      setState(() => _panelOpen = !_panelOpen);
+    }
+  }
+
   @override
   void dispose() {
+    if (_settingsSave?.isActive ?? false) {
+      _settingsSave!.cancel();
+      widget.onSettingsChanged(_settings);
+    }
     _session.setInputWindow(null);
     _session.removeListener(_onSessionChanged);
     if (!_suspending) {
@@ -233,7 +266,7 @@ class _GamePageState extends State<GamePage> {
       canPop: _suspending || _session.state != SessionState.running,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
-          _confirmStop();
+          _onBack();
         }
       },
       child: child,
@@ -252,19 +285,37 @@ class _GamePageState extends State<GamePage> {
               padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
               child: ConsoleView(session: _session),
             ),
-            Align(
-              alignment: Alignment.topRight,
-              child: _Toolbar(
-                running: _session.state == SessionState.running,
-                onLog: _showLog,
-                onStop: _confirmStop,
-                onSuspend: _suspend,
-              ),
-            ),
+            ..._overlay(SessionActions(onLog: _showLog, onStop: _confirmStop, onSuspend: _suspend)),
           ],
         ),
       ),
     );
+  }
+
+  List<Widget> _overlay(SessionActions actions, {bool withSettings = false}) {
+    final running = _session.state == SessionState.running;
+    return [
+      if (!_panelOpen)
+        SafeArea(
+          child: OverlayHandle(
+            position: _settings.handlePosition,
+            onPressed: () => setState(() => _panelOpen = true),
+            onMoved: (position) => _changeSettings(_settings.copyWith(handlePosition: position)),
+          ),
+        )
+      else ...[
+        GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => setState(() => _panelOpen = false)),
+        SessionPanel(
+          actions: actions,
+          running: running,
+          onClose: () => setState(() => _panelOpen = false),
+          settings: withSettings ? _settings : null,
+          rightClick: _touchButton == MouseButton.right,
+          onSettingsChanged: withSettings ? _changeSettings : null,
+          onRightClickChanged: (value) => setState(() => _touchButton = value ? MouseButton.right : MouseButton.left),
+        ),
+      ],
+    ];
   }
 
   @override
@@ -289,13 +340,13 @@ class _GamePageState extends State<GamePage> {
                   session: _session,
                   window: window,
                   touchButton: _touchButton,
-                  trackpad: _trackpad,
-                  mouseSensitivity: widget.game.settings.mouseSensitivity,
+                  trackpad: _settings.trackpad,
+                  mouseSensitivity: _settings.mouseSensitivity,
                 ),
               )
             else
               _StatusView(session: _session, game: widget.game),
-            if (window != null && _showControls) VirtualControls(session: _session, window: window),
+            if (window != null && _settings.showControls) VirtualControls(session: _session, window: window),
             Positioned(
               left: 0,
               top: 0,
@@ -315,127 +366,13 @@ class _GamePageState extends State<GamePage> {
                 ),
               ),
             ),
-            SafeArea(
-              child: Align(
-                alignment: Alignment.topRight,
-                child: _Toolbar(
-                  running: _session.state == SessionState.running,
-                  rightClick: _touchButton == MouseButton.right,
-                  trackpad: _trackpad,
-                  controls: _showControls,
-                  onKeyboard: _toggleKeyboard,
-                  onControls: () => setState(() => _showControls = !_showControls),
-                  onRightClick: () => setState(() {
-                    _touchButton = _touchButton == MouseButton.right ? MouseButton.left : MouseButton.right;
-                  }),
-                  onTrackpad: () => setState(() => _trackpad = !_trackpad),
-                  onLog: _showLog,
-                  onStop: _confirmStop,
-                  onSuspend: _suspend,
-                ),
-              ),
+            ..._overlay(
+              SessionActions(onLog: _showLog, onStop: _confirmStop, onSuspend: _suspend, onKeyboard: _toggleKeyboard),
+              withSettings: true,
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _Toolbar extends StatelessWidget {
-  const _Toolbar({
-    required this.running,
-    required this.onLog,
-    required this.onStop,
-    required this.onSuspend,
-    this.rightClick = false,
-    this.trackpad = false,
-    this.controls = false,
-    this.onKeyboard,
-    this.onControls,
-    this.onRightClick,
-    this.onTrackpad,
-  });
-
-  final bool running;
-  final bool rightClick;
-  final bool trackpad;
-  final bool controls;
-
-  /// The window controls are shown while running when these are set, which consoles leave out.
-  final VoidCallback? onKeyboard;
-  final VoidCallback? onControls;
-  final VoidCallback? onRightClick;
-  final VoidCallback? onTrackpad;
-  final VoidCallback onLog;
-  final VoidCallback onStop;
-  final VoidCallback onSuspend;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Material(
-        color: SogenColors.neutral900.withValues(alpha: 0.85),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: SogenColors.neutral700),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (running && onControls != null) ...[
-                _ToolbarButton(
-                  tooltip: controls ? 'Hide controls' : 'Show controls',
-                  icon: LucideIcons.gamepad2,
-                  color: controls ? SogenColors.accents[0] : null,
-                  onPressed: onControls,
-                ),
-                _ToolbarButton(tooltip: 'Keyboard', icon: LucideIcons.keyboard, onPressed: onKeyboard),
-                _ToolbarButton(
-                  tooltip: rightClick ? 'Touch acts as right click' : 'Touch acts as left click',
-                  icon: rightClick ? LucideIcons.mousePointerClick : LucideIcons.mouse,
-                  color: rightClick ? SogenColors.accents[0] : null,
-                  onPressed: onRightClick,
-                ),
-                _ToolbarButton(
-                  tooltip: trackpad ? 'Touch moves the cursor like a trackpad' : 'Touch clicks where you tap',
-                  icon: LucideIcons.touchpad,
-                  color: trackpad ? SogenColors.accents[0] : null,
-                  onPressed: onTrackpad,
-                ),
-              ],
-              _ToolbarButton(tooltip: 'Log', icon: LucideIcons.squareTerminal, onPressed: onLog),
-              if (running) _ToolbarButton(tooltip: 'Suspend', icon: LucideIcons.pause, onPressed: onSuspend),
-              _ToolbarButton(
-                tooltip: running ? 'Stop' : 'Close',
-                icon: running ? LucideIcons.circleStop : LucideIcons.x,
-                onPressed: onStop,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ToolbarButton extends StatelessWidget {
-  const _ToolbarButton({required this.tooltip, required this.icon, required this.onPressed, this.color});
-
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback? onPressed;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton(
-      tooltip: tooltip,
-      icon: Icon(icon, size: 20, color: color ?? SogenColors.neutral300),
-      onPressed: onPressed,
     );
   }
 }
