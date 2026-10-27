@@ -80,18 +80,65 @@ class TouchControl {
     this.opacity = 1,
   });
 
-  factory TouchControl.fromJson(Map<String, dynamic> json) => TouchControl(
-    kind: TouchControlKind.values.byName(json['kind'] as String),
-    label: json['label'] as String? ?? '',
-    right: json['right'] as bool? ?? false,
-    bottom: json['bottom'] as bool? ?? true,
-    dx: (json['dx'] as num).toDouble(),
-    dy: (json['dy'] as num).toDouble(),
-    keyCodes: (json['keyCodes'] as List<dynamic>? ?? const []).cast<int>(),
-    button: MouseButton.values.byName(json['button'] as String? ?? 'left'),
-    size: (json['size'] as num?)?.toDouble() ?? 64,
-    opacity: (json['opacity'] as num?)?.toDouble() ?? 1,
-  );
+  static const minSize = 32.0;
+  static const maxSize = 128.0;
+  static const minOpacity = 0.2;
+
+  /// Layouts come from the clipboard too, so everything a control needs to work is checked here.
+  factory TouchControl.fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) {
+      throw const FormatException('A control is not an object');
+    }
+
+    final kind = TouchControlKind.values.asNameMap()[json['kind']];
+    final keyCodes = json['keyCodes'] ?? const <Object?>[];
+    final button = MouseButton.values.asNameMap()[json['button'] ?? 'left'];
+    final label = json['label'] ?? '';
+    final right = json['right'] ?? false;
+    final bottom = json['bottom'] ?? true;
+    final dx = json['dx'];
+    final dy = json['dy'];
+    final size = json['size'] ?? 64;
+    final opacity = json['opacity'] ?? 1;
+
+    if (kind == null || button == null || label is! String || right is! bool || bottom is! bool) {
+      throw const FormatException('A control has an unknown kind, button, label or corner');
+    }
+    if (keyCodes is! List<Object?> || keyCodes.any((code) => code is! int || code <= 0)) {
+      throw const FormatException('A control has invalid key codes');
+    }
+
+    final expectedKeys = switch (kind) {
+      TouchControlKind.key => 1,
+      TouchControlKind.dpad => 4,
+      TouchControlKind.mouseButton => 0,
+    };
+    if (keyCodes.length != expectedKeys) {
+      throw FormatException('A ${kind.name} control needs $expectedKeys key codes');
+    }
+
+    bool inRange(Object? value, double min, double max) =>
+        value is num && value.isFinite && value >= min && value <= max;
+    if (!inRange(dx, 0, 10000) || !inRange(dy, 0, 10000)) {
+      throw const FormatException('A control has an invalid position');
+    }
+    if (!inRange(size, minSize, maxSize) || !inRange(opacity, minOpacity, 1)) {
+      throw const FormatException('A control has an invalid size or opacity');
+    }
+
+    return TouchControl(
+      kind: kind,
+      label: label,
+      right: right,
+      bottom: bottom,
+      dx: (dx! as num).toDouble(),
+      dy: (dy! as num).toDouble(),
+      keyCodes: keyCodes.cast<int>(),
+      button: button,
+      size: (size as num).toDouble(),
+      opacity: (opacity as num).toDouble(),
+    );
+  }
 
   final TouchControlKind kind;
   final String label;
@@ -112,6 +159,13 @@ class TouchControl {
   /// Diameter of a key; a d-pad uses it for each of its four keys.
   final double size;
   final double opacity;
+
+  /// The control shrunk where needed so that it fits on [screen].
+  TouchControl fitting(Size screen) {
+    final extentPerSize = kind == TouchControlKind.dpad ? 2.6 : 1.0;
+    final fits = screen.shortestSide / extentPerSize - 4;
+    return size <= fits ? this : copyWith(size: fits.clamp(minSize, maxSize));
+  }
 
   /// The space the control takes, for placing it. Keys have a 2 px margin, and a d-pad spreads its keys over 2.6 of them.
   double get extent => kind == TouchControlKind.dpad ? (size + 4) * 2.6 : size + 4;
@@ -167,8 +221,14 @@ class TouchControl {
 class TouchLayout {
   const TouchLayout(this.controls);
 
-  factory TouchLayout.fromJson(List<dynamic> json) =>
-      TouchLayout([for (final control in json) TouchControl.fromJson(control as Map<String, dynamic>)]);
+  static const maxControls = 64;
+
+  factory TouchLayout.fromJson(Object? json) {
+    if (json is! List<Object?> || json.length > maxControls) {
+      throw const FormatException('A layout is a list of at most $maxControls controls');
+    }
+    return TouchLayout([for (final control in json) TouchControl.fromJson(control)]);
+  }
 
   /// A d-pad on the left and action keys on the right, for keyboard-driven games.
   static const standard = TouchLayout([
