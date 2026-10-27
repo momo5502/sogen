@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../ads.dart';
 import '../game_library.dart';
 import '../session.dart';
 import '../theme.dart';
@@ -23,10 +24,11 @@ const _keyboardSentinel = '​';
 const _orientation = MethodChannel('dev.sogen.app/orientation');
 
 class GamePage extends StatefulWidget {
-  const GamePage({super.key, required this.game, required this.emulationRoot, this.session});
+  const GamePage({super.key, required this.game, required this.emulationRoot, required this.ads, this.session});
 
   final Game game;
   final String emulationRoot;
+  final Ads ads;
 
   final GameSession? session;
 
@@ -52,6 +54,7 @@ class _GamePageState extends State<GamePage> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _orientation.invokeMethod('followSensor', {'enabled': true});
     _session.addListener(_onSessionChanged);
+    widget.ads.preloadInterstitial();
     if (widget.session == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _begin());
     } else {
@@ -108,6 +111,7 @@ class _GamePageState extends State<GamePage> {
     await _session.suspend(saved.path);
     if (mounted) {
       _suspending = true;
+      widget.ads.showAfterGame(_session, suspended: true);
       Navigator.of(context).pop(_session);
     }
   }
@@ -120,6 +124,7 @@ class _GamePageState extends State<GamePage> {
       if (_session.state case SessionState.starting || SessionState.running) {
         _session.stop();
       }
+      widget.ads.showAfterGame(_session);
       _session.dispose();
     }
     _keyboard.dispose();
