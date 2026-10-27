@@ -80,12 +80,13 @@ class _OverlayHandleState extends State<OverlayHandle> {
 
 /// Actions that do not apply are left null and hidden.
 class SessionActions {
-  const SessionActions({required this.onLog, required this.onStop, this.onSuspend, this.onKeyboard});
+  const SessionActions({required this.onLog, required this.onStop, this.onSuspend, this.onKeyboard, this.onEditLayout});
 
   final VoidCallback onLog;
   final VoidCallback onStop;
   final VoidCallback? onSuspend;
   final VoidCallback? onKeyboard;
+  final VoidCallback? onEditLayout;
 }
 
 /// The controls of a running game: session actions and the settings that can change while playing.
@@ -178,6 +179,16 @@ class SessionPanel extends StatelessWidget {
                     value: settings.showControls,
                     onChanged: (value) => onSettingsChanged(settings.copyWith(showControls: value)),
                   ),
+                  if (actions.onEditLayout case final onEditLayout?)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: const Icon(LucideIcons.layoutDashboard),
+                      title: const Text('Edit controls'),
+                      onTap: () {
+                        onClose();
+                        onEditLayout();
+                      },
+                    ),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Trackpad'),
