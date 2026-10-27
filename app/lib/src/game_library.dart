@@ -56,7 +56,6 @@ class GameSettings {
 
   final ScreenOrientation orientation;
 
-  /// Whether the on-screen controls are shown over the game.
   final bool showControls;
 
   /// Where the handle that opens the session panel sits, as a fraction of the screen height.
