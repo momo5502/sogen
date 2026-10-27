@@ -529,7 +529,14 @@ namespace sogen
                 if (section_entry->view_storage_id == 0 && section_entry->backing_address == 0 &&
                     section_entry->allocation_attributes != SEC_RESERVE && c.win_emu.memory.can_alias_host_memory_anywhere())
                 {
-                    section_entry->view_storage_id = c.proc.section_views.create_storage(backing_size);
+                    try
+                    {
+                        section_entry->view_storage_id = c.proc.section_views.create_storage(backing_size);
+                    }
+                    catch (const std::bad_alloc&)
+                    {
+                        return STATUS_NO_MEMORY;
+                    }
                 }
 
                 if (section_entry->view_storage_id != 0)

@@ -1238,6 +1238,11 @@ namespace sogen::kvm
                 this->rebuild_mappings();
             }
 
+            bool supports_host_memory_mapping() const override
+            {
+                return true;
+            }
+
             bool map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) override
             {
                 if (!is_page_aligned(address) || !is_page_aligned(size))

@@ -1644,6 +1644,11 @@ namespace sogen::whp
                 }
             }
 
+            bool supports_host_memory_mapping() const override
+            {
+                return true;
+            }
+
             bool map_host_memory(const uint64_t address, const size_t size, void* host_pointer,
                                  const memory_permission permissions) override
             {

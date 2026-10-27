@@ -400,7 +400,7 @@ namespace sogen
 
     bool memory_manager::can_alias_host_memory_anywhere() const
     {
-        return !this->memory_->host_memory_mapping_requires_identity();
+        return this->memory_->supports_host_memory_mapping() && !this->memory_->host_memory_mapping_requires_identity();
     }
 
     uint64_t memory_manager::allocate_placed_host_memory(const size_t size, const nt_memory_permission permissions,

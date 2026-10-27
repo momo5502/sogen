@@ -1496,6 +1496,11 @@ namespace sogen::whp
                 map_pages(address, size, nullptr, permissions);
             }
 
+            bool supports_host_memory_mapping() const override
+            {
+                return true;
+            }
+
             bool map_host_memory(const uint64_t address, const size_t size, void* host, const memory_permission permissions) override
             {
                 if (!host || reinterpret_cast<uintptr_t>(host) % page_size != 0)

@@ -4,6 +4,11 @@
 
 namespace sogen
 {
+    namespace
+    {
+        constexpr size_t snapshot_block_size = 0x10000;
+    }
+
     uint64_t section_view_manager::create_storage(const size_t size)
     {
         const auto id = this->next_storage_id_++;
@@ -96,9 +101,22 @@ namespace sogen
             buffer.write(id);
             buffer.write(stored.references);
             buffer.write(stored.memory.size());
-            buffer.write_chunked(stored.memory.size(), [&](const size_t offset, const std::span<std::byte> chunk) {
-                std::memcpy(chunk.data(), stored.memory.data() + offset, chunk.size());
-            });
+
+            std::vector<uint64_t> written_blocks{};
+            for (size_t offset = 0; offset < stored.memory.size(); offset += snapshot_block_size)
+            {
+                const auto block = std::span(stored.memory.data() + offset, std::min(snapshot_block_size, stored.memory.size() - offset));
+                if (std::ranges::any_of(block, [](const uint8_t value) { return value != 0; }))
+                {
+                    written_blocks.push_back(offset);
+                }
+            }
+
+            buffer.write_vector(written_blocks);
+            for (const auto offset : written_blocks)
+            {
+                buffer.write(stored.memory.data() + offset, std::min(snapshot_block_size, stored.memory.size() - offset));
+            }
         }
 
         buffer.write_map(this->views_);
@@ -120,9 +138,15 @@ namespace sogen
             auto& stored = this->storages_[id];
             stored.memory = utils::shared_host_buffer{size};
             stored.references = references;
-            buffer.read_chunked(size, [&](const size_t offset, const std::span<const std::byte> chunk) {
-                std::memcpy(stored.memory.data() + offset, chunk.data(), chunk.size());
-            });
+
+            for (const auto offset : buffer.read_vector<uint64_t>())
+            {
+                if (offset >= size)
+                {
+                    throw std::runtime_error("Saved section memory block lies outside its section");
+                }
+                buffer.read(stored.memory.data() + offset, std::min(snapshot_block_size, static_cast<size_t>(size - offset)));
+            }
         }
 
         buffer.read_map(this->views_);
