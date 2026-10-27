@@ -72,23 +72,19 @@ class Ads {
   Future<void> showStartupAd(AppOpenAd ad) {
     _lastShown = DateTime.now();
     final closed = Completer<void>();
+    void finish() {
+      if (!closed.isCompleted) {
+        ad.dispose();
+        closed.complete();
+      }
+    }
+
     ad
       ..fullScreenContentCallback = FullScreenContentCallback(
-        onAdDismissedFullScreenContent: (ad) {
-          ad.dispose();
-          closed.complete();
-        },
-        onAdFailedToShowFullScreenContent: (ad, _) {
-          ad.dispose();
-          closed.complete();
-        },
+        onAdDismissedFullScreenContent: (_) => finish(),
+        onAdFailedToShowFullScreenContent: (_, _) => finish(),
       )
-      ..show().catchError((Object _) {
-        ad.dispose();
-        if (!closed.isCompleted) {
-          closed.complete();
-        }
-      });
+      ..show().catchError((Object _) => finish());
     return closed.future;
   }
 
