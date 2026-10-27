@@ -50,6 +50,8 @@ namespace sogen
         // embedder loaded. Later calls have no effect.
         void load(void* get_instance_proc_addr);
 
+        void set_conserve_guest_address_space(bool conserve);
+
         // False if no Vulkan driver could be loaded on the host.
         bool available() const;
 
