@@ -32,10 +32,15 @@ class GameSettings {
 
   // A finger travels far less than a mouse, so mouse-look would turn slowly at one count per guest pixel.
   static const defaultMouseSensitivity = 3.0;
+  static const minMouseSensitivity = 0.5;
+  static const maxMouseSensitivity = 8.0;
 
   factory GameSettings.fromJson(Map<String, dynamic> json) => GameSettings(
     trackpad: json['trackpad'] as bool? ?? false,
-    mouseSensitivity: (json['mouseSensitivity'] as num?)?.toDouble() ?? defaultMouseSensitivity,
+    mouseSensitivity: ((json['mouseSensitivity'] as num?)?.toDouble() ?? defaultMouseSensitivity).clamp(
+      minMouseSensitivity,
+      maxMouseSensitivity,
+    ),
     orientation: ScreenOrientation.fromName(json['orientation'] as String?),
   );
 

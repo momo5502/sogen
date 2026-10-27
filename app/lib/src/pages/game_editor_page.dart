@@ -35,6 +35,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
   bool _liveNetwork = false;
   bool _console = false;
   bool _scanning = false;
+  bool _saving = false;
   int _scanGeneration = 0;
   GameSettings _settings = const GameSettings();
 
@@ -173,10 +174,21 @@ class _GameEditorPageState extends State<GameEditorPage> {
   Future<void> _save() async {
     final directory = _directory;
     final executable = _executable;
-    if (directory == null || executable == null) {
+    if (directory == null || executable == null || _saving) {
       return;
     }
 
+    setState(() => _saving = true);
+    try {
+      await _store(directory, executable);
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Future<void> _store(String directory, String executable) async {
     final game = Game(
       id: widget.game?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       name: _name.text.trim().isEmpty ? p.basenameWithoutExtension(executable) : _name.text.trim(),
@@ -377,9 +389,9 @@ class _GameEditorPageState extends State<GameEditorPage> {
                 ),
               ),
               Slider(
-                value: _settings.mouseSensitivity.clamp(0.5, 8),
-                min: 0.5,
-                max: 8,
+                value: _settings.mouseSensitivity,
+                min: GameSettings.minMouseSensitivity,
+                max: GameSettings.maxMouseSensitivity,
                 divisions: 15,
                 onChanged: (value) => setState(() => _settings = _settings.copyWith(mouseSensitivity: value)),
               ),
@@ -401,7 +413,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
               label: widget.game == null ? 'Add to library' : 'Save',
               icon: widget.game == null ? LucideIcons.plus : LucideIcons.check,
               expand: true,
-              onPressed: _save,
+              onPressed: _saving ? null : _save,
             ),
           ],
         ],
