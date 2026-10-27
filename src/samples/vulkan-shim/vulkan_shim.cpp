@@ -137,7 +137,8 @@ namespace
 
     bool bridge_call(uint32_t code, const void* in, DWORD in_len, void* out, DWORD out_len)
     {
-        // Allocating new sets cannot observe pending writes to existing sets.
+        // Allocation cannot observe pending writes; every command that uses or invalidates existing sets
+        // must drain them first, including free, pool reset, and destruction.
         if (code != gb::ioctl_update_descriptor_sets_batch && code != gb::ioctl_allocate_descriptor_sets)
         {
             flush_descriptor_updates();

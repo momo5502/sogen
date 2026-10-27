@@ -1439,9 +1439,35 @@ namespace sogen::kvm
                 cpuid->nent = cpuid_entries;
                 check_ioctl_result(::ioctl(this->kvm_fd_.get(), KVM_GET_SUPPORTED_CPUID, cpuid), "KVM_GET_SUPPORTED_CPUID");
                 this->xsave_supported_ = std::any_of(cpuid->entries, cpuid->entries + cpuid->nent, [](const kvm_cpuid_entry2& entry) {
-                    return entry.function == 1 && (entry.ecx & (1u << 26)) != 0;
+                    return entry.function == 1 && (entry.ecx & (1u << 26u)) != 0;
                 });
                 check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_CPUID2, cpuid), "KVM_SET_CPUID2");
+
+                if (this->xsave_supported_)
+                {
+                    if (::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_XCRS) <= 0)
+                    {
+                        throw std::runtime_error("KVM does not support the required KVM_CAP_XCRS extension");
+                    }
+
+                    auto* const xstate_features =
+                        std::find_if(cpuid->entries, cpuid->entries + cpuid->nent,
+                                     [](const kvm_cpuid_entry2& entry) { return entry.function == 0xD && entry.index == 0; });
+                    if (xstate_features == cpuid->entries + cpuid->nent || (xstate_features->eax & 0x3u) != 0x3u)
+                    {
+                        throw std::runtime_error("KVM does not support x87 and SSE extended state");
+                    }
+
+                    const auto avx_supported = std::any_of(cpuid->entries, cpuid->entries + cpuid->nent, [](const kvm_cpuid_entry2& entry) {
+                        return entry.function == 1 && (entry.ecx & (1u << 28u)) != 0;
+                    });
+                    // KVM resets XCR0 to x87 only; OSXSAVE needs SSE and advertised AVX state for user-mode XRSTOR.
+                    kvm_xcrs xcrs{};
+                    xcrs.nr_xcrs = 1;
+                    xcrs.xcrs[0].xcr = 0;
+                    xcrs.xcrs[0].value = 0x3u | (avx_supported && (xstate_features->eax & 0x4u) != 0 ? 0x4u : 0);
+                    check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_XCRS, &xcrs), "KVM_SET_XCRS");
+                }
             }
 
             void initialize_virtual_processor_state()
@@ -1775,20 +1801,19 @@ namespace sogen::kvm
                     return;
                 }
 
+                // KVM consumes memslots only on vCPU entry; host memory access uses mapped_pages_.
                 this->mappings_dirty_ = false;
                 this->synchronize_memslots();
             }
 
             void synchronize_memslots()
             {
-                auto desired = this->desired_slots_;
                 for (auto it = this->current_slots_.begin(); it != this->current_slots_.end();)
                 {
-                    const auto entry = desired.find(it->first);
-                    if (entry != desired.end() && entry->second.size == it->second.size && entry->second.host == it->second.host &&
-                        entry->second.flags == it->second.flags)
+                    const auto entry = this->desired_slots_.find(it->first);
+                    if (entry != this->desired_slots_.end() && entry->second.size == it->second.size &&
+                        entry->second.host == it->second.host && entry->second.flags == it->second.flags)
                     {
-                        desired.erase(entry);
                         ++it;
                     }
                     else
@@ -1798,8 +1823,13 @@ namespace sogen::kvm
                     }
                 }
 
-                for (const auto& [run_gpa, run] : desired)
+                for (const auto& [run_gpa, run] : this->desired_slots_)
                 {
+                    if (this->current_slots_.contains(run_gpa))
+                    {
+                        continue;
+                    }
+
                     const auto slot = this->allocate_slot_id();
                     this->set_memslot(slot, run_gpa, run.size, run.host, run.flags);
                     this->current_slots_[run_gpa] = installed_memslot{.id = slot, .size = run.size, .host = run.host, .flags = run.flags};
@@ -2422,16 +2452,20 @@ namespace sogen::kvm
                 this->sregs_cache_valid_ = false;
                 if (!completed)
                 {
+                    // KVM may return before consuming dirty shared registers; preserve them for the next run.
                     if (this->run_->kvm_dirty_regs & KVM_SYNC_X86_REGS)
                     {
                         this->regs_cache_ = this->run_->s.regs.regs;
                         this->regs_cache_valid_ = true;
+                        this->regs_cache_dirty_ = true;
                     }
                     if (this->run_->kvm_dirty_regs & KVM_SYNC_X86_SREGS)
                     {
                         this->sregs_cache_ = this->run_->s.regs.sregs;
                         this->sregs_cache_valid_ = true;
+                        this->sregs_cache_dirty_ = true;
                     }
+                    this->run_->kvm_dirty_regs = 0;
                     return;
                 }
 

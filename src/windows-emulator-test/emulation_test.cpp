@@ -60,11 +60,12 @@ namespace sogen::test
         ASSERT_TRUE(memory.allocate_memory(code_address, 0x1000, memory_permission::all));
         ASSERT_TRUE(memory.allocate_memory(xsave_address, 0x1000, memory_permission::read_write));
         machine->write_memory(code_address, code.data(), code.size());
+        machine->write_memory<uint64_t>(xsave_address + 512, 0x2);
 
         auto& cpu = machine->get_cpu(0);
         cpu.reg(x86_register::rip, code_address);
         cpu.reg(x86_register::rcx, xsave_address);
-        cpu.reg(x86_register::rax, uint64_t{0});
+        cpu.reg(x86_register::rax, uint64_t{0x3});
         cpu.reg(x86_register::rdx, uint64_t{0});
 
         bool reached_syscall = false;
@@ -76,6 +77,36 @@ namespace sogen::test
         cpu.start();
 
         EXPECT_TRUE(reached_syscall);
+    }
+
+    TEST(EmulationTest, KvmExposesEnabledXstate)
+    {
+        if (::access("/dev/kvm", R_OK | W_OK) != 0 || !__builtin_cpu_supports("xsave"))
+        {
+            GTEST_SKIP();
+        }
+
+        auto machine = create_x86_64_emulator(backend_type::kvm);
+        constexpr uint64_t code_address = 0x10000;
+        constexpr std::array<uint8_t, 5> code{0x0F, 0x01, 0xD0, 0x0F, 0x05};
+        memory_manager memory{*machine};
+        ASSERT_TRUE(memory.allocate_memory(code_address, 0x1000, memory_permission::all));
+        machine->write_memory(code_address, code.data(), code.size());
+
+        auto& cpu = machine->get_cpu(0);
+        cpu.reg(x86_register::rip, code_address);
+        cpu.reg(x86_register::rcx, uint64_t{0});
+
+        bool reached_syscall = false;
+        machine->hook_instruction(x86_hookable_instructions::syscall, [&](cpu_interface& acting, uint64_t) {
+            reached_syscall = true;
+            acting.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+        cpu.start();
+
+        EXPECT_TRUE(reached_syscall);
+        EXPECT_EQ(cpu.reg<uint64_t>(x86_register::rax) & 0x3u, 0x3u);
     }
 
     TEST(EmulationTest, KvmMemslotsFollowMemoryChanges)
