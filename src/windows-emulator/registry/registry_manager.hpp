@@ -125,6 +125,16 @@ namespace sogen
         size_t get_value_count(const registry_key& key);
         void set_value(const registry_key& key, std::string name, uint32_t type, std::span<const std::byte> data);
 
+        enum class delete_result
+        {
+            deleted,
+            has_sub_keys,
+            read_only,
+        };
+
+        // Only keys created at runtime can go: the backing hives are read-only and the overlay cannot hide their keys.
+        delete_result delete_key(const registry_key& key);
+
         std::optional<std::string_view> get_sub_key_name(const registry_key& key, size_t index);
         size_t get_sub_key_count(const registry_key& key);
 

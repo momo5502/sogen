@@ -512,6 +512,36 @@ namespace sogen
         value.data.assign(data.begin(), data.end());
     }
 
+    registry_manager::delete_result registry_manager::delete_key(const registry_key& key)
+    {
+        const auto full_path = registry_manager::get_full_key_path(key);
+        const auto hive = this->hives_.find(key.hive);
+        if (key.path.get().empty() || (hive != this->hives_.end() && hive->second->get_sub_key(key.path.get())))
+        {
+            return delete_result::read_only;
+        }
+
+        const auto entry = this->overlay_values_.find(full_path);
+        if (entry == this->overlay_values_.end())
+        {
+            return delete_result::read_only;
+        }
+
+        if (!entry->second.sub_keys.empty())
+        {
+            return delete_result::has_sub_keys;
+        }
+
+        this->overlay_values_.erase(entry);
+        if (const auto parent = this->overlay_values_.find(utils::path_key{full_path.get().parent_path()});
+            parent != this->overlay_values_.end())
+        {
+            parent->second.sub_keys.erase(u16_to_u8(full_path.get().filename().u16string()));
+        }
+
+        return delete_result::deleted;
+    }
+
     void registry_manager::serialize_runtime_state(utils::buffer_serializer& buffer) const
     {
         buffer.write_map(this->overlay_values_);

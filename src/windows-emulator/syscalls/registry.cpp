@@ -565,7 +565,16 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            return STATUS_ACCESS_DENIED;
+            switch (c.win_emu.registry.delete_key(*key))
+            {
+            case registry_manager::delete_result::deleted:
+                return STATUS_SUCCESS;
+            case registry_manager::delete_result::has_sub_keys:
+                return STATUS_CANNOT_DELETE;
+            case registry_manager::delete_result::read_only:
+            default:
+                return STATUS_ACCESS_DENIED;
+            }
         }
 
         NTSTATUS handle_NtNotifyChangeKey()
