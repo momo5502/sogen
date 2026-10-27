@@ -112,8 +112,9 @@ class _GameEditorPageState extends State<GameEditorPage> {
 
     setState(() {
       _scanning = false;
-      _executables = executables;
-      _executable = executables.contains(selected) ? selected : executables.firstOrNull;
+      // A saved executable stays selectable even when the scan misses it, e.g. deeper than the search goes.
+      _executables = [if (selected != null && !executables.contains(selected)) selected, ...executables];
+      _executable = selected ?? _executables.firstOrNull;
       if (_name.text.isEmpty) {
         _name.text = p.basename(directory);
       }
@@ -158,6 +159,16 @@ class _GameEditorPageState extends State<GameEditorPage> {
     return environment;
   }
 
+  /// The field splits at whitespace, so arguments that contain spaces are kept as they were unless the user edits them.
+  List<String> _argumentList() {
+    final text = _arguments.text.trim();
+    final previous = widget.game?.arguments;
+    if (previous != null && text == previous.join(' ').trim()) {
+      return previous;
+    }
+    return text.isEmpty ? const [] : text.split(RegExp(r'\s+'));
+  }
+
   Future<void> _save() async {
     final directory = _directory;
     final executable = _executable;
@@ -165,13 +176,12 @@ class _GameEditorPageState extends State<GameEditorPage> {
       return;
     }
 
-    final arguments = _arguments.text.trim();
     final game = Game(
       id: widget.game?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       name: _name.text.trim().isEmpty ? p.basenameWithoutExtension(executable) : _name.text.trim(),
       directory: directory,
       executable: executable,
-      arguments: arguments.isEmpty ? const [] : arguments.split(RegExp(r'\s+')),
+      arguments: _argumentList(),
       environment: _parseEnvironment(_environment.text),
       liveNetwork: _liveNetwork,
       console: _console,
@@ -362,7 +372,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
                 ),
               ),
               Slider(
-                value: _settings.mouseSensitivity,
+                value: _settings.mouseSensitivity.clamp(0.5, 8),
                 min: 0.5,
                 max: 8,
                 divisions: 15,
