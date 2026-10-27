@@ -15,6 +15,7 @@ import {
   Boxes,
   Repeat,
   Code,
+  MessageCircle,
 } from "lucide-react";
 import { Highlight } from "prism-react-renderer";
 import type { PrismTheme } from "prism-react-renderer";
@@ -528,23 +529,43 @@ export function LandingPage() {
               Sogen is open source, and there's always more to build. Report a
               bug, add a syscall, or open a pull request.
             </p>
-            <a
-              href="https://github.com/momo5502/sogen"
-              target="_blank"
-              className="inline-block"
-            >
-              <Button
-                asChild
-                size="lg"
-                className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+              <a
+                href="https://github.com/momo5502/sogen"
+                target="_blank"
+                className="inline-block"
               >
-                <span>
-                  <Code className="mr-2 h-5 w-5 transition-transform" />
-                  Contribute on GitHub
-                  <ExternalLink className="ml-2 h-4 w-4" />
-                </span>
-              </Button>
-            </a>
+                <Button
+                  asChild
+                  size="lg"
+                  className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
+                >
+                  <span>
+                    <Code className="mr-2 h-5 w-5 transition-transform" />
+                    Contribute on GitHub
+                    <ExternalLink className="ml-2 h-4 w-4" />
+                  </span>
+                </Button>
+              </a>
+              <a
+                href="https://discord.sogen.dev"
+                target="_blank"
+                className="inline-block"
+              >
+                <Button
+                  asChild
+                  size="lg"
+                  variant="outline"
+                  className="rounded-lg border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300"
+                >
+                  <span>
+                    <MessageCircle className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                    Join the Discord
+                    <ExternalLink className="ml-2 h-4 w-4" />
+                  </span>
+                </Button>
+              </a>
+            </div>
           </div>
         </section>
 
@@ -597,6 +618,14 @@ export function LandingPage() {
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <BookOpen className="h-6 w-6" />
+                </a>
+                <a
+                  href="https://discord.sogen.dev"
+                  target="_blank"
+                  title="Discord"
+                  className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
+                >
+                  <MessageCircle className="h-6 w-6" />
                 </a>
               </div>
             </div>

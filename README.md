@@ -1,7 +1,7 @@
 <h1 align="center">
 	<a href="https://github.com/momo5502/sogen"><img src="https://momo5502.com/sogen/sogen.svg" height="200" /></a>
 	<br>
-	<a href="https://github.com/momo5502/sogen?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/sogen?color=00B0F8"/></a>
+	<a href="https://discord.sogen.dev"><img src="https://img.shields.io/badge/discord-come%20chat-00B0F8?logo=discord&logoColor=white"/></a>
 	<a href="https://github.com/momo5502/sogen/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/sogen/build.yml?branch=main&label=build"/></a>
 	<a href="https://github.com/momo5502/sogen/issues"><img src="https://img.shields.io/github/issues/momo5502/sogen?color=F8B000"/></a>
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/sogen?color=FF3131"/>
@@ -22,6 +22,7 @@ Built in C++ and powered by the CPU backend of your choice:
 - [FEX](https://fex-emu.com)
 
 Try it out: <a href="https://sogen.dev">sogen.dev</a>  
+Join the community: <a href="https://discord.sogen.dev">Discord</a>  
 &nbsp;  
 
 ## Key Features
