@@ -115,7 +115,8 @@ namespace sogen
             buffer.write_vector(written_blocks);
             for (const auto offset : written_blocks)
             {
-                buffer.write(stored.memory.data() + offset, std::min(snapshot_block_size, stored.memory.size() - offset));
+                buffer.write(stored.memory.data() + offset,
+                             std::min(snapshot_block_size, stored.memory.size() - static_cast<size_t>(offset)));
             }
         }
 
