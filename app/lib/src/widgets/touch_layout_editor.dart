@@ -28,6 +28,11 @@ class _TouchLayoutEditorState extends State<TouchLayoutEditor> {
   void _update(int index, TouchControl control) => setState(() => _controls[index] = control);
 
   Future<void> _add(Size screen) async {
+    if (_controls.length >= TouchLayout.maxControls) {
+      _showMessage('A layout holds at most ${TouchLayout.maxControls} controls');
+      return;
+    }
+
     final control = await showModalBottomSheet<TouchControl>(
       context: context,
       backgroundColor: SogenColors.card,
