@@ -345,6 +345,7 @@ namespace sogen
                                       uint64_t data, ULONG data_size);
         NTSTATUS handle_NtDeleteValueKey(const syscall_context& c, handle key_handle,
                                          emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name);
+        NTSTATUS handle_NtDeleteKey(const syscall_context& c, handle key_handle);
         NTSTATUS handle_NtNotifyChangeKey();
         NTSTATUS handle_NtCreateRegistryTransaction(const syscall_context& c, emulator_object<handle> transaction_handle,
                                                     ACCESS_MASK desired_access,
@@ -1714,6 +1715,7 @@ namespace sogen
         add_handler(NtCreateKey);
         add_handler(NtSetValueKey);
         add_handler(NtDeleteValueKey);
+        add_handler(NtDeleteKey);
         add_handler(NtNotifyChangeKey);
         add_handler(NtCreateRegistryTransaction);
         add_handler(NtOpenRegistryTransaction);

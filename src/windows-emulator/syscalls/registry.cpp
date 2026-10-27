@@ -557,6 +557,17 @@ namespace sogen
             return STATUS_ACCESS_DENIED;
         }
 
+        NTSTATUS handle_NtDeleteKey(const syscall_context& c, const handle key_handle)
+        {
+            const auto* key = c.proc.registry_keys.get(key_handle);
+            if (!key)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            return STATUS_ACCESS_DENIED;
+        }
+
         NTSTATUS handle_NtNotifyChangeKey()
         {
             return STATUS_SUCCESS;
