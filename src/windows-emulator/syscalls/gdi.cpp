@@ -2437,8 +2437,16 @@ namespace sogen
             }
             const auto& surface = it->second;
 
+            // With a buffer, the caller's header describes the requested format, and a negative height asks for top-down rows.
+            int32_t requested_height = 0;
+            if (bits != 0)
+            {
+                c.emu.read_memory(info + 8, &requested_height, sizeof(requested_height));
+            }
+            const bool top_down = requested_height < 0;
+
             const auto bi_width = static_cast<int32_t>(surface.width);
-            const auto bi_height = static_cast<int32_t>(surface.height);
+            const auto bi_height = top_down ? -static_cast<int32_t>(surface.height) : static_cast<int32_t>(surface.height);
             const uint16_t planes = 1;
             const uint16_t bit_count = surface.guest_bpp == 1 ? 1 : 32;
             const uint32_t compression = 0; // BI_RGB
@@ -2457,7 +2465,6 @@ namespace sogen
                 return bi_height;
             }
 
-            // Copy the requested scanlines as a bottom-up DIB (row 0 is the bottom image row).
             uint32_t copied = 0;
             for (uint32_t row = 0; row < scan_lines; ++row)
             {
@@ -2471,7 +2478,7 @@ namespace sogen
                 {
                     break;
                 }
-                const uint32_t src_y = surface.height - 1 - dib_row;
+                const uint32_t src_y = top_down ? dib_row : surface.height - 1 - dib_row;
                 const auto* source = surface.pixels.data() + static_cast<size_t>(src_y) * surface.width;
                 if (bit_count == 1)
                 {
