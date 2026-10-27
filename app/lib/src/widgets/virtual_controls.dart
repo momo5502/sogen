@@ -59,7 +59,6 @@ class VirtualControls extends StatelessWidget {
   };
 }
 
-/// [child] positioned where [control] sits on a [screen] of that size.
 Widget placeControl(TouchControl control, Size screen, Widget child) {
   final center = control.center(screen);
   final extent = control.extent;
@@ -379,7 +378,7 @@ class _MouseKeyState extends State<_MouseKey> {
   int _pointers = 0;
 
   void _send({required bool down}) {
-    final cursor = widget.session.guestCursor.value;
+    final cursor = widget.session.pointer;
     final atCursor = cursor != null && cursor.window == widget.window.handle;
     widget.session.mouseButton(
       widget.window,
