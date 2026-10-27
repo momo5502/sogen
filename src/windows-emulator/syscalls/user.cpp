@@ -7191,6 +7191,11 @@ namespace sogen
                 return shift ? shifted_digits[virtual_key - '0'] : static_cast<char16_t>(virtual_key);
             }
 
+            if (virtual_key >= VK_NUMPAD0 && virtual_key <= VK_NUMPAD9)
+            {
+                return static_cast<char16_t>(u'0' + (virtual_key - VK_NUMPAD0));
+            }
+
             const auto pick = [shift](const char16_t normal, const char16_t shifted) { return shift ? shifted : normal; };
 
             switch (virtual_key)
@@ -7213,6 +7218,8 @@ namespace sogen
                 return u'-';
             case VK_DIVIDE:
                 return u'/';
+            case VK_DECIMAL:
+                return u'.';
             case VK_OEM_1:
                 return pick(u';', u':');
             case VK_OEM_PLUS:
@@ -7437,10 +7444,12 @@ namespace sogen
 
         int32_t handle_NtUserToUnicodeEx(const syscall_context& c, const uint32_t virtual_key, const uint32_t scan_code,
                                          const emulator_pointer key_state, const emulator_pointer buffer, const int32_t buffer_size,
-                                         const uint32_t /*flags*/, const uint64_t /*keyboard_layout*/)
+                                         const uint32_t flags, const uint64_t /*keyboard_layout*/)
         {
             constexpr uint32_t key_up = 0x8000;
-            if (buffer == 0 || buffer_size <= 0 || (scan_code & key_up) != 0 || virtual_key >= 0x100)
+            constexpr uint32_t translate_key_up = 0x2;
+            const auto ignored_key_up = (scan_code & key_up) != 0 && (flags & translate_key_up) == 0;
+            if (buffer == 0 || buffer_size <= 0 || ignored_key_up || virtual_key >= 0x100)
             {
                 return 0;
             }
@@ -7452,18 +7461,9 @@ namespace sogen
             }
 
             const auto down = [&keys](const uint32_t key) { return (keys[key] & 0x80) != 0; };
-            const auto toggled = [&keys](const uint32_t key) { return (keys[key] & 0x01) != 0; };
 
             char16_t character = 0;
-            if (virtual_key >= VK_NUMPAD0 && virtual_key <= VK_NUMPAD9)
-            {
-                character = toggled(VK_NUMLOCK) ? static_cast<char16_t>(u'0' + (virtual_key - VK_NUMPAD0)) : 0;
-            }
-            else if (virtual_key == VK_DECIMAL)
-            {
-                character = toggled(VK_NUMLOCK) ? u'.' : 0;
-            }
-            else if (down(VK_CONTROL) && !down(VK_MENU))
+            if (down(VK_CONTROL) && !down(VK_MENU))
             {
                 if (virtual_key >= 'A' && virtual_key <= 'Z')
                 {
@@ -7480,7 +7480,7 @@ namespace sogen
             }
             else if (!down(VK_CONTROL))
             {
-                character = us_layout_character(virtual_key, down(VK_SHIFT), toggled(VK_CAPITAL));
+                character = us_layout_character(virtual_key, down(VK_SHIFT), (keys[VK_CAPITAL] & 0x01) != 0);
             }
 
             if (character == 0)
