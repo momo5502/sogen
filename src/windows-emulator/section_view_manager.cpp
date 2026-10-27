@@ -169,9 +169,17 @@ namespace sogen
 
         buffer.read_map(this->views_);
         this->restored_protections_.clear();
-        for (const auto address : this->views_ | std::views::keys)
+        for (const auto& [address, mapped] : this->views_)
         {
-            this->restored_protections_[address] = buffer.read_vector<basic_memory_region<nt_memory_permission>>();
+            auto regions = buffer.read_vector<basic_memory_region<nt_memory_permission>>();
+            if (std::ranges::any_of(regions, [&](const basic_memory_region<nt_memory_permission>& region) {
+                    return region.start < address || region.length == 0 || region.start - address >= mapped.size ||
+                           region.length > mapped.size - (region.start - address);
+                }))
+            {
+                throw std::runtime_error("Saved section view protection lies outside its view");
+            }
+            this->restored_protections_[address] = std::move(regions);
         }
 
         for (const auto& mapped : this->views_ | std::views::values)
