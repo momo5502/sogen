@@ -19,7 +19,7 @@ const _interstitialAdUnit = String.fromEnvironment(
 class Ads {
   Ads(this._settings);
 
-  static const _interstitialInterval = Duration(minutes: 10);
+  static const _interstitialInterval = Duration(minutes: 5);
   static const _minimumSession = Duration(minutes: 1);
 
   final AppSettings _settings;
