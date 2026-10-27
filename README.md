@@ -5,6 +5,7 @@
 	<a href="https://github.com/momo5502/sogen/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/sogen/build.yml?branch=main&label=build"/></a>
 	<a href="https://github.com/momo5502/sogen/issues"><img src="https://img.shields.io/github/issues/momo5502/sogen?color=F8B000"/></a>
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/sogen?color=FF3131"/>
+	<a href="https://discord.sogen.dev"><img src="https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white"/></a>
 </h1>
 
 Sogen runs Windows and Linux programs without a real operating system: It lets you see and control everything they do.
@@ -22,6 +23,7 @@ Built in C++ and powered by the CPU backend of your choice:
 - [FEX](https://fex-emu.com)
 
 Try it out: <a href="https://sogen.dev">sogen.dev</a>  
+Join the community: <a href="https://discord.sogen.dev">Discord</a>  
 &nbsp;  
 
 ## Key Features
