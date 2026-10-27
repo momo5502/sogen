@@ -20,6 +20,7 @@ namespace sogen
 
     namespace
     {
+        constexpr ULONG k_thread_state_capture_window = 0x2;
         constexpr ULONG k_thread_state_win32_thread_info = 0xE;
         constexpr ULONG k_thread_state_dialog_state = 0xA;
         constexpr ULONG k_thread_state_message_time = 0x9;
@@ -1717,6 +1718,13 @@ namespace sogen
                 return c.vcpu.active_thread ? c.vcpu.active_thread->win32k_thread_state : 0;
             }
 
+            if (routine == k_thread_state_capture_window)
+            {
+                const auto* captured = c.proc.windows.get(c.proc.mouse_capture_window);
+                return captured && c.vcpu.active_thread && captured->thread_id == c.vcpu.active_thread->id ? c.proc.mouse_capture_window
+                                                                                                           : 0;
+            }
+
             if (routine != k_thread_state_win32_thread_info)
             {
                 return 0;
@@ -1974,14 +1982,14 @@ namespace sogen
             const auto previous = c.proc.mouse_capture_window;
             if (window == 0 || c.proc.windows.get(window))
             {
-                c.proc.mouse_capture_window = window;
+                c.proc.set_mouse_capture(window);
             }
             return previous;
         }
 
         BOOL handle_NtUserReleaseCapture(const syscall_context& c)
         {
-            c.proc.mouse_capture_window = 0;
+            c.proc.set_mouse_capture(0);
             return TRUE;
         }
 

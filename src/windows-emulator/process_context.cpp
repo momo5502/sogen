@@ -775,6 +775,12 @@ namespace sogen
         return cls_ptr;
     }
 
+    void process_context::set_mouse_capture(const hwnd window)
+    {
+        this->mouse_capture_window = window;
+        this->user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) { server_info.captureCount = window != 0 ? 1 : 0; });
+    }
+
     void process_context::serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const
     {
         buffer.write_vector(this->sid);
