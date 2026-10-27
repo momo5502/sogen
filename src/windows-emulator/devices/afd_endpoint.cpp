@@ -1385,6 +1385,9 @@ namespace sogen
                                                                           {.QuadPart = std::numeric_limits<int64_t>::max()});
                 }
 
+                pending_poll poll{c, timeout};
+                this->pending_polls_.reserve(this->pending_polls_.size() + 1);
+
                 handle retained_port{};
                 const auto* active_thread = c.vcpu ? &c.thread() : nullptr;
                 if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, c.completion_port, retained_port))
@@ -1392,10 +1395,9 @@ namespace sogen
                     return STATUS_INVALID_HANDLE;
                 }
 
-                auto request = c;
-                request.completion_port = retained_port;
-                this->pending_polls_.emplace_back(request, timeout);
-                this->pending_polls_.back().retained_completion_port = retained_port;
+                poll.context.completion_port = retained_port;
+                poll.retained_completion_port = retained_port;
+                this->pending_polls_.push_back(std::move(poll));
                 return STATUS_PENDING;
             }
 
