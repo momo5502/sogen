@@ -2623,12 +2623,21 @@ namespace sogen
             if (!device)
             {
                 constexpr ULONG FSCTL_GET_REPARSE_POINT = 0x900A8;
+                constexpr ULONG FSCTL_IS_VOLUME_MOUNTED = 0x90028;
                 if (fs_control_code == FSCTL_GET_REPARSE_POINT && c.proc.files.get(file_handle))
                 {
                     // The target is a regular file or directory, not a reparse point. Returning
                     // STATUS_INVALID_HANDLE here makes callers (e.g. path canonicalization) treat
                     // the buffer as populated; Windows reports STATUS_NOT_A_REPARSE_POINT instead.
                     return STATUS_NOT_A_REPARSE_POINT;
+                }
+
+                if (fs_control_code == FSCTL_IS_VOLUME_MOUNTED && c.proc.files.get(file_handle))
+                {
+                    IO_STATUS_BLOCK<EmulatorTraits<Emu64>> iosb{};
+                    iosb.Status = STATUS_SUCCESS;
+                    io_status_block.write(iosb);
+                    return STATUS_SUCCESS;
                 }
 
                 c.win_emu.log.warn("NtFsControlFile on non-device handle (control code 0x%X)\n", static_cast<uint32_t>(fs_control_code));
