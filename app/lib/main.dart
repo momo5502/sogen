@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'src/ads.dart';
 import 'src/emulation_root.dart';
@@ -61,18 +62,19 @@ class _StartupScreenState extends State<_StartupScreen> {
   }
 
   Future<void> _showStartupAd() async {
-    final ad = await widget.ads.loadStartupAd();
-    if (!mounted) {
-      await ad?.dispose();
-      return;
-    }
-
-    if (ad != null) {
-      await widget.ads.showStartupAd(ad);
-    }
-
-    if (mounted) {
-      setState(() => _loaded = true);
+    try {
+      final ad = await widget.ads.loadStartupAd();
+      if (ad != null && mounted) {
+        await widget.ads.showStartupAd(ad);
+      } else {
+        await ad?.dispose();
+      }
+    } on PlatformException catch (e) {
+      debugPrint('The startup ad failed: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _loaded = true);
+      }
     }
   }
 

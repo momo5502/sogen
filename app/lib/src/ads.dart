@@ -83,7 +83,12 @@ class Ads {
           closed.complete();
         },
       )
-      ..show();
+      ..show().catchError((Object _) {
+        ad.dispose();
+        if (!closed.isCompleted) {
+          closed.complete();
+        }
+      });
     return closed.future;
   }
 
