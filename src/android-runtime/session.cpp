@@ -24,11 +24,7 @@ namespace sogen::android
 
             if (name.empty())
             {
-#if defined(__aarch64__)
-                return backend_type::fex;
-#else
-                return backend_type::icicle;
-#endif
+                return get_x86_64_emulator_backend_from_environment();
             }
 
             const auto it = backends.find(name);

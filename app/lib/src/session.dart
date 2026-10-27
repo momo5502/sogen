@@ -108,8 +108,6 @@ class GameSession extends ChangeNotifier {
     saveError = null;
     state = SessionState.starting;
 
-    final backend = game.backend.id;
-
     if (_stopRequested) {
       return true;
     }
@@ -122,7 +120,6 @@ class GameSession extends ChangeNotifier {
           'environment': game.environment,
           'pathMappings': {guestGameDirectory: game.directory},
           'workingDirectory': game.guestWorkingDirectory,
-          'backend': backend,
           'liveNetwork': game.liveNetwork,
           'resumeFile': resumeFile ?? '',
         }) ??
