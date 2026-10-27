@@ -266,6 +266,25 @@ namespace sogen
             env_map[u"TEMP"] = user_profile + u"\\AppData\\Local\\Temp";
             env_map[u"USERPROFILE"] = user_profile;
 
+            const auto home_path = user_profile.size() >= 2 && user_profile[1] == u':' ? user_profile.substr(2) : user_profile;
+            const auto program_files = system_drive + u"\\Program Files";
+            const auto program_files_x86 = program_files + u" (x86)";
+            const auto program_data = system_drive + u"\\ProgramData";
+            env_map.try_emplace(u"APPDATA", user_profile + u"\\AppData\\Roaming");
+            env_map.try_emplace(u"LOCALAPPDATA", user_profile + u"\\AppData\\Local");
+            env_map.try_emplace(u"HOMEDRIVE", system_drive);
+            env_map.try_emplace(u"HOMEPATH", home_path);
+            env_map.try_emplace(u"ProgramData", program_data);
+            env_map.try_emplace(u"ALLUSERSPROFILE", program_data);
+            env_map.try_emplace(u"PUBLIC", system_drive + u"\\Users\\Public");
+            env_map.try_emplace(u"ProgramFiles", program_files);
+            env_map.try_emplace(u"ProgramFiles(x86)", program_files_x86);
+            env_map.try_emplace(u"ProgramW6432", program_files);
+            env_map.try_emplace(u"CommonProgramFiles", program_files + u"\\Common Files");
+            env_map.try_emplace(u"CommonProgramFiles(x86)", program_files_x86 + u"\\Common Files");
+            env_map.try_emplace(u"CommonProgramW6432", program_files + u"\\Common Files");
+            env_map.try_emplace(u"USERDOMAIN", env_map[u"COMPUTERNAME"]);
+
             for (const auto& [key, value] : app_settings.environment)
             {
                 env_map[key] = value;
