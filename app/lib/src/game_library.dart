@@ -28,6 +28,8 @@ class GameSettings {
     this.trackpad = false,
     this.mouseSensitivity = defaultMouseSensitivity,
     this.orientation = ScreenOrientation.sensor,
+    this.showControls = true,
+    this.handlePosition = 0.5,
   });
 
   // A finger travels far less than a mouse, so mouse-look would turn slowly at one count per guest pixel.
@@ -37,6 +39,8 @@ class GameSettings {
     trackpad: json['trackpad'] as bool? ?? false,
     mouseSensitivity: (json['mouseSensitivity'] as num?)?.toDouble() ?? defaultMouseSensitivity,
     orientation: ScreenOrientation.fromName(json['orientation'] as String?),
+    showControls: json['showControls'] as bool? ?? true,
+    handlePosition: (json['handlePosition'] as num?)?.toDouble() ?? 0.5,
   );
 
   /// Whether touches start out moving the cursor like a trackpad instead of clicking where they land.
@@ -47,16 +51,32 @@ class GameSettings {
 
   final ScreenOrientation orientation;
 
-  GameSettings copyWith({bool? trackpad, double? mouseSensitivity, ScreenOrientation? orientation}) => GameSettings(
+  /// Whether the on-screen controls are shown over the game.
+  final bool showControls;
+
+  /// Where the handle that opens the session panel sits, as a fraction of the screen height.
+  final double handlePosition;
+
+  GameSettings copyWith({
+    bool? trackpad,
+    double? mouseSensitivity,
+    ScreenOrientation? orientation,
+    bool? showControls,
+    double? handlePosition,
+  }) => GameSettings(
     trackpad: trackpad ?? this.trackpad,
     mouseSensitivity: mouseSensitivity ?? this.mouseSensitivity,
     orientation: orientation ?? this.orientation,
+    showControls: showControls ?? this.showControls,
+    handlePosition: handlePosition ?? this.handlePosition,
   );
 
   Map<String, dynamic> toJson() => {
     'trackpad': trackpad,
     'mouseSensitivity': mouseSensitivity,
     'orientation': orientation.name,
+    'showControls': showControls,
+    'handlePosition': handlePosition,
   };
 }
 
@@ -162,6 +182,7 @@ class GameLibrary extends ChangeNotifier {
 
   final File _file;
   final List<Game> _games;
+  Future<void> _writes = Future.value();
 
   List<Game> get games => List.unmodifiable(_games);
 
@@ -192,17 +213,32 @@ class GameLibrary extends ChangeNotifier {
     }
   }
 
+  Future<void> updateSettings(String id, GameSettings settings) async {
+    final index = _games.indexWhere((entry) => entry.id == id);
+    if (index >= 0) {
+      _games[index] = _games[index].copyWith(settings: settings);
+      await _save();
+    }
+  }
+
   Future<void> remove(Game game) async {
     _games.removeWhere((entry) => entry.id == game.id);
     await _save();
   }
 
-  /// Writes a temporary file and renames it over the library, so that dying mid-write never truncates it.
-  Future<void> _save() async {
+  /// Writes a temporary file and renames it over the library, so that dying mid-write never truncates it. Writes run
+  /// one after another, since they share the temporary file.
+  Future<void> _save() {
+    final contents = jsonEncode(_games.map((game) => game.toJson()).toList());
+    notifyListeners();
+    // A failed write already reached its caller, so it must not block the ones after it.
+    return _writes = _writes.catchError((Object _) {}).then((_) => _write(contents));
+  }
+
+  Future<void> _write(String contents) async {
     await _file.parent.create(recursive: true);
     final temporary = File('${_file.path}.tmp');
-    await temporary.writeAsString(jsonEncode(_games.map((game) => game.toJson()).toList()), flush: true);
+    await temporary.writeAsString(contents, flush: true);
     await temporary.rename(_file.path);
-    notifyListeners();
   }
 }

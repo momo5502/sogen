@@ -71,7 +71,13 @@ class _HomePageState extends State<HomePage> {
   Future<void> _play(Game game, {GameSession? session}) async {
     final suspended = await Navigator.of(context).push<GameSession>(
       MaterialPageRoute(
-        builder: (_) => GamePage(game: game, emulationRoot: widget.root.path, ads: widget.ads, session: session),
+        builder: (_) => GamePage(
+          game: game,
+          emulationRoot: widget.root.path,
+          ads: widget.ads,
+          onSettingsChanged: (settings) => widget.library.updateSettings(game.id, settings),
+          session: session,
+        ),
       ),
     );
     if (suspended == null || !mounted) {
