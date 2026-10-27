@@ -119,6 +119,10 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
+        // Release builds pass the real AdMob app ID with -PadmobAppId=...; the default is Google's sample app.
+        manifestPlaceholders["admobAppId"] =
+            providers.gradleProperty("admobAppId").getOrElse("ca-app-pub-3940256099942544~3347511713")
+
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

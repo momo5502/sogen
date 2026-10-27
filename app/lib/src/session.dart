@@ -84,6 +84,9 @@ class GameSession extends ChangeNotifier {
 
   String? saveError;
 
+  /// When the game started running, or null if it never did.
+  DateTime? startedAt;
+
   List<GuestWindow> get windows => _windows.values.toList(growable: false);
 
   /// Windows whose cursor the guest confined and hid, so that input moves the mouse by deltas, as for mouse-look.
@@ -108,6 +111,7 @@ class GameSession extends ChangeNotifier {
     error = null;
     savedTo = null;
     saveError = null;
+    startedAt = null;
     state = SessionState.starting;
 
     final String backend;
@@ -145,6 +149,9 @@ class GameSession extends ChangeNotifier {
     }
 
     state = started ? SessionState.running : SessionState.idle;
+    if (started) {
+      startedAt = DateTime.now();
+    }
     notifyListeners();
     return started;
   }

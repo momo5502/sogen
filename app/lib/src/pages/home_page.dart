@@ -1,19 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
+import '../ads.dart';
 import '../emulation_root.dart';
 import '../game_library.dart';
 import '../session.dart';
+import '../settings.dart';
 import '../theme.dart';
 import '../widgets/sogen_widgets.dart';
 import 'add_game_page.dart';
 import 'game_page.dart';
+import 'settings_page.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.root, required this.library});
+  const HomePage({super.key, required this.root, required this.library, required this.settings, required this.ads});
 
   final EmulationRoot root;
   final GameLibrary library;
+  final AppSettings settings;
+  final Ads ads;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -59,10 +64,14 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  void _openSettings() {
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SettingsPage(settings: widget.settings)));
+  }
+
   Future<void> _play(Game game, {GameSession? session}) async {
     final suspended = await Navigator.of(context).push<GameSession>(
       MaterialPageRoute(
-        builder: (_) => GamePage(game: game, emulationRoot: widget.root.path, session: session),
+        builder: (_) => GamePage(game: game, emulationRoot: widget.root.path, ads: widget.ads, session: session),
       ),
     );
     if (suspended == null || !mounted) {
@@ -127,18 +136,19 @@ class _HomePageState extends State<HomePage> {
                       children: [
                         Text('Sogen', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
                         const Spacer(),
-                        if (installed)
-                          PopupMenuButton<void>(
-                            icon: const Icon(LucideIcons.ellipsisVertical, color: SogenColors.neutral400),
-                            color: SogenColors.card,
-                            itemBuilder: (context) => [
+                        PopupMenuButton<void>(
+                          icon: const Icon(LucideIcons.ellipsisVertical, color: SogenColors.neutral400),
+                          color: SogenColors.card,
+                          itemBuilder: (context) => [
+                            if (installed)
                               PopupMenuItem(
                                 enabled: !_installing,
                                 onTap: _installRoot,
                                 child: const Text('Re-download emulation root'),
                               ),
-                            ],
-                          ),
+                            PopupMenuItem(onTap: _openSettings, child: const Text('Settings')),
+                          ],
+                        ),
                       ],
                     ),
                   ),
