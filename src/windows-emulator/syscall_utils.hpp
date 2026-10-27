@@ -2,6 +2,8 @@
 
 #include "windows_emulator.hpp"
 #include "arch/syscall_abi.hpp"
+#include <algorithm>
+#include <bit>
 #include <ctime>
 #include <platform/primitives.hpp>
 #include "devices/named_pipe.hpp"
@@ -86,6 +88,17 @@ namespace sogen
             return dynamic_cast<T&>(*this->current_completion_state);
         }
     };
+
+    // The ZeroBits of NtAllocateVirtualMemory/NtMapViewOfSection as the highest address an allocator-chosen range may end at.
+    // Up to 32 it counts high-order bits of the address that must be zero. Above that it is a mask, of which only the
+    // leading zero bits count (Wine's tests confirm this on Windows with 0x1aaaaaaa). The WoW64 thunks pass 0xFFFEFFFF
+    // for every request of 32-bit code, which keeps that code's memory where its pointers reach.
+    inline uint64_t highest_address_for_zero_bits(const uint64_t zero_bits)
+    {
+        constexpr uint64_t unrestricted = MAX_ALLOCATION_END_EXCL - 1;
+        const auto high_zero_bits = zero_bits <= 32 ? static_cast<int>(zero_bits) : std::countl_zero(zero_bits);
+        return std::min(~uint64_t{0} >> high_zero_bits, unrestricted);
+    }
 
     inline uint64_t get_syscall_argument(const syscall_context& context, const size_t index)
     {

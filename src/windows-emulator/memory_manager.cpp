@@ -1030,7 +1030,13 @@ namespace sogen
     }
 
     uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only,
-                                             uint64_t start, const memory_region_kind kind)
+                                             const uint64_t start, const memory_region_kind kind)
+    {
+        return this->allocate_memory(size, permissions, reserve_only, start, kind, MAX_ALLOCATION_END_EXCL - 1);
+    }
+
+    uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only,
+                                             const uint64_t start, const memory_region_kind kind, const uint64_t highest_address)
     {
         // Backends sharing the address space with the guest (e.g. FEX) allocate their own host memory
         // (JIT code buffers, thread and GCD worker stacks, a framework's lazy vm_allocate) at any point
@@ -1038,7 +1044,7 @@ namespace sogen
         // the reserve_guest_address_range below would mmap(MAP_FIXED) over it. find_free_host_allocation_base
         // confirms the pick against the host instead of paying for an unconditional full rescan, which
         // costs O(host VM regions) Mach IPC syscalls and grows without bound over a session.
-        const uint64_t allocation_base = this->find_free_host_allocation_base(size, start);
+        const uint64_t allocation_base = this->find_free_host_allocation_base(size, start, highest_address);
         if (!allocation_base)
         {
             return 0;
