@@ -159,7 +159,6 @@ class _GamePageState extends State<GamePage> {
     );
   }
 
-  /// Stores a change that is still waiting to settle, and waits for the write that stores the latest settings.
   Future<void> _flushSettings() async {
     if (_settingsSave?.isActive ?? false) {
       _settingsSave!.cancel();

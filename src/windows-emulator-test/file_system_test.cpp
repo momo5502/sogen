@@ -375,11 +375,13 @@ namespace sogen::test
 
     TEST_F(CaseSensitiveFileSystemTest, ADistinctCasedSiblingDoesNotDisableRecovery)
     {
-        std::filesystem::create_directory(this->root / "C");
-        write_host_file(this->root / "c" / "Mixed.txt", "content");
+        write_host_file(this->root / "mapped" / "CaseProbe", "upper");
+        write_host_file(this->root / "mapped" / "cASEpROBE", "lower");
+        write_host_file(this->root / "mapped" / "Mixed.txt", "content");
         file_system fs{this->root};
+        fs.map(windows_path{'d', {}}, this->root / "mapped");
 
-        EXPECT_EQ(this->root / "c" / "Mixed.txt", fs.translate(windows_path{'c', {u"mixed.txt"}}));
+        EXPECT_EQ(this->root / "mapped" / "Mixed.txt", fs.translate(windows_path{'d', {u"mixed.txt"}}));
     }
 
     TEST_F(CaseSensitiveFileSystemTest, ADirectoryMountWithATrailingSeparatorRecoversCase)

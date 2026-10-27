@@ -9,7 +9,7 @@ import '../theme.dart';
 class OverlayHandle extends StatefulWidget {
   const OverlayHandle({super.key, required this.position, required this.onPressed, required this.onMoved});
 
-  /// Vertical center as a fraction of the available height.
+  /// The top edge as a fraction of how far the handle can travel, so 0 is the top and 1 the bottom.
   final double position;
   final VoidCallback onPressed;
   final ValueChanged<double> onMoved;
@@ -33,6 +33,13 @@ class _OverlayHandleState extends State<OverlayHandle> {
     }
   }
 
+  // A tap also cancels the drag recognizer, and must not store an unchanged position.
+  void _reportMove() {
+    if (_position != widget.position) {
+      widget.onMoved(_position);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -50,8 +57,8 @@ class _OverlayHandleState extends State<OverlayHandle> {
                 onVerticalDragUpdate: travel > 0
                     ? (details) => setState(() => _position = (_position + details.delta.dy / travel).clamp(0, 1))
                     : null,
-                onVerticalDragEnd: (_) => widget.onMoved(_position),
-                onVerticalDragCancel: () => widget.onMoved(_position),
+                onVerticalDragEnd: (_) => _reportMove(),
+                onVerticalDragCancel: _reportMove,
                 child: SizedBox(
                   width: _touchWidth,
                   height: _height,
@@ -89,7 +96,6 @@ class SessionActions {
   final VoidCallback? onEditLayout;
 }
 
-/// The controls of a running game: session actions and the settings that can change while playing.
 class SessionPanel extends StatelessWidget {
   const SessionPanel({
     super.key,

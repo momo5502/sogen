@@ -32,6 +32,13 @@ void main() {
     expect(moved.center(portrait), const Offset(300, 100));
   });
 
+  test('a control dragged past the edge still reloads', () {
+    final moved = TouchLayout.standard.controls.first.movedTo(const Offset(-30, 900), portrait);
+    expect(moved.dx, greaterThanOrEqualTo(0));
+    expect(moved.dy, greaterThanOrEqualTo(0));
+    expect(TouchLayout.fromJson(TouchLayout([moved]).toJson()).controls.single.toJson(), moved.toJson());
+  });
+
   test('a control that no longer fits after rotating stays on screen', () {
     const key = TouchControl(kind: TouchControlKind.key, label: 'A', right: false, bottom: false, dx: 50, dy: 700);
     final center = key.center(landscape);
