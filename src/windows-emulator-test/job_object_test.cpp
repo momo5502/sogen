@@ -79,7 +79,8 @@ namespace sogen::test
 
     TEST_F(JobObjectTest, RejectsInvalidHandlesWhenAssigning)
     {
-        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtAssignProcessToJobObject(this->context(), handle{0x1234}, CURRENT_PROCESS));
-        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtAssignProcessToJobObject(this->context(), this->job, handle{0x1234}));
+        EXPECT_EQ(STATUS_INVALID_HANDLE,
+                  syscalls::handle_NtAssignProcessToJobObject(this->context(), handle{.bits = 0x1234}, CURRENT_PROCESS));
+        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtAssignProcessToJobObject(this->context(), this->job, handle{.bits = 0x1234}));
     }
 }
