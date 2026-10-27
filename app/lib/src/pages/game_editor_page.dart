@@ -15,7 +15,6 @@ const _storage = MethodChannel('dev.sogen.app/storage');
 // Deep enough for launchers that keep the real executable in a bin/ or similar subfolder.
 const _maxSearchDepth = 3;
 
-/// Adds a game to the library, or edits [game] when one is given.
 class GameEditorPage extends StatefulWidget {
   const GameEditorPage({super.key, this.game});
 
@@ -197,10 +196,13 @@ class _GameEditorPageState extends State<GameEditorPage> {
     Navigator.of(context).pop(game);
   }
 
-  /// A suspended game resumes the process it saved, so it cannot follow a change to the folder or executable.
+  /// A suspended game resumes the process it saved, which was set up for its folder, executable and network access.
   Future<bool> _keepOrDiscardSuspendedState(Game game) async {
     final previous = widget.game;
-    if (previous == null || (previous.directory == game.directory && previous.executable == game.executable)) {
+    if (previous == null ||
+        (previous.directory == game.directory &&
+            previous.executable == game.executable &&
+            previous.liveNetwork == game.liveNetwork)) {
       return true;
     }
 
@@ -214,7 +216,8 @@ class _GameEditorPageState extends State<GameEditorPage> {
       builder: (context) => AlertDialog(
         title: Text('Discard the suspended ${previous.name}?'),
         content: const Text(
-          'The game was suspended with a different folder or executable, so it cannot resume after this change.',
+          'The game was suspended with a different folder, executable or network access, so it cannot resume after '
+          'this change.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
