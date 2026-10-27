@@ -43,11 +43,12 @@ class MainActivity : FlutterActivity() {
         // Flutter's preferred orientations respect the system rotation lock, which a game should not.
         MethodChannel(messenger, "dev.sogen.app/orientation").setMethodCallHandler { call, result ->
             when (call.method) {
-                "followSensor" -> {
-                    requestedOrientation = if (call.argument<Boolean>("enabled") == true) {
-                        ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-                    } else {
-                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                "set" -> {
+                    requestedOrientation = when (call.argument<String>("orientation")) {
+                        "sensor" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                        "landscape" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        "portrait" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                        else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     }
                     result.success(null)
                 }
