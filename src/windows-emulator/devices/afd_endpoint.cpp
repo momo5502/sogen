@@ -1397,7 +1397,7 @@ namespace sogen
 
                 poll.context.completion_port = retained_port;
                 poll.retained_completion_port = retained_port;
-                this->pending_polls_.push_back(std::move(poll));
+                this->pending_polls_.push_back(poll);
                 return STATUS_PENDING;
             }
 
