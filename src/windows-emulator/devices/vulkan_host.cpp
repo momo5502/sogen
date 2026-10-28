@@ -1625,7 +1625,7 @@ namespace sogen
                 buffer.read(this->height);
                 buffer.read(this->layers);
                 buffer.read_vector(this->views);
-                this->images.resize(buffer.read<uint64_t>());
+                this->images.resize(static_cast<size_t>(buffer.read<uint64_t>()));
                 for (auto& image : this->images)
                 {
                     buffer.read(image.flags);
@@ -6221,6 +6221,7 @@ namespace sogen
             }
 
             std::vector<VkAttachmentDescription> attachments{};
+            attachments.reserve(description.attachments.size());
             for (const auto& a : description.attachments)
             {
                 attachments.push_back(VkAttachmentDescription{
@@ -6237,13 +6238,16 @@ namespace sogen
             }
 
             std::vector<VkAttachmentReference> references{};
+            references.reserve(description.references.size());
             for (const auto& r : description.references)
             {
                 references.push_back(VkAttachmentReference{.attachment = r.attachment, .layout = translate_layout(r.layout)});
             }
 
             std::vector<VkSubpassDescription> subpasses{};
+            subpasses.reserve(description.subpasses.size());
             std::vector<uint32_t> view_masks{};
+            view_masks.reserve(description.subpasses.size());
             std::vector<VkInputAttachmentAspectReference> input_aspects{};
             size_t next_reference = 0;
             size_t next_preserve = 0;
@@ -6282,7 +6286,9 @@ namespace sogen
             }
 
             std::vector<VkSubpassDependency> dependencies{};
+            dependencies.reserve(description.dependencies.size());
             std::vector<int32_t> view_offsets{};
+            view_offsets.reserve(description.dependencies.size());
             for (const auto& d : description.dependencies)
             {
                 dependencies.push_back(VkSubpassDependency{
@@ -6315,7 +6321,11 @@ namespace sogen
 
             VkRenderPassCreateInfo info{};
             info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            info.pNext = !input_aspects.empty() ? static_cast<const void*>(&aspects) : (uses_multiview ? &multiview : nullptr);
+            info.pNext = aspects.pNext;
+            if (!input_aspects.empty())
+            {
+                info.pNext = &aspects;
+            }
             info.flags = description.flags;
             info.attachmentCount = static_cast<uint32_t>(attachments.size());
             info.pAttachments = attachments.data();
@@ -8975,7 +8985,7 @@ namespace sogen
         // dynamic. Otherwise resolve the render pass and bake a static viewport as before.
         const bool dynamic_rendering = (render_pass == 0);
         VkRenderPass rp_handle = VK_NULL_HANDLE;
-        uint32_t color_count = static_cast<uint32_t>(color_formats.size());
+        auto color_count = static_cast<uint32_t>(color_formats.size());
         if (!dynamic_rendering)
         {
             const auto rp = this->impl_->render_passes.find(render_pass);
