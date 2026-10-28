@@ -7541,7 +7541,6 @@ namespace sogen
         {
             constexpr uint32_t mouseeventf_move = 0x0001;
             constexpr uint32_t mouseeventf_absolute = 0x8000;
-            constexpr uint32_t mouseeventf_virtualdesk = 0x4000;
 
             auto& proc = c.proc;
             const auto window = proc.foreground_window;
@@ -7579,7 +7578,6 @@ namespace sogen
                 {
                     // Absolute coordinates are normalized to 0..65535 across the primary display (or the virtual
                     // desktop, which is the same single display here).
-                    (void)mouseeventf_virtualdesk;
                     const auto x = static_cast<int32_t>((static_cast<int64_t>(input.dx) * proc.display_width) >> 16);
                     const auto y = static_cast<int32_t>((static_cast<int64_t>(input.dy) * proc.display_height) >> 16);
                     dx = x - proc.cursor_x;
