@@ -7735,6 +7735,19 @@ namespace sogen
             wait_handles.push_back(it->second.handle);
         }
 
+        if (auto& proxy = sc_it->second.proxy)
+        {
+            if (proxy->lost)
+            {
+                return VK_ERROR_OUT_OF_DATE_KHR;
+            }
+            if (const VkResult prepared = this->impl_->prepare_proxy_copies(dev_it->second, *proxy, queue_it->second.queue_family_index);
+                prepared != VK_SUCCESS)
+            {
+                return prepared;
+            }
+        }
+
         VkSwapchainKHR native_swapchain = sc_it->second.handle;
         VkPresentInfoKHR info{};
         info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -7781,13 +7794,9 @@ namespace sogen
         };
 
         std::optional<proxy_copy> copy{};
-        if (auto& proxy = sc_it->second.proxy)
+        if (const auto& proxy = sc_it->second.proxy)
         {
             const uint32_t family = queue_it->second.queue_family_index;
-            if (const VkResult prepared = this->impl_->prepare_proxy_copies(dev_it->second, *proxy, family); prepared != VK_SUCCESS)
-            {
-                return prepared;
-            }
             copy = proxy_copy{.source = proxy->images[image_index],
                               .command_buffer = proxy->copies.at(family).buffers[image_index],
                               .copied = proxy->copied[image_index],
