@@ -266,30 +266,6 @@ namespace sogen
             return 0;
         }
 
-        constexpr std::array<std::array<uint8_t, 3>, 3> modifier_sides{{
-            {VK_SHIFT, VK_LSHIFT, VK_RSHIFT},
-            {VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
-            {VK_MENU, VK_LMENU, VK_RMENU},
-        }};
-
-        // Key messages name the generic modifier; the scan code (Shift) or the extended-key bit (Ctrl, Alt) tells which
-        // side it is.
-        uint8_t side_virtual_key(const ui_event& event)
-        {
-            const auto virtual_key = static_cast<uint8_t>(event.wParam & 0xFF);
-            const bool right_shift = ((event.lParam >> 16) & 0xFF) == 0x36;
-            const bool extended = (event.lParam & (1ull << 24)) != 0;
-            for (const auto& [generic, left, right] : modifier_sides)
-            {
-                if (virtual_key == generic)
-                {
-                    const bool is_right = generic == VK_SHIFT ? right_shift : extended;
-                    return is_right ? right : left;
-                }
-            }
-            return virtual_key;
-        }
-
         uint8_t mouse_button_virtual_key(const uint32_t message, const uint64_t wparam)
         {
             switch (message)
@@ -2205,7 +2181,7 @@ namespace sogen
             state = static_cast<uint8_t>((down ? 0x80 : 0) | (state & 0x01));
         };
 
-        const auto side = side_virtual_key(event);
+        const auto side = side_virtual_key(static_cast<uint32_t>(event.wParam & 0xFF), event.lParam);
         set(side);
         for (const auto& [generic, left, right] : modifier_sides)
         {
@@ -2250,7 +2226,10 @@ namespace sogen
             constexpr uint64_t previous_state_bit = 1ull << 30;
             resolved.lParam &= ~(context_bit | previous_state_bit);
             resolved.lParam |= (alt && system_key) ? context_bit : 0;
-            resolved.lParam |= (up || (virtual_key != VK_PACKET && down(side_virtual_key(event)))) ? previous_state_bit : 0;
+            resolved.lParam |=
+                (up || (virtual_key != VK_PACKET && down(side_virtual_key(static_cast<uint32_t>(event.wParam & 0xFF), event.lParam))))
+                    ? previous_state_bit
+                    : 0;
             return resolved;
         }
 
@@ -2300,6 +2279,14 @@ namespace sogen
         m.message = event.message;
         m.wParam = event.wParam;
         m.lParam = event.lParam;
+
+        if (event.injected && is_keyboard_message(event.message) && thread->focus_window != 0)
+        {
+            if (const auto* focus = this->process.windows.get(thread->focus_window); focus && focus->thread_id == win->thread_id)
+            {
+                m.window = thread->focus_window;
+            }
+        }
 
         if (is_pointer_message(event.message))
         {

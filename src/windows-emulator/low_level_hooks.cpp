@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "low_level_hooks.hpp"
+#include "keyboard_layout.hpp"
 #include "user_callback_dispatch.hpp"
 #include "win32k_userconnect.hpp"
 #include "windows_emulator.hpp"
@@ -81,7 +82,7 @@ namespace sogen
 
             const auto virtual_key = static_cast<DWORD>(event.wParam & 0xFF);
             return kbdll_hook_struct{
-                .vkCode = virtual_key,
+                .vkCode = side_virtual_key(virtual_key, l_param),
                 .scanCode =
                     virtual_key == VK_PACKET ? static_cast<DWORD>(event.injected_character) : static_cast<DWORD>((l_param >> 16) & 0xFF),
                 .flags = flags,

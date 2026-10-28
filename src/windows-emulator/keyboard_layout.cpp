@@ -3,6 +3,21 @@
 
 namespace sogen
 {
+    uint8_t side_virtual_key(const uint32_t virtual_key, const uint64_t key_lparam)
+    {
+        const bool right_shift = ((key_lparam >> 16) & 0xFF) == 0x36;
+        const bool extended = (key_lparam & (1ull << 24)) != 0;
+        for (const auto& [generic, left, right] : modifier_sides)
+        {
+            if (virtual_key == generic)
+            {
+                const bool is_right = generic == VK_SHIFT ? right_shift : extended;
+                return is_right ? right : left;
+            }
+        }
+        return static_cast<uint8_t>(virtual_key);
+    }
+
     // The US layout, which the rest of the keyboard emulation assumes as well.
     char16_t us_layout_character(const uint32_t virtual_key, const bool shift, const bool caps_lock)
     {
