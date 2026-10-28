@@ -675,6 +675,40 @@ namespace sogen
             }
         };
 
+        // A host surface may not take what a guest made for Windows asks for, such as Zink's B8G8R8A8 swapchains on
+        // Android. The guest then renders into these images, and each present copies one into an image of the native
+        // swapchain.
+        struct swapchain_proxy
+        {
+            std::vector<VkImage> images{};
+            std::vector<VkDeviceMemory> memories{};
+
+            struct copy_commands
+            {
+                VkCommandPool pool{};
+                std::vector<VkCommandBuffer> buffers{};
+            };
+
+            // Per queue family the guest presents from, created at its first present there.
+            std::map<uint32_t, copy_commands> copies{};
+            // Signaled once the copy out of the image is done, which the guest acquiring it again waits for. Only a copy
+            // that was submitted signals it.
+            std::vector<VkFence> copied{};
+            std::vector<bool> copy_submitted{};
+            // Per proxy image rather than per native one, since the copy waiting for it is fenced like the proxy image.
+            std::vector<VkSemaphore> native_acquired{};
+            // Per native image, waited for by its present.
+            std::vector<VkSemaphore> native_ready{};
+            std::vector<VkImage> native_images{};
+            uint32_t next_image{};
+            // Presents from different queues acquire native images without the kernel lock, while the swapchain
+            // needs external synchronization.
+            std::shared_ptr<std::mutex> native_access = std::make_shared<std::mutex>();
+            // A present that failed after acquiring a native image leaves it acquired and its semaphore pending, so the
+            // guest has to re-create the swapchain.
+            bool lost{};
+        };
+
         struct swapchain_data
         {
             VkSwapchainKHR handle{};
@@ -688,6 +722,7 @@ namespace sogen
             // outlive what it still presents. Each present therefore signals a fence when it is.
             std::vector<VkFence> presenting{};
             std::vector<VkFence> spare_present_fences{};
+            std::optional<swapchain_proxy> proxy{};
         };
 
         object_table<instance_data> instances{&this->recording_references};
@@ -1284,6 +1319,15 @@ namespace sogen
             // A re-created swapchain image is undefined, while the guest believes it is in its saved layout. It is
             // transitioned there when the guest first acquires it, before the guest can use it.
             bool layout_undefined{};
+            // A swapchain proxy image is never presented itself, and only presentable images may be in
+            // VK_IMAGE_LAYOUT_PRESENT_SRC_KHR. It is in VK_IMAGE_LAYOUT_GENERAL whenever the guest believes it is in that layout.
+            bool swapchain_proxy{};
+
+            VkImageLayout host_layout(const uint32_t layout) const
+            {
+                return this->swapchain_proxy && layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ? VK_IMAGE_LAYOUT_GENERAL
+                                                                                          : static_cast<VkImageLayout>(layout);
+            }
 
             uint32_t aspect_count() const
             {
@@ -1829,7 +1873,7 @@ namespace sogen
                 barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
                 barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
                 barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-                barrier.newLayout = layout;
+                barrier.newLayout = image.host_layout(layout);
                 barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
                 barrier.image = image.handle;
@@ -1963,6 +2007,8 @@ namespace sogen
             VkRenderPass handle{};
             uint64_t device_id{};
             render_pass_params create{};
+            // Variants for framebuffers with swapchain proxy images, keyed by which attachments are proxies.
+            std::map<std::vector<bool>, VkRenderPass> proxy_variants{};
         };
 
         struct framebuffer_data
@@ -2400,6 +2446,363 @@ namespace sogen
             }
         }
 
+        static VkFormat channel_swapped_format(const VkFormat format)
+        {
+            switch (format)
+            {
+            case VK_FORMAT_B8G8R8A8_UNORM:
+                return VK_FORMAT_R8G8B8A8_UNORM;
+            case VK_FORMAT_B8G8R8A8_SRGB:
+                return VK_FORMAT_R8G8B8A8_SRGB;
+            case VK_FORMAT_R8G8B8A8_UNORM:
+                return VK_FORMAT_B8G8R8A8_UNORM;
+            case VK_FORMAT_R8G8B8A8_SRGB:
+                return VK_FORMAT_B8G8R8A8_SRGB;
+            default:
+                return VK_FORMAT_UNDEFINED;
+            }
+        }
+
+        static VkResult query_surface_formats(const instance_data& instance, const VkPhysicalDevice physical_device,
+                                              const VkSurfaceKHR surface, std::vector<VkSurfaceFormatKHR>& out_formats)
+        {
+            uint32_t count = 0;
+            VkResult result = instance.get_surface_formats(physical_device, surface, &count, nullptr);
+            if (result != VK_SUCCESS)
+            {
+                return result;
+            }
+            out_formats.resize(count);
+            result = instance.get_surface_formats(physical_device, surface, &count, out_formats.data());
+            out_formats.resize(count);
+            return result == VK_INCOMPLETE ? VK_SUCCESS : result;
+        }
+
+        static VkResult query_surface_present_modes(const instance_data& instance, const VkPhysicalDevice physical_device,
+                                                    const VkSurfaceKHR surface, std::vector<VkPresentModeKHR>& out_modes)
+        {
+            uint32_t count = 0;
+            VkResult result = instance.get_surface_present_modes(physical_device, surface, &count, nullptr);
+            if (result != VK_SUCCESS)
+            {
+                return result;
+            }
+            out_modes.resize(count);
+            result = instance.get_surface_present_modes(physical_device, surface, &count, out_modes.data());
+            out_modes.resize(count);
+            return result == VK_INCOMPLETE ? VK_SUCCESS : result;
+        }
+
+        const queue_data* find_device_queue(const uint64_t device_id) const
+        {
+            const auto queue = std::ranges::find_if(this->queues, [&](const auto& entry) { return entry.second.device_id == device_id; });
+            return queue == this->queues.end() ? nullptr : &queue->second;
+        }
+
+        static void destroy_swapchain_proxy(const device_data& dev, swapchain_proxy& proxy)
+        {
+            // Without present fences nothing shows that a present has consumed its native_ready semaphore yet.
+            if (proxy.lost || !dev.present_fences)
+            {
+                dev.device_wait_idle(dev.handle);
+            }
+
+            std::vector<VkFence> submitted{};
+            for (size_t i = 0; i < proxy.copied.size(); ++i)
+            {
+                if (proxy.copy_submitted[i])
+                {
+                    submitted.push_back(proxy.copied[i]);
+                }
+            }
+            if (!submitted.empty())
+            {
+                dev.wait_for_fences(dev.handle, static_cast<uint32_t>(submitted.size()), submitted.data(), VK_TRUE, UINT64_MAX);
+            }
+            for (const VkFence fence : proxy.copied)
+            {
+                dev.destroy_fence(dev.handle, fence, nullptr);
+            }
+            for (const VkSemaphore semaphore : proxy.native_acquired)
+            {
+                dev.destroy_semaphore(dev.handle, semaphore, nullptr);
+            }
+            for (const VkSemaphore semaphore : proxy.native_ready)
+            {
+                dev.destroy_semaphore(dev.handle, semaphore, nullptr);
+            }
+            for (const auto& [family, commands] : proxy.copies)
+            {
+                dev.destroy_command_pool(dev.handle, commands.pool, nullptr);
+            }
+            for (const VkImage image : proxy.images)
+            {
+                dev.destroy_image(dev.handle, image, nullptr);
+            }
+            for (const VkDeviceMemory memory : proxy.memories)
+            {
+                dev.free_memory(dev.handle, memory, nullptr);
+            }
+            proxy = {};
+        }
+
+        // Copying with a blit converts between the channel orders, while a pair of the same encoding keeps the values.
+        static VkResult check_swapchain_proxy_support(const device_data& dev, const instance_data& instance, const VkFormat format,
+                                                      const VkFormat native_format, const uint32_t flags,
+                                                      const VkSurfaceCapabilitiesKHR& caps)
+        {
+            if ((flags & ~static_cast<uint32_t>(VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)) != 0 ||
+                (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0 || !instance.get_physical_device_format_properties ||
+                !instance.get_queue_family_properties || !dev.cmd_blit_image)
+            {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+
+            VkFormatProperties source{};
+            VkFormatProperties destination{};
+            instance.get_physical_device_format_properties(dev.physical_device, format, &source);
+            instance.get_physical_device_format_properties(dev.physical_device, native_format, &destination);
+            if ((source.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0 ||
+                (destination.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0)
+            {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+            return VK_SUCCESS;
+        }
+
+        VkResult create_swapchain_proxy(const device_data& dev, const VkImageCreateInfo& image_info, const uint32_t image_count,
+                                        const std::vector<VkImage>& native_images, swapchain_proxy& proxy)
+        {
+            for (uint32_t i = 0; i < image_count; ++i)
+            {
+                VkImage image{};
+                if (const VkResult result = dev.create_image(dev.handle, &image_info, nullptr, &image); result != VK_SUCCESS)
+                {
+                    return result;
+                }
+                proxy.images.push_back(image);
+
+                VkMemoryRequirements requirements{};
+                dev.get_image_memory_requirements(dev.handle, image, &requirements);
+                uint32_t type = this->find_memory_type(dev, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                if (type == UINT32_MAX)
+                {
+                    type = this->find_memory_type(dev, requirements.memoryTypeBits, 0);
+                }
+                if (type == UINT32_MAX)
+                {
+                    return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+                }
+
+                VkMemoryAllocateInfo allocate_info{};
+                allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                allocate_info.allocationSize = requirements.size;
+                allocate_info.memoryTypeIndex = type;
+                VkDeviceMemory memory{};
+                if (const VkResult result = dev.allocate_memory(dev.handle, &allocate_info, nullptr, &memory); result != VK_SUCCESS)
+                {
+                    return result;
+                }
+                proxy.memories.push_back(memory);
+                if (const VkResult result = dev.bind_image_memory(dev.handle, image, memory, 0); result != VK_SUCCESS)
+                {
+                    return result;
+                }
+            }
+
+            VkFenceCreateInfo fence_info{};
+            fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+            fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+            VkSemaphoreCreateInfo semaphore_info{};
+            semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+            for (uint32_t i = 0; i < image_count; ++i)
+            {
+                VkFence fence{};
+                if (const VkResult result = dev.create_fence(dev.handle, &fence_info, nullptr, &fence); result != VK_SUCCESS)
+                {
+                    return result;
+                }
+                proxy.copied.push_back(fence);
+                proxy.copy_submitted.push_back(false);
+
+                VkSemaphore semaphore{};
+                if (const VkResult result = dev.create_semaphore(dev.handle, &semaphore_info, nullptr, &semaphore); result != VK_SUCCESS)
+                {
+                    return result;
+                }
+                proxy.native_acquired.push_back(semaphore);
+            }
+            for (size_t i = 0; i < native_images.size(); ++i)
+            {
+                VkSemaphore semaphore{};
+                if (const VkResult result = dev.create_semaphore(dev.handle, &semaphore_info, nullptr, &semaphore); result != VK_SUCCESS)
+                {
+                    return result;
+                }
+                proxy.native_ready.push_back(semaphore);
+            }
+
+            proxy.native_images = native_images;
+            return VK_SUCCESS;
+        }
+
+        // A proxy image may be handed out again once the guest presented it and the copy out of it is done.
+        static std::optional<uint32_t> find_free_proxy_image(const device_data& dev, swapchain_data& sc, bool& out_copying,
+                                                             VkResult& out_error)
+        {
+            auto& proxy = *sc.proxy;
+            const auto count = static_cast<uint32_t>(proxy.images.size());
+            out_copying = false;
+            out_error = VK_SUCCESS;
+            for (uint32_t step = 0; step < count; ++step)
+            {
+                const uint32_t index = (proxy.next_image + step) % count;
+                if (sc.acquired[index])
+                {
+                    continue;
+                }
+
+                const VkResult status = proxy.copy_submitted[index] ? dev.get_fence_status(dev.handle, proxy.copied[index]) : VK_SUCCESS;
+                if (status == VK_SUCCESS)
+                {
+                    proxy.next_image = (index + 1) % count;
+                    return index;
+                }
+                if (status != VK_NOT_READY)
+                {
+                    out_error = status;
+                    return std::nullopt;
+                }
+                out_copying = true;
+            }
+            return std::nullopt;
+        }
+
+        // The proxy image does not wait for the presentation engine, so the acquire signals the guest's semaphore and
+        // fence right away.
+        VkResult signal_proxy_acquire(const device_data& dev, const uint64_t device_id, const VkSemaphore semaphore, const VkFence fence)
+        {
+            if (!semaphore && !fence)
+            {
+                return VK_SUCCESS;
+            }
+
+            const auto* queue = this->find_device_queue(device_id);
+            if (!queue)
+            {
+                return VK_ERROR_DEVICE_LOST;
+            }
+
+            VkSubmitInfo submit{};
+            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submit.signalSemaphoreCount = semaphore ? 1 : 0;
+            submit.pSignalSemaphores = &semaphore;
+
+            const auto lock = this->queue_lock(queue->handle);
+            const std::scoped_lock guard(*lock);
+            return dev.queue_submit(queue->handle, 1, &submit, fence);
+        }
+
+        // A blit needs a graphics queue, which the guest need not present from.
+        VkResult prepare_proxy_copies(const device_data& dev, swapchain_proxy& proxy, const uint32_t family)
+        {
+            if (proxy.copies.contains(family))
+            {
+                return VK_SUCCESS;
+            }
+
+            const auto instance = this->instances.find(dev.instance_id);
+            if (instance == this->instances.end() || !instance->second.get_queue_family_properties)
+            {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            uint32_t family_count = 0;
+            instance->second.get_queue_family_properties(dev.physical_device, &family_count, nullptr);
+            std::vector<VkQueueFamilyProperties> families(family_count);
+            instance->second.get_queue_family_properties(dev.physical_device, &family_count, families.data());
+            if (family >= family_count || (families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) == 0)
+            {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+
+            swapchain_proxy::copy_commands commands{};
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+            pool_info.queueFamilyIndex = family;
+            if (const VkResult result = dev.create_command_pool(dev.handle, &pool_info, nullptr, &commands.pool); result != VK_SUCCESS)
+            {
+                return result;
+            }
+
+            VkCommandBufferAllocateInfo buffers_info{};
+            buffers_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            buffers_info.commandPool = commands.pool;
+            buffers_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            buffers_info.commandBufferCount = static_cast<uint32_t>(proxy.images.size());
+            commands.buffers.resize(proxy.images.size());
+            if (const VkResult result = dev.allocate_command_buffers(dev.handle, &buffers_info, commands.buffers.data());
+                result != VK_SUCCESS)
+            {
+                dev.destroy_command_pool(dev.handle, commands.pool, nullptr);
+                return result;
+            }
+
+            proxy.copies.emplace(family, std::move(commands));
+            return VK_SUCCESS;
+        }
+
+        static void record_proxy_copy(const device_data& dev, const VkCommandBuffer command_buffer, const VkImage source,
+                                      const VkImage destination, const image_create_params& extent)
+        {
+            const VkImageSubresourceRange range{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                .baseMipLevel = 0,
+                                                .levelCount = 1,
+                                                .baseArrayLayer = 0,
+                                                .layerCount = extent.array_layers};
+
+            std::array<VkImageMemoryBarrier, 2> barriers{};
+            for (auto& barrier : barriers)
+            {
+                barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                barrier.subresourceRange = range;
+            }
+
+            barriers[0].image = source;
+            barriers[0].oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barriers[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barriers[0].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barriers[1].image = destination;
+            barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barriers[1].dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            dev.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                                     nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
+
+            const VkImageSubresourceLayers layers{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = extent.array_layers};
+            VkImageBlit region{};
+            region.srcSubresource = layers;
+            region.srcOffsets[1] = {.x = static_cast<int32_t>(extent.width), .y = static_cast<int32_t>(extent.height), .z = 1};
+            region.dstSubresource = layers;
+            region.dstOffsets[1] = region.srcOffsets[1];
+            dev.cmd_blit_image(command_buffer, source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, destination,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_NEAREST);
+
+            barriers[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            barriers[0].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            barriers[0].dstAccessMask = 0;
+            barriers[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            barriers[1].newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            barriers[1].srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            barriers[1].dstAccessMask = 0;
+            dev.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0,
+                                     nullptr, static_cast<uint32_t>(barriers.size()), barriers.data());
+        }
+
         void destroy_swapchain_resources(swapchain_data& sc)
         {
             const auto dev_it = this->devices.find(sc.device_id);
@@ -2439,6 +2842,12 @@ namespace sogen
                 dev.destroy_fence(dev.handle, fence, nullptr);
             }
             sc.presenting.clear();
+
+            if (sc.proxy)
+            {
+                destroy_swapchain_proxy(dev, *sc.proxy);
+                sc.proxy.reset();
+            }
 
             if (sc.handle && dev_it->second.destroy_swapchain)
             {
@@ -2535,6 +2944,10 @@ namespace sogen
                 if (rp.device_id == device_id && rp.handle && it->second.destroy_render_pass)
                 {
                     it->second.destroy_render_pass(it->second.handle, rp.handle, nullptr);
+                    for (const auto& [proxies, variant] : rp.proxy_variants)
+                    {
+                        it->second.destroy_render_pass(it->second.handle, variant, nullptr);
+                    }
                 }
             }
             for (auto& [id, view] : this->image_views)
@@ -6394,8 +6807,8 @@ namespace sogen
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         barrier.srcAccessMask = src_access_mask;
         barrier.dstAccessMask = dst_access_mask;
-        barrier.oldLayout = translate_layout(old_layout);
-        barrier.newLayout = translate_layout(new_layout);
+        barrier.oldLayout = img->second.host_layout(old_layout);
+        barrier.newLayout = img->second.host_layout(new_layout);
         barrier.srcQueueFamilyIndex = src_queue_family_index;
         barrier.dstQueueFamilyIndex = dst_queue_family_index;
         barrier.image = img->second.handle;
@@ -6860,6 +7273,9 @@ namespace sogen
             caps.currentExtent.width = std::clamp(current_extent->first, caps.minImageExtent.width, caps.maxImageExtent.width);
             caps.currentExtent.height = std::clamp(current_extent->second, caps.minImageExtent.height, caps.maxImageExtent.height);
         }
+        // Windows always offers opaque composition. A swapchain the host surface lacks it for is presented through proxy
+        // images.
+        caps.supportedCompositeAlpha |= VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         if (out && out_size > 0)
         {
             std::memcpy(out, &caps, std::min(out_size, sizeof(caps)));
@@ -6885,27 +7301,30 @@ namespace sogen
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
 
-        uint32_t count = 0;
-        VkResult result = instance->second.get_surface_formats(pd->second.handle, surf->second.handle, &count, nullptr);
-        if (result != VK_SUCCESS)
+        std::vector<VkSurfaceFormatKHR> formats{};
+        if (const VkResult result = impl::query_surface_formats(instance->second, pd->second.handle, surf->second.handle, formats);
+            result != VK_SUCCESS)
         {
             return result;
-        }
-        out_count = count;
-        if (out_formats.empty() || count == 0)
-        {
-            return VK_SUCCESS;
         }
 
-        const uint32_t capacity = static_cast<uint32_t>(std::min<size_t>(out_formats.size(), count));
-        std::vector<VkSurfaceFormatKHR> formats(capacity);
-        uint32_t written = capacity;
-        result = instance->second.get_surface_formats(pd->second.handle, surf->second.handle, &written, formats.data());
-        if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+        // Windows always offers B8G8R8A8, which guests such as Zink's WGL backend use without asking. A swapchain the
+        // host surface lacks it for is presented through proxy images.
+        const auto native_count = formats.size();
+        for (size_t i = 0; i < native_count; ++i)
         {
-            return result;
+            const VkSurfaceFormatKHR swapped{.format = impl::channel_swapped_format(formats[i].format),
+                                             .colorSpace = formats[i].colorSpace};
+            if (swapped.format != VK_FORMAT_UNDEFINED && std::ranges::none_of(formats, [&](const VkSurfaceFormatKHR& offered) {
+                    return offered.format == swapped.format && offered.colorSpace == swapped.colorSpace;
+                }))
+            {
+                formats.push_back(swapped);
+            }
         }
-        for (uint32_t i = 0; i < written; ++i)
+
+        out_count = static_cast<uint32_t>(formats.size());
+        for (size_t i = 0; i < formats.size() && i < out_formats.size(); ++i)
         {
             out_formats[i] = {
                 .format = static_cast<uint32_t>(formats[i].format),
@@ -6993,13 +7412,51 @@ namespace sogen
             native_old_swapchain = old->second.handle;
         }
 
+        const auto instance = this->impl_->instances.find(dev.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_surface_capabilities ||
+            !instance->second.get_surface_formats || !instance->second.get_surface_present_modes)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+        VkSurfaceCapabilitiesKHR caps{};
+        std::vector<VkSurfaceFormatKHR> native_formats{};
+        std::vector<VkPresentModeKHR> native_modes{};
+        VkResult queried = instance->second.get_surface_capabilities(dev.physical_device, surf_it->second.handle, &caps);
+        if (queried == VK_SUCCESS)
+        {
+            queried = impl::query_surface_formats(instance->second, dev.physical_device, surf_it->second.handle, native_formats);
+        }
+        if (queried == VK_SUCCESS)
+        {
+            queried = impl::query_surface_present_modes(instance->second, dev.physical_device, surf_it->second.handle, native_modes);
+        }
+        if (queried != VK_SUCCESS)
+        {
+            return queried;
+        }
+
+        const auto requested_format = static_cast<VkFormat>(format);
+        const auto offered = [&](const VkFormat candidate) {
+            return std::ranges::any_of(native_formats, [&](const VkSurfaceFormatKHR& native) {
+                return native.format == candidate && native.colorSpace == static_cast<VkColorSpaceKHR>(color_space);
+            });
+        };
+        const bool format_native = offered(requested_format);
+        const bool alpha_native = (caps.supportedCompositeAlpha & composite_alpha) != 0;
+        const bool count_native =
+            min_image_count >= caps.minImageCount && (caps.maxImageCount == 0 || min_image_count <= caps.maxImageCount);
+        const bool mode_native = std::ranges::find(native_modes, static_cast<VkPresentModeKHR>(present_mode)) != native_modes.end();
+        const bool proxied = !format_native || !alpha_native || !count_native || !mode_native;
+
         // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkSwapchainCreateInfoKHR info{};
         info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         info.flags = static_cast<VkSwapchainCreateFlagsKHR>(flags);
         info.surface = surf_it->second.handle;
         info.minImageCount = min_image_count;
-        info.imageFormat = static_cast<VkFormat>(format);
+        info.imageFormat = requested_format;
         info.imageColorSpace = static_cast<VkColorSpaceKHR>(color_space);
         info.imageExtent = {.width = width, .height = height};
         info.imageArrayLayers = image_array_layers;
@@ -7012,6 +7469,33 @@ namespace sogen
         info.presentMode = static_cast<VkPresentModeKHR>(present_mode);
         info.clipped = clipped ? VK_TRUE : VK_FALSE;
         info.oldSwapchain = native_old_swapchain;
+
+        if (proxied)
+        {
+            const VkFormat native_format = format_native ? requested_format : impl::channel_swapped_format(requested_format);
+            if (!offered(native_format))
+            {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+            if (const VkResult supported =
+                    impl::check_swapchain_proxy_support(dev, instance->second, requested_format, native_format, flags, caps);
+                supported != VK_SUCCESS)
+            {
+                return supported;
+            }
+
+            const auto supported_alpha = static_cast<VkCompositeAlphaFlagsKHR>(caps.supportedCompositeAlpha);
+            info.flags = 0;
+            info.minImageCount = caps.minImageCount;
+            info.imageFormat = native_format;
+            info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            info.queueFamilyIndexCount = 0;
+            info.pQueueFamilyIndices = nullptr;
+            info.compositeAlpha = alpha_native ? static_cast<VkCompositeAlphaFlagBitsKHR>(composite_alpha)
+                                               : static_cast<VkCompositeAlphaFlagBitsKHR>(supported_alpha & (~supported_alpha + 1));
+            info.presentMode = mode_native ? static_cast<VkPresentModeKHR>(present_mode) : VK_PRESENT_MODE_FIFO_KHR;
+        }
 
         VkSwapchainKHR native_swapchain{};
         VkResult result = dev.create_swapchain(dev.handle, &info, nullptr, &native_swapchain);
@@ -7055,9 +7539,42 @@ namespace sogen
                                            .composite_alpha = composite_alpha,
                                            .present_mode = present_mode,
                                            .clipped = clipped};
-        sc.acquired.assign(native_images.size(), false);
-        sc.image_ids.reserve(native_images.size());
-        for (VkImage image : native_images)
+
+        const uint32_t image_flags = (flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0 ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0;
+        if (proxied)
+        {
+            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+            VkImageCreateInfo image_info{};
+            image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            image_info.flags = image_flags;
+            image_info.imageType = VK_IMAGE_TYPE_2D;
+            image_info.format = requested_format;
+            image_info.extent = {.width = width, .height = height, .depth = 1};
+            image_info.mipLevels = 1;
+            image_info.arrayLayers = std::max(1U, image_array_layers);
+            image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+            image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            image_info.usage = static_cast<VkImageUsageFlags>(image_usage) | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            image_info.sharingMode = static_cast<VkSharingMode>(sharing_mode);
+            image_info.queueFamilyIndexCount = static_cast<uint32_t>(queue_family_indices.size());
+            image_info.pQueueFamilyIndices = queue_family_indices.empty() ? nullptr : queue_family_indices.data();
+            image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+            sc.proxy.emplace();
+            result = this->impl_->create_swapchain_proxy(dev, image_info, std::max({min_image_count, caps.minImageCount, 1U}),
+                                                         native_images, *sc.proxy);
+            if (result != VK_SUCCESS)
+            {
+                impl::destroy_swapchain_proxy(dev, *sc.proxy);
+                dev.destroy_swapchain(dev.handle, native_swapchain, nullptr);
+                return result;
+            }
+        }
+
+        const auto& guest_images = sc.proxy ? sc.proxy->images : native_images;
+        sc.acquired.assign(guest_images.size(), false);
+        sc.image_ids.reserve(guest_images.size());
+        for (VkImage image : guest_images)
         {
             const uint64_t image_id = this->impl_->allocate_id();
             impl::image_data data{.handle = image, .device_id = device, .samples = 1, .owned = false};
@@ -7071,8 +7588,9 @@ namespace sogen
                                                     .usage = image_usage,
                                                     .tiling = VK_IMAGE_TILING_OPTIMAL,
                                                     .image_type = VK_IMAGE_TYPE_2D,
-                                                    .flags = 0};
+                                                    .flags = sc.proxy ? image_flags : 0};
             data.reset_subresources(data.create.array_layers);
+            data.swapchain_proxy = sc.proxy.has_value();
             this->impl_->images.emplace(image_id, std::move(data));
             sc.image_ids.push_back(image_id);
         }
@@ -7112,13 +7630,58 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index)
+    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index,
+                                            const std::function<void(const std::function<void()>&)>& run_unlocked)
     {
         out_index = 0;
-        const auto sc_it = this->impl_->swapchains.find(swapchain);
+        auto sc_it = this->impl_->swapchains.find(swapchain);
         if (sc_it == this->impl_->swapchains.end())
         {
             return VK_ERROR_OUT_OF_DATE_KHR;
+        }
+
+        // Waiting for a copy out of a proxy image must not hold up the other vCPUs. The objects are looked up again
+        // afterwards, since the guest may destroy them meanwhile.
+        std::optional<uint32_t> proxy_index{};
+        if (sc_it->second.proxy)
+        {
+            const auto start = std::chrono::steady_clock::now();
+            while (true)
+            {
+                sc_it = this->impl_->swapchains.find(swapchain);
+                if (sc_it == this->impl_->swapchains.end() || sc_it->second.proxy->lost)
+                {
+                    return VK_ERROR_OUT_OF_DATE_KHR;
+                }
+                const auto device = this->impl_->devices.find(sc_it->second.device_id);
+                if (device == this->impl_->devices.end())
+                {
+                    return VK_ERROR_DEVICE_LOST;
+                }
+
+                bool copying{};
+                VkResult status{};
+                proxy_index = impl::find_free_proxy_image(device->second, sc_it->second, copying, status);
+                if (proxy_index)
+                {
+                    break;
+                }
+                if (status != VK_SUCCESS)
+                {
+                    return status;
+                }
+                // With every proxy image acquired, one may still be on its way through a present running unlocked.
+                if (timeout == 0)
+                {
+                    return VK_NOT_READY;
+                }
+                if (static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()) >= timeout)
+                {
+                    return VK_TIMEOUT;
+                }
+                run_unlocked([] { std::this_thread::sleep_for(std::chrono::milliseconds(1)); });
+            }
         }
 
         const auto dev_it = this->impl_->devices.find(sc_it->second.device_id);
@@ -7149,8 +7712,18 @@ namespace sogen
             fence_handle = it->second.handle;
         }
 
-        const VkResult result = dev_it->second.acquire_next_image(dev_it->second.handle, sc_it->second.handle, timeout, semaphore_handle,
-                                                                  fence_handle, &out_index);
+        VkResult result{};
+        if (proxy_index)
+        {
+            result = this->impl_->signal_proxy_acquire(dev_it->second, sc_it->second.device_id, semaphore_handle, fence_handle);
+            out_index = *proxy_index;
+        }
+        else
+        {
+            result = dev_it->second.acquire_next_image(dev_it->second.handle, sc_it->second.handle, timeout, semaphore_handle, fence_handle,
+                                                       &out_index);
+        }
+
         if ((result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) && out_index < sc_it->second.acquired.size())
         {
             auto& image = this->impl_->images.at(sc_it->second.image_ids[out_index]);
@@ -7202,6 +7775,19 @@ namespace sogen
             wait_handles.push_back(it->second.handle);
         }
 
+        if (auto& proxy = sc_it->second.proxy)
+        {
+            if (proxy->lost)
+            {
+                return VK_ERROR_OUT_OF_DATE_KHR;
+            }
+            if (const VkResult prepared = this->impl_->prepare_proxy_copies(dev_it->second, *proxy, queue_it->second.queue_family_index);
+                prepared != VK_SUCCESS)
+            {
+                return prepared;
+            }
+        }
+
         VkSwapchainKHR native_swapchain = sc_it->second.handle;
         VkPresentInfoKHR info{};
         info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -7234,13 +7820,120 @@ namespace sogen
         const auto presents = dev_it->second.presents;
         std::shared_lock device_in_use(*presents);
 
+        // A proxied present copies the guest's image into a native one, which it has to acquire first. That acquire
+        // waits for the presentation engine like a native present does, so it runs unlocked as well.
+        struct proxy_copy
+        {
+            VkImage source{};
+            VkCommandBuffer command_buffer{};
+            VkFence copied{};
+            VkSemaphore native_acquired{};
+            std::shared_ptr<std::mutex> native_access{};
+            std::vector<VkSemaphore> native_ready{};
+            std::vector<VkImage> native_images{};
+            impl::image_create_params extent{};
+        };
+
+        std::optional<proxy_copy> copy{};
+        if (const auto& proxy = sc_it->second.proxy)
+        {
+            const uint32_t family = queue_it->second.queue_family_index;
+            copy = proxy_copy{.source = proxy->images[image_index],
+                              .command_buffer = proxy->copies.at(family).buffers[image_index],
+                              .copied = proxy->copied[image_index],
+                              .native_acquired = proxy->native_acquired[image_index],
+                              .native_access = proxy->native_access,
+                              .native_ready = proxy->native_ready,
+                              .native_images = proxy->native_images,
+                              .extent = this->impl_->images.at(sc_it->second.image_ids[image_index]).create};
+        }
+        const auto& copy_device = dev_it->second;
+        constexpr VkPipelineStageFlags copy_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        const std::vector<VkPipelineStageFlags> copy_wait_stages(wait_handles.size() + 1, copy_stage);
+
         // The device lock is released before run_unlocked returns, since its caller may then wait for a lock that a
         // thread destroying the device holds.
+        bool copy_submitted{};
+        bool presented_natively{};
+        bool native_image_stranded{};
         const int32_t result = run_unlocked([&] {
             int32_t present_result{};
+            uint32_t native_index = image_index;
+            VkSemaphore ready = VK_NULL_HANDLE;
+            if (copy)
+            {
+                const std::scoped_lock swapchain_guard(*copy->native_access);
+                const VkResult acquired = copy_device.acquire_next_image(copy_device.handle, native_swapchain, UINT64_MAX,
+                                                                         copy->native_acquired, VK_NULL_HANDLE, &native_index);
+                const bool copying = acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR;
+
+                VkCommandBufferBeginInfo begin_info{};
+                begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                auto* const command_buffer = copy->command_buffer;
+                if (copying)
+                {
+                    ready = copy->native_ready[native_index];
+                    if (const VkResult recorded = copy_device.begin_command_buffer(command_buffer, &begin_info); recorded != VK_SUCCESS)
+                    {
+                        native_image_stranded = true;
+                        device_in_use.unlock();
+                        return static_cast<int32_t>(recorded);
+                    }
+                    impl::record_proxy_copy(copy_device, command_buffer, copy->source, copy->native_images[native_index], copy->extent);
+                    if (const VkResult recorded = copy_device.end_command_buffer(command_buffer); recorded != VK_SUCCESS)
+                    {
+                        native_image_stranded = true;
+                        device_in_use.unlock();
+                        return static_cast<int32_t>(recorded);
+                    }
+                }
+
+                // Without a native image the guest's semaphores are still waited for, as a failed present consumes them.
+                std::vector<VkSemaphore> copy_waits = wait_handles;
+                if (copying)
+                {
+                    copy_waits.push_back(copy->native_acquired);
+                }
+                VkSubmitInfo submit{};
+                submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                submit.waitSemaphoreCount = static_cast<uint32_t>(copy_waits.size());
+                submit.pWaitSemaphores = copy_waits.empty() ? nullptr : copy_waits.data();
+                submit.pWaitDstStageMask = copy_wait_stages.data();
+                submit.commandBufferCount = copying ? 1 : 0;
+                submit.pCommandBuffers = &command_buffer;
+                submit.signalSemaphoreCount = copying ? 1 : 0;
+                submit.pSignalSemaphores = &ready;
+
+                const std::scoped_lock guard(*queue_lock);
+                VkResult submitted = copy_device.reset_fences(copy_device.handle, 1, &copy->copied);
+                if (submitted == VK_SUCCESS)
+                {
+                    submitted = copy_device.queue_submit(native_queue, 1, &submit, copy->copied);
+                }
+                copy_submitted = submitted == VK_SUCCESS;
+                native_image_stranded = copying && !copy_submitted;
+                if (submitted != VK_SUCCESS || !copying)
+                {
+                    device_in_use.unlock();
+                    return static_cast<int32_t>(submitted != VK_SUCCESS ? submitted : acquired);
+                }
+
+                info.waitSemaphoreCount = 1;
+                info.pWaitSemaphores = &ready;
+                info.pImageIndices = &native_index;
+                present_result = native_present(native_queue, &info);
+                presented_natively = true;
+                if (present_result == VK_SUCCESS && acquired == VK_SUBOPTIMAL_KHR)
+                {
+                    present_result = VK_SUBOPTIMAL_KHR;
+                }
+            }
+            else
             {
                 const std::scoped_lock guard(*queue_lock);
                 present_result = native_present(native_queue, &info);
+                presented_natively = true;
             }
             device_in_use.unlock();
             return present_result;
@@ -7252,17 +7945,26 @@ namespace sogen
         {
             if (const auto presented = this->impl_->swapchains.find(swapchain); presented != this->impl_->swapchains.end())
             {
-                (queued ? presented->second.presenting : presented->second.spare_present_fences).push_back(present_fence);
+                (queued && presented_natively ? presented->second.presenting : presented->second.spare_present_fences)
+                    .push_back(present_fence);
             }
             else if (const auto device_it = this->impl_->devices.find(present_device); device_it != this->impl_->devices.end())
             {
                 const auto& dev = device_it->second;
-                if (const VkResult waited = dev.wait_for_fences(dev.handle, 1, &present_fence, VK_TRUE, UINT64_MAX);
-                    waited == VK_SUCCESS || waited == VK_ERROR_DEVICE_LOST)
+                const VkResult waited =
+                    presented_natively ? dev.wait_for_fences(dev.handle, 1, &present_fence, VK_TRUE, UINT64_MAX) : VK_SUCCESS;
+                if (waited == VK_SUCCESS || waited == VK_ERROR_DEVICE_LOST)
                 {
                     dev.destroy_fence(dev.handle, present_fence, nullptr);
                 }
             }
+        }
+
+        if (const auto presented = this->impl_->swapchains.find(swapchain);
+            presented != this->impl_->swapchains.end() && presented->second.proxy)
+        {
+            presented->second.proxy->copy_submitted[image_index] = copy_submitted;
+            presented->second.proxy->lost |= native_image_stranded;
         }
 
         if (queued)
@@ -7999,6 +8701,140 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    namespace
+    {
+        // Expects a description create_render_pass validated.
+        VkResult create_native_render_pass(const PFN_vkCreateRenderPass2 create2, const PFN_vkCreateRenderPass create,
+                                           const VkDevice device, const vulkan_host::render_pass_description& description,
+                                           VkRenderPass& out_render_pass)
+        {
+            if (!create2)
+            {
+                return create_legacy_render_pass(create, device, description, out_render_pass);
+            }
+
+            const auto attachment_count = static_cast<uint32_t>(description.attachments.size());
+            const auto subpass_count = static_cast<uint32_t>(description.subpasses.size());
+
+            std::vector<VkAttachmentDescription2> attachments(attachment_count);
+            std::vector<VkAttachmentDescriptionStencilLayout> stencil_layouts(attachment_count);
+            for (uint32_t i = 0; i < attachment_count; ++i)
+            {
+                const auto& a = description.attachments[i];
+                auto& out = attachments[i];
+                out.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
+                out.flags = a.flags;
+                out.format = static_cast<VkFormat>(a.format);
+                out.samples = static_cast<VkSampleCountFlagBits>(a.samples);
+                out.loadOp = static_cast<VkAttachmentLoadOp>(a.load_op);
+                out.storeOp = static_cast<VkAttachmentStoreOp>(a.store_op);
+                out.stencilLoadOp = static_cast<VkAttachmentLoadOp>(a.stencil_load_op);
+                out.stencilStoreOp = static_cast<VkAttachmentStoreOp>(a.stencil_store_op);
+                out.initialLayout = translate_layout(a.initial_layout);
+                out.finalLayout = translate_layout(a.final_layout);
+                if (a.has_stencil_layouts)
+                {
+                    stencil_layouts[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_STENCIL_LAYOUT;
+                    stencil_layouts[i].stencilInitialLayout = translate_layout(a.stencil_initial_layout);
+                    stencil_layouts[i].stencilFinalLayout = translate_layout(a.stencil_final_layout);
+                    out.pNext = &stencil_layouts[i];
+                }
+            }
+
+            std::vector<VkAttachmentReference2> references(description.references.size());
+            std::vector<VkAttachmentReferenceStencilLayout> reference_stencil_layouts(description.references.size());
+            for (size_t i = 0; i < references.size(); ++i)
+            {
+                const auto& r = description.references[i];
+                references[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
+                references[i].attachment = r.attachment;
+                references[i].layout = translate_layout(r.layout);
+                references[i].aspectMask = r.aspect_mask;
+                if (r.stencil_layout != VK_IMAGE_LAYOUT_UNDEFINED)
+                {
+                    reference_stencil_layouts[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_STENCIL_LAYOUT;
+                    reference_stencil_layouts[i].stencilLayout = translate_layout(r.stencil_layout);
+                    references[i].pNext = &reference_stencil_layouts[i];
+                }
+            }
+
+            std::vector<VkSubpassDescription2> subpasses(subpass_count);
+            std::vector<VkSubpassDescriptionDepthStencilResolve> resolves(subpass_count);
+            size_t next_reference = 0;
+            size_t next_preserve = 0;
+            const auto take = [](const auto& items, size_t& offset, const size_t count) {
+                const auto* taken = count ? items.data() + offset : nullptr;
+                offset += count;
+                return taken;
+            };
+            for (uint32_t i = 0; i < subpass_count; ++i)
+            {
+                const auto& sp = description.subpasses[i];
+                auto& out = subpasses[i];
+                out.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
+                out.flags = sp.flags;
+                out.pipelineBindPoint = static_cast<VkPipelineBindPoint>(sp.bind_point);
+                out.viewMask = sp.view_mask;
+                out.inputAttachmentCount = sp.input_count;
+                out.pInputAttachments = take(references, next_reference, sp.input_count);
+                out.colorAttachmentCount = sp.color_count;
+                out.pColorAttachments = take(references, next_reference, sp.color_count);
+                out.pResolveAttachments = sp.has_color_resolve ? take(references, next_reference, sp.color_count) : nullptr;
+                out.pDepthStencilAttachment = sp.has_depth_stencil ? take(references, next_reference, 1) : nullptr;
+                if (sp.has_depth_stencil_resolve)
+                {
+                    resolves[i].sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
+                    resolves[i].depthResolveMode = static_cast<VkResolveModeFlagBits>(sp.depth_resolve_mode);
+                    resolves[i].stencilResolveMode = static_cast<VkResolveModeFlagBits>(sp.stencil_resolve_mode);
+                    resolves[i].pDepthStencilResolveAttachment = take(references, next_reference, 1);
+                    out.pNext = &resolves[i];
+                }
+                out.preserveAttachmentCount = sp.preserve_count;
+                out.pPreserveAttachments = take(description.preserves, next_preserve, sp.preserve_count);
+            }
+
+            std::vector<VkSubpassDependency2> dependencies(description.dependencies.size());
+            std::vector<VkMemoryBarrier2> barriers(description.dependencies.size());
+            for (size_t i = 0; i < dependencies.size(); ++i)
+            {
+                const auto& d = description.dependencies[i];
+                auto& out = dependencies[i];
+                out.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+                if (d.has_memory_barrier2)
+                {
+                    barriers[i].sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+                    barriers[i].srcStageMask = d.src_stage_mask2;
+                    barriers[i].dstStageMask = d.dst_stage_mask2;
+                    barriers[i].srcAccessMask = d.src_access_mask2;
+                    barriers[i].dstAccessMask = d.dst_access_mask2;
+                    out.pNext = &barriers[i];
+                }
+                out.srcSubpass = d.src_subpass;
+                out.dstSubpass = d.dst_subpass;
+                out.srcStageMask = d.src_stage_mask;
+                out.dstStageMask = d.dst_stage_mask;
+                out.srcAccessMask = d.src_access_mask;
+                out.dstAccessMask = d.dst_access_mask;
+                out.dependencyFlags = d.flags;
+                out.viewOffset = d.view_offset;
+            }
+
+            VkRenderPassCreateInfo2 info{};
+            info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
+            info.flags = description.flags;
+            info.attachmentCount = attachment_count;
+            info.pAttachments = attachments.data();
+            info.subpassCount = subpass_count;
+            info.pSubpasses = subpasses.data();
+            info.dependencyCount = static_cast<uint32_t>(dependencies.size());
+            info.pDependencies = dependencies.data();
+            info.correlatedViewMaskCount = static_cast<uint32_t>(description.correlated_view_masks.size());
+            info.pCorrelatedViewMasks = description.correlated_view_masks.data();
+
+            return create2(device, &info, nullptr, &out_render_pass);
+        }
+    }
+
     int32_t vulkan_host::create_render_pass(uint64_t device, const render_pass_description& description, uint64_t& out_render_pass)
     {
         out_render_pass = 0;
@@ -8042,130 +8878,9 @@ namespace sogen
             return VK_SUCCESS;
         };
 
-        if (!dev->second.create_render_pass2)
-        {
-            VkRenderPass render_pass{};
-            const VkResult result = create_legacy_render_pass(dev->second.create_render_pass, dev->second.handle, description, render_pass);
-            return result == VK_SUCCESS ? register_render_pass(render_pass) : result;
-        }
-
-        std::vector<VkAttachmentDescription2> attachments(attachment_count);
-        std::vector<VkAttachmentDescriptionStencilLayout> stencil_layouts(attachment_count);
-        for (uint32_t i = 0; i < attachment_count; ++i)
-        {
-            const auto& a = description.attachments[i];
-            auto& out = attachments[i];
-            out.sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2;
-            out.flags = a.flags;
-            out.format = static_cast<VkFormat>(a.format);
-            out.samples = static_cast<VkSampleCountFlagBits>(a.samples);
-            out.loadOp = static_cast<VkAttachmentLoadOp>(a.load_op);
-            out.storeOp = static_cast<VkAttachmentStoreOp>(a.store_op);
-            out.stencilLoadOp = static_cast<VkAttachmentLoadOp>(a.stencil_load_op);
-            out.stencilStoreOp = static_cast<VkAttachmentStoreOp>(a.stencil_store_op);
-            out.initialLayout = translate_layout(a.initial_layout);
-            out.finalLayout = translate_layout(a.final_layout);
-            if (a.has_stencil_layouts)
-            {
-                stencil_layouts[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_STENCIL_LAYOUT;
-                stencil_layouts[i].stencilInitialLayout = translate_layout(a.stencil_initial_layout);
-                stencil_layouts[i].stencilFinalLayout = translate_layout(a.stencil_final_layout);
-                out.pNext = &stencil_layouts[i];
-            }
-        }
-
-        std::vector<VkAttachmentReference2> references(description.references.size());
-        std::vector<VkAttachmentReferenceStencilLayout> reference_stencil_layouts(description.references.size());
-        for (size_t i = 0; i < references.size(); ++i)
-        {
-            const auto& r = description.references[i];
-            references[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2;
-            references[i].attachment = r.attachment;
-            references[i].layout = translate_layout(r.layout);
-            references[i].aspectMask = r.aspect_mask;
-            if (r.stencil_layout != VK_IMAGE_LAYOUT_UNDEFINED)
-            {
-                reference_stencil_layouts[i].sType = VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_STENCIL_LAYOUT;
-                reference_stencil_layouts[i].stencilLayout = translate_layout(r.stencil_layout);
-                references[i].pNext = &reference_stencil_layouts[i];
-            }
-        }
-
-        std::vector<VkSubpassDescription2> subpasses(subpass_count);
-        std::vector<VkSubpassDescriptionDepthStencilResolve> resolves(subpass_count);
-        size_t next_reference = 0;
-        size_t next_preserve = 0;
-        const auto take = [](const auto& items, size_t& offset, const size_t count) {
-            const auto* taken = count ? items.data() + offset : nullptr;
-            offset += count;
-            return taken;
-        };
-        for (uint32_t i = 0; i < subpass_count; ++i)
-        {
-            const auto& sp = description.subpasses[i];
-            auto& out = subpasses[i];
-            out.sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2;
-            out.flags = sp.flags;
-            out.pipelineBindPoint = static_cast<VkPipelineBindPoint>(sp.bind_point);
-            out.viewMask = sp.view_mask;
-            out.inputAttachmentCount = sp.input_count;
-            out.pInputAttachments = take(references, next_reference, sp.input_count);
-            out.colorAttachmentCount = sp.color_count;
-            out.pColorAttachments = take(references, next_reference, sp.color_count);
-            out.pResolveAttachments = sp.has_color_resolve ? take(references, next_reference, sp.color_count) : nullptr;
-            out.pDepthStencilAttachment = sp.has_depth_stencil ? take(references, next_reference, 1) : nullptr;
-            if (sp.has_depth_stencil_resolve)
-            {
-                resolves[i].sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
-                resolves[i].depthResolveMode = static_cast<VkResolveModeFlagBits>(sp.depth_resolve_mode);
-                resolves[i].stencilResolveMode = static_cast<VkResolveModeFlagBits>(sp.stencil_resolve_mode);
-                resolves[i].pDepthStencilResolveAttachment = take(references, next_reference, 1);
-                out.pNext = &resolves[i];
-            }
-            out.preserveAttachmentCount = sp.preserve_count;
-            out.pPreserveAttachments = take(description.preserves, next_preserve, sp.preserve_count);
-        }
-
-        std::vector<VkSubpassDependency2> dependencies(description.dependencies.size());
-        std::vector<VkMemoryBarrier2> barriers(description.dependencies.size());
-        for (size_t i = 0; i < dependencies.size(); ++i)
-        {
-            const auto& d = description.dependencies[i];
-            auto& out = dependencies[i];
-            out.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
-            if (d.has_memory_barrier2)
-            {
-                barriers[i].sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
-                barriers[i].srcStageMask = d.src_stage_mask2;
-                barriers[i].dstStageMask = d.dst_stage_mask2;
-                barriers[i].srcAccessMask = d.src_access_mask2;
-                barriers[i].dstAccessMask = d.dst_access_mask2;
-                out.pNext = &barriers[i];
-            }
-            out.srcSubpass = d.src_subpass;
-            out.dstSubpass = d.dst_subpass;
-            out.srcStageMask = d.src_stage_mask;
-            out.dstStageMask = d.dst_stage_mask;
-            out.srcAccessMask = d.src_access_mask;
-            out.dstAccessMask = d.dst_access_mask;
-            out.dependencyFlags = d.flags;
-            out.viewOffset = d.view_offset;
-        }
-
-        VkRenderPassCreateInfo2 info{};
-        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2;
-        info.flags = description.flags;
-        info.attachmentCount = attachment_count;
-        info.pAttachments = attachments.data();
-        info.subpassCount = subpass_count;
-        info.pSubpasses = subpasses.data();
-        info.dependencyCount = static_cast<uint32_t>(dependencies.size());
-        info.pDependencies = dependencies.data();
-        info.correlatedViewMaskCount = static_cast<uint32_t>(description.correlated_view_masks.size());
-        info.pCorrelatedViewMasks = description.correlated_view_masks.data();
-
         VkRenderPass render_pass{};
-        const VkResult result = dev->second.create_render_pass2(dev->second.handle, &info, nullptr, &render_pass);
+        const VkResult result = create_native_render_pass(dev->second.create_render_pass2, dev->second.create_render_pass,
+                                                          dev->second.handle, description, render_pass);
         return result == VK_SUCCESS ? register_render_pass(render_pass) : result;
     }
 
@@ -8180,6 +8895,10 @@ namespace sogen
         if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_render_pass)
         {
             dev->second.destroy_render_pass(dev->second.handle, it->second.handle, nullptr);
+            for (const auto& [proxies, variant] : it->second.proxy_variants)
+            {
+                dev->second.destroy_render_pass(dev->second.handle, variant, nullptr);
+            }
         }
         this->impl_->render_passes.erase(it);
     }
@@ -9447,14 +10166,50 @@ namespace sogen
 
         std::vector<VkImageView> view_handles{};
         view_handles.reserve(views.size());
-        for (const uint64_t view_id : views)
+        std::vector<bool> proxies(views.size(), false);
+        for (size_t i = 0; i < views.size(); ++i)
         {
-            const auto view = this->impl_->image_views.find(view_id);
+            const auto view = this->impl_->image_views.find(views[i]);
             if (view == this->impl_->image_views.end() || view->second.device_id != cb->second.device_id)
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             view_handles.push_back(view->second.handle);
+
+            const auto image = this->impl_->images.find(view->second.create.image);
+            const auto& attachment = description.attachments[i];
+            proxies[i] = image != this->impl_->images.end() && image->second.swapchain_proxy &&
+                         (attachment.initial_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR ||
+                          attachment.final_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        }
+
+        VkRenderPass native_render_pass = rp->second.handle;
+        if (std::ranges::any_of(proxies, [](const bool proxy) { return proxy; }))
+        {
+            auto& variant = rp->second.proxy_variants[proxies];
+            if (!variant)
+            {
+                auto proxied = description;
+                for (size_t i = 0; i < proxies.size(); ++i)
+                {
+                    auto& attachment = proxied.attachments[i];
+                    for (auto* layout : {&attachment.initial_layout, &attachment.final_layout})
+                    {
+                        if (proxies[i] && *layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+                        {
+                            *layout = VK_IMAGE_LAYOUT_GENERAL;
+                        }
+                    }
+                }
+                if (const VkResult created = create_native_render_pass(dev->second.create_render_pass2, dev->second.create_render_pass,
+                                                                       dev->second.handle, proxied, variant);
+                    created != VK_SUCCESS)
+                {
+                    rp->second.proxy_variants.erase(proxies);
+                    return created;
+                }
+            }
+            native_render_pass = variant;
         }
 
         std::vector<VkClearValue> clears(clear_values.size());
@@ -9472,7 +10227,7 @@ namespace sogen
         VkRenderPassBeginInfo info{};
         info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         info.pNext = imageless ? &attachment_info : nullptr;
-        info.renderPass = rp->second.handle;
+        info.renderPass = native_render_pass;
         info.framebuffer = fb->second.handle;
         info.renderArea.offset = {.x = area.x, .y = area.y};
         info.renderArea.extent = {.width = area.width, .height = area.height};
@@ -10424,7 +11179,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 16;
+        constexpr uint32_t snapshot_version = 17;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -11846,6 +12601,7 @@ namespace sogen
             buffer.write(swapchain.device_id);
             buffer.write(swapchain.surface_id);
             buffer.write(swapchain.create);
+            buffer.write(swapchain.proxy.has_value());
             buffer.write_vector(swapchain.image_ids);
             for (const auto image : swapchain.image_ids)
             {
@@ -12508,6 +13264,7 @@ namespace sogen
             const auto device = buffer.read<uint64_t>();
             const auto surface = buffer.read<uint64_t>();
             const auto create = buffer.read<impl::swapchain_params>();
+            const auto proxied = buffer.read<bool>();
             const auto image_ids = buffer.read_vector<uint64_t>();
 
             uint64_t swapchain{};
@@ -12523,6 +13280,10 @@ namespace sogen
                 throw std::runtime_error("The re-created Vulkan swapchain has a different number of images");
             }
             expect_restored(result, swapchain, id, "swapchain");
+            if (impl.swapchains.at(swapchain).proxy.has_value() != proxied)
+            {
+                throw std::runtime_error("The host surface no longer presents the Vulkan swapchain the same way");
+            }
 
             for (const auto image : image_ids)
             {

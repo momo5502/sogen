@@ -2491,7 +2491,8 @@ namespace sogen
 
                 uint32_t index = 0;
                 const int32_t result =
-                    this->vulkan_.acquire_next_image(request.swapchain, request.timeout, request.semaphore, request.fence, index);
+                    this->vulkan_.acquire_next_image(request.swapchain, request.timeout, request.semaphore, request.fence, index,
+                                                     [&](const std::function<void()>& wait) { win_emu.run_without_kernel_lock(wait); });
                 return write_output(win_emu, context, gpu_bridge::acquire_next_image_response{.vk_result = result, .image_index = index});
             }
 
