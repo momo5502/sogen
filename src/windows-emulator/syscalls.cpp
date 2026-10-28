@@ -785,7 +785,8 @@ namespace sogen
         BOOL handle_NtUserSetProcessDpiAwarenessContext();
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& c, uint32_t code, uint32_t map_type, uint32_t keyboard_id,
                                               uint64_t keyboard_layout);
-        NTSTATUS handle_NtUserToUnicodeEx();
+        int32_t handle_NtUserToUnicodeEx(const syscall_context& c, uint32_t virtual_key, uint32_t scan_code, emulator_pointer key_state,
+                                         emulator_pointer buffer, int32_t buffer_size, uint32_t flags, uint64_t keyboard_layout);
         uint64_t handle_NtUserSetKeyboardState();
         uint64_t handle_NtUserAttachThreadInput();
         BOOL handle_NtUserRegisterTouchHitTestingWindow();

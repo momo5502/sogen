@@ -7177,6 +7177,76 @@ namespace sogen
             return TRUE;
         }
 
+        // The US layout, which the rest of the keyboard emulation assumes as well.
+        char16_t us_layout_character(const uint32_t virtual_key, const bool shift, const bool caps_lock)
+        {
+            if (virtual_key >= 'A' && virtual_key <= 'Z')
+            {
+                return static_cast<char16_t>(shift != caps_lock ? virtual_key : virtual_key - 'A' + 'a');
+            }
+
+            if (virtual_key >= '0' && virtual_key <= '9')
+            {
+                constexpr std::u16string_view shifted_digits = u")!@#$%^&*(";
+                return shift ? shifted_digits[virtual_key - '0'] : static_cast<char16_t>(virtual_key);
+            }
+
+            if (virtual_key >= VK_NUMPAD0 && virtual_key <= VK_NUMPAD9)
+            {
+                return static_cast<char16_t>(u'0' + (virtual_key - VK_NUMPAD0));
+            }
+
+            const auto pick = [shift](const char16_t normal, const char16_t shifted) { return shift ? shifted : normal; };
+
+            switch (virtual_key)
+            {
+            case VK_SPACE:
+                return u' ';
+            case VK_RETURN:
+                return u'\r';
+            case VK_BACK:
+                return u'\b';
+            case VK_TAB:
+                return u'\t';
+            case VK_ESCAPE:
+                return 0x1B;
+            case VK_MULTIPLY:
+                return u'*';
+            case VK_ADD:
+                return u'+';
+            case VK_SUBTRACT:
+                return u'-';
+            case VK_DIVIDE:
+                return u'/';
+            case VK_DECIMAL:
+                return u'.';
+            case VK_OEM_1:
+                return pick(u';', u':');
+            case VK_OEM_PLUS:
+                return pick(u'=', u'+');
+            case VK_OEM_COMMA:
+                return pick(u',', u'<');
+            case VK_OEM_MINUS:
+                return pick(u'-', u'_');
+            case VK_OEM_PERIOD:
+                return pick(u'.', u'>');
+            case VK_OEM_2:
+                return pick(u'/', u'?');
+            case VK_OEM_3:
+                return pick(u'`', u'~');
+            case VK_OEM_4:
+                return pick(u'[', u'{');
+            case VK_OEM_5:
+                return pick(u'\\', u'|');
+            case VK_OEM_6:
+                return pick(u']', u'}');
+            case VK_OEM_7:
+                return pick(u'\'', u'"');
+            default:
+                return 0;
+            }
+        }
+
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& /*c*/, const uint32_t code, const uint32_t map_type,
                                               const uint32_t /*keyboard_id*/, const uint64_t /*keyboard_layout*/)
         {
@@ -7317,38 +7387,7 @@ namespace sogen
 
             if (map_type == 2)
             {
-                if ((code >= '0' && code <= '9') || (code >= 'A' && code <= 'Z') || code == VK_SPACE)
-                {
-                    return code;
-                }
-
-                switch (code)
-                {
-                case VK_OEM_1:
-                    return ';';
-                case VK_OEM_PLUS:
-                    return '=';
-                case VK_OEM_COMMA:
-                    return ',';
-                case VK_OEM_MINUS:
-                    return '-';
-                case VK_OEM_PERIOD:
-                    return '.';
-                case VK_OEM_2:
-                    return '/';
-                case VK_OEM_3:
-                    return '`';
-                case VK_OEM_4:
-                    return '[';
-                case VK_OEM_5:
-                    return '\\';
-                case VK_OEM_6:
-                    return ']';
-                case VK_OEM_7:
-                    return '\'';
-                default:
-                    return 0;
-                }
+                return us_layout_character(code, false, true);
             }
 
             if (map_type == 1 || map_type == 3)
@@ -7403,9 +7442,60 @@ namespace sogen
             return 0;
         }
 
-        NTSTATUS handle_NtUserToUnicodeEx()
+        int32_t handle_NtUserToUnicodeEx(const syscall_context& c, const uint32_t virtual_key, const uint32_t scan_code,
+                                         const emulator_pointer key_state, const emulator_pointer buffer, const int32_t buffer_size,
+                                         const uint32_t flags, const uint64_t /*keyboard_layout*/)
         {
-            return 0;
+            constexpr uint32_t key_up = 0x8000;
+            constexpr uint32_t translate_key_up = 0x2;
+            const auto ignored_key_up = (scan_code & key_up) != 0 && (flags & translate_key_up) == 0;
+            if (buffer == 0 || buffer_size <= 0 || ignored_key_up || virtual_key >= 0x100)
+            {
+                return 0;
+            }
+
+            std::array<uint8_t, 256> keys{};
+            if (key_state != 0 && !c.win_emu.memory.try_read_memory(key_state, keys.data(), keys.size()))
+            {
+                return 0;
+            }
+
+            const auto down = [&keys](const uint32_t key) { return (keys[key] & 0x80) != 0; };
+
+            char16_t character = 0;
+            if (down(VK_CONTROL) && !down(VK_MENU))
+            {
+                if (virtual_key >= 'A' && virtual_key <= 'Z')
+                {
+                    character = static_cast<char16_t>(virtual_key - 'A' + 1);
+                }
+                else if (virtual_key == VK_BACK)
+                {
+                    character = 0x7F;
+                }
+                else if (virtual_key == VK_RETURN)
+                {
+                    character = u'\n';
+                }
+            }
+            else if (!down(VK_CONTROL))
+            {
+                character = us_layout_character(virtual_key, down(VK_SHIFT), (keys[VK_CAPITAL] & 0x01) != 0);
+            }
+
+            if (character == 0)
+            {
+                return 0;
+            }
+
+            const std::array<char16_t, 2> text{character, u'\0'};
+            const auto length = buffer_size > 1 ? text.size() : 1;
+            if (!c.win_emu.memory.try_write_memory(buffer, text.data(), length * sizeof(char16_t)))
+            {
+                return 0;
+            }
+
+            return 1;
         }
 
         uint64_t handle_NtUserSetKeyboardState()
