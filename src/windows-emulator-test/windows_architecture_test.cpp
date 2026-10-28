@@ -751,6 +751,10 @@ namespace sogen::test
         EXPECT_EQ(this->modules_.map_module(differently_cased, this->log_), mapped);
         EXPECT_EQ(this->modules_.get_module_load_count_by_path(differently_cased), 1u);
 
+        const windows_path dotted{"C:\\game\\sub\\..\\game.dll"};
+        EXPECT_EQ(this->modules_.map_module(dotted, this->log_), mapped);
+        EXPECT_EQ(this->modules_.get_module_load_count_by_path(dotted), 1u);
+
         EXPECT_EQ(this->modules_.map_module(windows_path{"C:\\game\\missing.dll"}, this->log_), nullptr);
     }
 

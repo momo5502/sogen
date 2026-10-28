@@ -604,7 +604,7 @@ namespace sogen
 
     std::filesystem::path module_manager::module_identity(const windows_path& path)
     {
-        return std::filesystem::path{utils::string::to_lower(path.to_portable_path().u16string())};
+        return std::filesystem::path{utils::string::to_lower(path.lexically_normal().to_portable_path().u16string())};
     }
 
     std::optional<uint64_t> module_manager::get_module_load_count_by_path(const windows_path& path)
