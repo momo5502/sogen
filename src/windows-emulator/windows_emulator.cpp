@@ -581,7 +581,7 @@ namespace sogen
                 return false;
             }
 
-            if (thread.registers_in_transit)
+            if (thread.registers_in_transit || thread.pending_register_accesses != 0)
             {
                 return false;
             }
@@ -1122,15 +1122,37 @@ namespace sogen
         incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
     }
 
-    void windows_emulator::wait_for_register_transfer(const emulator_thread& thread)
+    void windows_emulator::wait_for_thread_registers(vcpu_context& vcpu, emulator_thread& thread)
     {
         this->kernel_lock_.assert_held();
 
-        while (thread.registers_in_transit)
+        const auto loaded_elsewhere = [&]() -> vcpu_context* {
+            auto* owner = find_vcpu_running_thread(*this, thread);
+            return owner && owner != &vcpu && !owner->active_thread_saved ? owner : nullptr;
+        };
+
+        if (!thread.registers_in_transit && !loaded_elsewhere())
         {
-            this->kernel_lock_.unlock();
-            std::this_thread::yield();
-            this->kernel_lock_.lock();
+            return;
+        }
+
+        vcpu.active_thread_saved = true;
+        ++thread.pending_register_accesses;
+        const auto _ = utils::finally([&] {
+            vcpu.active_thread_saved = false;
+            --thread.pending_register_accesses;
+            this->wake_idle_vcpu();
+        });
+
+        while (!this->should_stop && (thread.registers_in_transit || loaded_elsewhere()))
+        {
+            if (auto* owner = loaded_elsewhere())
+            {
+                owner->switch_thread = true;
+                owner->cpu.stop();
+            }
+
+            this->run_without_kernel_lock([] { std::this_thread::yield(); });
         }
     }
 

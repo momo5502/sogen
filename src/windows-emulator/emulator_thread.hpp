@@ -400,6 +400,9 @@ namespace sogen
         // Set while a vCPU moves this thread's registers in or out with the kernel lock released. The thread must not
         // be scheduled, deleted or have its registers accessed until the transfer is done.
         bool registers_in_transit{false};
+        // Counts syscalls on other vCPUs waiting in wait_for_thread_registers for this thread. The thread must not be
+        // loaded onto a vCPU while it is non-zero.
+        uint32_t pending_register_accesses{0};
         bool alerted{false};
         uint32_t create_flags{0};
         uint32_t suspended{0};

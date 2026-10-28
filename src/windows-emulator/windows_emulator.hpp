@@ -166,6 +166,8 @@ namespace sogen
         guest_cpu& cpu;
         emulator_thread* active_thread{};
         std::atomic_bool switch_thread{false};
+        // Set while this vCPU waits in wait_for_thread_registers. Its active thread's registers are saved meanwhile.
+        bool active_thread_saved{false};
 
         emulator_thread& thread() const
         {
@@ -626,9 +628,11 @@ namespace sogen
         // meanwhile. Requires the kernel lock, and incoming must already be the vCPU's active thread.
         void transfer_thread_registers(vcpu_context& vcpu, emulator_thread* outgoing, emulator_thread& incoming);
 
-        // Blocks until no vCPU is transferring the thread's registers. Requires the kernel lock, which it releases
-        // while waiting.
-        void wait_for_register_transfer(const emulator_thread& thread);
+        // Blocks until the thread's saved registers are current: no vCPU is transferring them and no other vCPU has the
+        // thread loaded. A vCPU that has it loaded is asked to switch away, which saves them. The calling vCPU's active
+        // thread must already be saved, so that two vCPUs accessing each other's thread do not wait for each other.
+        // Requires the kernel lock, which it releases while waiting.
+        void wait_for_thread_registers(vcpu_context& vcpu, emulator_thread& thread);
 
       private:
         void set_foreground_window(hwnd window);
