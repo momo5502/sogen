@@ -13,9 +13,7 @@ namespace sogen
         {
             if (mutant_handle.value.type != handle_types::mutant)
             {
-                c.win_emu.log.error("Bad handle type for NtReleaseMutant\n");
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
+                return STATUS_OBJECT_TYPE_MISMATCH;
             }
 
             auto* mutant = c.proc.mutants.get(mutant_handle);
