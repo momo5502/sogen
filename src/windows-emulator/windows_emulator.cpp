@@ -2810,8 +2810,11 @@ namespace sogen
             clip = ui_rect{.left = rect->left, .top = rect->top, .right = rect->right, .bottom = rect->bottom};
         }
 
+        // SDL's relative mode pins the cursor to a pixel in the window's center but may leave it visible. Only raw motion
+        // reaches the guest then, just as with a hidden cursor.
         const bool hidden = this->process.cursor_show_count < 0 || !this->process.cursor_shape_visible;
-        this->ui().set_cursor_clip(this->process.foreground_window, clip, clip.has_value() && hidden);
+        const bool pinned = clip && clip->right - clip->left <= 2 && clip->bottom - clip->top <= 2;
+        this->ui().set_cursor_clip(this->process.foreground_window, clip, clip.has_value() && (hidden || pinned));
     }
 
     void windows_emulator::save_snapshot()
