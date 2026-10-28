@@ -655,6 +655,11 @@ namespace sogen
                 return STATUS_INVALID_INFO_CLASS;
             }
 
+            if (info_class == FileCompressionInformation && length < sizeof(FILE_COMPRESSION_INFORMATION))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
             auto block = io_status_block.try_read();
             if (!block.has_value())
             {
@@ -708,7 +713,10 @@ namespace sogen
             const auto* f = c.proc.files.get(file_handle);
             if (!f)
             {
-                return ret(STATUS_INVALID_HANDLE);
+                const auto object_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+                auto* store = c.proc.get_handle_store(object_handle);
+                const auto is_other_object = object_handle.value.type != handle_types::device && store && store->get_object(object_handle);
+                return ret(is_other_object ? STATUS_OBJECT_TYPE_MISMATCH : STATUS_INVALID_HANDLE);
             }
 
             if (info_class == FileAttributeTagInformation)
@@ -774,6 +782,18 @@ namespace sogen
 
                 c.emu.write_memory(file_information, FILE_CASE_SENSITIVE_INFORMATION{});
                 return ret(STATUS_SUCCESS, required_length);
+            }
+
+            if (info_class == FileCompressionInformation)
+            {
+                FILE_COMPRESSION_INFORMATION info{};
+                if (f->handle)
+                {
+                    info.CompressedFileSize.QuadPart = f->handle.size();
+                }
+
+                c.emu.write_memory(file_information, info);
+                return ret(STATUS_SUCCESS, sizeof(info));
             }
 
             if (info_class == FileIdInformation)
