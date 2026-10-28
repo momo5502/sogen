@@ -29,10 +29,11 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            for (const auto& semaphore : c.proc.semaphores)
+            for (auto& semaphore : c.proc.semaphores)
             {
                 if (semaphore.second.name == name)
                 {
+                    ++semaphore.second.ref_count;
                     semaphore_handle.write(c.proc.semaphores.make_handle(semaphore.first));
                     return STATUS_SUCCESS;
                 }
