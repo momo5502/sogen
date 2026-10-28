@@ -910,6 +910,71 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtCreateThreadStateChange(const syscall_context& c, const emulator_object<handle> state_change_handle,
+                                                  const ACCESS_MASK /*desired_access*/, const uint64_t /*object_attributes*/,
+                                                  const handle thread_handle, const uint64_t /*reserved*/)
+        {
+            const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            if (!thread)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            thread_state_change state{};
+            state.thread_id = thread->id;
+            state_change_handle.write(c.proc.thread_state_changes.store(std::move(state)));
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtChangeThreadState(const syscall_context& c, const handle state_change_handle, const handle thread_handle,
+                                            const uint32_t state_change_type, const uint64_t /*extended_information*/,
+                                            const uint64_t /*extended_information_length*/, const uint64_t /*reserved*/)
+        {
+            constexpr uint32_t thread_state_change_suspend = 0;
+            constexpr uint32_t thread_state_change_resume = 1;
+
+            auto* state = c.proc.thread_state_changes.get(state_change_handle);
+            const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            if (!state || !thread)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            if (thread->id != state->thread_id)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const emulator_object<ULONG> no_previous_count{c.emu, 0};
+            if (state_change_type == thread_state_change_suspend)
+            {
+                const auto status = handle_NtSuspendThread(c, thread_handle, no_previous_count);
+                if (NT_SUCCESS(status))
+                {
+                    ++state->suspend_count;
+                }
+                return status;
+            }
+
+            if (state_change_type == thread_state_change_resume)
+            {
+                // A state-change object only resumes what it suspended itself.
+                if (state->suspend_count == 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto status = handle_NtResumeThread(c, thread_handle, no_previous_count);
+                if (NT_SUCCESS(status))
+                {
+                    --state->suspend_count;
+                }
+                return status;
+            }
+
+            return STATUS_INVALID_INFO_CLASS;
+        }
+
         NTSTATUS handle_NtContinueEx(const syscall_context& c, const uint64_t thread_context, const uint64_t continue_argument)
         {
             c.write_status = false;

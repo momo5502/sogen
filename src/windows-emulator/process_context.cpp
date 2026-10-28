@@ -856,6 +856,7 @@ namespace sogen
         buffer.write(this->wait_completion_packets);
         buffer.write(this->worker_factories);
         buffer.write(this->jobs);
+        buffer.write(this->thread_state_changes);
         buffer.write(this->ports);
         buffer.write(this->mutants);
         buffer.write(this->default_desktop);
@@ -980,6 +981,7 @@ namespace sogen
         buffer.read(this->wait_completion_packets);
         buffer.read(this->worker_factories);
         buffer.read(this->jobs);
+        buffer.read(this->thread_state_changes);
         buffer.read(this->ports);
         buffer.read(this->mutants);
         buffer.read(this->default_desktop);
@@ -1184,6 +1186,8 @@ namespace sogen
             return &worker_factories;
         case handle_types::job:
             return &jobs;
+        case handle_types::thread_state_change:
+            return &thread_state_changes;
         case handle_types::registry:
             return &registry_keys;
         case handle_types::mutant:
@@ -1530,7 +1534,7 @@ namespace sogen
             q.pop();
 
             std::vector<std::byte> file;
-            if (!utils::io::read_file(file_system.translate(system_root_path / knowndll_filename), &file))
+            if (!file_system.read_file(system_root_path / knowndll_filename, &file))
             {
                 continue;
             }

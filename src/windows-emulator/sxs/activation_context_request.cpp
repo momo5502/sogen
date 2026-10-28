@@ -134,7 +134,6 @@ namespace sogen::sxs
         }
         mapped_module executable{};
         executable.module_path = assembly_directory / windows_path(manifest_path.leaf());
-        executable.path = win_emu.file_sys.translate(executable.module_path);
         executable.machine = static_cast<uint16_t>(machine);
 
         const activation_context_source manifest{.contents = manifest_contents, .path = manifest_path};

@@ -227,6 +227,17 @@ namespace sogen
         return resolved->provider->open(resolved->relative, mode);
     }
 
+    open_result file_system::open_read(const windows_path& path) const
+    {
+        const auto resolved = this->resolve(path);
+        if (!resolved)
+        {
+            return {.status = STATUS_OBJECT_PATH_NOT_FOUND};
+        }
+
+        return resolved->provider->open(resolved->relative, u"rb");
+    }
+
     NTSTATUS file_system::create_directory(const windows_path& path)
     {
         const auto resolved = this->resolve(path);
@@ -317,6 +328,48 @@ namespace sogen
         }
 
         return resolved->provider->remove(resolved->relative);
+    }
+
+    bool file_system::read_file(const windows_path& path, std::vector<std::byte>* data) const
+    {
+        const auto input = this->open_read(path);
+        if (!input.file)
+        {
+            return false;
+        }
+
+        const auto size = input.file->size();
+        if (size < 0 || !input.file->seek(0, SEEK_SET))
+        {
+            return false;
+        }
+
+        data->resize(static_cast<size_t>(size));
+
+        size_t offset = 0;
+        while (offset < data->size())
+        {
+            const auto read = input.file->read(std::span{*data}.subspan(offset));
+            if (read == 0)
+            {
+                return false;
+            }
+
+            offset += read;
+        }
+
+        return true;
+    }
+
+    std::vector<std::byte> file_system::read_file(const windows_path& path) const
+    {
+        std::vector<std::byte> data{};
+        if (!this->read_file(path, &data))
+        {
+            return {};
+        }
+
+        return data;
     }
 
     std::filesystem::path file_system::translate(const windows_path& path) const

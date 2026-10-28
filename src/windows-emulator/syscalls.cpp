@@ -393,12 +393,12 @@ namespace sogen
         // syscalls/semaphore.cpp:
         NTSTATUS handle_NtOpenSemaphore(const syscall_context& c, emulator_object<handle> semaphore_handle, ACCESS_MASK /*desired_access*/,
                                         emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
-        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, ULONG release_count,
+        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, LONG release_count,
                                            emulator_object<LONG> previous_count);
         NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, emulator_object<handle> semaphore_handle,
                                           ACCESS_MASK /*desired_access*/,
-                                          emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG initial_count,
-                                          ULONG maximum_count);
+                                          emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, LONG initial_count,
+                                          LONG maximum_count);
 
         // syscalls/system.cpp:
         NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, uint32_t info_class, uint64_t system_information,
@@ -433,6 +433,12 @@ namespace sogen
         NTSTATUS handle_NtYieldExecution(const syscall_context& c);
         NTSTATUS handle_NtSetThreadExecutionState(const syscall_context& c, ULONG new_flags, emulator_object<ULONG> previous_flags);
         NTSTATUS handle_NtSuspendThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
+        NTSTATUS handle_NtCreateThreadStateChange(const syscall_context& c, emulator_object<handle> state_change_handle,
+                                                  ACCESS_MASK desired_access, uint64_t object_attributes, handle thread_handle,
+                                                  uint64_t reserved);
+        NTSTATUS handle_NtChangeThreadState(const syscall_context& c, handle state_change_handle, handle thread_handle,
+                                            uint32_t state_change_type, uint64_t extended_information, uint64_t extended_information_length,
+                                            uint64_t reserved);
         NTSTATUS handle_NtResumeThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
         NTSTATUS handle_NtContinue(const syscall_context& c, uint64_t thread_context, BOOLEAN raise_alert);
         NTSTATUS handle_NtContinueEx(const syscall_context& c, uint64_t thread_context, uint64_t continue_argument);
@@ -800,6 +806,7 @@ namespace sogen
         BOOL handle_NtUserSetImeHotKey();
         int16_t handle_NtUserVkKeyScanEx();
         BOOL handle_NtUserSetLayeredWindowAttributes();
+        BOOL handle_NtUserSetWindowFeedbackSetting();
         BOOL handle_NtUserUpdateClientRect(const syscall_context& c, hwnd window);
         int32_t handle_NtUserScrollWindowEx();
         BOOL handle_NtUserRedrawFrame(const syscall_context& c, hwnd window);
@@ -1830,6 +1837,8 @@ namespace sogen
         add_handler(NtQueryDefaultLocale);
         add_handler(NtSetTimerResolution);
         add_handler(NtSuspendThread);
+        add_handler(NtCreateThreadStateChange);
+        add_handler(NtChangeThreadState);
         add_handler(NtResumeThread);
         add_handler(NtClearEvent);
         add_handler(NtTraceControl);
@@ -2100,6 +2109,7 @@ namespace sogen
         add_handler(NtUserSetImeHotKey);
         add_handler(NtUserVkKeyScanEx);
         add_handler(NtUserSetLayeredWindowAttributes);
+        add_handler(NtUserSetWindowFeedbackSetting);
         add_handler(NtUserIsChildWindowDpiMessageEnabled);
 
 #undef add_handler

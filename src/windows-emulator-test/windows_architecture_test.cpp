@@ -5,6 +5,7 @@
 #include <memory_manager.hpp>
 #include <process_context.hpp>
 #include <module/module_mapping.hpp>
+#include <filesystem/mount_provider.hpp>
 #include <version/windows_version_manager.hpp>
 #include <logger.hpp>
 
@@ -590,6 +591,171 @@ namespace sogen::test
         EXPECT_FALSE(thread.message_wait_return_register.has_value());
         EXPECT_FALSE(thread.await_time.has_value());
         EXPECT_FALSE(thread.pending_status.has_value());
+    }
+
+    namespace
+    {
+        class memory_file final : public i_file
+        {
+          public:
+            explicit memory_file(std::vector<std::byte> data)
+                : data_(std::move(data))
+            {
+            }
+
+            size_t read(const std::span<std::byte> buffer) override
+            {
+                const auto count = std::min(buffer.size(), data_.size() - position_);
+                std::memcpy(buffer.data(), data_.data() + position_, count);
+                position_ += count;
+                return count;
+            }
+
+            size_t write(std::span<const std::byte>) override
+            {
+                return 0;
+            }
+
+            bool flush() override
+            {
+                return true;
+            }
+
+            bool seek(const int64_t offset, const int origin) override
+            {
+                const auto base = origin == SEEK_SET ? 0 : (origin == SEEK_CUR ? static_cast<int64_t>(position_) : size());
+                const auto target = base + offset;
+                if (target < 0 || target > size())
+                {
+                    return false;
+                }
+
+                position_ = static_cast<size_t>(target);
+                return true;
+            }
+
+            int64_t tell() override
+            {
+                return static_cast<int64_t>(position_);
+            }
+
+            int64_t size() override
+            {
+                return static_cast<int64_t>(data_.size());
+            }
+
+            bool resize(uint64_t) override
+            {
+                return false;
+            }
+
+            std::optional<struct compat_stat> stat() override
+            {
+                struct compat_stat result{};
+                result.st_mode = S_IFREG;
+                result.st_size = size();
+                return result;
+            }
+
+          private:
+            std::vector<std::byte> data_{};
+            size_t position_{};
+        };
+
+        class memory_provider final : public mount_provider
+        {
+          public:
+            explicit memory_provider(std::map<std::u16string, std::vector<std::byte>> files)
+                : files_(std::move(files))
+            {
+            }
+
+            std::optional<struct compat_stat> stat(const windows_path& path) const override
+            {
+                const auto file = files_.find(key(path));
+                if (file == files_.end())
+                {
+                    return std::nullopt;
+                }
+
+                struct compat_stat result{};
+                result.st_mode = S_IFREG;
+                result.st_size = static_cast<int64_t>(file->second.size());
+                return result;
+            }
+
+            std::vector<directory_entry> list(const windows_path&) const override
+            {
+                return {};
+            }
+
+            open_result open(const windows_path& path, const std::u16string&) override
+            {
+                const auto file = files_.find(key(path));
+                if (file == files_.end())
+                {
+                    return {.status = STATUS_OBJECT_NAME_NOT_FOUND};
+                }
+
+                return {.file = std::make_unique<memory_file>(file->second), .status = STATUS_SUCCESS};
+            }
+
+            NTSTATUS create_directory(const windows_path&) override
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+            NTSTATUS rename(const windows_path&, const windows_path&) override
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+            NTSTATUS remove(const windows_path&) override
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
+          private:
+            std::optional<std::filesystem::path> get_host_path(const windows_path&) const override
+            {
+                return std::nullopt;
+            }
+
+            static std::u16string key(const windows_path& path)
+            {
+                return utils::string::to_lower(path.u16string());
+            }
+
+            std::map<std::u16string, std::vector<std::byte>> files_{};
+        };
+    }
+
+    TYPED_TEST(WindowsArchitectureTest, ModulesLoadFromProvidersWithoutHostPaths)
+    {
+        constexpr auto machine = TypeParam::pe_machine;
+        this->file_sys_.mount(windows_path{"C:\\game"}, std::make_unique<memory_provider>(std::map<std::u16string, std::vector<std::byte>>{
+                                                            {u"game.dll", make_test_image<uint64_t>(machine)},
+                                                        }));
+
+        const windows_path path{"C:\\game\\game.dll"};
+        const auto detection = pe_architecture_detector::detect_from_file(this->file_sys_, path);
+        ASSERT_TRUE(detection.is_valid());
+        EXPECT_EQ(detection.machine, machine);
+
+        const auto* mapped = this->modules_.map_module(path, this->log_);
+        ASSERT_NE(mapped, nullptr);
+        EXPECT_EQ(mapped->module_path, path);
+        EXPECT_EQ(mapped->machine, static_cast<uint16_t>(machine));
+
+        const windows_path differently_cased{"C:\\GAME\\Game.DLL"};
+        EXPECT_EQ(this->modules_.map_module(differently_cased, this->log_), mapped);
+        EXPECT_EQ(this->modules_.get_module_load_count_by_path(differently_cased), 1u);
+
+        const windows_path dotted{"C:\\game\\sub\\..\\game.dll"};
+        EXPECT_EQ(this->modules_.map_module(dotted, this->log_), mapped);
+        EXPECT_EQ(this->modules_.get_module_load_count_by_path(dotted), 1u);
+
+        EXPECT_EQ(this->modules_.map_module(windows_path{"C:\\game\\missing.dll"}, this->log_), nullptr);
     }
 
     TYPED_TEST(WindowsArchitectureTest, WrongCpuArchitectureAndInvalidBootstrapAreRejected)

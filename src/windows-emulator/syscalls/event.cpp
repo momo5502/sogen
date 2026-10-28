@@ -84,7 +84,7 @@ namespace sogen
                 return STATUS_INVALID_INFO_CLASS;
             }
 
-            if (event_information_length < sizeof(EVENT_BASIC_INFORMATION))
+            if (event_information_length != sizeof(EVENT_BASIC_INFORMATION))
             {
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
@@ -130,6 +130,11 @@ namespace sogen
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                       const EVENT_TYPE event_type, const BOOLEAN initial_state)
         {
+            if (event_type != NotificationEvent && event_type != SynchronizationEvent)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
             std::u16string name{};
             if (object_attributes)
             {
@@ -217,7 +222,7 @@ namespace sogen
                 }
             }
 
-            return STATUS_NOT_FOUND;
+            return STATUS_OBJECT_NAME_NOT_FOUND;
         }
     }
 

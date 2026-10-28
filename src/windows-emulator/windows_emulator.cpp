@@ -790,7 +790,7 @@ namespace sogen
             file_sys.map(mount.guest_path, mount.host_path, mount.mode);
         }
 
-        const auto detection = pe_architecture_detector::detect_from_file(file_sys.translate(application));
+        const auto detection = pe_architecture_detector::detect_from_file(file_sys, application);
         if (!detection.is_valid())
         {
             throw std::runtime_error("Cannot determine the machine type of " + application.string() + ": " + detection.error_message);
@@ -938,7 +938,7 @@ namespace sogen
         const auto* win32u = this->mod_manager.win32u;
 
         const auto apiset_data =
-            apiset::obtain(this->file_sys.translate(this->version.get_system_root() / "System32" / "apisetschema.dll"));
+            apiset::obtain(this->file_sys.read_file(this->version.get_system_root() / "System32" / "apisetschema.dll"));
 
         this->process.setup(*this, this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
 

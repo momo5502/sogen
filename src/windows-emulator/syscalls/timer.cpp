@@ -19,6 +19,19 @@ namespace sogen
                 int64_t no_wake_tolerance;
             };
 
+            // TIMER_SET_COALESCABLE_TIMER_INFO, what SetWaitableTimerEx passes. The tolerable delay only allows Windows
+            // to coalesce expirations, so honouring the due time and period is enough.
+            struct timer_set_coalescable_timer_info
+            {
+                LARGE_INTEGER due_time;
+                uint64_t apc_routine;
+                uint64_t apc_context;
+                uint64_t wake_context;
+                ULONG period;
+                ULONG tolerable_delay;
+                uint64_t previous_state;
+            };
+
             std::pair<timer*, NTSTATUS> find_timer(const syscall_context& c, const handle timer_handle, const bool extended)
             {
                 const auto effective = c.proc.resolve_object_pseudo_handle(timer_handle, c.vcpu.active_thread);
@@ -257,10 +270,31 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtSetTimerEx(const syscall_context& /*c*/, handle /*timer_handle*/, uint32_t /*timer_set_info_class*/,
-                                     uint64_t /*timer_set_information*/, ULONG /*timer_set_information_length*/)
+        NTSTATUS handle_NtSetTimerEx(const syscall_context& c, const handle timer_handle, const uint32_t timer_set_info_class,
+                                     const uint64_t timer_set_information, const ULONG timer_set_information_length)
         {
-            return STATUS_NOT_SUPPORTED;
+            constexpr uint32_t timer_set_coalescable_timer = 0;
+            if (timer_set_info_class != timer_set_coalescable_timer)
+            {
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
+            if (timer_set_information_length != sizeof(timer_set_coalescable_timer_info))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            const auto info = emulator_object<timer_set_coalescable_timer_info>{c.emu, timer_set_information}.read();
+            if (info.period > static_cast<ULONG>(std::numeric_limits<LONG>::max()))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            return handle_NtSetTimer(
+                c, timer_handle,
+                emulator_object<LARGE_INTEGER>{c.emu, timer_set_information + offsetof(timer_set_coalescable_timer_info, due_time)},
+                info.apc_routine, info.apc_context, FALSE, static_cast<LONG>(info.period),
+                emulator_object<BOOLEAN>{c.emu, info.previous_state});
         }
 
         NTSTATUS handle_NtQueryTimer(const syscall_context& c, const handle timer_handle, const ULONG information_class,

@@ -12,11 +12,30 @@ namespace sogen
     {
         NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
         NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle, emulator_object<LONG> previous_count);
-        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, ULONG release_count,
+        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, LONG release_count,
                                            emulator_object<LONG> previous_count);
 
         constexpr ULONG duplicate_close_source = 1;
         constexpr ULONG duplicate_same_access = 2;
+
+        void resume_state_change_suspensions(const syscall_context& c, const thread_state_change& state)
+        {
+            for (auto& thread : c.proc.threads | std::views::values)
+            {
+                if (thread.id != state.thread_id)
+                {
+                    continue;
+                }
+
+                const auto resumed = std::min(thread.suspended, state.suspend_count);
+                thread.suspended -= resumed;
+                if (resumed != 0 && thread.suspended == 0)
+                {
+                    c.win_emu.wake_idle_vcpu();
+                }
+                return;
+            }
+        }
 
         NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
         {
@@ -39,6 +58,15 @@ namespace sogen
             if (object && object->protect_from_close)
             {
                 return STATUS_HANDLE_NOT_CLOSABLE;
+            }
+
+            if (value.type == handle_types::thread_state_change)
+            {
+                const auto* state = c.proc.thread_state_changes.get(h);
+                if (state && state->ref_count == 1)
+                {
+                    resume_state_change_suspensions(c, *state);
+                }
             }
 
             if (value.type == handle_types::wait_completion_packet)
@@ -239,6 +267,8 @@ namespace sogen
                 return u"TpWorkerFactory";
             case handle_types::job:
                 return u"Job";
+            case handle_types::thread_state_change:
+                return u"ThreadStateChange";
             case handle_types::private_namespace:
                 return u"Directory";
             case handle_types::process:
@@ -763,16 +793,14 @@ namespace sogen
                                                  const WAIT_TYPE wait_type, const BOOLEAN alertable,
                                                  const emulator_object<LARGE_INTEGER> timeout)
         {
-            if (wait_type != WaitAny && wait_type != WaitAll)
-            {
-                c.win_emu.log.error("Wait type not supported!\n");
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
-            }
-
             if (count == 0 || count > 64) // MAXIMUM_WAIT_OBJECTS
             {
-                return STATUS_INVALID_PARAMETER;
+                return STATUS_INVALID_PARAMETER_1;
+            }
+
+            if (wait_type != WaitAny && wait_type != WaitAll)
+            {
+                return STATUS_INVALID_PARAMETER_3;
             }
 
             auto& t = c.thread();
@@ -821,16 +849,14 @@ namespace sogen
                                                    const WAIT_TYPE wait_type, const BOOLEAN alertable,
                                                    const emulator_object<LARGE_INTEGER> timeout)
         {
-            if (wait_type != WaitAny && wait_type != WaitAll)
-            {
-                c.win_emu.log.error("Wait type not supported!\n");
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
-            }
-
             if (count == 0 || count > 64) // MAXIMUM_WAIT_OBJECTS
             {
-                return STATUS_INVALID_PARAMETER;
+                return STATUS_INVALID_PARAMETER_1;
+            }
+
+            if (wait_type != WaitAny && wait_type != WaitAll)
+            {
+                return STATUS_INVALID_PARAMETER_3;
             }
 
             auto& t = c.thread();

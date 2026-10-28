@@ -5417,7 +5417,7 @@ extern "C"
                     vkDestroyShaderModule(device, source.owned_module, nullptr);
                 }
             }
-            stages_valid = stages_valid && vertex_shader.valid && fragment_shader.valid;
+            stages_valid = stages_valid && vertex_shader.valid;
             if (!stages_valid)
             {
                 if (vertex_shader.owned_module != VK_NULL_HANDLE)
