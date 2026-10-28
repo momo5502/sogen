@@ -388,7 +388,7 @@ namespace sogen
                                              ULONG extended_parameter_count);
         NTSTATUS handle_NtUnmapViewOfSection(const syscall_context& c, handle process_handle, uint64_t base_address);
         NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, handle process_handle, uint64_t base_address, ULONG /*flags*/);
-        NTSTATUS handle_NtAreMappedFilesTheSame();
+        NTSTATUS handle_NtAreMappedFilesTheSame(const syscall_context& c, uint64_t file1_mapped_as_an_image, uint64_t file2_mapped_as_file);
 
         // syscalls/semaphore.cpp:
         NTSTATUS handle_NtOpenSemaphore(const syscall_context& c, emulator_object<handle> semaphore_handle, ACCESS_MASK /*desired_access*/,

@@ -241,6 +241,29 @@ namespace sogen
                     c.win_emu.memory.release_memory(backing, 0);
                 }
             }
+
+            std::optional<std::filesystem::path> get_mapped_file_identity(const syscall_context& c, const region_info& region,
+                                                                          const uint64_t address)
+            {
+                if (region.kind == memory_region_kind::file_section_view)
+                {
+                    if (const auto filename = c.win_emu.memory.get_region_mapped_filename(address))
+                    {
+                        return module_manager::module_identity(windows_path{*filename});
+                    }
+                }
+
+                if (region.kind == memory_region_kind::section_image)
+                {
+                    const auto* mod = c.win_emu.mod_manager.find_by_address(address);
+                    if (mod && !mod->module_path.empty())
+                    {
+                        return module_manager::module_identity(mod->module_path);
+                    }
+                }
+
+                return std::nullopt;
+            }
         }
 
         NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
@@ -802,9 +825,34 @@ namespace sogen
             return handle_NtUnmapViewOfSection(c, process_handle, base_address);
         }
 
-        NTSTATUS handle_NtAreMappedFilesTheSame()
+        NTSTATUS handle_NtAreMappedFilesTheSame(const syscall_context& c, const uint64_t file1_mapped_as_an_image,
+                                                const uint64_t file2_mapped_as_file)
         {
-            return STATUS_NOT_SUPPORTED;
+            const auto first = c.win_emu.memory.get_region_info(file1_mapped_as_an_image);
+            const auto second = c.win_emu.memory.get_region_info(file2_mapped_as_file);
+            if (!first.is_reserved || !second.is_reserved)
+            {
+                return STATUS_INVALID_ADDRESS;
+            }
+
+            if (first.allocation_base == second.allocation_base)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            const auto first_file = get_mapped_file_identity(c, first, file1_mapped_as_an_image);
+            const auto second_file = get_mapped_file_identity(c, second, file2_mapped_as_file);
+            if (!first_file || !second_file)
+            {
+                return STATUS_CONFLICTING_ADDRESSES;
+            }
+
+            if (first.kind == memory_region_kind::section_image && *first_file == *second_file)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            return STATUS_NOT_SAME_DEVICE;
         }
 
         NTSTATUS handle_NtQuerySection(const syscall_context& c, const handle section_handle,

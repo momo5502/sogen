@@ -523,6 +523,11 @@ namespace sogen
 
             if (object_information_class == ObjectBasicInformation)
             {
+                if (object_information_length != sizeof(OBJECT_BASIC_INFORMATION))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
                 return handle_query<OBJECT_BASIC_INFORMATION>(c.emu, object_information, object_information_length, return_length,
                                                               [&](OBJECT_BASIC_INFORMATION& info) {
                                                                   info.GrantedAccess = GENERIC_ALL;
@@ -993,10 +998,11 @@ namespace sogen
                                               const emulator_pointer security_descriptor, const ULONG length,
                                               const emulator_object<ULONG> length_needed)
         {
-            if ((security_information &
-                 (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION)) == 0)
+            // Reading a SACL requires ACCESS_SYSTEM_SECURITY on the handle, which Windows only grants once
+            // SeSecurityPrivilege is enabled, and the emulator never enables it.
+            if (security_information & (SACL_SECURITY_INFORMATION | BACKUP_SECURITY_INFORMATION))
             {
-                return STATUS_INVALID_PARAMETER;
+                return STATUS_ACCESS_DENIED;
             }
 
             const auto& owner_sid = c.proc.sid;

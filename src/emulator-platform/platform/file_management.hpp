@@ -313,6 +313,8 @@ namespace sogen
 
     constexpr auto WORKER_FACTORY_FLAG_LOADER_POOL = 0x1; // real name is unknown
 
+    constexpr auto MAXIMUM_HARDERROR_PARAMETERS = 5;
+
     using HARDERROR_RESPONSE_OPTION = enum _HARDERROR_RESPONSE_OPTION
     {
         OptionAbortRetryIgnore,
