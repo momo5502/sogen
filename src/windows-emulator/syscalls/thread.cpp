@@ -25,6 +25,12 @@ namespace sogen
                     thread.teb32->access([&](TEB32& teb) { teb.IsImpersonating = token != 0; });
                 }
             }
+
+            NTSTATUS get_unresolved_handle_status(const handle h, const handle_types::type expected_type)
+            {
+                return h.value.type == expected_type || h.value.type == handle_types::reserved ? STATUS_INVALID_HANDLE
+                                                                                               : STATUS_OBJECT_TYPE_MISMATCH;
+            }
         }
 
         NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const handle thread_handle, const THREADINFOCLASS info_class,
@@ -1045,23 +1051,26 @@ namespace sogen
                                         const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG flags,
                                         const emulator_object<handle> new_thread_handle)
         {
+            if (!new_thread_handle.try_write(NULL_HANDLE))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (flags != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
             if (!c.proc.is_current_process_handle(process_handle))
             {
-                return STATUS_INVALID_HANDLE;
+                return get_unresolved_handle_status(process_handle, handle_types::process);
             }
 
             const auto resolved_thread_handle = c.proc.resolve_object_pseudo_handle(thread_handle, c.vcpu.active_thread);
 
             if (resolved_thread_handle != NULL_HANDLE && resolved_thread_handle.value.type != handle_types::thread)
             {
-                return STATUS_INVALID_HANDLE;
-            }
-
-            if (flags != 0)
-            {
-                c.win_emu.log.error("NtGetNextThread flags %X not supported\n", static_cast<uint32_t>(flags));
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
+                return get_unresolved_handle_status(resolved_thread_handle, handle_types::thread);
             }
 
             bool return_next_thread = resolved_thread_handle == NULL_HANDLE;
@@ -1080,7 +1089,6 @@ namespace sogen
                 }
             }
 
-            new_thread_handle.write(NULL_HANDLE);
             return STATUS_NO_MORE_ENTRIES;
         }
 
@@ -1257,6 +1265,12 @@ namespace sogen
                                          const EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
                                          const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
         {
+            constexpr ULONG valid_create_flags = 0x7F;
+            if (create_flags & ~valid_create_flags)
+            {
+                return STATUS_INVALID_PARAMETER_7;
+            }
+
             if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;
@@ -1370,11 +1384,19 @@ namespace sogen
                                             const uint32_t apc_flags, const uint64_t apc_routine, const uint64_t apc_argument1,
                                             const uint64_t apc_argument2, const uint64_t apc_argument3)
         {
+            // QUEUE_USER_APC_CALLBACK_DATA_CONTEXT, which older MinGW headers do not define.
+            constexpr uint32_t apc_callback_data_context = 0x00010000;
+            constexpr uint32_t valid_apc_flags = QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC | apc_callback_data_context;
+            if (apc_flags & ~valid_apc_flags)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
             auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
             {
-                return STATUS_INVALID_HANDLE;
+                return get_unresolved_handle_status(thread_handle, handle_types::thread);
             }
 
             if (apc_flags)
