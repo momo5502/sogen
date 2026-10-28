@@ -133,6 +133,12 @@ namespace sogen
         {
         }
 
+        // A range every process maps at the same guest address, such as KUSER_SHARED_DATA. A snapshot may keep
+        // memory there, since restoring one maps the range like every other start does.
+        virtual void register_fixed_guest_range(uint64_t /*address*/, size_t /*size*/)
+        {
+        }
+
         // Counterpart to reserve_guest_address_range, called once a guest range is genuinely freed -
         // not on a decommit, where the range stays reserved and the host claim must persist. The
         // caller expands the freed range to the surrounding unreserved gap, so the backend may drop

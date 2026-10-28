@@ -1719,7 +1719,10 @@ namespace sogen::fex
                 const bool in_low_window = this->low_guest_window_ != 0 && address + size <= low_guest_window_size;
                 const bool in_arena =
                     this->guest_arena_ != 0 && address >= this->guest_arena_ && address + size <= this->guest_arena_ + guest_arena_size;
-                if (!in_low_window && !in_arena)
+                const bool fixed = std::ranges::any_of(this->fixed_guest_ranges_, [&](const auto& range) {
+                    return address >= range.first && address + size <= range.first + range.second;
+                });
+                if (!in_low_window && !in_arena && !fixed)
                 {
                     std::array<char, 128> message{};
                     snprintf(message.data(), message.size(), "Guest memory at 0x%llx lies where a new process may not get it back",
@@ -2214,6 +2217,13 @@ namespace sogen::fex
                 throw std::runtime_error("FEX MMIO mappings must be page aligned");
             }
 
+#ifndef __APPLE__
+            // Accesses only trap while the host maps nothing there either. Darwin's __PAGEZERO already guarantees that.
+            if (!this->host_range_is_claimed(address, size))
+            {
+                this->reserve_guest_address_range(address, size);
+            }
+#endif
             this->mmio_regions_.emplace_back(mmio_region{.address = address, .size = size, .read_cb = std::move(read_cb)});
         }
 
@@ -2277,6 +2287,14 @@ namespace sogen::fex
                 const uint64_t run_end = next == this->claimed_host_ranges_.end() ? end : std::min(next->first, end);
                 this->claim_host_range(cursor, static_cast<size_t>(run_end - cursor));
                 cursor = run_end;
+            }
+        }
+
+        void register_fixed_guest_range(const uint64_t address, const size_t size) override
+        {
+            if (std::ranges::find(this->fixed_guest_ranges_, std::pair{address, size}) == this->fixed_guest_ranges_.end())
+            {
+                this->fixed_guest_ranges_.emplace_back(address, size);
             }
         }
 
@@ -4369,6 +4387,7 @@ namespace sogen::fex
         uint64_t instance_id_{std::random_device{}() | (static_cast<uint64_t>(std::random_device{}()) << 32)};
 
         std::map<uint64_t, size_t> claimed_host_ranges_;
+        std::vector<std::pair<uint64_t, size_t>> fixed_guest_ranges_;
 
         // Host base of the window backing a WoW64 process's low 4GB, or 0 while guest VA == host VA.
         uint64_t low_guest_window_{};

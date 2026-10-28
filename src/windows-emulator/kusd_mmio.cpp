@@ -258,10 +258,11 @@ namespace sogen
         }
 
         this->registered_ = true;
+        this->memory_->register_fixed_range(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
 
         if (this->intercept_)
         {
-            this->memory_->allocate_mmio(
+            const bool mapped = this->memory_->allocate_mmio(
                 KUSD_ADDRESS, KUSD_BUFFER_SIZE,
                 [this](const uint64_t addr, void* data, const size_t size) {
                     this->read(addr, data, size); //
@@ -269,12 +270,19 @@ namespace sogen
                 [](const uint64_t, const void*, const size_t) {
                     // Writing not supported!
                 });
+            if (!mapped)
+            {
+                throw std::runtime_error("Failed to map KUSER_SHARED_DATA");
+            }
             return;
         }
 
         // Classified as MMIO like the trapping variant, so the guest can't release it and snapshots leave it to
         // this object to recreate.
-        this->memory_->allocate_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE, memory_permission::read, false, memory_region_kind::mmio);
+        if (!this->memory_->allocate_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE, memory_permission::read, false, memory_region_kind::mmio))
+        {
+            throw std::runtime_error("Failed to map KUSER_SHARED_DATA");
+        }
         const std::scoped_lock lock(this->mutex_);
         this->update();
         this->write_page();
