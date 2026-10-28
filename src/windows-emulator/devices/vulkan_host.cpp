@@ -2499,7 +2499,8 @@ namespace sogen
 
         static void destroy_swapchain_proxy(const device_data& dev, swapchain_proxy& proxy)
         {
-            if (proxy.lost)
+            // Without present fences nothing shows that a present has consumed its native_ready semaphore yet.
+            if (proxy.lost || !dev.present_fences)
             {
                 dev.device_wait_idle(dev.handle);
             }
@@ -7415,7 +7416,8 @@ namespace sogen
         };
         const bool format_native = offered(requested_format);
         const bool alpha_native = (caps.supportedCompositeAlpha & composite_alpha) != 0;
-        const bool count_native = caps.maxImageCount == 0 || min_image_count <= caps.maxImageCount;
+        const bool count_native =
+            min_image_count >= caps.minImageCount && (caps.maxImageCount == 0 || min_image_count <= caps.maxImageCount);
         const bool mode_native = std::ranges::find(native_modes, static_cast<VkPresentModeKHR>(present_mode)) != native_modes.end();
         const bool proxied = !format_native || !alpha_native || !count_native || !mode_native;
 
