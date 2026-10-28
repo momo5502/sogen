@@ -7466,19 +7466,6 @@ namespace sogen
             auto& proc = c.proc;
             const auto window = find_foreground_window(c);
 
-            const auto button_flags = [&] {
-                const auto down = [&](const uint32_t key) { return (proc.key_state[key] & 0x80) != 0; };
-                uint64_t flags = 0;
-                flags |= down(VK_LBUTTON) ? MK_LBUTTON : 0;
-                flags |= down(VK_RBUTTON) ? MK_RBUTTON : 0;
-                flags |= down(VK_SHIFT) ? MK_SHIFT : 0;
-                flags |= down(VK_CONTROL) ? MK_CONTROL : 0;
-                flags |= down(VK_MBUTTON) ? MK_MBUTTON : 0;
-                flags |= down(VK_XBUTTON1) ? MK_XBUTTON1 : 0;
-                flags |= down(VK_XBUTTON2) ? MK_XBUTTON2 : 0;
-                return flags;
-            };
-
             // Like host motion, injected pointer events let the emulator clip the cursor and feed raw input. Button and
             // wheel events stay at wherever the cursor is when they are delivered.
             const auto send = [&](const uint32_t message, const uint64_t w_param, const std::optional<std::pair<int32_t, int32_t>> motion,
@@ -7490,6 +7477,8 @@ namespace sogen
                     .lParam = 0,
                     .relative_motion = motion ? motion : (target ? std::nullopt : std::optional{std::pair{0, 0}}),
                     .cursor_target = target,
+                    .injected = true,
+                    .extra_info = input.extra_info,
                 });
             };
 
@@ -7510,16 +7499,25 @@ namespace sogen
 
                 if (window == 0)
                 {
-                    proc.cursor_x = target ? target->first : proc.cursor_x + input.dx;
-                    proc.cursor_y = target ? target->second : proc.cursor_y + input.dy;
+                    auto x = target ? target->first : proc.cursor_x + input.dx;
+                    auto y = target ? target->second : proc.cursor_y + input.dy;
+                    if (const auto& clip = proc.cursor_clip)
+                    {
+                        const auto left = static_cast<int32_t>(clip->left);
+                        const auto top = static_cast<int32_t>(clip->top);
+                        x = std::clamp(x, left, std::max(left, static_cast<int32_t>(clip->right) - 1));
+                        y = std::clamp(y, top, std::max(top, static_cast<int32_t>(clip->bottom) - 1));
+                    }
+                    proc.cursor_x = x;
+                    proc.cursor_y = y;
                 }
                 else
                 {
-                    send(WM_MOUSEMOVE, button_flags(), motion, target);
+                    send(WM_MOUSEMOVE, 0, motion, target);
                 }
             }
 
-            const auto press = [&](const uint32_t message, const uint32_t virtual_key, const bool down, const uint64_t extra_w_param) {
+            const auto press = [&](const uint32_t message, const uint32_t virtual_key, const bool down, const uint64_t w_param) {
                 // Without a window to receive it, injected input still changes what GetAsyncKeyState reports.
                 if (window == 0)
                 {
@@ -7531,14 +7529,7 @@ namespace sogen
                     return;
                 }
 
-                auto flags = button_flags();
-                const auto mask = virtual_key == VK_LBUTTON    ? MK_LBUTTON
-                                  : virtual_key == VK_RBUTTON  ? MK_RBUTTON
-                                  : virtual_key == VK_MBUTTON  ? MK_MBUTTON
-                                  : virtual_key == VK_XBUTTON1 ? MK_XBUTTON1
-                                                               : MK_XBUTTON2;
-                flags = down ? (flags | mask) : (flags & ~static_cast<uint64_t>(mask));
-                send(message, flags | extra_w_param, std::nullopt, std::nullopt);
+                send(message, w_param, std::nullopt, std::nullopt);
             };
 
             struct button_transition
@@ -7591,8 +7582,8 @@ namespace sogen
             if (window != 0 && (input.flags & (mouseeventf_wheel | mouseeventf_hwheel)))
             {
                 const auto delta = static_cast<uint16_t>(input.mouse_data);
-                send((input.flags & mouseeventf_wheel) ? WM_MOUSEWHEEL : WM_MOUSEHWHEEL,
-                     button_flags() | (static_cast<uint64_t>(delta) << 16), std::nullopt, std::nullopt);
+                send((input.flags & mouseeventf_wheel) ? WM_MOUSEWHEEL : WM_MOUSEHWHEEL, static_cast<uint64_t>(delta) << 16, std::nullopt,
+                     std::nullopt);
             }
         }
 
@@ -7603,7 +7594,6 @@ namespace sogen
             constexpr uint32_t keyeventf_unicode = 0x0004;
             constexpr uint32_t keyeventf_scancode = 0x0008;
 
-            auto& proc = c.proc;
             const auto window = find_foreground_window(c);
             const bool up = (input.flags & keyeventf_keyup) != 0;
             const bool unicode = (input.flags & keyeventf_unicode) != 0;
@@ -7624,30 +7614,26 @@ namespace sogen
                 scan_code = handle_NtUserMapVirtualKeyEx(c, virtual_key, 0, 0, 0);
             }
 
-            if (virtual_key == 0 || virtual_key >= proc.key_state.size())
+            if (virtual_key == 0 || virtual_key >= c.proc.key_state.size())
             {
                 return;
             }
 
-            const auto down = [&](const uint32_t key) { return (proc.key_state[key] & 0x80) != 0; };
-            const bool was_down = !unicode && down(virtual_key);
-            const bool alt = generic_virtual_key(virtual_key) == VK_MENU || down(VK_MENU);
-            const bool system_key = (alt || virtual_key == VK_F10) && !down(VK_CONTROL);
-
             uint64_t l_param = 1 | (static_cast<uint64_t>(scan_code & 0xFF) << 16);
             l_param |= (input.flags & keyeventf_extendedkey) ? (1ull << 24) : 0;
-            l_param |= (alt && system_key) ? (1ull << 29) : 0;
-            l_param |= (up || was_down) ? (1ull << 30) : 0;
             l_param |= up ? (1ull << 31) : 0;
 
             // Like Windows, key messages name the generic modifier rather than its left or right variant; the scan code and
             // extended-key bit tell the sides apart.
-            const uint32_t message = up ? (system_key ? WM_SYSKEYUP : WM_KEYUP) : (system_key ? WM_SYSKEYDOWN : WM_KEYDOWN);
-            const ui_event event{.window = window,
-                                 .message = message,
-                                 .wParam = generic_virtual_key(virtual_key),
-                                 .lParam = l_param,
-                                 .translate_character = !unicode && !system_key};
+            const ui_event event{
+                .window = window,
+                .message = static_cast<uint32_t>(up ? WM_KEYUP : WM_KEYDOWN),
+                .wParam = generic_virtual_key(virtual_key),
+                .lParam = l_param,
+                .injected = true,
+                .extra_info = input.extra_info,
+                .injected_character = unicode ? static_cast<char16_t>(input.scan_code) : char16_t{},
+            };
 
             // Without a window to receive it, injected input still changes what GetAsyncKeyState reports.
             if (window == 0)
@@ -7657,12 +7643,6 @@ namespace sogen
             }
 
             c.win_emu.handle_ui_event_locked(event);
-
-            if (unicode && !up)
-            {
-                c.win_emu.handle_ui_event_locked(
-                    ui_event{.window = window, .message = WM_CHAR, .wParam = input.scan_code, .lParam = l_param});
-            }
         }
 
         uint32_t handle_NtUserSendInput(const syscall_context& c, const uint32_t input_count, const emulator_pointer inputs,

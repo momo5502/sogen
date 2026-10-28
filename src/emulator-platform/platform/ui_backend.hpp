@@ -81,9 +81,13 @@ namespace sogen
         // which can be after low-level hooks held them back.
         std::optional<std::pair<int32_t, int32_t>> cursor_target{};
 
-        // Key-down events injected by the guest also post the character the key produces under the key state at
-        // delivery, since the guest's TranslateMessage does not translate.
-        bool translate_character{};
+        // Input the guest injected with SendInput. Low-level hooks can hold it back, so the details that depend on the
+        // key state (system keys, the previous-state and context bits, held buttons) are resolved when the hooks and the
+        // window see it. Key-downs also post the character they produce, since the guest's TranslateMessage does not
+        // translate; VK_PACKET keys carry theirs in injected_character.
+        bool injected{};
+        uint64_t extra_info{};
+        char16_t injected_character{};
     };
 
     class ui_backend

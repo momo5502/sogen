@@ -15,8 +15,10 @@ namespace sogen
         constexpr size_t k_client_pfn_dispatch_hook_index = 19;
 
         constexpr DWORD k_llkhf_extended = 0x01;
+        constexpr DWORD k_llkhf_injected = 0x10;
         constexpr DWORD k_llkhf_altdown = 0x20;
         constexpr DWORD k_llkhf_up = 0x80;
+        constexpr DWORD k_llmhf_injected = 0x01;
 
         struct kbdll_hook_struct
         {
@@ -60,10 +62,10 @@ namespace sogen
             return c.proc.user_handles.get_server_info().read().apfnClientW[k_client_pfn_dispatch_hook_index];
         }
 
-        kbdll_hook_struct make_keyboard_hook_data(const process_context::low_level_input& input)
+        kbdll_hook_struct make_keyboard_hook_data(const process_context::low_level_input& input, const ui_event& event)
         {
-            const auto l_param = input.event.lParam;
-            DWORD flags = 0;
+            const auto l_param = event.lParam;
+            DWORD flags = event.injected ? k_llkhf_injected : 0;
             if ((l_param & (1ull << 24)) != 0)
             {
                 flags |= k_llkhf_extended;
@@ -72,33 +74,38 @@ namespace sogen
             {
                 flags |= k_llkhf_altdown;
             }
-            if (input.event.message == WM_KEYUP || input.event.message == WM_SYSKEYUP)
+            if (event.message == WM_KEYUP || event.message == WM_SYSKEYUP)
             {
                 flags |= k_llkhf_up;
             }
 
+            const auto virtual_key = static_cast<DWORD>(event.wParam & 0xFF);
             return kbdll_hook_struct{
-                .vkCode = static_cast<DWORD>(input.event.wParam & 0xFF),
-                .scanCode = static_cast<DWORD>((l_param >> 16) & 0xFF),
+                .vkCode = virtual_key,
+                .scanCode =
+                    virtual_key == VK_PACKET ? static_cast<DWORD>(event.injected_character) : static_cast<DWORD>((l_param >> 16) & 0xFF),
                 .flags = flags,
                 .time = input.time,
+                .dwExtraInfo = event.extra_info,
             };
         }
 
-        msll_hook_struct make_mouse_hook_data(const process_context::low_level_input& input)
+        msll_hook_struct make_mouse_hook_data(const process_context::low_level_input& input, const ui_event& event)
         {
             DWORD mouse_data = 0;
-            const auto message = input.event.message;
+            const auto message = event.message;
             if (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL || message == WM_XBUTTONDOWN || message == WM_XBUTTONUP ||
                 message == WM_XBUTTONDBLCLK)
             {
-                mouse_data = static_cast<DWORD>(input.event.wParam & 0xFFFF0000);
+                mouse_data = static_cast<DWORD>(event.wParam & 0xFFFF0000);
             }
 
             return msll_hook_struct{
                 .pt = POINT{.x = input.screen_x, .y = input.screen_y},
                 .mouseData = mouse_data,
+                .flags = event.injected ? k_llmhf_injected : 0,
                 .time = input.time,
+                .dwExtraInfo = event.extra_info,
             };
         }
     }
@@ -112,6 +119,7 @@ namespace sogen
         }
 
         const auto& [input, entry] = *hook;
+        const auto event = c.win_emu.resolve_injected_event(input.event);
         const auto code = static_cast<UINT>(k_hc_action | (entry.id << 16));
         const auto dispatch = client_dispatch_hook(c);
 
@@ -119,10 +127,10 @@ namespace sogen
         {
             const fn_hk_in_ll_hook_message<kbdll_hook_struct> args{
                 .code = code,
-                .wParam = input.event.message,
+                .wParam = event.message,
                 .proc = entry.proc,
                 .dispatch = dispatch,
-                .hook_data = make_keyboard_hook_data(input),
+                .hook_data = make_keyboard_hook_data(input, event),
             };
             dispatch_user_callback(c, completion_id, k_fn_hk_in_lp_kbdll_hook_struct_callback_id, args);
         }
@@ -130,10 +138,10 @@ namespace sogen
         {
             const fn_hk_in_ll_hook_message<msll_hook_struct> args{
                 .code = code,
-                .wParam = input.event.message,
+                .wParam = event.message,
                 .proc = entry.proc,
                 .dispatch = dispatch,
-                .hook_data = make_mouse_hook_data(input),
+                .hook_data = make_mouse_hook_data(input, event),
             };
             dispatch_user_callback(c, completion_id, k_fn_hk_in_lp_msll_hook_struct_callback_id, args);
         }

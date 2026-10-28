@@ -266,6 +266,29 @@ namespace sogen
             return 0;
         }
 
+        constexpr std::array<std::array<uint8_t, 3>, 3> modifier_sides{{
+            {VK_SHIFT, VK_LSHIFT, VK_RSHIFT},
+            {VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
+            {VK_MENU, VK_LMENU, VK_RMENU},
+        }};
+
+        // Key messages name the generic modifier; the scan code (Shift) or the extended-key bit (Ctrl, Alt) tells which
+        // side it is.
+        uint8_t side_virtual_key(const ui_event& event)
+        {
+            const auto virtual_key = static_cast<uint8_t>(event.wParam & 0xFF);
+            const bool right_shift = ((event.lParam >> 16) & 0xFF) == 0x36;
+            const bool extended = (event.lParam & (1ull << 24)) != 0;
+            for (const auto& [generic, left, right] : modifier_sides)
+            {
+                if (virtual_key == generic)
+                {
+                    return (generic == VK_SHIFT ? right_shift : extended) ? right : left;
+                }
+            }
+            return virtual_key;
+        }
+
         uint8_t mouse_button_virtual_key(const uint32_t message, const uint64_t wparam)
         {
             switch (message)
@@ -2181,33 +2204,69 @@ namespace sogen
             state = static_cast<uint8_t>((down ? 0x80 : 0) | (state & 0x01));
         };
 
-        // Key messages name the generic modifier; the scan code (Shift) or the extended-key bit (Ctrl, Alt) tells which
-        // side changed, and the generic key is down while either side is.
-        const bool right_scan = ((event.lParam >> 16) & 0xFF) == 0x36;
-        const bool extended = (event.lParam & (1ull << 24)) != 0;
-        for (const auto [generic, left, right, is_right] :
-             {std::tuple{VK_SHIFT, VK_LSHIFT, VK_RSHIFT, right_scan}, std::tuple{VK_CONTROL, VK_LCONTROL, VK_RCONTROL, extended},
-              std::tuple{VK_MENU, VK_LMENU, VK_RMENU, extended}})
+        const auto side = side_virtual_key(event);
+        set(side);
+        for (const auto& [generic, left, right] : modifier_sides)
         {
-            if (virtual_key == generic || virtual_key == left || virtual_key == right)
+            if (side == left || side == right)
             {
-                const auto side = virtual_key == generic ? (is_right ? right : left) : virtual_key;
-                set(static_cast<uint8_t>(side));
                 const bool any_down = ((this->process.key_state[left] | this->process.key_state[right]) & 0x80) != 0;
                 if (any_down && (this->process.key_state[generic] & 0x80) == 0)
                 {
                     this->process.async_key_state[generic] = 1;
                 }
                 this->process.key_state[generic] = any_down ? 0x80 : 0;
-                return;
             }
         }
-
-        set(virtual_key);
     }
 
-    void windows_emulator::deliver_ui_event(const ui_event& event)
+    ui_event windows_emulator::resolve_injected_event(const ui_event& event) const
     {
+        if (!event.injected)
+        {
+            return event;
+        }
+
+        auto resolved = event;
+        const auto down = [&](const uint32_t key) { return (this->process.key_state[key] & 0x80) != 0; };
+
+        if (is_keyboard_message(event.message))
+        {
+            const auto virtual_key = static_cast<uint32_t>(event.wParam & 0xFF);
+            const bool up = event.message == WM_KEYUP || event.message == WM_SYSKEYUP;
+            const bool alt = virtual_key == VK_MENU || down(VK_MENU);
+            const bool system_key = (alt || virtual_key == VK_F10) && !down(VK_CONTROL);
+            resolved.message = up ? (system_key ? WM_SYSKEYUP : WM_KEYUP) : (system_key ? WM_SYSKEYDOWN : WM_KEYDOWN);
+
+            constexpr uint64_t context_bit = 1ull << 29;
+            constexpr uint64_t previous_state_bit = 1ull << 30;
+            resolved.lParam &= ~(context_bit | previous_state_bit);
+            resolved.lParam |= (alt && system_key) ? context_bit : 0;
+            resolved.lParam |= (up || (virtual_key != VK_PACKET && down(side_virtual_key(event)))) ? previous_state_bit : 0;
+            return resolved;
+        }
+
+        if (is_pointer_message(event.message))
+        {
+            uint64_t flags = 0;
+            for (const auto& [key, flag] :
+                 {std::pair{VK_LBUTTON, MK_LBUTTON}, std::pair{VK_RBUTTON, MK_RBUTTON}, std::pair{VK_SHIFT, MK_SHIFT},
+                  std::pair{VK_CONTROL, MK_CONTROL}, std::pair{VK_MBUTTON, MK_MBUTTON}, std::pair{VK_XBUTTON1, MK_XBUTTON1},
+                  std::pair{VK_XBUTTON2, MK_XBUTTON2}})
+            {
+                const bool pressed =
+                    mouse_button_virtual_key(event.message, event.wParam) == key ? is_mouse_button_down_message(event.message) : down(key);
+                flags |= pressed ? static_cast<uint64_t>(flag) : 0;
+            }
+            resolved.wParam = (event.wParam & 0xFFFF0000) | flags;
+        }
+
+        return resolved;
+    }
+
+    void windows_emulator::deliver_ui_event(const ui_event& queued_event)
+    {
+        const auto event = this->resolve_injected_event(queued_event);
         if (event.message == WM_SIZE)
         {
             this->resize_window_from_host(event.window, event.wParam == SIZE_MAXIMIZED, point_x(event.lParam), point_y(event.lParam));
@@ -2357,9 +2416,12 @@ namespace sogen
 
         thread->post_message(*this, m, true);
 
-        if (event.translate_character && is_key_down_message(event.message))
+        if (event.injected && is_key_down_message(event.message))
         {
-            if (const auto character = key_character(static_cast<uint32_t>(event.wParam & 0xFF), this->process.key_state); character != 0)
+            const auto virtual_key = static_cast<uint32_t>(event.wParam & 0xFF);
+            const auto character =
+                virtual_key == VK_PACKET ? event.injected_character : key_character(virtual_key, this->process.key_state);
+            if (character != 0)
             {
                 msg character_message = m;
                 character_message.message = event.message == WM_SYSKEYDOWN ? WM_SYSCHAR : WM_CHAR;
