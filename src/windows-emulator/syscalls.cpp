@@ -806,6 +806,7 @@ namespace sogen
         BOOL handle_NtUserSetImeHotKey();
         int16_t handle_NtUserVkKeyScanEx();
         BOOL handle_NtUserSetLayeredWindowAttributes();
+        BOOL handle_NtUserSetWindowFeedbackSetting();
         BOOL handle_NtUserUpdateClientRect(const syscall_context& c, hwnd window);
         int32_t handle_NtUserScrollWindowEx();
         BOOL handle_NtUserRedrawFrame(const syscall_context& c, hwnd window);
@@ -2108,6 +2109,7 @@ namespace sogen
         add_handler(NtUserSetImeHotKey);
         add_handler(NtUserVkKeyScanEx);
         add_handler(NtUserSetLayeredWindowAttributes);
+        add_handler(NtUserSetWindowFeedbackSetting);
         add_handler(NtUserIsChildWindowDpiMessageEnabled);
 
 #undef add_handler

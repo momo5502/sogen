@@ -7612,6 +7612,11 @@ namespace sogen
             return -1;
         }
 
+        BOOL handle_NtUserSetWindowFeedbackSetting()
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserSetLayeredWindowAttributes()
         {
             return TRUE;
