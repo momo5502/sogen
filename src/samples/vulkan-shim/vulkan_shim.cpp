@@ -3941,6 +3941,28 @@ extern "C"
     {
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkQueueBeginDebugUtilsLabelEXT(VkQueue, const VkDebugUtilsLabelEXT*)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkQueueEndDebugUtilsLabelEXT(VkQueue)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkQueueInsertDebugUtilsLabelEXT(VkQueue, const VkDebugUtilsLabelEXT*)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkSetDebugUtilsObjectNameEXT(VkDevice, const VkDebugUtilsObjectNameInfoEXT*)
+    {
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkSetDebugUtilsObjectTagEXT(VkDevice, const VkDebugUtilsObjectTagInfoEXT*)
+    {
+        return VK_SUCCESS;
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDebugUtilsMessengerEXT(VkInstance,
                                                                                         const VkDebugUtilsMessengerCreateInfoEXT*,
                                                                                         const VkAllocationCallbacks*,
@@ -6218,6 +6240,11 @@ extern "C"
             {.name = "vkCmdBeginDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginDebugUtilsLabelEXT)},
             {.name = "vkCmdEndDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndDebugUtilsLabelEXT)},
             {.name = "vkCmdInsertDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdInsertDebugUtilsLabelEXT)},
+            {.name = "vkQueueBeginDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueBeginDebugUtilsLabelEXT)},
+            {.name = "vkQueueEndDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueEndDebugUtilsLabelEXT)},
+            {.name = "vkQueueInsertDebugUtilsLabelEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueInsertDebugUtilsLabelEXT)},
+            {.name = "vkSetDebugUtilsObjectNameEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSetDebugUtilsObjectNameEXT)},
+            {.name = "vkSetDebugUtilsObjectTagEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSetDebugUtilsObjectTagEXT)},
             {.name = "vkCreateDebugUtilsMessengerEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDebugUtilsMessengerEXT)},
             {.name = "vkDestroyDebugUtilsMessengerEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDebugUtilsMessengerEXT)},
             {.name = "vkSubmitDebugUtilsMessageEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSubmitDebugUtilsMessageEXT)},
