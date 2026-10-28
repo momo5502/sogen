@@ -11476,7 +11476,12 @@ namespace sogen
                 return stage.code != nullptr || impl.shader_modules.contains(stage.module);
             };
 
-            if (!restorable(pipeline.create.vertex) || (!pipeline.create.compute && !restorable(pipeline.create.fragment)))
+            const auto absent = [](const impl::shader_stage_params& stage) {
+                return stage.module == 0 && stage.identifier.empty() && stage.code == nullptr;
+            };
+
+            if (!restorable(pipeline.create.vertex) ||
+                (!pipeline.create.compute && !absent(pipeline.create.fragment) && !restorable(pipeline.create.fragment)))
             {
                 throw std::runtime_error("Vulkan pipeline " + std::to_string(id) + " was created from shader code the bridge never saw");
             }
