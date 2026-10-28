@@ -1368,6 +1368,10 @@ namespace sogen
             {
                 const auto [info, handles] = get_poll_info<Traits>(win_emu, c);
                 const auto endpoints = resolve_endpoints(win_emu, handles);
+                if (std::ranges::find(endpoints, nullptr) != endpoints.end())
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
 
                 const auto status = perform_poll(win_emu, c, endpoints, handles);
                 if (status != STATUS_PENDING)
