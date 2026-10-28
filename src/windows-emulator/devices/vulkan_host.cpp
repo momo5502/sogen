@@ -6244,6 +6244,7 @@ namespace sogen
 
             std::vector<VkSubpassDescription> subpasses{};
             std::vector<uint32_t> view_masks{};
+            std::vector<VkInputAttachmentAspectReference> input_aspects{};
             const auto* next_reference = references.data();
             const auto* next_preserve = description.preserves.data();
             const auto take = [](auto*& cursor, const size_t count) {
@@ -6253,6 +6254,16 @@ namespace sogen
             };
             for (const auto& sp : description.subpasses)
             {
+                const auto first_input = static_cast<size_t>(next_reference - references.data());
+                for (uint32_t i = 0; i < sp.input_count; ++i)
+                {
+                    if (const auto aspect = description.references[first_input + i].aspect_mask; aspect != 0)
+                    {
+                        input_aspects.push_back(VkInputAttachmentAspectReference{
+                            .subpass = static_cast<uint32_t>(subpasses.size()), .inputAttachmentIndex = i, .aspectMask = aspect});
+                    }
+                }
+
                 VkSubpassDescription out{};
                 out.flags = sp.flags;
                 out.pipelineBindPoint = static_cast<VkPipelineBindPoint>(sp.bind_point);
@@ -6294,9 +6305,15 @@ namespace sogen
             multiview.pCorrelationMasks = description.correlated_view_masks.data();
             const bool uses_multiview = std::ranges::any_of(view_masks, [](const uint32_t mask) { return mask != 0; });
 
+            VkRenderPassInputAttachmentAspectCreateInfo aspects{};
+            aspects.sType = VK_STRUCTURE_TYPE_RENDER_PASS_INPUT_ATTACHMENT_ASPECT_CREATE_INFO;
+            aspects.pNext = uses_multiview ? &multiview : nullptr;
+            aspects.aspectReferenceCount = static_cast<uint32_t>(input_aspects.size());
+            aspects.pAspectReferences = input_aspects.data();
+
             VkRenderPassCreateInfo info{};
             info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-            info.pNext = uses_multiview ? &multiview : nullptr;
+            info.pNext = !input_aspects.empty() ? static_cast<const void*>(&aspects) : (uses_multiview ? &multiview : nullptr);
             info.flags = description.flags;
             info.attachmentCount = static_cast<uint32_t>(attachments.size());
             info.pAttachments = attachments.data();
