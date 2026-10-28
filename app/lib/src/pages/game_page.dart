@@ -270,6 +270,9 @@ class _GamePageState extends State<GamePage> {
       } finally {
         await _flushSettings();
       }
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
     }
   }
 
