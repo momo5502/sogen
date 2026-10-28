@@ -1250,8 +1250,7 @@ namespace sogen
                 std::vector<const afd_endpoint*> endpoints{};
                 endpoints.reserve(handles.size());
 
-                // A socket can be closed by another thread while a poll on it is pending; it then stays in the list
-                // as null and reports AFD_POLL_LOCAL_CLOSE.
+                // A socket closed while a poll on it is pending stays as null and reports AFD_POLL_LOCAL_CLOSE.
                 for (const auto& handle : handles)
                 {
                     const auto* device = proc.devices.get(handle.Handle);
