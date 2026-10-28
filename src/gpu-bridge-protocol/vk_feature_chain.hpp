@@ -79,6 +79,8 @@ namespace sogen::gpu_bridge
         {
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES:
             return sizeof(VkPhysicalDeviceVulkan11Properties);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES:
+            return sizeof(VkPhysicalDeviceIDProperties);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES:
             return sizeof(VkPhysicalDeviceVulkan12Properties);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES:
