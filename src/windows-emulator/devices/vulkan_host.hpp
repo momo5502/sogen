@@ -521,15 +521,87 @@ namespace sogen
         int32_t cmd_copy_query_pool_results(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count,
                                             uint64_t destination_buffer, uint64_t destination_offset, uint64_t stride, uint32_t flags);
 
-        // One color attachment + an optional depth attachment (depth_format == 0 => color only), single
-        // subpass with the requested initial/final layouts.
-        int32_t create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op, uint32_t initial_layout,
-                                   uint32_t final_layout, uint32_t depth_format, uint64_t& out_render_pass);
+        struct render_pass_attachment
+        {
+            uint32_t flags;
+            uint32_t format;
+            uint32_t samples;
+            uint32_t load_op;
+            uint32_t store_op;
+            uint32_t stencil_load_op;
+            uint32_t stencil_store_op;
+            uint32_t initial_layout;
+            uint32_t final_layout;
+            uint32_t has_stencil_layouts;
+            uint32_t stencil_initial_layout;
+            uint32_t stencil_final_layout;
+        };
+
+        struct render_pass_reference
+        {
+            uint32_t attachment;
+            uint32_t layout;
+            uint32_t aspect_mask;
+            uint32_t stencil_layout;
+        };
+
+        // References are consumed in order per subpass: inputs, colors, color resolves, depth-stencil, its resolve.
+        struct render_pass_subpass
+        {
+            uint32_t flags;
+            uint32_t bind_point;
+            uint32_t view_mask;
+            uint32_t input_count;
+            uint32_t color_count;
+            uint32_t has_color_resolve;
+            uint32_t has_depth_stencil;
+            uint32_t has_depth_stencil_resolve;
+            uint32_t depth_resolve_mode;
+            uint32_t stencil_resolve_mode;
+            uint32_t preserve_count;
+        };
+
+        struct render_pass_dependency
+        {
+            uint32_t src_subpass;
+            uint32_t dst_subpass;
+            uint32_t src_stage_mask;
+            uint32_t dst_stage_mask;
+            uint32_t src_access_mask;
+            uint32_t dst_access_mask;
+            uint32_t flags;
+            int32_t view_offset;
+        };
+
+        struct render_pass_description
+        {
+            uint32_t flags{};
+            std::vector<render_pass_attachment> attachments{};
+            std::vector<render_pass_subpass> subpasses{};
+            std::vector<render_pass_reference> references{};
+            std::vector<render_pass_dependency> dependencies{};
+            std::vector<uint32_t> preserves{};
+            std::vector<uint32_t> correlated_view_masks{};
+        };
+
+        struct framebuffer_attachment_image
+        {
+            uint32_t flags;
+            uint32_t usage;
+            uint32_t width;
+            uint32_t height;
+            uint32_t layer_count;
+            uint32_t view_format_count;
+            std::array<uint32_t, 8> view_formats;
+        };
+
+        int32_t create_render_pass(uint64_t device, const render_pass_description& description, uint64_t& out_render_pass);
         void destroy_render_pass(uint64_t device, uint64_t render_pass);
 
-        // depth_view == 0 => single color attachment.
-        int32_t create_framebuffer(uint64_t device, uint64_t render_pass, uint64_t image_view, uint64_t depth_view, uint32_t width,
-                                   uint32_t height, uint64_t& out_framebuffer);
+        // Imageless framebuffers pass attachment images instead of views.
+        int32_t create_framebuffer(uint64_t device, uint64_t render_pass, uint32_t flags, uint32_t width, uint32_t height, uint32_t layers,
+                                   std::span<const uint64_t> views, std::span<const framebuffer_attachment_image> images,
+                                   uint64_t& out_framebuffer);
         void destroy_framebuffer(uint64_t device, uint64_t framebuffer);
 
         // --- descriptor sets (uniform buffers now; combined image samplers added with textures) ---
@@ -679,23 +751,33 @@ namespace sogen
         // depth test. Empty vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
         // When render_pass == 0 the pipeline is built for dynamic rendering (VK_KHR_dynamic_rendering) using
         // color_formats/depth_format/stencil_format, with viewport and scissor as dynamic state.
-        int32_t create_graphics_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t render_pass, uint64_t pipeline_layout,
-                                         const shader_stage_source& vertex_shader, const shader_stage_source& fragment_shader,
-                                         uint32_t flags, uint32_t width, uint32_t height, std::span<const vertex_binding> bindings,
-                                         std::span<const vertex_attribute> attributes, std::span<const vertex_divisor> divisors,
-                                         const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
-                                         uint32_t stencil_format, uint32_t rasterization_samples, uint32_t primitive_topology,
-                                         uint32_t primitive_restart_enable, uint32_t rasterization_stream,
-                                         uint32_t rasterization_stream_flags, std::span<const uint32_t> dynamic_states,
-                                         const specialization& vs_spec, const specialization& fs_spec,
-                                         std::span<const color_blend_attachment> blend_attachments, uint64_t& out_pipeline);
+        int32_t create_graphics_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t render_pass, uint32_t subpass,
+                                         uint64_t pipeline_layout, const shader_stage_source& vertex_shader,
+                                         const shader_stage_source& fragment_shader, uint32_t flags, uint32_t width, uint32_t height,
+                                         std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
+                                         std::span<const vertex_divisor> divisors, const depth_state& depth,
+                                         std::span<const uint32_t> color_formats, uint32_t depth_format, uint32_t stencil_format,
+                                         uint32_t rasterization_samples, uint32_t primitive_topology, uint32_t primitive_restart_enable,
+                                         uint32_t rasterization_stream, uint32_t rasterization_stream_flags,
+                                         std::span<const uint32_t> dynamic_states, const specialization& vs_spec,
+                                         const specialization& fs_spec, std::span<const color_blend_attachment> blend_attachments,
+                                         uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t pipeline_layout,
                                         const shader_stage_source& shader, uint32_t flags, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
-        // clear_depth is used only when the render pass has a depth attachment.
-        int32_t cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, uint32_t width, uint32_t height,
-                                      float r, float g, float b, float a, float clear_depth);
+        struct render_area
+        {
+            int32_t x;
+            int32_t y;
+            uint32_t width;
+            uint32_t height;
+        };
+
+        // Each clear value is a raw VkClearValue. attachments name the views of an imageless framebuffer.
+        int32_t cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, const render_area& area,
+                                      uint32_t contents, std::span<const std::array<uint32_t, 4>> clear_values,
+                                      std::span<const uint64_t> attachments);
         int32_t cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline, uint32_t bind_point);
         int32_t cmd_dispatch(uint64_t command_buffer, uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z);
         int32_t cmd_dispatch_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset);

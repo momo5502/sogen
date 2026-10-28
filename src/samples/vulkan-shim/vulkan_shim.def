@@ -16,6 +16,7 @@ EXPORTS
     vkBindImageMemory
     vkBindImageMemory2
     vkCmdBeginRenderPass
+    vkCmdBeginRenderPass2
     vkCmdBeginTransformFeedbackEXT
     vkCmdBeginRendering
     vkCmdBindDescriptorSets
@@ -73,7 +74,9 @@ EXPORTS
     vkCmdWriteTimestamp2KHR
     vkCmdEndDebugUtilsLabelEXT
     vkCmdEndRenderPass
+    vkCmdEndRenderPass2
     vkCmdNextSubpass
+    vkCmdNextSubpass2
     vkCmdEndRendering
     vkCmdExecuteCommands
     vkCmdFillBuffer
@@ -130,6 +133,7 @@ EXPORTS
     vkCreatePipelineLayout
     vkCreatePipelineCache
     vkCreateRenderPass
+    vkCreateRenderPass2
     vkCreateSampler
     vkCreateSemaphore
     vkCreateShaderModule

@@ -2723,15 +2723,100 @@ namespace sogen
 
             NTSTATUS handle_create_render_pass(windows_emulator& win_emu, const io_device_context& context)
             {
-                gpu_bridge::create_render_pass_request request{};
+                using request_t = gpu_bridge::create_render_pass_request;
+
+                request_t request{};
                 if (!read_input(win_emu, context, request))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+
+                std::vector<gpu_bridge::render_pass_attachment> attachments{};
+                std::vector<gpu_bridge::render_pass_subpass> subpasses{};
+                std::vector<gpu_bridge::render_pass_reference> references{};
+                std::vector<gpu_bridge::render_pass_dependency> dependencies{};
+                std::vector<uint32_t> preserves{};
+                std::vector<uint32_t> correlated_view_masks{};
+
+                size_t offset = sizeof(request_t);
+                const auto read_section = [&]<typename T>(const uint32_t count, std::vector<T>& out) {
+                    if (!read_trailing_array(win_emu, context, offset, count, out))
+                    {
+                        return false;
+                    }
+                    offset += static_cast<size_t>(count) * sizeof(T);
+                    return true;
+                };
+                if (!read_section(request.attachment_count, attachments) || !read_section(request.subpass_count, subpasses) ||
+                    !read_section(request.reference_count, references) || !read_section(request.dependency_count, dependencies) ||
+                    !read_section(request.preserve_count, preserves) ||
+                    !read_section(request.correlated_view_mask_count, correlated_view_masks))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                vulkan_host::render_pass_description description{};
+                description.flags = request.flags;
+                for (const auto& a : attachments)
+                {
+                    description.attachments.push_back(vulkan_host::render_pass_attachment{
+                        .flags = a.flags,
+                        .format = a.format,
+                        .samples = a.samples,
+                        .load_op = a.load_op,
+                        .store_op = a.store_op,
+                        .stencil_load_op = a.stencil_load_op,
+                        .stencil_store_op = a.stencil_store_op,
+                        .initial_layout = a.initial_layout,
+                        .final_layout = a.final_layout,
+                        .has_stencil_layouts = a.has_stencil_layouts,
+                        .stencil_initial_layout = a.stencil_initial_layout,
+                        .stencil_final_layout = a.stencil_final_layout,
+                    });
+                }
+                for (const auto& sp : subpasses)
+                {
+                    description.subpasses.push_back(vulkan_host::render_pass_subpass{
+                        .flags = sp.flags,
+                        .bind_point = sp.bind_point,
+                        .view_mask = sp.view_mask,
+                        .input_count = sp.input_count,
+                        .color_count = sp.color_count,
+                        .has_color_resolve = sp.has_color_resolve,
+                        .has_depth_stencil = sp.has_depth_stencil,
+                        .has_depth_stencil_resolve = sp.has_depth_stencil_resolve,
+                        .depth_resolve_mode = sp.depth_resolve_mode,
+                        .stencil_resolve_mode = sp.stencil_resolve_mode,
+                        .preserve_count = sp.preserve_count,
+                    });
+                }
+                for (const auto& r : references)
+                {
+                    description.references.push_back(vulkan_host::render_pass_reference{
+                        .attachment = r.attachment,
+                        .layout = r.layout,
+                        .aspect_mask = r.aspect_mask,
+                        .stencil_layout = r.stencil_layout,
+                    });
+                }
+                for (const auto& d : dependencies)
+                {
+                    description.dependencies.push_back(vulkan_host::render_pass_dependency{
+                        .src_subpass = d.src_subpass,
+                        .dst_subpass = d.dst_subpass,
+                        .src_stage_mask = d.src_stage_mask,
+                        .dst_stage_mask = d.dst_stage_mask,
+                        .src_access_mask = d.src_access_mask,
+                        .dst_access_mask = d.dst_access_mask,
+                        .flags = d.flags,
+                        .view_offset = d.view_offset,
+                    });
+                }
+                description.preserves = std::move(preserves);
+                description.correlated_view_masks = std::move(correlated_view_masks);
+
                 uint64_t render_pass = gpu_bridge::null_object;
-                const int32_t result =
-                    this->vulkan_.create_render_pass(request.device, request.format, request.load_op, request.store_op,
-                                                     request.initial_layout, request.final_layout, request.depth_format, render_pass);
+                const int32_t result = this->vulkan_.create_render_pass(request.device, description, render_pass);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = render_pass});
             }
@@ -2749,14 +2834,44 @@ namespace sogen
 
             NTSTATUS handle_create_framebuffer(windows_emulator& win_emu, const io_device_context& context)
             {
-                gpu_bridge::create_framebuffer_request request{};
+                using request_t = gpu_bridge::create_framebuffer_request;
+
+                request_t request{};
                 if (!read_input(win_emu, context, request))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+
+                std::vector<uint64_t> views{};
+                std::vector<vulkan_host::framebuffer_attachment_image> images{};
+                if (request.flags & gpu_bridge::framebuffer_create_imageless_bit)
+                {
+                    std::vector<gpu_bridge::framebuffer_attachment_image> wire_images{};
+                    if (!read_trailing_array(win_emu, context, sizeof(request_t), request.attachment_count, wire_images))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    for (const auto& image : wire_images)
+                    {
+                        images.push_back(vulkan_host::framebuffer_attachment_image{
+                            .flags = image.flags,
+                            .usage = image.usage,
+                            .width = image.width,
+                            .height = image.height,
+                            .layer_count = image.layer_count,
+                            .view_format_count = image.view_format_count,
+                            .view_formats = image.view_formats,
+                        });
+                    }
+                }
+                else if (!read_trailing_array(win_emu, context, sizeof(request_t), request.attachment_count, views))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 uint64_t framebuffer = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_framebuffer(request.device, request.render_pass, request.image_view,
-                                                                        request.depth_view, request.width, request.height, framebuffer);
+                const int32_t result = this->vulkan_.create_framebuffer(request.device, request.render_pass, request.flags, request.width,
+                                                                        request.height, request.layers, views, images, framebuffer);
                 return write_output(win_emu, context,
                                     gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = framebuffer});
             }
@@ -2960,8 +3075,8 @@ namespace sogen
 
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
-                    request.device, request.pipeline_cache, request.render_pass, request.pipeline_layout, vertex_shader, fragment_shader,
-                    request.flags, request.width, request.height, bindings, attributes, divisors, depth, color_formats,
+                    request.device, request.pipeline_cache, request.render_pass, request.subpass, request.pipeline_layout, vertex_shader,
+                    fragment_shader, request.flags, request.width, request.height, bindings, attributes, divisors, depth, color_formats,
                     request.depth_format, request.stencil_format, request.rasterization_samples, request.primitive_topology,
                     request.primitive_restart_enable, request.rasterization_stream, request.rasterization_stream_flags, dynamic_states,
                     vs_spec, fs_spec, blend_attachments, pipeline);
@@ -3590,8 +3705,21 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_begin_render_pass(req.command_buffer, req.render_pass, req.framebuffer, req.width, req.height,
-                                                               req.clear_r, req.clear_g, req.clear_b, req.clear_a, req.clear_depth);
+                    const size_t available = size - sizeof(req);
+                    const size_t clear_bytes = static_cast<size_t>(req.clear_value_count) * sizeof(std::array<uint32_t, 4>);
+                    if (req.clear_value_count > available / sizeof(std::array<uint32_t, 4>) ||
+                        req.attachment_count > (available - clear_bytes) / sizeof(gpu_bridge::object_id))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<std::array<uint32_t, 4>> clear_values(req.clear_value_count);
+                    std::memcpy(clear_values.data(), payload + sizeof(req), clear_bytes);
+                    std::vector<uint64_t> attachments(req.attachment_count);
+                    std::memcpy(attachments.data(), payload + sizeof(req) + clear_bytes, attachments.size() * sizeof(uint64_t));
+                    return this->vulkan_.cmd_begin_render_pass(
+                        req.command_buffer, req.render_pass, req.framebuffer,
+                        vulkan_host::render_area{.x = req.x, .y = req.y, .width = req.width, .height = req.height}, req.contents,
+                        clear_values, attachments);
                 }
                 case gpu_bridge::command::cmd_bind_pipeline: {
                     gpu_bridge::cmd_bind_pipeline_request req{};
