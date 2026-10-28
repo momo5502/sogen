@@ -57,9 +57,8 @@ namespace sogen
             }
 
             // Windows maps the .apiset section of apisetschema.dll as the process API set map.
-            std::vector<std::byte> read_schema_dll(const std::filesystem::path& schema_dll)
+            std::vector<std::byte> read_schema_dll(const std::vector<std::byte>& file)
             {
-                const auto file = utils::io::read_file(schema_dll);
                 if (file.empty())
                 {
                     throw std::runtime_error("Failed to read apisetschema.dll");
@@ -99,7 +98,7 @@ namespace sogen
             }
         }
 
-        container obtain(const std::filesystem::path& schema_dll)
+        container obtain(const std::vector<std::byte>& schema_dll)
         {
             return {.data = read_schema_dll(schema_dll)};
         }

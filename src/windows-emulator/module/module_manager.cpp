@@ -159,6 +159,63 @@ namespace sogen
         return result;
     }
 
+    pe_detection_result pe_architecture_detector::detect_from_data(const std::span<const std::byte> data)
+    {
+        const auto variant_result = winpe::get_pe_format(
+            [&](const uint64_t offset, void* destination, const size_t length) {
+                std::memcpy(destination, data.data() + offset, length);
+                return true;
+            },
+            0, data.size());
+
+        if (std::holds_alternative<std::error_code>(variant_result))
+        {
+            pe_detection_result result;
+            result.error_message = std::get<std::error_code>(variant_result).message();
+            return result;
+        }
+
+        const auto format = std::get<winpe::pe_format>(variant_result);
+        pe_detection_result result;
+        result.architecture = format.architecture;
+        result.machine = format.machine;
+        result.suggested_mode = determine_execution_mode(format);
+        return result;
+    }
+
+    pe_detection_result pe_architecture_detector::detect_from_file(const file_system& file_sys, const windows_path& path)
+    {
+        const auto input = file_sys.open_read(path);
+        if (!input.file)
+        {
+            pe_detection_result result;
+            result.error_message = "Cannot open file";
+            return result;
+        }
+
+        const auto size = input.file->size();
+        const auto variant_result = winpe::get_pe_format(
+            [&](const uint64_t offset, void* destination, const size_t length) {
+                return input.file->seek(static_cast<int64_t>(offset), SEEK_SET) &&
+                       input.file->read({static_cast<std::byte*>(destination), length}) == length;
+            },
+            0, size < 0 ? 0 : static_cast<uint64_t>(size));
+
+        if (std::holds_alternative<std::error_code>(variant_result))
+        {
+            pe_detection_result result;
+            result.error_message = std::get<std::error_code>(variant_result).message();
+            return result;
+        }
+
+        const auto format = std::get<winpe::pe_format>(variant_result);
+        pe_detection_result result;
+        result.architecture = format.architecture;
+        result.machine = format.machine;
+        result.suggested_mode = determine_execution_mode(format);
+        return result;
+    }
+
     pe_detection_result pe_architecture_detector::detect_from_memory(const memory_interface& memory, uint64_t base_address,
                                                                      uint64_t image_size)
     {
@@ -198,10 +255,11 @@ namespace sogen
     }
 
     // PE32 Mapping Strategy Implementation
-    mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+    mapped_module pe32_mapping_strategy::map_from_data(memory_manager& memory, const std::span<const std::byte> data,
+                                                       std::filesystem::path identity, windows_path module_path,
                                                        const uint64_t relocation_base)
     {
-        return map_module_from_file<std::uint32_t>(memory, std::move(file), std::move(module_path), relocation_base);
+        return map_module_from_data<std::uint32_t>(memory, data, std::move(identity), std::move(module_path), relocation_base);
     }
 
     mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -211,10 +269,11 @@ namespace sogen
     }
 
     // PE64 Mapping Strategy Implementation
-    mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+    mapped_module pe64_mapping_strategy::map_from_data(memory_manager& memory, const std::span<const std::byte> data,
+                                                       std::filesystem::path identity, windows_path module_path,
                                                        const uint64_t relocation_base)
     {
-        return map_module_from_file<std::uint64_t>(memory, std::move(file), std::move(module_path), relocation_base);
+        return map_module_from_data<std::uint64_t>(memory, data, std::move(identity), std::move(module_path), relocation_base);
     }
 
     mapped_module pe64_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -308,12 +367,11 @@ namespace sogen
 
     execution_mode module_manager::detect_execution_mode(const windows_path& executable_path, const logger& logger)
     {
-        const auto local_file = this->file_sys_->translate(executable_path);
-        auto detection_result = pe_architecture_detector::detect_from_file(local_file);
+        auto detection_result = pe_architecture_detector::detect_from_file(*this->file_sys_, executable_path);
 
         if (!detection_result.is_valid())
         {
-            logger.error("Failed to detect executable architecture of file %s: %s\n", local_file.string().c_str(),
+            logger.error("Failed to detect executable architecture of file %s: %s\n", executable_path.string().c_str(),
                          detection_result.error_message.c_str());
             return execution_mode::unknown;
         }
@@ -544,17 +602,14 @@ namespace sogen
         }
     }
 
+    std::filesystem::path module_manager::module_identity(const windows_path& path)
+    {
+        return std::filesystem::path{utils::string::to_lower(path.to_portable_path().u16string())};
+    }
+
     std::optional<uint64_t> module_manager::get_module_load_count_by_path(const windows_path& path)
     {
-        const auto host_path = this->file_sys_->translate(path);
-        if (host_path.empty())
-        {
-            return {};
-        }
-
-        auto local_file = std::filesystem::weakly_canonical(std::filesystem::absolute(host_path));
-
-        if (auto load_count_entry = modules_load_count.find(local_file); load_count_entry != modules_load_count.end())
+        if (auto load_count_entry = modules_load_count.find(module_identity(path)); load_count_entry != modules_load_count.end())
         {
             return load_count_entry->second;
         }
@@ -565,19 +620,40 @@ namespace sogen
     mapped_module* module_manager::map_module(windows_path file, const logger& logger, const bool is_static, bool allow_duplicate,
                                               const uint64_t relocation_base)
     {
-        auto local_file = this->file_sys_->translate(file);
-        if (local_file.empty())
+        if (utils::string::to_lower(file.leaf()) == u"win32u.dll")
+        {
+            allow_duplicate = false;
+        }
+
+        auto identity = module_identity(file);
+
+        if (!allow_duplicate)
+        {
+            for (auto& mod : this->modules_ | std::views::values)
+            {
+                if (mod.path == identity)
+                {
+                    return &mod;
+                }
+            }
+        }
+
+        std::vector<std::byte> data{};
+        if (!this->file_sys_->read_file(file, &data) || data.empty())
         {
             logger.error("Failed to map module: %s does not resolve to a file\n", file.string().c_str());
             return nullptr;
         }
 
-        if (local_file.filename() == "win32u.dll")
-        {
-            return this->map_local_module(local_file, std::move(file), logger, is_static, false, relocation_base);
-        }
+        auto detection_result = pe_architecture_detector::detect_from_data(data);
 
-        return this->map_local_module(local_file, std::move(file), logger, is_static, allow_duplicate, relocation_base);
+        return map_module_core(
+            detection_result,
+            [&]() {
+                auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
+                return strategy.map_from_data(*this->memory_, data, std::move(identity), std::move(file), relocation_base);
+            },
+            logger, is_static);
     }
 
     mapped_module* module_manager::map_module_or_throw(const windows_path& file, const logger& logger, const bool is_static,
@@ -590,33 +666,6 @@ namespace sogen
         }
 
         return mapped_module;
-    }
-
-    mapped_module* module_manager::map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
-                                                    const bool is_static, bool allow_duplicate, const uint64_t relocation_base)
-    {
-        auto local_file = weakly_canonical(absolute(file));
-
-        if (!allow_duplicate)
-        {
-            for (auto& mod : this->modules_ | std::views::values)
-            {
-                if (mod.path == local_file)
-                {
-                    return &mod;
-                }
-            }
-        }
-
-        auto detection_result = pe_architecture_detector::detect_from_file(local_file);
-
-        return map_module_core(
-            detection_result,
-            [&]() {
-                auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-                return strategy.map_from_file(*this->memory_, std::move(local_file), std::move(module_path), relocation_base);
-            },
-            logger, is_static);
     }
 
     mapped_module* module_manager::map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path,

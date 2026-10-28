@@ -143,7 +143,7 @@ namespace sogen
             NTSTATUS map_nls_file(const syscall_context& c, const std::string_view file_name,
                                   const emulator_object<uint64_t> section_pointer, const emulator_object<ULONG> section_size)
             {
-                const auto nls_file = utils::io::read_file(c.win_emu.file_sys.translate(get_system32_path(c, file_name)));
+                const auto nls_file = c.win_emu.file_sys.read_file(get_system32_path(c, file_name));
                 if (nls_file.empty())
                 {
                     return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -164,7 +164,7 @@ namespace sogen
                                              const emulator_object<LCID> default_locale_id,
                                              const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
         {
-            const auto locale_file = utils::io::read_file(c.win_emu.file_sys.translate(get_system32_path(c, "locale.nls")));
+            const auto locale_file = c.win_emu.file_sys.read_file(get_system32_path(c, "locale.nls"));
             if (locale_file.empty())
             {
                 return STATUS_FILE_INVALID;

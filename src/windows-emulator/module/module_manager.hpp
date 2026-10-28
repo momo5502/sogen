@@ -42,8 +42,8 @@ namespace sogen
     {
       public:
         virtual ~module_mapping_strategy() = default;
-        virtual mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
-                                            uint64_t relocation_base) = 0;
+        virtual mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
+                                            windows_path module_path, uint64_t relocation_base) = 0;
         virtual mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                               windows_path module_path) = 0;
     };
@@ -51,8 +51,8 @@ namespace sogen
     class pe32_mapping_strategy : public module_mapping_strategy
     {
       public:
-        mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
-                                    uint64_t relocation_base) override;
+        mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
+                                    windows_path module_path, uint64_t relocation_base) override;
         mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                       windows_path module_path) override;
     };
@@ -60,8 +60,8 @@ namespace sogen
     class pe64_mapping_strategy : public module_mapping_strategy
     {
       public:
-        mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
-                                    uint64_t relocation_base) override;
+        mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
+                                    windows_path module_path, uint64_t relocation_base) override;
         mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                       windows_path module_path) override;
     };
@@ -81,6 +81,8 @@ namespace sogen
     {
       public:
         static pe_detection_result detect_from_file(const std::filesystem::path& file);
+        static pe_detection_result detect_from_data(std::span<const std::byte> data);
+        static pe_detection_result detect_from_file(const file_system& file_sys, const windows_path& path);
         static pe_detection_result detect_from_memory(const memory_interface& memory, uint64_t base_address, uint64_t image_size);
         static execution_mode determine_execution_mode(winpe::pe_format format);
     };
@@ -107,8 +109,7 @@ namespace sogen
                                   uint64_t relocation_base = 0);
         mapped_module* map_module_or_throw(const windows_path& file, const logger& logger, bool is_static = false,
                                            bool allow_duplicate = false);
-        mapped_module* map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
-                                        bool is_static = false, bool allow_duplicate = false, uint64_t relocation_base = 0);
+        static std::filesystem::path module_identity(const windows_path& path);
         mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,
                                          bool is_static = false, bool allow_duplicate = false);
 

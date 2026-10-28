@@ -7,6 +7,8 @@
 namespace sogen
 {
 
+    struct file_system_test_access;
+
     class file_system
     {
       public:
@@ -23,14 +25,20 @@ namespace sogen
         bool is_writable(const windows_path& path) const;
 
         open_result open(const windows_path& path, const std::u16string& mode);
+        open_result open_read(const windows_path& path) const;
         NTSTATUS create_directory(const windows_path& path);
         NTSTATUS rename(const windows_path& from, const windows_path& to);
         NTSTATUS remove(const windows_path& path);
 
+        bool read_file(const windows_path& path, std::vector<std::byte>* data) const;
+        std::vector<std::byte> read_file(const windows_path& path) const;
+
+      private:
+        friend struct file_system_test_access;
+
         // Returns an empty path if no mount resolves the guest path.
         std::filesystem::path translate(const windows_path& path) const;
 
-      private:
         struct mount_entry
         {
             std::unique_ptr<mount_provider> provider{};

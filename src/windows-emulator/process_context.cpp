@@ -1530,7 +1530,7 @@ namespace sogen
             q.pop();
 
             std::vector<std::byte> file;
-            if (!utils::io::read_file(file_system.translate(system_root_path / knowndll_filename), &file))
+            if (!file_system.read_file(system_root_path / knowndll_filename, &file))
             {
                 continue;
             }

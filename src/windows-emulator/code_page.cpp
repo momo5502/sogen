@@ -106,8 +106,8 @@ namespace sogen
         }
 
         const auto directory = win_emu.version.get_system_root() / "System32";
-        const auto ansi = utils::io::read_file(win_emu.file_sys.translate(directory / ("c_" + std::to_string(*ansi_page) + ".nls")));
-        const auto oem = utils::io::read_file(win_emu.file_sys.translate(directory / ("c_" + std::to_string(*oem_page) + ".nls")));
+        const auto ansi = win_emu.file_sys.read_file(directory / ("c_" + std::to_string(*ansi_page) + ".nls"));
+        const auto oem = win_emu.file_sys.read_file(directory / ("c_" + std::to_string(*oem_page) + ".nls"));
         const auto tables = build_ansi_oem_tables(ansi, oem);
         if (!tables)
         {
