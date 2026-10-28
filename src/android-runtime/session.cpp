@@ -240,6 +240,7 @@ namespace sogen::android
 
                 this->emulator_ = &win_emu;
                 this->snapshots_ = &snapshots;
+                win_emu.frames().set_limit(this->frame_limit_);
             }
 
             const bool saved = snapshots.run();
@@ -289,6 +290,26 @@ namespace sogen::android
     {
         const std::lock_guard lock{this->mutex_};
         return this->snapshots_ && this->snapshots_->request(std::move(destination));
+    }
+
+    void session::set_frame_limit(const uint32_t frames_per_second)
+    {
+        const std::lock_guard lock{this->mutex_};
+        this->frame_limit_ = frames_per_second;
+        if (this->emulator_)
+        {
+            this->emulator_->frames().set_limit(frames_per_second);
+        }
+    }
+
+    std::optional<frame_pacer::statistics> session::frame_statistics()
+    {
+        const std::lock_guard lock{this->mutex_};
+        if (!this->emulator_)
+        {
+            return std::nullopt;
+        }
+        return this->emulator_->frames().take_statistics();
     }
 
     void session::report_snapshot(const snapshot::snapshot_outcome& outcome)

@@ -4,9 +4,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.RemoteException
 import dev.sogen.app.runtime.ISogenCallback
 import dev.sogen.app.runtime.ISogenSession
@@ -30,6 +32,9 @@ class SessionController(
     private var exited = false
     private var stopRequested = false
     private var consoleSize: Pair<Int, Int>? = null
+    private var frameLimit = 0
+    private var statsInterval = 0
+    private val power = context.getSystemService(PowerManager::class.java)
 
     /** Window that receives hardware key events, set by the game view. */
     var inputWindow: Long = 0
@@ -52,6 +57,8 @@ class SessionController(
                 call {
                     remote.start(config.toBundle(), callback)
                     consoleSize?.let { (columns, rows) -> remote.consoleResize(columns, rows) }
+                    remote.setFrameLimit(frameLimit)
+                    remote.setStatsInterval(statsInterval)
                     // The service creates the session synchronously in start, and a stopped session exits as soon
                     // as it runs, reporting its exit code as usual.
                     if (stopRequested) {
@@ -108,6 +115,17 @@ class SessionController(
     fun text(window: Long, text: String) = call { session?.text(window, text) }
 
     fun close(window: Long) = call { session?.close(window) }
+
+    /** Takes effect once the session starts when it is not running yet, like [statsInterval]. */
+    fun setFrameLimit(framesPerSecond: Int) {
+        frameLimit = framesPerSecond
+        call { session?.setFrameLimit(framesPerSecond) }
+    }
+
+    fun setStatsInterval(milliseconds: Int) {
+        statsInterval = milliseconds
+        call { session?.setStatsInterval(milliseconds) }
+    }
 
     private val callback = object : ISogenCallback.Stub() {
         override fun onOutput(text: String, color: Int) =
@@ -176,6 +194,18 @@ class SessionController(
         }
 
         override fun onExit(exitCode: Int) = post { this@SessionController.onExit(exitCode) }
+
+        override fun onStats(frames: Long, worstPresentIntervalNs: Long, residentBytes: Long) = post {
+            emit(
+                mapOf(
+                    "event" to "stats",
+                    "frames" to frames,
+                    "worstPresentIntervalNs" to worstPresentIntervalNs,
+                    "residentBytes" to residentBytes,
+                    "thermalStatus" to if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) power.currentThermalStatus else null,
+                ),
+            )
+        }
     }
 
     /** [exitCode] is null when the service process died without reporting one, i.e. it crashed. */
@@ -190,6 +220,8 @@ class SessionController(
         session = null
         inputWindow = 0
         consoleSize = null
+        frameLimit = 0
+        statsInterval = 0
 
         connection?.let { context.unbindService(it) }
         connection = null

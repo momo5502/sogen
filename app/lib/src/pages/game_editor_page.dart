@@ -15,14 +15,16 @@ const _storage = MethodChannel('dev.sogen.app/storage');
 // Deep enough for launchers that keep the real executable in a bin/ or similar subfolder.
 const _maxSearchDepth = 3;
 
-class AddGamePage extends StatefulWidget {
-  const AddGamePage({super.key});
+class GameEditorPage extends StatefulWidget {
+  const GameEditorPage({super.key, this.game});
+
+  final Game? game;
 
   @override
-  State<AddGamePage> createState() => _AddGamePageState();
+  State<GameEditorPage> createState() => _GameEditorPageState();
 }
 
-class _AddGamePageState extends State<AddGamePage> {
+class _GameEditorPageState extends State<GameEditorPage> {
   final TextEditingController _name = TextEditingController();
   final TextEditingController _arguments = TextEditingController();
   final TextEditingController _environment = TextEditingController();
@@ -33,6 +35,27 @@ class _AddGamePageState extends State<AddGamePage> {
   bool _liveNetwork = false;
   bool _console = false;
   bool _scanning = false;
+  bool _saving = false;
+  int _scanGeneration = 0;
+  GameSettings _settings = const GameSettings();
+
+  @override
+  void initState() {
+    super.initState();
+
+    final game = widget.game;
+    if (game == null) {
+      return;
+    }
+
+    _name.text = game.name;
+    _arguments.text = game.arguments.join(' ');
+    _environment.text = game.environment.entries.map((entry) => '${entry.key}=${entry.value}').join('\n');
+    _liveNetwork = game.liveNetwork;
+    _console = game.console;
+    _settings = game.settings;
+    _scan(game.directory, selected: game.executable);
+  }
 
   @override
   void dispose() {
@@ -70,10 +93,13 @@ class _AddGamePageState extends State<AddGamePage> {
     }
 
     final directory = await FilePicker.getDirectoryPath(dialogTitle: 'Game folder');
-    if (directory == null) {
-      return;
+    if (directory != null) {
+      await _scan(directory);
     }
+  }
 
+  Future<void> _scan(String directory, {String? selected}) async {
+    final generation = ++_scanGeneration;
     setState(() {
       _directory = directory;
       _executables = const [];
@@ -82,14 +108,15 @@ class _AddGamePageState extends State<AddGamePage> {
     });
 
     final executables = await _findExecutables(Directory(directory));
-    if (!mounted) {
+    if (!mounted || generation != _scanGeneration) {
       return;
     }
 
     setState(() {
       _scanning = false;
-      _executables = executables;
-      _executable = executables.firstOrNull;
+      // A saved executable stays selectable even when the scan misses it, e.g. deeper than the search goes.
+      _executables = [if (selected != null && !executables.contains(selected)) selected, ...executables];
+      _executable = selected ?? _executables.firstOrNull;
       if (_name.text.isEmpty) {
         _name.text = p.basename(directory);
       }
@@ -134,27 +161,98 @@ class _AddGamePageState extends State<AddGamePage> {
     return environment;
   }
 
-  void _save() {
+  /// The field splits at whitespace, so arguments that contain spaces are kept as they were unless the user edits them.
+  List<String> _argumentList() {
+    final text = _arguments.text.trim();
+    final previous = widget.game?.arguments;
+    if (previous != null && text == previous.join(' ').trim()) {
+      return previous;
+    }
+    return text.isEmpty ? const [] : text.split(RegExp(r'\s+'));
+  }
+
+  Future<void> _save() async {
     final directory = _directory;
     final executable = _executable;
-    if (directory == null || executable == null) {
+    if (directory == null || executable == null || _saving) {
       return;
     }
 
-    final arguments = _arguments.text.trim();
-    final environment = _parseEnvironment(_environment.text);
-    Navigator.of(context).pop(
-      Game(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        name: _name.text.trim().isEmpty ? p.basenameWithoutExtension(executable) : _name.text.trim(),
-        directory: directory,
-        executable: executable,
-        arguments: arguments.isEmpty ? const [] : arguments.split(RegExp(r'\s+')),
-        environment: environment,
-        liveNetwork: _liveNetwork,
-        console: _console,
+    setState(() => _saving = true);
+    try {
+      await _store(directory, executable);
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Future<void> _store(String directory, String executable) async {
+    final game = Game(
+      id: widget.game?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
+      name: _name.text.trim().isEmpty ? p.basenameWithoutExtension(executable) : _name.text.trim(),
+      directory: directory,
+      executable: executable,
+      arguments: _argumentList(),
+      environment: _parseEnvironment(_environment.text),
+      liveNetwork: _liveNetwork,
+      console: _console,
+      settings: _settings,
+    );
+
+    if (!await _keepOrDiscardSuspendedState(game) || !mounted) {
+      return;
+    }
+
+    Navigator.of(context).pop(game);
+  }
+
+  /// A suspended game resumes the process it saved, which was set up for its folder, executable and network access.
+  Future<bool> _keepOrDiscardSuspendedState(Game game) async {
+    final previous = widget.game;
+    if (previous == null ||
+        (previous.directory == game.directory &&
+            previous.executable == game.executable &&
+            previous.liveNetwork == game.liveNetwork)) {
+      return true;
+    }
+
+    final saved = await savedStateFile(game);
+    if (!saved.existsSync() || !mounted) {
+      return true;
+    }
+
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Discard the suspended ${previous.name}?'),
+        content: const Text(
+          'The game was suspended with a different folder, executable or network access, so it cannot resume after '
+          'this change.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Discard')),
+        ],
       ),
     );
+
+    if (discard != true) {
+      return false;
+    }
+
+    try {
+      await saved.delete();
+      return true;
+    } on FileSystemException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not discard the suspended game: ${e.osError?.message ?? e.message}')),
+        );
+      }
+      return false;
+    }
   }
 
   @override
@@ -165,7 +263,10 @@ class _AddGamePageState extends State<AddGamePage> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(icon: const Icon(LucideIcons.x), onPressed: () => Navigator.of(context).pop()),
-        title: Text('Add game', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+        title: Text(
+          widget.game == null ? 'Add game' : 'Edit game',
+          style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
@@ -262,8 +363,58 @@ class _AddGamePageState extends State<AddGamePage> {
               value: _console,
               onChanged: (value) => setState(() => _console = value),
             ),
+            if (!_console) ...[
+              const SizedBox(height: 16),
+              Text('Controls', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Trackpad'),
+                subtitle: Text(
+                  'Touch moves the cursor instead of clicking where you tap',
+                  style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+                ),
+                value: _settings.trackpad,
+                onChanged: (value) => setState(() => _settings = _settings.copyWith(trackpad: value)),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Mouse-look speed'),
+                subtitle: Text(
+                  'For games that capture the mouse, like first-person games',
+                  style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+                ),
+                trailing: Text(
+                  '${_settings.mouseSensitivity.toStringAsFixed(1)}x',
+                  style: monospace(fontSize: 13, color: SogenColors.neutral300),
+                ),
+              ),
+              Slider(
+                value: _settings.mouseSensitivity,
+                min: GameSettings.minMouseSensitivity,
+                max: GameSettings.maxMouseSensitivity,
+                divisions: 15,
+                onChanged: (value) => setState(() => _settings = _settings.copyWith(mouseSensitivity: value)),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<ScreenOrientation>(
+                initialValue: _settings.orientation,
+                dropdownColor: SogenColors.card,
+                decoration: const InputDecoration(labelText: 'Screen orientation'),
+                items: [
+                  for (final orientation in ScreenOrientation.values)
+                    DropdownMenuItem(value: orientation, child: Text(orientation.label)),
+                ],
+                onChanged: (value) =>
+                    setState(() => _settings = _settings.copyWith(orientation: value ?? ScreenOrientation.sensor)),
+              ),
+            ],
             const SizedBox(height: 24),
-            PrimaryButton(label: 'Add to library', icon: LucideIcons.plus, expand: true, onPressed: _save),
+            PrimaryButton(
+              label: widget.game == null ? 'Add to library' : 'Save',
+              icon: widget.game == null ? LucideIcons.plus : LucideIcons.check,
+              expand: true,
+              onPressed: _saving ? null : _save,
+            ),
           ],
         ],
       ),

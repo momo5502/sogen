@@ -71,6 +71,10 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     fun key(window: Long, keyCode: Int, down: Boolean) = nativeKey(handle, window, keyCode, down)
     fun text(window: Long, text: String) = nativeText(handle, window, text)
     fun close(window: Long) = nativeClose(handle, window)
+    fun setFrameLimit(framesPerSecond: Int) = nativeSetFrameLimit(handle, framesPerSecond)
+
+    /** Frames presented so far and the longest present interval since the last call, or null while nothing runs. */
+    fun frameStatistics(): LongArray? = nativeFrameStatistics(handle)
 
     override fun close() = nativeDestroy(handle)
 
@@ -95,6 +99,8 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     ): Int
 
     private external fun nativeStop(handle: Long)
+    private external fun nativeSetFrameLimit(handle: Long, framesPerSecond: Int)
+    private external fun nativeFrameStatistics(handle: Long): LongArray?
     private external fun nativeSuspend(handle: Long, destination: String): Boolean
     private external fun nativeConsoleInput(handle: Long, data: ByteArray)
     private external fun nativeConsoleResize(handle: Long, columns: Int, rows: Int)

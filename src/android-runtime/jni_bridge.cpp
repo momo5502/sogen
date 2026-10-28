@@ -3,6 +3,9 @@
 
 #include <android/native_window_jni.h>
 
+#include <algorithm>
+#include <array>
+
 namespace
 {
     using sogen::android::session;
@@ -135,6 +138,32 @@ extern "C"
                                                                                     jstring destination)
     {
         return get_session(handle).suspend(to_string(*env, destination)) ? JNI_TRUE : JNI_FALSE;
+    }
+
+    JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeSetFrameLimit(JNIEnv* /*env*/, jobject /*self*/, const jlong handle,
+                                                                                      const jint frames_per_second)
+    {
+        get_session(handle).set_frame_limit(static_cast<uint32_t>(std::max(frames_per_second, 0)));
+    }
+
+    // Frames presented so far and the longest present interval since the last call, or null while nothing runs.
+    JNIEXPORT jlongArray JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeFrameStatistics(JNIEnv* env, jobject /*self*/,
+                                                                                              const jlong handle)
+    {
+        const auto statistics = get_session(handle).frame_statistics();
+        if (!statistics)
+        {
+            return nullptr;
+        }
+
+        const std::array<jlong, 2> values{static_cast<jlong>(statistics->frames),
+                                          static_cast<jlong>(statistics->worst_present_interval_ns)};
+        auto* result = env->NewLongArray(static_cast<jsize>(values.size()));
+        if (result)
+        {
+            env->SetLongArrayRegion(result, 0, static_cast<jsize>(values.size()), values.data());
+        }
+        return result;
     }
 
     JNIEXPORT void JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeConsoleInput(JNIEnv* env, jobject /*self*/, const jlong handle,

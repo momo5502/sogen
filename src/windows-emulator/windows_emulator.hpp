@@ -15,6 +15,7 @@
 #include "scheduler_clock.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
+#include "frame_pacer.hpp"
 #include "filesystem/mount_spec.hpp"
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
@@ -207,6 +208,7 @@ namespace sogen
         std::unique_ptr<network::dns_lookup> dns_lookup_{};
         std::unique_ptr<network::socket_factory> socket_factory_{};
         std::unique_ptr<ui_backend> ui_backend_{};
+        frame_pacer frame_pacer_{};
         std::unique_ptr<audio_backend> audio_backend_{};
         std::unique_ptr<crypt_protect_backend> crypt_protect_backend_{};
         process_manager* process_manager_{};
@@ -316,6 +318,11 @@ namespace sogen
         ui_backend& ui()
         {
             return *this->ui_backend_;
+        }
+
+        frame_pacer& frames()
+        {
+            return this->frame_pacer_;
         }
 
         const ui_backend& ui() const

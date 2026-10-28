@@ -6,9 +6,14 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.Process
 import android.os.RemoteException
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import android.view.Surface
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
 /**
@@ -23,6 +28,12 @@ class SogenService : Service() {
     @Volatile
     private var callbackListener: NativeListener? = null
 
+    @Volatile
+    private var callback: ISogenCallback? = null
+
+    private val statsSampler = Executors.newSingleThreadScheduledExecutor()
+    private var statsReports: ScheduledFuture<*>? = null
+
     private val binder = object : ISogenSession.Stub() {
         override fun start(config: Bundle, callback: ISogenCallback) {
             synchronized(this@SogenService) {
@@ -33,6 +44,7 @@ class SogenService : Service() {
                 try {
                     val listener = CallbackListener(callback)
                     callbackListener = listener
+                    this@SogenService.callback = callback
                     native = SogenNative(listener)
                 } catch (e: UnsatisfiedLinkError) {
                     Log.e(TAG, "Could not load the emulator library", e)
@@ -107,6 +119,41 @@ class SogenService : Service() {
         override fun close(window: Long) {
             native?.close(window)
         }
+
+        override fun setFrameLimit(framesPerSecond: Int) {
+            native?.setFrameLimit(framesPerSecond)
+        }
+
+        override fun setStatsInterval(milliseconds: Int) {
+            synchronized(statsSampler) {
+                statsReports?.cancel(false)
+                statsReports = if (milliseconds > 0 && !statsSampler.isShutdown) {
+                    // A fixed delay, so that sampling runs never overlap when one is slow.
+                    statsSampler.scheduleWithFixedDelay(::reportStats, 0, milliseconds.toLong(), TimeUnit.MILLISECONDS)
+                } else {
+                    null
+                }
+            }
+        }
+    }
+
+    private fun reportStats() {
+        val statistics = native?.frameStatistics() ?: return
+        try {
+            callback?.onStats(statistics[0], statistics[1], residentBytes())
+        } catch (_: RemoteException) {
+            // The launcher is gone.
+        }
+    }
+
+    /** The second field of statm is the resident set, in pages. */
+    private fun residentBytes(): Long {
+        val pages = try {
+            File("/proc/self/statm").readText().split(' ').getOrNull(1)?.toLongOrNull()
+        } catch (_: java.io.IOException) {
+            null
+        }
+        return (pages ?: 0) * Os.sysconf(OsConstants._SC_PAGESIZE)
     }
 
     override fun onBind(intent: Intent): IBinder = binder
@@ -122,6 +169,9 @@ class SogenService : Service() {
         val session = native ?: return
         val sandbox = File(applicationInfo.nativeLibraryDir, SANDBOX_LIBRARY)
         val exitCode = session.run(config, if (sandbox.exists()) sandbox.path else "", prepareVulkanDriver())
+        synchronized(statsSampler) {
+            statsSampler.shutdownNow()
+        }
 
         try {
             callback.onExit(exitCode)

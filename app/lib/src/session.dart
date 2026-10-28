@@ -27,6 +27,25 @@ class GuestWindow {
 
 enum MouseButton { left, right, middle }
 
+class SessionStats {
+  const SessionStats({
+    required this.framesPerSecond,
+    required this.worstPresentInterval,
+    required this.residentBytes,
+    this.thermalStatus,
+  });
+
+  final double framesPerSecond;
+
+  /// The longest time between two presented frames since the previous report; not the GPU's render time.
+  final Duration worstPresentInterval;
+
+  final int residentBytes;
+
+  /// Android's PowerManager.THERMAL_STATUS_*, null where the device does not report it.
+  final int? thermalStatus;
+}
+
 /// Where the guest put the cursor itself, in client coordinates of [window].
 class GuestCursor {
   const GuestCursor(this.window, this.x, this.y);
@@ -101,6 +120,15 @@ class GameSession extends ChangeNotifier {
   /// Updated separately from the other session state, since games may move the cursor every frame.
   final ValueNotifier<GuestCursor?> guestCursor = ValueNotifier(null);
 
+  /// The latest cursor position, whether the guest moved the cursor or the player did.
+  GuestCursor? get pointer => _pointer;
+  GuestCursor? _pointer;
+
+  /// Reported while [setStatsInterval] is above zero.
+  final ValueNotifier<SessionStats?> stats = ValueNotifier(null);
+  int? _reportedFrames;
+  final Stopwatch _sinceReport = Stopwatch();
+
   /// Returns false if another game is still running. Any other failure ends the session with [error] set.
   Future<bool> start(Game game, {required String emulationRoot, String? resumeFile}) async {
     _windows.clear();
@@ -158,20 +186,24 @@ class GameSession extends ChangeNotifier {
   Future<void> setInputWindow(GuestWindow? window) =>
       _methods.invokeMethod('setInputWindow', {'window': window?.handle ?? 0});
 
-  void mouseMove(GuestWindow window, int x, int y) =>
-      _methods.invokeMethod('mouseMove', {'window': window.handle, 'x': x, 'y': y});
+  void mouseMove(GuestWindow window, int x, int y) {
+    _pointer = GuestCursor(window.handle, x, y);
+    _methods.invokeMethod('mouseMove', {'window': window.handle, 'x': x, 'y': y});
+  }
 
   void mouseMotion(GuestWindow window, int dx, int dy) =>
       _methods.invokeMethod('mouseMotion', {'window': window.handle, 'dx': dx, 'dy': dy});
 
-  void mouseButton(GuestWindow window, MouseButton button, {required bool down, required int x, required int y}) =>
-      _methods.invokeMethod('mouseButton', {
-        'window': window.handle,
-        'button': button.index,
-        'down': down,
-        'x': x,
-        'y': y,
-      });
+  void mouseButton(GuestWindow window, MouseButton button, {required bool down, required int x, required int y}) {
+    _pointer = GuestCursor(window.handle, x, y);
+    _methods.invokeMethod('mouseButton', {
+      'window': window.handle,
+      'button': button.index,
+      'down': down,
+      'x': x,
+      'y': y,
+    });
+  }
 
   void mouseWheel(GuestWindow window, int delta, int x, int y) =>
       _methods.invokeMethod('mouseWheel', {'window': window.handle, 'delta': delta, 'x': x, 'y': y});
@@ -186,8 +218,13 @@ class GameSession extends ChangeNotifier {
   void _handle(Map<Object?, Object?> event) {
     final window = (event['window'] as num?)?.toInt();
 
+    if (event['event'] == 'stats') {
+      _onStats(event);
+      return;
+    }
+
     if (event['event'] == 'cursorMoved') {
-      guestCursor.value = GuestCursor(window!, event['x'] as int, event['y'] as int);
+      _pointer = guestCursor.value = GuestCursor(window!, event['x'] as int, event['y'] as int);
       return;
     }
 
@@ -252,12 +289,42 @@ class GameSession extends ChangeNotifier {
     _addOutput(text, _stdoutColor);
   }
 
+  void setFrameLimit(int framesPerSecond) =>
+      _methods.invokeMethod('setFrameLimit', {'framesPerSecond': framesPerSecond});
+
+  void setStatsInterval(Duration interval) {
+    _reportedFrames = null;
+    stats.value = null;
+    _methods.invokeMethod('setStatsInterval', {'milliseconds': interval.inMilliseconds});
+  }
+
+  void _onStats(Map<Object?, Object?> event) {
+    final frames = (event['frames'] as num).toInt();
+    final previousFrames = _reportedFrames;
+    final elapsed = _sinceReport.elapsedMicroseconds;
+    _reportedFrames = frames;
+    _sinceReport
+      ..reset()
+      ..start();
+    if (previousFrames == null) {
+      return;
+    }
+
+    stats.value = SessionStats(
+      framesPerSecond: elapsed > 0 ? (frames - previousFrames) * Duration.microsecondsPerSecond / elapsed : 0,
+      worstPresentInterval: Duration(microseconds: (event['worstPresentIntervalNs'] as num).toInt() ~/ 1000),
+      residentBytes: (event['residentBytes'] as num).toInt(),
+      thermalStatus: (event['thermalStatus'] as num?)?.toInt(),
+    );
+  }
+
   @override
   void dispose() {
     _disposed = true;
     _subscription.cancel();
     _console.close();
     guestCursor.dispose();
+    stats.dispose();
     super.dispose();
   }
 }

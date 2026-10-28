@@ -43,12 +43,25 @@ class MainActivity : FlutterActivity() {
         // Flutter's preferred orientations respect the system rotation lock, which a game should not.
         MethodChannel(messenger, "dev.sogen.app/orientation").setMethodCallHandler { call, result ->
             when (call.method) {
-                "followSensor" -> {
-                    requestedOrientation = if (call.argument<Boolean>("enabled") == true) {
-                        ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-                    } else {
-                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                "set" -> {
+                    requestedOrientation = when (call.argument<String>("orientation")) {
+                        "sensor" -> ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                        "landscape" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        "portrait" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                        else -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     }
+                    result.success(null)
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+
+        // Trades peak speed for clocks the device can hold, so long sessions do not slow down once it heats up.
+        MethodChannel(messenger, "dev.sogen.app/performance").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "sustained" -> {
+                    window.setSustainedPerformanceMode(call.argument<Boolean>("enabled") == true)
                     result.success(null)
                 }
 
@@ -115,6 +128,8 @@ class MainActivity : FlutterActivity() {
             "mouseWheel" -> session.mouseWheel(window, int("delta"), int("x"), int("y")).also { result.success(null) }
             "key" -> session.key(window, int("keyCode"), call.argument<Boolean>("down") == true).also { result.success(null) }
             "text" -> session.text(window, call.argument<String>("text").orEmpty()).also { result.success(null) }
+            "setFrameLimit" -> session.setFrameLimit(int("framesPerSecond")).also { result.success(null) }
+            "setStatsInterval" -> session.setStatsInterval(int("milliseconds")).also { result.success(null) }
             "close" -> session.close(window).also { result.success(null) }
             else -> result.notImplemented()
         }

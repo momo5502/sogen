@@ -14,4 +14,7 @@ oneway interface ISogenCallback {
     /** [error] is empty once the process was saved to [path]. */
     void onSnapshot(String path, String error);
     void onExit(int exitCode);
+
+    /** Frames presented so far, the longest time between two presents since the last report, and the memory in use. */
+    void onStats(long frames, long worstPresentIntervalNs, long residentBytes);
 }
