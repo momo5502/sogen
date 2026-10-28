@@ -4613,8 +4613,6 @@ extern "C"
 
     namespace
     {
-        // Flattens one VkWriteDescriptorSet into bridge records, one per descriptor; inline-uniform data is appended to
-        // inline_uniform_data and referenced by offset.
         void serialize_descriptor_write(const VkWriteDescriptorSet& src, std::vector<gb::descriptor_write>& writes,
                                         std::vector<uint8_t>& inline_uniform_data)
         {
@@ -4745,7 +4743,6 @@ extern "C"
             VkPipelineBindPoint bind_point{};
         };
 
-        // The writes a template produces for pData, with the arrays they point to.
         struct template_writes
         {
             std::vector<VkWriteDescriptorSet> writes;

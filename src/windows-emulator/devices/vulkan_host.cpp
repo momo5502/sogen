@@ -1981,7 +1981,6 @@ namespace sogen
         // Set while restoring a snapshot, so the object being re-created gets the id the guest already holds.
         std::deque<uint64_t> forced_ids{};
 
-        // The structures a VkWriteDescriptorSet points to, kept alive until the write reaches the driver.
         struct descriptor_write_storage
         {
             VkDescriptorBufferInfo buffer_info{};
@@ -1990,8 +1989,6 @@ namespace sogen
             VkWriteDescriptorSetInlineUniformBlock inline_uniform_block{};
         };
 
-        // Translates a bridged write into a VkWriteDescriptorSet without its destination set. Fails when the write names
-        // an object that does not exist or belongs to another device.
         bool build_descriptor_write(const uint64_t device, const vulkan_host::descriptor_write& w, descriptor_write_storage& storage,
                                     VkWriteDescriptorSet& vw)
         {
