@@ -699,6 +699,9 @@ namespace sogen
             std::vector<VkSemaphore> native_ready{};
             std::vector<VkImage> native_images{};
             uint32_t next_image{};
+            // Presents from different queues acquire native images without the kernel lock, while the swapchain
+            // needs external synchronization.
+            std::shared_ptr<std::mutex> native_access = std::make_shared<std::mutex>();
             // A present that failed after acquiring a native image leaves it acquired and its semaphore pending, so the
             // guest has to re-create the swapchain.
             bool lost{};
@@ -7631,9 +7634,10 @@ namespace sogen
                 {
                     return status;
                 }
-                if (!copying || timeout == 0)
+                // With every proxy image acquired, one may still be on its way through a present running unlocked.
+                if (timeout == 0)
                 {
-                    return timeout == 0 ? VK_NOT_READY : VK_TIMEOUT;
+                    return VK_NOT_READY;
                 }
                 if (static_cast<uint64_t>(
                         std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()) >= timeout)
@@ -7788,6 +7792,7 @@ namespace sogen
             VkCommandBuffer command_buffer{};
             VkFence copied{};
             VkSemaphore native_acquired{};
+            std::shared_ptr<std::mutex> native_access{};
             std::vector<VkSemaphore> native_ready{};
             std::vector<VkImage> native_images{};
             impl::image_create_params extent{};
@@ -7801,6 +7806,7 @@ namespace sogen
                               .command_buffer = proxy->copies.at(family).buffers[image_index],
                               .copied = proxy->copied[image_index],
                               .native_acquired = proxy->native_acquired[image_index],
+                              .native_access = proxy->native_access,
                               .native_ready = proxy->native_ready,
                               .native_images = proxy->native_images,
                               .extent = this->impl_->images.at(sc_it->second.image_ids[image_index]).create};
@@ -7820,6 +7826,7 @@ namespace sogen
             VkSemaphore ready = VK_NULL_HANDLE;
             if (copy)
             {
+                const std::scoped_lock swapchain_guard(*copy->native_access);
                 const VkResult acquired = copy_device.acquire_next_image(copy_device.handle, native_swapchain, UINT64_MAX,
                                                                          copy->native_acquired, VK_NULL_HANDLE, &native_index);
                 const bool copying = acquired == VK_SUCCESS || acquired == VK_SUBOPTIMAL_KHR;
