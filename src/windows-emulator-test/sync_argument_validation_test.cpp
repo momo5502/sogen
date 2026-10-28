@@ -14,6 +14,7 @@ namespace sogen::syscalls
                                       LONG maximum_count);
     NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, LONG release_count,
                                        emulator_object<LONG> previous_count);
+    NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle, emulator_object<LONG> previous_count);
     NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, ULONG count, emulator_object<handle> handles, WAIT_TYPE wait_type,
                                              BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
     NTSTATUS handle_NtWaitForMultipleObjects32(const syscall_context& c, ULONG count, emulator_object<uint32_t> handles,
@@ -79,6 +80,15 @@ namespace sogen::test
                 const emulator_object<LONG> previous{this->emu->memory, this->storage + 0x100};
                 previous.write(untouched);
                 const auto status = syscalls::handle_NtReleaseSemaphore(this->context(), semaphore, count, previous);
+                previous_count = previous.read();
+                return status;
+            }
+
+            NTSTATUS release_mutant(const handle mutant, LONG& previous_count)
+            {
+                const emulator_object<LONG> previous{this->emu->memory, this->storage + 0x100};
+                previous.write(untouched);
+                const auto status = syscalls::handle_NtReleaseMutant(this->context(), mutant, previous);
                 previous_count = previous.read();
                 return status;
             }
@@ -180,6 +190,16 @@ namespace sogen::test
 
         LONG previous{};
         EXPECT_EQ(STATUS_OBJECT_TYPE_MISMATCH, this->release_semaphore(event, 1, previous));
+        EXPECT_EQ(untouched, previous);
+    }
+
+    TEST_F(SyncArgumentValidationTest, ReleaseMutantRefusesAnotherObjectType)
+    {
+        handle event{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_event(NotificationEvent, &event));
+
+        LONG previous{};
+        EXPECT_EQ(STATUS_OBJECT_TYPE_MISMATCH, this->release_mutant(event, previous));
         EXPECT_EQ(untouched, previous);
     }
 
