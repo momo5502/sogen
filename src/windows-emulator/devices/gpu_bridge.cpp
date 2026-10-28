@@ -158,6 +158,8 @@ namespace sogen
                     return handle_get_image_memory_requirements(win_emu, context);
                 case gpu_bridge::ioctl_get_image_subresource_layout:
                     return handle_get_image_subresource_layout(win_emu, context);
+                case gpu_bridge::ioctl_get_render_area_granularity:
+                    return handle_get_render_area_granularity(win_emu, context);
                 case gpu_bridge::ioctl_bind_image_memory:
                     return handle_bind_image_memory(win_emu, context);
                 case gpu_bridge::ioctl_create_surface:
@@ -2303,6 +2305,22 @@ namespace sogen
                                         .vk_result = result, .memory_type_bits = memory_type_bits, .size = size, .alignment = alignment});
             }
 
+            NTSTATUS handle_get_render_area_granularity(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_render_area_granularity_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint32_t width = 0;
+                uint32_t height = 0;
+                const int32_t result = this->vulkan_.get_render_area_granularity(request.device, request.render_pass, width, height);
+                return write_output(
+                    win_emu, context,
+                    gpu_bridge::get_render_area_granularity_response{.vk_result = result, .width = width, .height = height, .reserved = 0});
+            }
+
             NTSTATUS handle_get_image_subresource_layout(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::get_image_subresource_layout_request request{};
@@ -3905,6 +3923,15 @@ namespace sogen
                         return vk_error_initialization_failed;
                     }
                     return this->vulkan_.cmd_dispatch(req.command_buffer, req.group_count_x, req.group_count_y, req.group_count_z);
+                }
+                case gpu_bridge::command::cmd_dispatch_base: {
+                    gpu_bridge::cmd_dispatch_base_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_dispatch_base(req.command_buffer, {req.base_group_x, req.base_group_y, req.base_group_z},
+                                                           {req.group_count_x, req.group_count_y, req.group_count_z});
                 }
                 case gpu_bridge::command::cmd_dispatch_indirect: {
                     gpu_bridge::cmd_dispatch_indirect_request req{};
