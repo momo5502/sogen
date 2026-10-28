@@ -312,7 +312,7 @@ namespace sogen
                 return static_cast<NTSTATUS>(previous);
             }
 
-            c.win_emu.log.print(color::gray, "Unsupported thread set info class: %X\n", info_class);
+            c.win_emu.log.error("Unsupported thread set info class: %X\n", info_class);
             return STATUS_INVALID_INFO_CLASS;
         }
 
@@ -654,7 +654,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            c.win_emu.log.print(color::gray, "Unsupported thread query info class: 0x%X\n", info_class);
+            c.win_emu.log.error("Unsupported thread query info class: 0x%X\n", info_class);
             return STATUS_INVALID_INFO_CLASS;
         }
 
