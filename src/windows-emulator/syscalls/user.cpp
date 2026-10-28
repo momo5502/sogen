@@ -7247,6 +7247,35 @@ namespace sogen
             }
         }
 
+        char16_t key_character(const uint32_t virtual_key, const std::array<uint8_t, 256>& keys)
+        {
+            const auto down = [&keys](const uint32_t key) { return (keys[key] & 0x80) != 0; };
+
+            if (down(VK_CONTROL) && !down(VK_MENU))
+            {
+                if (virtual_key >= 'A' && virtual_key <= 'Z')
+                {
+                    return static_cast<char16_t>(virtual_key - 'A' + 1);
+                }
+                if (virtual_key == VK_BACK)
+                {
+                    return 0x7F;
+                }
+                if (virtual_key == VK_RETURN)
+                {
+                    return u'\n';
+                }
+                return 0;
+            }
+
+            if (down(VK_CONTROL))
+            {
+                return 0;
+            }
+
+            return us_layout_character(virtual_key, down(VK_SHIFT), (keys[VK_CAPITAL] & 0x01) != 0);
+        }
+
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& /*c*/, const uint32_t code, const uint32_t map_type,
                                               const uint32_t /*keyboard_id*/, const uint64_t /*keyboard_layout*/)
         {
@@ -7460,29 +7489,7 @@ namespace sogen
                 return 0;
             }
 
-            const auto down = [&keys](const uint32_t key) { return (keys[key] & 0x80) != 0; };
-
-            char16_t character = 0;
-            if (down(VK_CONTROL) && !down(VK_MENU))
-            {
-                if (virtual_key >= 'A' && virtual_key <= 'Z')
-                {
-                    character = static_cast<char16_t>(virtual_key - 'A' + 1);
-                }
-                else if (virtual_key == VK_BACK)
-                {
-                    character = 0x7F;
-                }
-                else if (virtual_key == VK_RETURN)
-                {
-                    character = u'\n';
-                }
-            }
-            else if (!down(VK_CONTROL))
-            {
-                character = us_layout_character(virtual_key, down(VK_SHIFT), (keys[VK_CAPITAL] & 0x01) != 0);
-            }
-
+            const auto character = key_character(virtual_key, keys);
             if (character == 0)
             {
                 return 0;
@@ -7496,6 +7503,263 @@ namespace sogen
             }
 
             return 1;
+        }
+
+        struct emu_mouse_input
+        {
+            int32_t dx;
+            int32_t dy;
+            uint32_t mouse_data;
+            uint32_t flags;
+            uint32_t time;
+            uint64_t extra_info;
+        };
+
+        struct emu_keyboard_input
+        {
+            uint16_t virtual_key;
+            uint16_t scan_code;
+            uint32_t flags;
+            uint32_t time;
+            uint64_t extra_info;
+        };
+
+        struct emu_input
+        {
+            uint32_t type;
+
+            union
+            {
+                emu_mouse_input mouse;
+                emu_keyboard_input keyboard;
+            };
+        };
+
+        static_assert(sizeof(emu_input) == 40);
+
+        void send_mouse_input(const syscall_context& c, const emu_mouse_input& input)
+        {
+            constexpr uint32_t mouseeventf_move = 0x0001;
+            constexpr uint32_t mouseeventf_absolute = 0x8000;
+            constexpr uint32_t mouseeventf_virtualdesk = 0x4000;
+
+            auto& proc = c.proc;
+            const auto window = proc.foreground_window;
+
+            const auto button_flags = [&] {
+                const auto down = [&](const uint32_t key) { return (proc.key_state[key] & 0x80) != 0; };
+                uint64_t flags = 0;
+                flags |= down(VK_LBUTTON) ? MK_LBUTTON : 0;
+                flags |= down(VK_RBUTTON) ? MK_RBUTTON : 0;
+                flags |= down(VK_SHIFT) ? MK_SHIFT : 0;
+                flags |= down(VK_CONTROL) ? MK_CONTROL : 0;
+                flags |= down(VK_MBUTTON) ? MK_MBUTTON : 0;
+                flags |= down(VK_XBUTTON1) ? MK_XBUTTON1 : 0;
+                flags |= down(VK_XBUTTON2) ? MK_XBUTTON2 : 0;
+                return flags;
+            };
+
+            // Pointer events relative to the current cursor let the emulator clip the cursor and feed raw input the
+            // way it does for host motion.
+            const auto send = [&](const uint32_t message, const uint64_t w_param, const int32_t dx, const int32_t dy) {
+                c.win_emu.handle_ui_event_locked(ui_event{
+                    .window = window,
+                    .message = message,
+                    .wParam = w_param,
+                    .lParam = 0,
+                    .relative_motion = std::pair{dx, dy},
+                });
+            };
+
+            if (input.flags & mouseeventf_move)
+            {
+                int32_t dx = input.dx;
+                int32_t dy = input.dy;
+                if (input.flags & mouseeventf_absolute)
+                {
+                    // Absolute coordinates are normalized to 0..65535 across the primary display (or the virtual
+                    // desktop, which is the same single display here).
+                    (void)mouseeventf_virtualdesk;
+                    const auto x = static_cast<int32_t>((static_cast<int64_t>(input.dx) * proc.display_width) >> 16);
+                    const auto y = static_cast<int32_t>((static_cast<int64_t>(input.dy) * proc.display_height) >> 16);
+                    dx = x - proc.cursor_x;
+                    dy = y - proc.cursor_y;
+                }
+
+                if (window == 0)
+                {
+                    proc.cursor_x += dx;
+                    proc.cursor_y += dy;
+                }
+                else
+                {
+                    send(WM_MOUSEMOVE, button_flags(), dx, dy);
+                }
+            }
+
+            if (window == 0)
+            {
+                return;
+            }
+
+            struct button_transition
+            {
+                uint32_t flag;
+                uint32_t message;
+                uint32_t virtual_key;
+                bool down;
+            };
+
+            constexpr std::array<button_transition, 6> transitions{{
+                {.flag = 0x0002, .message = WM_LBUTTONDOWN, .virtual_key = VK_LBUTTON, .down = true},
+                {.flag = 0x0004, .message = WM_LBUTTONUP, .virtual_key = VK_LBUTTON, .down = false},
+                {.flag = 0x0008, .message = WM_RBUTTONDOWN, .virtual_key = VK_RBUTTON, .down = true},
+                {.flag = 0x0010, .message = WM_RBUTTONUP, .virtual_key = VK_RBUTTON, .down = false},
+                {.flag = 0x0020, .message = WM_MBUTTONDOWN, .virtual_key = VK_MBUTTON, .down = true},
+                {.flag = 0x0040, .message = WM_MBUTTONUP, .virtual_key = VK_MBUTTON, .down = false},
+            }};
+
+            const auto apply = [&](const uint32_t virtual_key, const bool down) {
+                auto flags = button_flags();
+                const uint64_t mask = virtual_key == VK_LBUTTON    ? MK_LBUTTON
+                                      : virtual_key == VK_RBUTTON  ? MK_RBUTTON
+                                      : virtual_key == VK_MBUTTON  ? MK_MBUTTON
+                                      : virtual_key == VK_XBUTTON1 ? MK_XBUTTON1
+                                                                   : MK_XBUTTON2;
+                return down ? (flags | mask) : (flags & ~mask);
+            };
+
+            for (const auto& t : transitions)
+            {
+                if (input.flags & t.flag)
+                {
+                    send(t.message, apply(t.virtual_key, t.down), 0, 0);
+                }
+            }
+
+            constexpr uint32_t mouseeventf_xdown = 0x0080;
+            constexpr uint32_t mouseeventf_xup = 0x0100;
+            for (const uint32_t flag : {mouseeventf_xdown, mouseeventf_xup})
+            {
+                if ((input.flags & flag) == 0)
+                {
+                    continue;
+                }
+
+                const bool down = flag == mouseeventf_xdown;
+                for (const uint32_t button : {XBUTTON1, XBUTTON2})
+                {
+                    if (input.mouse_data & button)
+                    {
+                        const auto virtual_key = button == XBUTTON1 ? VK_XBUTTON1 : VK_XBUTTON2;
+                        send(down ? WM_XBUTTONDOWN : WM_XBUTTONUP, apply(virtual_key, down) | (static_cast<uint64_t>(button) << 16), 0, 0);
+                    }
+                }
+            }
+
+            constexpr uint32_t mouseeventf_wheel = 0x0800;
+            constexpr uint32_t mouseeventf_hwheel = 0x1000;
+            if (input.flags & (mouseeventf_wheel | mouseeventf_hwheel))
+            {
+                const auto delta = static_cast<uint16_t>(input.mouse_data);
+                send((input.flags & mouseeventf_wheel) ? WM_MOUSEWHEEL : WM_MOUSEHWHEEL,
+                     button_flags() | (static_cast<uint64_t>(delta) << 16), 0, 0);
+            }
+        }
+
+        void send_keyboard_input(const syscall_context& c, const emu_keyboard_input& input)
+        {
+            constexpr uint32_t keyeventf_extendedkey = 0x0001;
+            constexpr uint32_t keyeventf_keyup = 0x0002;
+            constexpr uint32_t keyeventf_unicode = 0x0004;
+            constexpr uint32_t keyeventf_scancode = 0x0008;
+
+            auto& proc = c.proc;
+            const auto window = proc.foreground_window;
+            const bool up = (input.flags & keyeventf_keyup) != 0;
+
+            uint32_t virtual_key = input.virtual_key;
+            uint32_t scan_code = input.scan_code;
+            if (input.flags & keyeventf_unicode)
+            {
+                virtual_key = VK_PACKET;
+            }
+            else if (input.flags & keyeventf_scancode)
+            {
+                const auto extended_scan = (input.flags & keyeventf_extendedkey) ? (0xE000 | scan_code) : scan_code;
+                virtual_key = handle_NtUserMapVirtualKeyEx(c, extended_scan, 3, 0, 0);
+            }
+            else
+            {
+                scan_code = handle_NtUserMapVirtualKeyEx(c, virtual_key, 0, 0, 0);
+            }
+
+            if (window == 0 || virtual_key == 0 || virtual_key >= proc.key_state.size())
+            {
+                return;
+            }
+
+            const auto down = [&](const uint32_t key) { return (proc.key_state[key] & 0x80) != 0; };
+            const bool was_down = down(virtual_key);
+            const bool alt = virtual_key == VK_MENU || virtual_key == VK_LMENU || virtual_key == VK_RMENU || down(VK_MENU);
+            const bool system_key = (alt || virtual_key == VK_F10) && !down(VK_CONTROL);
+
+            uint64_t l_param = 1 | (static_cast<uint64_t>(scan_code & 0xFF) << 16);
+            l_param |= (input.flags & keyeventf_extendedkey) ? (1ull << 24) : 0;
+            l_param |= (alt && system_key) ? (1ull << 29) : 0;
+            l_param |= (up || was_down) ? (1ull << 30) : 0;
+            l_param |= up ? (1ull << 31) : 0;
+
+            const uint32_t message = up ? (system_key ? WM_SYSKEYUP : WM_KEYUP) : (system_key ? WM_SYSKEYDOWN : WM_KEYDOWN);
+            c.win_emu.handle_ui_event_locked(ui_event{.window = window, .message = message, .wParam = virtual_key, .lParam = l_param});
+
+            if (up || system_key)
+            {
+                return;
+            }
+
+            // The guest's TranslateMessage does not translate, so the character the key produces is posted with it, the
+            // way characters typed on the host arrive.
+            const auto character =
+                (input.flags & keyeventf_unicode) ? static_cast<char16_t>(input.scan_code) : key_character(virtual_key, proc.key_state);
+            if (character != 0)
+            {
+                c.win_emu.handle_ui_event_locked(ui_event{.window = window, .message = WM_CHAR, .wParam = character, .lParam = l_param});
+            }
+        }
+
+        uint32_t handle_NtUserSendInput(const syscall_context& c, const uint32_t input_count, const emulator_pointer inputs,
+                                        const int32_t input_size)
+        {
+            constexpr uint32_t input_mouse = 0;
+            constexpr uint32_t input_keyboard = 1;
+
+            if (input_size != sizeof(emu_input) || inputs == 0)
+            {
+                set_guest_last_error(c, ERROR_INVALID_PARAMETER);
+                return 0;
+            }
+
+            for (uint32_t i = 0; i < input_count; ++i)
+            {
+                emu_input input{};
+                if (!c.win_emu.memory.try_read_memory(inputs + static_cast<uint64_t>(i) * sizeof(emu_input), &input, sizeof(input)))
+                {
+                    set_guest_last_error(c, ERROR_NOACCESS);
+                    return i;
+                }
+
+                if (input.type == input_mouse)
+                {
+                    send_mouse_input(c, input.mouse);
+                }
+                else if (input.type == input_keyboard)
+                {
+                    send_keyboard_input(c, input.keyboard);
+                }
+            }
+
+            return input_count;
         }
 
         uint64_t handle_NtUserSetKeyboardState()

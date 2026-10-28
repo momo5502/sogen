@@ -1887,6 +1887,12 @@ namespace sogen
     void windows_emulator::handle_ui_event(const ui_event& event)
     {
         const std::scoped_lock lock(this->kernel_lock_);
+        this->handle_ui_event_locked(event);
+    }
+
+    void windows_emulator::handle_ui_event_locked(const ui_event& event)
+    {
+        this->kernel_lock_.assert_held();
 
         const auto hook_id = low_level_hook_id(event.message);
         auto& pending = this->process.pending_low_level_input;
