@@ -41,14 +41,17 @@ namespace sogen
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
 
-        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, const handle semaphore_handle, const ULONG release_count,
+        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, const handle semaphore_handle, const LONG release_count,
                                            const emulator_object<LONG> previous_count)
         {
+            if (release_count <= 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
             if (semaphore_handle.value.type != handle_types::semaphore)
             {
-                c.win_emu.log.error("Bad handle type for NtReleaseSemaphore\n");
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
+                return STATUS_OBJECT_TYPE_MISMATCH;
             }
 
             auto* mutant = c.proc.semaphores.get(semaphore_handle);
@@ -57,16 +60,15 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto [old_count, succeeded] = mutant->release(release_count);
+            const auto [old_count, succeeded] = mutant->release(static_cast<ULONG>(release_count));
+            if (!succeeded)
+            {
+                return STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+            }
 
             if (previous_count)
             {
                 previous_count.write(static_cast<LONG>(old_count));
-            }
-
-            if (!succeeded)
-            {
-                return STATUS_SEMAPHORE_LIMIT_EXCEEDED;
             }
 
             c.win_emu.wake_idle_vcpu();
@@ -76,9 +78,9 @@ namespace sogen
         NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,
                                           const ACCESS_MASK /*desired_access*/,
                                           const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
-                                          const ULONG initial_count, const ULONG maximum_count)
+                                          const LONG initial_count, const LONG maximum_count)
         {
-            if (maximum_count <= 0 || initial_count > maximum_count)
+            if (maximum_count <= 0 || initial_count < 0 || initial_count > maximum_count)
             {
                 return STATUS_INVALID_PARAMETER;
             }
