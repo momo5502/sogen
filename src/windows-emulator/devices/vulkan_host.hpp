@@ -571,6 +571,11 @@ namespace sogen
             uint32_t dst_access_mask;
             uint32_t flags;
             int32_t view_offset;
+            uint32_t has_memory_barrier2;
+            uint64_t src_stage_mask2;
+            uint64_t dst_stage_mask2;
+            uint64_t src_access_mask2;
+            uint64_t dst_access_mask2;
         };
 
         struct render_pass_description
@@ -586,13 +591,12 @@ namespace sogen
 
         struct framebuffer_attachment_image
         {
-            uint32_t flags;
-            uint32_t usage;
-            uint32_t width;
-            uint32_t height;
-            uint32_t layer_count;
-            uint32_t view_format_count;
-            std::array<uint32_t, 8> view_formats;
+            uint32_t flags{};
+            uint32_t usage{};
+            uint32_t width{};
+            uint32_t height{};
+            uint32_t layer_count{};
+            std::vector<uint32_t> view_formats{};
         };
 
         int32_t create_render_pass(uint64_t device, const render_pass_description& description, uint64_t& out_render_pass);

@@ -4498,6 +4498,12 @@ extern "C"
                 .dst_access_mask = d.dstAccessMask,
                 .flags = d.dependencyFlags,
                 .view_offset = (multiview && i < multiview->dependencyCount) ? multiview->pViewOffsets[i] : 0,
+                .has_memory_barrier2 = 0,
+                .reserved = 0,
+                .src_stage_mask2 = 0,
+                .dst_stage_mask2 = 0,
+                .src_access_mask2 = 0,
+                .dst_access_mask2 = 0,
             });
         }
 
@@ -4585,6 +4591,7 @@ extern "C"
         for (uint32_t i = 0; i < pCreateInfo->dependencyCount; ++i)
         {
             const auto& d = pCreateInfo->pDependencies[i];
+            const auto* barrier = find_in_chain<VkMemoryBarrier2>(d.pNext, VK_STRUCTURE_TYPE_MEMORY_BARRIER_2);
             description.dependencies.push_back(gb::render_pass_dependency{
                 .src_subpass = d.srcSubpass,
                 .dst_subpass = d.dstSubpass,
@@ -4594,6 +4601,12 @@ extern "C"
                 .dst_access_mask = d.dstAccessMask,
                 .flags = d.dependencyFlags,
                 .view_offset = d.viewOffset,
+                .has_memory_barrier2 = barrier ? 1u : 0u,
+                .reserved = 0,
+                .src_stage_mask2 = barrier ? barrier->srcStageMask : 0,
+                .dst_stage_mask2 = barrier ? barrier->dstStageMask : 0,
+                .src_access_mask2 = barrier ? barrier->srcAccessMask : 0,
+                .dst_access_mask2 = barrier ? barrier->dstAccessMask : 0,
             });
         }
 
@@ -4635,22 +4648,20 @@ extern "C"
             for (uint32_t i = 0; i < images->attachmentImageInfoCount; ++i)
             {
                 const auto& info = images->pAttachmentImageInfos[i];
-                gb::framebuffer_attachment_image image{};
-                image.flags = info.flags;
-                image.usage = info.usage;
-                image.width = info.width;
-                image.height = info.height;
-                image.layer_count = info.layerCount;
-                if (info.viewFormatCount > image.view_formats.size())
-                {
-                    return VK_ERROR_INITIALIZATION_FAILED;
-                }
-                image.view_format_count = info.viewFormatCount;
-                for (uint32_t j = 0; j < info.viewFormatCount; ++j)
-                {
-                    image.view_formats[j] = static_cast<uint32_t>(info.pViewFormats[j]);
-                }
+                const gb::framebuffer_attachment_image image{
+                    .flags = info.flags,
+                    .usage = info.usage,
+                    .width = info.width,
+                    .height = info.height,
+                    .layer_count = info.layerCount,
+                    .view_format_count = info.viewFormatCount,
+                };
                 append_bytes(message, &image, sizeof(image));
+            }
+            for (uint32_t i = 0; i < images->attachmentImageInfoCount; ++i)
+            {
+                const auto& info = images->pAttachmentImageInfos[i];
+                append_bytes(message, info.pViewFormats, static_cast<size_t>(info.viewFormatCount) * sizeof(VkFormat));
             }
         }
         else

@@ -2810,6 +2810,11 @@ namespace sogen
                         .dst_access_mask = d.dst_access_mask,
                         .flags = d.flags,
                         .view_offset = d.view_offset,
+                        .has_memory_barrier2 = d.has_memory_barrier2,
+                        .src_stage_mask2 = d.src_stage_mask2,
+                        .dst_stage_mask2 = d.dst_stage_mask2,
+                        .src_access_mask2 = d.src_access_mask2,
+                        .dst_access_mask2 = d.dst_access_mask2,
                     });
                 }
                 description.preserves = std::move(preserves);
@@ -2851,16 +2856,22 @@ namespace sogen
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
+                    size_t offset = sizeof(request_t) + wire_images.size() * sizeof(gpu_bridge::framebuffer_attachment_image);
                     for (const auto& image : wire_images)
                     {
+                        std::vector<uint32_t> view_formats{};
+                        if (!read_trailing_array(win_emu, context, offset, image.view_format_count, view_formats))
+                        {
+                            return STATUS_INVALID_PARAMETER;
+                        }
+                        offset += view_formats.size() * sizeof(uint32_t);
                         images.push_back(vulkan_host::framebuffer_attachment_image{
                             .flags = image.flags,
                             .usage = image.usage,
                             .width = image.width,
                             .height = image.height,
                             .layer_count = image.layer_count,
-                            .view_format_count = image.view_format_count,
-                            .view_formats = image.view_formats,
+                            .view_formats = std::move(view_formats),
                         });
                     }
                 }

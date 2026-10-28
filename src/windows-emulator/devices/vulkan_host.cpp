@@ -1604,7 +1604,16 @@ namespace sogen
                 buffer.write(this->height);
                 buffer.write(this->layers);
                 buffer.write_vector(this->views);
-                buffer.write_vector(this->images);
+                buffer.write(static_cast<uint64_t>(this->images.size()));
+                for (const auto& image : this->images)
+                {
+                    buffer.write(image.flags);
+                    buffer.write(image.usage);
+                    buffer.write(image.width);
+                    buffer.write(image.height);
+                    buffer.write(image.layer_count);
+                    buffer.write_vector(image.view_formats);
+                }
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
@@ -1616,7 +1625,16 @@ namespace sogen
                 buffer.read(this->height);
                 buffer.read(this->layers);
                 buffer.read_vector(this->views);
-                buffer.read_vector(this->images);
+                this->images.resize(buffer.read<uint64_t>());
+                for (auto& image : this->images)
+                {
+                    buffer.read(image.flags);
+                    buffer.read(image.usage);
+                    buffer.read(image.width);
+                    buffer.read(image.height);
+                    buffer.read(image.layer_count);
+                    buffer.read_vector(image.view_formats);
+                }
             }
         };
 
@@ -7928,11 +7946,21 @@ namespace sogen
         }
 
         std::vector<VkSubpassDependency2> dependencies(description.dependencies.size());
+        std::vector<VkMemoryBarrier2> barriers(description.dependencies.size());
         for (size_t i = 0; i < dependencies.size(); ++i)
         {
             const auto& d = description.dependencies[i];
             auto& out = dependencies[i];
             out.sType = VK_STRUCTURE_TYPE_SUBPASS_DEPENDENCY_2;
+            if (d.has_memory_barrier2)
+            {
+                barriers[i].sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+                barriers[i].srcStageMask = d.src_stage_mask2;
+                barriers[i].dstStageMask = d.dst_stage_mask2;
+                barriers[i].srcAccessMask = d.src_access_mask2;
+                barriers[i].dstAccessMask = d.dst_access_mask2;
+                out.pNext = &barriers[i];
+            }
             out.srcSubpass = d.src_subpass;
             out.dstSubpass = d.dst_subpass;
             out.srcStageMask = d.src_stage_mask;
@@ -8021,13 +8049,9 @@ namespace sogen
         for (size_t i = 0; i < images.size(); ++i)
         {
             const auto& image = images[i];
-            if (image.view_format_count > image.view_formats.size())
+            for (const uint32_t format : image.view_formats)
             {
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            for (uint32_t j = 0; j < image.view_format_count; ++j)
-            {
-                view_formats[i].push_back(static_cast<VkFormat>(image.view_formats[j]));
+                view_formats[i].push_back(static_cast<VkFormat>(format));
             }
             auto& info = image_infos[i];
             info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_ATTACHMENT_IMAGE_INFO;
@@ -8036,7 +8060,7 @@ namespace sogen
             info.width = image.width;
             info.height = image.height;
             info.layerCount = image.layer_count;
-            info.viewFormatCount = image.view_format_count;
+            info.viewFormatCount = static_cast<uint32_t>(view_formats[i].size());
             info.pViewFormats = view_formats[i].data();
         }
 
@@ -9288,15 +9312,32 @@ namespace sogen
         {
             const auto view = this->impl_->image_views.find(views[i]);
             const auto& create = view->second.create;
-            cb->second.layout_transitions.push_back(impl::layout_transition{
-                .image = create.image,
-                .aspect_mask = create.aspect_mask,
-                .base_mip_level = create.base_mip_level,
-                .level_count = create.level_count ? create.level_count : 1,
-                .base_array_layer = create.base_array_layer,
-                .layer_count = create.layer_count ? create.layer_count : 1,
-                .new_layout = static_cast<uint32_t>(translate_layout(description.attachments[i].final_layout)),
-            });
+            const auto& attachment = description.attachments[i];
+            const auto record = [&](const uint32_t aspect_mask, const uint32_t layout) {
+                if (aspect_mask == 0)
+                {
+                    return;
+                }
+                cb->second.layout_transitions.push_back(impl::layout_transition{
+                    .image = create.image,
+                    .aspect_mask = aspect_mask,
+                    .base_mip_level = create.base_mip_level,
+                    .level_count = create.level_count ? create.level_count : 1,
+                    .base_array_layer = create.base_array_layer,
+                    .layer_count = create.layer_count ? create.layer_count : 1,
+                    .new_layout = static_cast<uint32_t>(translate_layout(layout)),
+                });
+            };
+
+            if (attachment.has_stencil_layouts)
+            {
+                record(create.aspect_mask & ~static_cast<uint32_t>(VK_IMAGE_ASPECT_STENCIL_BIT), attachment.final_layout);
+                record(create.aspect_mask & VK_IMAGE_ASPECT_STENCIL_BIT, attachment.stencil_final_layout);
+            }
+            else
+            {
+                record(create.aspect_mask, attachment.final_layout);
+            }
         }
         return VK_SUCCESS;
     }

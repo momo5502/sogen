@@ -1789,6 +1789,12 @@ namespace sogen::gpu_bridge
         uint32_t dst_access_mask;
         uint32_t flags;
         int32_t view_offset;
+        uint32_t has_memory_barrier2; // the dependency chains a VkMemoryBarrier2, whose masks replace the ones above
+        uint32_t reserved;
+        uint64_t src_stage_mask2;
+        uint64_t dst_stage_mask2;
+        uint64_t src_access_mask2;
+        uint64_t dst_access_mask2;
     };
 
     // out = object_response
@@ -1819,7 +1825,6 @@ namespace sogen::gpu_bridge
         uint32_t height;
         uint32_t layer_count;
         uint32_t view_format_count;
-        std::array<uint32_t, 8> view_formats;
     };
 
     inline constexpr uint32_t framebuffer_create_imageless_bit = 0x1; // VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT
@@ -1838,6 +1843,7 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
         // object_id views[attachment_count]; or, when imageless:
         // framebuffer_attachment_image images[attachment_count];
+        // uint32_t view_formats[]; // each image's view_format_count formats, in image order
     };
 
     // variable-length list of descriptor-set-layout ids: this header is immediately followed by
@@ -2585,9 +2591,9 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(render_pass_attachment) == 48, "wire layout drift");
     static_assert(sizeof(render_pass_reference) == 16, "wire layout drift");
     static_assert(sizeof(render_pass_subpass) == 48, "wire layout drift");
-    static_assert(sizeof(render_pass_dependency) == 32, "wire layout drift");
+    static_assert(sizeof(render_pass_dependency) == 72, "wire layout drift");
     static_assert(sizeof(create_render_pass_request) == 40, "wire layout drift");
-    static_assert(sizeof(framebuffer_attachment_image) == 56, "wire layout drift");
+    static_assert(sizeof(framebuffer_attachment_image) == 24, "wire layout drift");
     static_assert(sizeof(create_framebuffer_request) == 40, "wire layout drift");
     static_assert(sizeof(cmd_begin_render_pass_request) == 56, "wire layout drift");
     static_assert(sizeof(free_descriptor_sets_request) == 24, "wire layout drift");
