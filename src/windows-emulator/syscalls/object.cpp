@@ -18,6 +18,25 @@ namespace sogen
         constexpr ULONG duplicate_close_source = 1;
         constexpr ULONG duplicate_same_access = 2;
 
+        void resume_state_change_suspensions(const syscall_context& c, const thread_state_change& state)
+        {
+            for (auto& thread : c.proc.threads | std::views::values)
+            {
+                if (thread.id != state.thread_id)
+                {
+                    continue;
+                }
+
+                const auto resumed = std::min(thread.suspended, state.suspend_count);
+                thread.suspended -= resumed;
+                if (resumed != 0 && thread.suspended == 0)
+                {
+                    c.win_emu.wake_idle_vcpu();
+                }
+                return;
+            }
+        }
+
         NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
         {
             const auto value = h.value;
@@ -39,6 +58,15 @@ namespace sogen
             if (object && object->protect_from_close)
             {
                 return STATUS_HANDLE_NOT_CLOSABLE;
+            }
+
+            if (value.type == handle_types::thread_state_change)
+            {
+                const auto* state = c.proc.thread_state_changes.get(h);
+                if (state && state->ref_count == 1)
+                {
+                    resume_state_change_suspensions(c, *state);
+                }
             }
 
             if (value.type == handle_types::wait_completion_packet)
@@ -239,6 +267,8 @@ namespace sogen
                 return u"TpWorkerFactory";
             case handle_types::job:
                 return u"Job";
+            case handle_types::thread_state_change:
+                return u"ThreadStateChange";
             case handle_types::private_namespace:
                 return u"Directory";
             case handle_types::process:

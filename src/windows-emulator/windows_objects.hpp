@@ -33,6 +33,25 @@ namespace sogen
         }
     };
 
+    // Suspensions made through a thread state-change object are undone when the object is closed.
+    struct thread_state_change : ref_counted_object
+    {
+        uint32_t thread_id{};
+        uint32_t suspend_count{};
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->thread_id);
+            buffer.write(this->suspend_count);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->thread_id);
+            buffer.read(this->suspend_count);
+        }
+    };
+
     struct timer : ref_counted_object
     {
         std::u16string name{};

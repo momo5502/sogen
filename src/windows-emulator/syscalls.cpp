@@ -433,6 +433,12 @@ namespace sogen
         NTSTATUS handle_NtYieldExecution(const syscall_context& c);
         NTSTATUS handle_NtSetThreadExecutionState(const syscall_context& c, ULONG new_flags, emulator_object<ULONG> previous_flags);
         NTSTATUS handle_NtSuspendThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
+        NTSTATUS handle_NtCreateThreadStateChange(const syscall_context& c, emulator_object<handle> state_change_handle,
+                                                  ACCESS_MASK desired_access, uint64_t object_attributes, handle thread_handle,
+                                                  uint64_t reserved);
+        NTSTATUS handle_NtChangeThreadState(const syscall_context& c, handle state_change_handle, handle thread_handle,
+                                            uint32_t state_change_type, uint64_t extended_information, uint64_t extended_information_length,
+                                            uint64_t reserved);
         NTSTATUS handle_NtResumeThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
         NTSTATUS handle_NtContinue(const syscall_context& c, uint64_t thread_context, BOOLEAN raise_alert);
         NTSTATUS handle_NtContinueEx(const syscall_context& c, uint64_t thread_context, uint64_t continue_argument);
@@ -1830,6 +1836,8 @@ namespace sogen
         add_handler(NtQueryDefaultLocale);
         add_handler(NtSetTimerResolution);
         add_handler(NtSuspendThread);
+        add_handler(NtCreateThreadStateChange);
+        add_handler(NtChangeThreadState);
         add_handler(NtResumeThread);
         add_handler(NtClearEvent);
         add_handler(NtTraceControl);

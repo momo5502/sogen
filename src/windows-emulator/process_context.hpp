@@ -641,6 +641,7 @@ namespace sogen
         handle_store<handle_types::wait_completion_packet, wait_completion_packet> wait_completion_packets{};
         handle_store<handle_types::worker_factory, worker_factory> worker_factories{};
         handle_store<handle_types::job, job_object> jobs{};
+        handle_store<handle_types::thread_state_change, thread_state_change> thread_state_changes{};
         handle_store<handle_types::port, port_container> ports{};
         handle_store<handle_types::mutant, mutant> mutants{};
         handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
