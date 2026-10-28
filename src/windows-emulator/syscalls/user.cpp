@@ -7665,14 +7665,14 @@ namespace sogen
             }
         }
 
-        void send_keyboard_input(const syscall_context& c, const emu_keyboard_input& input)
+        void send_keyboard_input(const syscall_context& c, const emu_keyboard_input& input, std::array<uint8_t, 256>& keys)
         {
             constexpr uint32_t keyeventf_extendedkey = 0x0001;
             constexpr uint32_t keyeventf_keyup = 0x0002;
             constexpr uint32_t keyeventf_unicode = 0x0004;
             constexpr uint32_t keyeventf_scancode = 0x0008;
 
-            auto& proc = c.proc;
+            const auto& proc = c.proc;
             const auto window = proc.foreground_window;
             const bool up = (input.flags & keyeventf_keyup) != 0;
 
@@ -7692,12 +7692,12 @@ namespace sogen
                 scan_code = handle_NtUserMapVirtualKeyEx(c, virtual_key, 0, 0, 0);
             }
 
-            if (window == 0 || virtual_key == 0 || virtual_key >= proc.key_state.size())
+            if (window == 0 || virtual_key == 0 || virtual_key >= keys.size())
             {
                 return;
             }
 
-            const auto down = [&](const uint32_t key) { return (proc.key_state[key] & 0x80) != 0; };
+            const auto down = [&](const uint32_t key) { return (keys[key] & 0x80) != 0; };
             const bool was_down = down(virtual_key);
             const bool alt = virtual_key == VK_MENU || virtual_key == VK_LMENU || virtual_key == VK_RMENU || down(VK_MENU);
             const bool system_key = (alt || virtual_key == VK_F10) && !down(VK_CONTROL);
@@ -7711,15 +7711,31 @@ namespace sogen
             const uint32_t message = up ? (system_key ? WM_SYSKEYUP : WM_KEYUP) : (system_key ? WM_SYSKEYDOWN : WM_KEYDOWN);
             c.win_emu.handle_ui_event_locked(ui_event{.window = window, .message = message, .wParam = virtual_key, .lParam = l_param});
 
+            const auto set_key = [&](const uint32_t key) { keys[key] = up ? 0 : 0x80; };
+            set_key(virtual_key);
+            if (virtual_key == VK_LSHIFT || virtual_key == VK_RSHIFT)
+            {
+                set_key(VK_SHIFT);
+            }
+            else if (virtual_key == VK_LCONTROL || virtual_key == VK_RCONTROL)
+            {
+                set_key(VK_CONTROL);
+            }
+            else if (virtual_key == VK_LMENU || virtual_key == VK_RMENU)
+            {
+                set_key(VK_MENU);
+            }
+
             if (up || system_key)
             {
                 return;
             }
 
             // The guest's TranslateMessage does not translate, so the character the key produces is posted with it, the
-            // way characters typed on the host arrive.
+            // way characters typed on the host arrive. The key state is the one these inputs build up in order, since low-level
+            // hooks can still hold earlier ones back from the process key state.
             const auto character =
-                (input.flags & keyeventf_unicode) ? static_cast<char16_t>(input.scan_code) : key_character(virtual_key, proc.key_state);
+                (input.flags & keyeventf_unicode) ? static_cast<char16_t>(input.scan_code) : key_character(virtual_key, keys);
             if (character != 0)
             {
                 c.win_emu.handle_ui_event_locked(ui_event{.window = window, .message = WM_CHAR, .wParam = character, .lParam = l_param});
@@ -7738,6 +7754,7 @@ namespace sogen
                 return 0;
             }
 
+            auto keys = c.proc.key_state;
             for (uint32_t i = 0; i < input_count; ++i)
             {
                 emu_input input{};
@@ -7753,7 +7770,7 @@ namespace sogen
                 }
                 else if (input.type == input_keyboard)
                 {
-                    send_keyboard_input(c, input.keyboard);
+                    send_keyboard_input(c, input.keyboard, keys);
                 }
             }
 
