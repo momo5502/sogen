@@ -717,6 +717,8 @@ namespace sogen
                                         uint64_t count_buffer_offset, uint32_t max_draw_count, uint32_t stride);
         int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
                                          std::span<const uint64_t> sets, uint32_t bind_point, std::span<const uint32_t> dynamic_offsets);
+        int32_t cmd_push_descriptor_set(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t bind_point, uint32_t set,
+                                        std::span<const descriptor_write> writes);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
         int32_t cmd_next_subpass(uint64_t command_buffer, uint32_t contents);
         // Dynamic rendering (VK_KHR_dynamic_rendering / core 1.3). depth/stencil are null when absent.

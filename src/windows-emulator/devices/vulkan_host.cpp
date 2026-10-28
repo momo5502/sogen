@@ -554,6 +554,7 @@ namespace sogen
             PFN_vkFreeDescriptorSets free_descriptor_sets{};
             PFN_vkUpdateDescriptorSets update_descriptor_sets{};
             PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets{};
+            PFN_vkCmdPushDescriptorSetKHR cmd_push_descriptor_set{};
             PFN_vkCreatePipelineCache create_pipeline_cache{};
             PFN_vkDestroyPipelineCache destroy_pipeline_cache{};
             PFN_vkGetPipelineCacheData get_pipeline_cache_data{};
@@ -1979,6 +1980,109 @@ namespace sogen
 
         // Set while restoring a snapshot, so the object being re-created gets the id the guest already holds.
         std::deque<uint64_t> forced_ids{};
+
+        // The structures a VkWriteDescriptorSet points to, kept alive until the write reaches the driver.
+        struct descriptor_write_storage
+        {
+            VkDescriptorBufferInfo buffer_info{};
+            VkDescriptorImageInfo image_info{};
+            VkBufferView texel_buffer_view{};
+            VkWriteDescriptorSetInlineUniformBlock inline_uniform_block{};
+        };
+
+        // Translates a bridged write into a VkWriteDescriptorSet without its destination set. Fails when the write names
+        // an object that does not exist or belongs to another device.
+        bool build_descriptor_write(const uint64_t device, const vulkan_host::descriptor_write& w, descriptor_write_storage& storage,
+                                    VkWriteDescriptorSet& vw)
+        {
+            vw = {};
+            vw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            vw.dstBinding = w.dst_binding;
+            vw.dstArrayElement = w.dst_array_element;
+            vw.descriptorCount = 1;
+            vw.descriptorType = static_cast<VkDescriptorType>(w.descriptor_type);
+
+            const bool is_image =
+                (w.descriptor_type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
+                 w.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE || w.descriptor_type == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT ||
+                 w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER);
+            const bool is_texel_buffer = (w.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER ||
+                                          w.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER);
+            if (w.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
+            {
+                VkWriteDescriptorSetInlineUniformBlock& inline_uniform_block = storage.inline_uniform_block;
+                inline_uniform_block = {};
+                inline_uniform_block.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
+                inline_uniform_block.dataSize = static_cast<uint32_t>(w.inline_uniform_data.size());
+                inline_uniform_block.pData = w.inline_uniform_data.empty() ? nullptr : w.inline_uniform_data.data();
+                vw.pNext = &inline_uniform_block;
+                vw.descriptorCount = inline_uniform_block.dataSize;
+            }
+            else if (is_texel_buffer)
+            {
+                VkBufferView& buffer_view = storage.texel_buffer_view;
+                buffer_view = VK_NULL_HANDLE;
+                if (w.buffer_or_view != 0)
+                {
+                    const auto view = this->buffer_views.find(w.buffer_or_view);
+                    if (view == this->buffer_views.end() || view->second.device_id != device)
+                    {
+                        return false;
+                    }
+                    buffer_view = view->second.handle;
+                }
+                vw.pTexelBufferView = &buffer_view;
+            }
+            else if (is_image)
+            {
+                const auto view = this->image_views.find(w.image_view);
+                if (view != this->image_views.end() && view->second.device_id != device)
+                {
+                    return false;
+                }
+                VkDescriptorImageInfo& ii = storage.image_info;
+                ii.sampler = VK_NULL_HANDLE;
+                if (w.sampler != 0)
+                {
+                    const auto smp = this->samplers.find(w.sampler);
+                    if (smp == this->samplers.end() || smp->second.device_id != device)
+                    {
+                        return false;
+                    }
+                    ii.sampler = smp->second.handle;
+                }
+                ii.imageView = (view != this->image_views.end()) ? view->second.handle : VK_NULL_HANDLE;
+                ii.imageLayout = static_cast<VkImageLayout>(w.image_layout);
+                vw.pImageInfo = &ii;
+            }
+            else
+            {
+                VkDescriptorBufferInfo& bi = storage.buffer_info;
+                if (w.buffer_or_view == 0)
+                {
+                    // Null descriptor (VK_EXT_robustness2 nullDescriptor, which DXVK enables): an unused
+                    // uniform/storage buffer slot is bound to VK_NULL_HANDLE. Returning an error here makes
+                    // the recorded command buffer fail, which DXVK reports as a fatal vkEndCommandBuffer error.
+                    bi.buffer = VK_NULL_HANDLE;
+                    bi.offset = 0;
+                    bi.range = w.range ? w.range : VK_WHOLE_SIZE;
+                }
+                else
+                {
+                    const auto buf = this->buffers.find(w.buffer_or_view);
+                    if (buf == this->buffers.end() || buf->second.device_id != device)
+                    {
+                        return false;
+                    }
+                    bi.buffer = buf->second.handle;
+                    bi.offset = w.offset;
+                    bi.range = w.range;
+                }
+                vw.pBufferInfo = &bi;
+            }
+
+            return true;
+        }
 
         uint64_t allocate_id()
         {
@@ -4078,6 +4182,7 @@ namespace sogen
             data.free_descriptor_sets = reinterpret_cast<PFN_vkFreeDescriptorSets>(resolve("vkFreeDescriptorSets"));
             data.update_descriptor_sets = reinterpret_cast<PFN_vkUpdateDescriptorSets>(resolve("vkUpdateDescriptorSets"));
             data.cmd_bind_descriptor_sets = reinterpret_cast<PFN_vkCmdBindDescriptorSets>(resolve("vkCmdBindDescriptorSets"));
+            data.cmd_push_descriptor_set = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(resolve("vkCmdPushDescriptorSetKHR"));
             data.create_pipeline_cache = reinterpret_cast<PFN_vkCreatePipelineCache>(resolve("vkCreatePipelineCache"));
             data.destroy_pipeline_cache = reinterpret_cast<PFN_vkDestroyPipelineCache>(resolve("vkDestroyPipelineCache"));
             data.get_pipeline_cache_data = reinterpret_cast<PFN_vkGetPipelineCacheData>(resolve("vkGetPipelineCacheData"));
@@ -8212,16 +8317,10 @@ namespace sogen
         // in heavy scenes, so the buffers are reused (single emulator thread, no reentrancy) instead of
         // allocated per call.
         static thread_local std::vector<VkWriteDescriptorSet> vk_writes;
-        static thread_local std::vector<VkDescriptorBufferInfo> buffer_infos;
-        static thread_local std::vector<VkDescriptorImageInfo> image_infos;
-        static thread_local std::vector<VkBufferView> texel_buffer_views;
-        static thread_local std::vector<VkWriteDescriptorSetInlineUniformBlock> inline_uniform_blocks;
+        static thread_local std::vector<impl::descriptor_write_storage> write_storage;
         static thread_local std::vector<VkCopyDescriptorSet> vk_copies;
         vk_writes.clear();
-        buffer_infos.resize(writes.size());
-        image_infos.resize(writes.size());
-        texel_buffer_views.resize(writes.size());
-        inline_uniform_blocks.resize(writes.size());
+        write_storage.resize(writes.size());
         vk_writes.reserve(writes.size());
         vk_copies.clear();
         vk_copies.reserve(copies.size());
@@ -8248,92 +8347,16 @@ namespace sogen
             }
 
             VkWriteDescriptorSet vw{};
-            vw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            if (!this->impl_->build_descriptor_write(device, w, write_storage[i], vw))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
             vw.dstSet = cached_set_handle;
-            vw.dstBinding = w.dst_binding;
-            vw.dstArrayElement = w.dst_array_element;
-            vw.descriptorCount = 1;
-            vw.descriptorType = static_cast<VkDescriptorType>(w.descriptor_type);
 
-            const bool is_image =
-                (w.descriptor_type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
-                 w.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE || w.descriptor_type == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT ||
-                 w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER);
-            const bool is_texel_buffer = (w.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER ||
-                                          w.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER);
-            if (w.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
+            if (vw.pBufferInfo && w.buffer_or_view != 0)
             {
-                VkWriteDescriptorSetInlineUniformBlock& inline_uniform_block = inline_uniform_blocks[i];
-                inline_uniform_block = {};
-                inline_uniform_block.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
-                inline_uniform_block.dataSize = static_cast<uint32_t>(w.inline_uniform_data.size());
-                inline_uniform_block.pData = w.inline_uniform_data.empty() ? nullptr : w.inline_uniform_data.data();
-                vw.pNext = &inline_uniform_block;
-                vw.descriptorCount = inline_uniform_block.dataSize;
-            }
-            else if (is_texel_buffer)
-            {
-                VkBufferView& buffer_view = texel_buffer_views[i];
-                buffer_view = VK_NULL_HANDLE;
-                if (w.buffer_or_view != 0)
-                {
-                    const auto view = this->impl_->buffer_views.find(w.buffer_or_view);
-                    if (view == this->impl_->buffer_views.end() || view->second.device_id != device)
-                    {
-                        return VK_ERROR_INITIALIZATION_FAILED;
-                    }
-                    buffer_view = view->second.handle;
-                }
-                vw.pTexelBufferView = &buffer_view;
-            }
-            else if (is_image)
-            {
-                const auto view = this->impl_->image_views.find(w.image_view);
-                if (view != this->impl_->image_views.end() && view->second.device_id != device)
-                {
-                    return VK_ERROR_INITIALIZATION_FAILED;
-                }
-                VkDescriptorImageInfo& ii = image_infos[i];
-                ii.sampler = VK_NULL_HANDLE;
-                if (w.sampler != 0)
-                {
-                    const auto smp = this->impl_->samplers.find(w.sampler);
-                    if (smp == this->impl_->samplers.end() || smp->second.device_id != device)
-                    {
-                        return VK_ERROR_INITIALIZATION_FAILED;
-                    }
-                    ii.sampler = smp->second.handle;
-                }
-                ii.imageView = (view != this->impl_->image_views.end()) ? view->second.handle : VK_NULL_HANDLE;
-                ii.imageLayout = static_cast<VkImageLayout>(w.image_layout);
-                vw.pImageInfo = &ii;
-            }
-            else
-            {
-                VkDescriptorBufferInfo& bi = buffer_infos[i];
-                if (w.buffer_or_view == 0)
-                {
-                    // Null descriptor (VK_EXT_robustness2 nullDescriptor, which DXVK enables): an unused
-                    // uniform/storage buffer slot is bound to VK_NULL_HANDLE. Returning an error here makes
-                    // the recorded command buffer fail, which DXVK reports as a fatal vkEndCommandBuffer error.
-                    bi.buffer = VK_NULL_HANDLE;
-                    bi.offset = 0;
-                    bi.range = w.range ? w.range : VK_WHOLE_SIZE;
-                }
-                else
-                {
-                    const auto buf = this->impl_->buffers.find(w.buffer_or_view);
-                    if (buf == this->impl_->buffers.end() || buf->second.device_id != device)
-                    {
-                        return VK_ERROR_INITIALIZATION_FAILED;
-                    }
-                    bi.buffer = buf->second.handle;
-                    bi.offset = w.offset;
-                    bi.range = w.range;
-                    cached_set->buffer_bindings[w.dst_binding] = impl::bound_buffer_info{
-                        .buffer_id = w.buffer_or_view, .offset = w.offset, .range = w.range, .type = w.descriptor_type};
-                }
-                vw.pBufferInfo = &bi;
+                cached_set->buffer_bindings[w.dst_binding] =
+                    impl::bound_buffer_info{.buffer_id = w.buffer_or_view, .offset = w.offset, .range = w.range, .type = w.descriptor_type};
             }
             vk_writes.push_back(vw);
         }
@@ -9403,6 +9426,39 @@ namespace sogen
         dev->second.cmd_bind_descriptor_sets(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), layout->second.handle,
                                              first_set, static_cast<uint32_t>(handles.size()), handles.data(),
                                              static_cast<uint32_t>(dynamic_offsets.size()), dynamic_offsets.data());
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_push_descriptor_set(const uint64_t command_buffer, const uint64_t pipeline_layout, const uint32_t bind_point,
+                                                 const uint32_t set, const std::span<const descriptor_write> writes)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
+        if (cb == this->impl_->command_buffers.end() || layout == this->impl_->pipeline_layouts.end() ||
+            layout->second.device_id != cb->second.device_id)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_push_descriptor_set)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        static thread_local std::vector<VkWriteDescriptorSet> vk_writes;
+        static thread_local std::vector<impl::descriptor_write_storage> write_storage;
+        vk_writes.resize(writes.size());
+        write_storage.resize(writes.size());
+        for (size_t i = 0; i < writes.size(); ++i)
+        {
+            if (!this->impl_->build_descriptor_write(cb->second.device_id, writes[i], write_storage[i], vk_writes[i]))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+
+        dev->second.cmd_push_descriptor_set(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), layout->second.handle, set,
+                                            static_cast<uint32_t>(vk_writes.size()), vk_writes.data());
         return VK_SUCCESS;
     }
 

@@ -3219,6 +3219,38 @@ namespace sogen
 
             // Applies one update_descriptor_sets_request blob and advances `offset` past it. Shared by the
             // single and coalesced-batch IOCTLs.
+            // The caller has checked that write_count records and inline_uniform_data_size bytes are readable.
+            static bool decode_descriptor_writes(const std::byte* records, const uint32_t write_count, const std::byte* inline_uniform_data,
+                                                 const uint32_t inline_uniform_data_size,
+                                                 std::vector<vulkan_host::descriptor_write>& writes)
+            {
+                writes.resize(write_count);
+                for (uint32_t i = 0; i < write_count; ++i)
+                {
+                    gpu_bridge::descriptor_write w{};
+                    std::memcpy(&w, records + static_cast<size_t>(i) * sizeof(w), sizeof(w));
+                    if (w.inline_uniform_data_offset > inline_uniform_data_size ||
+                        w.inline_uniform_data_size > inline_uniform_data_size - w.inline_uniform_data_offset)
+                    {
+                        return false;
+                    }
+                    writes[i] = {.dst_set = w.dst_set,
+                                 .dst_binding = w.dst_binding,
+                                 .dst_array_element = w.dst_array_element,
+                                 .descriptor_type = w.descriptor_type,
+                                 .buffer_or_view = w.buffer_or_view,
+                                 .offset = w.offset,
+                                 .range = w.range,
+                                 .sampler = w.sampler,
+                                 .image_view = w.image_view,
+                                 .image_layout = w.image_layout,
+                                 .inline_uniform_data = std::span<const std::byte>{inline_uniform_data + w.inline_uniform_data_offset,
+                                                                                   w.inline_uniform_data_size}};
+                }
+
+                return true;
+            }
+
             int32_t apply_update_descriptor_sets(const std::byte* data, size_t size, size_t& offset)
             {
                 constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
@@ -3250,30 +3282,11 @@ namespace sogen
                     return vk_error_initialization_failed;
                 }
 
-                std::vector<vulkan_host::descriptor_write> writes(request.write_count);
-                size_t write_offset = offset;
-                for (auto& write : writes)
+                std::vector<vulkan_host::descriptor_write> writes{};
+                if (!decode_descriptor_writes(data + offset, request.write_count, data + inline_uniform_data_offset,
+                                              request.inline_uniform_data_size, writes))
                 {
-                    gpu_bridge::descriptor_write w{};
-                    std::memcpy(&w, data + write_offset, sizeof(w));
-                    write_offset += sizeof(w);
-                    if (w.inline_uniform_data_offset > request.inline_uniform_data_size ||
-                        w.inline_uniform_data_size > request.inline_uniform_data_size - w.inline_uniform_data_offset)
-                    {
-                        return vk_error_initialization_failed;
-                    }
-                    write = {.dst_set = w.dst_set,
-                             .dst_binding = w.dst_binding,
-                             .dst_array_element = w.dst_array_element,
-                             .descriptor_type = w.descriptor_type,
-                             .buffer_or_view = w.buffer_or_view,
-                             .offset = w.offset,
-                             .range = w.range,
-                             .sampler = w.sampler,
-                             .image_view = w.image_view,
-                             .image_layout = w.image_layout,
-                             .inline_uniform_data = std::span<const std::byte>{
-                                 data + inline_uniform_data_offset + w.inline_uniform_data_offset, w.inline_uniform_data_size}};
+                    return vk_error_initialization_failed;
                 }
                 std::vector<vulkan_host::descriptor_copy> copies(request.copy_count);
                 size_t copy_offset = copies_offset;
@@ -3933,6 +3946,30 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_bind_descriptor_sets(req.command_buffer, req.pipeline_layout, req.first_set, sets,
                                                                   req.bind_point, dynamic_offsets);
+                }
+                case gpu_bridge::command::cmd_push_descriptor_set: {
+                    gpu_bridge::cmd_push_descriptor_set_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t available = size - sizeof(req);
+                    if (req.write_count > available / sizeof(gpu_bridge::descriptor_write))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t writes_bytes = static_cast<size_t>(req.write_count) * sizeof(gpu_bridge::descriptor_write);
+                    if (req.inline_uniform_data_size > available - writes_bytes)
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<vulkan_host::descriptor_write> writes{};
+                    if (!decode_descriptor_writes(payload + sizeof(req), req.write_count, payload + sizeof(req) + writes_bytes,
+                                                  req.inline_uniform_data_size, writes))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_push_descriptor_set(req.command_buffer, req.pipeline_layout, req.bind_point, req.set, writes);
                 }
                 case gpu_bridge::command::cmd_end_render_pass: {
                     gpu_bridge::cmd_end_render_pass_request req{};
