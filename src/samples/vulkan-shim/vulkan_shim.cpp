@@ -15,8 +15,10 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -270,6 +272,19 @@ namespace
     {
         static std::unordered_map<gb::object_id, std::vector<uint8_t>> streams;
         return streams;
+    }
+
+    struct private_data_store
+    {
+        std::mutex mutex;
+        uint64_t next_slot = 1;
+        std::map<std::tuple<VkObjectType, uint64_t, uint64_t>, uint64_t> values;
+    };
+
+    private_data_store& private_data()
+    {
+        static private_data_store store;
+        return store;
     }
 
     // Pending coalesced vkUpdateDescriptorSets blobs (the hottest bridge call - DXVK updates per draw).
@@ -3775,6 +3790,181 @@ extern "C"
         }
     }
 
+    // Each physical device forms its own group; the bridge has no device groups spanning several GPUs.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumeratePhysicalDeviceGroups(
+        VkInstance instance, uint32_t* pPhysicalDeviceGroupCount, VkPhysicalDeviceGroupProperties* pPhysicalDeviceGroupProperties)
+    {
+        uint32_t count = 0;
+        if (const VkResult result = vkEnumeratePhysicalDevices(instance, &count, nullptr); result != VK_SUCCESS)
+        {
+            return result;
+        }
+        if (!pPhysicalDeviceGroupProperties)
+        {
+            *pPhysicalDeviceGroupCount = count;
+            return VK_SUCCESS;
+        }
+
+        std::vector<VkPhysicalDevice> devices(count);
+        if (const VkResult result = vkEnumeratePhysicalDevices(instance, &count, devices.data()); result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint32_t written = std::min(count, *pPhysicalDeviceGroupCount);
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            auto& group = pPhysicalDeviceGroupProperties[i];
+            group.physicalDeviceCount = 1;
+            group.physicalDevices[0] = devices[i];
+            group.subsetAllocation = VK_FALSE;
+        }
+        *pPhysicalDeviceGroupCount = written;
+        return written < count ? VK_INCOMPLETE : VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceGroupPeerMemoryFeatures(VkDevice, uint32_t, uint32_t, uint32_t,
+                                                                                        VkPeerMemoryFeatureFlags* pPeerMemoryFeatures)
+    {
+        *pPeerMemoryFeatures = 0;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDeviceMask(VkCommandBuffer, uint32_t)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDispatchBase(VkCommandBuffer commandBuffer, uint32_t baseGroupX,
+                                                                       uint32_t baseGroupY, uint32_t baseGroupZ, uint32_t groupCountX,
+                                                                       uint32_t groupCountY, uint32_t groupCountZ)
+    {
+        gb::cmd_dispatch_base_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.base_group_x = baseGroupX;
+        request.base_group_y = baseGroupY;
+        request.base_group_z = baseGroupZ;
+        request.group_count_x = groupCountX;
+        request.group_count_y = groupCountY;
+        request.group_count_z = groupCountZ;
+        record_command(request.command_buffer, gb::command::cmd_dispatch_base, &request, sizeof(request));
+    }
+
+    // Trimming only returns unused pool memory, which an implementation may skip.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkTrimCommandPool(VkDevice, VkCommandPool, VkCommandPoolTrimFlags)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo,
+                                                                       VkQueue* pQueue)
+    {
+        if (pQueueInfo->flags != 0)
+        {
+            *pQueue = VK_NULL_HANDLE;
+            return;
+        }
+        vkGetDeviceQueue(device, pQueueInfo->queueFamilyIndex, pQueueInfo->queueIndex, pQueue);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceExternalBufferProperties(
+        VkPhysicalDevice, const VkPhysicalDeviceExternalBufferInfo*, VkExternalBufferProperties* pExternalBufferProperties)
+    {
+        pExternalBufferProperties->externalMemoryProperties = {};
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceExternalFenceProperties(
+        VkPhysicalDevice, const VkPhysicalDeviceExternalFenceInfo*, VkExternalFenceProperties* pExternalFenceProperties)
+    {
+        pExternalFenceProperties->exportFromImportedHandleTypes = 0;
+        pExternalFenceProperties->compatibleHandleTypes = 0;
+        pExternalFenceProperties->externalFenceFeatures = 0;
+    }
+
+    // The host reports samplerYcbcrConversion as unsupported, so no valid caller reaches these.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSamplerYcbcrConversion(VkDevice, const VkSamplerYcbcrConversionCreateInfo*,
+                                                                                        const VkAllocationCallbacks*,
+                                                                                        VkSamplerYcbcrConversion* pYcbcrConversion)
+    {
+        *pYcbcrConversion = VK_NULL_HANDLE;
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySamplerYcbcrConversion(VkDevice, VkSamplerYcbcrConversion,
+                                                                                     const VkAllocationCallbacks*)
+    {
+    }
+
+    // The host reports bufferDeviceAddressCaptureReplay as unsupported, and without it the opaque address may be zero.
+    __declspec(dllexport) VKAPI_ATTR uint64_t VKAPI_CALL vkGetBufferOpaqueCaptureAddress(VkDevice, const VkBufferDeviceAddressInfo*)
+    {
+        return 0;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR uint64_t VKAPI_CALL
+    vkGetDeviceMemoryOpaqueCaptureAddress(VkDevice, const VkDeviceMemoryOpaqueCaptureAddressInfo*)
+    {
+        return 0;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceToolProperties(VkPhysicalDevice, uint32_t* pToolCount,
+                                                                                           VkPhysicalDeviceToolProperties*)
+    {
+        *pToolCount = 0;
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetRenderAreaGranularity(VkDevice device, VkRenderPass renderPass,
+                                                                                VkExtent2D* pGranularity)
+    {
+        gb::get_render_area_granularity_request request{};
+        request.device = to_object_id(device);
+        request.render_pass = to_object_id(renderPass);
+
+        gb::get_render_area_granularity_response response{};
+        if (!bridge_call(gb::ioctl_get_render_area_granularity, &request, sizeof(request), &response, sizeof(response)) ||
+            response.vk_result != VK_SUCCESS)
+        {
+            *pGranularity = {.width = 1, .height = 1};
+            return;
+        }
+        *pGranularity = {.width = response.width, .height = response.height};
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreatePrivateDataSlot(VkDevice, const VkPrivateDataSlotCreateInfo*,
+                                                                                 const VkAllocationCallbacks*,
+                                                                                 VkPrivateDataSlot* pPrivateDataSlot)
+    {
+        auto& store = private_data();
+        const std::lock_guard lock(store.mutex);
+        *pPrivateDataSlot = to_handle<VkPrivateDataSlot>(store.next_slot++);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPrivateDataSlot(VkDevice, VkPrivateDataSlot privateDataSlot,
+                                                                              const VkAllocationCallbacks*)
+    {
+        auto& store = private_data();
+        const std::lock_guard lock(store.mutex);
+        const auto slot = to_object_id(privateDataSlot);
+        std::erase_if(store.values, [slot](const auto& entry) { return std::get<2>(entry.first) == slot; });
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkSetPrivateData(VkDevice, VkObjectType objectType, uint64_t objectHandle,
+                                                                          VkPrivateDataSlot privateDataSlot, uint64_t data)
+    {
+        auto& store = private_data();
+        const std::lock_guard lock(store.mutex);
+        store.values[{objectType, objectHandle, to_object_id(privateDataSlot)}] = data;
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPrivateData(VkDevice, VkObjectType objectType, uint64_t objectHandle,
+                                                                      VkPrivateDataSlot privateDataSlot, uint64_t* pData)
+    {
+        auto& store = private_data();
+        const std::lock_guard lock(store.mutex);
+        const auto it = store.values.find({objectType, objectHandle, to_object_id(privateDataSlot)});
+        *pData = it != store.values.end() ? it->second : 0;
+    }
+
     // Core: no sparse residency support.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceSparseImageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType,
                                                                                                     VkSampleCountFlagBits,
@@ -6726,6 +6916,67 @@ extern "C"
             {.name = "vkCreateImageView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImageView)},
             {.name = "vkDestroyImageView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImageView)},
             {.name = "vkCreateRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass)},
+            {.name = "vkEnumeratePhysicalDeviceGroups", .func = reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDeviceGroups)},
+            {.name = "vkEnumeratePhysicalDeviceGroupsKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkEnumeratePhysicalDeviceGroups)},
+            {.name = "vkGetDeviceGroupPeerMemoryFeatures",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceGroupPeerMemoryFeatures)},
+            {.name = "vkGetDeviceGroupPeerMemoryFeaturesKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceGroupPeerMemoryFeatures)},
+            {.name = "vkCmdSetDeviceMask", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDeviceMask)},
+            {.name = "vkCmdSetDeviceMaskKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDeviceMask)},
+            {.name = "vkCmdDispatchBase", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatchBase)},
+            {.name = "vkCmdDispatchBaseKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatchBase)},
+            {.name = "vkTrimCommandPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkTrimCommandPool)},
+            {.name = "vkTrimCommandPoolKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkTrimCommandPool)},
+            {.name = "vkGetDeviceQueue2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceQueue2)},
+            {.name = "vkGetPhysicalDeviceExternalBufferProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceExternalBufferProperties)},
+            {.name = "vkGetPhysicalDeviceExternalBufferPropertiesKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceExternalBufferProperties)},
+            {.name = "vkGetPhysicalDeviceExternalFenceProperties",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceExternalFenceProperties)},
+            {.name = "vkGetPhysicalDeviceExternalFencePropertiesKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceExternalFenceProperties)},
+            {.name = "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceExternalSemaphoreProperties)},
+            {.name = "vkCreateSamplerYcbcrConversion", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSamplerYcbcrConversion)},
+            {.name = "vkCreateSamplerYcbcrConversionKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSamplerYcbcrConversion)},
+            {.name = "vkDestroySamplerYcbcrConversion", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySamplerYcbcrConversion)},
+            {.name = "vkDestroySamplerYcbcrConversionKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySamplerYcbcrConversion)},
+            {.name = "vkGetBufferOpaqueCaptureAddress", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferOpaqueCaptureAddress)},
+            {.name = "vkGetBufferOpaqueCaptureAddressKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferOpaqueCaptureAddress)},
+            {.name = "vkGetDeviceMemoryOpaqueCaptureAddress",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceMemoryOpaqueCaptureAddress)},
+            {.name = "vkGetDeviceMemoryOpaqueCaptureAddressKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceMemoryOpaqueCaptureAddress)},
+            {.name = "vkGetPhysicalDeviceToolProperties", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceToolProperties)},
+            {.name = "vkGetPhysicalDeviceToolPropertiesEXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceToolProperties)},
+            {.name = "vkGetRenderAreaGranularity", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetRenderAreaGranularity)},
+            {.name = "vkCreatePrivateDataSlot", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreatePrivateDataSlot)},
+            {.name = "vkCreatePrivateDataSlotEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreatePrivateDataSlot)},
+            {.name = "vkDestroyPrivateDataSlot", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPrivateDataSlot)},
+            {.name = "vkDestroyPrivateDataSlotEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPrivateDataSlot)},
+            {.name = "vkSetPrivateData", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSetPrivateData)},
+            {.name = "vkSetPrivateDataEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSetPrivateData)},
+            {.name = "vkGetPrivateData", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPrivateData)},
+            {.name = "vkGetPrivateDataEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPrivateData)},
+            {.name = "vkCmdDrawIndexedIndirectCountAMD", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexedIndirectCount)},
+            {.name = "vkCmdDrawIndirectCountAMD", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndirectCount)},
+            {.name = "vkGetDeviceImageSparseMemoryRequirementsKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageSparseMemoryRequirements)},
+            {.name = "vkGetPhysicalDeviceFeatures2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceFeatures2)},
+            {.name = "vkGetPhysicalDeviceFormatProperties2KHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceFormatProperties2)},
+            {.name = "vkGetPhysicalDeviceImageFormatProperties2KHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceImageFormatProperties2)},
+            {.name = "vkGetPhysicalDeviceMemoryProperties2KHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceMemoryProperties2)},
+            {.name = "vkGetPhysicalDeviceProperties2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceProperties2)},
+            {.name = "vkGetPhysicalDeviceQueueFamilyProperties2KHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceQueueFamilyProperties2)},
+            {.name = "vkGetPhysicalDeviceSparseImageFormatProperties2KHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPhysicalDeviceSparseImageFormatProperties2)},
             {.name = "vkCreateRenderPass2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass2)},
             {.name = "vkCreateRenderPass2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass2)},
             {.name = "vkCmdBeginRenderPass2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass2)},

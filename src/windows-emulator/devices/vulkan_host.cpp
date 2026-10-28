@@ -569,6 +569,8 @@ namespace sogen
             PFN_vkCmdExecuteCommands cmd_execute_commands{};
             PFN_vkCmdBindPipeline cmd_bind_pipeline{};
             PFN_vkCmdDispatch cmd_dispatch{};
+            PFN_vkCmdDispatchBase cmd_dispatch_base{};
+            PFN_vkGetRenderAreaGranularity get_render_area_granularity{};
             PFN_vkCmdDispatchIndirect cmd_dispatch_indirect{};
             PFN_vkCmdDraw cmd_draw{};
             PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers{};
@@ -3565,7 +3567,19 @@ namespace sogen
         for (auto& buffer : chained)
         {
             auto* base = reinterpret_cast<VkBaseOutStructure*>(buffer.data());
-            if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT)
+            if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES)
+            {
+                // Protected queues and Ycbcr conversions are not bridged.
+                auto* features = reinterpret_cast<VkPhysicalDeviceVulkan11Features*>(buffer.data());
+                features->protectedMemory = VK_FALSE;
+                features->samplerYcbcrConversion = VK_FALSE;
+            }
+            else if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES)
+            {
+                // Opaque capture addresses are host addresses that a replay could not reproduce.
+                reinterpret_cast<VkPhysicalDeviceVulkan12Features*>(buffer.data())->bufferDeviceAddressCaptureReplay = VK_FALSE;
+            }
+            else if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT)
             {
                 auto* features = reinterpret_cast<VkPhysicalDeviceTransformFeedbackFeaturesEXT*>(buffer.data());
                 // TODO: Expose geometry-stream support after geometry shaders are bridged.
@@ -4286,6 +4300,12 @@ namespace sogen
             data.cmd_execute_commands = reinterpret_cast<PFN_vkCmdExecuteCommands>(resolve("vkCmdExecuteCommands"));
             data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
             data.cmd_dispatch = reinterpret_cast<PFN_vkCmdDispatch>(resolve("vkCmdDispatch"));
+            data.cmd_dispatch_base = reinterpret_cast<PFN_vkCmdDispatchBase>(resolve("vkCmdDispatchBase"));
+            if (!data.cmd_dispatch_base)
+            {
+                data.cmd_dispatch_base = reinterpret_cast<PFN_vkCmdDispatchBase>(resolve("vkCmdDispatchBaseKHR"));
+            }
+            data.get_render_area_granularity = reinterpret_cast<PFN_vkGetRenderAreaGranularity>(resolve("vkGetRenderAreaGranularity"));
             data.cmd_dispatch_indirect = reinterpret_cast<PFN_vkCmdDispatchIndirect>(resolve("vkCmdDispatchIndirect"));
             data.cmd_draw = reinterpret_cast<PFN_vkCmdDraw>(resolve("vkCmdDraw"));
             data.cmd_bind_vertex_buffers = reinterpret_cast<PFN_vkCmdBindVertexBuffers>(resolve("vkCmdBindVertexBuffers"));
@@ -4377,6 +4397,15 @@ namespace sogen
         if (!queue)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        for (const auto& [id, data] : this->impl_->queues)
+        {
+            if (data.device_id == device && data.handle == queue)
+            {
+                out_queue = id;
+                return VK_SUCCESS;
+            }
         }
 
         const uint64_t id = this->impl_->allocate_id();
@@ -9512,6 +9541,43 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_dispatch(cb->second.handle, group_count_x, group_count_y, group_count_z);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_dispatch_base(uint64_t command_buffer, const std::array<uint32_t, 3>& base_group,
+                                           const std::array<uint32_t, 3>& group_count)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_dispatch_base)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_dispatch_base(cb->second.handle, base_group[0], base_group[1], base_group[2], group_count[0], group_count[1],
+                                      group_count[2]);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_render_area_granularity(uint64_t device, uint64_t render_pass, uint32_t& out_width, uint32_t& out_height)
+    {
+        out_width = 0;
+        out_height = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto rp = this->impl_->render_passes.find(render_pass);
+        if (dev == this->impl_->devices.end() || rp == this->impl_->render_passes.end() || rp->second.device_id != device ||
+            !dev->second.get_render_area_granularity)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkExtent2D granularity{};
+        dev->second.get_render_area_granularity(dev->second.handle, rp->second.handle, &granularity);
+        out_width = granularity.width;
+        out_height = granularity.height;
         return VK_SUCCESS;
     }
 

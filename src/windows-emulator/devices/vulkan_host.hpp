@@ -784,6 +784,9 @@ namespace sogen
                                       std::span<const uint64_t> attachments);
         int32_t cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline, uint32_t bind_point);
         int32_t cmd_dispatch(uint64_t command_buffer, uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z);
+        int32_t cmd_dispatch_base(uint64_t command_buffer, const std::array<uint32_t, 3>& base_group,
+                                  const std::array<uint32_t, 3>& group_count);
+        int32_t get_render_area_granularity(uint64_t device, uint64_t render_pass, uint32_t& out_width, uint32_t& out_height);
         int32_t cmd_dispatch_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset);
         int32_t cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex,
                          uint32_t first_instance);
