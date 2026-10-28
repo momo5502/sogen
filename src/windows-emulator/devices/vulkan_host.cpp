@@ -2544,9 +2544,9 @@ namespace sogen
         }
 
         // Copying with a blit converts between the channel orders, while a pair of the same encoding keeps the values.
-        VkResult check_swapchain_proxy_support(const device_data& dev, const instance_data& instance, const VkFormat format,
-                                               const VkFormat native_format, const uint32_t flags,
-                                               const VkSurfaceCapabilitiesKHR& caps) const
+        static VkResult check_swapchain_proxy_support(const device_data& dev, const instance_data& instance, const VkFormat format,
+                                                      const VkFormat native_format, const uint32_t flags,
+                                                      const VkSurfaceCapabilitiesKHR& caps)
         {
             if ((flags & ~static_cast<uint32_t>(VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR)) != 0 ||
                 (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0 || !instance.get_physical_device_format_properties ||
@@ -7393,12 +7393,16 @@ namespace sogen
         VkSurfaceCapabilitiesKHR caps{};
         std::vector<VkSurfaceFormatKHR> native_formats{};
         std::vector<VkPresentModeKHR> native_modes{};
-        if (VkResult queried = instance->second.get_surface_capabilities(dev.physical_device, surf_it->second.handle, &caps);
-            queried != VK_SUCCESS ||
-            (queried = impl::query_surface_formats(instance->second, dev.physical_device, surf_it->second.handle, native_formats)) !=
-                VK_SUCCESS ||
-            (queried = impl::query_surface_present_modes(instance->second, dev.physical_device, surf_it->second.handle, native_modes)) !=
-                VK_SUCCESS)
+        VkResult queried = instance->second.get_surface_capabilities(dev.physical_device, surf_it->second.handle, &caps);
+        if (queried == VK_SUCCESS)
+        {
+            queried = impl::query_surface_formats(instance->second, dev.physical_device, surf_it->second.handle, native_formats);
+        }
+        if (queried == VK_SUCCESS)
+        {
+            queried = impl::query_surface_present_modes(instance->second, dev.physical_device, surf_it->second.handle, native_modes);
+        }
+        if (queried != VK_SUCCESS)
         {
             return queried;
         }
@@ -7443,7 +7447,7 @@ namespace sogen
                 return VK_ERROR_FORMAT_NOT_SUPPORTED;
             }
             if (const VkResult supported =
-                    this->impl_->check_swapchain_proxy_support(dev, instance->second, requested_format, native_format, flags, caps);
+                    impl::check_swapchain_proxy_support(dev, instance->second, requested_format, native_format, flags, caps);
                 supported != VK_SUCCESS)
             {
                 return supported;
@@ -7508,6 +7512,7 @@ namespace sogen
         const uint32_t image_flags = (flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0 ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0;
         if (proxied)
         {
+            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
             VkImageCreateInfo image_info{};
             image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
             image_info.flags = image_flags;
@@ -7834,7 +7839,7 @@ namespace sogen
                 VkCommandBufferBeginInfo begin_info{};
                 begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-                const auto command_buffer = copy->command_buffer;
+                auto* const command_buffer = copy->command_buffer;
                 if (copying)
                 {
                     ready = copy->native_ready[native_index];
