@@ -2261,16 +2261,25 @@ namespace sogen
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
             const auto virtual_key = static_cast<uint8_t>(event.wParam & 0xFF);
-            if ((this->process.key_state[virtual_key] & 0x80) == 0)
+            if (virtual_key == VK_PACKET)
+            {
+                break;
+            }
+            auto& state = this->process.key_state[virtual_key];
+            if ((state & 0x80) == 0)
             {
                 this->process.async_key_state[virtual_key] = 1;
+                if (virtual_key == VK_CAPITAL || virtual_key == VK_NUMLOCK || virtual_key == VK_SCROLL)
+                {
+                    state ^= 0x01;
+                }
             }
-            this->process.key_state[virtual_key] = 0x80;
+            state = static_cast<uint8_t>(0x80 | (state & 0x01));
             break;
         }
         case WM_KEYUP:
         case WM_SYSKEYUP:
-            this->process.key_state[static_cast<uint8_t>(event.wParam & 0xFF)] = 0;
+            this->process.key_state[static_cast<uint8_t>(event.wParam & 0xFF)] &= 0x01;
             break;
         default:
             if (const auto virtual_key = mouse_button_virtual_key(event.message, event.wParam); virtual_key != 0)
@@ -2680,7 +2689,7 @@ namespace sogen
             });
 
             // Delivering the release does not clear the key when there is no window to deliver it to.
-            this->process.key_state[key] = 0;
+            this->process.key_state[key] &= 0x01;
         }
     }
 
