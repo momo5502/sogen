@@ -12,7 +12,7 @@ namespace sogen
     {
         NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
         NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle, emulator_object<LONG> previous_count);
-        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, ULONG release_count,
+        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, LONG release_count,
                                            emulator_object<LONG> previous_count);
 
         constexpr ULONG duplicate_close_source = 1;
@@ -763,16 +763,14 @@ namespace sogen
                                                  const WAIT_TYPE wait_type, const BOOLEAN alertable,
                                                  const emulator_object<LARGE_INTEGER> timeout)
         {
-            if (wait_type != WaitAny && wait_type != WaitAll)
-            {
-                c.win_emu.log.error("Wait type not supported!\n");
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
-            }
-
             if (count == 0 || count > 64) // MAXIMUM_WAIT_OBJECTS
             {
-                return STATUS_INVALID_PARAMETER;
+                return STATUS_INVALID_PARAMETER_1;
+            }
+
+            if (wait_type != WaitAny && wait_type != WaitAll)
+            {
+                return STATUS_INVALID_PARAMETER_3;
             }
 
             auto& t = c.thread();
@@ -821,16 +819,14 @@ namespace sogen
                                                    const WAIT_TYPE wait_type, const BOOLEAN alertable,
                                                    const emulator_object<LARGE_INTEGER> timeout)
         {
-            if (wait_type != WaitAny && wait_type != WaitAll)
-            {
-                c.win_emu.log.error("Wait type not supported!\n");
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
-            }
-
             if (count == 0 || count > 64) // MAXIMUM_WAIT_OBJECTS
             {
-                return STATUS_INVALID_PARAMETER;
+                return STATUS_INVALID_PARAMETER_1;
+            }
+
+            if (wait_type != WaitAny && wait_type != WaitAll)
+            {
+                return STATUS_INVALID_PARAMETER_3;
             }
 
             auto& t = c.thread();
