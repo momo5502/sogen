@@ -5,6 +5,8 @@
 
 #include <charconv>
 
+#include <sys/stat.h>
+
 namespace sogen::sxs
 {
     namespace
