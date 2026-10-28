@@ -1090,7 +1090,7 @@ namespace sogen
                 outgoing->save(vcpu.cpu);
             }
 
-            incoming.restore(vcpu.cpu);
+            incoming.restore(vcpu.cpu, this->process.gdt_base);
             return;
         }
 
@@ -1119,7 +1119,7 @@ namespace sogen
             incoming.load_registers(vcpu.cpu);
         }
 
-        incoming.refresh_execution_context(vcpu.cpu);
+        incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
     }
 
     void windows_emulator::wait_for_register_transfer(const emulator_thread& thread)

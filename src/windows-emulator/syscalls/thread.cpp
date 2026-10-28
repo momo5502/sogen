@@ -136,7 +136,7 @@ namespace sogen
                     {
                         c.win_emu.wait_for_register_transfer(*thread);
                         c.vcpu.active_thread->save(c.emu);
-                        thread->restore(c.emu);
+                        thread->restore(c.emu, c.proc.gdt_base);
                     }
 
                     c.x64_cpu().reg(x86_register::dr0, static_cast<uint64_t>(new_wow64_context.Dr0));
@@ -149,7 +149,7 @@ namespace sogen
                     if (needs_switch)
                     {
                         thread->save(c.emu);
-                        c.vcpu.active_thread->restore(c.emu);
+                        c.vcpu.active_thread->restore(c.emu, c.proc.gdt_base);
                     }
                 }
 
@@ -1120,10 +1120,10 @@ namespace sogen
             c.win_emu.wait_for_register_transfer(thread);
             active.save(c.emu);
             const auto _ = utils::finally([&] {
-                active.restore(c.emu); //
+                active.restore(c.emu, c.proc.gdt_base); //
             });
 
-            thread.restore(c.emu);
+            thread.restore(c.emu, c.proc.gdt_base);
             if (!thread.setup_done && !c.proc.is_wow64_process)
             {
                 thread.setup_if_necessary(c.emu, c.proc);
