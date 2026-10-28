@@ -15,7 +15,6 @@ $ErrorActionPreference = 'Stop'
 $system32 = Join-Path $WindowsDir 'system32'
 $syswow64 = Join-Path $WindowsDir 'syswow64'
 
-# Overwrites the bundled DirectX DLLs with a translation layer's.
 function Install-Dlls([string]$label, [string]$srcDir, [string]$dstDir) {
     if (-not (Test-Path $srcDir)) { throw "$label source directory not found: $srcDir" }
     Get-ChildItem -Path $srcDir -Filter '*.dll' | ForEach-Object {
@@ -62,7 +61,6 @@ try {
     $vkd3dArchive = Join-Path $work $vkd3dAsset.name
     Invoke-WebRequest -Uri $vkd3dAsset.browser_download_url -OutFile $vkd3dArchive
 
-    # The archive is a zstd-compressed tarball: unpack the tar first, then its contents.
     $vkd3dDir = Join-Path $work 'vkd3d'
     7z x -y "-o$vkd3dDir" $vkd3dArchive | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Failed to extract $vkd3dArchive" }
