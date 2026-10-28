@@ -471,7 +471,8 @@ namespace sogen
                                  uint32_t present_mode, uint32_t clipped, uint64_t& out_swapchain, uint32_t& out_image_count);
         void destroy_swapchain(uint64_t device, uint64_t swapchain);
         int32_t get_swapchain_images(uint64_t swapchain, std::span<uint64_t> out_images, uint32_t& out_count);
-        int32_t acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index);
+        int32_t acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index,
+                                   const std::function<void(const std::function<void()>&)>& run_unlocked);
         // The native present goes through run_unlocked, which may run it without the caller's locks: it touches no
         // other vulkan_host state, and the device is kept alive until it returns.
         int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, const std::vector<uint64_t>& wait_semaphores,
