@@ -7600,6 +7600,7 @@ namespace sogen
 
             uint32_t virtual_key = input.virtual_key;
             uint32_t scan_code = input.scan_code;
+            bool extended = (input.flags & keyeventf_extendedkey) != 0;
             if (unicode)
             {
                 virtual_key = VK_PACKET;
@@ -7611,7 +7612,9 @@ namespace sogen
             }
             else
             {
-                scan_code = handle_NtUserMapVirtualKeyEx(c, virtual_key, 0, 0, 0);
+                const auto extended_scan = handle_NtUserMapVirtualKeyEx(c, virtual_key, 4, 0, 0);
+                scan_code = extended_scan & 0xFF;
+                extended = extended || (extended_scan >> 8) == 0xE0;
             }
 
             if (virtual_key == 0 || virtual_key >= c.proc.key_state.size())
@@ -7620,7 +7623,7 @@ namespace sogen
             }
 
             uint64_t l_param = 1 | (static_cast<uint64_t>(scan_code & 0xFF) << 16);
-            l_param |= (input.flags & keyeventf_extendedkey) ? (1ull << 24) : 0;
+            l_param |= extended ? (1ull << 24) : 0;
             l_param |= up ? (1ull << 31) : 0;
 
             // Like Windows, key messages name the generic modifier rather than its left or right variant; the scan code and
@@ -7652,7 +7655,7 @@ namespace sogen
             constexpr uint32_t input_keyboard = 1;
             constexpr uint32_t input_hardware = 2;
 
-            if (input_size != sizeof(emu_input) || inputs == 0)
+            if (input_count == 0 || input_size != sizeof(emu_input) || inputs == 0)
             {
                 set_guest_last_error(c, ERROR_INVALID_PARAMETER);
                 return 0;
