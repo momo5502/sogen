@@ -61,6 +61,8 @@ namespace sogen
                     uint32_t reserved2;
                 };
 
+                static_assert(sizeof(device_id_list_header) == 16);
+
                 constexpr ULONG minimum_reply = 20;
                 constexpr char16_t empty_list = u'\0';
                 if (!c.output_buffer || c.output_buffer_length < minimum_reply)
