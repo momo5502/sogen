@@ -1250,21 +1250,12 @@ namespace sogen
                 std::vector<const afd_endpoint*> endpoints{};
                 endpoints.reserve(handles.size());
 
+                // A socket closed while a poll on it is pending stays as null and reports AFD_POLL_LOCAL_CLOSE.
                 for (const auto& handle : handles)
                 {
-                    auto* device = proc.devices.get(handle.Handle);
-                    if (!device)
-                    {
-                        throw std::runtime_error("Bad device!");
-                    }
-
-                    const auto* endpoint = device->template get_internal_device<afd_endpoint<Traits>>();
-                    if (!endpoint || !endpoint->s_)
-                    {
-                        throw std::runtime_error("Invalid AFD endpoint!");
-                    }
-
-                    endpoints.push_back(endpoint);
+                    const auto* device = proc.devices.get(handle.Handle);
+                    const auto* endpoint = device ? device->template get_internal_device<afd_endpoint<Traits>>() : nullptr;
+                    endpoints.push_back(endpoint && endpoint->s_ ? endpoint : nullptr);
                 }
 
                 return endpoints;
@@ -1277,40 +1268,51 @@ namespace sogen
                 const auto entry_count = std::min(endpoints.size(), handles.size());
 
                 std::vector<network::poll_entry> poll_data{};
-                poll_data.resize(entry_count);
-
-                auto endpoint_it = endpoints.begin();
-                auto handle_it = handles.begin();
-
-                for (auto& pfd : poll_data)
+                std::vector<size_t> poll_indices{};
+                for (size_t index = 0; index < entry_count; ++index)
                 {
-                    const auto* endpoint = *endpoint_it++;
-                    const auto& handle = *handle_it++;
+                    if (!endpoints[index])
+                    {
+                        continue;
+                    }
 
-                    pfd.s = endpoint->s_.get();
-                    pfd.events = map_afd_request_events_to_socket(handle.PollEvents);
+                    network::poll_entry pfd{};
+                    pfd.s = endpoints[index]->s_.get();
+                    pfd.events = map_afd_request_events_to_socket(handles[index].PollEvents);
                     pfd.revents = pfd.events;
+                    poll_data.push_back(pfd);
+                    poll_indices.push_back(index);
                 }
 
-                win_emu.socket_factory().poll_sockets(poll_data);
-                for (size_t index = 0; index < poll_data.size(); ++index)
+                if (!poll_data.empty())
                 {
-                    if (endpoints[index]->connect_failed_)
+                    win_emu.socket_factory().poll_sockets(poll_data);
+                }
+
+                std::vector<ULONG> afd_events(entry_count);
+                for (size_t index = 0; index < entry_count; ++index)
+                {
+                    if (!endpoints[index])
                     {
-                        poll_data[index].revents = static_cast<int16_t>(poll_data[index].revents | POLLERR);
+                        afd_events[index] = handles[index].PollEvents & AFD_POLL_LOCAL_CLOSE;
                     }
                 }
 
-                std::vector<ULONG> afd_events(poll_data.size());
-                for (size_t index = 0; index < poll_data.size(); ++index)
+                for (size_t poll_index = 0; poll_index < poll_data.size(); ++poll_index)
                 {
-                    const auto& pfd = poll_data[index];
+                    const auto index = poll_indices[poll_index];
+                    const auto* endpoint = endpoints[index];
+                    auto& pfd = poll_data[poll_index];
+                    if (endpoint->connect_failed_)
+                    {
+                        pfd.revents = static_cast<int16_t>(pfd.revents | POLLERR);
+                    }
+
                     if (pfd.revents == 0)
                     {
                         continue;
                     }
 
-                    const auto* endpoint = endpoints[index];
                     const bool is_connecting =
                         endpoint->connect_failed_ ||
                         (endpoint->delayed_ioctl_ && _AFD_REQUEST(endpoint->delayed_ioctl_->io_control_code) == AFD_CONNECT);
@@ -1365,6 +1367,10 @@ namespace sogen
             {
                 const auto [info, handles] = get_poll_info<Traits>(win_emu, c);
                 const auto endpoints = resolve_endpoints(win_emu, handles);
+                if (std::ranges::find(endpoints, nullptr) != endpoints.end())
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
 
                 const auto status = perform_poll(win_emu, c, endpoints, handles);
                 if (status != STATUS_PENDING)
