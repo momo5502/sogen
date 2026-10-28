@@ -371,11 +371,18 @@ namespace sogen
                 return true;
             }
 
+            // Only 32-bit code needs these below 4 GiB. Native processes get them above, like their other allocations, even
+            // where an older executable moves its own default allocation address down.
+            uint64_t gdi_allocation_start(const syscall_context& c)
+            {
+                return c.proc.is_wow64_process ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
+            }
+
             uint64_t allocate_gdi_user_block(const syscall_context& c, const uint32_t size)
             {
                 const auto aligned_size = static_cast<size_t>(page_align_up(size));
                 const uint64_t base =
-                    c.win_emu.memory.allocate_memory(aligned_size, memory_permission::read_write, false, DEFAULT_ALLOCATION_ADDRESS_32BIT);
+                    c.win_emu.memory.allocate_memory(aligned_size, memory_permission::read_write, false, gdi_allocation_start(c));
                 if (base == 0)
                 {
                     return 0;
@@ -2237,9 +2244,8 @@ namespace sogen
                 return 0;
             }
 
-            const auto guest_bits =
-                c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(allocation_bytes)), memory_permission::read_write, false,
-                                                 DEFAULT_ALLOCATION_ADDRESS_32BIT);
+            const auto guest_bits = c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(allocation_bytes)),
+                                                                     memory_permission::read_write, false, gdi_allocation_start(c));
 
             if (guest_bits == 0)
             {
