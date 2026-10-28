@@ -37,6 +37,56 @@ namespace sogen
             }
         };
 
+        // \Device\DeviceApi\CMApi, which cfgmgr32 asks for device lists and properties. Device ID lists come back
+        // empty, i.e. no device matches the filter. Succeeding without writing the reply made
+        // CM_Get_Device_ID_List_Size fail, so SetupDiGetClassDevs returned INVALID_HANDLE_VALUE, on which Unreal
+        // Engine 4 enumerates monitors forever. Other requests keep succeeding without data.
+        struct device_api_device : stateless_device
+        {
+            NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
+            {
+                constexpr ULONG ioctl_get_device_id_list = 0x470803;
+                if (c.io_control_code != ioctl_get_device_id_list)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                // cfgmgr32 reads the request's status and the list size from this header and the list right after it,
+                // but sizes its buffer as 20 bytes plus the list, and asks for the size with a 20-byte buffer.
+                struct device_id_list_header
+                {
+                    uint32_t reserved1;
+                    NTSTATUS status;
+                    uint32_t list_bytes;
+                    uint32_t reserved2;
+                };
+
+                static_assert(sizeof(device_id_list_header) == 16);
+
+                constexpr ULONG minimum_reply = 20;
+                constexpr char16_t empty_list = u'\0';
+                if (!c.output_buffer || c.output_buffer_length < minimum_reply)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const bool fits = c.output_buffer_length >= minimum_reply + sizeof(empty_list);
+                const device_id_list_header header{
+                    .reserved1 = 0,
+                    .status = fits ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL,
+                    .list_bytes = sizeof(empty_list),
+                    .reserved2 = 0,
+                };
+                win_emu.memory.write_memory(c.output_buffer, &header, sizeof(header));
+                if (fits)
+                {
+                    win_emu.memory.write_memory(c.output_buffer + sizeof(header), &empty_list, sizeof(empty_list));
+                }
+
+                return STATUS_SUCCESS;
+            }
+        };
+
         struct transport_stub_device : stateless_device
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
@@ -64,6 +114,11 @@ namespace sogen
             return std::make_unique<dummy_device>();
         }
 
+        std::unique_ptr<io_device> create_device_api_device(const device_creation_context&)
+        {
+            return std::make_unique<device_api_device>();
+        }
+
         std::unique_ptr<io_device> create_transport_stub_device(const device_creation_context&)
         {
             return std::make_unique<transport_stub_device>();
@@ -89,7 +144,7 @@ namespace sogen
             // Dummy
             {u"RasAcd"sv, create_dummy_device},
             {u"PcwDrv"sv, create_dummy_device},
-            {u"DeviceApi\\CMApi"sv, create_dummy_device},
+            {u"DeviceApi\\CMApi"sv, create_device_api_device},
             {u"DeviceApi\\CMNotify"sv, create_dummy_device},
             {u"ConDrv\\Server"sv, create_dummy_device},
             {u"DeviceApi\\Dev\\Query"sv, create_unsupported_io_device},
