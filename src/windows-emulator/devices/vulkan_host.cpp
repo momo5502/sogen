@@ -8599,7 +8599,9 @@ namespace sogen
 
         VkShaderModule vertex_module = VK_NULL_HANDLE;
         VkShaderModule fragment_module = VK_NULL_HANDLE;
-        if (!resolve_stage(vertex_shader, vertex_module) || !resolve_stage(fragment_shader, fragment_module))
+        // Depth-only passes (depth prepass, shadows) have no fragment stage.
+        const bool has_fragment_stage = fragment_shader.module != 0 || !fragment_shader.identifier.empty();
+        if (!resolve_stage(vertex_shader, vertex_module) || (has_fragment_stage && !resolve_stage(fragment_shader, fragment_module)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -8865,7 +8867,7 @@ namespace sogen
         info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         info.flags = static_cast<VkPipelineCreateFlags>(flags);
         info.pNext = dynamic_rendering ? &rendering_info : nullptr;
-        info.stageCount = static_cast<uint32_t>(stages.size());
+        info.stageCount = has_fragment_stage ? 2 : 1;
         info.pStages = stages.data();
         info.pVertexInputState = &vertex_input;
         info.pInputAssemblyState = &input_assembly;
