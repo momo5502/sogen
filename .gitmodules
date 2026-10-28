@@ -33,7 +33,7 @@
 	shallow = true
 [submodule "deps/zstd"]
 	path = deps/zstd
-	url = https://github.com/facebook/zstd.git
+	url = https://github.com/meta/zstd.git
 	shallow = true
 [submodule "deps/nanobind"]
 	path = deps/nanobind
