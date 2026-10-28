@@ -446,6 +446,12 @@ namespace sogen
 #define VK_F12                      0x7B
 #define VK_NUMLOCK                  0x90
 #define VK_SCROLL                   0x91
+#define VK_LSHIFT                   0xA0
+#define VK_RSHIFT                   0xA1
+#define VK_LCONTROL                 0xA2
+#define VK_RCONTROL                 0xA3
+#define VK_LMENU                    0xA4
+#define VK_RMENU                    0xA5
 #define VK_OEM_1                    0xBA
 #define VK_OEM_PLUS                 0xBB
 #define VK_OEM_COMMA                0xBC
@@ -458,6 +464,7 @@ namespace sogen
 #define VK_OEM_6                    0xDD
 #define VK_OEM_7                    0xDE
 #define VK_OEM_102                  0xE2
+#define VK_PACKET                   0xE7
 
 #define IDOK                        1
 #define IDCANCEL                    2

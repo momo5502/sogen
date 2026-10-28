@@ -7654,10 +7654,12 @@ namespace sogen
             constexpr uint32_t input_mouse = 0;
             constexpr uint32_t input_keyboard = 1;
             constexpr uint32_t input_hardware = 2;
+            constexpr uint32_t error_invalid_parameter = 87;
+            constexpr uint32_t error_noaccess = 998;
 
             if (input_count == 0 || input_size != sizeof(emu_input) || inputs == 0)
             {
-                set_guest_last_error(c, ERROR_INVALID_PARAMETER);
+                set_guest_last_error(c, error_invalid_parameter);
                 return 0;
             }
 
@@ -7666,7 +7668,7 @@ namespace sogen
                 emu_input input{};
                 if (!c.win_emu.memory.try_read_memory(inputs + static_cast<uint64_t>(i) * sizeof(emu_input), &input, sizeof(input)))
                 {
-                    set_guest_last_error(c, ERROR_NOACCESS);
+                    set_guest_last_error(c, error_noaccess);
                     return i;
                 }
 
@@ -7680,7 +7682,7 @@ namespace sogen
                 }
                 else if (input.type != input_hardware)
                 {
-                    set_guest_last_error(c, ERROR_INVALID_PARAMETER);
+                    set_guest_last_error(c, error_invalid_parameter);
                     return i;
                 }
             }
