@@ -12,6 +12,9 @@
 
 #include "steam_api.h"
 #include "steam_gameserver.h"
+#if __has_include("isteamappticket.h")
+#include "isteamappticket.h"
+#endif
 
 #include "steam_bridge_protocol.hpp" // response_type: shared reverse-callback interface ids
 

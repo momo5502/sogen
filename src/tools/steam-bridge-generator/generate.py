@@ -611,6 +611,9 @@ def _parse_tu(sdk_dir: str, bits: int):
     args = ["-x", "c++", "-std=c++14", "-D_WIN32", "-DAPI_GEN", "-fms-extensions",
             "-Wno-ignored-attributes", "-Wno-nonportable-include-path", "-target", target, "-I", sdk_dir]
     src = '#include "steam_api.h"\n#include "steam_gameserver.h"\n'
+    # steam_api.h doesn't include it, but older steam_api versions fail SteamAPI_Init without it (Crysis 2).
+    if os.path.exists(os.path.join(sdk_dir, "isteamappticket.h")):
+        src += '#include "isteamappticket.h"\n'
     return cx.Index.create().parse("s.cpp", args=args, unsaved_files=[("s.cpp", src)],
                                    options=cx.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES)
 
