@@ -70,8 +70,10 @@ namespace sogen
 
                 const bool fits = c.output_buffer_length >= minimum_reply + sizeof(empty_list);
                 const device_id_list_header header{
+                    .reserved1 = 0,
                     .status = fits ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL,
                     .list_bytes = sizeof(empty_list),
+                    .reserved2 = 0,
                 };
                 win_emu.memory.write_memory(c.output_buffer, &header, sizeof(header));
                 if (fits)
