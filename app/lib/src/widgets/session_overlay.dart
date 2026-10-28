@@ -19,9 +19,9 @@ class OverlayHandle extends StatefulWidget {
 }
 
 class _OverlayHandleState extends State<OverlayHandle> {
-  static const _width = 20.0;
-  static const _touchWidth = 48.0;
-  static const _height = 64.0;
+  static const _width = 28.0;
+  static const _touchWidth = 64.0;
+  static const _height = 88.0;
 
   late double _position = widget.position;
 
@@ -69,10 +69,10 @@ class _OverlayHandleState extends State<OverlayHandle> {
                       height: _height,
                       decoration: BoxDecoration(
                         color: SogenColors.neutral900.withValues(alpha: 0.5),
-                        borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
+                        borderRadius: const BorderRadius.horizontal(left: Radius.circular(12)),
                         border: Border.all(color: SogenColors.neutral600.withValues(alpha: 0.6)),
                       ),
-                      child: const Icon(LucideIcons.chevronLeft, size: 14, color: SogenColors.neutral300),
+                      child: const Icon(LucideIcons.chevronLeft, size: 18, color: SogenColors.neutral300),
                     ),
                   ),
                 ),
