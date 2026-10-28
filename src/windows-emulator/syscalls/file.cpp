@@ -1338,8 +1338,10 @@ namespace sogen
                 return 0;
             }
 
+            // wow64cpu's turbo thunks issue NtReadFile/NtWriteFile without an APC directly, with the same convention.
             const auto* caller = c.win_emu.mod_manager.find_by_address(return_address);
-            if (!caller || !utils::string::equals_ignore_case(std::string_view{caller->name}, std::string_view{"wow64.dll"}))
+            if (!caller || (!utils::string::equals_ignore_case(std::string_view{caller->name}, std::string_view{"wow64.dll"}) &&
+                            !utils::string::equals_ignore_case(std::string_view{caller->name}, std::string_view{"wow64cpu.dll"})))
             {
                 return 0;
             }
