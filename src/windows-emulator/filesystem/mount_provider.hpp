@@ -6,6 +6,8 @@
 namespace sogen
 {
 
+    class file_system;
+
     struct directory_entry
     {
         std::u16string name{};
@@ -38,7 +40,9 @@ namespace sogen
         virtual NTSTATUS rename(const windows_path& from, const windows_path& to) = 0;
         virtual NTSTATUS remove(const windows_path& path) = 0;
 
-        // Read-only access to the backing host file for consumers that map host files directly, such as the image loader.
+      private:
+        friend class file_system;
+
         virtual std::optional<std::filesystem::path> get_host_path(const windows_path& path) const = 0;
     };
 

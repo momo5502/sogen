@@ -288,7 +288,7 @@ namespace sogen
             if ((allocation_attributes & SEC_IMAGE) && !s.file_name.empty())
             {
                 std::vector<std::byte> file_data;
-                if (utils::io::read_file(c.win_emu.file_sys.translate(s.file_name), &file_data))
+                if (c.win_emu.file_sys.read_file(s.file_name, &file_data))
                 {
                     s.cache_image_info_from_filedata(file_data);
                 }
@@ -465,8 +465,7 @@ namespace sogen
 
             if (section_entry->is_image())
             {
-                const auto file_path =
-                    std::filesystem::weakly_canonical(std::filesystem::absolute(c.win_emu.file_sys.translate(section_entry->file_name)));
+                const auto file_path = module_manager::module_identity(section_entry->file_name);
                 uint64_t relocation_base{};
                 for (const auto& loaded_module : c.win_emu.mod_manager.modules() | std::views::values)
                 {
@@ -582,7 +581,7 @@ namespace sogen
 
             // File-backed section: map a fresh copy of the file contents.
             std::vector<std::byte> file_data{};
-            if (!utils::io::read_file(c.win_emu.file_sys.translate(section_entry->file_name), &file_data))
+            if (!c.win_emu.file_sys.read_file(section_entry->file_name, &file_data))
             {
                 return STATUS_INVALID_PARAMETER;
             }

@@ -8,6 +8,17 @@
 #include <fstream>
 #include <random>
 
+namespace sogen
+{
+    struct file_system_test_access
+    {
+        static std::filesystem::path translate(const file_system& fs, const windows_path& path)
+        {
+            return fs.translate(path);
+        }
+    };
+} // namespace sogen
+
 namespace sogen::test
 {
     namespace
@@ -96,10 +107,11 @@ namespace sogen::test
         file_system fs{this->root};
         fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped");
 
-        EXPECT_EQ(this->root / "a" / "a.txt", fs.translate(windows_path{'a', {u"..", u"..", u"..", u"a.txt"}}));
-        EXPECT_EQ(this->root / "a" / "a.txt", fs.translate(windows_path{'a', {u"b", u"..", u"..", u"b", u"..", u"a.txt"}}));
-        EXPECT_EQ(this->root / "c" / "x.txt", fs.translate(windows_path{'c', {u"mnt", u"..", u"x.txt"}}));
-        EXPECT_EQ(this->root / "c" / "x.txt", fs.translate(windows_path{'c', {u"mnt", u"..", u"..", u"x.txt"}}));
+        EXPECT_EQ(this->root / "a" / "a.txt", file_system_test_access::translate(fs, windows_path{'a', {u"..", u"..", u"..", u"a.txt"}}));
+        EXPECT_EQ(this->root / "a" / "a.txt",
+                  file_system_test_access::translate(fs, windows_path{'a', {u"b", u"..", u"..", u"b", u"..", u"a.txt"}}));
+        EXPECT_EQ(this->root / "c" / "x.txt", file_system_test_access::translate(fs, windows_path{'c', {u"mnt", u"..", u"x.txt"}}));
+        EXPECT_EQ(this->root / "c" / "x.txt", file_system_test_access::translate(fs, windows_path{'c', {u"mnt", u"..", u"..", u"x.txt"}}));
     }
 
     TEST_F(FileSystemTest, DeepestMountWins)
@@ -109,9 +121,10 @@ namespace sogen::test
         fs.map(windows_path{'c', {u"mnt", u"deep"}}, this->root / "other");
         fs.map(windows_path{'c', {u"mnt", u"exact.txt"}}, this->root / "single.txt");
 
-        EXPECT_EQ(this->root / "mapped" / "sub" / "a.txt", fs.translate(windows_path{'c', {u"mnt", u"sub", u"a.txt"}}));
-        EXPECT_EQ(this->root / "other" / "y.txt", fs.translate(windows_path{'c', {u"mnt", u"deep", u"y.txt"}}));
-        EXPECT_EQ(this->root / "single.txt", fs.translate(windows_path{'c', {u"mnt", u"exact.txt"}}));
+        EXPECT_EQ(this->root / "mapped" / "sub" / "a.txt",
+                  file_system_test_access::translate(fs, windows_path{'c', {u"mnt", u"sub", u"a.txt"}}));
+        EXPECT_EQ(this->root / "other" / "y.txt", file_system_test_access::translate(fs, windows_path{'c', {u"mnt", u"deep", u"y.txt"}}));
+        EXPECT_EQ(this->root / "single.txt", file_system_test_access::translate(fs, windows_path{'c', {u"mnt", u"exact.txt"}}));
 
         const auto result = fs.open(windows_path{'c', {u"mnt", u"exact.txt"}}, u"rb");
         ASSERT_TRUE(result.file);
@@ -122,7 +135,7 @@ namespace sogen::test
     {
         file_system fs{this->root};
 
-        EXPECT_TRUE(fs.translate(windows_path{'z', {u"x.txt"}}).empty());
+        EXPECT_TRUE(file_system_test_access::translate(fs, windows_path{'z', {u"x.txt"}}).empty());
         EXPECT_FALSE(fs.stat(windows_path{'z', {}}));
 
         const auto result = fs.open(windows_path{'z', {u"x.txt"}}, u"wb");
@@ -138,7 +151,7 @@ namespace sogen::test
 
         fs.map(windows_path{'d', {}}, this->root / "other");
         EXPECT_EQ((std::set<char>{'a', 'c', 'd'}), fs.list_drives());
-        EXPECT_EQ(this->root / "other" / "y.txt", fs.translate(windows_path{'d', {u"y.txt"}}));
+        EXPECT_EQ(this->root / "other" / "y.txt", file_system_test_access::translate(fs, windows_path{'d', {u"y.txt"}}));
     }
 
     TEST_F(FileSystemTest, ListingIncludesChildMounts)
@@ -236,7 +249,7 @@ namespace sogen::test
         file_system fs{this->root, filesystem_mode::read_only};
         fs.map(windows_path{'c', {}}, this->root / "mapped", filesystem_mode::read_write);
 
-        EXPECT_EQ(this->root / "mapped" / "x.txt", fs.translate(windows_path{'c', {u"x.txt"}}));
+        EXPECT_EQ(this->root / "mapped" / "x.txt", file_system_test_access::translate(fs, windows_path{'c', {u"x.txt"}}));
         EXPECT_TRUE(fs.is_writable(windows_path{'c', {u"x.txt"}}));
         EXPECT_FALSE(fs.is_writable(windows_path{'a', {u"x.txt"}}));
     }
@@ -349,8 +362,9 @@ namespace sogen::test
     {
         file_system fs{this->root, filesystem_mode::read_write};
 
-        EXPECT_EQ(this->root / "c" / "new.txt", fs.translate(windows_path{'c', {u"new.txt"}}));
-        EXPECT_EQ(this->root / "c" / "absent" / "deeper" / "new.txt", fs.translate(windows_path{'c', {u"absent", u"deeper", u"new.txt"}}));
+        EXPECT_EQ(this->root / "c" / "new.txt", file_system_test_access::translate(fs, windows_path{'c', {u"new.txt"}}));
+        EXPECT_EQ(this->root / "c" / "absent" / "deeper" / "new.txt",
+                  file_system_test_access::translate(fs, windows_path{'c', {u"absent", u"deeper", u"new.txt"}}));
 
         ASSERT_TRUE(fs.open(windows_path{'c', {u"new.txt"}}, u"wb").file);
         EXPECT_TRUE(std::filesystem::exists(this->root / "c" / "new.txt"));
@@ -364,7 +378,7 @@ namespace sogen::test
         write_host_file(this->root / "c" / "PROPSYS.dll.mun", "resource");
         file_system fs{this->root};
 
-        EXPECT_EQ(this->root / "c" / "PROPSYS.dll.mun", fs.translate(windows_path{'c', {u"propsys.dll.mun"}}));
+        EXPECT_EQ(this->root / "c" / "PROPSYS.dll.mun", file_system_test_access::translate(fs, windows_path{'c', {u"propsys.dll.mun"}}));
 
         const auto result = fs.open(windows_path{'c', {u"propsys.dll.mun"}}, u"rb");
         ASSERT_TRUE(result.file);
@@ -381,7 +395,7 @@ namespace sogen::test
         file_system fs{this->root};
         fs.map(windows_path{'d', {}}, this->root / "mapped");
 
-        EXPECT_EQ(this->root / "mapped" / "Mixed.txt", fs.translate(windows_path{'d', {u"mixed.txt"}}));
+        EXPECT_EQ(this->root / "mapped" / "Mixed.txt", file_system_test_access::translate(fs, windows_path{'d', {u"mixed.txt"}}));
     }
 
     TEST_F(CaseSensitiveFileSystemTest, ADirectoryMountWithATrailingSeparatorRecoversCase)
@@ -390,7 +404,7 @@ namespace sogen::test
         file_system fs{this->root};
         fs.map(windows_path{'d', {}}, this->root / "c" / "");
 
-        EXPECT_EQ(this->root / "c" / "Mixed.txt", fs.translate(windows_path{'d', {u"mixed.txt"}}));
+        EXPECT_EQ(this->root / "c" / "Mixed.txt", file_system_test_access::translate(fs, windows_path{'d', {u"mixed.txt"}}));
     }
 
 #ifdef OS_WINDOWS
@@ -403,7 +417,7 @@ namespace sogen::test
         std::error_code ec{};
         file_system fs{this->root};
         fs.map(windows_path{'d', {}}, drive_root);
-        const auto host_path = fs.translate(windows_path{'d', {windows_directory.filename().u16string()}});
+        const auto host_path = file_system_test_access::translate(fs, windows_path{'d', {windows_directory.filename().u16string()}});
 
         EXPECT_TRUE(std::filesystem::equivalent(host_path, windows_directory, ec));
     }
@@ -416,11 +430,11 @@ namespace sogen::test
         file_system fs{this->root, filesystem_mode::read_write};
 
         EXPECT_EQ(this->root / "c" / "WinSxS" / "Manifests" / "Common-Controls.manifest",
-                  fs.translate(windows_path{'c', {u"winsxs", u"manifests", u"common-controls.manifest"}}));
+                  file_system_test_access::translate(fs, windows_path{'c', {u"winsxs", u"manifests", u"common-controls.manifest"}}));
         EXPECT_TRUE(fs.open(windows_path{'c', {u"winsxs", u"manifests", u"common-controls.manifest"}}, u"rb").file);
 
         EXPECT_EQ(this->root / "c" / "WinSxS" / "Manifests" / "new.manifest",
-                  fs.translate(windows_path{'c', {u"winsxs", u"manifests", u"new.manifest"}}));
+                  file_system_test_access::translate(fs, windows_path{'c', {u"winsxs", u"manifests", u"new.manifest"}}));
         EXPECT_EQ(STATUS_SUCCESS, fs.create_directory(windows_path{'c', {u"winsxs", u"policies"}}));
         EXPECT_TRUE(std::filesystem::is_directory(this->root / "c" / "WinSxS" / "policies"));
     }
@@ -431,11 +445,11 @@ namespace sogen::test
         write_host_file(this->root / "c" / "aMBIGUOUS.txt", "lower");
         file_system fs{this->root};
 
-        EXPECT_EQ(this->root / "c" / "Ambiguous.txt", fs.translate(windows_path{'c', {u"ambiguous.txt"}}));
+        EXPECT_EQ(this->root / "c" / "Ambiguous.txt", file_system_test_access::translate(fs, windows_path{'c', {u"ambiguous.txt"}}));
 
         write_host_file(this->root / "c" / "ambiguous.txt", "exact");
-        EXPECT_EQ(this->root / "c" / "ambiguous.txt", fs.translate(windows_path{'c', {u"ambiguous.txt"}}));
-        EXPECT_EQ("exact", read_host_file(fs.translate(windows_path{'c', {u"ambiguous.txt"}})));
+        EXPECT_EQ(this->root / "c" / "ambiguous.txt", file_system_test_access::translate(fs, windows_path{'c', {u"ambiguous.txt"}}));
+        EXPECT_EQ("exact", read_host_file(file_system_test_access::translate(fs, windows_path{'c', {u"ambiguous.txt"}})));
     }
 
     TEST_F(CaseSensitiveFileSystemTest, CaseRecoveryStaysInsideTheMount)
@@ -445,7 +459,7 @@ namespace sogen::test
         file_system fs{this->root};
 
         const windows_path escaping{'c', {u"..", u"escape", u"secret.txt"}};
-        EXPECT_EQ(this->root / "c" / "escape" / "secret.txt", fs.translate(escaping));
+        EXPECT_EQ(this->root / "c" / "escape" / "secret.txt", file_system_test_access::translate(fs, escaping));
         EXPECT_FALSE(fs.open(escaping, u"rb").file);
     }
 } // namespace sogen::test

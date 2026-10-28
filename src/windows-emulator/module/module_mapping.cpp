@@ -727,19 +727,6 @@ namespace sogen
     }
 
     template <typename T>
-    mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
-                                       const uint64_t relocation_base)
-    {
-        const auto data = utils::io::read_file(file);
-        if (data.empty())
-        {
-            throw std::runtime_error("Bad file data: " + file.string());
-        }
-
-        return map_module_from_data<T>(memory, data, std::move(file), std::move(module_path), relocation_base);
-    }
-
-    template <typename T>
     mapped_module map_module_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size, windows_path module_path)
     {
         mapped_module binary{};
@@ -834,10 +821,6 @@ namespace sogen
                                                                uint64_t relocation_base);
     template mapped_module map_module_from_data<std::uint64_t>(memory_manager& memory, const std::span<const std::byte> data,
                                                                std::filesystem::path file, windows_path module_path,
-                                                               uint64_t relocation_base);
-    template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memory, std::filesystem::path file, windows_path module_path,
-                                                               uint64_t relocation_base);
-    template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file, windows_path module_path,
                                                                uint64_t relocation_base);
 
     template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,

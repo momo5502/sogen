@@ -5,6 +5,8 @@
 
 #include <charconv>
 
+#include <sys/stat.h>
+
 namespace sogen::sxs
 {
     namespace
@@ -816,10 +818,9 @@ namespace sogen::sxs
             return std::nullopt;
         }
 
-        std::optional<std::string> read_embedded_manifest(const std::filesystem::path& path, const uint16_t resource_id = 1)
+        std::optional<std::string> read_embedded_manifest(const std::vector<std::byte>& image, const uint16_t resource_id = 1)
         {
-            std::vector<std::byte> image{};
-            if (!utils::io::read_file(path, &image) || image.size() < 0x40)
+            if (image.size() < 0x40)
             {
                 return std::nullopt;
             }
@@ -888,50 +889,58 @@ namespace sogen::sxs
             return decode_manifest_text(manifest);
         }
 
-        std::optional<std::string> read_text_file(const std::filesystem::path& path)
+        std::optional<std::string> read_embedded_manifest(const file_system& file_system, const windows_path& path,
+                                                          const uint16_t resource_id = 1)
+        {
+            std::vector<std::byte> image{};
+            if (!file_system.read_file(path, &image))
+            {
+                return std::nullopt;
+            }
+            return read_embedded_manifest(image, resource_id);
+        }
+
+        std::optional<std::string> read_text_file(const file_system& file_system, const windows_path& path)
         {
             std::vector<std::byte> data{};
-            if (!utils::io::read_file(path, &data))
+            if (!file_system.read_file(path, &data))
             {
                 return std::nullopt;
             }
             return decode_manifest_text(data);
         }
 
-        std::optional<source_document> read_application_manifest(const mapped_module& executable)
+        windows_path with_suffix(const windows_path& path, const std::u16string_view suffix)
         {
-            if (auto embedded = read_embedded_manifest(executable.path))
+            return windows_path{path.u16string() + std::u16string{suffix}};
+        }
+
+        std::optional<source_document> read_application_manifest(const file_system& file_system, const mapped_module& executable)
+        {
+            if (auto embedded = read_embedded_manifest(file_system, executable.module_path))
             {
                 return source_document{.contents = std::move(*embedded), .path = executable.module_path.u16string()};
             }
-            auto external = executable.path;
-            external += ".manifest";
-            if (auto manifest = read_text_file(external))
+            for (const auto* suffix : {u".manifest", u".Manifest"})
             {
-                return source_document{.contents = std::move(*manifest), .path = executable.module_path.u16string() + u".manifest"};
-            }
-            external = executable.path;
-            external += ".Manifest";
-            if (auto manifest = read_text_file(external))
-            {
-                return source_document{.contents = std::move(*manifest), .path = executable.module_path.u16string() + u".Manifest"};
+                const auto path = with_suffix(executable.module_path, suffix);
+                if (auto manifest = read_text_file(file_system, path))
+                {
+                    return source_document{.contents = std::move(*manifest), .path = path.u16string()};
+                }
             }
             return std::nullopt;
         }
 
-        std::optional<source_document> read_application_config(const mapped_module& executable)
+        std::optional<source_document> read_application_config(const file_system& file_system, const mapped_module& executable)
         {
-            auto config = executable.path;
-            config += ".config";
-            if (auto contents = read_text_file(config))
+            for (const auto* suffix : {u".config", u".Config"})
             {
-                return source_document{.contents = std::move(*contents), .path = executable.module_path.u16string() + u".config"};
-            }
-            config = executable.path;
-            config += ".Config";
-            if (auto contents = read_text_file(config))
-            {
-                return source_document{.contents = std::move(*contents), .path = executable.module_path.u16string() + u".Config"};
+                const auto path = with_suffix(executable.module_path, suffix);
+                if (auto contents = read_text_file(file_system, path))
+                {
+                    return source_document{.contents = std::move(*contents), .path = path.u16string()};
+                }
             }
             return std::nullopt;
         }
@@ -1072,16 +1081,12 @@ namespace sogen::sxs
             }
         }
 
-        std::vector<std::filesystem::path> directory_entries(const std::filesystem::path& directory)
+        std::vector<std::u16string> directory_entries(const file_system& file_system, const windows_path& directory)
         {
-            std::vector<std::filesystem::path> entries{};
-            std::error_code error{};
-            std::filesystem::directory_iterator iterator(directory, error);
-            const std::filesystem::directory_iterator end{};
-            while (!error && iterator != end)
+            std::vector<std::u16string> entries{};
+            for (auto& entry : file_system.list_directory(directory))
             {
-                entries.push_back(iterator->path());
-                iterator.increment(error);
+                entries.push_back(std::move(entry.name));
             }
             std::ranges::sort(entries);
             return entries;
@@ -1090,22 +1095,21 @@ namespace sogen::sxs
         void apply_system_policy(const file_system& file_system, const windows_path& manifests_path, assembly_identity& identity,
                                  const mapped_module& executable)
         {
-            const auto directory = file_system.translate(manifests_path);
             const auto name_fragment = winsxs_name(identity.name);
             const auto token_fragment = to_lower(identity.public_key_token);
             const auto architecture = architecture_name(identity, executable);
             const auto version_prefix =
                 std::to_string(identity.assembly_version.parts[0]) + "." + std::to_string(identity.assembly_version.parts[1]) + ".";
             const auto prefix = architecture + "_policy." + version_prefix + name_fragment + "_";
-            for (const auto& path : directory_entries(directory))
+            for (const auto& entry_name : directory_entries(file_system, manifests_path))
             {
-                const auto filename = to_lower(path.filename().string());
+                const auto filename = to_lower(u16_to_u8(entry_name));
                 if (!filename.starts_with(prefix) || (!token_fragment.empty() && filename.find(token_fragment) == std::string::npos) ||
                     !filename.ends_with(".manifest"))
                 {
                     continue;
                 }
-                if (const auto policy = read_text_file(path))
+                if (const auto policy = read_text_file(file_system, manifests_path / windows_path(entry_name)))
                 {
                     apply_binding_redirects(*policy, identity);
                 }
@@ -1155,7 +1159,7 @@ namespace sogen::sxs
 
             for (const auto& entry : make_candidates(u".manifest"))
             {
-                const auto xml = read_text_file(file_system.translate(application_directory / entry.relative_path));
+                const auto xml = read_text_file(file_system, application_directory / entry.relative_path);
                 if (!xml)
                 {
                     continue;
@@ -1170,7 +1174,7 @@ namespace sogen::sxs
 
             for (const auto& entry : make_candidates(u".dll"))
             {
-                const auto xml = read_embedded_manifest(file_system.translate(application_directory / entry.relative_path), 2);
+                const auto xml = read_embedded_manifest(file_system, application_directory / entry.relative_path, 2);
                 if (!xml)
                 {
                     continue;
@@ -1189,21 +1193,20 @@ namespace sogen::sxs
                                                                  const windows_path& winsxs_path, const assembly_identity& identity,
                                                                  const mapped_module& executable, const std::string_view preferred_language)
         {
-            const auto directory = file_system.translate(manifests_path);
             const auto architecture = architecture_name(identity, executable);
             const auto prefix = architecture + "_" + winsxs_name(identity.name) + "_";
             const auto token_fragment = "_" + to_lower(identity.public_key_token) + "_";
             std::optional<resolved_assembly> exact{};
             std::optional<resolved_assembly> compatible{};
-            for (const auto& path : directory_entries(directory))
+            for (const auto& entry_name : directory_entries(file_system, manifests_path))
             {
-                const auto filename = to_lower(path.filename().string());
+                const auto filename = to_lower(u16_to_u8(entry_name));
                 if (!filename.starts_with(prefix) || !filename.ends_with(".manifest") ||
                     (!identity.public_key_token.empty() && filename.find(token_fragment) == std::string::npos))
                 {
                     continue;
                 }
-                const auto xml = read_text_file(path);
+                const auto xml = read_text_file(file_system, manifests_path / windows_path(entry_name));
                 if (!xml)
                 {
                     continue;
@@ -1213,16 +1216,15 @@ namespace sogen::sxs
                 {
                     continue;
                 }
-                const auto stem = path.stem().u16string();
-                std::error_code error{};
-                if (!std::filesystem::is_directory(file_system.translate(winsxs_path / windows_path(stem)), error))
+                const auto stem = std::filesystem::path(entry_name).stem().u16string();
+                const auto assembly_directory = file_system.stat(winsxs_path / windows_path(stem));
+                if (!assembly_directory || (assembly_directory->st_mode & S_IFMT) != S_IFDIR)
                 {
-                    error.clear();
                     continue;
                 }
                 resolved_assembly result{};
                 result.identity = std::move(*manifest.identity);
-                result.manifest_path = (manifests_path / windows_path(path.filename())).u16string();
+                result.manifest_path = (manifests_path / windows_path(entry_name)).u16string();
                 result.directory_name = stem;
                 result.files = std::move(manifest.files);
                 result.dependencies = std::move(manifest.dependencies);
@@ -1682,13 +1684,13 @@ namespace sogen::sxs
     std::vector<std::byte> build_process_activation_context(const file_system& file_system, const mapped_module& executable,
                                                             const windows_path& system_root, const std::string_view preferred_language)
     {
-        const auto manifest = read_application_manifest(executable);
+        const auto manifest = read_application_manifest(file_system, executable);
         if (!manifest)
         {
             return {};
         }
-        return build_activation_context_from_documents(file_system, executable, *manifest, read_application_config(executable), system_root,
-                                                       preferred_language);
+        return build_activation_context_from_documents(file_system, executable, *manifest, read_application_config(file_system, executable),
+                                                       system_root, preferred_language);
     }
 
     std::vector<std::byte> build_activation_context(const file_system& file_system, const mapped_module& executable,
