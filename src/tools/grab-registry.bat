@@ -47,6 +47,13 @@ REG ADD HKLM\SogenSeed\Software\Valve\Steam               /v SteamPath        /t
 REG ADD HKLM\SogenSeed\Software\Valve\Steam               /v SteamExe         /t REG_SZ    /d "%STEAM_PATH%\steam.exe" /f
 REG UNLOAD HKLM\SogenSeed
 
+REM --- Mesa's OpenGL tries its D3D12 driver first, which in the guest runs on vkd3d-proton and deadlocks when the
+REM --- driver unloads. Zink runs directly on Vulkan. A game's own GALLIUM_DRIVER still overrides this.
+REG UNLOAD HKLM\SogenSysSeed >NUL 2>&1
+REG LOAD HKLM\SogenSysSeed "%REGDIR%\SYSTEM"
+REG ADD "HKLM\SogenSysSeed\ControlSet001\Control\Session Manager\Environment" /v GALLIUM_DRIVER /t REG_SZ /d zink /f
+REG UNLOAD HKLM\SogenSysSeed
+
 REM --- Audio endpoint seed. Hosts without a local playback device (CI runners, RDP sessions) have no active
 REM --- endpoint, so DirectSound fails with DSERR_NODRIVER and WASAPI finds no default device.
 REG UNLOAD HKLM\SogenSwSeed >NUL 2>&1

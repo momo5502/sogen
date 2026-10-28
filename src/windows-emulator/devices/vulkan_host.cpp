@@ -3123,6 +3123,11 @@ namespace sogen
 
         VkPhysicalDeviceProperties properties{};
         instance->second.get_physical_device_properties(pd->second.handle, &properties);
+        // The host instance is created for at most Vulkan 1.3, and the shim does not implement the 1.4 core commands.
+        if (properties.apiVersion > VK_MAKE_API_VERSION(0, 1, 3, VK_API_VERSION_PATCH(properties.apiVersion)))
+        {
+            properties.apiVersion = VK_API_VERSION_1_3;
+        }
 
         if (guest_is_32bit)
         {

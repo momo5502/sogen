@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "windows_emulator.hpp"
+#include "keyboard_layout.hpp"
 
 #include "cpu_context.hpp"
 
@@ -1887,6 +1888,12 @@ namespace sogen
     void windows_emulator::handle_ui_event(const ui_event& event)
     {
         const std::scoped_lock lock(this->kernel_lock_);
+        this->handle_ui_event_locked(event);
+    }
+
+    void windows_emulator::handle_ui_event_locked(const ui_event& event)
+    {
+        this->kernel_lock_.assert_held();
 
         const auto hook_id = low_level_hook_id(event.message);
         auto& pending = this->process.pending_low_level_input;
@@ -2124,10 +2131,17 @@ namespace sogen
     {
         int32_t cursor_x = this->process.cursor_x;
         int32_t cursor_y = this->process.cursor_y;
-        if (event.relative_motion)
+        if (event.relative_motion || event.cursor_target)
         {
-            cursor_x += event.relative_motion->first;
-            cursor_y += event.relative_motion->second;
+            if (event.cursor_target)
+            {
+                std::tie(cursor_x, cursor_y) = *event.cursor_target;
+            }
+            else
+            {
+                cursor_x += event.relative_motion->first;
+                cursor_y += event.relative_motion->second;
+            }
             if (const auto& clip = this->process.cursor_clip)
             {
                 const auto left = static_cast<int32_t>(clip->left);
@@ -2145,8 +2159,99 @@ namespace sogen
         return {cursor_x, cursor_y};
     }
 
-    void windows_emulator::deliver_ui_event(const ui_event& event)
+    void windows_emulator::update_key_state(const ui_event& event)
     {
+        const auto virtual_key = static_cast<uint8_t>(event.wParam & 0xFF);
+        if (virtual_key == VK_PACKET)
+        {
+            return;
+        }
+
+        const bool down = event.message == WM_KEYDOWN || event.message == WM_SYSKEYDOWN;
+        const auto set = [&](const uint8_t key) {
+            auto& state = this->process.key_state[key];
+            if (down && (state & 0x80) == 0)
+            {
+                this->process.async_key_state[key] = 1;
+                if (key == VK_CAPITAL || key == VK_NUMLOCK || key == VK_SCROLL)
+                {
+                    state ^= 0x01;
+                }
+            }
+            state = static_cast<uint8_t>((down ? 0x80 : 0) | (state & 0x01));
+        };
+
+        const auto side = side_virtual_key(static_cast<uint32_t>(event.wParam & 0xFF), event.lParam);
+        set(side);
+        for (const auto& [generic, left, right] : modifier_sides)
+        {
+            if (side == left || side == right)
+            {
+                const bool any_down = ((this->process.key_state[left] | this->process.key_state[right]) & 0x80) != 0;
+                if (any_down && (this->process.key_state[generic] & 0x80) == 0)
+                {
+                    this->process.async_key_state[generic] = 1;
+                }
+                this->process.key_state[generic] = any_down ? 0x80 : 0;
+            }
+        }
+    }
+
+    ui_event windows_emulator::resolve_injected_event(const ui_event& event) const
+    {
+        if (!event.injected)
+        {
+            return event;
+        }
+
+        auto resolved = event;
+        const auto down = [&](const uint32_t key) { return (this->process.key_state[key] & 0x80) != 0; };
+
+        if (is_keyboard_message(event.message))
+        {
+            const auto virtual_key = static_cast<uint32_t>(event.wParam & 0xFF);
+            const bool up = event.message == WM_KEYUP || event.message == WM_SYSKEYUP;
+            const bool alt = virtual_key == VK_MENU || down(VK_MENU);
+            const bool system_key = (alt || virtual_key == VK_F10) && !down(VK_CONTROL);
+            if (system_key)
+            {
+                resolved.message = up ? WM_SYSKEYUP : WM_SYSKEYDOWN;
+            }
+            else
+            {
+                resolved.message = up ? WM_KEYUP : WM_KEYDOWN;
+            }
+
+            constexpr uint64_t context_bit = 1ull << 29;
+            constexpr uint64_t previous_state_bit = 1ull << 30;
+            resolved.lParam &= ~(context_bit | previous_state_bit);
+            resolved.lParam |= (alt && system_key) ? context_bit : 0;
+            resolved.lParam |=
+                (up || (virtual_key != VK_PACKET && down(side_virtual_key(virtual_key, event.lParam)))) ? previous_state_bit : 0;
+            return resolved;
+        }
+
+        if (is_pointer_message(event.message))
+        {
+            uint64_t flags = 0;
+            for (const auto& [key, flag] :
+                 {std::pair{VK_LBUTTON, MK_LBUTTON}, std::pair{VK_RBUTTON, MK_RBUTTON}, std::pair{VK_SHIFT, MK_SHIFT},
+                  std::pair{VK_CONTROL, MK_CONTROL}, std::pair{VK_MBUTTON, MK_MBUTTON}, std::pair{VK_XBUTTON1, MK_XBUTTON1},
+                  std::pair{VK_XBUTTON2, MK_XBUTTON2}})
+            {
+                const bool pressed =
+                    mouse_button_virtual_key(event.message, event.wParam) == key ? is_mouse_button_down_message(event.message) : down(key);
+                flags |= pressed ? static_cast<uint64_t>(flag) : 0;
+            }
+            resolved.wParam = (event.wParam & 0xFFFF0000) | flags;
+        }
+
+        return resolved;
+    }
+
+    void windows_emulator::deliver_ui_event(const ui_event& queued_event)
+    {
+        const auto event = this->resolve_injected_event(queued_event);
         if (event.message == WM_SIZE)
         {
             this->resize_window_from_host(event.window, event.wParam == SIZE_MAXIMIZED, point_x(event.lParam), point_y(event.lParam));
@@ -2173,6 +2278,14 @@ namespace sogen
         m.wParam = event.wParam;
         m.lParam = event.lParam;
 
+        if (event.injected && is_keyboard_message(event.message) && thread->focus_window != 0)
+        {
+            if (const auto* focus = this->process.windows.get(thread->focus_window); focus && focus->thread_id == win->thread_id)
+            {
+                m.window = thread->focus_window;
+            }
+        }
+
         if (is_pointer_message(event.message))
         {
             // Track the cursor in screen coordinates (client origin + client-local position) so GetCursorPos
@@ -2182,12 +2295,15 @@ namespace sogen
             const auto [new_cursor_x, new_cursor_y] = this->cursor_after_pointer_event(event);
             int32_t raw_dx = new_cursor_x - this->process.cursor_x;
             int32_t raw_dy = new_cursor_y - this->process.cursor_y;
-            if (event.relative_motion)
+            if (event.relative_motion || event.cursor_target)
             {
                 // Like a ClipCursor-confined cursor on Windows: the position stops at the clip rectangle while the
                 // raw motion keeps flowing.
-                raw_dx = event.relative_motion->first;
-                raw_dy = event.relative_motion->second;
+                if (event.relative_motion)
+                {
+                    raw_dx = event.relative_motion->first;
+                    raw_dy = event.relative_motion->second;
+                }
                 if (origin)
                 {
                     l_param = pack_point(new_cursor_x - origin->x, new_cursor_y - origin->y);
@@ -2253,18 +2369,10 @@ namespace sogen
         switch (event.message)
         {
         case WM_KEYDOWN:
-        case WM_SYSKEYDOWN: {
-            const auto virtual_key = static_cast<uint8_t>(event.wParam & 0xFF);
-            if ((this->process.key_state[virtual_key] & 0x80) == 0)
-            {
-                this->process.async_key_state[virtual_key] = 1;
-            }
-            this->process.key_state[virtual_key] = 0x80;
-            break;
-        }
+        case WM_SYSKEYDOWN:
         case WM_KEYUP:
         case WM_SYSKEYUP:
-            this->process.key_state[static_cast<uint8_t>(event.wParam & 0xFF)] = 0;
+            this->update_key_state(event);
             break;
         default:
             if (const auto virtual_key = mouse_button_virtual_key(event.message, event.wParam); virtual_key != 0)
@@ -2300,6 +2408,20 @@ namespace sogen
         }
 
         thread->post_message(*this, m, true);
+
+        if (event.injected && is_key_down_message(event.message))
+        {
+            const auto virtual_key = static_cast<uint32_t>(event.wParam & 0xFF);
+            const auto character =
+                virtual_key == VK_PACKET ? event.injected_character : key_character(virtual_key, this->process.key_state);
+            if (character != 0)
+            {
+                msg character_message = m;
+                character_message.message = event.message == WM_SYSKEYDOWN ? WM_SYSCHAR : WM_CHAR;
+                character_message.wParam = character;
+                thread->post_message(*this, character_message, true);
+            }
+        }
 
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || is_key_down_message(event.message) ||
             is_mouse_button_message(event.message) || is_mouse_wheel_message(event.message))
@@ -2674,7 +2796,7 @@ namespace sogen
             });
 
             // Delivering the release does not clear the key when there is no window to deliver it to.
-            this->process.key_state[key] = 0;
+            this->process.key_state[key] &= 0x01;
         }
     }
 

@@ -252,6 +252,9 @@ EXPORTS
     vkGetSwapchainImagesKHR
     vkMapMemory
     vkMergePipelineCaches
+    vkQueueBeginDebugUtilsLabelEXT
+    vkQueueEndDebugUtilsLabelEXT
+    vkQueueInsertDebugUtilsLabelEXT
     vkQueuePresentKHR
     vkQueueBindSparse
     vkQueueSubmit
@@ -264,6 +267,8 @@ EXPORTS
     vkResetEvent
     vkResetQueryPool
     vkResetFences
+    vkSetDebugUtilsObjectNameEXT
+    vkSetDebugUtilsObjectTagEXT
     vkSetEvent
     vkSetPrivateData
     vkSignalSemaphore

@@ -366,6 +366,9 @@ namespace sogen
         }
 
         void handle_ui_event(const ui_event& event);
+        void handle_ui_event_locked(const ui_event& event);
+        void update_key_state(const ui_event& event);
+        ui_event resolve_injected_event(const ui_event& event) const;
         void apply_cursor_capture();
         void release_held_input();
 
