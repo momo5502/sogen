@@ -241,7 +241,7 @@ jobs:
       - name: Create Emulation Root
         run: src/tools/create-root.bat
 
-      - name: Install DXVK and Vulkan Shim
+      - name: Install DXVK, vkd3d-proton and Vulkan Shim
         shell: pwsh
         run: ./src/tools/install-gpu-runtime.ps1 -WindowsDir root/filesys/c/windows -Shim64 build/release/artifacts/vulkan-shim-x64.dll -Shim32 build/release/artifacts/vulkan-shim-x86.dll
         env:
