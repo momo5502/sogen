@@ -550,6 +550,13 @@ namespace sogen
                     buffer.write(this->event.relative_motion->first);
                     buffer.write(this->event.relative_motion->second);
                 }
+                buffer.write(this->event.cursor_target.has_value());
+                if (this->event.cursor_target)
+                {
+                    buffer.write(this->event.cursor_target->first);
+                    buffer.write(this->event.cursor_target->second);
+                }
+                buffer.write(this->event.translate_character);
                 buffer.write(this->screen_x);
                 buffer.write(this->screen_y);
                 buffer.write(this->time);
@@ -578,6 +585,20 @@ namespace sogen
                 {
                     this->event.relative_motion.reset();
                 }
+                bool has_cursor_target{};
+                buffer.read(has_cursor_target);
+                if (has_cursor_target)
+                {
+                    std::pair<int32_t, int32_t> cursor_target{};
+                    buffer.read(cursor_target.first);
+                    buffer.read(cursor_target.second);
+                    this->event.cursor_target = cursor_target;
+                }
+                else
+                {
+                    this->event.cursor_target.reset();
+                }
+                buffer.read(this->event.translate_character);
                 buffer.read(this->screen_x);
                 buffer.read(this->screen_y);
                 buffer.read(this->time);
