@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "windows_emulator.hpp"
+#include "keyboard_layout.hpp"
 
 #include "cpu_context.hpp"
 
@@ -2130,10 +2131,17 @@ namespace sogen
     {
         int32_t cursor_x = this->process.cursor_x;
         int32_t cursor_y = this->process.cursor_y;
-        if (event.relative_motion)
+        if (event.relative_motion || event.cursor_target)
         {
-            cursor_x += event.relative_motion->first;
-            cursor_y += event.relative_motion->second;
+            if (event.cursor_target)
+            {
+                std::tie(cursor_x, cursor_y) = *event.cursor_target;
+            }
+            else
+            {
+                cursor_x += event.relative_motion->first;
+                cursor_y += event.relative_motion->second;
+            }
             if (const auto& clip = this->process.cursor_clip)
             {
                 const auto left = static_cast<int32_t>(clip->left);
@@ -2149,6 +2157,53 @@ namespace sogen
         }
 
         return {cursor_x, cursor_y};
+    }
+
+    void windows_emulator::update_key_state(const ui_event& event)
+    {
+        const auto virtual_key = static_cast<uint8_t>(event.wParam & 0xFF);
+        if (virtual_key == VK_PACKET)
+        {
+            return;
+        }
+
+        const bool down = event.message == WM_KEYDOWN || event.message == WM_SYSKEYDOWN;
+        const auto set = [&](const uint8_t key) {
+            auto& state = this->process.key_state[key];
+            if (down && (state & 0x80) == 0)
+            {
+                this->process.async_key_state[key] = 1;
+                if (key == VK_CAPITAL || key == VK_NUMLOCK || key == VK_SCROLL)
+                {
+                    state ^= 0x01;
+                }
+            }
+            state = static_cast<uint8_t>((down ? 0x80 : 0) | (state & 0x01));
+        };
+
+        // Key messages name the generic modifier; the scan code (Shift) or the extended-key bit (Ctrl, Alt) tells which
+        // side changed, and the generic key is down while either side is.
+        const bool right_scan = ((event.lParam >> 16) & 0xFF) == 0x36;
+        const bool extended = (event.lParam & (1ull << 24)) != 0;
+        for (const auto [generic, left, right, is_right] :
+             {std::tuple{VK_SHIFT, VK_LSHIFT, VK_RSHIFT, right_scan}, std::tuple{VK_CONTROL, VK_LCONTROL, VK_RCONTROL, extended},
+              std::tuple{VK_MENU, VK_LMENU, VK_RMENU, extended}})
+        {
+            if (virtual_key == generic || virtual_key == left || virtual_key == right)
+            {
+                const auto side = virtual_key == generic ? (is_right ? right : left) : virtual_key;
+                set(static_cast<uint8_t>(side));
+                const bool any_down = ((this->process.key_state[left] | this->process.key_state[right]) & 0x80) != 0;
+                if (any_down && (this->process.key_state[generic] & 0x80) == 0)
+                {
+                    this->process.async_key_state[generic] = 1;
+                }
+                this->process.key_state[generic] = any_down ? 0x80 : 0;
+                return;
+            }
+        }
+
+        set(virtual_key);
     }
 
     void windows_emulator::deliver_ui_event(const ui_event& event)
@@ -2188,12 +2243,15 @@ namespace sogen
             const auto [new_cursor_x, new_cursor_y] = this->cursor_after_pointer_event(event);
             int32_t raw_dx = new_cursor_x - this->process.cursor_x;
             int32_t raw_dy = new_cursor_y - this->process.cursor_y;
-            if (event.relative_motion)
+            if (event.relative_motion || event.cursor_target)
             {
                 // Like a ClipCursor-confined cursor on Windows: the position stops at the clip rectangle while the
                 // raw motion keeps flowing.
-                raw_dx = event.relative_motion->first;
-                raw_dy = event.relative_motion->second;
+                if (event.relative_motion)
+                {
+                    raw_dx = event.relative_motion->first;
+                    raw_dy = event.relative_motion->second;
+                }
                 if (origin)
                 {
                     l_param = pack_point(new_cursor_x - origin->x, new_cursor_y - origin->y);
@@ -2259,27 +2317,10 @@ namespace sogen
         switch (event.message)
         {
         case WM_KEYDOWN:
-        case WM_SYSKEYDOWN: {
-            const auto virtual_key = static_cast<uint8_t>(event.wParam & 0xFF);
-            if (virtual_key == VK_PACKET)
-            {
-                break;
-            }
-            auto& state = this->process.key_state[virtual_key];
-            if ((state & 0x80) == 0)
-            {
-                this->process.async_key_state[virtual_key] = 1;
-                if (virtual_key == VK_CAPITAL || virtual_key == VK_NUMLOCK || virtual_key == VK_SCROLL)
-                {
-                    state ^= 0x01;
-                }
-            }
-            state = static_cast<uint8_t>(0x80 | (state & 0x01));
-            break;
-        }
+        case WM_SYSKEYDOWN:
         case WM_KEYUP:
         case WM_SYSKEYUP:
-            this->process.key_state[static_cast<uint8_t>(event.wParam & 0xFF)] &= 0x01;
+            this->update_key_state(event);
             break;
         default:
             if (const auto virtual_key = mouse_button_virtual_key(event.message, event.wParam); virtual_key != 0)
@@ -2315,6 +2356,17 @@ namespace sogen
         }
 
         thread->post_message(*this, m, true);
+
+        if (event.translate_character && is_key_down_message(event.message))
+        {
+            if (const auto character = key_character(static_cast<uint32_t>(event.wParam & 0xFF), this->process.key_state); character != 0)
+            {
+                msg character_message = m;
+                character_message.message = event.message == WM_SYSKEYDOWN ? WM_SYSCHAR : WM_CHAR;
+                character_message.wParam = character;
+                thread->post_message(*this, character_message, true);
+            }
+        }
 
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || is_key_down_message(event.message) ||
             is_mouse_button_message(event.message) || is_mouse_wheel_message(event.message))

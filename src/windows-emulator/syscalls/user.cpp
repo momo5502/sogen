@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
+#include "../keyboard_layout.hpp"
 #include "../low_level_hooks.hpp"
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
@@ -7178,105 +7179,6 @@ namespace sogen
             return TRUE;
         }
 
-        // The US layout, which the rest of the keyboard emulation assumes as well.
-        char16_t us_layout_character(const uint32_t virtual_key, const bool shift, const bool caps_lock)
-        {
-            if (virtual_key >= 'A' && virtual_key <= 'Z')
-            {
-                return static_cast<char16_t>(shift != caps_lock ? virtual_key : virtual_key - 'A' + 'a');
-            }
-
-            if (virtual_key >= '0' && virtual_key <= '9')
-            {
-                constexpr std::u16string_view shifted_digits = u")!@#$%^&*(";
-                return shift ? shifted_digits[virtual_key - '0'] : static_cast<char16_t>(virtual_key);
-            }
-
-            if (virtual_key >= VK_NUMPAD0 && virtual_key <= VK_NUMPAD9)
-            {
-                return static_cast<char16_t>(u'0' + (virtual_key - VK_NUMPAD0));
-            }
-
-            const auto pick = [shift](const char16_t normal, const char16_t shifted) { return shift ? shifted : normal; };
-
-            switch (virtual_key)
-            {
-            case VK_SPACE:
-                return u' ';
-            case VK_RETURN:
-                return u'\r';
-            case VK_BACK:
-                return u'\b';
-            case VK_TAB:
-                return u'\t';
-            case VK_ESCAPE:
-                return 0x1B;
-            case VK_MULTIPLY:
-                return u'*';
-            case VK_ADD:
-                return u'+';
-            case VK_SUBTRACT:
-                return u'-';
-            case VK_DIVIDE:
-                return u'/';
-            case VK_DECIMAL:
-                return u'.';
-            case VK_OEM_1:
-                return pick(u';', u':');
-            case VK_OEM_PLUS:
-                return pick(u'=', u'+');
-            case VK_OEM_COMMA:
-                return pick(u',', u'<');
-            case VK_OEM_MINUS:
-                return pick(u'-', u'_');
-            case VK_OEM_PERIOD:
-                return pick(u'.', u'>');
-            case VK_OEM_2:
-                return pick(u'/', u'?');
-            case VK_OEM_3:
-                return pick(u'`', u'~');
-            case VK_OEM_4:
-                return pick(u'[', u'{');
-            case VK_OEM_5:
-                return pick(u'\\', u'|');
-            case VK_OEM_6:
-                return pick(u']', u'}');
-            case VK_OEM_7:
-                return pick(u'\'', u'"');
-            default:
-                return 0;
-            }
-        }
-
-        char16_t key_character(const uint32_t virtual_key, const std::array<uint8_t, 256>& keys)
-        {
-            const auto down = [&keys](const uint32_t key) { return (keys[key] & 0x80) != 0; };
-
-            if (down(VK_CONTROL) && !down(VK_MENU))
-            {
-                if (virtual_key >= 'A' && virtual_key <= 'Z')
-                {
-                    return static_cast<char16_t>(virtual_key - 'A' + 1);
-                }
-                if (virtual_key == VK_BACK)
-                {
-                    return 0x7F;
-                }
-                if (virtual_key == VK_RETURN)
-                {
-                    return u'\n';
-                }
-                return 0;
-            }
-
-            if (down(VK_CONTROL))
-            {
-                return 0;
-            }
-
-            return us_layout_character(virtual_key, down(VK_SHIFT), (keys[VK_CAPITAL] & 0x01) != 0);
-        }
-
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& /*c*/, const uint32_t code, const uint32_t map_type,
                                               const uint32_t /*keyboard_id*/, const uint64_t /*keyboard_layout*/)
         {
@@ -7538,32 +7440,6 @@ namespace sogen
 
         static_assert(sizeof(emu_input) == 40);
 
-        // Earlier inputs of the same call can still wait for low-level hooks, so each input is translated against the state
-        // the inputs before it build up rather than against the process state.
-        struct injected_input_state
-        {
-            std::array<uint8_t, 256> keys{};
-            int32_t cursor_x{};
-            int32_t cursor_y{};
-        };
-
-        void apply_key_transition(std::array<uint8_t, 256>& keys, const uint32_t virtual_key, const bool up)
-        {
-            const uint8_t toggle = keys[virtual_key] & 0x01;
-            const bool toggles = virtual_key == VK_CAPITAL || virtual_key == VK_NUMLOCK || virtual_key == VK_SCROLL;
-            keys[virtual_key] = static_cast<uint8_t>((up ? 0 : 0x80) | ((toggles && !up) ? (toggle ^ 0x01) : toggle));
-
-            for (const auto [generic, left, right] :
-                 {std::tuple{VK_SHIFT, VK_LSHIFT, VK_RSHIFT}, std::tuple{VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
-                  std::tuple{VK_MENU, VK_LMENU, VK_RMENU}})
-            {
-                if (virtual_key == static_cast<uint32_t>(left) || virtual_key == static_cast<uint32_t>(right))
-                {
-                    keys[generic] = (keys[left] | keys[right]) & 0x80;
-                }
-            }
-        }
-
         uint32_t generic_virtual_key(const uint32_t virtual_key)
         {
             switch (virtual_key)
@@ -7582,17 +7458,7 @@ namespace sogen
             }
         }
 
-        // Without a window to receive it, injected input still changes what GetAsyncKeyState reports.
-        void apply_unrouted_key_transition(process_context& proc, const uint32_t virtual_key, const bool up)
-        {
-            if (!up && (proc.key_state[virtual_key] & 0x80) == 0)
-            {
-                proc.async_key_state[virtual_key] = 1;
-            }
-            apply_key_transition(proc.key_state, virtual_key, up);
-        }
-
-        void send_mouse_input(const syscall_context& c, const emu_mouse_input& input, injected_input_state& state)
+        void send_mouse_input(const syscall_context& c, const emu_mouse_input& input)
         {
             constexpr uint32_t mouseeventf_move = 0x0001;
             constexpr uint32_t mouseeventf_absolute = 0x8000;
@@ -7601,7 +7467,7 @@ namespace sogen
             const auto window = find_foreground_window(c);
 
             const auto button_flags = [&] {
-                const auto down = [&](const uint32_t key) { return (state.keys[key] & 0x80) != 0; };
+                const auto down = [&](const uint32_t key) { return (proc.key_state[key] & 0x80) != 0; };
                 uint64_t flags = 0;
                 flags |= down(VK_LBUTTON) ? MK_LBUTTON : 0;
                 flags |= down(VK_RBUTTON) ? MK_RBUTTON : 0;
@@ -7613,62 +7479,66 @@ namespace sogen
                 return flags;
             };
 
-            // Pointer events relative to the current cursor let the emulator clip the cursor and feed raw input the
-            // way it does for host motion.
-            const auto send = [&](const uint32_t message, const uint64_t w_param, const int32_t dx, const int32_t dy) {
+            // Like host motion, injected pointer events let the emulator clip the cursor and feed raw input. Button and
+            // wheel events stay at wherever the cursor is when they are delivered.
+            const auto send = [&](const uint32_t message, const uint64_t w_param, const std::optional<std::pair<int32_t, int32_t>> motion,
+                                  const std::optional<std::pair<int32_t, int32_t>> target) {
                 c.win_emu.handle_ui_event_locked(ui_event{
                     .window = window,
                     .message = message,
                     .wParam = w_param,
                     .lParam = 0,
-                    .relative_motion = std::pair{dx, dy},
+                    .relative_motion = motion ? motion : (target ? std::nullopt : std::optional{std::pair{0, 0}}),
+                    .cursor_target = target,
                 });
             };
 
             if (input.flags & mouseeventf_move)
             {
-                auto target_x = state.cursor_x + input.dx;
-                auto target_y = state.cursor_y + input.dy;
+                std::optional<std::pair<int32_t, int32_t>> motion{};
+                std::optional<std::pair<int32_t, int32_t>> target{};
                 if (input.flags & mouseeventf_absolute)
                 {
                     // Absolute coordinates are normalized to 0..65535 across the display.
-                    target_x = static_cast<int32_t>((static_cast<int64_t>(input.dx) * proc.display_width) >> 16);
-                    target_y = static_cast<int32_t>((static_cast<int64_t>(input.dy) * proc.display_height) >> 16);
-                }
-                if (const auto& clip = proc.cursor_clip)
-                {
-                    const auto left = static_cast<int32_t>(clip->left);
-                    const auto top = static_cast<int32_t>(clip->top);
-                    target_x = std::clamp(target_x, left, std::max(left, static_cast<int32_t>(clip->right) - 1));
-                    target_y = std::clamp(target_y, top, std::max(top, static_cast<int32_t>(clip->bottom) - 1));
-                }
-
-                const auto dx = target_x - state.cursor_x;
-                const auto dy = target_y - state.cursor_y;
-                state.cursor_x = target_x;
-                state.cursor_y = target_y;
-
-                if (window == 0)
-                {
-                    proc.cursor_x = target_x;
-                    proc.cursor_y = target_y;
+                    target = std::pair{static_cast<int32_t>((static_cast<int64_t>(input.dx) * proc.display_width) >> 16),
+                                       static_cast<int32_t>((static_cast<int64_t>(input.dy) * proc.display_height) >> 16)};
                 }
                 else
                 {
-                    send(WM_MOUSEMOVE, button_flags(), dx, dy);
+                    motion = std::pair{input.dx, input.dy};
+                }
+
+                if (window == 0)
+                {
+                    proc.cursor_x = target ? target->first : proc.cursor_x + input.dx;
+                    proc.cursor_y = target ? target->second : proc.cursor_y + input.dy;
+                }
+                else
+                {
+                    send(WM_MOUSEMOVE, button_flags(), motion, target);
                 }
             }
 
             const auto press = [&](const uint32_t message, const uint32_t virtual_key, const bool down, const uint64_t extra_w_param) {
-                apply_key_transition(state.keys, virtual_key, !down);
+                // Without a window to receive it, injected input still changes what GetAsyncKeyState reports.
                 if (window == 0)
                 {
-                    apply_unrouted_key_transition(proc, virtual_key, !down);
+                    if (down && (proc.key_state[virtual_key] & 0x80) == 0)
+                    {
+                        proc.async_key_state[virtual_key] = 1;
+                    }
+                    proc.key_state[virtual_key] = down ? 0x80 : 0;
+                    return;
                 }
-                else
-                {
-                    send(message, button_flags() | extra_w_param, 0, 0);
-                }
+
+                auto flags = button_flags();
+                const auto mask = virtual_key == VK_LBUTTON    ? MK_LBUTTON
+                                  : virtual_key == VK_RBUTTON  ? MK_RBUTTON
+                                  : virtual_key == VK_MBUTTON  ? MK_MBUTTON
+                                  : virtual_key == VK_XBUTTON1 ? MK_XBUTTON1
+                                                               : MK_XBUTTON2;
+                flags = down ? (flags | mask) : (flags & ~static_cast<uint64_t>(mask));
+                send(message, flags | extra_w_param, std::nullopt, std::nullopt);
             };
 
             struct button_transition
@@ -7722,11 +7592,11 @@ namespace sogen
             {
                 const auto delta = static_cast<uint16_t>(input.mouse_data);
                 send((input.flags & mouseeventf_wheel) ? WM_MOUSEWHEEL : WM_MOUSEHWHEEL,
-                     button_flags() | (static_cast<uint64_t>(delta) << 16), 0, 0);
+                     button_flags() | (static_cast<uint64_t>(delta) << 16), std::nullopt, std::nullopt);
             }
         }
 
-        void send_keyboard_input(const syscall_context& c, const emu_keyboard_input& input, injected_input_state& state)
+        void send_keyboard_input(const syscall_context& c, const emu_keyboard_input& input)
         {
             constexpr uint32_t keyeventf_extendedkey = 0x0001;
             constexpr uint32_t keyeventf_keyup = 0x0002;
@@ -7754,30 +7624,15 @@ namespace sogen
                 scan_code = handle_NtUserMapVirtualKeyEx(c, virtual_key, 0, 0, 0);
             }
 
-            if (virtual_key == 0 || virtual_key >= state.keys.size())
+            if (virtual_key == 0 || virtual_key >= proc.key_state.size())
             {
                 return;
             }
 
-            auto& keys = state.keys;
-            const auto down = [&](const uint32_t key) { return (keys[key] & 0x80) != 0; };
+            const auto down = [&](const uint32_t key) { return (proc.key_state[key] & 0x80) != 0; };
             const bool was_down = !unicode && down(virtual_key);
             const bool alt = generic_virtual_key(virtual_key) == VK_MENU || down(VK_MENU);
             const bool system_key = (alt || virtual_key == VK_F10) && !down(VK_CONTROL);
-
-            if (!unicode)
-            {
-                apply_key_transition(keys, virtual_key, up);
-            }
-
-            if (window == 0)
-            {
-                if (!unicode)
-                {
-                    apply_unrouted_key_transition(proc, virtual_key, up);
-                }
-                return;
-            }
 
             uint64_t l_param = 1 | (static_cast<uint64_t>(scan_code & 0xFF) << 16);
             l_param |= (input.flags & keyeventf_extendedkey) ? (1ull << 24) : 0;
@@ -7785,22 +7640,28 @@ namespace sogen
             l_param |= (up || was_down) ? (1ull << 30) : 0;
             l_param |= up ? (1ull << 31) : 0;
 
-            // Like Windows, key messages name the generic modifier rather than its left or right variant.
+            // Like Windows, key messages name the generic modifier rather than its left or right variant; the scan code and
+            // extended-key bit tell the sides apart.
             const uint32_t message = up ? (system_key ? WM_SYSKEYUP : WM_KEYUP) : (system_key ? WM_SYSKEYDOWN : WM_KEYDOWN);
-            c.win_emu.handle_ui_event_locked(
-                ui_event{.window = window, .message = message, .wParam = generic_virtual_key(virtual_key), .lParam = l_param});
+            const ui_event event{.window = window,
+                                 .message = message,
+                                 .wParam = generic_virtual_key(virtual_key),
+                                 .lParam = l_param,
+                                 .translate_character = !unicode && !system_key};
 
-            if (up || system_key)
+            // Without a window to receive it, injected input still changes what GetAsyncKeyState reports.
+            if (window == 0)
             {
+                c.win_emu.update_key_state(event);
                 return;
             }
 
-            // The guest's TranslateMessage does not translate, so the character the key produces is posted with it, the
-            // way characters typed on the host arrive.
-            const auto character = unicode ? static_cast<char16_t>(input.scan_code) : key_character(virtual_key, keys);
-            if (character != 0)
+            c.win_emu.handle_ui_event_locked(event);
+
+            if (unicode && !up)
             {
-                c.win_emu.handle_ui_event_locked(ui_event{.window = window, .message = WM_CHAR, .wParam = character, .lParam = l_param});
+                c.win_emu.handle_ui_event_locked(
+                    ui_event{.window = window, .message = WM_CHAR, .wParam = input.scan_code, .lParam = l_param});
             }
         }
 
@@ -7817,7 +7678,6 @@ namespace sogen
                 return 0;
             }
 
-            injected_input_state state{.keys = c.proc.key_state, .cursor_x = c.proc.cursor_x, .cursor_y = c.proc.cursor_y};
             for (uint32_t i = 0; i < input_count; ++i)
             {
                 emu_input input{};
@@ -7829,11 +7689,11 @@ namespace sogen
 
                 if (input.type == input_mouse)
                 {
-                    send_mouse_input(c, input.mouse, state);
+                    send_mouse_input(c, input.mouse);
                 }
                 else if (input.type == input_keyboard)
                 {
-                    send_keyboard_input(c, input.keyboard, state);
+                    send_keyboard_input(c, input.keyboard);
                 }
                 else if (input.type != input_hardware)
                 {

@@ -76,6 +76,14 @@ namespace sogen
         // Set on WM_MOUSEMOVE while the host reports relative motion: the host cursor does not move, so the
         // emulator moves the guest cursor by this delta instead of taking the position from lParam.
         std::optional<std::pair<int32_t, int32_t>> relative_motion{};
+
+        // Pointer events injected by the guest name the screen position the cursor moves to when they are delivered,
+        // which can be after low-level hooks held them back.
+        std::optional<std::pair<int32_t, int32_t>> cursor_target{};
+
+        // Key-down events injected by the guest also post the character the key produces under the key state at
+        // delivery, since the guest's TranslateMessage does not translate.
+        bool translate_character{};
     };
 
     class ui_backend
