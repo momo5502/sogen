@@ -316,6 +316,113 @@ namespace
         std::fflush(stdout);
     }
 
+    template <typename T>
+    const T* find_in_chain(const void* chain, const VkStructureType type)
+    {
+        for (const auto* next = static_cast<const VkBaseInStructure*>(chain); next; next = next->pNext)
+        {
+            if (next->sType == type)
+            {
+                return reinterpret_cast<const T*>(next);
+            }
+        }
+        return nullptr;
+    }
+
+    void append_bytes(std::vector<uint8_t>& message, const void* data, const size_t size)
+    {
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        message.insert(message.end(), bytes, bytes + size);
+    }
+
+    struct render_pass_description
+    {
+        uint32_t flags{};
+        std::vector<gb::render_pass_attachment> attachments{};
+        std::vector<gb::render_pass_subpass> subpasses{};
+        std::vector<gb::render_pass_reference> references{};
+        std::vector<gb::render_pass_dependency> dependencies{};
+        std::vector<uint32_t> preserves{};
+        std::vector<uint32_t> correlated_view_masks{};
+
+        void add_reference(const uint32_t attachment, const VkImageLayout layout, const VkImageAspectFlags aspect_mask,
+                           const VkImageLayout stencil_layout)
+        {
+            this->references.push_back(gb::render_pass_reference{
+                .attachment = attachment,
+                .layout = static_cast<uint32_t>(layout),
+                .aspect_mask = aspect_mask,
+                .stencil_layout = static_cast<uint32_t>(stencil_layout),
+            });
+        }
+
+        void add_reference(const VkAttachmentReference2& reference)
+        {
+            const auto* stencil =
+                find_in_chain<VkAttachmentReferenceStencilLayout>(reference.pNext, VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_STENCIL_LAYOUT);
+            this->add_reference(reference.attachment, reference.layout, reference.aspectMask,
+                                stencil ? stencil->stencilLayout : VK_IMAGE_LAYOUT_UNDEFINED);
+        }
+
+        std::vector<uint8_t> serialize(const VkDevice device) const
+        {
+            gb::create_render_pass_request request{};
+            request.device = to_object_id(device);
+            request.flags = this->flags;
+            request.attachment_count = static_cast<uint32_t>(this->attachments.size());
+            request.subpass_count = static_cast<uint32_t>(this->subpasses.size());
+            request.reference_count = static_cast<uint32_t>(this->references.size());
+            request.dependency_count = static_cast<uint32_t>(this->dependencies.size());
+            request.preserve_count = static_cast<uint32_t>(this->preserves.size());
+            request.correlated_view_mask_count = static_cast<uint32_t>(this->correlated_view_masks.size());
+
+            std::vector<uint8_t> message{};
+            append_bytes(message, &request, sizeof(request));
+            append_bytes(message, this->attachments.data(), this->attachments.size() * sizeof(gb::render_pass_attachment));
+            append_bytes(message, this->subpasses.data(), this->subpasses.size() * sizeof(gb::render_pass_subpass));
+            append_bytes(message, this->references.data(), this->references.size() * sizeof(gb::render_pass_reference));
+            append_bytes(message, this->dependencies.data(), this->dependencies.size() * sizeof(gb::render_pass_dependency));
+            append_bytes(message, this->preserves.data(), this->preserves.size() * sizeof(uint32_t));
+            append_bytes(message, this->correlated_view_masks.data(), this->correlated_view_masks.size() * sizeof(uint32_t));
+            return message;
+        }
+    };
+
+    VkResult create_render_pass(const VkDevice device, const render_pass_description& description, VkRenderPass* pRenderPass)
+    {
+        const auto message = description.serialize(device);
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_render_pass, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+        *pRenderPass = to_handle<VkRenderPass>(response.object);
+        return VK_SUCCESS;
+    }
+
+    VkImageAspectFlags format_aspects(const VkFormat format)
+    {
+        switch (format)
+        {
+        case VK_FORMAT_D16_UNORM:
+        case VK_FORMAT_X8_D24_UNORM_PACK32:
+        case VK_FORMAT_D32_SFLOAT:
+            return VK_IMAGE_ASPECT_DEPTH_BIT;
+        case VK_FORMAT_S8_UINT:
+            return VK_IMAGE_ASPECT_STENCIL_BIT;
+        case VK_FORMAT_D16_UNORM_S8_UINT:
+        case VK_FORMAT_D24_UNORM_S8_UINT:
+        case VK_FORMAT_D32_SFLOAT_S8_UINT:
+            return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+        default:
+            return VK_IMAGE_ASPECT_COLOR_BIT;
+        }
+    }
 }
 
 extern "C"
@@ -4316,36 +4423,219 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass(VkDevice device, const VkRenderPassCreateInfo* pCreateInfo,
                                                                             const VkAllocationCallbacks*, VkRenderPass* pRenderPass)
     {
-        // The first attachment drives the color attachment; a subpass depth-stencil attachment (if any)
-        // contributes its format so the bridge adds a matching depth attachment.
-        const VkAttachmentDescription& a = pCreateInfo->pAttachments[0];
-        gb::create_render_pass_request request{};
-        request.device = to_object_id(device);
-        request.format = static_cast<uint32_t>(a.format);
-        request.load_op = static_cast<uint32_t>(a.loadOp);
-        request.store_op = static_cast<uint32_t>(a.storeOp);
-        request.initial_layout = static_cast<uint32_t>(a.initialLayout);
-        request.final_layout = static_cast<uint32_t>(a.finalLayout);
-        if (pCreateInfo->subpassCount > 0 && pCreateInfo->pSubpasses[0].pDepthStencilAttachment)
+        const auto* multiview =
+            find_in_chain<VkRenderPassMultiviewCreateInfo>(pCreateInfo->pNext, VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO);
+        const auto* input_aspects = find_in_chain<VkRenderPassInputAttachmentAspectCreateInfo>(
+            pCreateInfo->pNext, VK_STRUCTURE_TYPE_RENDER_PASS_INPUT_ATTACHMENT_ASPECT_CREATE_INFO);
+
+        render_pass_description description{};
+        description.flags = pCreateInfo->flags;
+
+        for (uint32_t i = 0; i < pCreateInfo->attachmentCount; ++i)
         {
-            const uint32_t depth_index = pCreateInfo->pSubpasses[0].pDepthStencilAttachment->attachment;
-            if (depth_index != VK_ATTACHMENT_UNUSED && depth_index < pCreateInfo->attachmentCount)
-            {
-                request.depth_format = static_cast<uint32_t>(pCreateInfo->pAttachments[depth_index].format);
-            }
+            const auto& a = pCreateInfo->pAttachments[i];
+            description.attachments.push_back(gb::render_pass_attachment{
+                .flags = a.flags,
+                .format = static_cast<uint32_t>(a.format),
+                .samples = static_cast<uint32_t>(a.samples),
+                .load_op = static_cast<uint32_t>(a.loadOp),
+                .store_op = static_cast<uint32_t>(a.storeOp),
+                .stencil_load_op = static_cast<uint32_t>(a.stencilLoadOp),
+                .stencil_store_op = static_cast<uint32_t>(a.stencilStoreOp),
+                .initial_layout = static_cast<uint32_t>(a.initialLayout),
+                .final_layout = static_cast<uint32_t>(a.finalLayout),
+                .has_stencil_layouts = 0,
+                .stencil_initial_layout = 0,
+                .stencil_final_layout = 0,
+            });
         }
 
-        gb::object_response response{};
-        if (!bridge_call(gb::ioctl_create_render_pass, &request, sizeof(request), &response, sizeof(response)))
+        // vkCreateRenderPass2 requires an aspect mask on every input attachment, which version 1 render passes only
+        // name through VkRenderPassInputAttachmentAspectCreateInfo; otherwise all aspects of the format are implied.
+        const auto input_aspect = [&](const uint32_t subpass, const uint32_t index, const uint32_t attachment) -> VkImageAspectFlags {
+            if (input_aspects)
+            {
+                for (uint32_t i = 0; i < input_aspects->aspectReferenceCount; ++i)
+                {
+                    const auto& r = input_aspects->pAspectReferences[i];
+                    if (r.subpass == subpass && r.inputAttachmentIndex == index)
+                    {
+                        return r.aspectMask;
+                    }
+                }
+            }
+            return attachment == VK_ATTACHMENT_UNUSED ? 0 : format_aspects(pCreateInfo->pAttachments[attachment].format);
+        };
+
+        for (uint32_t i = 0; i < pCreateInfo->subpassCount; ++i)
         {
-            return VK_ERROR_INITIALIZATION_FAILED;
+            const auto& sp = pCreateInfo->pSubpasses[i];
+            description.subpasses.push_back(gb::render_pass_subpass{
+                .flags = sp.flags,
+                .bind_point = static_cast<uint32_t>(sp.pipelineBindPoint),
+                .view_mask = (multiview && i < multiview->subpassCount) ? multiview->pViewMasks[i] : 0,
+                .input_count = sp.inputAttachmentCount,
+                .color_count = sp.colorAttachmentCount,
+                .has_color_resolve = sp.pResolveAttachments ? 1u : 0u,
+                .has_depth_stencil = sp.pDepthStencilAttachment ? 1u : 0u,
+                .has_depth_stencil_resolve = 0,
+                .depth_resolve_mode = 0,
+                .stencil_resolve_mode = 0,
+                .preserve_count = sp.preserveAttachmentCount,
+                .reserved = 0,
+            });
+
+            for (uint32_t j = 0; j < sp.inputAttachmentCount; ++j)
+            {
+                const auto& r = sp.pInputAttachments[j];
+                description.add_reference(r.attachment, r.layout, input_aspect(i, j, r.attachment), VK_IMAGE_LAYOUT_UNDEFINED);
+            }
+            for (uint32_t j = 0; j < sp.colorAttachmentCount; ++j)
+            {
+                description.add_reference(sp.pColorAttachments[j].attachment, sp.pColorAttachments[j].layout, 0, VK_IMAGE_LAYOUT_UNDEFINED);
+            }
+            for (uint32_t j = 0; sp.pResolveAttachments && j < sp.colorAttachmentCount; ++j)
+            {
+                description.add_reference(sp.pResolveAttachments[j].attachment, sp.pResolveAttachments[j].layout, 0,
+                                          VK_IMAGE_LAYOUT_UNDEFINED);
+            }
+            if (sp.pDepthStencilAttachment)
+            {
+                description.add_reference(sp.pDepthStencilAttachment->attachment, sp.pDepthStencilAttachment->layout, 0,
+                                          VK_IMAGE_LAYOUT_UNDEFINED);
+            }
+            description.preserves.insert(description.preserves.end(), sp.pPreserveAttachments,
+                                         sp.pPreserveAttachments + sp.preserveAttachmentCount);
         }
-        if (response.vk_result != VK_SUCCESS)
+
+        for (uint32_t i = 0; i < pCreateInfo->dependencyCount; ++i)
         {
-            return static_cast<VkResult>(response.vk_result);
+            const auto& d = pCreateInfo->pDependencies[i];
+            description.dependencies.push_back(gb::render_pass_dependency{
+                .src_subpass = d.srcSubpass,
+                .dst_subpass = d.dstSubpass,
+                .src_stage_mask = d.srcStageMask,
+                .dst_stage_mask = d.dstStageMask,
+                .src_access_mask = d.srcAccessMask,
+                .dst_access_mask = d.dstAccessMask,
+                .flags = d.dependencyFlags,
+                .view_offset = (multiview && i < multiview->dependencyCount) ? multiview->pViewOffsets[i] : 0,
+                .has_memory_barrier2 = 0,
+                .reserved = 0,
+                .src_stage_mask2 = 0,
+                .dst_stage_mask2 = 0,
+                .src_access_mask2 = 0,
+                .dst_access_mask2 = 0,
+            });
         }
-        *pRenderPass = to_handle<VkRenderPass>(response.object);
-        return VK_SUCCESS;
+
+        if (multiview)
+        {
+            description.correlated_view_masks.assign(multiview->pCorrelationMasks,
+                                                     multiview->pCorrelationMasks + multiview->correlationMaskCount);
+        }
+
+        return create_render_pass(device, description, pRenderPass);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateRenderPass2(VkDevice device, const VkRenderPassCreateInfo2* pCreateInfo,
+                                                                             const VkAllocationCallbacks*, VkRenderPass* pRenderPass)
+    {
+        render_pass_description description{};
+        description.flags = pCreateInfo->flags;
+
+        for (uint32_t i = 0; i < pCreateInfo->attachmentCount; ++i)
+        {
+            const auto& a = pCreateInfo->pAttachments[i];
+            const auto* stencil =
+                find_in_chain<VkAttachmentDescriptionStencilLayout>(a.pNext, VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_STENCIL_LAYOUT);
+            description.attachments.push_back(gb::render_pass_attachment{
+                .flags = a.flags,
+                .format = static_cast<uint32_t>(a.format),
+                .samples = static_cast<uint32_t>(a.samples),
+                .load_op = static_cast<uint32_t>(a.loadOp),
+                .store_op = static_cast<uint32_t>(a.storeOp),
+                .stencil_load_op = static_cast<uint32_t>(a.stencilLoadOp),
+                .stencil_store_op = static_cast<uint32_t>(a.stencilStoreOp),
+                .initial_layout = static_cast<uint32_t>(a.initialLayout),
+                .final_layout = static_cast<uint32_t>(a.finalLayout),
+                .has_stencil_layouts = stencil ? 1u : 0u,
+                .stencil_initial_layout = stencil ? static_cast<uint32_t>(stencil->stencilInitialLayout) : 0,
+                .stencil_final_layout = stencil ? static_cast<uint32_t>(stencil->stencilFinalLayout) : 0,
+            });
+        }
+
+        for (uint32_t i = 0; i < pCreateInfo->subpassCount; ++i)
+        {
+            const auto& sp = pCreateInfo->pSubpasses[i];
+            const auto* resolve = find_in_chain<VkSubpassDescriptionDepthStencilResolve>(
+                sp.pNext, VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE);
+            const bool has_depth_stencil_resolve = resolve && resolve->pDepthStencilResolveAttachment;
+            description.subpasses.push_back(gb::render_pass_subpass{
+                .flags = sp.flags,
+                .bind_point = static_cast<uint32_t>(sp.pipelineBindPoint),
+                .view_mask = sp.viewMask,
+                .input_count = sp.inputAttachmentCount,
+                .color_count = sp.colorAttachmentCount,
+                .has_color_resolve = sp.pResolveAttachments ? 1u : 0u,
+                .has_depth_stencil = sp.pDepthStencilAttachment ? 1u : 0u,
+                .has_depth_stencil_resolve = has_depth_stencil_resolve ? 1u : 0u,
+                .depth_resolve_mode = resolve ? static_cast<uint32_t>(resolve->depthResolveMode) : 0,
+                .stencil_resolve_mode = resolve ? static_cast<uint32_t>(resolve->stencilResolveMode) : 0,
+                .preserve_count = sp.preserveAttachmentCount,
+                .reserved = 0,
+            });
+
+            for (uint32_t j = 0; j < sp.inputAttachmentCount; ++j)
+            {
+                description.add_reference(sp.pInputAttachments[j]);
+            }
+            for (uint32_t j = 0; j < sp.colorAttachmentCount; ++j)
+            {
+                description.add_reference(sp.pColorAttachments[j]);
+            }
+            for (uint32_t j = 0; sp.pResolveAttachments && j < sp.colorAttachmentCount; ++j)
+            {
+                description.add_reference(sp.pResolveAttachments[j]);
+            }
+            if (sp.pDepthStencilAttachment)
+            {
+                description.add_reference(*sp.pDepthStencilAttachment);
+            }
+            if (has_depth_stencil_resolve)
+            {
+                description.add_reference(*resolve->pDepthStencilResolveAttachment);
+            }
+            description.preserves.insert(description.preserves.end(), sp.pPreserveAttachments,
+                                         sp.pPreserveAttachments + sp.preserveAttachmentCount);
+        }
+
+        for (uint32_t i = 0; i < pCreateInfo->dependencyCount; ++i)
+        {
+            const auto& d = pCreateInfo->pDependencies[i];
+            const auto* barrier = find_in_chain<VkMemoryBarrier2>(d.pNext, VK_STRUCTURE_TYPE_MEMORY_BARRIER_2);
+            description.dependencies.push_back(gb::render_pass_dependency{
+                .src_subpass = d.srcSubpass,
+                .dst_subpass = d.dstSubpass,
+                .src_stage_mask = d.srcStageMask,
+                .dst_stage_mask = d.dstStageMask,
+                .src_access_mask = d.srcAccessMask,
+                .dst_access_mask = d.dstAccessMask,
+                .flags = d.dependencyFlags,
+                .view_offset = d.viewOffset,
+                .has_memory_barrier2 = barrier ? 1u : 0u,
+                .reserved = 0,
+                .src_stage_mask2 = barrier ? barrier->srcStageMask : 0,
+                .dst_stage_mask2 = barrier ? barrier->dstStageMask : 0,
+                .src_access_mask2 = barrier ? barrier->srcAccessMask : 0,
+                .dst_access_mask2 = barrier ? barrier->dstAccessMask : 0,
+            });
+        }
+
+        description.correlated_view_masks.assign(pCreateInfo->pCorrelatedViewMasks,
+                                                 pCreateInfo->pCorrelatedViewMasks + pCreateInfo->correlatedViewMaskCount);
+
+        return create_render_pass(device, description, pRenderPass);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyRenderPass(VkDevice device, VkRenderPass renderPass,
@@ -4360,13 +4650,53 @@ extern "C"
         gb::create_framebuffer_request request{};
         request.device = to_object_id(device);
         request.render_pass = to_object_id(pCreateInfo->renderPass);
-        request.image_view = to_object_id(pCreateInfo->pAttachments[0]); // color attachment
-        request.depth_view = (pCreateInfo->attachmentCount >= 2) ? to_object_id(pCreateInfo->pAttachments[1]) : gb::null_object;
+        request.flags = pCreateInfo->flags;
+        request.attachment_count = pCreateInfo->attachmentCount;
         request.width = pCreateInfo->width;
         request.height = pCreateInfo->height;
+        request.layers = pCreateInfo->layers;
+
+        std::vector<uint8_t> message{};
+        append_bytes(message, &request, sizeof(request));
+
+        if (pCreateInfo->flags & VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT)
+        {
+            const auto* images = find_in_chain<VkFramebufferAttachmentsCreateInfo>(pCreateInfo->pNext,
+                                                                                   VK_STRUCTURE_TYPE_FRAMEBUFFER_ATTACHMENTS_CREATE_INFO);
+            if (!images || images->attachmentImageInfoCount != pCreateInfo->attachmentCount)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            for (uint32_t i = 0; i < images->attachmentImageInfoCount; ++i)
+            {
+                const auto& info = images->pAttachmentImageInfos[i];
+                const gb::framebuffer_attachment_image image{
+                    .flags = info.flags,
+                    .usage = info.usage,
+                    .width = info.width,
+                    .height = info.height,
+                    .layer_count = info.layerCount,
+                    .view_format_count = info.viewFormatCount,
+                };
+                append_bytes(message, &image, sizeof(image));
+            }
+            for (uint32_t i = 0; i < images->attachmentImageInfoCount; ++i)
+            {
+                const auto& info = images->pAttachmentImageInfos[i];
+                append_bytes(message, info.pViewFormats, static_cast<size_t>(info.viewFormatCount) * sizeof(VkFormat));
+            }
+        }
+        else
+        {
+            for (uint32_t i = 0; i < pCreateInfo->attachmentCount; ++i)
+            {
+                const gb::object_id view = to_object_id(pCreateInfo->pAttachments[i]);
+                append_bytes(message, &view, sizeof(view));
+            }
+        }
 
         gb::object_response response{};
-        if (!bridge_call(gb::ioctl_create_framebuffer, &request, sizeof(request), &response, sizeof(response)))
+        if (!bridge_call(gb::ioctl_create_framebuffer, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -5500,6 +5830,7 @@ extern "C"
             request.device = to_object_id(device);
             request.pipeline_cache = to_object_id(pipelineCache);
             request.render_pass = to_object_id(ci.renderPass);
+            request.subpass = ci.subpass;
             request.pipeline_layout = to_object_id(ci.layout);
             request.vertex_shader = vertex_shader.wire;
             request.fragment_shader = fragment_shader.wire;
@@ -5739,27 +6070,41 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass(VkCommandBuffer commandBuffer,
-                                                                          const VkRenderPassBeginInfo* pRenderPassBegin, VkSubpassContents)
+                                                                          const VkRenderPassBeginInfo* pRenderPassBegin,
+                                                                          VkSubpassContents contents)
     {
+        const auto* attachments =
+            find_in_chain<VkRenderPassAttachmentBeginInfo>(pRenderPassBegin->pNext, VK_STRUCTURE_TYPE_RENDER_PASS_ATTACHMENT_BEGIN_INFO);
+
         gb::cmd_begin_render_pass_request request{};
         request.command_buffer = to_object_id(commandBuffer);
         request.render_pass = to_object_id(pRenderPassBegin->renderPass);
         request.framebuffer = to_object_id(pRenderPassBegin->framebuffer);
+        request.x = pRenderPassBegin->renderArea.offset.x;
+        request.y = pRenderPassBegin->renderArea.offset.y;
         request.width = pRenderPassBegin->renderArea.extent.width;
         request.height = pRenderPassBegin->renderArea.extent.height;
-        request.clear_depth = 1.0f;
-        if (pRenderPassBegin->clearValueCount > 0 && pRenderPassBegin->pClearValues)
+        request.contents = static_cast<uint32_t>(contents);
+        request.clear_value_count = pRenderPassBegin->pClearValues ? pRenderPassBegin->clearValueCount : 0;
+        request.attachment_count = attachments ? attachments->attachmentCount : 0;
+
+        std::vector<uint8_t> message{};
+        append_bytes(message, &request, sizeof(request));
+        append_bytes(message, pRenderPassBegin->pClearValues, static_cast<size_t>(request.clear_value_count) * sizeof(VkClearValue));
+        for (uint32_t i = 0; i < request.attachment_count; ++i)
         {
-            request.clear_r = pRenderPassBegin->pClearValues[0].color.float32[0];
-            request.clear_g = pRenderPassBegin->pClearValues[0].color.float32[1];
-            request.clear_b = pRenderPassBegin->pClearValues[0].color.float32[2];
-            request.clear_a = pRenderPassBegin->pClearValues[0].color.float32[3];
-            if (pRenderPassBegin->clearValueCount >= 2)
-            {
-                request.clear_depth = pRenderPassBegin->pClearValues[1].depthStencil.depth;
-            }
+            const gb::object_id view = to_object_id(attachments->pAttachments[i]);
+            append_bytes(message, &view, sizeof(view));
         }
-        record_command(request.command_buffer, gb::command::cmd_begin_render_pass, &request, sizeof(request));
+
+        record_command(request.command_buffer, gb::command::cmd_begin_render_pass, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginRenderPass2(VkCommandBuffer commandBuffer,
+                                                                           const VkRenderPassBeginInfo* pRenderPassBegin,
+                                                                           const VkSubpassBeginInfo* pSubpassBeginInfo)
+    {
+        vkCmdBeginRenderPass(commandBuffer, pRenderPassBegin, pSubpassBeginInfo->contents);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint,
@@ -6036,6 +6381,17 @@ extern "C"
         request.command_buffer = to_object_id(commandBuffer);
         request.contents = static_cast<uint32_t>(contents);
         record_command(request.command_buffer, gb::command::cmd_next_subpass, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdNextSubpass2(VkCommandBuffer commandBuffer,
+                                                                       const VkSubpassBeginInfo* pSubpassBeginInfo, const VkSubpassEndInfo*)
+    {
+        vkCmdNextSubpass(commandBuffer, pSubpassBeginInfo->contents);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass2(VkCommandBuffer commandBuffer, const VkSubpassEndInfo*)
+    {
+        vkCmdEndRenderPass(commandBuffer);
     }
 
     // Dynamic rendering (VK_KHR_dynamic_rendering / core 1.3): DXVK 2.x records draws inside this instead of
@@ -6397,6 +6753,14 @@ extern "C"
             {.name = "vkCreateImageView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImageView)},
             {.name = "vkDestroyImageView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImageView)},
             {.name = "vkCreateRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass)},
+            {.name = "vkCreateRenderPass2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass2)},
+            {.name = "vkCreateRenderPass2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass2)},
+            {.name = "vkCmdBeginRenderPass2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass2)},
+            {.name = "vkCmdBeginRenderPass2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass2)},
+            {.name = "vkCmdNextSubpass2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdNextSubpass2)},
+            {.name = "vkCmdNextSubpass2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdNextSubpass2)},
+            {.name = "vkCmdEndRenderPass2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass2)},
+            {.name = "vkCmdEndRenderPass2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass2)},
             {.name = "vkDestroyRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyRenderPass)},
             {.name = "vkCreateFramebuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateFramebuffer)},
             {.name = "vkDestroyFramebuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyFramebuffer)},

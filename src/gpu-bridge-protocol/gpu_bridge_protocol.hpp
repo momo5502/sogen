@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 38;
+    inline constexpr uint32_t protocol_version = 39;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1737,27 +1737,113 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
+    struct render_pass_attachment
+    {
+        uint32_t flags;
+        uint32_t format;
+        uint32_t samples;
+        uint32_t load_op;
+        uint32_t store_op;
+        uint32_t stencil_load_op;
+        uint32_t stencil_store_op;
+        uint32_t initial_layout;
+        uint32_t final_layout;
+        uint32_t has_stencil_layouts;
+        uint32_t stencil_initial_layout;
+        uint32_t stencil_final_layout;
+    };
+
+    struct render_pass_reference
+    {
+        uint32_t attachment;
+        uint32_t layout;
+        uint32_t aspect_mask;
+        uint32_t stencil_layout; // VK_IMAGE_LAYOUT_UNDEFINED => no separate stencil layout
+    };
+
+    // A subpass takes its references from the request's reference array in this order: inputs, colors, color
+    // resolves (color_count of them when has_color_resolve), the depth-stencil attachment, its resolve.
+    struct render_pass_subpass
+    {
+        uint32_t flags;
+        uint32_t bind_point;
+        uint32_t view_mask;
+        uint32_t input_count;
+        uint32_t color_count;
+        uint32_t has_color_resolve;
+        uint32_t has_depth_stencil;
+        uint32_t has_depth_stencil_resolve;
+        uint32_t depth_resolve_mode;
+        uint32_t stencil_resolve_mode;
+        uint32_t preserve_count;
+        uint32_t reserved;
+    };
+
+    struct render_pass_dependency
+    {
+        uint32_t src_subpass;
+        uint32_t dst_subpass;
+        uint32_t src_stage_mask;
+        uint32_t dst_stage_mask;
+        uint32_t src_access_mask;
+        uint32_t dst_access_mask;
+        uint32_t flags;
+        int32_t view_offset;
+        uint32_t has_memory_barrier2; // the dependency chains a VkMemoryBarrier2, whose masks replace the ones above
+        uint32_t reserved;
+        uint64_t src_stage_mask2;
+        uint64_t dst_stage_mask2;
+        uint64_t src_access_mask2;
+        uint64_t dst_access_mask2;
+    };
+
     // out = object_response
     struct create_render_pass_request
     {
         object_id device;
-        uint32_t format;         // VkFormat of the color attachment
-        uint32_t load_op;        // VkAttachmentLoadOp
-        uint32_t store_op;       // VkAttachmentStoreOp
-        uint32_t initial_layout; // VkImageLayout
-        uint32_t final_layout;   // VkImageLayout
-        uint32_t depth_format;   // VkFormat of the depth attachment, or 0 for no depth attachment
+        uint32_t flags;
+        uint32_t attachment_count;
+        uint32_t subpass_count;
+        uint32_t reference_count;
+        uint32_t dependency_count;
+        uint32_t preserve_count;
+        uint32_t correlated_view_mask_count;
         uint32_t reserved;
+        // render_pass_attachment attachments[attachment_count];
+        // render_pass_subpass subpasses[subpass_count];
+        // render_pass_reference references[reference_count];
+        // render_pass_dependency dependencies[dependency_count];
+        // uint32_t preserve_attachments[preserve_count]; // consumed by the subpasses in order
+        // uint32_t correlated_view_masks[correlated_view_mask_count];
     };
 
+    struct framebuffer_attachment_image
+    {
+        uint32_t flags;
+        uint32_t usage;
+        uint32_t width;
+        uint32_t height;
+        uint32_t layer_count;
+        uint32_t view_format_count;
+    };
+
+    inline constexpr uint32_t framebuffer_create_imageless_bit = 0x1; // VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT
+
+    // Imageless framebuffers describe their attachments instead of naming views.
+    // out = object_response
     struct create_framebuffer_request
     {
         object_id device;
         object_id render_pass;
-        object_id image_view; // color attachment
-        object_id depth_view; // depth attachment, or null_object for none
+        uint32_t flags;
+        uint32_t attachment_count;
         uint32_t width;
         uint32_t height;
+        uint32_t layers;
+        uint32_t reserved;
+        // object_id views[attachment_count]; or, when imageless:
+        // framebuffer_attachment_image images[attachment_count];
+        // uint32_t view_formats[]; // each image's view_format_count formats, in image order
     };
 
     // variable-length list of descriptor-set-layout ids: this header is immediately followed by
@@ -1892,6 +1978,8 @@ namespace sogen::gpu_bridge
         // entries are valid; the rest are zero. When blend_attachment_count == 0 the host disables blending.
         uint32_t blend_attachment_count;
         uint32_t divisor_count; // number of vertex_input_divisor entries trailing the attributes
+        uint32_t subpass;
+        uint32_t reserved_subpass;
         std::array<pipeline_blend_attachment, max_color_attachments> blend_attachments{};
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
@@ -1926,14 +2014,16 @@ namespace sogen::gpu_bridge
         object_id command_buffer;
         object_id render_pass;
         object_id framebuffer;
+        int32_t x;
+        int32_t y;
         uint32_t width;
         uint32_t height;
-        float clear_r;
-        float clear_g;
-        float clear_b;
-        float clear_a;
-        float clear_depth;
+        uint32_t contents;
+        uint32_t clear_value_count;
+        uint32_t attachment_count; // views of an imageless framebuffer
         uint32_t reserved;
+        // VkClearValue clear_values[clear_value_count]; (16 bytes each)
+        // object_id attachments[attachment_count];
     };
 
     struct cmd_bind_pipeline_request
@@ -2472,7 +2562,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_pipeline_cache_data_response) == 16, "wire layout drift");
     static_assert(sizeof(merge_pipeline_caches_request) == 24, "wire layout drift");
     static_assert(sizeof(create_compute_pipeline_request) == 80, "wire layout drift");
-    static_assert(sizeof(create_graphics_pipeline_request) == 512, "wire layout drift");
+    static_assert(sizeof(create_graphics_pipeline_request) == 520, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");
@@ -2498,6 +2588,14 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_draw_indirect_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_draw_indirect_count_request) == 48, "wire layout drift");
     static_assert(sizeof(cmd_next_subpass_request) == 16, "wire layout drift");
+    static_assert(sizeof(render_pass_attachment) == 48, "wire layout drift");
+    static_assert(sizeof(render_pass_reference) == 16, "wire layout drift");
+    static_assert(sizeof(render_pass_subpass) == 48, "wire layout drift");
+    static_assert(sizeof(render_pass_dependency) == 72, "wire layout drift");
+    static_assert(sizeof(create_render_pass_request) == 40, "wire layout drift");
+    static_assert(sizeof(framebuffer_attachment_image) == 24, "wire layout drift");
+    static_assert(sizeof(create_framebuffer_request) == 40, "wire layout drift");
+    static_assert(sizeof(cmd_begin_render_pass_request) == 56, "wire layout drift");
     static_assert(sizeof(free_descriptor_sets_request) == 24, "wire layout drift");
     static_assert(sizeof(reset_query_pool_request) == 24, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
