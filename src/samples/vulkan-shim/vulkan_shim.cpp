@@ -5393,7 +5393,7 @@ extern "C"
                                                                                        VkDescriptorUpdateTemplate descriptorUpdateTemplate,
                                                                                        const VkAllocationCallbacks*)
     {
-        forget_private_data(VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, reinterpret_cast<uint64_t>(descriptorUpdateTemplate));
+        forget_private_data(VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, to_object_id(descriptorUpdateTemplate));
         delete reinterpret_cast<shim_descriptor_update_template*>(descriptorUpdateTemplate);
     }
 
