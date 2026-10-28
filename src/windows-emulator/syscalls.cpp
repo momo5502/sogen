@@ -789,6 +789,7 @@ namespace sogen
         uint64_t handle_NtUserSetClipboardData();
         uint64_t handle_NtUserGetProcessDpiAwarenessContext();
         BOOL handle_NtUserSetProcessDpiAwarenessContext();
+        uint32_t handle_NtUserSendInput(const syscall_context& c, uint32_t input_count, emulator_pointer inputs, int32_t input_size);
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& c, uint32_t code, uint32_t map_type, uint32_t keyboard_id,
                                               uint64_t keyboard_layout);
         int32_t handle_NtUserToUnicodeEx(const syscall_context& c, uint32_t virtual_key, uint32_t scan_code, emulator_pointer key_state,
@@ -1886,6 +1887,7 @@ namespace sogen
         add_handler(NtUserRedrawFrame);
         add_handler(NtUserGetCursorInfo);
         add_handler(NtUserMapVirtualKeyEx);
+        add_handler(NtUserSendInput);
         add_handler(NtUserToUnicodeEx);
         add_handler(NtUserSetProcessDpiAwarenessContext);
         add_handler(NtUserGetRawInputDeviceList);
