@@ -2227,9 +2227,7 @@ namespace sogen
             resolved.lParam &= ~(context_bit | previous_state_bit);
             resolved.lParam |= (alt && system_key) ? context_bit : 0;
             resolved.lParam |=
-                (up || (virtual_key != VK_PACKET && down(side_virtual_key(static_cast<uint32_t>(event.wParam & 0xFF), event.lParam))))
-                    ? previous_state_bit
-                    : 0;
+                (up || (virtual_key != VK_PACKET && down(side_virtual_key(virtual_key, event.lParam)))) ? previous_state_bit : 0;
             return resolved;
         }
 
