@@ -283,7 +283,8 @@ namespace sogen
             {
                 if (virtual_key == generic)
                 {
-                    return (generic == VK_SHIFT ? right_shift : extended) ? right : left;
+                    const bool is_right = generic == VK_SHIFT ? right_shift : extended;
+                    return is_right ? right : left;
                 }
             }
             return virtual_key;
@@ -2236,7 +2237,14 @@ namespace sogen
             const bool up = event.message == WM_KEYUP || event.message == WM_SYSKEYUP;
             const bool alt = virtual_key == VK_MENU || down(VK_MENU);
             const bool system_key = (alt || virtual_key == VK_F10) && !down(VK_CONTROL);
-            resolved.message = up ? (system_key ? WM_SYSKEYUP : WM_KEYUP) : (system_key ? WM_SYSKEYDOWN : WM_KEYDOWN);
+            if (system_key)
+            {
+                resolved.message = up ? WM_SYSKEYUP : WM_SYSKEYDOWN;
+            }
+            else
+            {
+                resolved.message = up ? WM_KEYUP : WM_KEYDOWN;
+            }
 
             constexpr uint64_t context_bit = 1ull << 29;
             constexpr uint64_t previous_state_bit = 1ull << 30;

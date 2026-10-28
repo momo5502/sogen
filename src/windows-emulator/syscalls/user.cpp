@@ -7470,12 +7470,18 @@ namespace sogen
             // wheel events stay at wherever the cursor is when they are delivered.
             const auto send = [&](const uint32_t message, const uint64_t w_param, const std::optional<std::pair<int32_t, int32_t>> motion,
                                   const std::optional<std::pair<int32_t, int32_t>> target) {
+                auto relative_motion = motion;
+                if (!motion && !target)
+                {
+                    relative_motion = std::pair{0, 0};
+                }
+
                 c.win_emu.handle_ui_event_locked(ui_event{
                     .window = window,
                     .message = message,
                     .wParam = w_param,
                     .lParam = 0,
-                    .relative_motion = motion ? motion : (target ? std::nullopt : std::optional{std::pair{0, 0}}),
+                    .relative_motion = relative_motion,
                     .cursor_target = target,
                     .injected = true,
                     .extra_info = input.extra_info,
