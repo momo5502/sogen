@@ -7711,19 +7711,18 @@ namespace sogen
             const uint32_t message = up ? (system_key ? WM_SYSKEYUP : WM_KEYUP) : (system_key ? WM_SYSKEYDOWN : WM_KEYDOWN);
             c.win_emu.handle_ui_event_locked(ui_event{.window = window, .message = message, .wParam = virtual_key, .lParam = l_param});
 
-            const auto set_key = [&](const uint32_t key) { keys[key] = up ? 0 : 0x80; };
-            set_key(virtual_key);
-            if (virtual_key == VK_LSHIFT || virtual_key == VK_RSHIFT)
+            const uint8_t toggle = keys[virtual_key] & 0x01;
+            const bool toggles = virtual_key == VK_CAPITAL || virtual_key == VK_NUMLOCK || virtual_key == VK_SCROLL;
+            keys[virtual_key] = static_cast<uint8_t>((up ? 0 : 0x80) | ((toggles && !up) ? (toggle ^ 0x01) : toggle));
+
+            for (const auto [generic, left, right] :
+                 {std::tuple{VK_SHIFT, VK_LSHIFT, VK_RSHIFT}, std::tuple{VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
+                  std::tuple{VK_MENU, VK_LMENU, VK_RMENU}})
             {
-                set_key(VK_SHIFT);
-            }
-            else if (virtual_key == VK_LCONTROL || virtual_key == VK_RCONTROL)
-            {
-                set_key(VK_CONTROL);
-            }
-            else if (virtual_key == VK_LMENU || virtual_key == VK_RMENU)
-            {
-                set_key(VK_MENU);
+                if (virtual_key == static_cast<uint32_t>(left) || virtual_key == static_cast<uint32_t>(right))
+                {
+                    keys[generic] = (keys[left] | keys[right]) & 0x80;
+                }
             }
 
             if (up || system_key)
