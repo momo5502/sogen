@@ -366,20 +366,25 @@ namespace sogen
                                                const emulator_object<uint32_t> bytes_to_protect, const uint32_t protection,
                                                const emulator_object<uint32_t> old_protection)
         {
+            const auto requested_protection = try_map_nt_to_emulator_protection(protection);
+            if (!requested_protection.has_value())
+            {
+                return STATUS_INVALID_PAGE_PROTECTION;
+            }
+
             const auto orig_start = base_address.read();
             const auto orig_length = bytes_to_protect.read();
+
+            if (orig_length == 0 || orig_start > MAX_ALLOCATION_ADDRESS || orig_length > MAX_ALLOCATION_END_EXCL - orig_start)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
 
             const auto aligned_start = page_align_down(orig_start);
             const auto aligned_length = page_align_up(orig_start + orig_length) - aligned_start;
 
             base_address.write(aligned_start);
             bytes_to_protect.write(static_cast<uint32_t>(aligned_length));
-
-            const auto requested_protection = try_map_nt_to_emulator_protection(protection);
-            if (!requested_protection.has_value())
-            {
-                return STATUS_INVALID_PAGE_PROTECTION;
-            }
 
             if (!c.proc.is_current_process_handle(process_handle))
             {
@@ -408,8 +413,11 @@ namespace sogen
 
             try
             {
-                c.win_emu.memory.protect_memory(aligned_start, static_cast<size_t>(aligned_length), *requested_protection,
-                                                &old_protection_value);
+                if (!c.win_emu.memory.protect_memory(aligned_start, static_cast<size_t>(aligned_length), *requested_protection,
+                                                     &old_protection_value))
+                {
+                    return STATUS_CONFLICTING_ADDRESSES;
+                }
             }
             catch (...)
             {
