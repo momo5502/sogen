@@ -287,6 +287,15 @@ namespace
         return store;
     }
 
+    // Objects the shim allocates itself are identified by their address, which a later object may reuse.
+    void forget_private_data(const VkObjectType type, const uint64_t handle)
+    {
+        auto& store = private_data();
+        const std::lock_guard lock(store.mutex);
+        std::erase_if(store.values,
+                      [&](const auto& entry) { return std::get<0>(entry.first) == type && std::get<1>(entry.first) == handle; });
+    }
+
     // Pending coalesced vkUpdateDescriptorSets blobs (the hottest bridge call - DXVK updates per draw).
     // Unlike the per-command-buffer streams (each synchronised to one thread by Vulkan), this global is
     // touched by every DXVK thread, and the preemptive time-slice can interrupt a thread mid-append, so the
@@ -5384,6 +5393,7 @@ extern "C"
                                                                                        VkDescriptorUpdateTemplate descriptorUpdateTemplate,
                                                                                        const VkAllocationCallbacks*)
     {
+        forget_private_data(VK_OBJECT_TYPE_DESCRIPTOR_UPDATE_TEMPLATE, reinterpret_cast<uint64_t>(descriptorUpdateTemplate));
         delete reinterpret_cast<shim_descriptor_update_template*>(descriptorUpdateTemplate);
     }
 

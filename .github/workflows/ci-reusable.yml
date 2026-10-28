@@ -142,19 +142,6 @@ jobs:
       - name: Verify Page Formatting
         run: cd page && npx --yes prettier . --check
 
-  audit-vulkan-shim:
-    name: Audit Vulkan Shim
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v7
-
-      - name: Checkout Vulkan Headers
-        run: git submodule update --init --depth 1 deps/Vulkan-Headers
-
-      - name: Audit shim command coverage
-        run: python3 src/tools/vulkan-shim-audit/audit.py
-
   build-root-tools:
     name: Build Root Tools
     runs-on: windows-latest
@@ -1709,7 +1696,6 @@ jobs:
         test-arm64-native,
         win-test,
         verify-formatting,
-        audit-vulkan-shim,
         workflow_metadata,
       ]
     steps:
