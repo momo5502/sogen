@@ -2896,6 +2896,30 @@ namespace sogen
             }
         }
 
+        // Guests that take the first device (Mesa's Zink, vkd3d-proton without a matching DXGI adapter) would otherwise
+        // land on a hybrid machine's integrated GPU, as on Windows without a high-performance GPU preference.
+        if (it->second.get_physical_device_properties)
+        {
+            const auto rank = [&](const VkPhysicalDevice device) {
+                VkPhysicalDeviceProperties properties{};
+                it->second.get_physical_device_properties(device, &properties);
+                switch (properties.deviceType)
+                {
+                case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+                    return 0;
+                case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+                    return 1;
+                case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+                    return 2;
+                case VK_PHYSICAL_DEVICE_TYPE_CPU:
+                    return 4;
+                default:
+                    return 3;
+                }
+            };
+            std::ranges::stable_sort(devices, std::less{}, rank);
+        }
+
         out_count = count;
 
         for (uint32_t i = 0; i < count && i < out_devices.size(); ++i)
