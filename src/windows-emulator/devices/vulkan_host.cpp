@@ -8046,7 +8046,8 @@ namespace sogen
 
         VkDescriptorSetLayoutCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        info.pNext = vk_binding_flags.empty() ? nullptr : &binding_flags;
+        info.pNext =
+            std::ranges::any_of(vk_binding_flags, [](const VkDescriptorBindingFlags f) { return f != 0; }) ? &binding_flags : nullptr;
         info.flags = flags;
         info.bindingCount = static_cast<uint32_t>(vk_bindings.size());
         info.pBindings = vk_bindings.empty() ? nullptr : vk_bindings.data();
@@ -8102,7 +8103,8 @@ namespace sogen
 
         VkDescriptorSetLayoutCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        info.pNext = vk_binding_flags.empty() ? nullptr : &binding_flags;
+        info.pNext =
+            std::ranges::any_of(vk_binding_flags, [](const VkDescriptorBindingFlags f) { return f != 0; }) ? &binding_flags : nullptr;
         info.flags = flags;
         info.bindingCount = static_cast<uint32_t>(vk_bindings.size());
         info.pBindings = vk_bindings.empty() ? nullptr : vk_bindings.data();
