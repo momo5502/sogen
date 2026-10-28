@@ -6245,19 +6245,21 @@ namespace sogen
             std::vector<VkSubpassDescription> subpasses{};
             std::vector<uint32_t> view_masks{};
             std::vector<VkInputAttachmentAspectReference> input_aspects{};
-            const auto* next_reference = references.data();
-            const auto* next_preserve = description.preserves.data();
-            const auto take = [](auto*& cursor, const size_t count) {
-                const auto* taken = count ? cursor : nullptr;
-                cursor += count;
+            size_t next_reference = 0;
+            size_t next_preserve = 0;
+            const auto take = [](const auto& items, size_t& offset, const size_t count) {
+                const auto* taken = count ? items.data() + offset : nullptr;
+                offset += count;
                 return taken;
             };
             for (const auto& sp : description.subpasses)
             {
-                const auto first_input = static_cast<size_t>(next_reference - references.data());
                 for (uint32_t i = 0; i < sp.input_count; ++i)
                 {
-                    if (const auto aspect = description.references[first_input + i].aspect_mask; aspect != 0)
+                    const auto& reference = description.references[next_reference + i];
+                    const auto aspect = reference.aspect_mask;
+                    if (reference.attachment != VK_ATTACHMENT_UNUSED && aspect != 0 &&
+                        aspect != get_vulkan_format_aspects(description.attachments[reference.attachment].format))
                     {
                         input_aspects.push_back(VkInputAttachmentAspectReference{
                             .subpass = static_cast<uint32_t>(subpasses.size()), .inputAttachmentIndex = i, .aspectMask = aspect});
@@ -6268,13 +6270,13 @@ namespace sogen
                 out.flags = sp.flags;
                 out.pipelineBindPoint = static_cast<VkPipelineBindPoint>(sp.bind_point);
                 out.inputAttachmentCount = sp.input_count;
-                out.pInputAttachments = take(next_reference, sp.input_count);
+                out.pInputAttachments = take(references, next_reference, sp.input_count);
                 out.colorAttachmentCount = sp.color_count;
-                out.pColorAttachments = take(next_reference, sp.color_count);
-                out.pResolveAttachments = sp.has_color_resolve ? take(next_reference, sp.color_count) : nullptr;
-                out.pDepthStencilAttachment = sp.has_depth_stencil ? take(next_reference, 1) : nullptr;
+                out.pColorAttachments = take(references, next_reference, sp.color_count);
+                out.pResolveAttachments = sp.has_color_resolve ? take(references, next_reference, sp.color_count) : nullptr;
+                out.pDepthStencilAttachment = sp.has_depth_stencil ? take(references, next_reference, 1) : nullptr;
                 out.preserveAttachmentCount = sp.preserve_count;
-                out.pPreserveAttachments = take(next_preserve, sp.preserve_count);
+                out.pPreserveAttachments = take(description.preserves, next_preserve, sp.preserve_count);
                 subpasses.push_back(out);
                 view_masks.push_back(sp.view_mask);
             }
@@ -8047,11 +8049,11 @@ namespace sogen
 
         std::vector<VkSubpassDescription2> subpasses(subpass_count);
         std::vector<VkSubpassDescriptionDepthStencilResolve> resolves(subpass_count);
-        const auto* next_reference = references.data();
-        const auto* next_preserve = description.preserves.data();
-        const auto take = [](auto*& cursor, const size_t count) {
-            const auto* taken = count ? cursor : nullptr;
-            cursor += count;
+        size_t next_reference = 0;
+        size_t next_preserve = 0;
+        const auto take = [](const auto& items, size_t& offset, const size_t count) {
+            const auto* taken = count ? items.data() + offset : nullptr;
+            offset += count;
             return taken;
         };
         for (uint32_t i = 0; i < subpass_count; ++i)
@@ -8063,21 +8065,21 @@ namespace sogen
             out.pipelineBindPoint = static_cast<VkPipelineBindPoint>(sp.bind_point);
             out.viewMask = sp.view_mask;
             out.inputAttachmentCount = sp.input_count;
-            out.pInputAttachments = take(next_reference, sp.input_count);
+            out.pInputAttachments = take(references, next_reference, sp.input_count);
             out.colorAttachmentCount = sp.color_count;
-            out.pColorAttachments = take(next_reference, sp.color_count);
-            out.pResolveAttachments = sp.has_color_resolve ? take(next_reference, sp.color_count) : nullptr;
-            out.pDepthStencilAttachment = sp.has_depth_stencil ? take(next_reference, 1) : nullptr;
+            out.pColorAttachments = take(references, next_reference, sp.color_count);
+            out.pResolveAttachments = sp.has_color_resolve ? take(references, next_reference, sp.color_count) : nullptr;
+            out.pDepthStencilAttachment = sp.has_depth_stencil ? take(references, next_reference, 1) : nullptr;
             if (sp.has_depth_stencil_resolve)
             {
                 resolves[i].sType = VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE;
                 resolves[i].depthResolveMode = static_cast<VkResolveModeFlagBits>(sp.depth_resolve_mode);
                 resolves[i].stencilResolveMode = static_cast<VkResolveModeFlagBits>(sp.stencil_resolve_mode);
-                resolves[i].pDepthStencilResolveAttachment = take(next_reference, 1);
+                resolves[i].pDepthStencilResolveAttachment = take(references, next_reference, 1);
                 out.pNext = &resolves[i];
             }
             out.preserveAttachmentCount = sp.preserve_count;
-            out.pPreserveAttachments = take(next_preserve, sp.preserve_count);
+            out.pPreserveAttachments = take(description.preserves, next_preserve, sp.preserve_count);
         }
 
         std::vector<VkSubpassDependency2> dependencies(description.dependencies.size());
