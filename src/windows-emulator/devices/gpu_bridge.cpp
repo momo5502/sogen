@@ -3217,8 +3217,6 @@ namespace sogen
             static constexpr size_t max_memory_transfer_bytes = size_t{256} * 1024 * 1024;
 #endif
 
-            // Applies one update_descriptor_sets_request blob and advances `offset` past it. Shared by the
-            // single and coalesced-batch IOCTLs.
             // The caller has checked that write_count records and inline_uniform_data_size bytes are readable.
             static bool decode_descriptor_writes(const std::byte* records, const uint32_t write_count, const std::byte* inline_uniform_data,
                                                  const uint32_t inline_uniform_data_size,
@@ -3251,6 +3249,8 @@ namespace sogen
                 return true;
             }
 
+            // Applies one update_descriptor_sets_request blob and advances `offset` past it. Shared by the
+            // single and coalesced-batch IOCTLs.
             int32_t apply_update_descriptor_sets(const std::byte* data, size_t size, size_t& offset)
             {
                 constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
