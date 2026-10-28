@@ -166,7 +166,7 @@ namespace sogen
             {
                 BOOLEAN hide = true;
 
-                if (thread_information != 0 && thread_information % 4 != 0)
+                if (thread_information_length != 0 && thread_information != 0 && thread_information % 4 != 0)
                 {
                     return STATUS_DATATYPE_MISALIGNMENT;
                 }
@@ -209,7 +209,7 @@ namespace sogen
             {
                 if (thread_information_length != sizeof(handle))
                 {
-                    return STATUS_BUFFER_OVERFLOW;
+                    return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
                 const emulator_object<handle> info{c.emu, thread_information};
@@ -312,9 +312,8 @@ namespace sogen
                 return static_cast<NTSTATUS>(previous);
             }
 
-            c.win_emu.log.error("Unsupported thread set info class: %X\n", info_class);
-            c.emu.stop();
-            return STATUS_NOT_SUPPORTED;
+            c.win_emu.log.print(color::gray, "Unsupported thread set info class: %X\n", info_class);
+            return STATUS_INVALID_INFO_CLASS;
         }
 
         NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, const handle thread_handle, const uint32_t info_class,
@@ -624,10 +623,39 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            c.win_emu.log.error("Unsupported thread query info class: 0x%X\n", info_class);
-            c.emu.stop();
+            if (info_class == ThreadNameInformation)
+            {
+                const auto name_bytes = static_cast<uint32_t>(thread->name.size() * sizeof(char16_t));
+                const auto total_size = static_cast<uint32_t>(sizeof(THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>)) + name_bytes;
 
-            return STATUS_NOT_SUPPORTED;
+                if (return_length)
+                {
+                    return_length.write(total_size);
+                }
+
+                if (thread_information_length < total_size)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto name_buffer = thread_information + sizeof(THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>);
+                if (name_bytes != 0)
+                {
+                    c.emu.write_memory(name_buffer, thread->name.data(), name_bytes);
+                }
+
+                const emulator_object<THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>> info{c.emu, thread_information};
+                info.access([&](THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>& value) {
+                    value.ThreadName.Length = static_cast<uint16_t>(name_bytes);
+                    value.ThreadName.MaximumLength = static_cast<uint16_t>(name_bytes);
+                    value.ThreadName.Buffer = name_buffer;
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            c.win_emu.log.print(color::gray, "Unsupported thread query info class: 0x%X\n", info_class);
+            return STATUS_INVALID_INFO_CLASS;
         }
 
         NTSTATUS handle_NtOpenThread(const syscall_context& c, const emulator_object<handle> thread_handle, ACCESS_MASK /*desired_access*/,
