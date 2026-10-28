@@ -3856,6 +3856,7 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceQueue2(VkDevice device, const VkDeviceQueueInfo2* pQueueInfo,
                                                                        VkQueue* pQueue)
     {
+        // The only queue creation flag asks for a protected queue, and protectedMemory is reported as unsupported.
         if (pQueueInfo->flags != 0)
         {
             *pQueue = VK_NULL_HANDLE;
