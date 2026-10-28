@@ -7612,7 +7612,6 @@ namespace sogen
             return -1;
         }
 
-        // Only configures the visual feedback for touch and pen input.
         BOOL handle_NtUserSetWindowFeedbackSetting()
         {
             return TRUE;
