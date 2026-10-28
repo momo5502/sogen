@@ -6204,6 +6204,109 @@ namespace sogen
         {
             return static_cast<VkImageLayout>(layout);
         }
+
+        // Hosts below Vulkan 1.2 may lack vkCreateRenderPass2. Version 1 render passes cannot express separate stencil
+        // layouts, depth-stencil resolves or synchronization2 dependencies, so those are refused there.
+        VkResult create_legacy_render_pass(const PFN_vkCreateRenderPass create, const VkDevice device,
+                                           const vulkan_host::render_pass_description& description, VkRenderPass& render_pass)
+        {
+            const bool representable =
+                std::ranges::none_of(description.attachments, [](const auto& a) { return a.has_stencil_layouts != 0; }) &&
+                std::ranges::none_of(description.references, [](const auto& r) { return r.stencil_layout != VK_IMAGE_LAYOUT_UNDEFINED; }) &&
+                std::ranges::none_of(description.subpasses, [](const auto& sp) { return sp.has_depth_stencil_resolve != 0; }) &&
+                std::ranges::none_of(description.dependencies, [](const auto& d) { return d.has_memory_barrier2 != 0; });
+            if (!representable)
+            {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+
+            std::vector<VkAttachmentDescription> attachments{};
+            for (const auto& a : description.attachments)
+            {
+                attachments.push_back(VkAttachmentDescription{
+                    .flags = a.flags,
+                    .format = static_cast<VkFormat>(a.format),
+                    .samples = static_cast<VkSampleCountFlagBits>(a.samples),
+                    .loadOp = static_cast<VkAttachmentLoadOp>(a.load_op),
+                    .storeOp = static_cast<VkAttachmentStoreOp>(a.store_op),
+                    .stencilLoadOp = static_cast<VkAttachmentLoadOp>(a.stencil_load_op),
+                    .stencilStoreOp = static_cast<VkAttachmentStoreOp>(a.stencil_store_op),
+                    .initialLayout = translate_layout(a.initial_layout),
+                    .finalLayout = translate_layout(a.final_layout),
+                });
+            }
+
+            std::vector<VkAttachmentReference> references{};
+            for (const auto& r : description.references)
+            {
+                references.push_back(VkAttachmentReference{.attachment = r.attachment, .layout = translate_layout(r.layout)});
+            }
+
+            std::vector<VkSubpassDescription> subpasses{};
+            std::vector<uint32_t> view_masks{};
+            const auto* next_reference = references.data();
+            const auto* next_preserve = description.preserves.data();
+            const auto take = [](auto*& cursor, const size_t count) {
+                const auto* taken = count ? cursor : nullptr;
+                cursor += count;
+                return taken;
+            };
+            for (const auto& sp : description.subpasses)
+            {
+                VkSubpassDescription out{};
+                out.flags = sp.flags;
+                out.pipelineBindPoint = static_cast<VkPipelineBindPoint>(sp.bind_point);
+                out.inputAttachmentCount = sp.input_count;
+                out.pInputAttachments = take(next_reference, sp.input_count);
+                out.colorAttachmentCount = sp.color_count;
+                out.pColorAttachments = take(next_reference, sp.color_count);
+                out.pResolveAttachments = sp.has_color_resolve ? take(next_reference, sp.color_count) : nullptr;
+                out.pDepthStencilAttachment = sp.has_depth_stencil ? take(next_reference, 1) : nullptr;
+                out.preserveAttachmentCount = sp.preserve_count;
+                out.pPreserveAttachments = take(next_preserve, sp.preserve_count);
+                subpasses.push_back(out);
+                view_masks.push_back(sp.view_mask);
+            }
+
+            std::vector<VkSubpassDependency> dependencies{};
+            std::vector<int32_t> view_offsets{};
+            for (const auto& d : description.dependencies)
+            {
+                dependencies.push_back(VkSubpassDependency{
+                    .srcSubpass = d.src_subpass,
+                    .dstSubpass = d.dst_subpass,
+                    .srcStageMask = d.src_stage_mask,
+                    .dstStageMask = d.dst_stage_mask,
+                    .srcAccessMask = d.src_access_mask,
+                    .dstAccessMask = d.dst_access_mask,
+                    .dependencyFlags = d.flags,
+                });
+                view_offsets.push_back(d.view_offset);
+            }
+
+            VkRenderPassMultiviewCreateInfo multiview{};
+            multiview.sType = VK_STRUCTURE_TYPE_RENDER_PASS_MULTIVIEW_CREATE_INFO;
+            multiview.subpassCount = static_cast<uint32_t>(view_masks.size());
+            multiview.pViewMasks = view_masks.data();
+            multiview.dependencyCount = static_cast<uint32_t>(view_offsets.size());
+            multiview.pViewOffsets = view_offsets.data();
+            multiview.correlationMaskCount = static_cast<uint32_t>(description.correlated_view_masks.size());
+            multiview.pCorrelationMasks = description.correlated_view_masks.data();
+            const bool uses_multiview = std::ranges::any_of(view_masks, [](const uint32_t mask) { return mask != 0; });
+
+            VkRenderPassCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+            info.pNext = uses_multiview ? &multiview : nullptr;
+            info.flags = description.flags;
+            info.attachmentCount = static_cast<uint32_t>(attachments.size());
+            info.pAttachments = attachments.data();
+            info.subpassCount = static_cast<uint32_t>(subpasses.size());
+            info.pSubpasses = subpasses.data();
+            info.dependencyCount = static_cast<uint32_t>(dependencies.size());
+            info.pDependencies = dependencies.data();
+
+            return create(device, &info, nullptr, &render_pass);
+        }
     }
 
     int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
@@ -7837,7 +7940,7 @@ namespace sogen
     {
         out_render_pass = 0;
         const auto dev = this->impl_->devices.find(device);
-        if (dev == this->impl_->devices.end() || !dev->second.create_render_pass2)
+        if (dev == this->impl_->devices.end() || (!dev->second.create_render_pass2 && !dev->second.create_render_pass))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -7866,6 +7969,21 @@ namespace sogen
             }))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto register_render_pass = [&](const VkRenderPass render_pass) {
+            const uint64_t id = this->impl_->allocate_id();
+            this->impl_->render_passes.emplace(
+                id, impl::render_pass_data{.handle = render_pass, .device_id = device, .create = {.description = description}});
+            out_render_pass = id;
+            return VK_SUCCESS;
+        };
+
+        if (!dev->second.create_render_pass2)
+        {
+            VkRenderPass render_pass{};
+            const VkResult result = create_legacy_render_pass(dev->second.create_render_pass, dev->second.handle, description, render_pass);
+            return result == VK_SUCCESS ? register_render_pass(render_pass) : result;
         }
 
         std::vector<VkAttachmentDescription2> attachments(attachment_count);
@@ -7985,16 +8103,7 @@ namespace sogen
 
         VkRenderPass render_pass{};
         const VkResult result = dev->second.create_render_pass2(dev->second.handle, &info, nullptr, &render_pass);
-        if (result != VK_SUCCESS)
-        {
-            return result;
-        }
-
-        const uint64_t id = this->impl_->allocate_id();
-        this->impl_->render_passes.emplace(
-            id, impl::render_pass_data{.handle = render_pass, .device_id = device, .create = {.description = description}});
-        out_render_pass = id;
-        return VK_SUCCESS;
+        return result == VK_SUCCESS ? register_render_pass(render_pass) : result;
     }
 
     void vulkan_host::destroy_render_pass(uint64_t device, uint64_t render_pass)
@@ -8847,14 +8956,17 @@ namespace sogen
         // dynamic. Otherwise resolve the render pass and bake a static viewport as before.
         const bool dynamic_rendering = (render_pass == 0);
         VkRenderPass rp_handle = VK_NULL_HANDLE;
+        uint32_t color_count = static_cast<uint32_t>(color_formats.size());
         if (!dynamic_rendering)
         {
             const auto rp = this->impl_->render_passes.find(render_pass);
-            if (rp == this->impl_->render_passes.end() || rp->second.device_id != device)
+            if (rp == this->impl_->render_passes.end() || rp->second.device_id != device ||
+                subpass >= rp->second.create.description.subpasses.size())
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             rp_handle = rp->second.handle;
+            color_count = rp->second.create.description.subpasses[subpass].color_count;
         }
 
         // Rebuild a VkSpecializationInfo per stage from the forwarded entries/data. The map-entry vectors and
@@ -9040,8 +9152,6 @@ namespace sogen
         // into a multisampled backbuffer, so a hardcoded 1x here would mismatch and drop every fragment.
         multisample.rasterizationSamples =
             rasterization_samples ? static_cast<VkSampleCountFlagBits>(rasterization_samples) : VK_SAMPLE_COUNT_1_BIT;
-        // One blend attachment per color target (a render-pass pipeline keeps the single-attachment default).
-        const uint32_t color_count = dynamic_rendering ? static_cast<uint32_t>(color_formats.size()) : 1;
         VkPipelineColorBlendAttachmentState blend_template{};
         blend_template.colorWriteMask =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
