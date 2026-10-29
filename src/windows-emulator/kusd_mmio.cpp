@@ -258,7 +258,7 @@ namespace sogen
         }
 
         this->registered_ = true;
-        this->memory_->register_fixed_range(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
+        this->memory_->register_fixed_guest_range(KUSD_ADDRESS, KUSD_BUFFER_SIZE);
 
         if (this->intercept_)
         {

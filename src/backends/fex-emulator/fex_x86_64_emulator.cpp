@@ -2218,10 +2218,21 @@ namespace sogen::fex
             }
 
 #ifndef __APPLE__
-            // Accesses only trap while the host maps nothing there either. Darwin's __PAGEZERO already guarantees that.
+            // Claimed PROT_NONE so the host cannot place an accessible mapping here and accesses keep faulting into the MMIO
+            // handler. Darwin's __PAGEZERO already keeps the host out.
             if (!this->host_range_is_claimed(address, size))
             {
-                this->reserve_guest_address_range(address, size);
+                try
+                {
+                    this->reserve_guest_address_range(address, size);
+                }
+                catch (const std::runtime_error&)
+                {
+                    std::array<char, 128> message{};
+                    snprintf(message.data(), message.size(), "The host already maps memory at 0x%llx, where the guest needs MMIO",
+                             static_cast<unsigned long long>(address));
+                    throw std::runtime_error(message.data());
+                }
             }
 #endif
             this->mmio_regions_.emplace_back(mmio_region{.address = address, .size = size, .read_cb = std::move(read_cb)});

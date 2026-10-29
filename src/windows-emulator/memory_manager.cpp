@@ -1130,7 +1130,7 @@ namespace sogen
         }
     }
 
-    void memory_manager::register_fixed_range(const uint64_t address, const size_t size)
+    void memory_manager::register_fixed_guest_range(const uint64_t address, const size_t size)
     {
         this->memory_->register_fixed_guest_range(address, size);
     }
