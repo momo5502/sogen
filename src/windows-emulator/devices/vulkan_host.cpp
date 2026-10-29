@@ -13269,15 +13269,19 @@ namespace sogen
             uint64_t surface{};
             impl.forced_ids = {id};
             const auto native_surface = callbacks.create_native_surface(id, instance);
-            if (native_surface == 0 && impl.instances.contains(instance))
+            int32_t result = VK_ERROR_SURFACE_LOST_KHR;
+            if (native_surface != 0)
+            {
+                result = this->create_surface(instance, native_surface, surface);
+            }
+            else if (impl.instances.contains(instance))
             {
                 // The guest may keep a surface after destroying its window, as Mesa's WGL backend does. It stays a valid
                 // object that only reports VK_ERROR_SURFACE_LOST_KHR.
                 surface = impl.allocate_id();
                 impl.surfaces.emplace(surface, impl::surface_data{.handle = VK_NULL_HANDLE, .instance_id = instance});
+                result = VK_SUCCESS;
             }
-            const auto result = native_surface != 0 ? this->create_surface(instance, native_surface, surface)
-                                                    : (surface != 0 ? VK_SUCCESS : VK_ERROR_SURFACE_LOST_KHR);
             expect_restored(result, surface, id, "surface");
         }
 
