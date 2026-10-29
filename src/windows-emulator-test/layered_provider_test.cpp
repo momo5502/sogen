@@ -303,6 +303,48 @@ namespace sogen::test
         EXPECT_TRUE(restarted->stat(guest({u"dir", u"moved.txt"})));
     }
 
+    TEST_F(LayeredProviderTest, ARenameThatCannotHideTheOldNameKeepsTheDestination)
+    {
+        write_host_file(this->upper() / "dir" / "target.txt", "keep me");
+        std::filesystem::create_directories(this->state() / "journal");
+
+        const auto provider = this->make_provider();
+        EXPECT_NE(STATUS_SUCCESS, provider->rename(guest({u"file.txt"}), guest({u"dir", u"target.txt"})));
+
+        EXPECT_EQ("keep me", read_host_file(this->upper() / "dir" / "target.txt"));
+        EXPECT_TRUE(provider->stat(guest({u"file.txt"})));
+        EXPECT_EQ((std::set<std::u16string>{u"old.txt", u"keep.txt", u"target.txt"}), names_in(*provider, guest({u"dir"})));
+    }
+
+    TEST_F(LayeredProviderTest, RenamingOntoAnExistingFileReplacesIt)
+    {
+        write_host_file(this->upper() / "dir" / "target.txt", "replaced");
+
+        const auto provider = this->make_provider();
+        ASSERT_EQ(STATUS_SUCCESS, provider->rename(guest({u"file.txt"}), guest({u"dir", u"target.txt"})));
+
+        EXPECT_EQ("lower contents", read_host_file(this->upper() / "dir" / "target.txt"));
+        EXPECT_FALSE(provider->stat(guest({u"file.txt"})));
+        EXPECT_FALSE(std::filesystem::exists(this->state() / "tmp" / "replaced-1"));
+    }
+
+    TEST_F(LayeredProviderTest, ATornJournalThatCannotBeCutIsReported)
+    {
+        write_host_file(this->state() / "journal", "H\tfile.txt\nH\tdir");
+        std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::owner_read | std::filesystem::perms::group_read,
+                                     std::filesystem::perm_options::replace);
+
+        if (std::filesystem::status(this->state() / "journal").permissions() !=
+            (std::filesystem::perms::owner_read | std::filesystem::perms::group_read))
+        {
+            GTEST_SKIP() << "the host does not enforce read-only files";
+        }
+
+        EXPECT_THROW(this->make_provider(), std::runtime_error);
+
+        std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+    }
+
     TEST_F(LayeredProviderTest, RenamingAnUpperFileHidesItsLowerCounterpart)
     {
         const auto provider = this->make_provider();

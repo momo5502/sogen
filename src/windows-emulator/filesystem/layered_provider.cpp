@@ -82,6 +82,10 @@ namespace sogen
         {
             std::error_code ec{};
             std::filesystem::resize_file(this->file_, complete, ec);
+            if (ec)
+            {
+                throw std::runtime_error("Failed to recover the layer journal: " + this->file_.string());
+            }
         }
 
         std::istringstream records(content.substr(0, complete));
@@ -560,20 +564,43 @@ namespace sogen
             return this->upper_->rename(from, to);
         }
 
-        const auto destination_existed = this->stat(to).has_value();
-        if (!this->copy_to_upper(from, to))
+        // An upper file at the destination is set aside, so that it can come back if the rename cannot be completed.
+        const auto destination = this->upper_->get_host_path(to);
+        std::optional<std::filesystem::path> replaced{};
+        if (this->upper_->stat(to))
         {
-            return STATUS_ACCESS_DENIED;
+            replaced = this->temporary_directory_ / ("replaced-" + std::to_string(this->temporary_counter_++));
+
+            std::error_code ec{};
+            std::filesystem::rename(*destination, *replaced, ec);
+            if (ec)
+            {
+                return STATUS_ACCESS_DENIED;
+            }
         }
 
-        if (!this->journal_.hide(from))
-        {
-            if (!destination_existed)
+        const auto undo = [&] {
+            std::error_code ec{};
+            if (replaced)
+            {
+                std::filesystem::rename(*replaced, *destination, ec);
+            }
+            else
             {
                 (void)this->upper_->remove(to);
             }
+        };
 
+        if (!this->copy_to_upper(from, to) || !this->journal_.hide(from))
+        {
+            undo();
             return STATUS_ACCESS_DENIED;
+        }
+
+        if (replaced)
+        {
+            std::error_code ec{};
+            std::filesystem::remove(*replaced, ec);
         }
 
         return STATUS_SUCCESS;
