@@ -2229,7 +2229,7 @@ namespace sogen::fex
                 catch (const std::runtime_error&)
                 {
                     std::array<char, 128> message{};
-                    snprintf(message.data(), message.size(), "The host already maps memory at 0x%llx, where the guest needs MMIO",
+                    snprintf(message.data(), message.size(), "Failed to reserve guest MMIO at 0x%llx on the host",
                              static_cast<unsigned long long>(address));
                     throw std::runtime_error(message.data());
                 }
