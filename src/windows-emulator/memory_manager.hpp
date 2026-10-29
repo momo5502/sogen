@@ -162,7 +162,7 @@ namespace sogen
         uint64_t allocate_memory(size_t size, nt_memory_permission permissions, bool reserve_only, uint64_t start, memory_region_kind kind,
                                  uint64_t highest_address);
 
-        void register_fixed_guest_range(uint64_t address, size_t size);
+        void register_fixed_guest_range(uint64_t address, size_t size) override;
 
         uint64_t find_free_allocation_base(size_t size, uint64_t start = 0) const;
         uint64_t find_free_allocation_base(size_t size, uint64_t start, uint64_t alignment, uint64_t lowest_address,
