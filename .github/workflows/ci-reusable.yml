@@ -1395,20 +1395,10 @@ jobs:
       # Gradle installs a missing NDK itself, but only tries once and fails the build on a truncated download.
       - name: Install Android NDK
         run: |
-          ndk_version=$(sed -n 's/.*val ndkVersion: String = "\(.*\)".*/\1/p' \
-            "$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt")
-          if [ -z "$ndk_version" ]; then
-            echo "Could not determine the NDK version Flutter uses"
-            exit 1
-          fi
-          for attempt in 1 2 3 4 5; do
-            if "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk_version" < /dev/null > /dev/null &&
-               [ -f "$ANDROID_HOME/ndk/$ndk_version/source.properties" ]; then
-              exit 0
-            fi
-            echo "Installing NDK $ndk_version failed (attempt $attempt)"
-            rm -rf "$ANDROID_HOME/ndk/$ndk_version"
-            sleep $((attempt * 15))
+          ndk=$(sed -n 's/.*val ndkVersion: String = "\(.*\)".*/\1/p' "$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt")
+          for _ in 1 2 3; do
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${ndk:?}" > /dev/null && exit 0
+            rm -rf "$ANDROID_HOME/ndk/$ndk" && sleep 30
           done
           exit 1
 
