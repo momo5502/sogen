@@ -31,6 +31,10 @@ namespace sogen::test
             // rescan would re-pick these identically every iteration.
             std::vector<host_reserved_range> hidden_from_full_scan{};
 
+            // A host mapping that lands after the caller's probe: the first claim overlapping it fails, and from then on both
+            // scans report it.
+            std::optional<host_reserved_range> arriving_range{};
+
             std::vector<host_reserved_range> claimed_ranges{};
             std::vector<guest_address_range> released_ranges{};
             bool requires_host_identity{};
@@ -40,6 +44,7 @@ namespace sogen::test
 
             void reserve_guest_address_range(const uint64_t address, const size_t size) override
             {
+                this->collide_with_arriving_range(address, size);
                 this->claimed_ranges.push_back({.address = address, .size = size});
             }
 
@@ -95,12 +100,26 @@ namespace sogen::test
             }
 
           private:
+            void collide_with_arriving_range(const uint64_t address, const size_t size)
+            {
+                if (!this->arriving_range || address >= this->arriving_range->address + this->arriving_range->size ||
+                    this->arriving_range->address >= address + size)
+                {
+                    return;
+                }
+
+                this->foreign_ranges.push_back(*this->arriving_range);
+                this->arriving_range.reset();
+                throw host_memory_collision{};
+            }
+
             void map_mmio(uint64_t, size_t, mmio_read_callback, mmio_write_callback) override
             {
             }
 
-            void map_memory(uint64_t, size_t, memory_permission) override
+            void map_memory(const uint64_t address, const size_t size, memory_permission) override
             {
+                this->collide_with_arriving_range(address, size);
             }
 
             bool map_host_memory(const uint64_t address, size_t, void* host_pointer, memory_permission) override
@@ -526,5 +545,45 @@ namespace sogen::test
         ASSERT_FALSE(mm.allocate_memory(confirmed_base, size, nt_memory_permission{memory_permission::read_write}, true));
         ASSERT_TRUE(host.claimed_ranges.empty());
         ASSERT_EQ(mm.get_region_kind(confirmed_base), memory_region_kind::host_reserved);
+    }
+
+    TEST(HostAllocationTest, AllocationRepicksWhenTheHostClaimCollides)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr size_t size = 0x2000;
+        constexpr uint64_t start = DEFAULT_ALLOCATION_ADDRESS_64BIT;
+
+        const uint64_t first_pick = mm.find_free_allocation_base(size, start);
+        ASSERT_NE(first_pick, 0u);
+        host.arriving_range = host_reserved_range{.address = first_pick, .size = size};
+
+        const uint64_t base = mm.allocate_memory(size, nt_memory_permission{memory_permission::read_write}, false, start);
+
+        ASSERT_NE(base, 0u);
+        ASSERT_GE(base, first_pick + size);
+        ASSERT_EQ(mm.get_region_kind(base), memory_region_kind::private_allocation);
+        ASSERT_EQ(host.claimed_ranges.size(), 1u);
+        ASSERT_EQ(host.claimed_ranges.front().address, base);
+    }
+
+    TEST(HostAllocationTest, FixedAddressAllocationFailsWhenTheHostClaimCollides)
+    {
+        for (const bool reserve_only : {true, false})
+        {
+            SCOPED_TRACE(reserve_only ? "reserve only" : "committed");
+
+            fake_host_memory host{};
+            memory_manager mm{host};
+
+            constexpr uint64_t base = 0x40000000;
+            constexpr size_t size = 0x10000;
+            host.arriving_range = host_reserved_range{.address = base, .size = size};
+
+            ASSERT_FALSE(mm.allocate_memory(base, size, nt_memory_permission{memory_permission::read_write}, reserve_only));
+            ASSERT_EQ(mm.get_region_kind(base), memory_region_kind::free);
+            ASSERT_TRUE(host.claimed_ranges.empty());
+        }
     }
 } // namespace sogen::test

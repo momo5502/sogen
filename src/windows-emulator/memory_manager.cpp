@@ -606,17 +606,25 @@ namespace sogen
         // full-address-space rescan grows costlier as the host map does, for no added safety.
         this->reserve_host_memory_ranges_in(address, size);
 
-        if (!this->allocate_memory_raw(address, size, permissions, reserve_only, kind))
+        try
         {
-            return false;
-        }
+            if (!this->allocate_memory_raw(address, size, permissions, reserve_only, kind))
+            {
+                return false;
+            }
 
-        // A reserve-only range never reaches map_memory, so nothing else claims it at the host level:
-        // the host allocator would stay free to hand the address out until the guest commits, and the
-        // commit's MAP_FIXED would then clobber whatever landed there.
-        if (reserve_only)
+            // A reserve-only range never reaches map_memory, so nothing else claims it at the host level:
+            // the host allocator would stay free to hand the address out until the guest commits, and the
+            // commit's MAP_FIXED would then clobber whatever landed there.
+            if (reserve_only)
+            {
+                this->memory_->reserve_guest_address_range(address, size);
+            }
+        }
+        catch (const host_memory_collision&)
         {
-            this->memory_->reserve_guest_address_range(address, size);
+            this->release_memory(address, 0);
+            return false;
         }
 
         return true;
@@ -1067,27 +1075,43 @@ namespace sogen
         // the reserve_guest_address_range below would mmap(MAP_FIXED) over it. find_free_host_allocation_base
         // confirms the pick against the host instead of paying for an unconditional full rescan, which
         // costs O(host VM regions) Mach IPC syscalls and grows without bound over a session.
-        const uint64_t allocation_base = this->find_free_host_allocation_base(size, start, highest_address);
-        if (!allocation_base)
+        for (int attempt = 0;; ++attempt)
         {
-            return 0;
+            const uint64_t allocation_base = this->find_free_host_allocation_base(size, start, highest_address);
+            if (!allocation_base)
+            {
+                return 0;
+            }
+
+            // Claimed at the host level immediately, even when the guest range is only reserved and not yet
+            // backed by map_memory - see reserve_guest_address_range's doc comment. A host mapping can still
+            // land between the confirm and this claim; the next pick's confirm then sees it and moves on.
+            try
+            {
+                this->memory_->reserve_guest_address_range(allocation_base, size);
+            }
+            catch (const host_memory_collision&)
+            {
+                this->release_host_claims(allocation_base + size);
+                if (attempt >= max_host_reserved_retries)
+                {
+                    return 0;
+                }
+                continue;
+            }
+
+            // Not the public allocate_memory(address, ...): its rescan would re-discover the
+            // reserve_guest_address_range mmap just made as a foreign host allocation - reserved_regions_
+            // does not know about it yet - and mark allocation_base host_reserved, making the call below
+            // self-conflict. The confirm inside find_free_host_allocation_base already covers this window.
+            if (!this->allocate_memory_raw(allocation_base, size, permissions, reserve_only, kind))
+            {
+                this->release_host_claims(allocation_base + size);
+                return 0;
+            }
+
+            return allocation_base;
         }
-
-        // Claimed at the host level immediately, even when the guest range is only reserved and not yet
-        // backed by map_memory - see reserve_guest_address_range's doc comment.
-        this->memory_->reserve_guest_address_range(allocation_base, size);
-
-        // Not the public allocate_memory(address, ...): its rescan would re-discover the
-        // reserve_guest_address_range mmap just made as a foreign host allocation - reserved_regions_
-        // does not know about it yet - and mark allocation_base host_reserved, making the call below
-        // self-conflict. The confirm inside find_free_host_allocation_base already covers this window.
-        if (!this->allocate_memory_raw(allocation_base, size, permissions, reserve_only, kind))
-        {
-            this->release_host_claims(allocation_base + size);
-            return 0;
-        }
-
-        return allocation_base;
     }
 
     uint64_t memory_manager::find_free_host_allocation_base(const size_t size, const uint64_t start)

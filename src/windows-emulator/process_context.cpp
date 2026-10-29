@@ -76,10 +76,9 @@ namespace sogen
         {
             uint64_t default_allocation_base =
                 (is_wow64_process == true) ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
-            uint64_t base = memory.find_free_allocation_base(size, default_allocation_base);
-            bool allocated = memory.allocate_memory(base, size, memory_permission::read_write);
+            const uint64_t base = memory.allocate_memory(size, memory_permission::read_write, false, default_allocation_base);
 
-            if (!allocated)
+            if (!base)
             {
                 throw std::runtime_error("Failed to allocate memory for process structure");
             }

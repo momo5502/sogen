@@ -24,6 +24,16 @@ namespace sogen
         size_t size;
     };
 
+    // Thrown by a backend sharing the address space with the host when a range it has to claim was mapped by the host
+    // after the caller found it free. The caller can release the range and pick another address.
+    struct EMULATOR_INTERFACE host_memory_collision : std::runtime_error
+    {
+        host_memory_collision()
+            : std::runtime_error("Guest memory range is already mapped on the host")
+        {
+        }
+    };
+
     class memory_manager;
     class linux_memory_manager;
 
