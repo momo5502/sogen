@@ -431,11 +431,6 @@ namespace sogen
         // transition, so a shared GDT would let a WOW64 thread on one vCPU read another vCPU's TEB base.
         uint64_t gdt_base{};
 
-        uint64_t gdt_base_for_vcpu(const size_t vcpu_index) const
-        {
-            return this->gdt_base + vcpu_index * GDT_LIMIT;
-        }
-
         windows_guest_architecture native_architecture{windows_guest_architecture::x86_64};
 
         const windows_arch_abi& abi() const
