@@ -303,29 +303,28 @@ namespace sogen::test
         EXPECT_TRUE(restarted->stat(guest({u"dir", u"moved.txt"})));
     }
 
-    TEST_F(LayeredProviderTest, ARenameThatCannotHideTheOldNameKeepsTheDestination)
+    TEST_F(LayeredProviderTest, ARenameThatCannotHideTheOldNameLeavesNothingBehind)
     {
-        write_host_file(this->upper() / "dir" / "target.txt", "keep me");
         std::filesystem::create_directories(this->state() / "journal");
 
         const auto provider = this->make_provider();
         EXPECT_NE(STATUS_SUCCESS, provider->rename(guest({u"file.txt"}), guest({u"dir", u"target.txt"})));
 
-        EXPECT_EQ("keep me", read_host_file(this->upper() / "dir" / "target.txt"));
         EXPECT_TRUE(provider->stat(guest({u"file.txt"})));
-        EXPECT_EQ((std::set<std::u16string>{u"old.txt", u"keep.txt", u"target.txt"}), names_in(*provider, guest({u"dir"})));
+        EXPECT_FALSE(provider->stat(guest({u"dir", u"target.txt"})));
+        EXPECT_FALSE(std::filesystem::exists(this->upper() / "dir" / "target.txt"));
     }
 
-    TEST_F(LayeredProviderTest, RenamingOntoAnExistingFileReplacesIt)
+    TEST_F(LayeredProviderTest, ALowerFileCannotReplaceAnExistingFileByRenaming)
     {
-        write_host_file(this->upper() / "dir" / "target.txt", "replaced");
+        write_host_file(this->upper() / "dir" / "target.txt", "keep me");
 
         const auto provider = this->make_provider();
-        ASSERT_EQ(STATUS_SUCCESS, provider->rename(guest({u"file.txt"}), guest({u"dir", u"target.txt"})));
+        EXPECT_EQ(STATUS_OBJECT_NAME_COLLISION, provider->rename(guest({u"file.txt"}), guest({u"dir", u"old.txt"})));
+        EXPECT_EQ(STATUS_OBJECT_NAME_COLLISION, provider->rename(guest({u"file.txt"}), guest({u"dir", u"target.txt"})));
 
-        EXPECT_EQ("lower contents", read_host_file(this->upper() / "dir" / "target.txt"));
-        EXPECT_FALSE(provider->stat(guest({u"file.txt"})));
-        EXPECT_FALSE(std::filesystem::exists(this->state() / "tmp" / "replaced-1"));
+        EXPECT_EQ("keep me", read_host_file(this->upper() / "dir" / "target.txt"));
+        EXPECT_TRUE(provider->stat(guest({u"file.txt"})));
     }
 
     TEST_F(LayeredProviderTest, ATornJournalThatCannotBeCutIsReported)

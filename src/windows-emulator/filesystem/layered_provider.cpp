@@ -564,43 +564,21 @@ namespace sogen
             return this->upper_->rename(from, to);
         }
 
-        // An upper file at the destination is set aside, so that it can come back if the rename cannot be completed.
-        const auto destination = this->upper_->get_host_path(to);
-        std::optional<std::filesystem::path> replaced{};
-        if (this->upper_->stat(to))
+        // Replacing needs the old destination to survive a failed or interrupted rename, which has no durable record yet.
+        if (this->stat(to))
         {
-            replaced = this->temporary_directory_ / ("replaced-" + std::to_string(this->temporary_counter_++));
-
-            std::error_code ec{};
-            std::filesystem::rename(*destination, *replaced, ec);
-            if (ec)
-            {
-                return STATUS_ACCESS_DENIED;
-            }
+            return STATUS_OBJECT_NAME_COLLISION;
         }
 
-        const auto undo = [&] {
-            std::error_code ec{};
-            if (replaced)
-            {
-                std::filesystem::rename(*replaced, *destination, ec);
-            }
-            else
-            {
-                (void)this->upper_->remove(to);
-            }
-        };
-
-        if (!this->copy_to_upper(from, to) || !this->journal_.hide(from))
+        if (!this->copy_to_upper(from, to))
         {
-            undo();
             return STATUS_ACCESS_DENIED;
         }
 
-        if (replaced)
+        if (!this->journal_.hide(from))
         {
-            std::error_code ec{};
-            std::filesystem::remove(*replaced, ec);
+            (void)this->upper_->remove(to);
+            return STATUS_ACCESS_DENIED;
         }
 
         return STATUS_SUCCESS;
