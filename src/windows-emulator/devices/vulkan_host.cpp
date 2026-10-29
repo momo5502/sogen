@@ -7226,7 +7226,7 @@ namespace sogen
         const auto pd = this->impl_->physical_devices.find(physical_device);
         const auto surf = this->impl_->surfaces.find(surface);
         if (pd == this->impl_->physical_devices.end() || surf == this->impl_->surfaces.end() ||
-            pd->second.instance_id != surf->second.instance_id)
+            pd->second.instance_id != surf->second.instance_id || !surf->second.handle)
         {
             return VK_ERROR_SURFACE_LOST_KHR;
         }
@@ -7250,7 +7250,7 @@ namespace sogen
         const auto pd = this->impl_->physical_devices.find(physical_device);
         const auto surf = this->impl_->surfaces.find(surface);
         if (pd == this->impl_->physical_devices.end() || surf == this->impl_->surfaces.end() ||
-            pd->second.instance_id != surf->second.instance_id)
+            pd->second.instance_id != surf->second.instance_id || !surf->second.handle)
         {
             return VK_ERROR_SURFACE_LOST_KHR;
         }
@@ -7290,7 +7290,7 @@ namespace sogen
         const auto pd = this->impl_->physical_devices.find(physical_device);
         const auto surf = this->impl_->surfaces.find(surface);
         if (pd == this->impl_->physical_devices.end() || surf == this->impl_->surfaces.end() ||
-            pd->second.instance_id != surf->second.instance_id)
+            pd->second.instance_id != surf->second.instance_id || !surf->second.handle)
         {
             return VK_ERROR_SURFACE_LOST_KHR;
         }
@@ -7341,7 +7341,7 @@ namespace sogen
         const auto pd = this->impl_->physical_devices.find(physical_device);
         const auto surf = this->impl_->surfaces.find(surface);
         if (pd == this->impl_->physical_devices.end() || surf == this->impl_->surfaces.end() ||
-            pd->second.instance_id != surf->second.instance_id)
+            pd->second.instance_id != surf->second.instance_id || !surf->second.handle)
         {
             return VK_ERROR_SURFACE_LOST_KHR;
         }
@@ -7394,6 +7394,10 @@ namespace sogen
             dev_it->second.instance_id != surf_it->second.instance_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!surf_it->second.handle)
+        {
+            return VK_ERROR_SURFACE_LOST_KHR;
         }
         impl::device_data& dev = dev_it->second;
         if (!dev.create_swapchain || !dev.destroy_swapchain || !dev.get_swapchain_images)
@@ -13254,7 +13258,16 @@ namespace sogen
 
             uint64_t surface{};
             impl.forced_ids = {id};
-            const auto result = this->create_surface(instance, callbacks.create_native_surface(id, instance), surface);
+            const auto native_surface = callbacks.create_native_surface(id, instance);
+            if (native_surface == 0 && impl.instances.contains(instance))
+            {
+                // The guest may keep a surface after destroying its window, as Mesa's WGL backend does. It stays a valid
+                // object that only reports VK_ERROR_SURFACE_LOST_KHR.
+                surface = impl.allocate_id();
+                impl.surfaces.emplace(surface, impl::surface_data{.handle = VK_NULL_HANDLE, .instance_id = instance});
+            }
+            const auto result = native_surface != 0 ? this->create_surface(instance, native_surface, surface)
+                                                    : (surface != 0 ? VK_SUCCESS : VK_ERROR_SURFACE_LOST_KHR);
             expect_restored(result, surface, id, "surface");
         }
 
