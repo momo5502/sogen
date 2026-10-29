@@ -12,6 +12,11 @@ namespace sogen
                                          const uint64_t parameters, const HARDERROR_RESPONSE_OPTION /*valid_response_option*/,
                                          const emulator_object<HARDERROR_RESPONSE> response)
         {
+            if (number_of_parameters > MAXIMUM_HARDERROR_PARAMETERS)
+            {
+                return STATUS_INVALID_PARAMETER_2;
+            }
+
             if (response)
             {
                 response.try_write(ResponseAbort);

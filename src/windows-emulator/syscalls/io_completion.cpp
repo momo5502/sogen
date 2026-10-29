@@ -200,7 +200,8 @@ namespace sogen
             const emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> io_completion_information, const ULONG count,
             const emulator_object<ULONG> num_entries_removed, const emulator_object<LARGE_INTEGER> timeout, const BOOLEAN alertable)
         {
-            if (count == 0 || !io_completion_information)
+            constexpr auto max_count = std::numeric_limits<ULONG>::max() / sizeof(FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>);
+            if (count == 0 || count > max_count || !io_completion_information)
             {
                 return STATUS_INVALID_PARAMETER;
             }
