@@ -707,6 +707,7 @@ namespace sogen
             // A present that failed after acquiring a native image leaves it acquired and its semaphore pending, so the
             // guest has to re-create the swapchain.
             bool lost{};
+            bool copyable{};
         };
 
         struct swapchain_data
@@ -2570,7 +2571,7 @@ namespace sogen
             return VK_SUCCESS;
         }
 
-        static VkImageCreateInfo proxy_image_info(const swapchain_params& create)
+        VkImageCreateInfo proxy_image_info(const device_data& dev, const swapchain_params& create)
         {
             // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
             VkImageCreateInfo image_info{};
@@ -2583,8 +2584,17 @@ namespace sogen
             image_info.arrayLayers = std::max(1U, create.image_array_layers);
             image_info.samples = VK_SAMPLE_COUNT_1_BIT;
             image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-            image_info.usage =
-                static_cast<VkImageUsageFlags>(create.image_usage) | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            image_info.usage = static_cast<VkImageUsageFlags>(create.image_usage) | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            // Snapshots write a held image's frame back, which only formats a transfer can write to allow.
+            if (const auto instance = this->instances.find(dev.instance_id); instance != this->instances.end())
+            {
+                VkFormatProperties features{};
+                instance->second.get_physical_device_format_properties(dev.physical_device, image_info.format, &features);
+                if ((features.optimalTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_DST_BIT) != 0)
+                {
+                    image_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                }
+            }
             image_info.sharingMode = static_cast<VkSharingMode>(create.sharing_mode);
             image_info.queueFamilyIndexCount = static_cast<uint32_t>(create.queue_family_indices.size());
             image_info.pQueueFamilyIndices = create.queue_family_indices.empty() ? nullptr : create.queue_family_indices.data();
@@ -2616,6 +2626,7 @@ namespace sogen
                                                                : 0U};
                 data.reset_subresources(data.create.array_layers);
                 data.swapchain_proxy = sc.proxy.has_value();
+                data.copyable = sc.proxy && sc.proxy->copyable;
                 this->images.emplace(image_id, std::move(data));
                 sc.image_ids.push_back(image_id);
             }
@@ -2624,6 +2635,7 @@ namespace sogen
         VkResult create_swapchain_proxy(const device_data& dev, const VkImageCreateInfo& image_info, const uint32_t image_count,
                                         const std::vector<VkImage>& native_images, swapchain_proxy& proxy)
         {
+            proxy.copyable = (image_info.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0;
             for (uint32_t i = 0; i < image_count; ++i)
             {
                 VkImage image{};
@@ -7598,7 +7610,7 @@ namespace sogen
         if (proxied)
         {
             sc.proxy.emplace();
-            result = this->impl_->create_swapchain_proxy(dev, impl::proxy_image_info(sc.create),
+            result = this->impl_->create_swapchain_proxy(dev, this->impl_->proxy_image_info(dev, sc.create),
                                                          std::max({min_image_count, caps.minImageCount, 1U}), native_images, *sc.proxy);
             if (result != VK_SUCCESS)
             {
@@ -12639,6 +12651,10 @@ namespace sogen
                 }
 
                 const auto& data = impl.images.at(swapchain.image_ids[i]);
+                if (!data.copyable)
+                {
+                    throw std::runtime_error("Snapshots cannot save a held Vulkan swapchain image on this GPU");
+                }
                 const auto block = get_vulkan_copy_block(data.create.format, VK_IMAGE_ASPECT_COLOR_BIT);
                 const VkExtent3D extent{.width = data.create.width, .height = data.create.height, .depth = 1};
                 for (uint32_t layer = 0; layer < data.create.array_layers; ++layer)
@@ -13349,7 +13365,7 @@ namespace sogen
                 impl::swapchain_data sc{.device_id = device, .surface_id = surface, .create = create};
                 sc.proxy.emplace();
                 sc.proxy->lost = true;
-                if (impl.create_swapchain_proxy(dev, impl::proxy_image_info(sc.create), static_cast<uint32_t>(image_ids.size()), {},
+                if (impl.create_swapchain_proxy(dev, impl.proxy_image_info(dev, sc.create), static_cast<uint32_t>(image_ids.size()), {},
                                                 *sc.proxy) != VK_SUCCESS)
                 {
                     impl::destroy_swapchain_proxy(dev, *sc.proxy);
