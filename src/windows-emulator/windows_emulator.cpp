@@ -2800,8 +2800,6 @@ namespace sogen
         }
     }
 
-    // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while
-    // the guest cursor is hidden.
     uint64_t windows_emulator::highest_user_address() const
     {
         if (!this->process.is_wow64_process)
@@ -2812,6 +2810,8 @@ namespace sogen
         return (executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) ? 0xFFFEFFFF : 0x7FFEFFFF;
     }
 
+    // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while
+    // the guest cursor is hidden.
     void windows_emulator::apply_cursor_capture()
     {
         std::optional<ui_rect> clip{};
