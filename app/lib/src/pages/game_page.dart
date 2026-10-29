@@ -128,10 +128,15 @@ class _GamePageState extends State<GamePage> {
 
   Future<void> _suspend() async {
     _finishing = true;
-    await _flushSettings();
-    final saved = await savedStateFile(widget.game);
-    await saved.parent.create(recursive: true);
-    await _session.suspend(saved.path);
+    try {
+      await _flushSettings();
+      final saved = await savedStateFile(widget.game);
+      await saved.parent.create(recursive: true);
+      await _session.suspend(saved.path);
+    } catch (_) {
+      _finishing = false;
+      rethrow;
+    }
     if (mounted && !_leaving) {
       _leaving = true;
       _suspending = true;
@@ -224,7 +229,6 @@ class _GamePageState extends State<GamePage> {
     }
   }
 
-  // A game that exits cleanly has nothing left to show. Crashes and non-zero exits stay for their log.
   void _leave() {
     if (_leaving || !mounted) {
       return;
@@ -236,7 +240,9 @@ class _GamePageState extends State<GamePage> {
     }
 
     _leaving = true;
-    Navigator.of(context).removeRoute(route);
+    Navigator.of(context)
+      ..popUntil((candidate) => identical(candidate, route))
+      ..pop();
   }
 
   void _onKeyboardChanged(String value) {
@@ -295,6 +301,9 @@ class _GamePageState extends State<GamePage> {
       _finishing = true;
       try {
         await _session.stop();
+      } catch (_) {
+        _finishing = false;
+        rethrow;
       } finally {
         await _flushSettings();
       }
