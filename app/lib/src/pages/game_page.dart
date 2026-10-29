@@ -305,9 +305,14 @@ class _GamePageState extends State<GamePage> {
         _finishing = false;
         rethrow;
       } finally {
-        await _flushSettings();
+        try {
+          await _flushSettings();
+        } finally {
+          if (_finishing) {
+            _leave();
+          }
+        }
       }
-      _leave();
     }
   }
 
