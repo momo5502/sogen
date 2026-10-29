@@ -15,28 +15,31 @@ namespace sogen
     namespace
     {
         // The Audiosrv ALPC port hosts several RPC interfaces whose opnums overlap, so we dispatch by the
-        // interface the client bound to.
-        //   {923F85B3-BBEE-4EDF-8059-F569FA64A027} v1.6 = MMDevice enumeration (mmdevapi).
-        //   {D574D111-6126-49D7-9B86-4DE6B650D4FC} v2.8 = "AudioClientRpc" / IAudioClient streaming (audioses).
+        // interface the client bound to. Windows changes their UUIDs between builds while keeping the versions.
+        //   {923F85B3-BBEE-4EDF-8059-F569FA64A027} v1.6 = MMDevice enumeration (mmdevapi), 10.0.26100.
+        //   {A3BE171F-A525-47A3-B75A-93DA9D645D1C} v1.6 = the same interface in 10.0.20348.
+        //   {D574D111-6126-49D7-9B86-4DE6B650D4FC} v2.8 = "AudioClientRpc" / IAudioClient streaming (audioses), 10.0.26100.
+        //   {98B2C141-ECA2-4919-98B4-A1980D00D234} v2.8 = the same interface in 10.0.20348.
         constexpr std::array<uint8_t, 16> k_iface_mmdevice_enum = {0xb3, 0x85, 0x3f, 0x92, 0xee, 0xbb, 0xdf, 0x4e,
                                                                    0x80, 0x59, 0xf5, 0x69, 0xfa, 0x64, 0xa0, 0x27};
+        constexpr std::array<uint8_t, 16> k_iface_mmdevice_enum_20348 = {0x1f, 0x17, 0xbe, 0xa3, 0x25, 0xa5, 0xa3, 0x47,
+                                                                         0xb7, 0x5a, 0x93, 0xda, 0x9d, 0x64, 0x5d, 0x1c};
         constexpr std::array<uint8_t, 16> k_iface_audio_client = {0x11, 0xd1, 0x74, 0xd5, 0x26, 0x61, 0xd7, 0x49,
                                                                   0x9b, 0x86, 0x4d, 0xe6, 0xb6, 0x50, 0xd4, 0xfc};
+        constexpr std::array<uint8_t, 16> k_iface_audio_client_20348 = {0x41, 0xc1, 0xb2, 0x98, 0xa2, 0xec, 0x19, 0x49,
+                                                                        0x98, 0xb4, 0xa1, 0x98, 0x0d, 0x00, 0xd2, 0x34};
 
-        constexpr uint32_t k_audio_opnum_mmdev_get_blob = 0;           // {923F85B3} [out] serialized blob, no [in]
-        constexpr uint32_t k_audio_opnum_get_default_endpoint = 25;    // {923F85B3}
-        constexpr uint32_t k_audio_opnum_get_mix_format = 0;           // {D574D111}
-        constexpr uint32_t k_audio_opnum_is_format_supported = 1;      // {D574D111} AudioServerIsFormatSupported
-        constexpr uint32_t k_audio_opnum_get_device_period = 2;        // {D574D111} AudioServerGetDevicePeriod
-        constexpr uint32_t k_audio_opnum_open_stream = 4;              // {D574D111} (Initialize prep)
-        constexpr uint32_t k_audio_opnum_get_audio_session = 6;        // {D574D111} AudioServerGetAudioSession
-        constexpr uint32_t k_audio_opnum_create_stream = 7;            // {D574D111} CreateRemoteStream
-        constexpr uint32_t k_audio_opnum_get_session_state = 27;       // {D574D111} AudioSessionGetState
-        constexpr uint32_t k_audio_opnum_destroy_session = 55;         // {D574D111} AudioSessionDestroy
-        constexpr uint32_t k_audio_opnum_destroy_stream = 13;          // {D574D111} AudioServerDestroyStream
-        constexpr uint32_t k_audio_opnum_start_stream = 8;             // {D574D111} StartStream (IAudioClient::Start)
-        constexpr uint32_t k_audio_opnum_stop_stream = 9;              // {D574D111} StopStream (IAudioClient::Stop)
-        constexpr uint32_t k_audio_opnum_derive_stream_category = 122; // {D574D111} AudioServerDeriveStreamCategory
+        constexpr uint32_t k_audio_opnum_mmdev_get_blob = 0;        // MMDevice enumeration: [out] serialized blob, no [in]
+        constexpr uint32_t k_audio_opnum_get_default_endpoint = 25; // MMDevice enumeration
+        constexpr uint32_t k_audio_opnum_get_mix_format = 0;        // AudioClientRpc
+        constexpr uint32_t k_audio_opnum_is_format_supported = 1;   // AudioClientRpc AudioServerIsFormatSupported
+        constexpr uint32_t k_audio_opnum_get_device_period = 2;     // AudioClientRpc AudioServerGetDevicePeriod
+        constexpr uint32_t k_audio_opnum_open_stream = 4;           // AudioClientRpc (Initialize prep)
+        constexpr uint32_t k_audio_opnum_get_audio_session = 6;     // AudioClientRpc AudioServerGetAudioSession
+        constexpr uint32_t k_audio_opnum_create_stream = 7;         // AudioClientRpc CreateRemoteStream
+        constexpr uint32_t k_audio_opnum_destroy_stream = 13;       // AudioClientRpc AudioServerDestroyStream
+        constexpr uint32_t k_audio_opnum_start_stream = 8;          // AudioClientRpc StartStream (IAudioClient::Start)
+        constexpr uint32_t k_audio_opnum_stop_stream = 9;           // AudioClientRpc StopStream (IAudioClient::Stop)
 
         constexpr NTSTATUS k_hr_ok = 0;
         constexpr NTSTATUS k_hr_false = 1;
@@ -76,7 +79,7 @@ namespace sogen
         }
 
         // The audio-session context handle handed back by AudioServerGetAudioSession (opnum 6) and round-tripped
-        // by the AudioSession* opnums (e.g. AudioSessionGetState, opnum 27). Opaque to the client, which only
+        // by the AudioSession* opnums (e.g. AudioSessionGetState). Opaque to the client, which only
         // binds follow-on session RPCs to it.
         constexpr std::array<uint8_t, 16> k_session_context_uuid = {0x53, 0x6f, 0x67, 0x65, 0x6e, 0x41, 0x75, 0x64,
                                                                     0x69, 0x6f, 0x53, 0x65, 0x73, 0x73, 0x00, 0x01};
@@ -143,13 +146,45 @@ namespace sogen
 
         // Layout of the WASAPI shared-buffer control header the guest maps. The client writes interleaved PCM
         // into the sample area at k_render_data_offset (past the DCPE control header) and advances the write
-        // cursor (bytes queued) at +0x18; the audio engine (this emulator) advances the play cursor (bytes
-        // consumed) at +0x20. CCrossProcessBaseClientEndpoint::GetCurrentPadding reports (write - play) /
-        // block_align frames, so a streaming client blocks until the engine drains the buffer by advancing the
-        // play cursor. Offsets confirmed against a live capture and audioses!GetCurrentPadding.
+        // cursor (bytes queued); the audio engine (this emulator) advances the play cursor (bytes consumed).
+        // CCrossProcessBaseClientEndpoint::GetCurrentPadding reports (write - play) / block_align frames, so a
+        // streaming client blocks until the engine drains the buffer by advancing the play cursor.
         constexpr uint32_t k_render_data_offset = 0x400;
-        constexpr uint32_t k_write_cursor_offset = 0x18;
-        constexpr uint32_t k_play_cursor_offset = 0x20;
+
+        struct render_cursor_offsets
+        {
+            uint32_t write{};
+            uint32_t play{};
+        };
+
+        // 10.0.26100 audioses reads ControlData_V1, whose 8-byte version prefix moves the cursors of 10.0.20348's ControlData.
+        constexpr render_cursor_offsets k_control_data_v1_cursors{.write = 0x18, .play = 0x20};
+        constexpr render_cursor_offsets k_control_data_v0_cursors{.write = 0x10, .play = 0x18};
+
+        using render_control_data = std::array<uint8_t, 0x1c0>;
+
+        // 10.0.20348 ControlData in the layout its audioses!CCrossProcessBaseServerEndpoint::Initialize writes: the volatile part
+        // at +0x00, the DCPE signature at +0xC0 and the static part at +0xC8, sized as the format's cbSize + 200. The other static
+        // fields keep their captured values, so the queue offset at static +0x9C is not the one that writer stores; both builds
+        // ignore it while the queue count at static +0x84 is 0.
+        render_control_data to_control_data_v0(const render_control_data& v1, const uint16_t format_extra_size)
+        {
+            constexpr size_t v1_volatile_offset = 0x08;
+            constexpr size_t v1_signature_offset = 0xC8;
+            constexpr size_t v1_static_offset = 0xCC;
+            constexpr size_t v0_signature_offset = 0xC0;
+            constexpr size_t v0_static_offset = 0xC8;
+            constexpr uint32_t v0_static_base_size = 200;
+
+            render_control_data v0{};
+            std::memcpy(v0.data(), v1.data() + v1_volatile_offset, v0_signature_offset);
+            std::memcpy(v0.data() + v0_signature_offset, v1.data() + v1_signature_offset, sizeof(uint32_t));
+            std::memcpy(v0.data() + v0_static_offset, v1.data() + v1_static_offset, v1.size() - v1_static_offset);
+
+            const uint32_t static_size = v0_static_base_size + format_extra_size;
+            std::memcpy(v0.data() + v0_static_offset, &static_size, sizeof(static_size));
+            return v0;
+        }
 
         constexpr uint64_t k_hns_per_second = 10000000;
         constexpr uint64_t k_default_buffer_duration = k_hns_per_second; // 1 s
@@ -206,7 +241,45 @@ namespace sogen
         // Opnum 4 offsets were confirmed against native audiosrv traffic, opnum 1 offsets against the requests of 32- and
         // 64-bit IAudioClient::IsFormatSupported callers.
         constexpr request_format_offsets k_open_stream_format_offsets{.ndr32 = 136, .ndr64 = 152};
-        constexpr request_format_offsets k_is_format_supported_format_offsets{.ndr32 = 308, .ndr64 = 336};
+
+        // The opnums both builds share keep their numbers; 10.0.26100 inserted procedures before the session ones.
+        struct audio_client_interface
+        {
+            std::array<uint8_t, 16> id{};
+            uint32_t get_session_state_opnum{};
+            uint32_t destroy_session_opnum{};
+            uint32_t derive_stream_category_opnum{};
+            request_format_offsets is_format_supported_format_offsets{};
+            bool control_data_v1{};
+        };
+
+        constexpr std::array<audio_client_interface, 2> k_audio_client_interfaces{{
+            {.id = k_iface_audio_client,
+             .get_session_state_opnum = 27,
+             .destroy_session_opnum = 55,
+             .derive_stream_category_opnum = 122,
+             .is_format_supported_format_offsets = {.ndr32 = 308, .ndr64 = 336},
+             .control_data_v1 = true},
+            {.id = k_iface_audio_client_20348,
+             .get_session_state_opnum = 26,
+             .destroy_session_opnum = 54,
+             .derive_stream_category_opnum = 120,
+             .is_format_supported_format_offsets = {.ndr32 = 284, .ndr64 = 312},
+             .control_data_v1 = false},
+        }};
+
+        const audio_client_interface* find_audio_client_interface(const std::array<uint8_t, 16>& id)
+        {
+            for (const auto& entry : k_audio_client_interfaces)
+            {
+                if (entry.id == id)
+                {
+                    return &entry;
+                }
+            }
+
+            return nullptr;
+        }
 
         std::optional<stream_audio_format> read_stream_audio_format(windows_emulator& win_emu, const lpc_request_context& c,
                                                                     const size_t pointer_size, const request_format_offsets& offsets)
@@ -387,6 +460,7 @@ namespace sogen
                 bool claimed_sink{};
                 uint64_t render_event{};
                 stream_audio_format format{};
+                render_cursor_offsets cursors{};
                 uint32_t buffer_bytes{};
                 uint64_t section_size{};
                 uint64_t guest_address{};
@@ -399,6 +473,7 @@ namespace sogen
                     buffer.write(this->claimed_sink);
                     buffer.write(this->render_event);
                     buffer.write(this->format);
+                    buffer.write(this->cursors);
                     buffer.write(this->buffer_bytes);
                     buffer.write(this->section_size);
                     buffer.write(this->guest_address);
@@ -412,6 +487,7 @@ namespace sogen
                     buffer.read(this->claimed_sink);
                     buffer.read(this->render_event);
                     buffer.read(this->format);
+                    buffer.read(this->cursors);
                     buffer.read(this->buffer_bytes);
                     buffer.read(this->section_size);
                     buffer.read(this->guest_address);
@@ -421,12 +497,13 @@ namespace sogen
             };
 
             render_stream(windows_emulator& win_emu, audio_sink& sink, const uint32_t id, const stream_audio_format& format,
-                          const uint32_t buffer_bytes, const uint64_t section_size, const uint8_t* control_header,
-                          const size_t control_header_size)
+                          const render_cursor_offsets cursors, const uint32_t buffer_bytes, const uint64_t section_size,
+                          const uint8_t* control_header, const size_t control_header_size)
                 : win_emu_(win_emu),
                   sink_(sink),
                   id_(id),
                   stream_format_(format),
+                  cursors_(cursors),
                   buffer_bytes_(buffer_bytes),
                   section_size_(section_size),
                   host_storage_(static_cast<size_t>(section_size))
@@ -452,6 +529,7 @@ namespace sogen
                   claimed_sink_(restored.claimed_sink),
                   render_event_(restored.render_event),
                   stream_format_(restored.format),
+                  cursors_(restored.cursors),
                   buffer_bytes_(restored.buffer_bytes),
                   section_size_(restored.section_size),
                   guest_address_(restored.guest_address),
@@ -474,7 +552,7 @@ namespace sogen
 
                 this->mapped_ = true;
                 // The prior backend queue is opaque and no longer exists, so only samples not submitted before the snapshot remain pending.
-                this->write_play_cursor(std::max(this->read_cursor(k_play_cursor_offset), this->submitted_));
+                this->write_play_cursor(std::max(this->read_cursor(this->cursors_.play), this->submitted_));
             }
 
             ~render_stream()
@@ -557,6 +635,7 @@ namespace sogen
                 result.claimed_sink = this->claimed_sink_;
                 result.render_event = this->render_event_.load(std::memory_order_relaxed);
                 result.format = this->stream_format_;
+                result.cursors = this->cursors_;
                 result.buffer_bytes = this->buffer_bytes_;
                 result.section_size = this->section_size_;
                 result.guest_address = this->guest_address_;
@@ -572,7 +651,9 @@ namespace sogen
             {
                 if (restored.section_size > std::numeric_limits<size_t>::max() - k_audio_page_size ||
                     restored.contents.size() != restored.section_size || restored.section_size < k_render_data_offset ||
-                    restored.buffer_bytes == 0 || restored.buffer_bytes > restored.section_size - k_render_data_offset)
+                    restored.cursors.write > k_render_data_offset - sizeof(uint64_t) ||
+                    restored.cursors.play > k_render_data_offset - sizeof(uint64_t) || restored.buffer_bytes == 0 ||
+                    restored.buffer_bytes > restored.section_size - k_render_data_offset)
                 {
                     throw std::runtime_error("[audio-service] Cannot restore invalid render stream storage");
                 }
@@ -594,7 +675,7 @@ namespace sogen
 
             void write_play_cursor(const uint64_t value)
             {
-                std::memcpy(this->host_ptr_ + k_play_cursor_offset, &value, sizeof(value));
+                std::memcpy(this->host_ptr_ + this->cursors_.play, &value, sizeof(value));
             }
 
             void run()
@@ -629,7 +710,7 @@ namespace sogen
                         continue;
                     }
 
-                    const auto write = this->read_cursor(k_write_cursor_offset);
+                    const auto write = this->read_cursor(this->cursors_.write);
                     if (write == 0)
                     {
                         continue;
@@ -638,7 +719,7 @@ namespace sogen
                     if (!started)
                     {
                         started = true;
-                        play_base = this->read_cursor(k_play_cursor_offset);
+                        play_base = this->read_cursor(this->cursors_.play);
                         anchor = std::chrono::steady_clock::now();
                     }
 
@@ -739,6 +820,7 @@ namespace sogen
             bool claimed_sink_{};
             std::atomic<uint64_t> render_event_{};
             stream_audio_format stream_format_{};
+            render_cursor_offsets cursors_{};
             uint32_t buffer_bytes_{};
             uint64_t section_size_{};
             uint64_t guest_address_{0};
@@ -756,14 +838,27 @@ namespace sogen
                                 utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& reply_handles) override
             {
                 const auto& iface = this->bound_interface();
-                if (iface == k_iface_audio_client)
+                if (const auto* client = find_audio_client_interface(iface))
                 {
+                    if (procedure_id == client->get_session_state_opnum)
+                    {
+                        return handle_get_session_state(writer);
+                    }
+                    if (procedure_id == client->destroy_session_opnum)
+                    {
+                        return handle_destroy_session(writer);
+                    }
+                    if (procedure_id == client->derive_stream_category_opnum)
+                    {
+                        return handle_derive_stream_category(win_emu, c, writer);
+                    }
+
                     switch (procedure_id)
                     {
                     case k_audio_opnum_get_mix_format:
                         return handle_get_mix_format(writer);
                     case k_audio_opnum_is_format_supported:
-                        return handle_is_format_supported(win_emu, c, writer);
+                        return handle_is_format_supported(win_emu, c, writer, client->is_format_supported_format_offsets);
                     case k_audio_opnum_get_device_period:
                         return handle_get_device_period(writer);
                     case k_audio_opnum_destroy_stream:
@@ -773,19 +868,13 @@ namespace sogen
                         return handle_open_stream(win_emu, c, writer);
                     case k_audio_opnum_get_audio_session:
                         return handle_get_audio_session(writer);
-                    case k_audio_opnum_get_session_state:
-                        return handle_get_session_state(writer);
-                    case k_audio_opnum_destroy_session:
-                        return handle_destroy_session(writer);
                     case k_audio_opnum_create_stream:
-                        return handle_create_stream(win_emu, c, writer, reply_handles);
+                        return handle_create_stream(win_emu, c, writer, reply_handles, client->control_data_v1);
                     case k_audio_opnum_start_stream:
                         this->bind_render_event(win_emu, c);
                         return handle_post_create(writer);
                     case k_audio_opnum_stop_stream:
                         return handle_post_create(writer);
-                    case k_audio_opnum_derive_stream_category:
-                        return handle_derive_stream_category(win_emu, c, writer);
                     case 5:
                         return handle_post_create(writer);
                     default:
@@ -793,7 +882,7 @@ namespace sogen
                     }
                 }
 
-                if (iface != k_iface_mmdevice_enum)
+                if (iface != k_iface_mmdevice_enum && iface != k_iface_mmdevice_enum_20348)
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
@@ -1032,7 +1121,7 @@ namespace sogen
                 writer.write(fmt.data(), fmt.size(), 1);
             }
 
-            // {D574D111} opnum 0: AudioServerGetMixFormat(endpointId, VadServerSettings*, [out] WAVEFORMATEX**).
+            // AudioClientRpc opnum 0: AudioServerGetMixFormat(endpointId, VadServerSettings*, [out] WAVEFORMATEX**).
             static NTSTATUS handle_get_mix_format(utils::aligned_binary_writer& writer)
             {
                 write_mix_format(writer);
@@ -1041,16 +1130,16 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 1: AudioServerIsFormatSupported(endpointId, shareMode, mixParams, format,
+            // AudioClientRpc opnum 1: AudioServerIsFormatSupported(endpointId, shareMode, mixParams, format,
             //   [in,out,unique] closestMatch). DirectSound probes its buffer format here before activating the
             //   render client; failing (or not answering) the call makes audioses map the RPC error to
             //   AUDCLNT_E_DEVICE_INVALIDATED. Like the native engine, accept a format the stream can play and suggest
             //   the mix format for any other: XAudio2 probes an incomplete format first and only moves on to a
             //   playable one when the engine declines it.
             static NTSTATUS handle_is_format_supported(windows_emulator& win_emu, const lpc_request_context& c,
-                                                       utils::aligned_binary_writer& writer)
+                                                       utils::aligned_binary_writer& writer, const request_format_offsets& offsets)
             {
-                if (read_stream_audio_format(win_emu, c, writer.pointer_size(), k_is_format_supported_format_offsets))
+                if (read_stream_audio_format(win_emu, c, writer.pointer_size(), offsets))
                 {
                     writer.write_ndr_pointer(false); // [out] closest-match format: null (format accepted as-is)
                     writer.align_to(sizeof(uint32_t));
@@ -1065,7 +1154,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 2: AudioServerGetDevicePeriod(endpointId, mixParams, flags,
+            // AudioClientRpc opnum 2: AudioServerGetDevicePeriod(endpointId, mixParams, flags,
             //   [in,out,unique] *defaultPeriod, [in,out,unique] *minimumPeriod), both in 100-ns units. Report the
             //   standard shared-mode engine periods (10 ms default, 3 ms minimum).
             static NTSTATUS handle_get_device_period(utils::aligned_binary_writer& writer)
@@ -1096,7 +1185,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 4: the IAudioClient::Initialize "open stream" prep call.
+            // AudioClientRpc opnum 4: the IAudioClient::Initialize "open stream" prep call.
             //   [in]  endpointId, sharemode, flags, WAVEFORMATEX*, GUID*, request-struct
             //   [out] LPWSTR*       (unique pointer, optional)
             //   [out] context_handle (the stream handle, reused as the binding for follow-on RPCs)
@@ -1126,14 +1215,14 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 7: CreateRemoteStream. The [out] SYSTEM_AUDIO_STREAM wire is only 120 bytes (the
+            // AudioClientRpc opnum 7: CreateRemoteStream. The [out] SYSTEM_AUDIO_STREAM wire is only 120 bytes (the
             // 1232-byte form seen in memory is bloated by host pointers): a session GUID, nAvgBytesPerSec, an
             // opaque server cookie (the client just hands it back in StartStream/StopStream, which we ignore), and a few
             // counts. The shared render buffer is NOT in the payload — it rides in as an ALPC HANDLE message
             // attribute. We back it with a pagefile section the guest can map and attach its handle. The wire
             // below was captured from a live Windows audio service (tools/alpc_capture.py).
             NTSTATUS handle_create_stream(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer& writer,
-                                          std::vector<alpc_reply_handle>& reply_handles)
+                                          std::vector<alpc_reply_handle>& reply_handles, const bool control_data_v1)
             {
                 const auto id = read_stream_id(win_emu, c);
                 const auto entry = id ? this->streams_.find(*id) : this->streams_.end();
@@ -1192,7 +1281,7 @@ namespace sogen
                 // The WASAPI shared-buffer control header audioses validates during Initialize. Captured from a
                 // live audio service (tools/alpc_capture.py) for a 1-second buffer; the buffer-size fields (+0x04,
                 // +0x170, +0x174) and the buffer duration (+0x154) are patched below to match this stream.
-                std::array<uint8_t, 0x1c0> render_control_header = {
+                render_control_data render_control_header = {
                     0x01, 0x00, 0x00, 0x00, 0x20, 0x66, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // version, buffer size
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1241,13 +1330,19 @@ namespace sogen
                 std::memcpy(&render_control_header[endpoint_name_offset], endpoint_name.data(), endpoint_name.size() * sizeof(char16_t));
                 std::memcpy(&render_control_header[0x154], &duration_hns, sizeof(duration_hns));
                 std::memcpy(&render_control_header[0x180], &format.wave_format, sizeof(format.wave_format));
+                if (!control_data_v1)
+                {
+                    render_control_header = to_control_data_v0(render_control_header, format.wave_format.extra_size);
+                }
 
                 // Back the render section with a host-owned buffer aliased into the guest and drained by a host
                 // thread (see render_stream). The guest maps this same memory as the shared audio buffer, so the
                 // drain thread reads the committed PCM and advances the play cursor without any CPU-backend hooks.
                 detach_render_stream(win_emu, stream);
-                stream.render = std::make_unique<render_stream>(win_emu, this->sink_, *id, format, buffer_bytes, render_section_size,
-                                                                render_control_header.data(), render_control_header.size());
+                const auto cursors = control_data_v1 ? k_control_data_v1_cursors : k_control_data_v0_cursors;
+                stream.render =
+                    std::make_unique<render_stream>(win_emu, this->sink_, *id, format, cursors, buffer_bytes, render_section_size,
+                                                    render_control_header.data(), render_control_header.size());
                 const auto backing = stream.render->guest_address();
                 if (backing == 0)
                 {
@@ -1295,7 +1390,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} StartStream/StopStream/disconnect/destroy all reply with just an S_OK HRESULT (the
+            // AudioClientRpc StartStream/StopStream/disconnect/destroy all reply with just an S_OK HRESULT (the
             // captured replies are 8 zero bytes of NDR).
             static NTSTATUS handle_post_create(utils::aligned_binary_writer& writer)
             {
@@ -1304,7 +1399,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 6: AudioServerGetAudioSession([in] stream ctx, [out] session ctx). Right after
+            // AudioClientRpc opnum 6: AudioServerGetAudioSession([in] stream ctx, [out] session ctx). Right after
             // CreateRemoteStream the DirectSound client (unlike the WASAPI one) fetches the audio-session handle;
             // an unimplemented reply here aborts Initialize (DestroyStream + E_FAIL). Per audiosrv's decompiled
             // IDL the only [out] is the session context handle (a 4-byte attributes field + 16-byte UUID); the
@@ -1318,7 +1413,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 27: AudioSessionGetState([in, out] session ctx, [out] short* state). Per the IDL
+            // AudioClientRpc AudioSessionGetState([in, out] session ctx, [out] short* state). Per the IDL
             // the [in,out] session context handle is marshalled back (4-byte attributes + 16-byte UUID) followed
             // by the [out] short state, then the NDR64 return HRESULT. Report AudioSessionStateInactive (0).
             static NTSTATUS handle_get_session_state(utils::aligned_binary_writer& writer)
@@ -1331,7 +1426,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 122: AudioServerDeriveStreamCategory([in] short category, [in] int flags,
+            // AudioClientRpc AudioServerDeriveStreamCategory([in] short category, [in] int flags,
             // [out] int* derived). The client asks the engine to map the category it requested onto the one the
             // endpoint will actually use, which a real engine may downgrade by policy. We apply no policy, so echo
             // the request back. The [in] short sits at offset 0, ahead of its two padding bytes.
@@ -1349,7 +1444,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 55: AudioSessionDestroy([in, out] session ctx). The 32-bit DirectSound session
+            // AudioClientRpc AudioSessionDestroy([in, out] session ctx). The 32-bit DirectSound session
             // setup releases the session control it fetched via GetAudioSession/GetSessionState; leaving this
             // opnum unimplemented returns STATUS_NOT_SUPPORTED (-> HRESULT_FROM_WIN32 NOT_SUPPORTED) and aborts
             // Initialize. Marshal the [in,out] context handle back and report success.
@@ -1362,7 +1457,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {923F85B3} opnum 0: HRESULT Proc0([out] byte** ppBlob) - no [in] params. mmdevapi's proxy calls
+            // MMDevice enumeration opnum 0: HRESULT Proc0([out] byte** ppBlob) - no [in] params. mmdevapi's proxy calls
             // it early (MW3 retries it) and expects a unique pointer to a conformant byte blob (a serialized
             // property/state store; a live host returned ~584 bytes). We have no faithful blob to hand back, so
             // report an empty result: a null unique pointer + S_OK. This replaces the RPC_X error the caller got
