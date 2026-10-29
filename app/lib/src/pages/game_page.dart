@@ -66,6 +66,7 @@ class _GamePageState extends State<GamePage> {
   String? _shownSaveError;
   bool _suspending = false;
   bool _leaving = false;
+  bool _finishing = false;
 
   @override
   void initState() {
@@ -126,11 +127,13 @@ class _GamePageState extends State<GamePage> {
   }
 
   Future<void> _suspend() async {
+    _finishing = true;
     await _flushSettings();
     final saved = await savedStateFile(widget.game);
     await saved.parent.create(recursive: true);
     await _session.suspend(saved.path);
-    if (mounted) {
+    if (mounted && !_leaving) {
+      _leaving = true;
       _suspending = true;
       widget.ads.showAfterGame(_session, suspended: true);
       Navigator.of(context).pop(_session);
@@ -212,7 +215,11 @@ class _GamePageState extends State<GamePage> {
     _shownSaveError = saveError;
     setState(() {});
 
-    if (_session.state == SessionState.exited && _session.exitCode == 0) {
+    if (!_finishing &&
+        _session.state == SessionState.exited &&
+        _session.exitCode == 0 &&
+        _session.error == null &&
+        _session.savedTo == null) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _leave());
     }
   }
@@ -285,6 +292,7 @@ class _GamePageState extends State<GamePage> {
     );
 
     if (stop == true) {
+      _finishing = true;
       try {
         await _session.stop();
       } finally {
