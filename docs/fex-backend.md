@@ -31,8 +31,8 @@ inside this process, treating guest virtual addresses as host virtual addresses 
   [`FEX-Emu/FEX`'s own `docs/ProgrammingConcerns.md`](https://github.com/FEX-Emu/FEX/blob/main/docs/ProgrammingConcerns.md)
   and `docs/allocator_usage.md`, which state this plainly from FEX's own side.
 - This backend's own address-space protections (`host_reserved` region tracking in
-  `windows-emulator/memory_manager.cpp`, the Apple-only FEXCore internal arena, and `GDT_ADDR`'s
-  placement in `process_context.hpp`) are mitigations, not a sandbox: they keep ordinary guest
+  `windows-emulator/memory_manager.cpp` and the Apple-only FEXCore internal arena) are mitigations,
+  not a sandbox: they keep ordinary guest
   allocations from *landing on* addresses this backend or the host process needs, reducing collision
   risk. They do not and cannot stop a guest from computing an arbitrary pointer into any other valid
   host-mapped memory — there is no hard fault boundary for that, by design.
@@ -124,7 +124,8 @@ root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requir
 - **Missing GPR sub-register widths.** `classify_gpr` had no cases for `r8b`-`r15b`/`r8w`-`r15w`/
   `r8d`-`r15d` (only the full 64-bit and the original 8 registers at every width) — silently
   zero-filled on read, silently dropped on write. Common in real x86-64 code (e.g. `mov r9d, eax`).
-- **`setup_gdt` discarded an allocation failure.** `GDT_ADDR` is deliberately placed at a high, fixed
-  address on Apple specifically because low addresses and a range of typical host allocations are
-  unusable/collision-prone here (see the address-space model above) — a collision there is real, not
-  theoretical, and previously failed silently instead of raising a diagnosable error.
+- **`setup_gdt` discarded an allocation failure.** The GDT then sat at a fixed address, and on Apple low
+  addresses and a range of typical host allocations are unusable/collision-prone (see the address-space
+  model above), so a collision there was real, not theoretical, and failed silently instead of raising a
+  diagnosable error. The GDT is now allocated through the memory manager, which confirms the address
+  against the host.
