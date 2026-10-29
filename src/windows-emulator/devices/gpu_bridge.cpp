@@ -2099,14 +2099,17 @@ namespace sogen
                 // Device memory generally cannot be mapped a second time, so it stays where the driver put it if it can.
                 const uint64_t mapped_size = (host_size + page - 1) & ~(page - 1);
                 const uint64_t in_place = get_untagged_pointer_address(host_ptr);
-                const uint64_t va =
-                    win_emu.memory.host_memory_can_stay_in_place()
-                        ? (win_emu.memory.allocate_host_memory_at(in_place, static_cast<size_t>(mapped_size), host_ptr,
-                                                                  memory_permission::read_write)
-                               ? in_place
-                               : 0)
-                        : win_emu.memory.allocate_host_memory(static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write,
-                                                              win_emu.highest_user_address());
+                uint64_t va = 0;
+                if (!win_emu.memory.host_memory_can_stay_in_place())
+                {
+                    va = win_emu.memory.allocate_host_memory(static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write,
+                                                             win_emu.highest_user_address());
+                }
+                else if (win_emu.memory.allocate_host_memory_at(in_place, static_cast<size_t>(mapped_size), host_ptr,
+                                                                memory_permission::read_write))
+                {
+                    va = in_place;
+                }
                 if (va == 0)
                 {
                     this->vulkan_.unmap_memory(request.device, request.memory);
