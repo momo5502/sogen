@@ -1130,6 +1130,11 @@ namespace sogen
         }
     }
 
+    void memory_manager::register_fixed_guest_range(const uint64_t address, const size_t size)
+    {
+        this->memory_->register_fixed_guest_range(address, size);
+    }
+
     uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
     {
         return this->find_free_allocation_base(size, start, ALLOCATION_GRANULARITY, MIN_ALLOCATION_ADDRESS, MAX_ALLOCATION_END_EXCL - 1);
