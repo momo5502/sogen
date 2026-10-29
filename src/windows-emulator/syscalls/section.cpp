@@ -739,7 +739,7 @@ namespace sogen
 
             if (!base_address)
             {
-                return STATUS_INVALID_PARAMETER;
+                return STATUS_NOT_MAPPED_VIEW;
             }
 
             if (c.proc.shared_section_address && base_address >= c.proc.shared_section_address &&
@@ -872,16 +872,16 @@ namespace sogen
             }
 
             case SECTION_INFORMATION_CLASS::SectionImageInformation: {
-                // Only image sections support this query
-                if (!section_entry->is_image())
-                {
-                    return STATUS_SECTION_NOT_IMAGE;
-                }
-
                 // Check buffer size
                 if (section_information_length < sizeof(SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>))
                 {
                     return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                // Only image sections support this query
+                if (!section_entry->is_image())
+                {
+                    return STATUS_SECTION_NOT_IMAGE;
                 }
 
                 SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>> info{};
@@ -1016,12 +1016,20 @@ namespace sogen
 
             case SECTION_INFORMATION_CLASS::SectionRelocationInformation:
             case SECTION_INFORMATION_CLASS::SectionOriginalBaseInformation:
-            case SECTION_INFORMATION_CLASS::SectionInternalImageInformation:
-                // These information classes are not implemented
+                if (section_information_length < sizeof(EmulatorTraits<Emu64>::ULONG_PTR))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                if (!section_entry->is_image())
+                {
+                    return STATUS_SECTION_NOT_IMAGE;
+                }
+
                 return STATUS_NOT_SUPPORTED;
 
             default:
-                return STATUS_NOT_SUPPORTED;
+                return STATUS_INVALID_INFO_CLASS;
             }
         }
     }
