@@ -61,6 +61,13 @@ namespace sogen
             return false;
         }
 
+        // Whether host memory can also appear in the guest at its own address, for memory the backend cannot map a
+        // second time elsewhere.
+        virtual bool host_memory_can_stay_in_place() const
+        {
+            return false;
+        }
+
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
       public:

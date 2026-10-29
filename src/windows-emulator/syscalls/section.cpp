@@ -538,7 +538,8 @@ namespace sogen
             }
 
             const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-            const auto highest_address = highest_address_for_zero_bits(zero_bits);
+            // Views of host-backed sections otherwise go above 4 GiB, where 32-bit code cannot reach them.
+            const auto highest_address = std::min(highest_address_for_zero_bits(zero_bits), c.win_emu.highest_user_address());
 
             if (section_entry->file_name.empty())
             {

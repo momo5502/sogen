@@ -434,8 +434,8 @@ namespace sogen
                 this->initialize_host_storage();
                 std::memcpy(this->host_ptr_, control_header, control_header_size);
 
-                this->guest_address_ =
-                    win_emu.memory.allocate_host_memory(static_cast<size_t>(section_size), this->host_ptr_, memory_permission::read_write);
+                this->guest_address_ = win_emu.memory.allocate_host_memory(static_cast<size_t>(section_size), this->host_ptr_,
+                                                                           memory_permission::read_write, win_emu.highest_user_address());
                 if (this->guest_address_ == 0)
                 {
                     return;
