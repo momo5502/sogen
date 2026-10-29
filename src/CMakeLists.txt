@@ -48,7 +48,7 @@ if(_SOGEN_BUILD_STANDALONE_TARGETS)
   add_subdirectory(windows-emulator-test)
   add_subdirectory(linux-emulator-test)
 
-  if((WIN32 OR LINUX OR ANDROID) AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+  if((WIN32 OR LINUX OR ANDROID OR OSX) AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     sogen_add_subdirectory_and_get_targets("tools" TOOL_TARGETS)
     sogen_targets_set_folder("tools" ${TOOL_TARGETS})
   endif()

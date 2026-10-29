@@ -9,7 +9,7 @@
 #ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
 #include <utils/win.hpp>
-#elif defined(__ANDROID__)
+#elif defined(__ANDROID__) || defined(__APPLE__)
 #include <backend_selection.hpp>
 #else
 #include <kvm_x86_64_emulator.hpp>
@@ -40,6 +40,14 @@ namespace sogen::sandbox
 {
     namespace
     {
+#ifdef __APPLE__
+        // KUSER_SHARED_DATA lies inside the __PAGEZERO segment of every 64-bit macOS process, so it cannot be mapped as
+        // plain memory and every read has to be emulated.
+        constexpr bool intercept_kusd = true;
+#else
+        constexpr bool intercept_kusd = false;
+#endif
+
         std::filesystem::path get_current_binary_dir()
         {
             return utils::get_current_executable_path().parent_path();
@@ -139,7 +147,7 @@ namespace sogen::sandbox
                 // The sandbox favours speed over exact timing: read the TSC and KUSER_SHARED_DATA natively instead of
                 // trapping every access (the analyzer keeps interception on).
                 .intercept_rdtsc = false,
-                .intercept_kusd = false,
+                .intercept_kusd = intercept_kusd,
                 .registry_directory = registry_directory.empty() ? get_current_binary_dir() / "registry" : registry_directory,
                 .network = network_mode,
                 .spoof_gpu_features = spoof_gpu_features,
@@ -198,7 +206,7 @@ namespace sogen::sandbox
 
 #ifdef _WIN32
             auto emulator = whp::create_x86_64_emulator(vcpu_count);
-#elif defined(__ANDROID__) && defined(__aarch64__)
+#elif (defined(__ANDROID__) || defined(__APPLE__)) && defined(__aarch64__)
             auto emulator = create_x86_64_emulator(backend_type::fex);
 #elif defined(__ANDROID__)
             auto emulator = create_x86_64_emulator(backend_type::unicorn);
