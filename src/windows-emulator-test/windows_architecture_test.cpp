@@ -802,10 +802,10 @@ namespace sogen::test
         const auto second_sp = this->abi_.stack_pointer(*this->machine_);
         this->abi_.return_value(*this->machine_, 0x8877665544332211ull);
         second->save(*this->machine_);
-        first->restore(*this->machine_);
+        first->restore(*this->machine_, this->process_.gdt_base);
         EXPECT_EQ(this->abi_.stack_pointer(*this->machine_), first_sp);
         EXPECT_EQ(this->abi_.return_value(*this->machine_), 0x1122334455667788ull);
-        second->restore(*this->machine_);
+        second->restore(*this->machine_, this->process_.gdt_base);
         EXPECT_EQ(this->abi_.stack_pointer(*this->machine_), second_sp);
         EXPECT_EQ(this->abi_.return_value(*this->machine_), 0x8877665544332211ull);
         EXPECT_EQ(this->process_.find_thread_by_id(first->id), first);

@@ -512,10 +512,10 @@ namespace sogen
             this->last_registers = emu.save_registers();
         }
 
-        void restore(cpu_interface& emu) const
+        void restore(cpu_interface& emu, const uint64_t gdt_base) const
         {
             this->load_registers(emu);
-            this->refresh_execution_context(emu);
+            this->refresh_execution_context(emu, gdt_base);
         }
 
         void load_registers(cpu_interface& emu) const
@@ -523,7 +523,7 @@ namespace sogen
             emu.restore_registers(this->last_registers);
         }
 
-        void refresh_execution_context(cpu_interface& cpu) const;
+        void refresh_execution_context(cpu_interface& cpu, uint64_t gdt_base) const;
 
         void setup_if_necessary(cpu_interface& emu, const process_context& context);
 
