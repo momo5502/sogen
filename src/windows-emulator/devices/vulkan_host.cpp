@@ -2570,6 +2570,56 @@ namespace sogen
             return VK_SUCCESS;
         }
 
+        static VkImageCreateInfo proxy_image_info(const swapchain_params& create)
+        {
+            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+            VkImageCreateInfo image_info{};
+            image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            image_info.flags = (create.flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0 ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0;
+            image_info.imageType = VK_IMAGE_TYPE_2D;
+            image_info.format = static_cast<VkFormat>(create.format);
+            image_info.extent = {.width = create.width, .height = create.height, .depth = 1};
+            image_info.mipLevels = 1;
+            image_info.arrayLayers = std::max(1U, create.image_array_layers);
+            image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+            image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            image_info.usage = static_cast<VkImageUsageFlags>(create.image_usage) | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            image_info.sharingMode = static_cast<VkSharingMode>(create.sharing_mode);
+            image_info.queueFamilyIndexCount = static_cast<uint32_t>(create.queue_family_indices.size());
+            image_info.pQueueFamilyIndices = create.queue_family_indices.empty() ? nullptr : create.queue_family_indices.data();
+            image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            return image_info;
+        }
+
+        void register_swapchain_images(swapchain_data& sc, const std::vector<VkImage>& guest_images)
+        {
+            const auto& create = sc.create;
+            sc.acquired.assign(guest_images.size(), false);
+            sc.image_ids.reserve(guest_images.size());
+            for (VkImage image : guest_images)
+            {
+                const uint64_t image_id = this->allocate_id();
+                image_data data{.handle = image, .device_id = sc.device_id, .samples = 1, .owned = false};
+                data.create = image_create_params{.format = create.format,
+                                                  .width = create.width,
+                                                  .height = create.height,
+                                                  .depth = 1,
+                                                  .mip_levels = 1,
+                                                  .array_layers = std::max(1U, create.image_array_layers),
+                                                  .samples = 1,
+                                                  .usage = create.image_usage,
+                                                  .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                                  .image_type = VK_IMAGE_TYPE_2D,
+                                                  .flags = sc.proxy && (create.flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0
+                                                               ? static_cast<uint32_t>(VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT)
+                                                               : 0U};
+                data.reset_subresources(data.create.array_layers);
+                data.swapchain_proxy = sc.proxy.has_value();
+                this->images.emplace(image_id, std::move(data));
+                sc.image_ids.push_back(image_id);
+            }
+        }
+
         VkResult create_swapchain_proxy(const device_data& dev, const VkImageCreateInfo& image_info, const uint32_t image_count,
                                         const std::vector<VkImage>& native_images, swapchain_proxy& proxy)
         {
@@ -7544,29 +7594,11 @@ namespace sogen
                                            .present_mode = present_mode,
                                            .clipped = clipped};
 
-        const uint32_t image_flags = (flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0 ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0;
         if (proxied)
         {
-            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
-            VkImageCreateInfo image_info{};
-            image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-            image_info.flags = image_flags;
-            image_info.imageType = VK_IMAGE_TYPE_2D;
-            image_info.format = requested_format;
-            image_info.extent = {.width = width, .height = height, .depth = 1};
-            image_info.mipLevels = 1;
-            image_info.arrayLayers = std::max(1U, image_array_layers);
-            image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-            image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-            image_info.usage = static_cast<VkImageUsageFlags>(image_usage) | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-            image_info.sharingMode = static_cast<VkSharingMode>(sharing_mode);
-            image_info.queueFamilyIndexCount = static_cast<uint32_t>(queue_family_indices.size());
-            image_info.pQueueFamilyIndices = queue_family_indices.empty() ? nullptr : queue_family_indices.data();
-            image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
             sc.proxy.emplace();
-            result = this->impl_->create_swapchain_proxy(dev, image_info, std::max({min_image_count, caps.minImageCount, 1U}),
-                                                         native_images, *sc.proxy);
+            result = this->impl_->create_swapchain_proxy(dev, impl::proxy_image_info(sc.create),
+                                                         std::max({min_image_count, caps.minImageCount, 1U}), native_images, *sc.proxy);
             if (result != VK_SUCCESS)
             {
                 impl::destroy_swapchain_proxy(dev, *sc.proxy);
@@ -7575,29 +7607,7 @@ namespace sogen
             }
         }
 
-        const auto& guest_images = sc.proxy ? sc.proxy->images : native_images;
-        sc.acquired.assign(guest_images.size(), false);
-        sc.image_ids.reserve(guest_images.size());
-        for (VkImage image : guest_images)
-        {
-            const uint64_t image_id = this->impl_->allocate_id();
-            impl::image_data data{.handle = image, .device_id = device, .samples = 1, .owned = false};
-            data.create = impl::image_create_params{.format = format,
-                                                    .width = width,
-                                                    .height = height,
-                                                    .depth = 1,
-                                                    .mip_levels = 1,
-                                                    .array_layers = std::max(1U, image_array_layers),
-                                                    .samples = 1,
-                                                    .usage = image_usage,
-                                                    .tiling = VK_IMAGE_TILING_OPTIMAL,
-                                                    .image_type = VK_IMAGE_TYPE_2D,
-                                                    .flags = sc.proxy ? image_flags : 0};
-            data.reset_subresources(data.create.array_layers);
-            data.swapchain_proxy = sc.proxy.has_value();
-            this->impl_->images.emplace(image_id, std::move(data));
-            sc.image_ids.push_back(image_id);
-        }
+        this->impl_->register_swapchain_images(sc, sc.proxy ? sc.proxy->images : native_images);
 
         const uint64_t id = this->impl_->allocate_id();
         out_image_count = static_cast<uint32_t>(sc.image_ids.size());
@@ -13284,18 +13294,41 @@ namespace sogen
             uint32_t image_count = 0;
             impl.forced_ids.assign(image_ids.begin(), image_ids.end());
             impl.forced_ids.push_back(id);
-            const auto result = this->create_swapchain(device, surface, 0, create.flags, create.format, create.color_space, create.width,
-                                                       create.height, create.image_array_layers, create.min_image_count, create.image_usage,
-                                                       create.sharing_mode, create.queue_family_indices, create.pre_transform,
-                                                       create.composite_alpha, create.present_mode, create.clipped, swapchain, image_count);
-            if (result == VK_SUCCESS && image_count != image_ids.size())
+
+            // A swapchain on a surface whose window is gone keeps its images, which views and descriptors may still refer
+            // to. Without a native swapchain behind them, it only reports that it is out of date.
+            if (const auto lost_surface = impl.surfaces.find(surface); lost_surface != impl.surfaces.end() && !lost_surface->second.handle)
             {
-                throw std::runtime_error("The re-created Vulkan swapchain has a different number of images");
+                const auto& dev = impl.devices.at(device);
+                impl::swapchain_data sc{.device_id = device, .surface_id = surface, .create = create};
+                sc.proxy.emplace();
+                sc.proxy->lost = true;
+                if (impl.create_swapchain_proxy(dev, impl::proxy_image_info(sc.create), static_cast<uint32_t>(image_ids.size()), {},
+                                                *sc.proxy) != VK_SUCCESS)
+                {
+                    impl::destroy_swapchain_proxy(dev, *sc.proxy);
+                    throw std::runtime_error("Restoring Vulkan swapchain " + std::to_string(id) + " of a lost surface failed");
+                }
+                impl.register_swapchain_images(sc, sc.proxy->images);
+                swapchain = impl.allocate_id();
+                impl.swapchains.emplace(swapchain, std::move(sc));
+                expect_restored(VK_SUCCESS, swapchain, id, "swapchain");
             }
-            expect_restored(result, swapchain, id, "swapchain");
-            if (impl.swapchains.at(swapchain).proxy.has_value() != proxied)
+            else
             {
-                throw std::runtime_error("The host surface no longer presents the Vulkan swapchain the same way");
+                const auto result = this->create_swapchain(
+                    device, surface, 0, create.flags, create.format, create.color_space, create.width, create.height,
+                    create.image_array_layers, create.min_image_count, create.image_usage, create.sharing_mode, create.queue_family_indices,
+                    create.pre_transform, create.composite_alpha, create.present_mode, create.clipped, swapchain, image_count);
+                if (result == VK_SUCCESS && image_count != image_ids.size())
+                {
+                    throw std::runtime_error("The re-created Vulkan swapchain has a different number of images");
+                }
+                expect_restored(result, swapchain, id, "swapchain");
+                if (impl.swapchains.at(swapchain).proxy.has_value() != proxied)
+                {
+                    throw std::runtime_error("The host surface no longer presents the Vulkan swapchain the same way");
+                }
             }
 
             for (const auto image : image_ids)
