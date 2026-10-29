@@ -1844,17 +1844,6 @@ namespace sogen
                                     gpu_bridge::allocate_memory_response{.vk_result = result, .reserved = 0, .memory = memory});
             }
 
-            // 32-bit code can only reach the low 2GB, unless the executable is large-address aware.
-            static uint64_t highest_guest_address(const windows_emulator& win_emu)
-            {
-                if (!win_emu.process.is_wow64_process)
-                {
-                    return MAX_ALLOCATION_END_EXCL - 1;
-                }
-                const auto* executable = win_emu.mod_manager.executable;
-                return (executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) ? 0xFFFEFFFF : 0x7FFEFFFF;
-            }
-
             // On backends whose guest memory lives at fixed host addresses, drivers without placed mappings map device
             // memory wherever they like: below a WoW64 guest's address limit only by chance, and outside the memory a
             // new process gets back for a snapshot. Host-visible memory is therefore allocated as guest memory and
@@ -1862,7 +1851,7 @@ namespace sogen
             bool allocate_imported_memory(windows_emulator& win_emu, const gpu_bridge::allocate_memory_request& request, uint64_t& memory)
             {
                 constexpr uint64_t page = 0x1000;
-                const uint64_t highest_address = highest_guest_address(win_emu);
+                const uint64_t highest_address = win_emu.highest_user_address();
 
                 const uint64_t import_alignment = this->vulkan_.host_import_alignment(request.device);
                 const uint64_t alignment = std::max(page, import_alignment);
@@ -2116,7 +2105,8 @@ namespace sogen
                                                                   memory_permission::read_write)
                                ? in_place
                                : 0)
-                        : win_emu.memory.allocate_host_memory(static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write);
+                        : win_emu.memory.allocate_host_memory(static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write,
+                                                              win_emu.highest_user_address());
                 if (va == 0)
                 {
                     this->vulkan_.unmap_memory(request.device, request.memory);
@@ -2164,7 +2154,7 @@ namespace sogen
                 void* host_ptr = nullptr;
                 const uint64_t guest_address =
                     win_emu.memory.allocate_placed_host_memory(static_cast<size_t>(size), memory_permission::read_write,
-                                                               highest_guest_address(win_emu), this->placer(device, memory, host_ptr));
+                                                               win_emu.highest_user_address(), this->placer(device, memory, host_ptr));
                 if (guest_address == 0)
                 {
                     return std::nullopt;

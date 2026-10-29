@@ -370,6 +370,10 @@ namespace sogen
         void update_key_state(const ui_event& event);
         ui_event resolve_injected_event(const ui_event& event) const;
         void apply_cursor_capture();
+
+        // The highest address the process's own code can reach: 32-bit code only reaches the low 2GB unless the
+        // executable is large-address aware.
+        uint64_t highest_user_address() const;
         void release_held_input();
 
         // Input held for low-level hooks: the next hook the given thread has to run, marked as running.
