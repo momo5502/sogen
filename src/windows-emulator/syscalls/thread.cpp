@@ -60,6 +60,20 @@ namespace sogen
                 const emulator_object<WOW64_CONTEXT> context_obj{c.emu, thread_information};
                 const auto new_wow64_context = context_obj.read();
 
+                const bool sets_debug_registers =
+                    (new_wow64_context.ContextFlags & CONTEXT_DEBUG_REGISTERS_32) == CONTEXT_DEBUG_REGISTERS_32;
+                const bool needs_switch = sets_debug_registers && thread != c.vcpu.active_thread;
+                if (needs_switch)
+                {
+                    c.vcpu.active_thread->save(c.emu);
+                    if (!c.win_emu.wait_for_thread_registers(c.vcpu, *thread))
+                    {
+                        c.vcpu.active_thread->restore(c.emu, c.proc.gdt_base);
+                        c.retrigger_syscall = true;
+                        return STATUS_UNSUCCESSFUL;
+                    }
+                }
+
                 // Update the persistent context for future queries
                 thread->wow64_cpu_reserved->access([&](WOW64_CPURESERVED& ctx) {
                     ctx.Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
@@ -129,13 +143,10 @@ namespace sogen
                 // WOW64_CPURESERVED block that wow64cpu reloads on resume. They must be programmed into
                 // the VP directly, otherwise a 32-bit hardware breakpoint armed via the thread context
                 // (e.g. t6r's CEG single-step trick) never arms and never fires.
-                if ((new_wow64_context.ContextFlags & CONTEXT_DEBUG_REGISTERS_32) == CONTEXT_DEBUG_REGISTERS_32)
+                if (sets_debug_registers)
                 {
-                    const bool needs_switch = thread != c.vcpu.active_thread;
                     if (needs_switch)
                     {
-                        c.vcpu.active_thread->save(c.emu);
-                        c.win_emu.wait_for_thread_registers(c.vcpu, *thread);
                         thread->restore(c.emu, c.proc.gdt_base);
                     }
 
@@ -1104,17 +1115,31 @@ namespace sogen
             cpu_context::save(dynamic_cast<arm64_cpu&>(cpu), context);
         }
 
+        bool is_saved_in_syscall(windows_emulator& win_emu, const emulator_thread& thread)
+        {
+            for (uint32_t i = 0; i < win_emu.vcpu_count(); ++i)
+            {
+                const auto& vcpu = win_emu.vcpu(i);
+                if (vcpu.active_thread == &thread)
+                {
+                    return vcpu.active_thread_saved;
+                }
+            }
+
+            return false;
+        }
+
         // Runs access with the thread's user-mode registers on the calling vCPU and keeps any change it
         // reports. A thread that has not run yet is described, as on Windows, by its initial context
         // (RtlUserThreadStart with the start routine and argument) that LdrInitializeThunk continues into.
         template <typename Context, typename Access>
-        void access_thread_context(const syscall_context& c, emulator_thread& thread, Access&& access)
+        NTSTATUS access_thread_context(const syscall_context& c, emulator_thread& thread, Access&& access)
         {
             auto& active = *c.vcpu.active_thread;
             if (&thread == &active)
             {
                 access();
-                return;
+                return STATUS_SUCCESS;
             }
 
             active.save(c.emu);
@@ -1122,7 +1147,12 @@ namespace sogen
                 active.restore(c.emu, c.proc.gdt_base); //
             });
 
-            c.win_emu.wait_for_thread_registers(c.vcpu, thread);
+            if (!c.win_emu.wait_for_thread_registers(c.vcpu, thread))
+            {
+                c.retrigger_syscall = true;
+                return STATUS_UNSUCCESSFUL;
+            }
+
             thread.restore(c.emu, c.proc.gdt_base);
             if (!thread.setup_done && !c.proc.is_wow64_process)
             {
@@ -1138,9 +1168,25 @@ namespace sogen
                 load_context(c.emu, c.emu.read_memory<Context>(*initial_context));
             }
 
+            // Windows shows a thread inside a syscall after the syscall instruction. Its saved registers keep the
+            // instruction itself, which its vCPU continues after and a retriggered syscall rewinds to.
+            const auto& abi = c.win_emu.abi();
+            const auto in_syscall = is_saved_in_syscall(c.win_emu, thread);
+            const auto syscall_ip = abi.instruction_pointer(c.emu);
+            const auto return_ip = syscall_ip + abi.syscall_abi().syscall_instruction_size();
+            if (in_syscall)
+            {
+                abi.instruction_pointer(c.emu, return_ip);
+            }
+
             if (!access())
             {
-                return;
+                return STATUS_SUCCESS;
+            }
+
+            if (in_syscall && abi.instruction_pointer(c.emu) == return_ip)
+            {
+                abi.instruction_pointer(c.emu, syscall_ip);
             }
 
             if (initial_context)
@@ -1153,6 +1199,8 @@ namespace sogen
             {
                 thread.save(c.emu);
             }
+
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtGetContextThread(const syscall_context& c, const handle thread_handle,
@@ -1178,26 +1226,35 @@ namespace sogen
                     c.win_emu.callbacks.on_suspicious_activity("Reading debug registers");
                 }
 
-                access_thread_context<arm64_context>(c, *thread, [&] {
+                const auto status = access_thread_context<arm64_context>(c, *thread, [&] {
                     store_context(c.emu, context);
                     return false;
                 });
+                if (status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
                 c.emu.write_memory(thread_context.value(), context);
                 return STATUS_SUCCESS;
             }
 
-            thread_context.access([&](CONTEXT64& context) {
-                if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
-                {
-                    c.win_emu.callbacks.on_suspicious_activity("Reading debug registers");
-                }
+            auto context = thread_context.read();
+            if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
+            {
+                c.win_emu.callbacks.on_suspicious_activity("Reading debug registers");
+            }
 
-                access_thread_context<CONTEXT64>(c, *thread, [&] {
-                    store_context(c.emu, context);
-                    return false;
-                });
+            const auto status = access_thread_context<CONTEXT64>(c, *thread, [&] {
+                store_context(c.emu, context);
+                return false;
             });
+            if (status != STATUS_SUCCESS)
+            {
+                return status;
+            }
 
+            thread_context.write(context);
             return STATUS_SUCCESS;
         }
 
@@ -1219,12 +1276,16 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                access_thread_context<arm64_context>(c, *thread, [&] {
+                const auto status = access_thread_context<arm64_context>(c, *thread, [&] {
                     load_context(c.emu, context);
                     // X18 always addresses the thread's TEB; the kernel does not take it from a user context.
                     c.win_emu.abi().install_thread_environment(c.emu, thread->teb64->value());
                     return true;
                 });
+                if (status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
 
                 if ((context.ContextFlags & arm64_context_debug_registers) == arm64_context_debug_registers)
                 {
@@ -1235,10 +1296,14 @@ namespace sogen
             }
 
             const auto context = thread_context.read();
-            access_thread_context<CONTEXT64>(c, *thread, [&] {
+            const auto status = access_thread_context<CONTEXT64>(c, *thread, [&] {
                 load_context(c.emu, context);
                 return true;
             });
+            if (status != STATUS_SUCCESS)
+            {
+                return status;
+            }
 
             if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
             {
