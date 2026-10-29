@@ -368,6 +368,11 @@ namespace sogen
                                         emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                         emulator_object<ULARGE_INTEGER> maximum_size, ULONG section_page_protection,
                                         ULONG allocation_attributes, handle file_handle);
+        NTSTATUS handle_NtCreateSectionEx(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK desired_access,
+                                          emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                          emulator_object<ULARGE_INTEGER> maximum_size, ULONG section_page_protection,
+                                          ULONG allocation_attributes, handle file_handle,
+                                          emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters, ULONG extended_parameter_count);
         NTSTATUS handle_NtOpenSection(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK /*desired_access*/,
                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
         NTSTATUS handle_NtQuerySection(const syscall_context& c, handle section_handle, SECTION_INFORMATION_CLASS section_information_class,
@@ -1614,6 +1619,7 @@ namespace sogen
         add_handler(NtQueryVolumeInformationFile);
         add_handler(NtApphelpCacheControl);
         add_handler(NtCreateSection);
+        add_handler(NtCreateSectionEx);
         add_handler(NtQuerySection);
         add_handler(NtConnectPort);
         add_handler(NtSecureConnectPort);
