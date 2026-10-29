@@ -955,7 +955,7 @@ namespace sogen
                 return STATUS_OBJECT_TYPE_MISMATCH;
             }
 
-            if (!NT_SUCCESS(signal_status))
+            if (signal_status != STATUS_SUCCESS)
             {
                 return signal_status;
             }

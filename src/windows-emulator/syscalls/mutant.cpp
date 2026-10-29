@@ -13,7 +13,7 @@ namespace sogen
         {
             if (mutant_handle.value.type != handle_types::mutant)
             {
-                return STATUS_OBJECT_TYPE_MISMATCH;
+                return mutant_handle.value.type == handle_types::reserved ? STATUS_INVALID_HANDLE : STATUS_OBJECT_TYPE_MISMATCH;
             }
 
             auto* mutant = c.proc.mutants.get(mutant_handle);
@@ -24,14 +24,14 @@ namespace sogen
 
             const auto [old_count, succeeded] = mutant->release(c.thread().id);
 
-            if (previous_count)
-            {
-                previous_count.write(static_cast<LONG>(old_count));
-            }
-
             if (!succeeded)
             {
-                return STATUS_MUTANT_NOT_OWNED;
+                return mutant->abandoned ? STATUS_ABANDONED : STATUS_MUTANT_NOT_OWNED;
+            }
+
+            if (previous_count)
+            {
+                previous_count.write(1 - static_cast<LONG>(old_count));
             }
 
             if (old_count == 1)
