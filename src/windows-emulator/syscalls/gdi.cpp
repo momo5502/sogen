@@ -371,8 +371,8 @@ namespace sogen
                 return true;
             }
 
-            // Only 32-bit code needs these below 4 GiB. Native processes get them above, like their other allocations, even
-            // where an older executable moves its own default allocation address down.
+            // Native processes get these above 4 GiB even where an older executable moves its own default allocation address
+            // down. Backends sharing the address space with the guest can only hand memory above it to a new process.
             uint64_t gdi_allocation_start(const syscall_context& c)
             {
                 return c.proc.is_wow64_process ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
