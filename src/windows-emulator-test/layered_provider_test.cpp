@@ -335,9 +335,17 @@ namespace sogen::test
     {
         write_host_file(this->state() / "journal", "H\tfile.txt\nH\tdir\\ol");
 
-        const auto provider = this->make_provider();
-        EXPECT_FALSE(provider->stat(guest({u"file.txt"})));
-        EXPECT_TRUE(provider->stat(guest({u"dir", u"old.txt"})));
+        {
+            const auto provider = this->make_provider();
+            EXPECT_FALSE(provider->stat(guest({u"file.txt"})));
+            EXPECT_TRUE(provider->stat(guest({u"dir", u"old.txt"})));
+            ASSERT_EQ(STATUS_SUCCESS, provider->remove(guest({u"dir", u"old.txt"})));
+        }
+
+        const auto restarted = this->make_provider();
+        EXPECT_FALSE(restarted->stat(guest({u"file.txt"})));
+        EXPECT_FALSE(restarted->stat(guest({u"dir", u"old.txt"})));
+        EXPECT_TRUE(restarted->stat(guest({u"dir", u"keep.txt"})));
     }
 
     TEST_F(LayeredProviderTest, CopiesAbandonedByACrashAreDiscarded)

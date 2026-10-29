@@ -33,6 +33,9 @@ namespace sogen
     // upper tree, so no marker file can collide with a guest file name. A journal record is made durable before the
     // change it describes becomes visible, so a crash leaves a state that some prefix of the operations would have left.
     //
+    // Renaming a file that only the lower has is a copy followed by hiding the old name, so a crash in between leaves both
+    // names, never neither.
+    //
     // Renaming a directory that has lower content is not supported yet and reports STATUS_NOT_SAME_DEVICE, which makes
     // callers fall back to copying it.
     class layered_provider final : public mount_provider

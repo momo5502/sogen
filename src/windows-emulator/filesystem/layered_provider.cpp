@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <sstream>
 
 #include <sys/stat.h>
 
@@ -70,11 +71,24 @@ namespace sogen
         : file_(std::move(file))
     {
         std::ifstream stream(this->file_, std::ios::binary);
-        std::string line{};
-        while (std::getline(stream, line))
+        const std::string content{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+        stream.close();
+
+        // A record the crash cut short has no terminator. It is dropped and cut off, so that the next record does not
+        // continue it.
+        const auto last_newline = content.find_last_of('\n');
+        const auto complete = last_newline == std::string::npos ? 0 : last_newline + 1;
+        if (complete != content.size())
         {
-            // A record the crash cut short has no terminator and is dropped.
-            if (stream.eof() || line.size() < 3 || line[1] != '\t')
+            std::error_code ec{};
+            std::filesystem::resize_file(this->file_, complete, ec);
+        }
+
+        std::istringstream records(content.substr(0, complete));
+        std::string line{};
+        while (std::getline(records, line))
+        {
+            if (line.size() < 3 || line[1] != '\t')
             {
                 continue;
             }
@@ -546,12 +560,23 @@ namespace sogen
             return this->upper_->rename(from, to);
         }
 
+        const auto destination_existed = this->stat(to).has_value();
         if (!this->copy_to_upper(from, to))
         {
             return STATUS_ACCESS_DENIED;
         }
 
-        return this->journal_.hide(from) ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;
+        if (!this->journal_.hide(from))
+        {
+            if (!destination_existed)
+            {
+                (void)this->upper_->remove(to);
+            }
+
+            return STATUS_ACCESS_DENIED;
+        }
+
+        return STATUS_SUCCESS;
     }
 
     NTSTATUS layered_provider::remove(const windows_path& path)
