@@ -65,6 +65,7 @@ class _GamePageState extends State<GamePage> {
   bool _editingLayout = false;
   String? _shownSaveError;
   bool _suspending = false;
+  bool _leaving = false;
 
   @override
   void initState() {
@@ -210,6 +211,25 @@ class _GamePageState extends State<GamePage> {
     }
     _shownSaveError = saveError;
     setState(() {});
+
+    if (_session.state == SessionState.exited && _session.exitCode == 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _leave());
+    }
+  }
+
+  // A game that exits cleanly has nothing left to show. Crashes and non-zero exits stay for their log.
+  void _leave() {
+    if (_leaving || !mounted) {
+      return;
+    }
+
+    final route = ModalRoute.of(context);
+    if (route == null) {
+      return;
+    }
+
+    _leaving = true;
+    Navigator.of(context).removeRoute(route);
   }
 
   void _onKeyboardChanged(String value) {
@@ -248,7 +268,7 @@ class _GamePageState extends State<GamePage> {
 
   Future<void> _confirmStop() async {
     if (_session.state != SessionState.running) {
-      Navigator.of(context).pop();
+      _leave();
       return;
     }
 
@@ -270,9 +290,7 @@ class _GamePageState extends State<GamePage> {
       } finally {
         await _flushSettings();
       }
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
+      _leave();
     }
   }
 
