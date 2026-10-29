@@ -1057,7 +1057,7 @@ namespace sogen
     {
         // Backstop only: every non-settling iteration of the pick/confirm loop below records at least
         // one more foreign range, so find_free_allocation_base is guaranteed to make progress.
-        constexpr int max_host_reserved_retries = 8;
+        constexpr size_t max_host_reserved_retries = 8;
     }
 
     uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only,
@@ -1075,7 +1075,7 @@ namespace sogen
         // the reserve_guest_address_range below would mmap(MAP_FIXED) over it. find_free_host_allocation_base
         // confirms the pick against the host instead of paying for an unconditional full rescan, which
         // costs O(host VM regions) Mach IPC syscalls and grows without bound over a session.
-        for (int attempt = 0;; ++attempt)
+        for (size_t attempt = 0;; ++attempt)
         {
             const uint64_t allocation_base = this->find_free_host_allocation_base(size, start, highest_address);
             if (!allocation_base)
@@ -1130,7 +1130,7 @@ namespace sogen
         // step; the windowed record retires exactly the flagged window, covering backends whose full
         // reserved_host_ranges() omits ranges their windowed query still reports occupied - otherwise
         // the same pick would be rejected every iteration while the full rescan recorded nothing new.
-        for (int attempt = 0;; ++attempt)
+        for (size_t attempt = 0;; ++attempt)
         {
             const uint64_t allocation_base =
                 this->find_free_allocation_base(size, start, ALLOCATION_GRANULARITY, MIN_ALLOCATION_ADDRESS, highest_address);
