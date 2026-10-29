@@ -707,6 +707,7 @@ namespace sogen
             // A present that failed after acquiring a native image leaves it acquired and its semaphore pending, so the
             // guest has to re-create the swapchain.
             bool lost{};
+            bool copyable{};
         };
 
         struct swapchain_data
@@ -2570,7 +2571,7 @@ namespace sogen
             return VK_SUCCESS;
         }
 
-        static VkImageCreateInfo proxy_image_info(const swapchain_params& create)
+        VkImageCreateInfo proxy_image_info(const device_data& dev, const swapchain_params& create)
         {
             // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
             VkImageCreateInfo image_info{};
@@ -2584,6 +2585,16 @@ namespace sogen
             image_info.samples = VK_SAMPLE_COUNT_1_BIT;
             image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
             image_info.usage = static_cast<VkImageUsageFlags>(create.image_usage) | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            // Snapshots write a held image's frame back, which only formats a transfer can write to allow.
+            if (const auto instance = this->instances.find(dev.instance_id); instance != this->instances.end())
+            {
+                VkFormatProperties features{};
+                instance->second.get_physical_device_format_properties(dev.physical_device, image_info.format, &features);
+                if ((features.optimalTilingFeatures & VK_FORMAT_FEATURE_TRANSFER_DST_BIT) != 0)
+                {
+                    image_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+                }
+            }
             image_info.sharingMode = static_cast<VkSharingMode>(create.sharing_mode);
             image_info.queueFamilyIndexCount = static_cast<uint32_t>(create.queue_family_indices.size());
             image_info.pQueueFamilyIndices = create.queue_family_indices.empty() ? nullptr : create.queue_family_indices.data();
@@ -2615,6 +2626,7 @@ namespace sogen
                                                                : 0U};
                 data.reset_subresources(data.create.array_layers);
                 data.swapchain_proxy = sc.proxy.has_value();
+                data.copyable = sc.proxy && sc.proxy->copyable;
                 this->images.emplace(image_id, std::move(data));
                 sc.image_ids.push_back(image_id);
             }
@@ -2623,6 +2635,7 @@ namespace sogen
         VkResult create_swapchain_proxy(const device_data& dev, const VkImageCreateInfo& image_info, const uint32_t image_count,
                                         const std::vector<VkImage>& native_images, swapchain_proxy& proxy)
         {
+            proxy.copyable = (image_info.usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) != 0;
             for (uint32_t i = 0; i < image_count; ++i)
             {
                 VkImage image{};
@@ -7597,7 +7610,7 @@ namespace sogen
         if (proxied)
         {
             sc.proxy.emplace();
-            result = this->impl_->create_swapchain_proxy(dev, impl::proxy_image_info(sc.create),
+            result = this->impl_->create_swapchain_proxy(dev, this->impl_->proxy_image_info(dev, sc.create),
                                                          std::max({min_image_count, caps.minImageCount, 1U}), native_images, *sc.proxy);
             if (result != VK_SUCCESS)
             {
@@ -11193,7 +11206,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 17;
+        constexpr uint32_t snapshot_version = 18;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -12600,7 +12613,9 @@ namespace sogen
         buffer.write(static_cast<uint64_t>(impl.swapchains.size()));
         for (const auto& [id, swapchain] : impl.swapchains)
         {
-            if (std::ranges::any_of(swapchain.acquired, [](const bool acquired) { return acquired; }))
+            // A held proxy image is only bookkeeping and comes back as such, but a held native image cannot be acquired again
+            // by index.
+            if (!swapchain.proxy && std::ranges::any_of(swapchain.acquired, [](const bool acquired) { return acquired; }))
             {
                 throw std::runtime_error("Snapshots cannot be taken while the guest holds a swapchain image");
             }
@@ -12622,6 +12637,50 @@ namespace sogen
                 const auto& data = impl.images.at(image);
                 buffer.write_vector(data.layouts);
                 buffer.write(data.last_queue_id);
+            }
+            buffer.write_vector(std::vector<uint8_t>(swapchain.acquired.begin(), swapchain.acquired.end()));
+
+            // A held proxy image may hold a frame the guest has not presented yet.
+            for (size_t i = 0; i < swapchain.image_ids.size(); ++i)
+            {
+                const bool held = swapchain.proxy && swapchain.acquired[i];
+                buffer.write(held);
+                if (!held)
+                {
+                    continue;
+                }
+
+                const auto& data = impl.images.at(swapchain.image_ids[i]);
+                if (!data.copyable)
+                {
+                    throw std::runtime_error("Snapshots cannot save a held Vulkan swapchain image on this GPU");
+                }
+                const auto block = get_vulkan_copy_block(data.create.format, VK_IMAGE_ASPECT_COLOR_BIT);
+                const VkExtent3D extent{.width = data.create.width, .height = data.create.height, .depth = 1};
+                for (uint32_t layer = 0; layer < data.create.array_layers; ++layer)
+                {
+                    const auto layout = data.host_layout(data.layouts[data.subresource_index(0, 0, layer)]);
+                    buffer.write(layout != VK_IMAGE_LAYOUT_UNDEFINED);
+                    if (layout == VK_IMAGE_LAYOUT_UNDEFINED)
+                    {
+                        continue;
+                    }
+
+                    std::vector<std::byte> contents{};
+                    if (block)
+                    {
+                        const uint64_t blocks_wide = (uint64_t{extent.width} + block->width - 1) / block->width;
+                        const uint64_t blocks_high = (uint64_t{extent.height} + block->height - 1) / block->height;
+                        contents.resize(static_cast<size_t>(blocks_wide * blocks_high * block->size));
+                    }
+                    if (!block || !transfer_for(data.device_id)
+                                       .copy_image(data.handle, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, extent,
+                                                   *block, layout, layout, true, contents, false))
+                    {
+                        throw std::runtime_error("Snapshots cannot save the contents of a held Vulkan swapchain image yet");
+                    }
+                    buffer.write_vector(contents);
+                }
             }
         }
 
@@ -13307,7 +13366,7 @@ namespace sogen
                 impl::swapchain_data sc{.device_id = device, .surface_id = surface, .create = create};
                 sc.proxy.emplace();
                 sc.proxy->lost = true;
-                if (impl.create_swapchain_proxy(dev, impl::proxy_image_info(sc.create), static_cast<uint32_t>(image_ids.size()), {},
+                if (impl.create_swapchain_proxy(dev, impl.proxy_image_info(dev, sc.create), static_cast<uint32_t>(image_ids.size()), {},
                                                 *sc.proxy) != VK_SUCCESS)
                 {
                     impl::destroy_swapchain_proxy(dev, *sc.proxy);
@@ -13347,6 +13406,49 @@ namespace sogen
                 restored.last_queue_id = buffer.read<uint64_t>();
                 restored.layout_undefined =
                     std::ranges::any_of(restored.layouts, [](const uint32_t layout) { return layout != VK_IMAGE_LAYOUT_UNDEFINED; });
+            }
+
+            auto& restored_swapchain = impl.swapchains.at(swapchain);
+            const auto acquired = buffer.read_vector<uint8_t>();
+            if (acquired.size() != restored_swapchain.acquired.size())
+            {
+                throw std::runtime_error("The re-created Vulkan swapchain has different images");
+            }
+
+            for (size_t i = 0; i < acquired.size(); ++i)
+            {
+                restored_swapchain.acquired[i] = acquired[i] != 0;
+            }
+
+            // A held image is not acquired again, which is where a re-created image otherwise gets its saved layout. Writing
+            // the saved frame back puts it there.
+            for (const auto image_id : image_ids)
+            {
+                if (!buffer.read<bool>())
+                {
+                    continue;
+                }
+
+                auto& image = impl.images.at(image_id);
+                const auto block = get_vulkan_copy_block(image.create.format, VK_IMAGE_ASPECT_COLOR_BIT);
+                const VkExtent3D extent{.width = image.create.width, .height = image.create.height, .depth = 1};
+                for (uint32_t layer = 0; layer < image.create.array_layers; ++layer)
+                {
+                    if (!buffer.read<bool>())
+                    {
+                        continue;
+                    }
+
+                    auto contents = buffer.read_vector<std::byte>();
+                    const auto layout = image.host_layout(image.layouts[image.subresource_index(0, 0, layer)]);
+                    if (!block ||
+                        !transfer_for(device).copy_image(image.handle, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, layer,
+                                                         extent, *block, VK_IMAGE_LAYOUT_UNDEFINED, layout, true, contents, true))
+                    {
+                        throw std::runtime_error("Restoring a held Vulkan swapchain image failed");
+                    }
+                }
+                image.layout_undefined = false;
             }
         }
 
