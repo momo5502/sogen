@@ -12669,8 +12669,9 @@ namespace sogen
                     std::vector<std::byte> contents{};
                     if (block)
                     {
-                        contents.resize(static_cast<size_t>(((extent.width + block->width - 1) / block->width) *
-                                                            ((extent.height + block->height - 1) / block->height) * block->size));
+                        const uint64_t blocks_wide = (uint64_t{extent.width} + block->width - 1) / block->width;
+                        const uint64_t blocks_high = (uint64_t{extent.height} + block->height - 1) / block->height;
+                        contents.resize(static_cast<size_t>(blocks_wide * blocks_high * block->size));
                     }
                     if (!block || !transfer_for(data.device_id)
                                        .copy_image(data.handle, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, extent,
