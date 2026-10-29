@@ -2433,9 +2433,14 @@ namespace sogen::fex
         }
 
 #ifndef __APPLE__
-        // Outside the low window, host memory can only appear in the guest at its own address. Inside it, the
-        // window's pages are replaced with a second mapping of the host memory instead.
+        // Inside the low window or the arena, the reserved pages are replaced with a second mapping of the host memory.
+        // Without either, host memory can only appear in the guest at its own address.
         bool host_memory_mapping_requires_identity() const override
+        {
+            return this->low_guest_window_ == 0 && this->guest_arena_ == 0;
+        }
+
+        bool host_memory_can_stay_in_place() const override
         {
             return this->low_guest_window_ == 0;
         }

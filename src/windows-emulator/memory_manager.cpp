@@ -316,10 +316,22 @@ namespace sogen
         return true;
     }
 
+    namespace
+    {
+        // Host memory for a native process goes above 4 GiB even where an older executable moves its default allocation
+        // address down: backends sharing the address space with the guest can only hand memory there to a new process.
+        uint64_t host_memory_start(const uint64_t highest_address)
+        {
+            return highest_address >= DEFAULT_ALLOCATION_ADDRESS_64BIT ? DEFAULT_ALLOCATION_ADDRESS_64BIT : 0;
+        }
+    }
+
     bool memory_manager::allocate_host_memory_at(const uint64_t address, const size_t size, void* host_pointer,
                                                  const nt_memory_permission permissions)
     {
-        const bool uses_existing_host_mapping = this->memory_->host_memory_mapping_requires_identity();
+        const bool uses_existing_host_mapping =
+            this->memory_->host_memory_mapping_requires_identity() ||
+            (this->memory_->host_memory_can_stay_in_place() && address == get_untagged_pointer_address(host_pointer));
         if (this->overlaps_reserved_region(address, size, uses_existing_host_mapping))
         {
             return false;
@@ -381,8 +393,9 @@ namespace sogen
         }
 
         const bool uses_existing_host_mapping = this->memory_->host_memory_mapping_requires_identity();
-        const uint64_t address = uses_existing_host_mapping ? get_untagged_pointer_address(host_pointer)
-                                                            : this->find_free_host_allocation_base(size, 0, highest_address);
+        const uint64_t address = uses_existing_host_mapping
+                                     ? get_untagged_pointer_address(host_pointer)
+                                     : this->find_free_host_allocation_base(size, host_memory_start(highest_address), highest_address);
 
         if (address < MIN_ALLOCATION_ADDRESS || address >= MAX_ALLOCATION_END_EXCL || size > MAX_ALLOCATION_END_EXCL - address ||
             address + size - 1 > highest_address)
@@ -392,7 +405,13 @@ namespace sogen
 
         if (!this->allocate_host_memory_at(address, size, host_pointer, permissions))
         {
-            return 0;
+            const uint64_t in_place = get_untagged_pointer_address(host_pointer);
+            if (uses_existing_host_mapping || !this->memory_->host_memory_can_stay_in_place() ||
+                !this->allocate_host_memory_at(in_place, size, host_pointer, permissions))
+            {
+                return 0;
+            }
+            return in_place;
         }
 
         return address;
@@ -414,6 +433,11 @@ namespace sogen
         return regions;
     }
 
+    bool memory_manager::host_memory_can_stay_in_place() const
+    {
+        return this->memory_->host_memory_can_stay_in_place();
+    }
+
     bool memory_manager::can_alias_host_memory_anywhere() const
     {
         return this->memory_->supports_host_memory_mapping() && !this->memory_->host_memory_mapping_requires_identity();
@@ -428,7 +452,7 @@ namespace sogen
             return 0;
         }
 
-        const uint64_t address = this->find_free_host_allocation_base(size, 0, highest_address);
+        const uint64_t address = this->find_free_host_allocation_base(size, host_memory_start(highest_address), highest_address);
         if (address == 0 || !this->allocate_placed_host_memory_at(address, size, permissions, place))
         {
             return 0;

@@ -1845,24 +1845,28 @@ namespace sogen
             }
 
             // 32-bit code can only reach the low 2GB, unless the executable is large-address aware.
-            static uint64_t highest_wow64_address(const windows_emulator& win_emu)
+            static uint64_t highest_guest_address(const windows_emulator& win_emu)
             {
+                if (!win_emu.process.is_wow64_process)
+                {
+                    return MAX_ALLOCATION_END_EXCL - 1;
+                }
                 const auto* executable = win_emu.mod_manager.executable;
                 return (executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) ? 0xFFFEFFFF : 0x7FFEFFFF;
             }
 
-            // A WoW64 guest can only reach memory below its address limit, and drivers without placed mappings map
-            // device memory wherever they like, which an alias into that range cannot always reach. Host-visible
-            // memory is therefore allocated as guest memory there and imported into the device, so it is already
-            // mapped where the guest needs it.
+            // On backends whose guest memory lives at fixed host addresses, drivers without placed mappings map device
+            // memory wherever they like: below a WoW64 guest's address limit only by chance, and outside the memory a
+            // new process gets back for a snapshot. Host-visible memory is therefore allocated as guest memory and
+            // imported into the device, so it is already mapped where the guest needs it.
             bool allocate_imported_memory(windows_emulator& win_emu, const gpu_bridge::allocate_memory_request& request, uint64_t& memory)
             {
                 constexpr uint64_t page = 0x1000;
-                const uint64_t wow64_highest_address = highest_wow64_address(win_emu);
+                const uint64_t highest_address = highest_guest_address(win_emu);
 
                 const uint64_t import_alignment = this->vulkan_.host_import_alignment(request.device);
                 const uint64_t alignment = std::max(page, import_alignment);
-                if (!win_emu.process.is_wow64_process || import_alignment == 0 || request.size == 0 ||
+                if (win_emu.memory.host_placement_address(MIN_ALLOCATION_ADDRESS) == 0 || import_alignment == 0 || request.size == 0 ||
                     request.size > UINT64_MAX - alignment ||
                     !this->vulkan_.is_host_visible_memory_type(request.device, request.memory_type_index))
                 {
@@ -1870,8 +1874,8 @@ namespace sogen
                 }
 
                 const uint64_t size = (request.size + alignment - 1) / alignment * alignment;
-                const uint64_t guest_address =
-                    win_emu.memory.find_free_host_allocation_base(static_cast<size_t>(size), 0, wow64_highest_address);
+                const uint64_t guest_address = win_emu.memory.find_free_host_allocation_base(
+                    static_cast<size_t>(size), win_emu.process.is_wow64_process ? 0 : DEFAULT_ALLOCATION_ADDRESS_64BIT, highest_address);
                 if (guest_address == 0 || guest_address % alignment != 0 ||
                     !win_emu.memory.allocate_memory(guest_address, static_cast<size_t>(size), memory_permission::read_write))
                 {
@@ -2103,9 +2107,16 @@ namespace sogen
                     return write_output(win_emu, context, response);
                 }
 
+                // Device memory generally cannot be mapped a second time, so it stays where the driver put it if it can.
                 const uint64_t mapped_size = (host_size + page - 1) & ~(page - 1);
+                const uint64_t in_place = get_untagged_pointer_address(host_ptr);
                 const uint64_t va =
-                    win_emu.memory.allocate_host_memory(static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write);
+                    win_emu.memory.host_memory_can_stay_in_place()
+                        ? (win_emu.memory.allocate_host_memory_at(in_place, static_cast<size_t>(mapped_size), host_ptr,
+                                                                  memory_permission::read_write)
+                               ? in_place
+                               : 0)
+                        : win_emu.memory.allocate_host_memory(static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write);
                 if (va == 0)
                 {
                     this->vulkan_.unmap_memory(request.device, request.memory);
@@ -2131,17 +2142,16 @@ namespace sogen
                 };
             }
 
-            // A WoW64 guest can only reach memory below its address limit, where the driver's own mapping generally is
-            // not. On backends whose guest memory lives at fixed host addresses, the driver then maps the memory right
-            // where a free guest range is backed, instead of the bridge aliasing a mapping the driver placed elsewhere
-            // (which device memory generally does not allow).
+            // On backends whose guest memory lives at fixed host addresses, the driver's own mapping is generally neither
+            // below a WoW64 guest's address limit nor in the memory a new process gets back for a snapshot. The driver
+            // then maps the memory right where a free guest range is backed, instead of the bridge aliasing a mapping the
+            // driver placed elsewhere (which device memory generally does not allow).
             std::optional<direct_mapping> map_memory_placed(windows_emulator& win_emu, const uint64_t device, const uint64_t memory)
             {
                 constexpr uint64_t page = 0x1000;
                 const uint64_t placed_alignment = this->vulkan_.placed_map_alignment(device);
                 const uint64_t allocation_size = this->vulkan_.allocation_size(memory);
-                if (!win_emu.process.is_wow64_process || placed_alignment == 0 || ALLOCATION_GRANULARITY % placed_alignment != 0 ||
-                    allocation_size == 0)
+                if (placed_alignment == 0 || ALLOCATION_GRANULARITY % placed_alignment != 0 || allocation_size == 0)
                 {
                     return std::nullopt;
                 }
@@ -2151,12 +2161,10 @@ namespace sogen
                 const uint64_t alignment = std::max(page, placed_alignment);
                 const uint64_t size = (allocation_size + alignment - 1) & ~(alignment - 1);
 
-                const uint64_t wow64_highest_address = highest_wow64_address(win_emu);
-
                 void* host_ptr = nullptr;
                 const uint64_t guest_address =
                     win_emu.memory.allocate_placed_host_memory(static_cast<size_t>(size), memory_permission::read_write,
-                                                               wow64_highest_address, this->placer(device, memory, host_ptr));
+                                                               highest_guest_address(win_emu), this->placer(device, memory, host_ptr));
                 if (guest_address == 0)
                 {
                     return std::nullopt;
