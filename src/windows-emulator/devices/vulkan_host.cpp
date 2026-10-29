@@ -11193,7 +11193,7 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 17;
+        constexpr uint32_t snapshot_version = 18;
 
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
@@ -12600,7 +12600,9 @@ namespace sogen
         buffer.write(static_cast<uint64_t>(impl.swapchains.size()));
         for (const auto& [id, swapchain] : impl.swapchains)
         {
-            if (std::ranges::any_of(swapchain.acquired, [](const bool acquired) { return acquired; }))
+            // A held proxy image is only bookkeeping and comes back as such, but a held native image cannot be acquired again
+            // by index.
+            if (!swapchain.proxy && std::ranges::any_of(swapchain.acquired, [](const bool acquired) { return acquired; }))
             {
                 throw std::runtime_error("Snapshots cannot be taken while the guest holds a swapchain image");
             }
@@ -12623,6 +12625,7 @@ namespace sogen
                 buffer.write_vector(data.layouts);
                 buffer.write(data.last_queue_id);
             }
+            buffer.write_vector(std::vector<uint8_t>(swapchain.acquired.begin(), swapchain.acquired.end()));
         }
 
         buffer.write(static_cast<uint64_t>(impl.query_pools.size()));
@@ -13347,6 +13350,26 @@ namespace sogen
                 restored.last_queue_id = buffer.read<uint64_t>();
                 restored.layout_undefined =
                     std::ranges::any_of(restored.layouts, [](const uint32_t layout) { return layout != VK_IMAGE_LAYOUT_UNDEFINED; });
+            }
+
+            auto& restored_swapchain = impl.swapchains.at(swapchain);
+            const auto acquired = buffer.read_vector<uint8_t>();
+            if (acquired.size() != restored_swapchain.acquired.size())
+            {
+                throw std::runtime_error("The re-created Vulkan swapchain has different images");
+            }
+
+            // A held image is not acquired again, which is where a re-created image otherwise gets its saved layout.
+            const auto& device_data = impl.devices.at(device);
+            for (size_t i = 0; i < acquired.size(); ++i)
+            {
+                restored_swapchain.acquired[i] = acquired[i] != 0;
+                auto& image = impl.images.at(image_ids[i]);
+                if (restored_swapchain.acquired[i] && image.layout_undefined &&
+                    !impl.transition_restored_swapchain_image(device_data, image, VK_NULL_HANDLE, VK_NULL_HANDLE))
+                {
+                    throw std::runtime_error("Failed to restore the layout of a held swapchain image");
+                }
             }
         }
 
