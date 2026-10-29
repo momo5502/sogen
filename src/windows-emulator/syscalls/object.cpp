@@ -1097,8 +1097,18 @@ namespace sogen
         }
 
         NTSTATUS handle_NtSetSecurityObject(const syscall_context& c, const handle h, const SECURITY_INFORMATION /*security_information*/,
-                                            const emulator_pointer /*security_descriptor*/)
+                                            const emulator_pointer security_descriptor)
         {
+            if (!security_descriptor)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (h.value.type == handle_types::reserved)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
             if (const auto* file = c.proc.files.get(h); file && !c.win_emu.file_sys.is_writable(file->handle.path()))
             {
                 return STATUS_ACCESS_DENIED;

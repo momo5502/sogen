@@ -797,8 +797,13 @@ namespace sogen
         }
 
         NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, const handle process_handle, const uint64_t base_address,
-                                               const ULONG /*flags*/)
+                                               const ULONG flags)
         {
+            if (flags & ~(MEM_UNMAP_WITH_TRANSIENT_BOOST | MEM_PRESERVE_PLACEHOLDER))
+            {
+                return STATUS_INVALID_PARAMETER_3;
+            }
+
             return handle_NtUnmapViewOfSection(c, process_handle, base_address);
         }
 

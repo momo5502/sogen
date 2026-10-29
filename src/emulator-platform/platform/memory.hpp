@@ -52,6 +52,10 @@
 #define MEM_PRESERVE_PLACEHOLDER  0x00000002
 #endif
 
+#ifndef MEM_UNMAP_WITH_TRANSIENT_BOOST
+#define MEM_UNMAP_WITH_TRANSIENT_BOOST 0x00000001
+#endif
+
 namespace sogen
 {
 
