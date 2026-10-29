@@ -65,6 +65,8 @@ class _GamePageState extends State<GamePage> {
   bool _editingLayout = false;
   String? _shownSaveError;
   bool _suspending = false;
+  bool _leaving = false;
+  bool _finishing = false;
 
   @override
   void initState() {
@@ -125,11 +127,18 @@ class _GamePageState extends State<GamePage> {
   }
 
   Future<void> _suspend() async {
-    await _flushSettings();
-    final saved = await savedStateFile(widget.game);
-    await saved.parent.create(recursive: true);
-    await _session.suspend(saved.path);
-    if (mounted) {
+    _finishing = true;
+    try {
+      await _flushSettings();
+      final saved = await savedStateFile(widget.game);
+      await saved.parent.create(recursive: true);
+      await _session.suspend(saved.path);
+    } catch (_) {
+      _finishing = false;
+      rethrow;
+    }
+    if (mounted && !_leaving) {
+      _leaving = true;
       _suspending = true;
       widget.ads.showAfterGame(_session, suspended: true);
       Navigator.of(context).pop(_session);
@@ -210,6 +219,30 @@ class _GamePageState extends State<GamePage> {
     }
     _shownSaveError = saveError;
     setState(() {});
+
+    if (!_finishing &&
+        _session.state == SessionState.exited &&
+        _session.exitCode == 0 &&
+        _session.error == null &&
+        _session.savedTo == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _leave());
+    }
+  }
+
+  void _leave() {
+    if (_leaving || !mounted) {
+      return;
+    }
+
+    final route = ModalRoute.of(context);
+    if (route == null) {
+      return;
+    }
+
+    _leaving = true;
+    Navigator.of(context)
+      ..popUntil((candidate) => identical(candidate, route))
+      ..pop();
   }
 
   void _onKeyboardChanged(String value) {
@@ -248,7 +281,7 @@ class _GamePageState extends State<GamePage> {
 
   Future<void> _confirmStop() async {
     if (_session.state != SessionState.running) {
-      Navigator.of(context).pop();
+      _leave();
       return;
     }
 
@@ -265,13 +298,20 @@ class _GamePageState extends State<GamePage> {
     );
 
     if (stop == true) {
+      _finishing = true;
       try {
         await _session.stop();
+      } catch (_) {
+        _finishing = false;
+        rethrow;
       } finally {
-        await _flushSettings();
-      }
-      if (mounted) {
-        Navigator.of(context).pop();
+        try {
+          await _flushSettings();
+        } finally {
+          if (_finishing) {
+            _leave();
+          }
+        }
       }
     }
   }
