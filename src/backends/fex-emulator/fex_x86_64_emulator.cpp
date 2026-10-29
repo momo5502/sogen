@@ -1764,14 +1764,10 @@ namespace sogen::fex
             const auto gdt_base = buffer.read<uint64_t>();
             const auto gdt_limit = buffer.read<uint32_t>();
 
-#ifndef __APPLE__
             if (low_guest_window && this->low_guest_window_ == 0)
             {
                 this->enable_low_guest_window();
             }
-#else
-            (void)low_guest_window;
-#endif
 
             // The descriptor table's host address depends on the low window, so it is set again once that exists.
             if (gdt_base != 0)
@@ -1811,21 +1807,13 @@ namespace sogen::fex
         }
 
         // FEXCore decodes each block in the mode its CS descriptor selects, so the single 64-bit
-        // Context also runs a WoW64 process's compatibility-mode code. That code addresses the low
-        // 4GB directly, which Darwin's __PAGEZERO makes unmappable.
-        void notify_process_bitness([[maybe_unused]] bool is_wow64_process) override
+        // Context also runs a WoW64 process's compatibility-mode code.
+        void notify_process_bitness(bool is_wow64_process) override
         {
-#ifdef __APPLE__
-            if (is_wow64_process)
-            {
-                throw std::runtime_error("FEX backend does not support WoW64 (32-bit) processes on macOS yet");
-            }
-#else
             if (is_wow64_process && this->low_guest_window_ == 0)
             {
                 this->enable_low_guest_window();
             }
-#endif
         }
 
         void load_gdt(pointer_type address, uint32_t limit) override
@@ -2087,9 +2075,10 @@ namespace sogen::fex
 
                 if (first_region)
                 {
-                    if (address > 0)
+                    const uint64_t gap_start = this->low_guest_window_ != 0 ? low_guest_window_size : 0;
+                    if (address > gap_start)
                     {
-                        ranges.push_back({.address = 0, .size = static_cast<size_t>(address)});
+                        ranges.push_back({.address = gap_start, .size = static_cast<size_t>(address - gap_start)});
                     }
                     first_region = false;
                 }
@@ -2219,7 +2208,7 @@ namespace sogen::fex
 
 #ifndef __APPLE__
             // Claimed PROT_NONE so the host cannot place an accessible mapping here and accesses keep faulting into the MMIO
-            // handler. Darwin's __PAGEZERO already keeps the host out.
+            // handler. Darwin's __PAGEZERO, or the low guest window, already keeps the host out.
             if (!this->host_range_is_claimed(address, size))
             {
                 try
@@ -2247,9 +2236,8 @@ namespace sogen::fex
 
 #ifdef __APPLE__
             // The host mmap/mprotect calls happen at 16KB granularity via the shadow table (see
-            // sync_host_page_apple); guest VA == host VA is unaffected, this only changes which host
-            // syscalls actually get issued and at what alignment. The range is claimed before the shadow
-            // table changes, so a host_memory_collision leaves the shadow table as it was.
+            // sync_host_page_apple). The range is claimed before the shadow table changes, so a
+            // host_memory_collision leaves the shadow table as it was.
             this->reserve_guest_address_range(address, size);
             this->set_shadow_range_apple(address, size, permissions);
             this->sync_host_pages_covering_apple(address, size);
@@ -2365,8 +2353,8 @@ namespace sogen::fex
 
             // VM_FLAGS_OVERWRITE replaces the reservation the memory manager put at the target;
             // copy=FALSE creates a second mapping of the caller-owned pages rather than copying them.
-            const uint64_t claim_start = host_page_align_down_apple(host_address);
-            const size_t claim_size = static_cast<size_t>(host_page_align_up_apple(host_address + size) - claim_start);
+            const uint64_t claim_start = host_page_align_down_apple(address);
+            const size_t claim_size = static_cast<size_t>(host_page_align_up_apple(address + size) - claim_start);
             if (!this->host_range_is_claimed(claim_start, claim_size))
             {
                 this->claim_host_range(claim_start, claim_size);
@@ -2849,29 +2837,29 @@ namespace sogen::fex
 
         void claim_host_range(const uint64_t address, const size_t size)
         {
-#ifdef __APPLE__
-            mach_vm_address_t target = address;
-            const kern_return_t result = ::mach_vm_allocate(mach_task_self(), &target, size, VM_FLAGS_FIXED);
-            if (result == KERN_NO_SPACE)
-            {
-                throw host_memory_collision{};
-            }
-            if (result != KERN_SUCCESS || target != address)
-            {
-                throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
-            }
-            if (::mprotect(reinterpret_cast<void*>(address), size, PROT_NONE) != 0)
-            {
-                ::mach_vm_deallocate(mach_task_self(), target, size);
-                throw std::runtime_error("FEX backend failed to protect a guest address reservation");
-            }
-#else
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
                 if (this->is_in_low_guest_window(host_address) || this->is_in_guest_arena(host_address, span_size))
                 {
                     return;
                 }
 
+#ifdef __APPLE__
+                mach_vm_address_t target = host_address;
+                const kern_return_t result = ::mach_vm_allocate(mach_task_self(), &target, span_size, VM_FLAGS_FIXED);
+                if (result == KERN_NO_SPACE)
+                {
+                    throw host_memory_collision{};
+                }
+                if (result != KERN_SUCCESS || target != host_address)
+                {
+                    throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
+                }
+                if (::mprotect(reinterpret_cast<void*>(host_address), span_size, PROT_NONE) != 0)
+                {
+                    ::mach_vm_deallocate(mach_task_self(), target, span_size);
+                    throw std::runtime_error("FEX backend failed to protect a guest address reservation");
+                }
+#else
                 void* result = ::mmap(reinterpret_cast<void*>(host_address), span_size, PROT_NONE,
                                       MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
                 if (result == MAP_FAILED && errno != EEXIST)
@@ -2886,8 +2874,8 @@ namespace sogen::fex
                     }
                     throw host_memory_collision{};
                 }
-            });
 #endif
+            });
             this->add_host_claim(address, size);
         }
 
@@ -2929,10 +2917,10 @@ namespace sogen::fex
             });
         }
 
-#ifndef __APPLE__
         // A WoW64 process's 32-bit code needs the guest's low 4GB, which the host process may already use for
-        // itself (Android's ART keeps its Java heap there). The guest's low 4GB is then backed by a host window
-        // elsewhere, and FEX adds the window's base to every guest access below 4GB.
+        // itself (Android's ART keeps its Java heap there) or cannot map at all (Darwin's __PAGEZERO). The guest's
+        // low 4GB is then backed by a host window elsewhere, and FEX adds the window's base to every guest access
+        // below 4GB.
         void enable_low_guest_window()
         {
             if (!this->claimed_host_ranges_.empty() && this->claimed_host_ranges_.begin()->first < low_guest_window_size)
@@ -2950,7 +2938,6 @@ namespace sogen::fex
             this->context_->SetWow64GuestRebaseValue(this->low_guest_window_);
             this->context_->SetNeedsWow64GuestRebase(true);
         }
-#endif
 
         bool is_in_guest_arena(const uint64_t host_address, const size_t size) const
         {
@@ -3113,7 +3100,8 @@ namespace sogen::fex
             {
                 // The page stays claimed while it is accessible, so only its protection changes.
                 const auto declared = this->shadow_permission_apple(host_page).value_or(memory_permission::none);
-                ::mprotect(reinterpret_cast<void*>(host_page), host_page_size_apple, to_prot_apple(enable ? declared | added : declared));
+                ::mprotect(reinterpret_cast<void*>(this->to_host_address(host_page)), host_page_size_apple,
+                           to_prot_apple(enable ? declared | added : declared));
             }
 #else
             // The range can span several regions_ entries with different declared permissions, so
@@ -3319,7 +3307,8 @@ namespace sogen::fex
                 this->claim_host_range(host_page_addr, host_page_size_apple);
             }
 
-            if (::mprotect(reinterpret_cast<void*>(host_page_addr), host_page_size_apple, to_prot_apple(*effective)) != 0)
+            if (::mprotect(reinterpret_cast<void*>(this->to_host_address(host_page_addr)), host_page_size_apple,
+                           to_prot_apple(*effective)) != 0)
             {
                 throw std::runtime_error("FEX backend failed to change memory protection");
             }
