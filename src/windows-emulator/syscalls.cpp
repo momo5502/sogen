@@ -1133,8 +1133,35 @@ namespace sogen
             }
         }
 
-        NTSTATUS handle_NtQueryWnfStateData()
+        NTSTATUS handle_NtQueryWnfStateData(const syscall_context&, const emulator_object<uint64_t> state_name,
+                                            const emulator_pointer /*type_id*/, const emulator_pointer /*explicit_scope*/,
+                                            const emulator_object<ULONG> change_stamp, const emulator_pointer buffer,
+                                            const emulator_object<ULONG> buffer_size)
         {
+            const auto name = state_name.try_read();
+            if (!name)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            // External WNF state names are XORed with this key; the decoded low bits hold the version and the data scope.
+            constexpr uint64_t state_name_key = 0x41C64E6DA3BC0074;
+            constexpr uint64_t max_data_scope = 5;
+            const auto decoded = *name ^ state_name_key;
+            if ((decoded & 0xF) != 1 || ((decoded >> 6) & 0xF) > max_data_scope)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto size = buffer_size.try_read();
+            if (!change_stamp || !size || (!buffer && *size != 0))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            // There is no WNF store, so every well-formed name reads like one that was never published.
+            change_stamp.write(0);
+            buffer_size.write(0);
             return STATUS_SUCCESS;
         }
 
