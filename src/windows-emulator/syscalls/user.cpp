@@ -7095,6 +7095,14 @@ namespace sogen
             return TRUE;
         }
 
+        // Opting in swaps legacy WM_MOUSE* messages for WM_POINTER ones, and there is no pointer input stack
+        // here, so reporting success would leave the caller waiting for messages that never arrive. Failing is
+        // what Windows itself does where pointer input is unavailable, and keeps the caller on the mouse path.
+        BOOL handle_NtUserEnableMouseInPointer()
+        {
+            return FALSE;
+        }
+
         namespace
         {
             constexpr uint32_t k_spi_get_icontitle_logfont = 0x1F;

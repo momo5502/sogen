@@ -789,6 +789,7 @@ namespace sogen
         uint32_t handle_NtUserGetCaretBlinkTime();
         BOOL handle_NtUserFlashWindowEx();
         BOOL handle_NtUserModifyWindowTouchCapability();
+        BOOL handle_NtUserEnableMouseInPointer();
         uint32_t handle_NtUserGetClipboardSequenceNumber();
         BOOL handle_NtUserOpenClipboard();
         BOOL handle_NtUserCloseClipboard();
@@ -2127,6 +2128,7 @@ namespace sogen
         add_handler(NtUserGetKeyboardState);
         add_handler(NtUserSetKeyboardState);
         add_handler(NtUserModifyWindowTouchCapability);
+        add_handler(NtUserEnableMouseInPointer);
         add_handler(NtUserGetClipboardSequenceNumber);
         add_handler(NtUserOpenClipboard);
         add_handler(NtUserCloseClipboard);
