@@ -267,7 +267,7 @@ namespace sogen
         }
 
         NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
-                                        const ACCESS_MASK /*desired_access*/,
+                                        const ACCESS_MASK desired_access,
                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                         const emulator_object<ULARGE_INTEGER> maximum_size, const ULONG section_page_protection,
                                         const ULONG allocation_attributes, const handle file_handle)
@@ -275,6 +275,7 @@ namespace sogen
             section s{};
             s.section_page_protection = section_page_protection;
             s.allocation_attributes = allocation_attributes;
+            s.granted_access = section::map_generic_access(desired_access);
 
             const auto* file = c.proc.files.get(file_handle);
             if (file)
@@ -555,17 +556,14 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                if (section_entry->view_storage_id == 0 && section_entry->backing_address == 0 &&
-                    section_entry->allocation_attributes != SEC_RESERVE && c.win_emu.memory.can_alias_host_memory_anywhere())
+                try
                 {
-                    try
-                    {
-                        section_entry->view_storage_id = c.proc.section_views.create_storage(backing_size);
-                    }
-                    catch (const std::bad_alloc&)
-                    {
-                        return STATUS_NO_MEMORY;
-                    }
+                    c.proc.section_view_storage(*section_entry, c.win_emu.memory.can_alias_host_memory_anywhere(),
+                                                c.win_emu.processes() != nullptr);
+                }
+                catch (const std::bad_alloc&)
+                {
+                    return STATUS_NO_MEMORY;
                 }
 
                 if (section_entry->view_storage_id != 0)

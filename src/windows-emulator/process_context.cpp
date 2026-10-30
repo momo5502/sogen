@@ -775,6 +775,254 @@ namespace sogen
         return cls_ptr;
     }
 
+    void process_context::terminate_job_processes(windows_emulator& win_emu, const job_object& job)
+    {
+        constexpr uint32_t kill_on_job_close = 0x2000;
+#ifdef _WIN32
+        static_assert(kill_on_job_close == JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
+#endif
+        if ((job.limit_flags() & kill_on_job_close) == 0 || !win_emu.processes())
+        {
+            return;
+        }
+
+        for (const auto& member : job.processes)
+        {
+            (void)win_emu.processes()->terminate_process(managed_process{.value = member.process}, 0);
+        }
+    }
+
+    void process_context::post_job_notification(job_object& job, const uint32_t message, const uint32_t process_id)
+    {
+        auto* port = this->io_completions.get(job.completion_port);
+        if (!port)
+        {
+            return;
+        }
+
+        io_completion_message notification{};
+        notification.key_context = job.completion_key;
+        notification.apc_context = process_id;
+        notification.io_status_block.Information = message;
+        port->enqueue(notification);
+    }
+
+    void process_context::post_exited_job_processes(windows_emulator& win_emu, const handle io_completion_handle)
+    {
+        constexpr uint32_t job_object_msg_active_process_zero = 4;
+        constexpr uint32_t job_object_msg_exit_process = 7;
+        constexpr uint32_t job_object_msg_abnormal_exit_process = 8;
+
+        auto* manager = win_emu.processes();
+        const auto* port = this->io_completions.get(io_completion_handle);
+        if (!manager)
+        {
+            return;
+        }
+
+        for (auto& job : this->jobs | std::views::values)
+        {
+            if (job.processes.empty() || !port || this->io_completions.get(job.completion_port) != port)
+            {
+                continue;
+            }
+
+            for (auto& member : job.processes)
+            {
+                if (member.exit_reported)
+                {
+                    continue;
+                }
+
+                const auto exit = manager->exit_status(managed_process{.value = member.process});
+                if (!exit || !exit.status)
+                {
+                    continue;
+                }
+
+                member.exit_reported = true;
+                const auto abnormal = exit.status->kind == process_exit_kind::runtime_failure;
+                this->post_job_notification(job, abnormal ? job_object_msg_abnormal_exit_process : job_object_msg_exit_process,
+                                            member.process_id);
+            }
+
+            if (!job.active_process_zero_reported &&
+                std::ranges::all_of(job.processes, [](const job_object::member& member) { return member.exit_reported; }))
+            {
+                job.active_process_zero_reported = true;
+                this->post_job_notification(job, job_object_msg_active_process_zero, 0);
+            }
+        }
+    }
+
+    void process_context::terminate_kill_on_close_jobs(windows_emulator& win_emu) const
+    {
+        for (const auto& job : this->jobs | std::views::values)
+        {
+            terminate_job_processes(win_emu, job);
+        }
+    }
+
+    void process_context::abandon_shared_mutants()
+    {
+        for (auto& entry : this->mutants | std::views::values)
+        {
+            if (entry.shared)
+            {
+                entry.abandon_if_owned_by_process(this->process_id);
+            }
+        }
+    }
+
+    void process_context::mark_exited(const NTSTATUS status)
+    {
+        this->exit_status = status;
+        this->abandon_shared_mutants();
+    }
+
+    uint64_t process_context::section_view_storage(section& section_entry, const bool can_alias_host_memory, const bool shareable)
+    {
+        if (section_entry.view_storage_id != 0)
+        {
+            return section_entry.view_storage_id;
+        }
+
+        const auto size = static_cast<size_t>(page_align_up(section_entry.maximum_size));
+        if (!section_entry.file_name.empty() || size == 0 || section_entry.backing_address != 0 ||
+            section_entry.allocation_attributes == SEC_RESERVE || !can_alias_host_memory)
+        {
+            return 0;
+        }
+
+        section_entry.view_storage_id = this->section_views.create_storage(size, shareable);
+        return section_entry.view_storage_id;
+    }
+
+    std::optional<process_shared_object> process_context::share_section(const handle section_handle, const bool can_alias_host_memory)
+    {
+        auto* section_entry = this->sections.get(section_handle);
+        if (!section_entry)
+        {
+            return std::nullopt;
+        }
+
+        const auto storage = this->section_view_storage(*section_entry, can_alias_host_memory, true);
+        const auto* memory = storage ? this->section_views.storage_memory(storage) : nullptr;
+        if (!memory || memory->name().empty())
+        {
+            return std::nullopt;
+        }
+
+        return process_shared_object{
+            .kind = process_shared_object_kind::section,
+            .guest_handle = section_handle.bits,
+            .memory = memory->name(),
+            .size = memory->size(),
+            .protection = section_entry->section_page_protection,
+            .attributes = section_entry->allocation_attributes,
+            .access = section_entry->granted_access,
+            .inherit = section_entry->inherit,
+        };
+    }
+
+    std::optional<process_shared_object> process_context::share_object(const handle object_handle, const bool can_alias_host_memory)
+    {
+        switch (object_handle.value.type)
+        {
+        case handle_types::section:
+            return this->share_section(object_handle, can_alias_host_memory);
+        case handle_types::event: {
+            auto* entry = this->events.get(object_handle);
+            if (!entry || entry->share().empty())
+            {
+                return std::nullopt;
+            }
+
+            return process_shared_object{
+                .kind = process_shared_object_kind::event,
+                .guest_handle = object_handle.bits,
+                .memory = entry->shared->name(),
+                .event_type = static_cast<uint32_t>(entry->type),
+                .inherit = entry->inherit,
+            };
+        }
+        case handle_types::mutant: {
+            auto* entry = this->mutants.get(object_handle);
+            if (!entry || entry->share().empty())
+            {
+                return std::nullopt;
+            }
+
+            return process_shared_object{
+                .kind = process_shared_object_kind::mutant,
+                .guest_handle = object_handle.bits,
+                .memory = entry->shared->name(),
+                .inherit = entry->inherit,
+            };
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    std::optional<handle> process_context::install_shared_object(const process_shared_object& shared, const std::optional<handle> at)
+    {
+        const auto store = [&](auto& objects, auto object) -> std::optional<handle> {
+            object.inherit = shared.inherit;
+            if (!at)
+            {
+                return objects.store(std::move(object));
+            }
+            if (!objects.store_at(*at, std::move(object)))
+            {
+                return std::nullopt;
+            }
+            return at;
+        };
+
+        if (shared.kind == process_shared_object_kind::event || shared.kind == process_shared_object_kind::mutant)
+        {
+            auto state = shared_sync_state::open(shared.memory);
+            if (!state)
+            {
+                return std::nullopt;
+            }
+
+            if (shared.kind == process_shared_object_kind::event)
+            {
+                event entry{};
+                entry.type = static_cast<EVENT_TYPE>(shared.event_type);
+                entry.shared = std::move(*state);
+                return store(this->events, std::move(entry));
+            }
+
+            mutant entry{};
+            entry.shared = std::move(*state);
+            return store(this->mutants, std::move(entry));
+        }
+
+        auto backing = utils::shared_host_buffer::open_named(shared.memory, static_cast<size_t>(shared.size));
+        if (!backing)
+        {
+            return std::nullopt;
+        }
+
+        section section_entry{};
+        section_entry.maximum_size = shared.size;
+        section_entry.section_page_protection = shared.protection;
+        section_entry.allocation_attributes = shared.attributes;
+        section_entry.view_storage_id = this->section_views.adopt_storage(std::move(*backing));
+        section_entry.granted_access = shared.access;
+
+        const auto storage = section_entry.view_storage_id;
+        const auto installed = store(this->sections, std::move(section_entry));
+        if (!installed)
+        {
+            this->section_views.release_storage(storage);
+        }
+        return installed;
+    }
+
     void process_context::serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const
     {
         buffer.write_vector(this->sid);
@@ -862,6 +1110,8 @@ namespace sogen
         buffer.write(this->mutants);
         buffer.write(this->default_desktop);
         buffer.write(this->desktops);
+        buffer.write(this->tokens);
+        buffer.write_vector(this->token_privileges);
         buffer.write(this->windows);
         buffer.write(this->menus);
         buffer.write(this->timers);
@@ -989,6 +1239,8 @@ namespace sogen
         buffer.read(this->mutants);
         buffer.read(this->default_desktop);
         buffer.read(this->desktops);
+        buffer.read(this->tokens);
+        buffer.read_vector(this->token_privileges);
         buffer.read(this->windows);
         buffer.read(this->menus);
         buffer.read(this->timers);
@@ -1202,6 +1454,8 @@ namespace sogen
             return &timers;
         case handle_types::desktop:
             return &desktops;
+        case handle_types::token:
+            return &tokens;
         case handle_types::port:
             return &ports;
         case handle_types::section:
@@ -1276,10 +1530,15 @@ namespace sogen
         return current == nullptr;
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
     bool process_context::is_current_process_handle(const handle handle) const
     {
-        return handle == CURRENT_PROCESS || handle == GUEST_PROCESS_HANDLE;
+        if (handle == CURRENT_PROCESS)
+        {
+            return true;
+        }
+
+        const auto* process = this->processes.get(handle);
+        return process && !process->process;
     }
 
     bool process_context::is_current_thread_handle(const handle handle, const emulator_thread* active_thread) const
@@ -1312,6 +1571,16 @@ namespace sogen
         }
 
         return handle;
+    }
+
+    uint64_t process_context::get_accumulated_cycles() const
+    {
+        uint64_t cycles{};
+        for (const auto& thread : this->threads | std::views::values)
+        {
+            cycles += thread.executed_instructions;
+        }
+        return cycles;
     }
 
     size_t process_context::get_live_thread_count() const
@@ -1348,12 +1617,9 @@ namespace sogen
     {
         thread.exit_status = thread_exit_status;
 
-        for (auto& mutant : this->mutants | std::views::values)
+        for (auto& entry : this->mutants | std::views::values)
         {
-            if (mutant.owning_thread_id == thread.id && mutant.locked_count > 0)
-            {
-                mutant.abandon();
-            }
+            entry.abandon_if_owned_by(mutant::make_owner(this->process_id, thread.id));
         }
 
         for (auto i = this->windows.begin(); i != this->windows.end();)

@@ -317,7 +317,8 @@ namespace sogen::sandbox
                 return 1;
             }
 
-            if (managed_connection && !managed_connection->notify_exit(static_cast<uint64_t>(static_cast<uint32_t>(*exit_status))))
+            if (managed_connection && !managed_connection->notify_exit(static_cast<uint64_t>(static_cast<uint32_t>(*exit_status)),
+                                                                       win_emu.process.get_accumulated_cycles()))
             {
                 throw std::runtime_error("Reporting managed process exit failed");
             }

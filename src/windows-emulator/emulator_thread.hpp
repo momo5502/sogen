@@ -493,6 +493,20 @@ namespace sogen
         uint32_t queue_status_changed_bits{};
 
         void mark_as_ready(NTSTATUS status);
+
+        void set_impersonation_token(const handle token)
+        {
+            this->impersonation_token = token;
+            if (this->teb64)
+            {
+                this->teb64->access([&](TEB64& teb) { teb.IsImpersonating = token != 0; });
+            }
+            if (this->teb32)
+            {
+                this->teb32->access([&](TEB32& teb) { teb.IsImpersonating = token != 0; });
+            }
+        }
+
         void remember_message_wait(cpu_interface& emu, const windows_arch_abi& abi);
         void restart_message_wait(cpu_interface& emu, const windows_arch_abi& abi);
 

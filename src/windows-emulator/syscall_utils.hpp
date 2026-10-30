@@ -220,6 +220,55 @@ namespace sogen
         return resolve_argument<T>(context, index++);
     }
 
+    inline handle resolve_token(const syscall_context& c, const handle token)
+    {
+        if (token == CURRENT_THREAD_TOKEN || token == CURRENT_THREAD_EFFECTIVE_TOKEN)
+        {
+            const auto impersonation = c.vcpu.active_thread ? c.vcpu.active_thread->impersonation_token : handle{};
+            if (impersonation != 0 || token == CURRENT_THREAD_TOKEN)
+            {
+                return impersonation;
+            }
+            return CURRENT_PROCESS_TOKEN;
+        }
+        if (const auto* opened = c.proc.tokens.get(token))
+        {
+            return opened->identity;
+        }
+        return token;
+    }
+
+    inline handle open_token(const syscall_context& c, const handle identity,
+                             std::optional<std::vector<token_privilege>> privileges = std::nullopt)
+    {
+        token_object token{};
+        token.identity = identity;
+        token.privileges = std::move(privileges);
+        return c.proc.tokens.store(std::move(token));
+    }
+
+    inline NTSTATUS map_process_error(const process_error error)
+    {
+        switch (error)
+        {
+        case process_error::none:
+            return STATUS_SUCCESS;
+        case process_error::invalid_process:
+            return STATUS_INVALID_CID;
+        case process_error::permission_denied:
+            return STATUS_ACCESS_DENIED;
+        case process_error::resource_limit:
+            return STATUS_INSUFFICIENT_RESOURCES;
+        case process_error::unavailable:
+            return STATUS_NOT_SUPPORTED;
+        case process_error::communication_failure:
+        case process_error::internal_failure:
+            return STATUS_INTERNAL_ERROR;
+        }
+
+        return STATUS_INTERNAL_ERROR;
+    }
+
     inline void write_syscall_result(const syscall_context& c, const uint64_t result, const uint64_t initial_ip)
     {
         if (c.write_status && !c.retrigger_syscall && !c.run_callback)

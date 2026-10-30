@@ -35,7 +35,7 @@ namespace sogen
         const process_create_request& request() const;
         std::vector<process_inherited_pipe> take_inherited_pipes();
         bool wait_for_resume(managed_process_target& target);
-        bool notify_exit(uint64_t exit_code);
+        bool notify_exit(uint64_t exit_code, uint64_t cycles);
         void disconnect();
 
       private:
@@ -79,12 +79,20 @@ namespace sogen
         process_debug_event_result next_debug_event(managed_process process) override;
         process_error continue_debug_event(managed_process process, uint32_t thread_id, uint32_t status) override;
         process_error detach_debugger(managed_process process) override;
+        process_object_install_result install_object(managed_process process, const process_shared_object& object) override;
+        process_object_export_result export_object(managed_process process, uint64_t handle) override;
+        process_error close_handle(managed_process process, uint64_t handle) override;
+        process_error set_thread_token(managed_process process, uint32_t thread_id, uint64_t token) override;
+        process_thread_token_result get_thread_token(managed_process process, uint32_t thread_id) override;
+        process_cycle_time_result cycle_time(managed_process process) const override;
         process_thread_context_result get_thread_context(managed_process process, uint32_t thread_id, bool wow64) override;
         process_error set_thread_context(managed_process process, uint32_t thread_id, std::span<const uint8_t> context,
                                          bool wow64) override;
         process_thread_information thread_information(managed_process process, uint32_t thread_id) override;
         process_suspend_result suspend_thread(managed_process process, uint32_t thread_id, bool resume) override;
         process_memory_region query_memory(managed_process process, uint64_t address) const override;
+        size_t running_process_count() const override;
+        void wait_for_processes() override;
 
       private:
         struct process_entry;

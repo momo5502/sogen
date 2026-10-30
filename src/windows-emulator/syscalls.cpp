@@ -376,7 +376,7 @@ namespace sogen
                                             ULONG length, emulator_object<ULONG> result_length);
 
         // syscalls/section.cpp:
-        NTSTATUS handle_NtCreateSection(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK /*desired_access*/,
+        NTSTATUS handle_NtCreateSection(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK desired_access,
                                         emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                         emulator_object<ULARGE_INTEGER> maximum_size, ULONG section_page_protection,
                                         ULONG allocation_attributes, handle file_handle);
@@ -506,7 +506,10 @@ namespace sogen
         handle_NtDuplicateToken(const syscall_context&, handle existing_token_handle, ACCESS_MASK /*desired_access*/,
                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
                                 /*object_attributes*/,
-                                BOOLEAN /*effective_only*/, TOKEN_TYPE type, emulator_object<handle> new_token_handle);
+                                BOOLEAN effective_only, TOKEN_TYPE type, emulator_object<handle> new_token_handle);
+        NTSTATUS handle_NtFilterToken(const syscall_context& c, handle existing_token_handle, ULONG flags, emulator_pointer sids_to_disable,
+                                      emulator_pointer privileges_to_delete, emulator_pointer restricted_sids,
+                                      emulator_object<handle> new_token_handle);
         NTSTATUS handle_NtQueryInformationToken(const syscall_context& c, handle token_handle,
                                                 TOKEN_INFORMATION_CLASS token_information_class, uint64_t token_information,
                                                 ULONG token_information_length, emulator_object<ULONG> return_length);
@@ -518,7 +521,12 @@ namespace sogen
                                       ACCESS_MASK desired_access, emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
                                       uint64_t privilege_set, emulator_object<ULONG> privilege_set_length,
                                       emulator_object<ACCESS_MASK> granted_access, emulator_object<NTSTATUS> access_status);
-        NTSTATUS handle_NtAdjustPrivilegesToken();
+        NTSTATUS handle_NtAdjustPrivilegesToken(const syscall_context& c, handle requested_token, BOOLEAN disable_all_privileges,
+                                                emulator_pointer new_state, ULONG buffer_length, emulator_pointer previous_state,
+                                                emulator_object<ULONG> return_length);
+        NTSTATUS handle_NtSetInformationToken(const syscall_context& c, handle requested_token,
+                                              TOKEN_INFORMATION_CLASS token_information_class, uint64_t token_information,
+                                              ULONG token_information_length);
         NTSTATUS handle_NtQuerySecurityPolicy();
         NTSTATUS handle_NtFlushInstructionCache(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                                 uint64_t region_size);
@@ -1100,7 +1108,7 @@ namespace sogen
 
             if (auto* e = c.proc.events.get(event))
             {
-                e->signaled = false;
+                e->set_signaled(false);
             }
 
             io_device_context context{c.emu};
@@ -1251,9 +1259,61 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtQueryInformationJobObject()
+        constexpr uint32_t job_basic_limit_information_class = 2;
+        constexpr uint32_t job_basic_ui_restrictions_class = 4;
+        constexpr uint32_t job_associate_completion_port_information_class = 7;
+        constexpr uint32_t job_extended_limit_information_class = 9;
+        constexpr uint32_t job_object_msg_new_process = 6;
+
+#ifdef _WIN32
+        static_assert(job_basic_limit_information_class == JobObjectBasicLimitInformation);
+        static_assert(job_basic_ui_restrictions_class == JobObjectBasicUIRestrictions);
+        static_assert(job_extended_limit_information_class == JobObjectExtendedLimitInformation);
+        static_assert(job_associate_completion_port_information_class == JobObjectAssociateCompletionPortInformation);
+        static_assert(job_object_msg_new_process == JOB_OBJECT_MSG_NEW_PROCESS);
+        static_assert(job_object::limit_flags_offset == offsetof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION, BasicLimitInformation.LimitFlags));
+#ifdef _WIN64
+        static_assert(job_object::extended_limit_information_size == sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+        static_assert(job_object::basic_limit_information_size == sizeof(JOBOBJECT_BASIC_LIMIT_INFORMATION));
+#endif
+#endif
+
+        NTSTATUS handle_NtQueryInformationJobObject(const syscall_context& c, const handle job_handle, const uint32_t info_class,
+                                                    const uint64_t info, const ULONG length, const emulator_object<ULONG> return_length)
         {
-            return STATUS_NOT_SUPPORTED;
+            const auto* job = c.proc.jobs.get(job_handle);
+            if (!job)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            std::span<const uint8_t> data{};
+            if (info_class == job_basic_ui_restrictions_class)
+            {
+                data = {reinterpret_cast<const uint8_t*>(&job->ui_restrictions), sizeof(job->ui_restrictions)};
+            }
+            else if (info_class == job_basic_limit_information_class)
+            {
+                data = std::span{job->extended_limits}.first(job_object::basic_limit_information_size);
+            }
+            else if (info_class == job_extended_limit_information_class)
+            {
+                data = job->extended_limits;
+            }
+            else
+            {
+                c.win_emu.log.error("Unsupported job object info class: %X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
+            if (length < data.size())
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            c.emu.write_memory(info, data.data(), data.size());
+            return_length.write_if_valid(static_cast<ULONG>(data.size()));
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtSetInformationJobObject(const syscall_context& c, const handle job_handle, const uint32_t info_class,
@@ -1265,33 +1325,49 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            constexpr uint32_t extended_limit_information_class = 9;
-            constexpr ULONG extended_limit_information_size = 144;
-            constexpr uint64_t limit_flags_offset = 16;
-            constexpr uint32_t kill_on_job_close = 0x2000;
-            constexpr uint32_t breakaway_ok = 0x0800;
-            constexpr uint32_t silent_breakaway_ok = 0x1000;
-            constexpr uint32_t die_on_unhandled_exception = 0x0400;
-            constexpr uint32_t supported_limit_flags = kill_on_job_close | breakaway_ok | silent_breakaway_ok | die_on_unhandled_exception;
-
-#ifdef _WIN32
-            static_assert(extended_limit_information_class == JobObjectExtendedLimitInformation);
-            static_assert(limit_flags_offset == offsetof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION, BasicLimitInformation.LimitFlags));
-            static_assert(kill_on_job_close == JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
-            static_assert(breakaway_ok == JOB_OBJECT_LIMIT_BREAKAWAY_OK);
-            static_assert(silent_breakaway_ok == JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK);
-            static_assert(die_on_unhandled_exception == JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION);
-#ifdef _WIN64
-            static_assert(extended_limit_information_size == sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
-#endif
-#endif
-
-            if (info_class != extended_limit_information_class)
+            if (info_class == job_basic_ui_restrictions_class)
             {
+                if (length != sizeof(ULONG))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                job->ui_restrictions = c.emu.read_memory<ULONG>(info);
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == job_associate_completion_port_information_class)
+            {
+                if (length != 2 * sizeof(EmulatorTraits<Emu64>::PVOID))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                if (job->completion_port != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto port = c.emu.read_memory<handle>(info + sizeof(EmulatorTraits<Emu64>::PVOID));
+                if (!c.proc.io_completions.get(port))
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                job->completion_key = c.emu.read_memory<uint64_t>(info);
+                job->completion_port = port;
+                for (const auto& member : job->processes)
+                {
+                    c.proc.post_job_notification(*job, job_object_msg_new_process, member.process_id);
+                }
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class != job_extended_limit_information_class)
+            {
+                c.win_emu.log.error("Unsupported job object info class: %X\n", info_class);
                 return STATUS_INVALID_INFO_CLASS;
             }
 
-            if (length != extended_limit_information_size)
+            if (length != job_object::extended_limit_information_size)
             {
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
@@ -1301,26 +1377,60 @@ namespace sogen
                 return STATUS_ACCESS_VIOLATION;
             }
 
-            const auto limit_flags = c.emu.read_memory<uint32_t>(info + limit_flags_offset);
+            constexpr uint32_t kill_on_job_close = 0x2000;
+            constexpr uint32_t breakaway_ok = 0x0800;
+            constexpr uint32_t silent_breakaway_ok = 0x1000;
+            constexpr uint32_t die_on_unhandled_exception = 0x0400;
+            constexpr uint32_t supported_limit_flags = kill_on_job_close | breakaway_ok | silent_breakaway_ok | die_on_unhandled_exception;
+
+#ifdef _WIN32
+            static_assert(job_object::limit_flags_offset ==
+                          offsetof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION, BasicLimitInformation.LimitFlags));
+            static_assert(kill_on_job_close == JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
+            static_assert(breakaway_ok == JOB_OBJECT_LIMIT_BREAKAWAY_OK);
+            static_assert(silent_breakaway_ok == JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK);
+            static_assert(die_on_unhandled_exception == JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION);
+#ifdef _WIN64
+            static_assert(job_object::extended_limit_information_size == sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+#endif
+#endif
+
+            const auto limit_flags = c.emu.read_memory<uint32_t>(info + job_object::limit_flags_offset);
             if (limit_flags & ~supported_limit_flags)
             {
                 return STATUS_NOT_SUPPORTED;
             }
 
-            job->limit_flags = limit_flags;
+            // Only kill-on-close is enforced; the other limits, such as the active process count, are kept but not applied.
+            c.emu.read_memory(info, job->extended_limits.data(), job->extended_limits.size());
             return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtAssignProcessToJobObject(const syscall_context& c, const handle job_handle, const handle process_handle)
         {
-            if (!c.proc.jobs.get(job_handle))
+            auto* job = c.proc.jobs.get(job_handle);
+            if (!job)
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (!c.proc.is_current_process_handle(process_handle) && !c.proc.processes.get(process_handle))
+            if (c.proc.is_current_process_handle(process_handle))
+            {
+                return STATUS_SUCCESS;
+            }
+
+            const auto* process = c.proc.processes.get(process_handle);
+            if (!process || !process->process)
             {
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (std::ranges::none_of(job->processes,
+                                     [&](const job_object::member& member) { return member.process == process->process.value; }))
+            {
+                job->processes.push_back({.process = process->process.value, .process_id = process->id});
+                job->active_process_zero_reported = false;
+                c.proc.post_job_notification(*job, job_object_msg_new_process, process->id);
             }
 
             return STATUS_SUCCESS;
@@ -1543,7 +1653,7 @@ namespace sogen
             });
             if (event)
             {
-                event->signaled = false;
+                event->set_signaled(false);
             }
 
             return STATUS_PENDING;
@@ -1623,6 +1733,7 @@ namespace sogen
         add_handler(NtOpenProcessTokenEx);
         add_handler(NtQuerySecurityAttributesToken);
         add_handler(NtAdjustPrivilegesToken);
+        add_handler(NtSetInformationToken);
         add_handler(NtQuerySecurityPolicy);
         add_handler(NtQueryLicenseValue);
         add_handler(NtTestAlert);
@@ -1788,6 +1899,7 @@ namespace sogen
         add_handler(NtOpenPrivateNamespace);
         add_handler(NtDeletePrivateNamespace);
         add_handler(NtDuplicateToken);
+        add_handler(NtFilterToken);
         add_handler(NtQueryTimerResolution);
         add_handler(NtSetInformationKey);
         add_handler(NtUserGetKeyboardLayout);

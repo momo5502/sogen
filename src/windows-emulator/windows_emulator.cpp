@@ -13,11 +13,17 @@
 #include "exception_dispatch.hpp"
 #include "apiset/apiset.hpp"
 #include "syscall_dispatcher.hpp"
+#include "syscall_utils.hpp"
 
 #include "memory_permission_ext.hpp"
 
 namespace sogen
 {
+    namespace syscalls
+    {
+        NTSTATUS handle_NtClose(const syscall_context& c, handle h);
+    }
+
     constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
     constexpr auto MAX_BASIC_BLOCKS_PER_TIME_SLICE = 0x8000;
 
@@ -874,6 +880,7 @@ namespace sogen
             this->vcpus_.push_back(std::make_unique<vcpu_context>(this->emu_->get_guest_cpu(i)));
         }
 
+        this->process.token_privileges = default_token_privileges(this->elevated_);
         this->ui_backend_->set_event_sink([this](const ui_event& event) { this->handle_ui_event(event); });
 #ifndef OS_WINDOWS
         if (this->emulation_root.empty())
@@ -895,7 +902,10 @@ namespace sogen
         this->setup_hooks();
     }
 
-    windows_emulator::~windows_emulator() = default;
+    windows_emulator::~windows_emulator()
+    {
+        this->process.abandon_shared_mutants();
+    }
 
     void windows_emulator::setup_process_if_necessary()
     {
@@ -1529,7 +1539,7 @@ namespace sogen
         }
         case 0xF003:
             this->callbacks.on_fast_fail(cpu.reg<uint32_t>(arm64_register::w0));
-            this->process.exit_status = STATUS_FAIL_FAST_EXCEPTION;
+            this->process.mark_exited(STATUS_FAIL_FAST_EXCEPTION);
             this->stop();
             return;
         case 0xF004:
@@ -1640,7 +1650,7 @@ namespace sogen
                 return;
             case 41:
                 this->callbacks.on_fast_fail(acting.reg<uint32_t>(x86_register::ecx));
-                this->process.exit_status = STATUS_FAIL_FAST_EXCEPTION;
+                this->process.mark_exited(STATUS_FAIL_FAST_EXCEPTION);
                 this->stop();
                 return;
             case 45:
@@ -1699,6 +1709,13 @@ namespace sogen
         {
             this->process.peb32->access([](PEB32& peb) { peb.BeingDebugged = TRUE; });
         }
+    }
+
+    bool windows_emulator::close_handle(const handle h)
+    {
+        auto& vcpu = this->vcpu(0);
+        const syscall_context context{.win_emu = *this, .emu = vcpu.cpu, .vcpu = vcpu, .proc = this->process};
+        return NT_SUCCESS(syscalls::handle_NtClose(context, h));
     }
 
     void windows_emulator::detach_debugger()
@@ -2709,9 +2726,8 @@ namespace sogen
                 continue;
             }
 
-            if (!entry->signaled)
+            if (!entry->set_signaled(true))
             {
-                entry->signaled = true;
                 if (--it->second == 0)
                 {
                     it = this->pending_event_signals_.erase(it);

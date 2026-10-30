@@ -9,14 +9,24 @@ namespace sogen
         constexpr size_t snapshot_block_size = 0x10000;
     }
 
-    uint64_t section_view_manager::create_storage(const size_t size)
+    uint64_t section_view_manager::create_storage(const size_t size, const bool shareable)
+    {
+        return this->adopt_storage(shareable ? utils::shared_host_buffer::create_named(size) : utils::shared_host_buffer{size});
+    }
+
+    uint64_t section_view_manager::adopt_storage(utils::shared_host_buffer memory)
     {
         const auto id = this->next_storage_id_++;
         this->storages_.emplace(id, storage{
-                                        .memory = utils::shared_host_buffer{size},
+                                        .memory = std::move(memory),
                                         .references = 1,
                                     });
         return id;
+    }
+
+    void section_view_manager::add_reference(const uint64_t storage_id)
+    {
+        ++this->storages_.at(storage_id).references;
     }
 
     void section_view_manager::release_storage(const uint64_t storage_id)
@@ -30,8 +40,14 @@ namespace sogen
 
     size_t section_view_manager::storage_size(const uint64_t storage_id) const
     {
+        const auto* memory = this->storage_memory(storage_id);
+        return memory ? memory->size() : 0;
+    }
+
+    const utils::shared_host_buffer* section_view_manager::storage_memory(const uint64_t storage_id) const
+    {
         const auto entry = this->storages_.find(storage_id);
-        return entry == this->storages_.end() ? 0 : entry->second.memory.size();
+        return entry == this->storages_.end() ? nullptr : &entry->second.memory;
     }
 
     uint64_t section_view_manager::map_view(memory_manager& memory, const uint64_t storage_id, const uint64_t offset, const size_t size,

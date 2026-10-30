@@ -993,10 +993,16 @@ namespace sogen
             if (options.managed_process && win_emu->process.exit_status)
             {
                 const auto exit_status = static_cast<uint64_t>(static_cast<uint32_t>(*win_emu->process.exit_status));
-                if (!options.managed_process->notify_exit(exit_status))
+                if (!options.managed_process->notify_exit(exit_status, win_emu->process.get_accumulated_cycles()))
                 {
                     throw std::runtime_error("Reporting managed process exit failed");
                 }
+            }
+
+            if (const auto running = manager->running_process_count(); running != 0)
+            {
+                win_emu->log.print(color::gray, "Waiting for %zu child process(es) to exit\n", running);
+                manager->wait_for_processes();
             }
 #endif
             return success;

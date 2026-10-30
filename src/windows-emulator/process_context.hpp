@@ -8,6 +8,8 @@
 
 #include "module/module_manager.hpp"
 #include <utils/nt_handle.hpp>
+#include <utils/shared_host_buffer.hpp>
+#include <process_manager.hpp>
 
 #include <arch_emulator.hpp>
 #include <platform/ui_backend.hpp>
@@ -422,6 +424,8 @@ namespace sogen
         handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread) const;
 
         size_t get_live_thread_count() const;
+        // CPU cycles are not modeled; executed instructions are the closest measure.
+        uint64_t get_accumulated_cycles() const;
 
         // WOW64 support flag - set during process setup based on executable architecture
         bool is_wow64_process{false};
@@ -641,6 +645,25 @@ namespace sogen
         uint32_t registry_display_height{default_display_height};
 
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
+        // The storage a pagefile section's views alias, created on first use. 0 when the section's views share one guest
+        // backing instead, because they cannot alias host memory or the section only reserves.
+        uint64_t section_view_storage(section& section_entry, bool can_alias_host_memory, bool shareable);
+        std::optional<process_shared_object> share_section(handle section_handle, bool can_alias_host_memory);
+        // Describes a pagefile section, event or mutant so another process can open the same object. Fails for objects that
+        // cannot be shared, such as file-backed sections or sections whose views share one guest backing.
+        std::optional<process_shared_object> share_object(handle object_handle, bool can_alias_host_memory);
+        // Mutants other processes hold handles to stay owned after this process ends unless they are abandoned, as Windows
+        // does when the owning thread exits.
+        void abandon_shared_mutants();
+        void post_job_notification(job_object& job, uint32_t message, uint32_t process_id);
+        // Posts the exit notifications of jobs associated with the completion port, whose member processes run elsewhere.
+        void post_exited_job_processes(windows_emulator& win_emu, handle io_completion_handle);
+        void mark_exited(NTSTATUS status);
+        std::optional<handle> install_shared_object(const process_shared_object& shared, std::optional<handle> at = std::nullopt);
+        // A job that kills its processes on close does so when its last handle is closed, which includes the owning
+        // process exiting.
+        static void terminate_job_processes(windows_emulator& win_emu, const job_object& job);
+        void terminate_kill_on_close_jobs(windows_emulator& win_emu) const;
         handle_store<handle_types::event, event> events{};
         handle_store<handle_types::file, file> files{};
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
@@ -658,6 +681,8 @@ namespace sogen
         handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
         handle default_desktop{};
         handle_store<handle_types::desktop, desktop> desktops{};
+        handle_store<handle_types::token, token_object> tokens{};
+        std::vector<token_privilege> token_privileges{};
         user_handle_store<handle_types::window, window> windows{user_handles};
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};

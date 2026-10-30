@@ -135,17 +135,33 @@ namespace sogen
                 }
             }
 
-            void set_thread_impersonation_token(emulator_thread& thread, const handle token)
+            bool is_impersonation_token(const handle token)
             {
-                thread.impersonation_token = token;
-                if (thread.teb64)
+                return token == 0 || token == DUMMY_IMPERSONATION_TOKEN || token == ANONYMOUS_IMPERSONATION_TOKEN;
+            }
+
+            NTSTATUS set_child_thread_token(const syscall_context& c, const managed_process_thread& thread,
+                                            const uint64_t token_information, const uint32_t token_information_length)
+            {
+                if (token_information_length != sizeof(handle))
                 {
-                    thread.teb64->access([&](TEB64& teb) { teb.IsImpersonating = token != 0; });
+                    return STATUS_BUFFER_OVERFLOW;
                 }
-                if (thread.teb32)
+
+                auto* manager = c.win_emu.processes();
+                if (!manager)
                 {
-                    thread.teb32->access([&](TEB32& teb) { teb.IsImpersonating = token != 0; });
+                    return STATUS_NOT_SUPPORTED;
                 }
+
+                const auto requested_token = c.emu.read_memory<handle>(token_information);
+                const auto token = requested_token == 0 ? requested_token : resolve_token(c, requested_token);
+                if (!is_impersonation_token(token))
+                {
+                    return token == CURRENT_PROCESS_TOKEN ? STATUS_BAD_TOKEN_TYPE : STATUS_INVALID_HANDLE;
+                }
+
+                return map_process_error(manager->set_thread_token(thread.process, thread.thread_id, token.bits));
             }
 
             NTSTATUS get_unresolved_handle_status(const handle h, const handle_types::type expected_type)
@@ -160,6 +176,10 @@ namespace sogen
         {
             if (const auto* managed = c.proc.managed_threads.get(thread_handle))
             {
+                if (info_class == ThreadImpersonationToken)
+                {
+                    return set_child_thread_token(c, *managed, thread_information, thread_information_length);
+                }
                 if (info_class != ThreadWow64Context)
                 {
                     return STATUS_NOT_SUPPORTED;
@@ -309,12 +329,13 @@ namespace sogen
                 }
 
                 const emulator_object<handle> info{c.emu, thread_information};
-                const auto token = info.read();
-                if (token != 0 && token != DUMMY_IMPERSONATION_TOKEN && token != ANONYMOUS_IMPERSONATION_TOKEN)
+                const auto requested_token = info.read();
+                const auto token = requested_token == 0 ? requested_token : resolve_token(c, requested_token);
+                if (!is_impersonation_token(token))
                 {
                     return token == CURRENT_PROCESS_TOKEN ? STATUS_BAD_TOKEN_TYPE : STATUS_INVALID_HANDLE;
                 }
-                set_thread_impersonation_token(*thread, token);
+                thread->set_impersonation_token(token);
 
                 return STATUS_SUCCESS;
             }
@@ -787,12 +808,12 @@ namespace sogen
                 {
                     if (t.id == id.UniqueThread)
                     {
-                        const auto handle = c.proc.threads.make_handle(h_val);
-                        if (!c.proc.threads.duplicate(handle))
+                        const auto opened = c.proc.threads.duplicate(c.proc.threads.make_handle(h_val));
+                        if (!opened)
                         {
                             return STATUS_INVALID_HANDLE;
                         }
-                        thread_handle.write(handle);
+                        thread_handle.write(*opened);
                         return STATUS_SUCCESS;
                     }
                 }
@@ -802,12 +823,12 @@ namespace sogen
             {
                 if (thread.thread_id == id.UniqueThread && (id.UniqueProcess == 0 || thread.process_id == id.UniqueProcess))
                 {
-                    const auto handle = c.proc.managed_threads.make_handle(h_val);
-                    if (!c.proc.managed_threads.duplicate(handle))
+                    const auto opened = c.proc.managed_threads.duplicate(c.proc.managed_threads.make_handle(h_val));
+                    if (!opened)
                     {
                         return STATUS_INVALID_HANDLE;
                     }
-                    thread_handle.write(handle);
+                    thread_handle.write(*opened);
                     return STATUS_SUCCESS;
                 }
             }
@@ -818,20 +839,41 @@ namespace sogen
         NTSTATUS handle_NtOpenThreadToken(const syscall_context& c, const handle thread_handle, const ACCESS_MASK /*desired_access*/,
                                           const BOOLEAN /*open_as_self*/, const emulator_object<handle> token_handle)
         {
-            const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
-            if (!thread)
+            handle impersonation_token{};
+            if (const auto* managed = c.proc.managed_threads.get(thread_handle))
             {
-                return STATUS_INVALID_HANDLE;
+                auto* manager = c.win_emu.processes();
+                if (!manager)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                const auto result = manager->get_thread_token(managed->process, managed->thread_id);
+                if (result.error != process_error::none)
+                {
+                    return map_process_error(result.error);
+                }
+                impersonation_token.bits = result.token;
             }
-            if (thread->impersonation_token == 0)
+            else
+            {
+                const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+                if (!thread)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+                impersonation_token = thread->impersonation_token;
+            }
+
+            if (impersonation_token == 0)
             {
                 return STATUS_NO_TOKEN;
             }
-            if (thread->impersonation_token == ANONYMOUS_IMPERSONATION_TOKEN)
+            if (impersonation_token == ANONYMOUS_IMPERSONATION_TOKEN)
             {
                 return STATUS_CANT_OPEN_ANONYMOUS;
             }
-            token_handle.write(thread->impersonation_token);
+            token_handle.write(open_token(c, impersonation_token));
 
             return STATUS_SUCCESS;
         }
@@ -850,7 +892,7 @@ namespace sogen
             {
                 return STATUS_INVALID_HANDLE;
             }
-            set_thread_impersonation_token(*thread, ANONYMOUS_IMPERSONATION_TOKEN);
+            thread->set_impersonation_token(ANONYMOUS_IMPERSONATION_TOKEN);
             return STATUS_SUCCESS;
         }
 

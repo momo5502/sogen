@@ -383,6 +383,8 @@ namespace sogen
         void attach_debugger();
         // Runs on the process manager connection thread.
         void detach_debugger();
+        // Closes a handle the way NtClose does, for requests that arrive from outside the guest.
+        bool close_handle(handle h);
 
         // Stops the current thread until the debugger continues the event; returns the continue status. Needs the
         // kernel lock, and does nothing without a debugger.

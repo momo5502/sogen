@@ -225,7 +225,7 @@ namespace sogen
         {
             if (auto* e = win_emu.process.events.get(request.event); e)
             {
-                e->signaled = true;
+                e->set_signaled(true);
                 win_emu.wake_idle_vcpu();
             }
         }
