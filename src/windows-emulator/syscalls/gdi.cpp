@@ -2989,6 +2989,47 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, const hdc dc, const emulator_pointer text, const ULONG char_count,
+                                          const ULONG max_extent, const emulator_pointer fit_count, const emulator_pointer partial_extents,
+                                          const emulator_pointer size, const FLONG flags)
+        {
+            constexpr FLONG glyph_indices = 1;
+
+            if (dc == 0 || size == 0 || static_cast<int32_t>(char_count) < 0 || (text == 0 && char_count != 0))
+            {
+                return FALSE;
+            }
+
+            if ((flags & ~glyph_indices) != 0)
+            {
+                c.win_emu.log.error("NtGdiGetTextExtentExW: unsupported flags 0x%X\n", static_cast<uint32_t>(flags));
+            }
+
+            const ULONG fit = std::min(char_count, max_extent / k_default_font_width);
+            if (fit_count != 0)
+            {
+                c.emu.write_memory(fit_count, &fit, sizeof(fit));
+            }
+
+            if (partial_extents != 0)
+            {
+                // Windows fills only the fitting entries when the fit count is requested, and every entry otherwise.
+                std::vector<ULONG> extents(fit_count != 0 ? fit : char_count);
+                for (ULONG i = 0; i < extents.size(); ++i)
+                {
+                    extents[i] = (i + 1) * k_default_font_width;
+                }
+                c.emu.write_memory(partial_extents, extents.data(), extents.size() * sizeof(ULONG));
+            }
+
+            const SIZE text_size{
+                .cx = static_cast<LONG>(k_default_font_width * char_count),
+                .cy = char_count == 0 ? 0 : static_cast<LONG>(k_default_font_height),
+            };
+            c.emu.write_memory(size, &text_size, sizeof(text_size));
+            return TRUE;
+        }
+
         BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
                                        const emulator_pointer /*chars*/, const UINT /*flags*/, const emulator_pointer buffer)
         {

@@ -896,6 +896,8 @@ namespace sogen
                                                             emulator_pointer unknown);
         BOOL handle_NtGdiGetTextExtent(const syscall_context& c, hdc dc, emulator_pointer text, int32_t char_count, emulator_pointer size,
                                        ULONG flags);
+        BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, hdc dc, emulator_pointer text, ULONG char_count, ULONG max_extent,
+                                          emulator_pointer fit_count, emulator_pointer partial_extents, emulator_pointer size, FLONG flags);
         BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, hdc dc, UINT first_char, UINT char_count, emulator_pointer chars,
                                        UINT flags, emulator_pointer buffer);
         BOOL handle_NtGdiGetCharABCWidthsW(const syscall_context& c, hdc dc, UINT first_char, UINT char_count, emulator_pointer chars,
@@ -1709,6 +1711,7 @@ namespace sogen
         add_handler(NtGdiGetTextFaceW);
         add_handler(NtGdiGetKerningPairs);
         add_handler(NtGdiGetTextExtent);
+        add_handler(NtGdiGetTextExtentExW);
         add_handler(NtGdiGetCharWidthW);
         add_handler(NtGdiGetCharABCWidthsW);
         add_handler(NtGdiGetGlyphOutline);
