@@ -73,8 +73,8 @@ else()
   set(SOGEN_ENABLE_FEX OFF)
 endif()
 
-# Hypervisor.framework backend for ARM64 guests on Apple Silicon Macs.
-if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+# Hypervisor.framework backends: ARM64 guests on Apple Silicon Macs, x86-64 guests on Intel Macs.
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64|x86_64")
   set(SOGEN_ENABLE_HVF ON)
 else()
   set(SOGEN_ENABLE_HVF OFF)

@@ -109,6 +109,9 @@ Status: in progress on branch `multi-vcpu`
       will surface more races.)
 - [x] Phase 4 — stress testing + contention profiling (see §9 Phase 4 for results)
 - [ ] Phase 5 — KVM parity, linux-emulator
+- [x] HVF ARM64 (Apple Silicon) drives N vCPUs, see §8a. Backend contract tests at N=2
+      pass 2000/2000 repeated runs; Windows-level ARM64 runs at N>1 still need an ARM64
+      emulation root to validate.
 
 Scope: WHP backend first, KVM second; windows-emulator first, linux-emulator second.
 Goal: run guest threads truly in parallel — one host thread drives one vCPU — instead of
@@ -606,6 +609,63 @@ Mirror of §4, structurally identical:
 Unicorn and icicle remain `supports_multiple_vcpus() == false`; at N=1 the unified
 scheduler runs a single worker with the same yield points and an uncontended BEL —
 functionally equivalent to today's loop.
+
+## 8a. Hypervisor.framework ARM64 backend
+
+`src/backends/hvf-arm64-emulator/hvf_arm64_emulator.cpp` splits into the machine
+(`hvf_arm64_emulator`: VM, stage-1 tables, guest memory, hooks) and per-vCPU `hvf_vcpu`
+objects, like WHP's `whp_vcpu`.
+
+**Thread affinity.** Hypervisor.framework only lets the thread that created a vCPU run it
+or touch its registers. The scheduler recreates its worker threads on every `start()` and
+sets up vCPU 0 from the thread that constructs the emulator, so a vCPU cannot simply be
+created on its worker. At N>1 every vCPU owns a host thread (`vcpu_thread`, 8 MiB stack,
+since hook callbacks run the syscall layer on it) and every operation on the vCPU runs
+there. A run started from a worker blocks the worker until the vCPU thread returns, and
+callbacks see the vCPU on its own thread, so register access inside exits is direct.
+Register access to a running vCPU from another thread is a `logic_error` instead of a
+deadlock. At N=1 the vCPU stays on the constructing thread exactly as before.
+
+**Shared state.** `state_mutex_` (shared) guards pages, tables and hooks. Exits read under
+it; memory and hook changes (serialized by the BEL) write under it. Callbacks are copied
+out and invoked without it, so the lock order stays BEL, then `state_mutex_`, then a
+vCPU's `run_mutex_`.
+
+**TLB coherence.** All vCPUs share one set of stage-1 tables.
+
+- Descriptors are replaced with single-copy-atomic stores.
+- A change that takes access away (unmap, protection downgrade, re-protecting a hooked
+  page, a table detached from its parent) is published before the operation returns:
+  every vCPU in the guest is forced out with `hv_vcpus_exit` and waited for, and detached
+  tables and released pages are reused only afterwards. This matches what Windows does
+  before `NtFreeVirtualMemory` returns.
+- A translation generation is bumped whenever a valid descriptor changes. A vCPU enters
+  through `TLBI VMALLE1IS` only when its last flush is older; otherwise it enters through
+  a stub without the invalidation. The invalidation is broadcast because a vCPU's host
+  thread can migrate between cores. A cancel that lands inside the entry stub forgets
+  the flush, since the `TLBI` may not have run.
+- A change that only grants access is not forced on running vCPUs. A fault on a page
+  whose intended permissions allow the access is retried with a flush (at most 64 times
+  in a row at one instruction), the counterpart of WHP's `try_repair_spurious_fault`.
+
+**Hooked instructions.** An execution hook removes EL0 execute from its page; after the
+callbacks the instruction is single-stepped with the page executable. At N>1 the stepping
+vCPU first pauses its peers (forces running ones out, the others wait at their next
+entry), so no peer can run a hooked instruction without the hook. The page is executable
+only while the step is armed, and a pending step is disarmed whenever its run returns.
+
+**Measured** (Apple M5 Pro, 6 performance cores, `hv_vcpu_run` exits through an SVC
+loop):
+
+| | 1 vCPU | 2 | 4 | 8 |
+|---|---|---|---|---|
+| exit throughput (M exits/s) | 0.94 | 1.50 | 1.75 | 1.01 |
+| compute (1e9 iterations per vCPU, s) | 0.224 | 0.225 | 0.236 | 0.236 |
+
+Flushing only after table changes cut the N=1 exit round trip from 1.46 µs to 1.10 µs
+and removed the slowdown a page-walking vCPU suffered from exiting peers (2.5x to 3.3x
+before). Exit throughput stops scaling past 4 vCPUs mostly inside Hypervisor.framework's
+exit path; under Windows the BEL serializes syscall handling anyway.
 
 ---
 

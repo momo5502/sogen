@@ -26,7 +26,9 @@
 #include <fex_x86_64_emulator.hpp>
 #endif
 
-#if defined(SOGEN_ENABLE_HVF)
+#if defined(SOGEN_ENABLE_HVF) && defined(__x86_64__)
+#include <hvf_x86_64_emulator.hpp>
+#elif defined(SOGEN_ENABLE_HVF)
 #include <hvf_arm64_emulator.hpp>
 #endif
 
@@ -71,6 +73,15 @@ namespace sogen
                 return fex::create_x86_64_emulator();
 #endif
 
+#if defined(SOGEN_ENABLE_HVF) && defined(__x86_64__)
+            case backend_type::hvf:
+                return hvf::create_x86_64_emulator(vcpu_count);
+#elif defined(SOGEN_ENABLE_HVF) && defined(SOGEN_ENABLE_FEX)
+            // Apple Silicon runs x86-64 code in Hypervisor.framework through FEX's translation.
+            case backend_type::hvf:
+                return fex::create_hypervisor_x86_64_emulator();
+#endif
+
             default:
                 break;
             }
@@ -113,7 +124,7 @@ namespace sogen
             return whp::create_arm64_emulator(vcpu_count);
 #endif
 
-#if defined(SOGEN_ENABLE_HVF)
+#if defined(SOGEN_ENABLE_HVF) && !defined(__x86_64__)
         case backend_type::hvf:
             return hvf::create_arm64_emulator(vcpu_count);
 #endif
@@ -148,7 +159,7 @@ namespace sogen
         {
             return backend_type::unicorn;
         }
-#if defined(SOGEN_ENABLE_HVF)
+#if defined(SOGEN_ENABLE_HVF) && !defined(__x86_64__)
         if (hvf::is_available())
         {
             return backend_type::hvf;
@@ -216,6 +227,14 @@ namespace sogen
             if (env && (env == "1"sv || env == "true"sv))
             {
                 backend = backend_type::fex;
+            }
+        }
+
+        {
+            const auto* env = getenv("EMULATOR_HVF");
+            if (env && (env == "1"sv || env == "true"sv))
+            {
+                backend = backend_type::hvf;
             }
         }
 

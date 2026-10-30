@@ -2,11 +2,21 @@
 #include <memory_manager.hpp>
 
 #include <gtest/gtest.h>
+#include <utils/finally.hpp>
 
+#include <sys/mman.h>
+
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
+#include <chrono>
 #include <cstring>
+#include <exception>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -204,6 +214,28 @@ namespace sogen::test
         EXPECT_EQ(machine->reg(arm64_register::x3), 0x1001u);
         EXPECT_EQ(machine->reg(arm64_register::x5), 0x1002u);
         EXPECT_EQ(machine->read_instruction_pointer(), code_address + 12);
+    }
+
+    TEST_F(Arm64BackendTest, SelfSynchronizedCounterReadsReachTheCounterHook)
+    {
+        if (machine->get_name() != "hvf-arm64")
+        {
+            GTEST_SKIP() << "CNTVCTSS_EL0 needs FEAT_ECV";
+        }
+        // mrs x7, cntvctss_el0; svc #1
+        load_code(std::array{0xD53BE0C7u, svc(1)});
+        machine->hook_instruction(arm64_hookable_instructions::read_counter, [&](cpu_interface& raw, const uint64_t destination) {
+            EXPECT_EQ(destination, static_cast<uint64_t>(arm64_register::x7));
+            dynamic_cast<arm64_cpu&>(raw).reg(static_cast<arm64_register>(destination), 0x4242u);
+            return instruction_hook_continuation::skip_instruction;
+        });
+        machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& cpu, uint64_t) {
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+        machine->start();
+        EXPECT_EQ(machine->reg(arm64_register::x7), 0x4242u);
+        EXPECT_EQ(machine->read_instruction_pointer(), code_address + 8);
     }
 
     TEST_F(Arm64BackendTest, UserSoftwareStepRunsOneInstructionAndReportsTheNextPc)
@@ -654,5 +686,428 @@ namespace sogen::test
         machine->restore_registers(saved);
         EXPECT_EQ(machine->reg(arm64_register::bvr0), code_address);
         EXPECT_EQ(machine->reg(arm64_register::wvr0), data_address);
+    }
+
+    TEST_F(Arm64BackendTest, HostMemoryBacksGuestPagesOnlyWhenItIsNotExecutable)
+    {
+        if (machine->get_name() != "hvf-arm64")
+        {
+            GTEST_SKIP() << "Only Hypervisor.framework maps host pages into a VM";
+        }
+        constexpr size_t size = 0x4000;
+        constexpr uint64_t data_guest = 0x80000;
+        constexpr uint64_t jit_guest = 0x90000;
+        auto* data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
+        auto* jit = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANON | MAP_PRIVATE | MAP_JIT, -1, 0);
+        ASSERT_NE(data, MAP_FAILED);
+        ASSERT_NE(jit, MAP_FAILED);
+        const auto release = utils::finally([&] {
+            munmap(data, size);
+            munmap(jit, size);
+        });
+
+        bool jit_mapped = true;
+        try
+        {
+            jit_mapped = memory.allocate_host_memory_at(jit_guest, size, jit, memory_permission::read_write);
+        }
+        catch (const std::exception&)
+        {
+            jit_mapped = false;
+        }
+        EXPECT_FALSE(jit_mapped);
+
+        constexpr uint64_t value = 0x1122334455667788ull;
+        std::memcpy(data, &value, sizeof(value));
+        ASSERT_TRUE(memory.allocate_host_memory_at(data_guest, size, data, memory_permission::read_write));
+        // ldr x0, [x8]; svc #1
+        load_code(std::array{0xF9400100u, svc(1)});
+        machine->reg(arm64_register::x8, data_guest);
+        machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface& cpu, uint64_t) {
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+        machine->start();
+        EXPECT_EQ(machine->reg(arm64_register::x0), value);
+    }
+
+    namespace
+    {
+        constexpr uint64_t peer_code_address = 0x11000;
+        constexpr uint64_t shared_address = 0x40000;
+        constexpr auto watchdog_timeout = std::chrono::seconds(10);
+
+        class Arm64MultiVcpuBackendTest : public testing::Test
+        {
+          protected:
+            std::unique_ptr<arm64_emulator> machine{};
+            std::optional<memory_manager> memory{};
+
+            void SetUp() override
+            {
+                if (get_arm64_emulator_backend_from_environment() == backend_type::unicorn)
+                {
+                    GTEST_SKIP() << "The ARM64 backend of this host runs a single vCPU";
+                }
+
+                machine = create_arm64_emulator_from_environment(2);
+                memory.emplace(*machine);
+                ASSERT_TRUE(machine->supports_multiple_vcpus());
+                ASSERT_EQ(machine->vcpu_count(), 2u);
+                ASSERT_TRUE(memory->allocate_memory(code_address, 0x2000, memory_permission::read_exec));
+                ASSERT_TRUE(memory->allocate_memory(data_address, 0x1000, memory_permission::read_write));
+                for (size_t i = 0; i < 2; ++i)
+                {
+                    cpu(i).reg(arm64_register::pc, i == 0 ? code_address : peer_code_address);
+                    cpu(i).reg(arm64_register::sp, stack_address + 0x800 * (i + 1));
+                }
+            }
+
+            void TearDown() override
+            {
+                memory.reset();
+                machine.reset();
+            }
+
+            arm64_cpu& cpu(const size_t index) const
+            {
+                return machine->get_cpu(index);
+            }
+
+            template <size_t N>
+            void load_code(const size_t index, const std::array<uint32_t, N>& code)
+            {
+                machine->write_memory(index == 0 ? code_address : peer_code_address, code);
+            }
+
+            // Runs both vCPUs on their own host threads and stops any vCPU still running after the timeout.
+            bool run_both()
+            {
+                std::atomic<size_t> finished{};
+                std::array<std::exception_ptr, 2> errors{};
+                std::vector<std::thread> threads{};
+                for (size_t i = 0; i < 2; ++i)
+                {
+                    threads.emplace_back([&, i] {
+                        try
+                        {
+                            cpu(i).start();
+                        }
+                        catch (...)
+                        {
+                            errors[i] = std::current_exception();
+                        }
+                        ++finished;
+                    });
+                }
+
+                const auto deadline = std::chrono::steady_clock::now() + watchdog_timeout;
+                while (finished < 2 && std::chrono::steady_clock::now() < deadline)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                const auto timed_out = finished < 2;
+                for (size_t i = 0; i < 2; ++i)
+                {
+                    cpu(i).stop();
+                }
+                for (auto& thread : threads)
+                {
+                    thread.join();
+                }
+                for (const auto& error : errors)
+                {
+                    if (error)
+                    {
+                        std::rethrow_exception(error);
+                    }
+                }
+                return !timed_out;
+            }
+
+            // Runs one vCPU on a host thread while the caller acts as its peer.
+            class background_run
+            {
+              public:
+                explicit background_run(arm64_cpu& cpu)
+                    : cpu_(cpu),
+                      thread_([this] {
+                          try
+                          {
+                              cpu_.start();
+                          }
+                          catch (...)
+                          {
+                              error_ = std::current_exception();
+                          }
+                          finished_ = true;
+                      })
+                {
+                }
+
+                ~background_run()
+                {
+                    if (thread_.joinable())
+                    {
+                        cpu_.stop();
+                        thread_.join();
+                    }
+                }
+
+                background_run(const background_run&) = delete;
+                background_run& operator=(const background_run&) = delete;
+                background_run(background_run&&) = delete;
+                background_run& operator=(background_run&&) = delete;
+
+                bool wait()
+                {
+                    const auto deadline = std::chrono::steady_clock::now() + watchdog_timeout;
+                    while (!finished_ && std::chrono::steady_clock::now() < deadline)
+                    {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    }
+                    const bool finished = finished_;
+                    cpu_.stop();
+                    thread_.join();
+                    if (error_)
+                    {
+                        std::rethrow_exception(error_);
+                    }
+                    return finished;
+                }
+
+              private:
+                arm64_cpu& cpu_;
+                std::atomic_bool finished_{};
+                std::exception_ptr error_{};
+                std::thread thread_;
+            };
+
+            void wait_for_guest_progress(const uint64_t counter_address) const
+            {
+                const auto deadline = std::chrono::steady_clock::now() + watchdog_timeout;
+                while (machine->read_memory<uint64_t>(counter_address) < 1000 && std::chrono::steady_clock::now() < deadline)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+                ASSERT_GE(machine->read_memory<uint64_t>(counter_address), 1000u) << "The guest loop never ran";
+            }
+        };
+    }
+
+    TEST_F(Arm64MultiVcpuBackendTest, VcpusRunInParallelAndHooksReportTheActingVcpu)
+    {
+        // ldar x0, [x8]; cbz x0, -4; svc #1
+        load_code(0, std::array{0xC8DFFD00u, 0xB4FFFFE0u, svc(1)});
+        // mov x0, #1; stlr x0, [x8]; svc #2
+        load_code(1, std::array{0xD2800020u, 0xC89FFD00u, svc(2)});
+        cpu(0).reg(arm64_register::x8, data_address);
+        cpu(1).reg(arm64_register::x8, data_address);
+
+        std::mutex mutex{};
+        std::vector<std::pair<size_t, uint64_t>> calls{};
+        machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& raw, const uint64_t id) {
+            auto& acting = dynamic_cast<arm64_cpu&>(raw);
+            EXPECT_EQ(&acting, &cpu(acting.index()));
+            EXPECT_EQ(acting.reg(arm64_register::x0), 1u);
+            {
+                const std::scoped_lock lock(mutex);
+                calls.emplace_back(acting.index(), id);
+            }
+            acting.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        ASSERT_TRUE(run_both()) << "A vCPU spinning on a peer's store never saw it";
+        std::ranges::sort(calls);
+        EXPECT_EQ(calls, (std::vector<std::pair<size_t, uint64_t>>{{0, 1}, {1, 2}}));
+        EXPECT_EQ(cpu(0).read_instruction_pointer(), code_address + 12);
+        EXPECT_EQ(cpu(1).read_instruction_pointer(), peer_code_address + 12);
+    }
+
+    TEST_F(Arm64MultiVcpuBackendTest, EachVcpuHasItsOwnRegistersAccessibleFromAnyThread)
+    {
+        cpu(0).reg(arm64_register::x5, 0x55u);
+        cpu(1).reg(arm64_register::x5, 0x66u);
+        EXPECT_EQ(machine->reg(arm64_register::x5), 0x55u);
+
+        std::thread([&] {
+            EXPECT_EQ(cpu(0).reg(arm64_register::x5), 0x55u);
+            EXPECT_EQ(cpu(1).reg(arm64_register::x5), 0x66u);
+            cpu(1).reg(arm64_register::x6, 0x77u);
+        }).join();
+        EXPECT_EQ(cpu(1).reg(arm64_register::x6), 0x77u);
+
+        const auto saved = cpu(1).save_registers();
+        cpu(0).restore_registers(saved);
+        EXPECT_EQ(cpu(0).reg(arm64_register::x5), 0x66u);
+        EXPECT_EQ(cpu(0).read_instruction_pointer(), peer_code_address);
+        EXPECT_EQ(cpu(0).index(), 0u);
+        EXPECT_EQ(cpu(1).index(), 1u);
+    }
+
+    TEST_F(Arm64MultiVcpuBackendTest, StopEndsEachSpinningVcpu)
+    {
+        // add x1, x1, #1; str x1, [x9]; b -8
+        constexpr std::array loop{0x91000421u, 0xF9000121u, 0x17FFFFFEu};
+        load_code(0, loop);
+        load_code(1, loop);
+        std::array<std::unique_ptr<background_run>, 2> runs{};
+        for (size_t i = 0; i < 2; ++i)
+        {
+            cpu(i).reg(arm64_register::x9, data_address + 8 * i);
+            runs[i] = std::make_unique<background_run>(cpu(i));
+        }
+        wait_for_guest_progress(data_address);
+        wait_for_guest_progress(data_address + 8);
+        for (size_t i = 0; i < 2; ++i)
+        {
+            cpu(i).stop();
+            EXPECT_TRUE(runs[i]->wait());
+            const auto pc = cpu(i).read_instruction_pointer();
+            const auto base = i == 0 ? code_address : peer_code_address;
+            EXPECT_TRUE(pc >= base && pc < base + 12) << std::hex << pc;
+        }
+    }
+
+    TEST_F(Arm64MultiVcpuBackendTest, ReleasingMemoryRevokesAccessOfARunningPeer)
+    {
+        ASSERT_TRUE(memory->allocate_memory(shared_address, 0x1000, memory_permission::read_write));
+        // ldr x0, [x8]; add x1, x1, #1; str x1, [x9]; b -12
+        load_code(1, std::array{0xF9400100u, 0x91000421u, 0xF9000121u, 0x17FFFFFDu});
+        cpu(1).reg(arm64_register::x8, shared_address);
+        cpu(1).reg(arm64_register::x9, data_address);
+
+        std::atomic<uint64_t> fault_address{};
+        std::atomic<int> fault_type{-1};
+        machine->hook_memory_violation(
+            [&](cpu_interface& raw, const uint64_t address, size_t, memory_operation, const memory_violation_type type) {
+                fault_address = address;
+                fault_type = static_cast<int>(type);
+                raw.stop();
+                return memory_violation_continuation::resume;
+            });
+
+        background_run run{cpu(1)};
+        wait_for_guest_progress(data_address);
+        ASSERT_TRUE(memory->release_memory(shared_address, 0x1000));
+        const auto iterations = machine->read_memory<uint64_t>(data_address);
+
+        ASSERT_TRUE(run.wait()) << "The peer kept reading released memory through a stale translation";
+        EXPECT_EQ(fault_address.load(), shared_address);
+        EXPECT_EQ(fault_type.load(), static_cast<int>(memory_violation_type::unmapped));
+        EXPECT_LE(machine->read_memory<uint64_t>(data_address), iterations + 1);
+        EXPECT_EQ(cpu(1).read_instruction_pointer(), peer_code_address);
+    }
+
+    TEST_F(Arm64MultiVcpuBackendTest, RemovingWritePermissionRevokesItForARunningPeer)
+    {
+        ASSERT_TRUE(memory->allocate_memory(shared_address, 0x1000, memory_permission::read_write));
+        // add x1, x1, #1; str x1, [x8]; str x1, [x9]; b -12
+        load_code(1, std::array{0x91000421u, 0xF9000101u, 0xF9000121u, 0x17FFFFFDu});
+        cpu(1).reg(arm64_register::x8, shared_address);
+        cpu(1).reg(arm64_register::x9, data_address);
+
+        std::atomic<int> fault_operation{-1};
+        std::atomic<int> fault_type{-1};
+        machine->hook_memory_violation(
+            [&](cpu_interface& raw, uint64_t, size_t, const memory_operation operation, const memory_violation_type type) {
+                fault_operation = static_cast<int>(operation);
+                fault_type = static_cast<int>(type);
+                raw.stop();
+                return memory_violation_continuation::resume;
+            });
+
+        background_run run{cpu(1)};
+        wait_for_guest_progress(data_address);
+        ASSERT_TRUE(memory->protect_memory(shared_address, 0x1000, memory_permission::read));
+        const auto frozen = machine->read_memory<uint64_t>(shared_address);
+
+        ASSERT_TRUE(run.wait()) << "The peer kept writing through a stale read-write translation";
+        EXPECT_EQ(fault_operation.load(), static_cast<int>(memory_operation::write));
+        EXPECT_EQ(fault_type.load(), static_cast<int>(memory_violation_type::protection));
+        EXPECT_EQ(machine->read_memory<uint64_t>(shared_address), frozen);
+    }
+
+    TEST_F(Arm64MultiVcpuBackendTest, PermissionGrantedWhileAPeerRunsIsNotReportedAsAViolation)
+    {
+        ASSERT_TRUE(memory->allocate_memory(shared_address, 0x1000, memory_permission::read));
+        // ldr x0, [x8]; cbz x0, -4; str x0, [x8, #8]; svc #1
+        load_code(1, std::array{0xF9400100u, 0xB4FFFFE0u, 0xF9000500u, svc(1)});
+        cpu(1).reg(arm64_register::x8, shared_address);
+
+        std::atomic<int> violations{};
+        machine->hook_memory_violation([&](cpu_interface& raw, uint64_t, size_t, memory_operation, memory_violation_type) {
+            ++violations;
+            raw.stop();
+            return memory_violation_continuation::resume;
+        });
+        std::atomic_bool reached{};
+        machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& raw, uint64_t) {
+            reached = true;
+            raw.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        background_run run{cpu(1)};
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        ASSERT_TRUE(memory->protect_memory(shared_address, 0x1000, memory_permission::read_write));
+        machine->write_memory(shared_address, uint64_t{0x1234});
+
+        ASSERT_TRUE(run.wait());
+        EXPECT_TRUE(reached);
+        EXPECT_EQ(violations.load(), 0);
+        EXPECT_EQ(machine->read_memory<uint64_t>(shared_address + 8), 0x1234u);
+    }
+
+    TEST_F(Arm64MultiVcpuBackendTest, ExecutionHooksFireOnEveryVcpu)
+    {
+        // mov x0, #1; svc #1
+        load_code(0, std::array{0xD2800020u, svc(1)});
+        load_code(1, std::array{0xD2800020u, svc(1)});
+        std::mutex mutex{};
+        std::vector<size_t> hooked{};
+        machine->hook_memory_range_execution(code_address, 0x2000, [&](cpu_interface& raw, const uint64_t address) {
+            if (address == code_address || address == peer_code_address)
+            {
+                const std::scoped_lock lock(mutex);
+                hooked.push_back(raw.index());
+            }
+        });
+        machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& raw, uint64_t) {
+            raw.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        ASSERT_TRUE(run_both());
+        std::ranges::sort(hooked);
+        EXPECT_EQ(hooked, (std::vector<size_t>{0, 1}));
+        EXPECT_EQ(cpu(0).reg(arm64_register::x0), 1u);
+        EXPECT_EQ(cpu(1).reg(arm64_register::x0), 1u);
+    }
+
+    TEST_F(Arm64MultiVcpuBackendTest, AHookedInstructionSteppedByOneVcpuStaysHookedForItsPeer)
+    {
+        constexpr uint64_t iterations = 300;
+        // add x1, x1, #1; subs x2, x2, #1; b.ne -8; svc #1
+        load_code(0, std::array{0x91000421u, 0xF1000442u, 0x54FFFFC1u, svc(1)});
+        for (size_t i = 0; i < 2; ++i)
+        {
+            cpu(i).reg(arm64_register::pc, code_address);
+            cpu(i).reg(arm64_register::x2, iterations);
+        }
+        std::array<std::atomic<uint64_t>, 2> hits{};
+        machine->hook_memory_execution(code_address, [&](cpu_interface& raw, uint64_t) { ++hits[raw.index()]; });
+        machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& raw, uint64_t) {
+            raw.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        ASSERT_TRUE(run_both());
+        for (size_t i = 0; i < 2; ++i)
+        {
+            EXPECT_EQ(cpu(i).reg(arm64_register::x1), iterations);
+            EXPECT_EQ(hits[i].load(), iterations) << "vCPU " << i << " ran the hooked instruction without the hook";
+        }
     }
 }

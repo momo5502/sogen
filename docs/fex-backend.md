@@ -31,8 +31,8 @@ inside this process, treating guest virtual addresses as host virtual addresses 
   [`FEX-Emu/FEX`'s own `docs/ProgrammingConcerns.md`](https://github.com/FEX-Emu/FEX/blob/main/docs/ProgrammingConcerns.md)
   and `docs/allocator_usage.md`, which state this plainly from FEX's own side.
 - This backend's own address-space protections (`host_reserved` region tracking in
-  `windows-emulator/memory_manager.cpp` and the Apple-only FEXCore internal arena) are mitigations,
-  not a sandbox: they keep ordinary guest
+  `windows-emulator/memory_manager.cpp`, the Apple-only FEXCore internal arena, and the guest arena
+  described below) are mitigations, not a sandbox: they keep ordinary guest
   allocations from *landing on* addresses this backend or the host process needs, reducing collision
   risk. They do not and cannot stop a guest from computing an arbitrary pointer into any other valid
   host-mapped memory — there is no hard fault boundary for that, by design.
@@ -44,7 +44,15 @@ inside this process, treating guest virtual addresses as host virtual addresses 
   sogen's memory manager. On Apple, the backend separately installs FEXCore allocator hooks that
   steer FEXCore's own anonymous internal mappings into a dedicated 4GiB host-reserved arena, keeping
   them out of guest allocation ranges. This is still only a collision mitigation, not isolation.
-  WoW64/32-bit processes remain unsupported by this backend.
+- Above 4GB, guest memory comes from a 256GB arena reserved at a fixed address: 64GB on Linux, 1TB on
+  macOS, which keeps [64GB, 448GB) for itself. Guest addresses therefore no longer follow the host's
+  ASLR, so runs are reproducible and a saved process can be restored in a new one. Images load inside
+  the arena, so an image without relocations cannot load at its preferred base. Saved register states
+  hold no host pointers, and the logical guest threads share FEXCore's call-ret shadow stack.
+  Only one emulator can exist per process.
+  WoW64/32-bit processes map the guest's low 4GB onto a host window. On Linux the window is reserved when
+  the first WoW64 process starts; on macOS only the hypervisor mode (`--backend hvf`) reserves it, so plain
+  FEX there still rejects WoW64 processes.
 
 ## Architecture
 
@@ -56,12 +64,21 @@ inside this process, treating guest virtual addresses as host virtual addresses 
 - Guest `syscall` instructions route back to sogen through a `FEXCore::HLE::SyscallHandler`, which
   invokes the registered syscall instruction-hook — the same mechanism the Windows emulation layer
   uses for every backend.
-- The fine-grained `hook_memory_read/write/execution/range_execution` and `hook_basic_block` hooks
-  are accepted for API compatibility but never fire, exactly like the KVM backend: guest code runs
-  natively, so there is no per-access/per-instruction instrumentation point short of single-stepping.
+- Execution hooks and instruction budgets (`start(count)`) use a callback the fork adds to FEX: code
+  compiled inside a registered range calls the syscall handler before each instruction. The handler
+  runs the hooks, counts the budget, and can leave the block to stop or to follow a changed `rip`.
+  Adding or removing a range drops the translated code there. With instruction precision on, the
+  whole address space is covered, which costs a host call per guest instruction. In the hypervisor
+  mode each host call is a VM exit, about 90 times slower, so the analyzer leaves precision off for
+  `--backend hvf` unless `--inst-precision` is given.
+- `cpuid`, `rdtsc` and `rdtscp` hooks make FEX translate those instructions to a `#UD` trap; the backend
+  runs the hooks, or the native instruction when none skips it. A `#UD` from any other instruction
+  goes to the `invalid` instruction hooks and then to the interrupt hooks.
+- `hook_memory_read/write` and `hook_basic_block` are accepted for API compatibility but never fire.
 - `deps/FEX` is pinned to a personal fork (`github.com/JackTYM/FEX`), not upstream FEX-Emu directly —
-  carries a 10-submodule removal (376MB trim) and a couple of small Darwin-portability/opdispatch
-  patches; see the fork's own commit history for the exact list. **Pinning to a fork means these
+  carries a 10-submodule removal (376MB trim), Darwin-portability patches, and the embedder hooks
+  described above (instruction callbacks, `cpuid`/`rdtsc` trapping, the WoW64 guest rebase switch);
+  see the fork's own commit history for the exact list. **Pinning to a fork means these
   patches don't automatically track upstream FEX-Emu security fixes** — periodically rebasing onto a
   newer upstream release is a maintenance cost worth weighing.
 
@@ -124,8 +141,5 @@ root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requir
 - **Missing GPR sub-register widths.** `classify_gpr` had no cases for `r8b`-`r15b`/`r8w`-`r15w`/
   `r8d`-`r15d` (only the full 64-bit and the original 8 registers at every width) — silently
   zero-filled on read, silently dropped on write. Common in real x86-64 code (e.g. `mov r9d, eax`).
-- **`setup_gdt` discarded an allocation failure.** The GDT then sat at a fixed address, and on Apple low
-  addresses and a range of typical host allocations are unusable/collision-prone (see the address-space
-  model above), so a collision there was real, not theoretical, and failed silently instead of raising a
-  diagnosable error. The GDT is now allocated through the memory manager, which confirms the address
-  against the host.
+- **`setup_gdt` discarded an allocation failure.** The GDT used to sit at a fixed address, where a
+  collision with a host allocation failed silently. It is now allocated like any other guest memory.
