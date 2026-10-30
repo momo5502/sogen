@@ -127,6 +127,10 @@ namespace sogen
             {
                 arguments.emplace_back("--spoof-gpu-features");
             }
+            if (options.instruction_precision)
+            {
+                arguments.emplace_back(*options.instruction_precision ? "--inst-precision" : "--no-inst-precision");
+            }
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
                 if (!path.empty())
