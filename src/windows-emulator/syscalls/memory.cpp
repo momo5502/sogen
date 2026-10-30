@@ -28,7 +28,7 @@ namespace sogen
 
             // Backstop only: every non-settling iteration of the pick/confirm loop below rescans, which
             // is guaranteed to make the next pick skip the offending range.
-            constexpr int max_host_reserved_retries = 8;
+            constexpr size_t max_host_reserved_retries = 8;
 
             const emulator_process* get_managed_process(const syscall_context& c, const handle process_handle)
             {
@@ -571,7 +571,7 @@ namespace sogen
                 // re-checks it and takes the binding host-level claim, so a mapping landing in between
                 // makes that call fail cleanly instead of clobbering. Both rescan forms are needed; see
                 // memory_manager::find_free_host_allocation_base.
-                for (int attempt = 0;; ++attempt)
+                for (size_t attempt = 0;; ++attempt)
                 {
                     potential_base = c.win_emu.memory.find_free_allocation_base(
                         static_cast<size_t>(allocation_bytes), 0, address_requirements.alignment, address_requirements.lowest_address,

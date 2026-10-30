@@ -2248,7 +2248,9 @@ namespace sogen::fex
 #ifdef __APPLE__
             // The host mmap/mprotect calls happen at 16KB granularity via the shadow table (see
             // sync_host_page_apple); guest VA == host VA is unaffected, this only changes which host
-            // syscalls actually get issued and at what alignment.
+            // syscalls actually get issued and at what alignment. The range is claimed before the shadow
+            // table changes, so a host_memory_collision leaves the shadow table as it was.
+            this->reserve_guest_address_range(address, size);
             this->set_shadow_range_apple(address, size, permissions);
             this->sync_host_pages_covering_apple(address, size);
 #else
@@ -2850,6 +2852,10 @@ namespace sogen::fex
 #ifdef __APPLE__
             mach_vm_address_t target = address;
             const kern_return_t result = ::mach_vm_allocate(mach_task_self(), &target, size, VM_FLAGS_FIXED);
+            if (result == KERN_NO_SPACE)
+            {
+                throw host_memory_collision{};
+            }
             if (result != KERN_SUCCESS || target != address)
             {
                 throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
@@ -2868,13 +2874,17 @@ namespace sogen::fex
 
                 void* result = ::mmap(reinterpret_cast<void*>(host_address), span_size, PROT_NONE,
                                       MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+                if (result == MAP_FAILED && errno != EEXIST)
+                {
+                    throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
+                }
                 if (result == MAP_FAILED || reinterpret_cast<uint64_t>(result) != host_address)
                 {
                     if (result != MAP_FAILED)
                     {
                         ::munmap(result, span_size);
                     }
-                    throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
+                    throw host_memory_collision{};
                 }
             });
 #endif

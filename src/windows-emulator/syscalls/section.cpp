@@ -337,9 +337,12 @@ namespace sogen
             {
                 constexpr auto shared_section_size = 0x10000;
 
-                const auto address = c.win_emu.memory.find_free_allocation_base(shared_section_size);
-                c.win_emu.memory.allocate_memory(address, shared_section_size, memory_permission::read_write, false,
-                                                 memory_region_kind::pagefile_section_view);
+                const auto address = c.win_emu.memory.allocate_memory(shared_section_size, memory_permission::read_write, false, 0,
+                                                                      memory_region_kind::pagefile_section_view);
+                if (!address)
+                {
+                    return STATUS_NO_MEMORY;
+                }
                 c.proc.shared_section_address = address;
                 c.proc.shared_section_size = shared_section_size;
 
@@ -351,9 +354,12 @@ namespace sogen
             {
                 constexpr auto dbwin_buffer_section_size = 0x1000;
 
-                const auto address = c.win_emu.memory.find_free_allocation_base(dbwin_buffer_section_size);
-                c.win_emu.memory.allocate_memory(address, dbwin_buffer_section_size, memory_permission::read_write, false,
-                                                 memory_region_kind::pagefile_section_view);
+                const auto address = c.win_emu.memory.allocate_memory(dbwin_buffer_section_size, memory_permission::read_write, false, 0,
+                                                                      memory_region_kind::pagefile_section_view);
+                if (!address)
+                {
+                    return STATUS_NO_MEMORY;
+                }
                 c.proc.dbwin_buffer = address;
                 c.proc.dbwin_buffer_size = dbwin_buffer_section_size;
 
