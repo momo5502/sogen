@@ -298,25 +298,45 @@ namespace sogen
         reg_key.hive = iterator->first.get();
         reg_key.path = normal_key.get().lexically_relative(reg_key.hive.get());
 
-        if (reg_key.path.get().empty())
-        {
-            return {std::move(reg_key)};
-        }
-
-        if (this->overlay_values_.contains(normal_key))
-        {
-            return {std::move(reg_key)};
-        }
-
-        auto path = reg_key.path.get();
-        const auto* entry = iterator->second->get_sub_key(path);
-
-        if (!entry)
+        if (!this->key_exists(reg_key))
         {
             return std::nullopt;
         }
 
         return {std::move(reg_key)};
+    }
+
+    bool registry_manager::key_exists(const registry_key& key)
+    {
+        if (key.path.get().empty())
+        {
+            return true;
+        }
+
+        const auto full_path = registry_manager::get_full_key_path(key);
+        if (this->is_deleted_hive_key(full_path))
+        {
+            return false;
+        }
+
+        return this->overlay_values_.contains(full_path) || this->get_hive_key(key).has_value();
+    }
+
+    bool registry_manager::is_root_key(const registry_key& key)
+    {
+        return registry_manager::get_full_key_path(key) == key.hive;
+    }
+
+    bool registry_manager::is_deleted_hive_key(const utils::path_key& full_path) const
+    {
+        const auto parent = this->overlay_values_.find(utils::path_key{full_path.get().parent_path()});
+        if (parent == this->overlay_values_.end())
+        {
+            return false;
+        }
+
+        const auto entry = parent->second.sub_keys.find(u16_to_u8(full_path.get().filename().u16string()));
+        return entry != parent->second.sub_keys.end() && !entry->second;
     }
 
     std::optional<registry_key> registry_manager::create_key(const std::filesystem::path& key)
@@ -373,7 +393,7 @@ namespace sogen
             if (!this->get_key(current_key))
             {
                 auto& parent_bucket = this->overlay_values_[utils::path_key{parent_path}];
-                parent_bucket.sub_keys.try_emplace(u16_to_u8(display_component.u16string()), true);
+                parent_bucket.sub_keys.insert_or_assign(u16_to_u8(display_component.u16string()), true);
                 this->overlay_values_.try_emplace(current_key);
             }
             ++component_index;
@@ -388,6 +408,34 @@ namespace sogen
         return this->find_hive(normal_key) != this->hives_.end();
     }
 
+    void registry_manager::delete_key(const registry_key& key)
+    {
+        const auto full_path = registry_manager::get_full_key_path(key);
+        const auto name = u16_to_u8(full_path.get().filename().u16string());
+        auto& parent = this->overlay_values_[utils::path_key{full_path.get().parent_path()}];
+
+        const auto backing_key = this->get_hive_key(key);
+        if (!backing_key)
+        {
+            parent.sub_keys.erase(name);
+            this->overlay_values_.erase(full_path);
+            return;
+        }
+
+        parent.sub_keys.insert_or_assign(name, false);
+
+        auto& values = this->overlay_values_[full_path].values;
+        values.clear();
+
+        for (size_t index = 0; index < backing_key->key.get_value_count(backing_key->file); ++index)
+        {
+            if (const auto* value = backing_key->key.get_value(backing_key->file, index))
+            {
+                values[value->name].deleted = true;
+            }
+        }
+    }
+
     std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string_view name)
     {
         if (const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));
@@ -396,6 +444,11 @@ namespace sogen
             if (const auto value_entry = overlay_entry->second.values.find(std::string{name});
                 value_entry != overlay_entry->second.values.end())
             {
+                if (value_entry->second.deleted)
+                {
+                    return std::nullopt;
+                }
+
                 registry_value v{};
                 v.type = value_entry->second.type;
                 v.name = value_entry->first;
@@ -426,34 +479,55 @@ namespace sogen
 
     std::optional<registry_value> registry_manager::get_value(const registry_key& key, const size_t index)
     {
-        hive_key* backing_key = nullptr;
-        std::ifstream* hive_file = nullptr;
-        size_t backing_count = 0;
-        if (const auto iterator = this->hives_.find(key.hive); iterator != this->hives_.end())
+        const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));
+        const auto* bucket = overlay_entry == this->overlay_values_.end() ? nullptr : &overlay_entry->second;
+        const auto backing_key = this->get_hive_key(key);
+
+        auto overlay_index = index;
+        if (backing_key)
         {
-            backing_key = iterator->second->get_sub_key(key.path.get());
-            hive_file = &iterator->second->get_file();
-            if (backing_key)
+            const auto backing_count = backing_key->key.get_value_count(backing_key->file);
+            const auto has_deleted_values =
+                bucket && std::ranges::any_of(bucket->values, [](const auto& entry) { return entry.second.deleted; });
+
+            if (!has_deleted_values)
             {
-                backing_count = backing_key->get_value_count(*hive_file);
                 if (index < backing_count)
                 {
-                    const auto* entry = backing_key->get_value(*hive_file, index);
+                    const auto* entry = backing_key->key.get_value(backing_key->file, index);
                     return entry ? this->get_value(key, entry->name) : std::nullopt;
+                }
+
+                overlay_index = index - backing_count;
+            }
+            else
+            {
+                for (size_t backing_index = 0; backing_index < backing_count; ++backing_index)
+                {
+                    const auto* entry = backing_key->key.get_value(backing_key->file, backing_index);
+                    auto value = entry ? this->get_value(key, entry->name) : std::nullopt;
+                    if (!value)
+                    {
+                        continue;
+                    }
+
+                    if (overlay_index == 0)
+                    {
+                        return value;
+                    }
+                    --overlay_index;
                 }
             }
         }
 
-        const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));
-        if (overlay_entry == this->overlay_values_.end())
+        if (!bucket)
         {
             return std::nullopt;
         }
 
-        auto overlay_index = index - backing_count;
-        for (const auto& [name, value] : overlay_entry->second.values)
+        for (const auto& [name, value] : bucket->values)
         {
-            if (backing_key && backing_key->get_value(*hive_file, name))
+            if (value.deleted || (backing_key && backing_key->key.get_value(backing_key->file, name)))
             {
                 continue;
             }
@@ -474,18 +548,8 @@ namespace sogen
 
     size_t registry_manager::get_value_count(const registry_key& key)
     {
-        hive_key* backing_key = nullptr;
-        std::ifstream* hive_file = nullptr;
-        size_t result = 0;
-        if (const auto iterator = this->hives_.find(key.hive); iterator != this->hives_.end())
-        {
-            backing_key = iterator->second->get_sub_key(key.path.get());
-            hive_file = &iterator->second->get_file();
-            if (backing_key)
-            {
-                result = backing_key->get_value_count(*hive_file);
-            }
-        }
+        const auto backing_key = this->get_hive_key(key);
+        size_t result = backing_key ? backing_key->key.get_value_count(backing_key->file) : 0;
 
         const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));
         if (overlay_entry == this->overlay_values_.end())
@@ -493,9 +557,14 @@ namespace sogen
             return result;
         }
 
-        for (const auto& [name, _] : overlay_entry->second.values)
+        for (const auto& [name, value] : overlay_entry->second.values)
         {
-            if (!backing_key || !backing_key->get_value(*hive_file, name))
+            const auto in_hive = backing_key && backing_key->key.get_value(backing_key->file, name);
+            if (value.deleted && in_hive)
+            {
+                --result;
+            }
+            else if (!value.deleted && !in_hive)
             {
                 ++result;
             }
@@ -510,6 +579,45 @@ namespace sogen
         auto& value = bucket.values[std::move(name)];
         value.type = type;
         value.data.assign(data.begin(), data.end());
+        value.deleted = false;
+    }
+
+    bool registry_manager::delete_value(const registry_key& key, const std::string_view name)
+    {
+        const auto full_path = registry_manager::get_full_key_path(key);
+        const auto backing_key = this->get_hive_key(key);
+        const auto in_hive = backing_key && backing_key->key.get_value(backing_key->file, name);
+
+        if (const auto overlay_entry = this->overlay_values_.find(full_path); overlay_entry != this->overlay_values_.end())
+        {
+            auto& values = overlay_entry->second.values;
+            if (const auto value_entry = values.find(std::string{name}); value_entry != values.end())
+            {
+                if (value_entry->second.deleted)
+                {
+                    return false;
+                }
+
+                if (in_hive)
+                {
+                    value_entry->second = overlay_value{.deleted = true};
+                }
+                else
+                {
+                    values.erase(value_entry);
+                }
+
+                return true;
+            }
+        }
+
+        if (!in_hive)
+        {
+            return false;
+        }
+
+        this->overlay_values_[full_path].values[std::string{name}].deleted = true;
+        return true;
     }
 
     void registry_manager::serialize_runtime_state(utils::buffer_serializer& buffer) const
@@ -570,37 +678,63 @@ namespace sogen
 
     std::optional<std::string_view> registry_manager::get_sub_key_name(const registry_key& key, const size_t index)
     {
-        hive_key* backing_key = nullptr;
-        std::ifstream* hive_file = nullptr;
-        size_t backing_count = 0;
-        if (const auto iterator = this->hives_.find(key.hive); iterator != this->hives_.end())
+        const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));
+        const auto* bucket = overlay_entry == this->overlay_values_.end() ? nullptr : &overlay_entry->second;
+        const auto backing_key = this->get_hive_key(key);
+
+        auto overlay_index = index;
+        if (backing_key)
         {
-            backing_key = iterator->second->get_sub_key(key.path.get());
-            hive_file = &iterator->second->get_file();
-            if (backing_key)
+            const auto backing_count = backing_key->key.get_sub_key_count(backing_key->file);
+            const auto has_deleted_sub_keys =
+                bucket && std::ranges::any_of(bucket->sub_keys, [](const auto& entry) { return !entry.second; });
+
+            if (!has_deleted_sub_keys)
             {
-                backing_count = backing_key->get_sub_key_count(*hive_file);
                 if (index < backing_count)
                 {
-                    if (const auto* name = backing_key->get_sub_key_name(*hive_file, index))
+                    if (const auto* name = backing_key->key.get_sub_key_name(backing_key->file, index))
                     {
                         return *name;
                     }
                     return std::nullopt;
                 }
+
+                overlay_index = index - backing_count;
+            }
+            else
+            {
+                for (size_t backing_index = 0; backing_index < backing_count; ++backing_index)
+                {
+                    const auto* name = backing_key->key.get_sub_key_name(backing_key->file, backing_index);
+                    if (!name)
+                    {
+                        continue;
+                    }
+
+                    if (const auto sub_key = bucket->sub_keys.find(std::string{*name});
+                        sub_key != bucket->sub_keys.end() && !sub_key->second)
+                    {
+                        continue;
+                    }
+
+                    if (overlay_index == 0)
+                    {
+                        return *name;
+                    }
+                    --overlay_index;
+                }
             }
         }
 
-        const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));
-        if (overlay_entry == this->overlay_values_.end())
+        if (!bucket)
         {
             return std::nullopt;
         }
 
-        auto overlay_index = index - backing_count;
-        for (const auto& [name, _] : overlay_entry->second.sub_keys)
+        for (const auto& [name, present] : bucket->sub_keys)
         {
-            if (backing_key && backing_key->get_sub_key(*hive_file, name))
+            if (!present || (backing_key && backing_key->key.get_sub_key(backing_key->file, name)))
             {
                 continue;
             }
@@ -617,18 +751,8 @@ namespace sogen
 
     size_t registry_manager::get_sub_key_count(const registry_key& key)
     {
-        hive_key* backing_key = nullptr;
-        std::ifstream* hive_file = nullptr;
-        size_t result = 0;
-        if (const auto iterator = this->hives_.find(key.hive); iterator != this->hives_.end())
-        {
-            backing_key = iterator->second->get_sub_key(key.path.get());
-            hive_file = &iterator->second->get_file();
-            if (backing_key)
-            {
-                result = backing_key->get_sub_key_count(*hive_file);
-            }
-        }
+        const auto backing_key = this->get_hive_key(key);
+        size_t result = backing_key ? backing_key->key.get_sub_key_count(backing_key->file) : 0;
 
         const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));
         if (overlay_entry == this->overlay_values_.end())
@@ -636,9 +760,14 @@ namespace sogen
             return result;
         }
 
-        for (const auto& [name, _] : overlay_entry->second.sub_keys)
+        for (const auto& [name, present] : overlay_entry->second.sub_keys)
         {
-            if (!backing_key || !backing_key->get_sub_key(*hive_file, name))
+            const auto in_hive = backing_key && backing_key->key.get_sub_key(backing_key->file, name);
+            if (!present && in_hive)
+            {
+                --result;
+            }
+            else if (present && !in_hive)
             {
                 ++result;
             }
