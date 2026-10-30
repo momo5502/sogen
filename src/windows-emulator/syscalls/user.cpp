@@ -1894,7 +1894,11 @@ namespace sogen
                 return 0;
             }
 
-            const auto window = it->second.target_window;
+            auto window = it->second.target_window;
+            if (window == 0 && it->second.is_window_dc)
+            {
+                window = c.proc.default_desktop_window_handle.bits;
+            }
             if (window == 0 || !c.proc.windows.get(window))
             {
                 return 0;
