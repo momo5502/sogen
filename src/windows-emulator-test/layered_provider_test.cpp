@@ -386,6 +386,23 @@ namespace sogen::test
         std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
     }
 
+    TEST_F(LayeredProviderTest, AJournalThatCannotBeReadIsReportedInsteadOfIgnored)
+    {
+        write_host_file(this->state() / "journal", "H\tfile.txt\n");
+        std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::none, std::filesystem::perm_options::replace);
+
+        if (std::ifstream{this->state() / "journal"})
+        {
+            std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::owner_all,
+                                         std::filesystem::perm_options::replace);
+            GTEST_SKIP() << "the host does not enforce unreadable files";
+        }
+
+        EXPECT_THROW(this->make_provider(), std::runtime_error);
+
+        std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+    }
+
     TEST_F(LayeredProviderTest, RenamingAnUpperFileHidesItsLowerCounterpart)
     {
         const auto provider = this->make_provider();

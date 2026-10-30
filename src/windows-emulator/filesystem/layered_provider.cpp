@@ -110,6 +110,10 @@ namespace sogen
         {
             std::ifstream stream(this->file_, std::ios::binary);
             content.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+            if (!stream.is_open() || stream.bad())
+            {
+                throw std::runtime_error("Failed to read the layer journal: " + this->file_.string());
+            }
         }
 
         // A record the crash cut short has no terminator. It is dropped and cut off, so that the next record does not
