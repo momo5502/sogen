@@ -272,13 +272,13 @@ namespace sogen::test
         EXPECT_EQ(STATUS_PENDING, this->emu->process.devices.get(this->reader)->execute_ioctl(*this->emu, context));
         server.work(*this->emu);
         EXPECT_EQ(STATUS_PENDING, context.io_status_block.read().Status);
-        EXPECT_FALSE(this->emu->process.events.get(event_handle)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(event_handle)->is_signaled());
         io_completion_message message{};
         EXPECT_FALSE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
         auto client = std::move(server.unopened_peer);
         server.work(*this->emu);
         EXPECT_EQ(STATUS_SUCCESS, context.io_status_block.read().Status);
-        EXPECT_TRUE(this->emu->process.events.get(event_handle)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(event_handle)->is_signaled());
         ASSERT_TRUE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
         EXPECT_EQ(42u, message.key_context);
         EXPECT_EQ(123u, message.apc_context);
@@ -298,7 +298,7 @@ namespace sogen::test
         ASSERT_EQ(STATUS_PENDING, server.io_control(*this->emu, context));
         EXPECT_TRUE(server.cancel_io(*this->emu, context.io_status_block.value()));
         EXPECT_EQ(STATUS_CANCELLED, context.io_status_block.read().Status);
-        EXPECT_TRUE(this->emu->process.events.get(event_handle)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(event_handle)->is_signaled());
         server.work(*this->emu);
         EXPECT_EQ(STATUS_CANCELLED, context.io_status_block.read().Status);
     }
@@ -344,12 +344,12 @@ namespace sogen::test
         context.event = event;
         context.apc_context = 0x5678;
         ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, context, true), STATUS_PENDING);
-        EXPECT_FALSE(this->emu->process.events.get(event)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(event)->is_signaled());
         ASSERT_EQ(this->write("hello pipe"), STATUS_SUCCESS);
         this->pipe(this->reader).work(*this->emu);
         EXPECT_EQ(context.io_status_block.read().Status, STATUS_SUCCESS);
         EXPECT_EQ(context.io_status_block.read().Information, 10u);
-        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
         EXPECT_EQ(this->read_output(10), "hello pipe");
         io_completion_message message{};
         ASSERT_TRUE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
@@ -448,7 +448,7 @@ namespace sogen::test
         ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, context, true), STATUS_PENDING);
         ASSERT_TRUE(this->pipe(this->reader).cancel_io(*this->emu, context.io_status_block.value()));
         EXPECT_EQ(context.io_status_block.read().Status, STATUS_CANCELLED);
-        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
     }
 
     TEST_F(NamedPipeTest, SynchronousReadParksOnlyItsIssuingGuestThread)
@@ -512,7 +512,7 @@ namespace sogen::test
                   STATUS_SUCCESS);
         original->set_completion_notification_flags(1);
         auto context = this->request(duplicate, 16);
-        EXPECT_EQ(context.completion_port, completion);
+        EXPECT_EQ(this->emu->process.io_completions.get(context.completion_port), this->emu->process.io_completions.get(completion));
         EXPECT_EQ(context.completion_key, 42u);
         EXPECT_EQ(context.completion_notification_flags, 1u);
         ASSERT_EQ(this->pipe(duplicate).start_io(*this->emu, context, true), STATUS_PENDING);
@@ -710,7 +710,7 @@ namespace sogen::test
         this->pipe(this->reader).work(*this->emu);
         EXPECT_EQ(pending.io_status_block.read().Status, STATUS_SUCCESS);
         EXPECT_EQ(this->read_output(2), "ok");
-        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
         EXPECT_EQ(this->emu->process.events.get(event)->ref_count, 1u);
     }
 

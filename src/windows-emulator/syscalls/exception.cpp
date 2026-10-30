@@ -1,6 +1,8 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../cpu_context.hpp"
+#include "../exception_dispatch.hpp"
 
 namespace sogen
 {
@@ -41,25 +43,37 @@ namespace sogen
                 }
             }
 
-            c.proc.exit_status = error_status;
+            c.proc.mark_exited(error_status);
             c.win_emu.callbacks.on_exception();
             c.emu.stop();
 
             return STATUS_SUCCESS;
         }
 
+        // A debugger sees the exception first; when it handles it, the thread continues from the raising context, as
+        // after NtContinue. A first chance it does not handle goes to the guest's handlers.
         NTSTATUS handle_NtRaiseException(const syscall_context& c,
                                          const emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> exception_record,
-                                         const emulator_object<CONTEXT64> /*thread_context*/, const BOOLEAN handle_exception)
+                                         const emulator_object<CONTEXT64> thread_context, const BOOLEAN first_chance)
         {
-            if (handle_exception)
+            const auto record = exception_record.read();
+            const auto context = thread_context.read();
+
+            if (report_exception_to_debugger(c.win_emu, c.vcpu, record, first_chance != FALSE))
             {
-                c.win_emu.log.error("Unhandled exceptions not supported yet!\n");
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
+                c.write_status = false;
+                cpu_context::restore(c.x64_cpu(), context);
+                return STATUS_SUCCESS;
             }
 
-            c.proc.exit_status = exception_record.read().ExceptionCode;
+            if (first_chance)
+            {
+                c.write_status = false;
+                dispatch_exception_record(c.win_emu, c.vcpu, record, context);
+                return STATUS_SUCCESS;
+            }
+
+            c.proc.mark_exited(record.ExceptionCode);
             c.win_emu.callbacks.on_exception();
             c.emu.stop();
 

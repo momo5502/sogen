@@ -54,7 +54,7 @@ namespace sogen
         write_io_status(context, status);
         if (auto* event = win_emu.process.events.get(context.event))
         {
-            event->signaled = true;
+            event->set_signaled(true);
         }
         if (context.apc_routine)
         {
@@ -173,7 +173,7 @@ namespace sogen
         write_io_status(context, STATUS_PENDING);
         if (auto* event = win_emu.process.events.get(context.event))
         {
-            event->signaled = false;
+            event->set_signaled(false);
         }
         this->pending_.push_back(std::move(pending));
         queued = true;

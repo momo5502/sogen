@@ -531,12 +531,19 @@ namespace sogen
             case SystemProcessInformation:
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
+            case SystemHandleCountInformation:
+                return handle_query<SYSTEM_HANDLECOUNT_INFORMATION>(
+                    c.emu, system_information, system_information_length, return_length, [&](SYSTEM_HANDLECOUNT_INFORMATION& info) {
+                        info.ProcessCount = 1;
+                        info.ThreadCount = static_cast<ULONG>(std::max<size_t>(c.proc.get_live_thread_count(), 1));
+                        info.HandleCount = 0;
+                    });
+
             case SystemFlushInformation:
             case SystemSecureBootPolicyInformation:
             case SystemCodeIntegrityPoliciesFullInformation:
             case SystemHypervisorSharedPageInformation:
             case SystemFeatureConfigurationInformation:
-            case SystemSupportedProcessorArchitectures2:
             case SystemFeatureConfigurationSectionInformation:
             case SystemFirmwareTableInformation:
             case SystemPolicyInformation:
@@ -906,7 +913,9 @@ namespace sogen
                                                                    info.AvailableMemory[0] = 0x80000000ull;
                                                                });
 
-            case SystemSupportedProcessorArchitectures: {
+            // The second class only differs in what newer ntdll builds ask it with, as IsWow64Process does.
+            case SystemSupportedProcessorArchitectures:
+            case SystemSupportedProcessorArchitectures2: {
                 constexpr auto num_arch = 2;
 
                 // The input is the process whose machine Windows marks with the Process flag; NULL marks none.
@@ -920,8 +929,11 @@ namespace sogen
                     return STATUS_ACCESS_VIOLATION;
                 }
                 const auto is_current_process = process.bits != 0 && c.proc.is_current_process_handle(process);
-                const auto is_other_process =
-                    !is_current_process && process.value.type == handle_types::process && c.proc.processes.get(process) != nullptr;
+                const auto* other_process =
+                    !is_current_process && process.value.type == handle_types::process ? c.proc.processes.get(process) : nullptr;
+                const auto is_other_process = other_process != nullptr;
+                const auto process_is_wow64 =
+                    is_current_process ? c.proc.is_wow64_process : is_other_process && other_process->is_wow64_process;
                 if (process.bits != 0 && !is_current_process && !is_other_process)
                 {
                     return process == CURRENT_THREAD || process.value.type == handle_types::thread ? STATUS_OBJECT_TYPE_MISMATCH
@@ -945,10 +957,10 @@ namespace sogen
                 supported_arch[0].KernelMode = 1;
                 supported_arch[0].UserMode = 1;
                 supported_arch[0].Native = 1;
-                supported_arch[0].Process = is_other_process || (is_current_process && !c.proc.is_wow64_process) ? 1 : 0;
+                supported_arch[0].Process = (is_current_process || is_other_process) && !process_is_wow64 ? 1 : 0;
                 supported_arch[1].Machine = IMAGE_FILE_MACHINE_I386;
                 supported_arch[1].UserMode = 1;
-                supported_arch[1].Process = is_current_process && c.proc.is_wow64_process ? 1 : 0;
+                supported_arch[1].Process = process_is_wow64 ? 1 : 0;
                 supported_arch[1].WoW64Container = 1;
 
                 c.emu.write_memory(system_information, supported_arch);

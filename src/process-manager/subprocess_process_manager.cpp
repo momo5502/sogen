@@ -198,6 +198,34 @@ namespace sogen
                     .error = decode_error(result.error)};
         }
 
+        std::unique_ptr<ProcessProtocol::SharedObjectT> encode_shared_object(const process_shared_object& object)
+        {
+            auto result = std::make_unique<ProcessProtocol::SharedObjectT>();
+            result->kind = static_cast<ProcessProtocol::SharedObjectKind>(object.kind);
+            result->guest_handle = object.guest_handle;
+            result->memory = object.memory;
+            result->size = object.size;
+            result->protection = object.protection;
+            result->attributes = object.attributes;
+            result->event_type = object.event_type;
+            result->access = object.access;
+            result->inherit = object.inherit;
+            return result;
+        }
+
+        process_shared_object decode_shared_object(const ProcessProtocol::SharedObjectT& object)
+        {
+            return {.kind = static_cast<process_shared_object_kind>(object.kind),
+                    .guest_handle = object.guest_handle,
+                    .memory = object.memory,
+                    .size = object.size,
+                    .protection = object.protection,
+                    .attributes = object.attributes,
+                    .event_type = object.event_type,
+                    .access = object.access,
+                    .inherit = object.inherit};
+        }
+
         ProcessProtocol::ProcessCreateRequestT encode_create_request(const process_create_request& request,
                                                                      std::vector<utils::host_pipe_transfer>& transfers)
         {
@@ -212,6 +240,7 @@ namespace sogen
             result.standard_input = request.standard_input;
             result.standard_output = request.standard_output;
             result.standard_error = request.standard_error;
+            result.debugged = request.debugged;
             std::unordered_map<uint64_t, std::pair<uint16_t, std::string>> exported_files;
             for (const auto& pipe : request.inherited_pipes)
             {
@@ -237,6 +266,10 @@ namespace sogen
                 inherited->inherit = pipe.inherit;
                 result.inherited_pipes.push_back(std::move(inherited));
             }
+            for (const auto& object : request.inherited_objects)
+            {
+                result.inherited_objects.push_back(encode_shared_object(object));
+            }
             result.environment.reserve(request.environment.size());
             for (const auto& [name, value] : request.environment)
             {
@@ -260,6 +293,7 @@ namespace sogen
             result.standard_input = request.standard_input;
             result.standard_output = request.standard_output;
             result.standard_error = request.standard_error;
+            result.debugged = request.debugged;
             std::unordered_map<uint64_t, std::shared_ptr<utils::host_pipe>> imported_files;
             for (const auto& pipe : request.inherited_pipes)
             {
@@ -281,11 +315,62 @@ namespace sogen
                                                   .completion_notification_flags = pipe->completion_notification_flags,
                                                   .inherit = pipe->inherit});
             }
+            for (const auto& object : request.inherited_objects)
+            {
+                result.inherited_objects.push_back(decode_shared_object(*object));
+            }
             result.environment.reserve(request.environment.size());
             for (auto& variable : request.environment)
             {
                 result.environment.insert_or_assign(std::move(variable->name), std::move(variable->value));
             }
+            return result;
+        }
+
+        std::unique_ptr<ProcessProtocol::DebugEventT> encode_debug_event(const process_debug_event& event)
+        {
+            auto result = std::make_unique<ProcessProtocol::DebugEventT>();
+            result->kind = static_cast<ProcessProtocol::DebugEventKind>(event.kind);
+            result->thread_id = event.thread_id;
+            result->base_address = event.base_address;
+            result->start_address = event.start_address;
+            result->path = event.path;
+            result->exit_status = event.exit_status;
+            result->exception_code = event.exception_code;
+            result->exception_flags = event.exception_flags;
+            result->exception_address = event.exception_address;
+            result->exception_parameters = event.exception_parameters;
+            result->first_chance = event.first_chance;
+            return result;
+        }
+
+        process_debug_event decode_debug_event(ProcessProtocol::DebugEventT& event)
+        {
+            return {.kind = static_cast<process_debug_event_kind>(event.kind),
+                    .thread_id = event.thread_id,
+                    .base_address = event.base_address,
+                    .start_address = event.start_address,
+                    .path = std::move(event.path),
+                    .exit_status = event.exit_status,
+                    .exception_code = event.exception_code,
+                    .exception_flags = event.exception_flags,
+                    .exception_address = event.exception_address,
+                    .exception_parameters = std::move(event.exception_parameters),
+                    .first_chance = event.first_chance};
+        }
+
+        ProcessProtocol::QueryMemoryResponseT encode_memory_region(const process_memory_region& region)
+        {
+            ProcessProtocol::QueryMemoryResponseT result{};
+            result.error = encode_error(region.error);
+            result.base_address = region.base_address;
+            result.allocation_base = region.allocation_base;
+            result.allocation_protect = region.allocation_protect;
+            result.region_size = region.region_size;
+            result.state = region.state;
+            result.protect = region.protect;
+            result.type = region.type;
+            result.mapped_file = region.mapped_file;
             return result;
         }
 
@@ -350,7 +435,8 @@ namespace sogen
             if (message->payload.type == ProcessProtocol::MessagePayload_ProcessExited)
             {
                 const std::scoped_lock lock(this->state_mutex);
-                this->exit = process_exit{.kind = process_exit_kind::exited, .code = message->payload.AsProcessExited()->exit_code};
+                const auto& exited = *message->payload.AsProcessExited();
+                this->exit = process_exit{.kind = process_exit_kind::exited, .code = exited.exit_code, .cycles = exited.cycles};
             }
             return message->payload.type == expected ? std::move(message) : std::nullopt;
         }
@@ -503,6 +589,158 @@ namespace sogen
                 }
                 break;
             }
+            case ProcessProtocol::MessagePayload_DebugEventRequest: {
+                const auto result = target.next_debug_event();
+                ProcessProtocol::DebugEventResponseT response{};
+                response.error = encode_error(result.error);
+                if (result.event)
+                {
+                    response.event = encode_debug_event(*result.event);
+                }
+                if (!this->send(std::move(response)))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_DebugContinueRequest: {
+                const auto& request = *message->payload.AsDebugContinueRequest();
+                ProcessProtocol::ProcessErrorResponseT response{};
+                response.error = encode_error(target.continue_debug_event(request.thread_id, request.status));
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_DebugDetachRequest: {
+                ProcessProtocol::ProcessErrorResponseT response{};
+                response.error = encode_error(target.detach_debugger());
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_ThreadContextRequest: {
+                const auto& request = *message->payload.AsThreadContextRequest();
+                auto result = target.get_thread_context(request.thread_id, request.wow64);
+                ProcessProtocol::ThreadContextResponseT response{};
+                response.error = encode_error(result.error);
+                response.context = std::move(result.context);
+                if (!this->send(std::move(response)))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_SetThreadContextRequest: {
+                const auto& request = *message->payload.AsSetThreadContextRequest();
+                ProcessProtocol::ProcessErrorResponseT response{};
+                response.error = encode_error(target.set_thread_context(request.thread_id, request.context, request.wow64));
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_ThreadInformationRequest: {
+                const auto result = target.thread_information(message->payload.AsThreadInformationRequest()->thread_id);
+                ProcessProtocol::ThreadInformationResponseT response{};
+                response.error = encode_error(result.error);
+                response.teb = result.teb;
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_SuspendThreadRequest: {
+                const auto& request = *message->payload.AsSuspendThreadRequest();
+                const auto result = target.suspend_thread(request.thread_id, request.resume);
+                ProcessProtocol::SuspendThreadResponseT response{};
+                response.error = encode_error(result.error);
+                response.previous_count = result.previous_count;
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_InstallObjectRequest: {
+                const auto result = target.install_object(decode_shared_object(*message->payload.AsInstallObjectRequest()->object));
+                ProcessProtocol::InstallObjectResponseT response{};
+                response.error = encode_error(result.error);
+                response.handle = result.handle;
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_ExportObjectRequest: {
+                const auto result = target.export_object(message->payload.AsExportObjectRequest()->handle);
+                ProcessProtocol::ExportObjectResponseT response{};
+                response.error = encode_error(result.error);
+                if (result.error == process_error::none)
+                {
+                    response.object = encode_shared_object(result.object);
+                }
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_CloseHandleRequest: {
+                ProcessProtocol::ProcessErrorResponseT response{};
+                response.error = encode_error(target.close_handle(message->payload.AsCloseHandleRequest()->handle));
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_SetThreadTokenRequest: {
+                const auto& request = *message->payload.AsSetThreadTokenRequest();
+                ProcessProtocol::ProcessErrorResponseT response{};
+                response.error = encode_error(target.set_thread_token(request.thread_id, request.token));
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_ThreadTokenRequest: {
+                const auto result = target.get_thread_token(message->payload.AsThreadTokenRequest()->thread_id);
+                ProcessProtocol::ThreadTokenResponseT response{};
+                response.error = encode_error(result.error);
+                response.token = result.token;
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_CycleTimeRequest: {
+                const auto result = target.cycle_time();
+                ProcessProtocol::CycleTimeResponseT response{};
+                response.error = encode_error(result.error);
+                response.cycles = result.cycles;
+                if (!this->send(response))
+                {
+                    return false;
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_QueryMemoryRequest: {
+                const auto region = target.query_memory(message->payload.AsQueryMemoryRequest()->address);
+                if (!this->send(encode_memory_region(region)))
+                {
+                    return false;
+                }
+                break;
+            }
             default:
                 return false;
             }
@@ -510,10 +748,18 @@ namespace sogen
         return false;
     }
 
-    bool managed_process_connection::notify_exit(const uint64_t exit_code)
+    template <typename T>
+    bool managed_process_connection::send(T payload)
+    {
+        const std::scoped_lock lock(this->send_mutex_);
+        return send_message(this->socket_, std::move(payload));
+    }
+
+    bool managed_process_connection::notify_exit(const uint64_t exit_code, const uint64_t cycles)
     {
         ProcessProtocol::ProcessExitedT message{};
         message.exit_code = exit_code;
+        message.cycles = cycles;
         bool sent{};
         {
             const std::scoped_lock lock(this->send_mutex_);
@@ -580,6 +826,45 @@ namespace sogen
         }
     }
 
+    size_t subprocess_process_manager::running_process_count() const
+    {
+        const std::scoped_lock lock(this->mutex_);
+        size_t running{};
+        for (const auto& [handle, process] : this->processes_)
+        {
+            (void)handle;
+            const std::scoped_lock state_lock(process->state_mutex);
+            if (!process->host_exit_status && !process->host_failure)
+            {
+                ++running;
+            }
+        }
+
+        return running;
+    }
+
+    void subprocess_process_manager::wait_for_processes()
+    {
+        std::vector<std::shared_ptr<process_entry>> processes{};
+        {
+            const std::scoped_lock lock(this->mutex_);
+            processes.reserve(this->processes_.size());
+            for (const auto& [handle, process] : this->processes_)
+            {
+                (void)handle;
+                processes.push_back(process);
+            }
+        }
+
+        for (const auto& process : processes)
+        {
+            if (process->output_thread.joinable())
+            {
+                process->output_thread.join();
+            }
+        }
+    }
+
     process_create_result subprocess_process_manager::create_process(process_create_request request)
     {
         managed_process handle{};
@@ -639,8 +924,10 @@ namespace sogen
             std::ignore = entry->process.wait(reproc::infinite);
             return {.error = process_error::internal_failure};
         }
-        request.process_id = static_cast<uint32_t>(host_process_id) * 2;
-        request.thread_id = request.process_id + 1;
+        // Windows process and thread ids are multiples of 4, and code relies on it: gdi32 keeps a lock in bit 0 of the
+        // owning process id in its handle table. Process ids take multiples of 8 so the first thread id cannot equal one.
+        request.process_id = static_cast<uint32_t>(host_process_id) * 8;
+        request.thread_id = request.process_id + 4;
 
         entry->output_thread = std::thread([process = entry.get()] {
             std::array<uint8_t, 4096> buffer{};
@@ -917,6 +1204,230 @@ namespace sogen
             return {.error = process_error::communication_failure};
         }
         return decode_memory_result(*response->payload.AsProcessMemoryResponse());
+    }
+
+    template <typename Request>
+    std::optional<ProcessProtocol::MessageT> subprocess_process_manager::exchange(const managed_process process, Request request,
+                                                                                  const uint8_t response_type) const
+    {
+        const auto entry = this->find_process(process);
+        if (!entry)
+        {
+            return std::nullopt;
+        }
+        const auto expected = static_cast<ProcessProtocol::MessagePayload>(response_type);
+        const std::scoped_lock lock(entry->control_mutex);
+        if (!send_message(entry->control, std::move(request)))
+        {
+            return std::nullopt;
+        }
+        auto response = entry->receive_response(expected, std::chrono::steady_clock::now() + response_timeout);
+        if (!response || response->payload.type != expected)
+        {
+            return std::nullopt;
+        }
+        return response;
+    }
+
+    process_debug_event_result subprocess_process_manager::next_debug_event(const managed_process process)
+    {
+        auto response = this->exchange(process, ProcessProtocol::DebugEventRequestT{}, ProcessProtocol::MessagePayload_DebugEventResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        auto& result = *response->payload.AsDebugEventResponse();
+        process_debug_event_result decoded{.error = decode_error(result.error)};
+        if (result.event)
+        {
+            decoded.event = decode_debug_event(*result.event);
+        }
+        return decoded;
+    }
+
+    process_error subprocess_process_manager::continue_debug_event(const managed_process process, const uint32_t thread_id,
+                                                                   const uint32_t status)
+    {
+        ProcessProtocol::DebugContinueRequestT request{};
+        request.thread_id = thread_id;
+        request.status = status;
+        const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ProcessErrorResponse);
+        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : process_error::communication_failure;
+    }
+
+    process_error subprocess_process_manager::detach_debugger(const managed_process process)
+    {
+        const auto response =
+            this->exchange(process, ProcessProtocol::DebugDetachRequestT{}, ProcessProtocol::MessagePayload_ProcessErrorResponse);
+        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : process_error::communication_failure;
+    }
+
+    process_thread_context_result subprocess_process_manager::get_thread_context(const managed_process process, const uint32_t thread_id,
+                                                                                 const bool wow64)
+    {
+        ProcessProtocol::ThreadContextRequestT request{};
+        request.thread_id = thread_id;
+        request.wow64 = wow64;
+        auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ThreadContextResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        auto& result = *response->payload.AsThreadContextResponse();
+        return {.context = std::move(result.context), .error = decode_error(result.error)};
+    }
+
+    process_error subprocess_process_manager::set_thread_context(const managed_process process, const uint32_t thread_id,
+                                                                 const std::span<const uint8_t> context, const bool wow64)
+    {
+        ProcessProtocol::SetThreadContextRequestT request{};
+        request.thread_id = thread_id;
+        request.wow64 = wow64;
+        request.context.assign(context.begin(), context.end());
+        const auto response = this->exchange(process, std::move(request), ProcessProtocol::MessagePayload_ProcessErrorResponse);
+        return response ? decode_error(response->payload.AsProcessErrorResponse()->error) : process_error::communication_failure;
+    }
+
+    process_thread_information subprocess_process_manager::thread_information(const managed_process process, const uint32_t thread_id)
+    {
+        ProcessProtocol::ThreadInformationRequestT request{};
+        request.thread_id = thread_id;
+        const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ThreadInformationResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto& result = *response->payload.AsThreadInformationResponse();
+        return {.teb = result.teb, .error = decode_error(result.error)};
+    }
+
+    process_suspend_result subprocess_process_manager::suspend_thread(const managed_process process, const uint32_t thread_id,
+                                                                      const bool resume)
+    {
+        ProcessProtocol::SuspendThreadRequestT request{};
+        request.thread_id = thread_id;
+        request.resume = resume;
+        const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_SuspendThreadResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto& result = *response->payload.AsSuspendThreadResponse();
+        return {.previous_count = result.previous_count, .error = decode_error(result.error)};
+    }
+
+    process_object_install_result subprocess_process_manager::install_object(const managed_process process,
+                                                                             const process_shared_object& object)
+    {
+        ProcessProtocol::InstallObjectRequestT request{};
+        request.object = encode_shared_object(object);
+        const auto response = this->exchange(process, std::move(request), ProcessProtocol::MessagePayload_InstallObjectResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto& result = *response->payload.AsInstallObjectResponse();
+        return {.handle = result.handle, .error = decode_error(result.error)};
+    }
+
+    process_object_export_result subprocess_process_manager::export_object(const managed_process process, const uint64_t handle)
+    {
+        ProcessProtocol::ExportObjectRequestT request{};
+        request.handle = handle;
+        const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ExportObjectResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto& result = *response->payload.AsExportObjectResponse();
+        if (result.error != ProcessProtocol::ProcessError_None || !result.object)
+        {
+            return {.error =
+                        result.error != ProcessProtocol::ProcessError_None ? decode_error(result.error) : process_error::internal_failure};
+        }
+        return {.object = decode_shared_object(*result.object)};
+    }
+
+    process_error subprocess_process_manager::close_handle(const managed_process process, const uint64_t handle)
+    {
+        ProcessProtocol::CloseHandleRequestT request{};
+        request.handle = handle;
+        const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ProcessErrorResponse);
+        if (!response)
+        {
+            return process_error::communication_failure;
+        }
+        return decode_error(response->payload.AsProcessErrorResponse()->error);
+    }
+
+    process_error subprocess_process_manager::set_thread_token(const managed_process process, const uint32_t thread_id,
+                                                               const uint64_t token)
+    {
+        ProcessProtocol::SetThreadTokenRequestT request{};
+        request.thread_id = thread_id;
+        request.token = token;
+        const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ProcessErrorResponse);
+        if (!response)
+        {
+            return process_error::communication_failure;
+        }
+        return decode_error(response->payload.AsProcessErrorResponse()->error);
+    }
+
+    process_thread_token_result subprocess_process_manager::get_thread_token(const managed_process process, const uint32_t thread_id)
+    {
+        ProcessProtocol::ThreadTokenRequestT request{};
+        request.thread_id = thread_id;
+        const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ThreadTokenResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto& result = *response->payload.AsThreadTokenResponse();
+        return {.token = result.token, .error = decode_error(result.error)};
+    }
+
+    process_cycle_time_result subprocess_process_manager::cycle_time(const managed_process process) const
+    {
+        const auto exit = this->exit_status(process);
+        if (exit.error != process_error::none)
+        {
+            return {.error = exit.error};
+        }
+        if (exit.status)
+        {
+            return {.cycles = exit.status->cycles};
+        }
+
+        const auto response =
+            this->exchange(process, ProcessProtocol::CycleTimeRequestT{}, ProcessProtocol::MessagePayload_CycleTimeResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto& result = *response->payload.AsCycleTimeResponse();
+        return {.cycles = result.cycles, .error = decode_error(result.error)};
+    }
+
+    process_memory_region subprocess_process_manager::query_memory(const managed_process process, const uint64_t address) const
+    {
+        ProcessProtocol::QueryMemoryRequestT request{};
+        request.address = address;
+        auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_QueryMemoryResponse);
+        if (!response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        auto& result = *response->payload.AsQueryMemoryResponse();
+        return {.base_address = result.base_address,
+                .allocation_base = result.allocation_base,
+                .allocation_protect = result.allocation_protect,
+                .region_size = result.region_size,
+                .state = result.state,
+                .protect = result.protect,
+                .type = result.type,
+                .mapped_file = std::move(result.mapped_file),
+                .error = decode_error(result.error)};
     }
 
     process_error subprocess_process_manager::terminate_process(const managed_process process, const uint64_t exit_code)

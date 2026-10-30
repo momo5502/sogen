@@ -130,28 +130,6 @@ namespace sogen
                 return environment;
             }
 
-            NTSTATUS map_process_error(const process_error error)
-            {
-                switch (error)
-                {
-                case process_error::none:
-                    return STATUS_SUCCESS;
-                case process_error::invalid_process:
-                    return STATUS_INVALID_CID;
-                case process_error::permission_denied:
-                    return STATUS_ACCESS_DENIED;
-                case process_error::resource_limit:
-                    return STATUS_INSUFFICIENT_RESOURCES;
-                case process_error::unavailable:
-                    return STATUS_NOT_SUPPORTED;
-                case process_error::communication_failure:
-                case process_error::internal_failure:
-                    return STATUS_INTERNAL_ERROR;
-                }
-
-                return STATUS_INTERNAL_ERROR;
-            }
-
             NTSTATUS process_exit_code(const process_exit& exit)
             {
                 return exit.kind == process_exit_kind::runtime_failure ? STATUS_UNSUCCESSFUL : static_cast<NTSTATUS>(exit.code);
@@ -213,7 +191,18 @@ namespace sogen
             request.standard_output = parameters.StandardOutput;
             request.standard_error = parameters.StandardError;
             std::unordered_map<const io_device*, uint64_t> inherited_files;
+            const auto inherit_object = [&](const handle h) {
+                if (std::ranges::any_of(request.inherited_objects, [&](const auto& entry) { return entry.guest_handle == h.bits; }))
+                {
+                    return;
+                }
+                if (auto shared = c.proc.share_object(h, c.win_emu.memory.can_alias_host_memory_anywhere()))
+                {
+                    request.inherited_objects.push_back(std::move(*shared));
+                }
+            };
             const auto inherit_pipe = [&](const handle h) -> NTSTATUS {
+                inherit_object(h);
                 if (std::ranges::any_of(request.inherited_pipes, [&](const auto& entry) { return entry.guest_handle == h.bits; }))
                 {
                     return STATUS_SUCCESS;
@@ -243,6 +232,27 @@ namespace sogen
                 }
                 return STATUS_SUCCESS;
             };
+            handle debug_object_handle{};
+            for (size_t i = 0; i < attribute_count; ++i)
+            {
+                const emulator_object<PS_ATTRIBUTE<EmulatorTraits<Emu64>>> attributes{
+                    c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>, Attributes)};
+                const auto attribute = attributes.read(i);
+                if ((attribute.Attribute & PS_ATTRIBUTE_NUMBER_MASK) == PsAttributeDebugObject)
+                {
+                    debug_object_handle.bits = attribute.Value;
+                }
+            }
+
+            if (debug_object_handle.bits)
+            {
+                if (!c.proc.debug_objects.get(debug_object_handle))
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+                request.debugged = true;
+            }
+
             bool explicit_handle_list{};
             for (size_t i = 0; i < attribute_count; ++i)
             {
@@ -284,6 +294,23 @@ namespace sogen
                             return status;
                         }
                     }
+                }
+                std::vector<handle> inheritable_objects{};
+                const auto collect_inheritable = [&](const auto& objects) {
+                    for (const auto& [index, object] : objects)
+                    {
+                        if (object.inherit)
+                        {
+                            inheritable_objects.push_back(objects.make_handle(index));
+                        }
+                    }
+                };
+                collect_inheritable(c.proc.sections);
+                collect_inheritable(c.proc.events);
+                collect_inheritable(c.proc.mutants);
+                for (const auto object_handle : inheritable_objects)
+                {
+                    inherit_object(object_handle);
                 }
             }
             for (auto* standard : {&request.standard_input, &request.standard_output, &request.standard_error})
@@ -330,6 +357,11 @@ namespace sogen
             child.native_environment = result.native_environment;
             child.compatibility_environment = result.compatibility_environment;
             const auto child_process_handle = c.proc.processes.store(std::move(child));
+
+            if (auto* debugger = c.proc.debug_objects.get(debug_object_handle))
+            {
+                debugger->debuggees.push_back({.process = result.process.value, .process_id = process_id, .thread_ids = {thread_id}});
+            }
 
             managed_process_thread initial_thread{};
             initial_thread.process = result.process;
@@ -408,6 +440,26 @@ namespace sogen
                         return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
                             c.emu, process_information, process_information_length, return_length,
                             [&](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = managed->compatibility_environment; });
+                    }
+
+                    if (info_class == ProcessTimes)
+                    {
+                        return handle_query<KERNEL_USER_TIMES>(c.emu, process_information, process_information_length, return_length,
+                                                               [](KERNEL_USER_TIMES& times) { times = {}; });
+                    }
+
+                    if (info_class == ProcessCycleTime)
+                    {
+                        const auto cycles = c.win_emu.processes()->cycle_time(managed->process);
+                        if (cycles.error != process_error::none)
+                        {
+                            return map_process_error(cycles.error);
+                        }
+                        return handle_query<PROCESS_CYCLE_TIME_INFORMATION>(c.emu, process_information, process_information_length,
+                                                                            return_length, [&](PROCESS_CYCLE_TIME_INFORMATION& info) {
+                                                                                info = {.AccumulatedCycles = cycles.cycles,
+                                                                                        .CurrentCycleCount = 0};
+                                                                            });
                     }
 
                     if (info_class != ProcessBasicInformation)
@@ -554,6 +606,12 @@ namespace sogen
                                                        [](KERNEL_USER_TIMES& t) {
                                                            t = {}; //
                                                        });
+
+            case ProcessCycleTime:
+                return handle_query<PROCESS_CYCLE_TIME_INFORMATION>(
+                    c.emu, process_information, process_information_length, return_length, [&](PROCESS_CYCLE_TIME_INFORMATION& info) {
+                        info = {.AccumulatedCycles = c.proc.get_accumulated_cycles(), .CurrentCycleCount = 0};
+                    });
 
             case ProcessCookie:
                 return handle_query<uint32_t>(c.emu, process_information, process_information_length, return_length, [](uint32_t& cookie) {
@@ -1077,12 +1135,12 @@ namespace sogen
             {
                 if (process.process && process.id == id.UniqueProcess)
                 {
-                    const auto handle = c.proc.processes.make_handle(index);
-                    if (!c.proc.processes.duplicate(handle))
+                    const auto opened = c.proc.processes.duplicate(c.proc.processes.make_handle(index));
+                    if (!opened)
                     {
                         return STATUS_INVALID_HANDLE;
                     }
-                    process_handle.write(handle);
+                    process_handle.write(*opened);
                     return STATUS_SUCCESS;
                 }
             }
@@ -1106,7 +1164,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            token_handle.write(CURRENT_PROCESS_TOKEN);
+            token_handle.write(open_token(c, CURRENT_PROCESS_TOKEN));
 
             return STATUS_SUCCESS;
         }
@@ -1134,7 +1192,14 @@ namespace sogen
 
             if (c.proc.is_current_process_handle(process_handle))
             {
-                c.proc.exit_status = exit_status;
+                c.proc.terminate_kill_on_close_jobs(c.win_emu);
+                c.win_emu.report_debug_event({
+                    .kind = process_debug_event_kind::exit_process,
+                    .thread_id = c.thread().id,
+                    .exit_status = static_cast<uint32_t>(exit_status),
+                });
+
+                c.proc.mark_exited(exit_status);
                 c.win_emu.stop();
                 return STATUS_SUCCESS;
             }

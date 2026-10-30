@@ -22,11 +22,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto [old_count, succeeded] = mutant->release(c.thread().id);
+            const auto [old_count, succeeded] = mutant->release(mutant::make_owner(c.proc.process_id, c.thread().id));
 
             if (!succeeded)
             {
-                return mutant->abandoned ? STATUS_ABANDONED : STATUS_MUTANT_NOT_OWNED;
+                return mutant->is_abandoned() ? STATUS_ABANDONED : STATUS_MUTANT_NOT_OWNED;
             }
 
             if (previous_count)
@@ -110,7 +110,7 @@ namespace sogen
 
             if (initial_owner)
             {
-                e.try_lock(c.thread().id);
+                e.try_lock(mutant::make_owner(c.proc.process_id, c.thread().id));
             }
 
             const auto handle = c.proc.mutants.store(std::move(e));

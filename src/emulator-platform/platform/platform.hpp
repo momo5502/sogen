@@ -30,6 +30,7 @@
 #include "window.hpp"
 #include "port.hpp"
 #include "namespace.hpp"
+#include "debug.hpp"
 
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop

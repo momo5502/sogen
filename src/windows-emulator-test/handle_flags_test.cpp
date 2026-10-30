@@ -130,4 +130,23 @@ namespace sogen::test
             EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), out.read()));
         }
     }
+
+    TEST_F(HandleFlagsTest, DuplicateHasItsOwnValueAndOutlivesTheOriginal)
+    {
+        auto& events = this->emu->process.events;
+        const auto original = events.store(event{});
+        const auto duplicate = events.duplicate(original);
+
+        ASSERT_TRUE(duplicate.has_value());
+        EXPECT_NE(original, *duplicate);
+        EXPECT_EQ(events.get(original), events.get(*duplicate));
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), original));
+        EXPECT_EQ(nullptr, events.get(original));
+        ASSERT_NE(nullptr, events.get(*duplicate));
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), *duplicate));
+        EXPECT_EQ(nullptr, events.get(*duplicate));
+        EXPECT_EQ(0u, events.size());
+    }
 }

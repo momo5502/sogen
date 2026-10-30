@@ -1404,7 +1404,7 @@ namespace sogen
             {
                 if (auto* e = c.proc.events.get(event))
                 {
-                    e->signaled = true;
+                    e->set_signaled(true);
                     c.win_emu.wake_idle_vcpu();
                 }
             }
@@ -1570,7 +1570,7 @@ namespace sogen
 
                     if (auto* event = c.proc.events.get(watch.event))
                     {
-                        event->signaled = true;
+                        event->set_signaled(true);
                     }
 
                     return true;
@@ -2668,7 +2668,7 @@ namespace sogen
 
             if (auto* e = c.proc.events.get(event))
             {
-                e->signaled = false;
+                e->set_signaled(false);
             }
 
             io_device_context context{c.emu};

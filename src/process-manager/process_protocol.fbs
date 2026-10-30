@@ -53,6 +53,26 @@ table InheritedPipe {
     completion_notification_flags: uint;
 }
 
+enum SharedObjectKind : ubyte {
+    Section,
+    Event,
+    Mutant,
+}
+
+// A kernel object another process can open: a pagefile section's pages, or an event's or mutant's state, in named host
+// shared memory. Size, protection and attributes describe sections; event_type describes events.
+table SharedObject {
+    kind: SharedObjectKind;
+    guest_handle: ulong;
+    memory: string (required);
+    size: ulong;
+    protection: uint;
+    attributes: uint;
+    event_type: uint;
+    access: uint;
+    inherit: bool;
+}
+
 table ProcessCreateRequest {
     application: string (required);
     argument0: string (required);
@@ -66,6 +86,8 @@ table ProcessCreateRequest {
     standard_error: ulong;
     inherited_pipes: [InheritedPipe];
     command_line: string (required);
+    debugged: bool;
+    inherited_objects: [SharedObject];
 }
 
 table ProcessStarted {
@@ -77,6 +99,7 @@ table ProcessStarted {
 
 table ProcessExited {
     exit_code: ulong;
+    cycles: ulong;
 }
 
 table ResumeProcessRequest {}
@@ -131,6 +154,141 @@ table ReadMemoryResponse {
     data: [ubyte];
 }
 
+enum DebugEventKind : ubyte {
+    CreateProcess = 0,
+    CreateThread,
+    ExitThread,
+    ExitProcess,
+    Exception,
+    LoadDll,
+    UnloadDll,
+}
+
+table DebugEvent {
+    kind: DebugEventKind = CreateProcess;
+    thread_id: uint;
+    base_address: ulong;
+    start_address: ulong;
+    path: string;
+    exit_status: uint;
+    exception_code: uint;
+    exception_flags: uint;
+    exception_address: ulong;
+    exception_parameters: [ulong];
+    first_chance: bool;
+}
+
+table DebugEventRequest {}
+
+table DebugEventResponse {
+    error: ProcessError = None;
+    event: DebugEvent;
+}
+
+table DebugContinueRequest {
+    thread_id: uint;
+    status: uint;
+}
+
+table DebugDetachRequest {
+}
+
+table InstallObjectRequest {
+    object: SharedObject (required);
+}
+
+table InstallObjectResponse {
+    error: ProcessError = None;
+    handle: ulong;
+}
+
+table ExportObjectRequest {
+    handle: ulong;
+}
+
+table ExportObjectResponse {
+    error: ProcessError = None;
+    object: SharedObject;
+}
+
+table CloseHandleRequest {
+    handle: ulong;
+}
+
+// Tokens travel as the pseudo-handle that identifies them: none, the impersonation token or the anonymous one.
+table SetThreadTokenRequest {
+    thread_id: uint;
+    token: ulong;
+}
+
+table ThreadTokenRequest {
+    thread_id: uint;
+}
+
+table ThreadTokenResponse {
+    error: ProcessError = None;
+    token: ulong;
+}
+
+table CycleTimeRequest {
+}
+
+table CycleTimeResponse {
+    error: ProcessError = None;
+    cycles: ulong;
+}
+
+table ThreadContextRequest {
+    thread_id: uint;
+    wow64: bool;
+}
+
+table ThreadContextResponse {
+    error: ProcessError = None;
+    context: [ubyte];
+}
+
+table SetThreadContextRequest {
+    thread_id: uint;
+    context: [ubyte];
+    wow64: bool;
+}
+
+table ThreadInformationRequest {
+    thread_id: uint;
+}
+
+table ThreadInformationResponse {
+    error: ProcessError = None;
+    teb: ulong;
+}
+
+table SuspendThreadRequest {
+    thread_id: uint;
+    resume: bool;
+}
+
+table SuspendThreadResponse {
+    error: ProcessError = None;
+    previous_count: uint;
+}
+
+table QueryMemoryRequest {
+    address: ulong;
+}
+
+table QueryMemoryResponse {
+    error: ProcessError = None;
+    base_address: ulong;
+    allocation_base: ulong;
+    allocation_protect: uint;
+    region_size: ulong;
+    state: uint;
+    protect: uint;
+    type: uint;
+    mapped_file: string;
+}
+
 union MessagePayload {
     Hello,
     ProcessCreateRequest,
@@ -146,6 +304,29 @@ union MessagePayload {
     ProcessMemoryResponse,
     ProcessErrorResponse,
     ReadMemoryResponse,
+    DebugEventRequest,
+    DebugEventResponse,
+    DebugContinueRequest,
+    ThreadContextRequest,
+    ThreadContextResponse,
+    SetThreadContextRequest,
+    SuspendThreadRequest,
+    SuspendThreadResponse,
+    QueryMemoryRequest,
+    QueryMemoryResponse,
+    ThreadInformationRequest,
+    ThreadInformationResponse,
+    DebugDetachRequest,
+    InstallObjectRequest,
+    InstallObjectResponse,
+    ExportObjectRequest,
+    ExportObjectResponse,
+    CloseHandleRequest,
+    SetThreadTokenRequest,
+    ThreadTokenRequest,
+    ThreadTokenResponse,
+    CycleTimeRequest,
+    CycleTimeResponse,
 }
 
 table Message {

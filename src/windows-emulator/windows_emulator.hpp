@@ -4,6 +4,7 @@
 #include <arch_emulator.hpp>
 #include <machine_type.hpp>
 #include "process_manager.hpp"
+#include "debug_port.hpp"
 
 #include <stop_reason.hpp>
 #include <utils/finally.hpp>
@@ -144,6 +145,10 @@ namespace sogen
         // Report Vulkan features DXVK requires to games even where the host GPU lacks them (Mali, older Adreno), so
         // DXVK accepts the adapter. A game that really uses one of them renders incorrectly there.
         bool spoof_gpu_features{false};
+
+        // Gives the process an elevated administrator token. Windows then starts elevation requests such as
+        // ShellExecute "runas" directly instead of going through the consent service, which is not emulated.
+        bool elevated{false};
     };
 
     struct emulator_interfaces
@@ -224,6 +229,8 @@ namespace sogen
         std::unique_ptr<audio_backend> audio_backend_{};
         std::unique_ptr<crypt_protect_backend> crypt_protect_backend_{};
         process_manager* process_manager_{};
+        debug_port debugger_{};
+        bool debugger_saw_process_{};
         std::unique_ptr<console_backend> console_backend_{};
         bool setup_completed_{false};
 
@@ -366,6 +373,25 @@ namespace sogen
         {
             return this->process_manager_;
         }
+
+        debug_port& debugger()
+        {
+            return this->debugger_;
+        }
+
+        // Makes this process the debuggee of a debugger in the parent process.
+        void attach_debugger();
+        // Runs on the process manager connection thread.
+        void detach_debugger();
+        // Closes a handle the way NtClose does, for requests that arrive from outside the guest.
+        bool close_handle(handle h);
+
+        // Stops the current thread until the debugger continues the event; returns the continue status. Needs the
+        // kernel lock, and does nothing without a debugger.
+        uint32_t report_debug_event(process_debug_event event);
+
+        // Brings the emulation loop around to its next scheduling point soon, where it runs the debugger's requests.
+        void interrupt_for_debugger();
 
         console_backend& console()
         {
@@ -533,6 +559,11 @@ namespace sogen
             return this->spoof_gpu_features_;
         }
 
+        bool runs_elevated() const
+        {
+            return this->elevated_;
+        }
+
         uint32_t vcpu_count() const
         {
             return this->vcpu_count_;
@@ -688,6 +719,8 @@ namespace sogen
         void set_foreground_window(hwnd window);
         void deliver_ui_event(const ui_event& event);
         void resize_window_from_host(hwnd window_handle, bool maximized, int32_t client_width, int32_t client_height);
+        void report_debugger_process_start();
+        bool reports_module_to_debugger(const mapped_module& mod) const;
         std::pair<int32_t, int32_t> cursor_after_pointer_event(const ui_event& event) const;
         std::pair<emulator_thread*, const user_low_level_hook*> find_low_level_hook(uint64_t handle);
         void wake_thread(emulator_thread& thread);
@@ -697,6 +730,7 @@ namespace sogen
         bool intercept_rdtsc_{true};
         bool intercept_kusd_{true};
         bool spoof_gpu_features_{false};
+        bool elevated_{false};
         uint32_t vcpu_count_{1};
         std::atomic_bool suspend_requested_{false};
         std::atomic_bool should_stop{false};

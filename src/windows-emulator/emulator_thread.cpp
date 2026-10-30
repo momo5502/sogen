@@ -4,6 +4,7 @@
 #include "cpu_context.hpp"
 #include "process_context.hpp"
 #include "io_completion_wait.hpp"
+#include "debug_object.hpp"
 #include "syscall_utils.hpp"
 
 namespace sogen
@@ -84,7 +85,7 @@ namespace sogen
                 break;
 
             case handle_types::process:
-                if (h == GUEST_PROCESS_HANDLE && c.exit_status.has_value())
+                if (c.is_current_process_handle(h) && c.exit_status.has_value())
                 {
                     return wait_state::signaled;
                 }
@@ -119,7 +120,7 @@ namespace sogen
                 }
 
                 const auto* e = c.events.get(h);
-                if (e && e->signaled)
+                if (e && e->is_signaled())
                 {
                     return wait_state::signaled;
                 }
@@ -148,9 +149,9 @@ namespace sogen
 
             case handle_types::mutant: {
                 const auto* e = c.mutants.get(h);
-                if (e && e->is_signaled(current_thread_id))
+                if (e && e->is_signaled(mutant::make_owner(c.process_id, current_thread_id)))
                 {
-                    return e->abandoned ? wait_state::abandoned : wait_state::signaled;
+                    return e->is_abandoned() ? wait_state::abandoned : wait_state::signaled;
                 }
 
                 break;
@@ -219,7 +220,7 @@ namespace sogen
                 return pipe && pipe->signaled ? std::optional{wait_state::signaled} : std::nullopt;
             }
             case handle_types::process: {
-                if (h == GUEST_PROCESS_HANDLE)
+                if (c.is_current_process_handle(h))
                 {
                     return c.exit_status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
                 }
@@ -252,14 +253,9 @@ namespace sogen
                 }
 
                 auto* event = c.events.get(h);
-                if (!event || !event->signaled)
+                if (!event || !event->try_acquire())
                 {
                     return std::nullopt;
-                }
-
-                if (event->type == SynchronizationEvent)
-                {
-                    event->signaled = false;
                 }
 
                 return wait_state::signaled;
@@ -287,7 +283,7 @@ namespace sogen
                     return std::nullopt;
                 }
 
-                const auto acquired = mutant->try_lock(current_thread_id);
+                const auto acquired = mutant->try_lock(mutant::make_owner(c.process_id, current_thread_id));
                 if (!acquired.has_value())
                 {
                     return std::nullopt;
@@ -758,6 +754,7 @@ namespace sogen
         this->await_msg = {};
         this->await_msg_mask = {};
         this->await_io_completion = {};
+        this->await_debug_event = {};
         this->await_file_io = {};
         this->await_host_condition = {};
 
@@ -1317,6 +1314,25 @@ namespace sogen
             }
 
             return complete_if_timed_out(STATUS_TIMEOUT);
+        }
+
+        if (this->await_debug_event.has_value())
+        {
+            const auto wait = *this->await_debug_event;
+            if (deliver_debug_event(win_emu, wait.debug_object, wait.state_change))
+            {
+                this->mark_as_ready(STATUS_SUCCESS);
+                return true;
+            }
+
+            constexpr auto infinite = std::chrono::steady_clock::time_point::min();
+            if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < clock.steady_now())
+            {
+                this->mark_as_ready(STATUS_TIMEOUT);
+                return true;
+            }
+
+            return false;
         }
 
         if (this->await_io_completion.has_value())
