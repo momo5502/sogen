@@ -155,7 +155,7 @@ namespace sogen
     enum class arm64_hookable_instructions
     {
         svc,
-        // MRS of CNTVCT_EL0 or PMCCNTR_EL0, which Windows exposes to EL0. The hook receives the destination
+        // MRS of CNTVCT_EL0, CNTVCTSS_EL0 or PMCCNTR_EL0, which Windows exposes to EL0. The hook receives the destination
         // arm64_register and writes the result itself.
         read_counter,
     };

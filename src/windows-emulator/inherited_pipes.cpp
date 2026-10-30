@@ -40,17 +40,26 @@ namespace sogen
                 throw std::runtime_error("Inherited guest pipe handle conflicts with child setup");
             }
         }
+        // A standard handle the parent did not pass stays the console one the child set up, as on Windows, where a
+        // child that inherits the console writes to it.
+        const auto inherit = [](auto& standard, const uint64_t passed) {
+            if (passed != 0)
+            {
+                standard = static_cast<std::remove_reference_t<decltype(standard)>>(passed);
+            }
+        };
+
         emulator.process.process_params64.access([&](RTL_USER_PROCESS_PARAMETERS64& parameters) {
-            parameters.StandardInput = request.standard_input;
-            parameters.StandardOutput = request.standard_output;
-            parameters.StandardError = request.standard_error;
+            inherit(parameters.StandardInput, request.standard_input);
+            inherit(parameters.StandardOutput, request.standard_output);
+            inherit(parameters.StandardError, request.standard_error);
         });
         if (emulator.process.process_params32)
         {
             emulator.process.process_params32->access([&](RTL_USER_PROCESS_PARAMETERS32& parameters) {
-                parameters.StandardInput = static_cast<uint32_t>(request.standard_input);
-                parameters.StandardOutput = static_cast<uint32_t>(request.standard_output);
-                parameters.StandardError = static_cast<uint32_t>(request.standard_error);
+                inherit(parameters.StandardInput, request.standard_input);
+                inherit(parameters.StandardOutput, request.standard_output);
+                inherit(parameters.StandardError, request.standard_error);
             });
         }
     }
