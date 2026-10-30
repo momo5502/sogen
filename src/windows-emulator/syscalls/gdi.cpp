@@ -46,6 +46,7 @@ namespace sogen
             constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0x20; // DC_ATTR.crBackgroundClr (SetBkColor)
             constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0x28;       // DC_ATTR.crForegroundClr (SetTextColor)
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
+            constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
 
             constexpr uint32_t k_stock_white_brush_index = 0x00;
@@ -138,6 +139,28 @@ namespace sogen
                 0x00F0F0F0u, // COLOR_MENUHILIGHT
                 0x00F0F0F0u, // COLOR_MENUBAR
             };
+
+            // The logfonts GetObject reports for the stock fonts on Windows.
+            EMU_LOGFONTW stock_font_logfont(const uint32_t index)
+            {
+                EMU_LOGFONTW font{};
+                font.lfCharSet = DEFAULT_CHARSET;
+                if (index == k_stock_system_font_index)
+                {
+                    font.lfHeight = 16;
+                    font.lfWidth = 7;
+                    font.lfWeight = FW_BOLD;
+                    font.lfPitchAndFamily = VARIABLE_PITCH | FF_SWISS;
+                    std::ranges::copy(u"System", font.lfFaceName);
+                }
+                else
+                {
+                    font.lfHeight = -11;
+                    font.lfWeight = FW_NORMAL;
+                    std::ranges::copy(u"MS Shell Dlg", font.lfFaceName);
+                }
+                return font;
+            }
 
             struct gdi_batch_header
             {
@@ -1040,6 +1063,42 @@ namespace sogen
                 }
             }
 
+            // SetTextAlign chooses which point of the text (x, y) names; draw_text starts at the top-left corner.
+            POINT text_top_left(const int x, const int y, const uint32_t text_align, const size_t count, const uint32_t* dx)
+            {
+                constexpr uint32_t ta_right = 2;
+                constexpr uint32_t ta_center = 6;
+                constexpr uint32_t ta_bottom = 8;
+                constexpr uint32_t ta_baseline = 24;
+
+                int width = 0;
+                for (size_t i = 0; i < count; ++i)
+                {
+                    width += dx != nullptr ? static_cast<int32_t>(dx[i]) : k_text_cell_width;
+                }
+
+                POINT origin{.x = x, .y = y};
+                if ((text_align & ta_center) == ta_center)
+                {
+                    origin.x -= width / 2;
+                }
+                else if ((text_align & ta_right) != 0)
+                {
+                    origin.x -= width;
+                }
+
+                if ((text_align & ta_baseline) == ta_baseline)
+                {
+                    origin.y -= static_cast<int>(k_default_font_ascent);
+                }
+                else if ((text_align & ta_bottom) != 0)
+                {
+                    origin.y -= k_text_cell_height;
+                }
+
+                return origin;
+            }
+
             void fill_rect(gdi_bitmap_surface& surface, const int left, const int top, const int right, const int bottom,
                            const uint32_t color)
             {
@@ -1066,7 +1125,8 @@ namespace sogen
                 gdi_bitmap_surface* surface = nullptr;
                 int32_t origin_x = 0;
                 int32_t origin_y = 0;
-                if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+                uint32_t present_handle = 0;
+                if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !surface)
                 {
                     return true;
                 }
@@ -1109,11 +1169,13 @@ namespace sogen
                             const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string.data());
                             const auto* text =
                                 reinterpret_cast<const char16_t*>(text_out->string.data() + text_out->dx_size / sizeof(char16_t));
-                            draw_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
-                                      text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
+                            const auto* advances = text_out->dx_size >= text_out->count * sizeof(uint32_t) ? dx : nullptr;
+                            const auto top_left = text_top_left(text_out->x + text_out->viewport_org.x + origin_x,
+                                                                text_out->y + text_out->viewport_org.y + origin_y, text_out->text_align,
+                                                                text_out->count, advances);
+                            draw_text(*surface, top_left.x, top_left.y, std::u16string_view(text, text_out->count),
                                       colorref_to_bgra(text_out->foreground),
-                                      has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
-                                      text_out->dx_size >= text_out->count * sizeof(uint32_t) ? dx : nullptr);
+                                      has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr, advances);
                         }
                     }
                     else if (header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
@@ -1142,6 +1204,7 @@ namespace sogen
                     offset += static_cast<size_t>(header->size);
                 }
 
+                present_win_surface(c, present_handle, surface);
                 return true;
             }
 
@@ -1301,6 +1364,10 @@ namespace sogen
                     else if (seed.type == k_gdi_pen_type)
                     {
                         set_gdi_object_color(c, handle, k_gdi_pen_type, 0x00000000u);
+                    }
+                    else if (seed.type == k_gdi_font_type)
+                    {
+                        c.proc.gdi_fonts[handle] = stock_font_logfont(seed.index);
                     }
 
                     if (seed.mirror_to_default_gui_slot)
@@ -1914,6 +1981,25 @@ namespace sogen
             }
 
             return TRUE;
+        }
+
+        void flush_gdi_batch(const syscall_context& c)
+        {
+            const auto& thread = c.thread();
+            ULONG batch_count = 0;
+            if (thread.teb64)
+            {
+                c.emu.read_memory(thread.teb64->value() + offsetof(TEB64, GdiBatchCount), &batch_count, sizeof(batch_count));
+            }
+            if (batch_count == 0 && thread.teb32)
+            {
+                c.emu.read_memory(thread.teb32->value() + offsetof(TEB32, GdiBatchCount), &batch_count, sizeof(batch_count));
+            }
+
+            if (batch_count != 0)
+            {
+                (void)handle_NtGdiFlush(c);
+            }
         }
 
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, const uint32_t color, const uint64_t /*unused*/)
@@ -2634,6 +2720,7 @@ namespace sogen
 
             c.proc.gdi_dc_states.erase(handle_value);
             c.proc.gdi_bitmap_surfaces.erase(handle_value);
+            c.proc.gdi_fonts.erase(handle_value);
             return 1;
         }
 
@@ -2722,9 +2809,14 @@ namespace sogen
             return TRUE;
         }
 
-        uint64_t handle_NtGdiHfontCreate(const syscall_context& c, const emulator_pointer /*logfont*/, const uint32_t /*angle*/)
+        uint64_t handle_NtGdiHfontCreate(const syscall_context& c, const emulator_pointer logfont, const uint32_t /*angle*/)
         {
-            return allocate_gdi_object(c, k_gdi_font_type, k_gdi_font_attr_size);
+            const auto handle = allocate_gdi_object(c, k_gdi_font_type, k_gdi_font_attr_size);
+            if (handle != 0 && logfont != 0)
+            {
+                c.proc.gdi_fonts[handle] = emulator_object<EMU_LOGFONTW>{c.emu, logfont}.read();
+            }
+            return handle;
         }
 
         uint32_t handle_NtGdiExtGetObjectW(const syscall_context& c, const uint32_t handle_value, const uint32_t size,
@@ -2774,6 +2866,13 @@ namespace sogen
                     bitmap.as<uint16_t>(16).set(1);
                     bitmap.as<uint16_t>(18).set(bpp);
                     bitmap.as<uint32_t>(20).set(static_cast<uint32_t>(surface.guest_bits));
+                }
+            }
+            else if (entry.Type == k_gdi_font_type)
+            {
+                if (const auto font_it = c.proc.gdi_fonts.find(handle_value); font_it != c.proc.gdi_fonts.end())
+                {
+                    std::memcpy(object_data.data(), &font_it->second, std::min(object_data.size(), sizeof(font_it->second)));
                 }
             }
 
@@ -4149,9 +4248,18 @@ namespace sogen
                 c.emu.read_memory(dx, advances.data(), advances.size() * sizeof(uint32_t));
             }
 
+            uint64_t dc_attr = 0;
+            uint32_t text_align = 0;
+            if (get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            {
+                c.emu.read_memory(dc_attr + k_gdi_dc_attr_text_align_offset, &text_align, sizeof(text_align));
+            }
+
             const auto color = get_dc_text_color(c, dc);
-            draw_text(*surface, x + origin_x, y + origin_y, glyphs, color, has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
-                      advances.empty() ? nullptr : advances.data());
+            const auto* dx_values = advances.empty() ? nullptr : advances.data();
+            const auto top_left = text_top_left(x + origin_x, y + origin_y, text_align, glyphs.size(), dx_values);
+            draw_text(*surface, top_left.x, top_left.y, glyphs, color, has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
+                      dx_values);
 
             dc_state->current_x = x + static_cast<int32_t>(count * k_text_cell_width);
             dc_state->current_y = y;

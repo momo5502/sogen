@@ -18,6 +18,7 @@ namespace sogen
 #define EASTEUROPE_CHARSET 238
 
 #define DEFAULT_PITCH      0
+#define VARIABLE_PITCH     2
 #define FF_SWISS           0x20
 #define FW_NORMAL          400
 #define FW_BOLD            700
