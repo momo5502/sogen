@@ -42,7 +42,7 @@ namespace sogen
     {
       public:
         layered_provider(std::unique_ptr<mount_provider> lower, std::filesystem::path upper_directory,
-                         std::filesystem::path state_directory);
+                         const std::filesystem::path& state_directory);
 
         std::optional<struct compat_stat> stat(const windows_path& path) const override;
         std::vector<directory_entry> list(const windows_path& path) const override;

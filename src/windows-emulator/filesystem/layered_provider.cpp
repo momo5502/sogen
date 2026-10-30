@@ -157,7 +157,8 @@ namespace sogen
         std::filesystem::create_directories(this->file_.parent_path(), ec);
 
         FILE* raw{};
-        if (open_unicode(&raw, this->file_, u"ab") != 0 || !raw)
+        open_unicode(&raw, this->file_, u"ab");
+        if (!raw)
         {
             return false;
         }
@@ -262,7 +263,7 @@ namespace sogen
     };
 
     layered_provider::layered_provider(std::unique_ptr<mount_provider> lower, std::filesystem::path upper_directory,
-                                       std::filesystem::path state_directory)
+                                       const std::filesystem::path& state_directory)
         : lower_(std::move(lower)),
           temporary_directory_(state_directory / "tmp"),
           journal_(state_directory / "journal")
@@ -403,7 +404,8 @@ namespace sogen
 
         {
             FILE* raw{};
-            if (open_unicode(&raw, temporary, u"wb") != 0 || !raw)
+            open_unicode(&raw, temporary, u"wb");
+            if (!raw)
             {
                 return false;
             }

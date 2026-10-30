@@ -30,7 +30,7 @@ namespace sogen
         return std::nullopt;
     }
 
-    inline constexpr bool allows_writes(const filesystem_mode mode)
+    constexpr bool allows_writes(const filesystem_mode mode)
     {
         return mode != filesystem_mode::read_only;
     }
