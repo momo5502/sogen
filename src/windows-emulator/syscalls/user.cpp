@@ -6894,6 +6894,86 @@ namespace sogen
             }
         }
 
+        BOOL handle_NtUserGetWindowDisplayAffinity(const syscall_context& c, const hwnd window, const emulator_object<DWORD> affinity)
+        {
+            constexpr uint32_t error_invalid_parameter = 87;
+            constexpr uint32_t error_no_access = 998;
+            constexpr uint32_t error_invalid_window_handle = 1400;
+            constexpr DWORD wda_none = 0;
+
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                set_guest_last_error(c, error_invalid_window_handle);
+                return FALSE;
+            }
+
+            if (win->parent_handle != c.proc.default_desktop_window_handle.bits)
+            {
+                set_guest_last_error(c, error_invalid_parameter);
+                return FALSE;
+            }
+
+            if (!affinity || !affinity.try_write(wda_none))
+            {
+                set_guest_last_error(c, error_no_access);
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
+        BOOL handle_NtUserShowOwnedPopups(const syscall_context& c, const hwnd owner, const BOOL show)
+        {
+            constexpr uint32_t error_invalid_window_handle = 1400;
+
+            if (!c.proc.windows.get(owner))
+            {
+                set_guest_last_error(c, error_invalid_window_handle);
+                return FALSE;
+            }
+
+            const auto has_visible_popup = std::ranges::any_of(c.proc.windows, [&](const auto& entry) {
+                return entry.second.owner_handle == owner && (entry.second.style & WS_VISIBLE) != 0;
+            });
+
+            if (!show && has_visible_popup)
+            {
+                c.win_emu.log.error("NtUserShowOwnedPopups: hiding visible owned popups is not supported\n");
+                c.emu.stop();
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
+        BOOL handle_NtUserGetCurrentInputMessageSource(const syscall_context& c, const emulator_pointer source)
+        {
+            struct input_message_source
+            {
+                uint32_t device_type;
+                uint32_t origin_id;
+            };
+
+            constexpr uint32_t error_invalid_parameter = 87;
+            constexpr uint32_t error_no_access = 998;
+            constexpr input_message_source unavailable{.device_type = 0, .origin_id = 0};
+
+            if (source == 0)
+            {
+                set_guest_last_error(c, error_invalid_parameter);
+                return FALSE;
+            }
+
+            if (!c.win_emu.memory.try_write_memory(source, &unavailable, sizeof(unavailable)))
+            {
+                set_guest_last_error(c, error_no_access);
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, const hwnd window_handle, const uint32_t query_type)
         {
             const auto* win = c.proc.windows.get(window_handle);
