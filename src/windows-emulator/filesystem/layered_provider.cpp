@@ -106,7 +106,13 @@ namespace sogen
     {
         std::string content{};
         std::error_code status_error{};
-        if (std::filesystem::is_regular_file(this->file_, status_error))
+        const auto journal_status = std::filesystem::status(this->file_, status_error);
+        if (journal_status.type() != std::filesystem::file_type::not_found && status_error)
+        {
+            throw std::runtime_error("Failed to read the layer journal: " + this->file_.string());
+        }
+
+        if (journal_status.type() == std::filesystem::file_type::regular)
         {
             std::ifstream stream(this->file_, std::ios::binary);
             content.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
