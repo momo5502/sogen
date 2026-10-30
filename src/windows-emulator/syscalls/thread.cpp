@@ -1133,13 +1133,13 @@ namespace sogen
         // reports. A thread that has not run yet is described, as on Windows, by its initial context
         // (RtlUserThreadStart with the start routine and argument) that LdrInitializeThunk continues into.
         template <typename Context, typename Access>
-        NTSTATUS access_thread_context(const syscall_context& c, emulator_thread& thread, Access&& access)
+        bool access_thread_context(const syscall_context& c, emulator_thread& thread, Access&& access)
         {
             auto& active = *c.vcpu.active_thread;
             if (&thread == &active)
             {
                 access();
-                return STATUS_SUCCESS;
+                return true;
             }
 
             active.save(c.emu);
@@ -1150,7 +1150,7 @@ namespace sogen
             if (!c.win_emu.wait_for_thread_registers(c.vcpu, thread))
             {
                 c.retrigger_syscall = true;
-                return STATUS_UNSUCCESSFUL;
+                return false;
             }
 
             thread.restore(c.emu, c.proc.gdt_base);
@@ -1181,7 +1181,7 @@ namespace sogen
 
             if (!access())
             {
-                return STATUS_SUCCESS;
+                return true;
             }
 
             if (in_syscall && abi.instruction_pointer(c.emu) == return_ip)
@@ -1200,7 +1200,7 @@ namespace sogen
                 thread.save(c.emu);
             }
 
-            return STATUS_SUCCESS;
+            return true;
         }
 
         NTSTATUS handle_NtGetContextThread(const syscall_context& c, const handle thread_handle,
@@ -1226,13 +1226,13 @@ namespace sogen
                     c.win_emu.callbacks.on_suspicious_activity("Reading debug registers");
                 }
 
-                const auto status = access_thread_context<arm64_context>(c, *thread, [&] {
+                const auto accessed = access_thread_context<arm64_context>(c, *thread, [&] {
                     store_context(c.emu, context);
                     return false;
                 });
-                if (status != STATUS_SUCCESS)
+                if (!accessed)
                 {
-                    return status;
+                    return STATUS_UNSUCCESSFUL;
                 }
 
                 c.emu.write_memory(thread_context.value(), context);
@@ -1245,13 +1245,13 @@ namespace sogen
                 c.win_emu.callbacks.on_suspicious_activity("Reading debug registers");
             }
 
-            const auto status = access_thread_context<CONTEXT64>(c, *thread, [&] {
+            const auto accessed = access_thread_context<CONTEXT64>(c, *thread, [&] {
                 store_context(c.emu, context);
                 return false;
             });
-            if (status != STATUS_SUCCESS)
+            if (!accessed)
             {
-                return status;
+                return STATUS_UNSUCCESSFUL;
             }
 
             thread_context.write(context);
@@ -1276,15 +1276,15 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto status = access_thread_context<arm64_context>(c, *thread, [&] {
+                const auto accessed = access_thread_context<arm64_context>(c, *thread, [&] {
                     load_context(c.emu, context);
                     // X18 always addresses the thread's TEB; the kernel does not take it from a user context.
                     c.win_emu.abi().install_thread_environment(c.emu, thread->teb64->value());
                     return true;
                 });
-                if (status != STATUS_SUCCESS)
+                if (!accessed)
                 {
-                    return status;
+                    return STATUS_UNSUCCESSFUL;
                 }
 
                 if ((context.ContextFlags & arm64_context_debug_registers) == arm64_context_debug_registers)
@@ -1296,13 +1296,13 @@ namespace sogen
             }
 
             const auto context = thread_context.read();
-            const auto status = access_thread_context<CONTEXT64>(c, *thread, [&] {
+            const auto accessed = access_thread_context<CONTEXT64>(c, *thread, [&] {
                 load_context(c.emu, context);
                 return true;
             });
-            if (status != STATUS_SUCCESS)
+            if (!accessed)
             {
-                return status;
+                return STATUS_UNSUCCESSFUL;
             }
 
             if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
