@@ -100,10 +100,14 @@ namespace sogen
                 return;
             }
 
-            const auto res = win_emu.callbacks.on_syscall(syscall_id, entry->second.name);
-            if (res == instruction_hook_continuation::skip_instruction)
+            auto& thread = vcpu.thread();
+            if (std::exchange(thread.retriggered_syscall_ip, std::nullopt) != address)
             {
-                return;
+                const auto res = win_emu.callbacks.on_syscall(syscall_id, entry->second.name);
+                if (res == instruction_hook_continuation::skip_instruction)
+                {
+                    return;
+                }
             }
 
             if (!entry->second.handler)
@@ -117,7 +121,14 @@ namespace sogen
 
             entry->second.handler(c);
 
-            dispatch_callback(win_emu, entry->second.name);
+            if (c.retrigger_syscall)
+            {
+                thread.retriggered_syscall_ip = address;
+            }
+            else
+            {
+                dispatch_callback(win_emu, entry->second.name);
+            }
         }
         catch (std::exception& e)
         {

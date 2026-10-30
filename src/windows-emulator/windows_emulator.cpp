@@ -401,8 +401,6 @@ namespace sogen
             return false;
         }
 
-        vcpu_context* find_vcpu_running_thread(windows_emulator& win_emu, const emulator_thread& thread);
-
         void perform_context_switch_work(windows_emulator& win_emu, vcpu_context& vcpu)
         {
             win_emu.apply_pending_guest_event_signals();
@@ -411,33 +409,19 @@ namespace sogen
 
             for (auto it = threads.begin(); it != threads.end();)
             {
-                if (!it->second.is_terminated() || it->second.ref_count > 0 || it->second.registers_in_transit)
+                auto& thread = it->second;
+                if (!thread.can_be_deleted(&vcpu))
                 {
                     ++it;
                     continue;
                 }
 
-                if (auto* running_on = find_vcpu_running_thread(win_emu, it->second))
+                if (vcpu.active_thread == &thread)
                 {
-                    if (running_on != &vcpu)
-                    {
-                        // Another vCPU still has this thread loaded; it will detach it soon.
-                        ++it;
-                        continue;
-                    }
-
-                    running_on->active_thread = nullptr;
+                    vcpu.active_thread = nullptr;
                 }
 
-                const auto [new_it, deleted] = threads.erase(it);
-                if (!deleted)
-                {
-                    ++it;
-                }
-                else
-                {
-                    it = new_it;
-                }
+                it = threads.erase(it).first;
             }
 
             auto& devices = win_emu.process.devices;
@@ -581,7 +565,7 @@ namespace sogen
                 return false;
             }
 
-            if (thread.registers_in_transit)
+            if (thread.registers_in_transit || thread.pending_register_accesses != 0)
             {
                 return false;
             }
@@ -609,7 +593,7 @@ namespace sogen
                     win_emu.callbacks.on_thread_switch(*active_thread, thread);
                 }
 
-                vcpu.active_thread = &thread;
+                vcpu.set_active_thread(&thread);
 
                 win_emu.transfer_thread_registers(vcpu, active_thread, thread);
             }
@@ -988,6 +972,7 @@ namespace sogen
                 // vCPU can pick it up once it becomes ready.
                 vcpu.active_thread->save(vcpu.cpu);
                 vcpu.active_thread = nullptr;
+                this->thread_registers_saved_.notify_all();
             }
 
             const auto host_wait_pending = has_pending_host_wait(this->process);
@@ -1109,6 +1094,7 @@ namespace sogen
                     outgoing->registers_in_transit = false;
                 }
                 incoming.registers_in_transit = false;
+                this->thread_registers_saved_.notify_all();
             });
 
             if (outgoing)
@@ -1122,16 +1108,68 @@ namespace sogen
         incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
     }
 
-    void windows_emulator::wait_for_register_transfer(const emulator_thread& thread)
+    bool windows_emulator::wait_for_thread_registers(vcpu_context& vcpu, emulator_thread& thread)
     {
         this->kernel_lock_.assert_held();
 
-        while (thread.registers_in_transit)
+        const auto loaded_elsewhere = [&]() -> vcpu_context* {
+            auto* owner = find_vcpu_running_thread(*this, thread);
+            return owner && owner != &vcpu && !owner->active_thread_saved ? owner : nullptr;
+        };
+
+        if (!thread.registers_in_transit && !loaded_elsewhere())
         {
-            this->kernel_lock_.unlock();
-            std::this_thread::yield();
-            this->kernel_lock_.lock();
+            return true;
         }
+
+        const auto was_saved = std::exchange(vcpu.active_thread_saved, true);
+        ++thread.pending_register_accesses;
+        this->thread_registers_saved_.notify_all();
+        const auto _ = utils::finally([&] {
+            vcpu.active_thread_saved = was_saved;
+            --thread.pending_register_accesses;
+            this->wake_idle_vcpu();
+        });
+
+        while (thread.registers_in_transit || loaded_elsewhere())
+        {
+            if (this->should_stop)
+            {
+                return false;
+            }
+
+            if (auto* owner = thread.registers_in_transit ? nullptr : loaded_elsewhere())
+            {
+                owner->switch_thread = true;
+                owner->cpu.stop();
+            }
+
+            // Bounded, so that the kick is repeated: a stop that reaches a vCPU just before it enters guest code is
+            // lost on WHP.
+            auto* dispatch_vcpu = std::exchange(this->dispatch_vcpu_, nullptr);
+            this->thread_registers_saved_.wait_for(this->kernel_lock_, std::chrono::milliseconds(1));
+            this->dispatch_vcpu_ = dispatch_vcpu;
+        }
+
+        return true;
+    }
+
+    bool windows_emulator::save_dispatching_thread(vcpu_context* vcpu)
+    {
+        if (this->vcpu_count_ == 1 || !vcpu || !vcpu->active_thread || vcpu->active_thread_saved)
+        {
+            return false;
+        }
+
+        vcpu->active_thread->save(vcpu->cpu);
+        vcpu->active_thread_saved = true;
+        this->thread_registers_saved_.notify_all();
+        return true;
+    }
+
+    void windows_emulator::reload_dispatching_thread(vcpu_context& vcpu) const
+    {
+        vcpu.thread().restore(vcpu.cpu, this->process.gdt_base);
     }
 
     bool windows_emulator::activate_thread(vcpu_context& vcpu, const uint32_t id)
@@ -2586,6 +2624,7 @@ namespace sogen
         }
 
         this->idle_wakeup_cv_.notify_all();
+        this->thread_registers_saved_.notify_all();
 
         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
         {
@@ -2761,7 +2800,9 @@ namespace sogen
         this->mod_manager.deserialize(buffer);
         this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
-        this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
+        emulator_thread* restored_thread{};
+        this->process.deserialize(buffer, restored_thread);
+        this->vcpus_[0]->set_active_thread(restored_thread);
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
@@ -2882,7 +2923,9 @@ namespace sogen
         this->mod_manager.deserialize(buffer);
         this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
-        this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
+        emulator_thread* restored_thread{};
+        this->process.deserialize(buffer, restored_thread);
+        this->vcpus_[0]->set_active_thread(restored_thread);
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
