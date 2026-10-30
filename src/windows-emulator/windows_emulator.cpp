@@ -2296,6 +2296,12 @@ namespace sogen
             return;
         }
 
+        if (event.message == WM_MOVE)
+        {
+            this->move_window_from_host(event.window, point_x(event.lParam), point_y(event.lParam));
+            return;
+        }
+
         const auto* win = this->process.windows.get(event.window);
         if (!win)
         {
@@ -2471,6 +2477,32 @@ namespace sogen
         {
             this->apply_cursor_capture();
         }
+    }
+
+    void windows_emulator::move_window_from_host(const hwnd window_handle, const int32_t x, const int32_t y)
+    {
+        auto* win = this->process.windows.get(window_handle);
+        if (!win || (win->x == x && win->y == y))
+        {
+            return;
+        }
+
+        auto* thread = get_thread_by_id(this->process, win->thread_id);
+        if (!thread)
+        {
+            return;
+        }
+
+        win->x = x;
+        win->y = y;
+        win->sync_guest_rects();
+
+        msg m{};
+        m.window = window_handle;
+        m.message = WM_MOVE;
+        m.lParam = pack_point(win->client_x(), win->client_y());
+        thread->post_message(*this, m, true);
+        this->wake_thread(*thread);
     }
 
     void windows_emulator::resize_window_from_host(const hwnd window_handle, const bool maximized, const int32_t client_width,
