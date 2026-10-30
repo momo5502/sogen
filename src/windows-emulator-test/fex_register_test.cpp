@@ -244,4 +244,36 @@ namespace sogen::test
         emu->reg<uint32_t>(x86_register::r9d, 0xDDEEFF00U);
         EXPECT_EQ(emu->reg(x86_register::r9), 0x00000000DDEEFF00ULL);
     }
+
+    TEST(FexRegisterTest, MachineAndCpuZeroShareRegisterState)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        auto& cpu = emu->get_cpu(0);
+
+        constexpr uint64_t rax_value = 0x1122334455667788ULL;
+        cpu.reg(x86_register::rax, rax_value);
+        EXPECT_EQ(emu->reg(x86_register::rax), rax_value);
+
+        constexpr uint64_t gs_base = 0x7FFE0000ULL;
+        emu->set_segment_base(x86_register::gs, gs_base);
+        EXPECT_EQ(cpu.get_segment_base(x86_register::gs), gs_base);
+
+        constexpr uint64_t gdt_base = 0x10000;
+        constexpr uint32_t gdt_limit = 0xFFF;
+        cpu.load_gdt(gdt_base, gdt_limit);
+        x86_64_cpu::descriptor_table_register gdtr{};
+        ASSERT_TRUE(emu->read_descriptor_table(static_cast<int>(x86_register::gdtr), gdtr));
+        EXPECT_EQ(gdtr.base, gdt_base);
+        EXPECT_EQ(gdtr.limit, gdt_limit);
+
+        const auto saved = emu->save_registers();
+        cpu.reg(x86_register::rax, uint64_t{0});
+        cpu.restore_registers(saved);
+        EXPECT_EQ(emu->reg(x86_register::rax), rax_value);
+    }
 } // namespace sogen::test
