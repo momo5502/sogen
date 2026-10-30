@@ -782,6 +782,16 @@ namespace sogen
                         this->set_window_active(this->resolve_guest(event.window.windowID), false);
                         break;
 
+                    // A host window sits where its guest window's frame is, so a user move moves the guest window.
+                    case SDL_EVENT_WINDOW_MOVED:
+                        if (const auto guest = this->resolve_guest(event.window.windowID); guest != 0)
+                        {
+                            const auto position = (static_cast<uint64_t>(static_cast<uint16_t>(event.window.data2)) << 16) |
+                                                  static_cast<uint16_t>(event.window.data1);
+                            this->post_event(guest, WM_MOVE, 0, position);
+                        }
+                        break;
+
                     // The guest renders at its own fixed resolution; the host window can be any size. On a
                     // host resize/expose, re-present the last frame so the letterbox (aspect-preserving fit
                     // with black bars) updates immediately, even if the guest has not produced a new frame.
@@ -1126,9 +1136,22 @@ namespace sogen
                 render_window(state);
             }
 
+            // Popup menus, tooltips and drop-downs: Windows shows them without activating them, and the toolkits that
+            // create them close them as soon as their owner loses activation.
+            static bool is_never_activated(const ui_window_desc& desc)
+            {
+                const bool captionless_tool_popup =
+                    (desc.style & WS_POPUP) != 0 && (desc.style & WS_CAPTION) != WS_CAPTION && (desc.ex_style & WS_EX_TOOLWINDOW) != 0;
+                return captionless_tool_popup || (desc.ex_style & WS_EX_NOACTIVATE) != 0;
+            }
+
             static Uint64 host_window_flags(const ui_window_desc& desc)
             {
                 Uint64 flags = 0;
+                if (is_never_activated(desc))
+                {
+                    flags |= SDL_WINDOW_NOT_FOCUSABLE;
+                }
                 if (!desc.visible)
                 {
                     flags |= SDL_WINDOW_HIDDEN;
@@ -1741,6 +1764,10 @@ namespace sogen
                 if (active)
                 {
                     if (this->active_window_ == window)
+                    {
+                        return;
+                    }
+                    if (const auto* state = this->resolve_window(window); state && is_never_activated(state->desc))
                     {
                         return;
                     }
