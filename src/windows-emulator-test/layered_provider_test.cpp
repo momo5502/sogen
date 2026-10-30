@@ -316,6 +316,23 @@ namespace sogen::test
         EXPECT_FALSE(std::filesystem::exists(this->upper() / "file.txt"));
     }
 
+    TEST_F(LayeredProviderTest, AWriteThroughAnOldHandleDoesNotModifyARecreatedFile)
+    {
+        const auto provider = this->make_provider();
+
+        const auto result = provider->open(guest({u"file.txt"}), u"r+b");
+        ASSERT_TRUE(result.file);
+        ASSERT_EQ(STATUS_SUCCESS, provider->remove(guest({u"file.txt"})));
+
+        const auto created = provider->open(guest({u"file.txt"}), u"wb");
+        ASSERT_TRUE(created.file);
+        ASSERT_EQ(3u, write_text(*created.file, "own"));
+        ASSERT_TRUE(created.file->flush());
+
+        EXPECT_EQ(0u, write_text(*result.file, "NEW"));
+        EXPECT_EQ("own", read_host_file(this->upper() / "file.txt"));
+    }
+
     TEST_F(LayeredProviderTest, ARenameThatCannotHideTheOldNameLeavesNothingBehind)
     {
         std::filesystem::create_directories(this->state() / "journal");

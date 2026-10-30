@@ -2,6 +2,7 @@
 
 #include "mount_provider.hpp"
 
+#include <unordered_map>
 #include <unordered_set>
 
 namespace sogen
@@ -39,9 +40,9 @@ namespace sogen
     // The state directory must be on the same filesystem as the upper directory, which the constructor verifies, because
     // copies are staged there and published by rename.
     //
-    // A handle opened on a lower file follows the path, not the file. Writing through it after the path was renamed or
-    // deleted fails; if the path was recreated in the upper meanwhile, the handle attaches to that file. Stable handle
-    // identity comes with the logical file IDs.
+    // A handle opened on a lower file follows the path until it copies up. Removing, renaming or creating that path
+    // invalidates the handle, so a later write through it fails instead of resurrecting the old name or modifying an
+    // unrelated file that now has the same path.
     //
     // Renaming a directory that has lower content is not supported yet and reports STATUS_NOT_SAME_DEVICE, which makes
     // callers fall back to copying it.
@@ -63,6 +64,7 @@ namespace sogen
 
         std::optional<std::filesystem::path> get_host_path(const windows_path& path) const override;
 
+        uint64_t generation(const windows_path& path) const;
         bool lower_visible(const windows_path& path) const;
         std::optional<struct compat_stat> lower_stat(const windows_path& path) const;
         NTSTATUS create_upper_parents(const windows_path& path);
@@ -74,6 +76,7 @@ namespace sogen
         std::filesystem::path temporary_directory_{};
         layer_journal journal_;
         uint64_t temporary_counter_{};
+        std::unordered_map<windows_path, uint64_t> generations_{};
     };
 
 } // namespace sogen

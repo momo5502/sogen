@@ -19,6 +19,7 @@
 #include <utils/string.hpp>
 
 #ifdef OS_WINDOWS
+#include <windows.h>
 #include <io.h>
 #else
 #include <unistd.h>
@@ -34,6 +35,33 @@ namespace sogen
         bool is_directory(const struct compat_stat& file_stat)
         {
             return (file_stat.st_mode & S_IFMT) == S_IFDIR;
+        }
+
+        bool same_filesystem(const std::filesystem::path& first, const std::filesystem::path& second)
+        {
+#ifdef OS_WINDOWS
+            const auto serial = [](const std::filesystem::path& path) -> std::optional<DWORD> {
+                const auto handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+                if (handle == INVALID_HANDLE_VALUE)
+                {
+                    return std::nullopt;
+                }
+
+                BY_HANDLE_FILE_INFORMATION information{};
+                const auto ok = GetFileInformationByHandle(handle, &information);
+                CloseHandle(handle);
+                return ok ? std::optional<DWORD>{information.dwVolumeSerialNumber} : std::nullopt;
+            };
+
+            const auto left = serial(first);
+            const auto right = serial(second);
+            return left && right && *left == *right;
+#else
+            struct stat left{};
+            struct stat right{};
+            return ::stat(first.c_str(), &left) == 0 && ::stat(second.c_str(), &right) == 0 && left.st_dev == right.st_dev;
+#endif
         }
 
         bool sync_stream(FILE* stream)
@@ -181,7 +209,8 @@ namespace sogen
             : provider_(&provider),
               path_(std::move(path)),
               lower_(std::move(lower)),
-              mode_(std::move(mode))
+              mode_(std::move(mode)),
+              generation_(provider.generation(path_))
         {
         }
 
@@ -239,8 +268,7 @@ namespace sogen
             }
 
             const auto position = this->lower_->tell();
-            if (position < 0 || (!this->provider_->upper_->stat(this->path_) && !this->provider_->lower_visible(this->path_)) ||
-                !this->provider_->copy_up(this->path_))
+            if (position < 0 || this->provider_->generation(this->path_) != this->generation_ || !this->provider_->copy_up(this->path_))
             {
                 return false;
             }
@@ -267,6 +295,7 @@ namespace sogen
         std::unique_ptr<i_file> lower_{};
         std::unique_ptr<i_file> upper_{};
         std::u16string mode_{};
+        uint64_t generation_{};
     };
 
     layered_provider::layered_provider(std::unique_ptr<mount_provider> lower, std::filesystem::path upper_directory,
@@ -285,19 +314,9 @@ namespace sogen
             std::filesystem::remove_all(entry.path(), ec);
         }
 
-        const auto probe = this->temporary_directory_ / "probe";
-        const auto probe_target = upper_directory / ".sogen-probe";
+        if (!same_filesystem(this->temporary_directory_, upper_directory))
         {
-            std::ofstream{probe};
-        }
-        std::filesystem::rename(probe, probe_target, ec);
-        const auto probe_error = ec;
-        std::filesystem::remove(probe, ec);
-        std::filesystem::remove(probe_target, ec);
-        if (probe_error)
-        {
-            throw std::runtime_error("The layer state directory must be on the same filesystem as the upper directory: " +
-                                     probe_error.message());
+            throw std::runtime_error("The layer state directory must be on the same filesystem as the upper directory");
         }
 
         this->upper_ = std::make_unique<host_directory_provider>(std::move(upper_directory));
@@ -524,8 +543,15 @@ namespace sogen
         return {.file = std::make_unique<cow_file>(*this, path, std::move(input.file), mode), .status = STATUS_SUCCESS};
     }
 
+    uint64_t layered_provider::generation(const windows_path& path) const
+    {
+        const auto entry = this->generations_.find(path);
+        return entry == this->generations_.end() ? 0 : entry->second;
+    }
+
     NTSTATUS layered_provider::create_directory(const windows_path& path)
     {
+        ++this->generations_[path];
         if (this->stat(path))
         {
             return STATUS_OBJECT_NAME_COLLISION;
@@ -548,6 +574,9 @@ namespace sogen
 
     NTSTATUS layered_provider::rename(const windows_path& from, const windows_path& to)
     {
+        ++this->generations_[from];
+        ++this->generations_[to];
+
         const auto source = this->stat(from);
         if (!source)
         {
@@ -610,6 +639,8 @@ namespace sogen
 
     NTSTATUS layered_provider::remove(const windows_path& path)
     {
+        ++this->generations_[path];
+
         const auto existing = this->stat(path);
         if (!existing)
         {
