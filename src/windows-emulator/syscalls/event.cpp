@@ -1,12 +1,29 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../memory_condition_events.hpp"
 
 namespace sogen
 {
 
     namespace syscalls
     {
+        namespace
+        {
+            std::optional<bool> memory_condition_state(const std::u16string_view name)
+            {
+                for (const auto& condition : memory_condition_events)
+                {
+                    if (condition.name == name)
+                    {
+                        return condition.signaled;
+                    }
+                }
+
+                return std::nullopt;
+            }
+        }
+
         NTSTATUS handle_NtSetEvent(const syscall_context& c, const uint64_t handle, const emulator_object<LONG> previous_state)
         {
             if (handle == DBWIN_DATA_READY)
@@ -238,6 +255,16 @@ namespace sogen
                     event_handle.write(c.proc.events.make_handle(entry.first).bits);
                     return STATUS_SUCCESS;
                 }
+            }
+
+            if (const auto signaled = memory_condition_state(name))
+            {
+                event e{};
+                e.type = NotificationEvent;
+                e.signaled = *signaled;
+                e.name = name;
+                event_handle.write(c.proc.events.store(std::move(e)).bits);
+                return STATUS_SUCCESS;
             }
 
             return STATUS_OBJECT_NAME_NOT_FOUND;
