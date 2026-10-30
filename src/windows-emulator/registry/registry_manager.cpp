@@ -77,6 +77,7 @@ namespace sogen
     {
         this->path_mapping_.clear();
         this->overlay_values_.clear();
+        this->key_generations_.clear();
         this->hives_.clear();
 
         const std::filesystem::path root = R"(\registry)";
@@ -274,6 +275,17 @@ namespace sogen
         return utils::path_key{key.hive.get() / key.path.get()};
     }
 
+    uint64_t registry_manager::get_generation(const utils::path_key& full_path) const
+    {
+        const auto entry = this->key_generations_.find(full_path);
+        if (entry == this->key_generations_.end())
+        {
+            return 0;
+        }
+
+        return entry->second;
+    }
+
     std::optional<registry_key> registry_manager::get_key(const utils::path_key& key)
     {
         static const utils::path_key machine_root{"\\registry\\machine"};
@@ -297,6 +309,7 @@ namespace sogen
         registry_key reg_key{};
         reg_key.hive = iterator->first.get();
         reg_key.path = normal_key.get().lexically_relative(reg_key.hive.get());
+        reg_key.generation = this->get_generation(registry_manager::get_full_key_path(reg_key));
 
         if (!this->key_exists(reg_key))
         {
@@ -314,7 +327,7 @@ namespace sogen
         }
 
         const auto full_path = registry_manager::get_full_key_path(key);
-        if (this->is_deleted_hive_key(full_path))
+        if (key.generation != this->get_generation(full_path) || this->is_deleted_hive_key(full_path))
         {
             return false;
         }
@@ -356,6 +369,7 @@ namespace sogen
         registry_key reg_key{};
         reg_key.hive = iterator->first.get();
         reg_key.path = normal_key.get().lexically_relative(reg_key.hive.get());
+        reg_key.generation = this->get_generation(registry_manager::get_full_key_path(reg_key));
 
         auto display_path_string = key.u16string();
         std::ranges::replace(display_path_string, u'\\', u'/');
@@ -413,6 +427,7 @@ namespace sogen
         const auto full_path = registry_manager::get_full_key_path(key);
         const auto name = u16_to_u8(full_path.get().filename().u16string());
         auto& parent = this->overlay_values_[utils::path_key{full_path.get().parent_path()}];
+        ++this->key_generations_[full_path];
 
         const auto backing_key = this->get_hive_key(key);
         if (!backing_key)
@@ -623,11 +638,13 @@ namespace sogen
     void registry_manager::serialize_runtime_state(utils::buffer_serializer& buffer) const
     {
         buffer.write_map(this->overlay_values_);
+        buffer.write_map(this->key_generations_);
     }
 
     void registry_manager::deserialize_runtime_state(utils::buffer_deserializer& buffer)
     {
         buffer.read_map(this->overlay_values_);
+        buffer.read_map(this->key_generations_);
     }
 
     registry_manager::hive_map::iterator registry_manager::find_hive(const utils::path_key& key)

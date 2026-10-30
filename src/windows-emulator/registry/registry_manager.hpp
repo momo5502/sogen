@@ -31,12 +31,14 @@ namespace sogen
     {
         utils::path_key hive{};
         utils::path_key path{};
+        uint64_t generation{};
         uint16_t tag{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->hive);
             buffer.write(this->path);
+            buffer.write(this->generation);
             buffer.write(this->tag);
         }
 
@@ -44,6 +46,7 @@ namespace sogen
         {
             buffer.read(this->hive);
             buffer.read(this->path);
+            buffer.read(this->generation);
             buffer.read(this->tag);
         }
 
@@ -183,9 +186,11 @@ namespace sogen
         hive_map hives_{};
         std::map<utils::path_key, utils::path_key> path_mapping_{};
         std::map<utils::path_key, overlay_bucket> overlay_values_{};
+        std::map<utils::path_key, uint64_t> key_generations_{};
 
         utils::path_key normalize_path(utils::path_key path) const;
         static utils::path_key get_full_key_path(const registry_key& key);
+        uint64_t get_generation(const utils::path_key& full_path) const;
         bool is_deleted_hive_key(const utils::path_key& full_path) const;
         void add_path_mapping(const utils::path_key& key, const utils::path_key& value);
 
