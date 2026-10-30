@@ -127,9 +127,9 @@ namespace sogen
 
         NTSTATUS handle_NtResetEvent(const syscall_context& c, const handle event_handle, const emulator_object<LONG> previous_state)
         {
-            if (event_handle.value.type != handle_types::event)
+            if (const auto status = check_handle_type(event_handle, handle_types::event); status != STATUS_SUCCESS)
             {
-                return event_handle.value.type == handle_types::reserved ? STATUS_INVALID_HANDLE : STATUS_OBJECT_TYPE_MISMATCH;
+                return status;
             }
 
             auto* e = c.proc.events.get(event_handle);

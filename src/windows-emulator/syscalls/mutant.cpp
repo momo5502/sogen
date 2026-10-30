@@ -141,9 +141,9 @@ namespace sogen
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
 
-            if (mutant_handle.value.type != handle_types::mutant)
+            if (const auto status = check_handle_type(mutant_handle, handle_types::mutant); status != STATUS_SUCCESS)
             {
-                return mutant_handle.value.type == handle_types::reserved ? STATUS_INVALID_HANDLE : STATUS_OBJECT_TYPE_MISMATCH;
+                return status;
             }
 
             const auto* mutant = c.proc.mutants.get(mutant_handle);

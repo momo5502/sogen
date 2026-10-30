@@ -217,6 +217,9 @@ namespace sogen::test
         EXPECT_EQ(0, info.CurrentCount);
         EXPECT_EQ(FALSE, info.OwnedByCaller);
         EXPECT_EQ(FALSE, info.AbandonedState);
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryMutant(this->context(), owned, MutantBasicInformation, this->buffer_address(),
+                                                                 sizeof(MUTANT_BASIC_INFORMATION), {this->emu->memory}));
     }
 
     TEST_F(SyncQueryTest, MutantBasicInformationReportsAnAbandonedMutantAsSignaled)
@@ -313,13 +316,6 @@ namespace sogen::test
         }
     }
 
-    TEST_F(SyncQueryTest, MutantQueryAcceptsAMissingReturnLength)
-    {
-        EXPECT_EQ(STATUS_SUCCESS,
-                  syscalls::handle_NtQueryMutant(this->context(), this->create_mutant(true), MutantBasicInformation, this->buffer_address(),
-                                                 sizeof(MUTANT_BASIC_INFORMATION), {this->emu->memory}));
-    }
-
     TEST_F(SyncQueryTest, SemaphoreBasicInformationReportsTheCurrentAndMaximumCount)
     {
         const auto h = this->create_semaphore(2, 5);
@@ -402,13 +398,10 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, this->reset_event(synchronization, previous));
         EXPECT_EQ(1, previous);
         EXPECT_FALSE(this->is_signaled(synchronization));
-    }
 
-    TEST_F(SyncQueryTest, ResetEventAcceptsAMissingPreviousState)
-    {
-        const auto h = this->create_event(NotificationEvent, true);
-        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtResetEvent(this->context(), h, {this->emu->memory}));
-        EXPECT_FALSE(this->is_signaled(h));
+        const auto without_previous = this->create_event(NotificationEvent, true);
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtResetEvent(this->context(), without_previous, {this->emu->memory}));
+        EXPECT_FALSE(this->is_signaled(without_previous));
     }
 
     TEST_F(SyncQueryTest, ResetEventValidatesTheHandle)

@@ -133,9 +133,9 @@ namespace sogen
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
 
-            if (semaphore_handle.value.type != handle_types::semaphore)
+            if (const auto status = check_handle_type(semaphore_handle, handle_types::semaphore); status != STATUS_SUCCESS)
             {
-                return semaphore_handle.value.type == handle_types::reserved ? STATUS_INVALID_HANDLE : STATUS_OBJECT_TYPE_MISMATCH;
+                return status;
             }
 
             const auto* semaphore = c.proc.semaphores.get(semaphore_handle);
