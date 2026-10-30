@@ -607,17 +607,24 @@ namespace sogen
 
             if (info_class == ThreadNameInformation)
             {
-                if (thread_information_length != sizeof(THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>))
+                using name_information = THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>;
+                const auto name_bytes = static_cast<USHORT>(thread->name.size() * sizeof(char16_t));
+                const auto required = static_cast<uint32_t>(sizeof(name_information) + name_bytes);
+                if (return_length)
                 {
-                    return STATUS_BUFFER_OVERFLOW;
+                    return_length.write(required);
                 }
 
-                const emulator_object<THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>> info{c.emu, thread_information};
-                const auto i = info.read();
-                thread->name = read_unicode_string(c.emu, i.ThreadName);
+                if (thread_information_length < required)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
 
-                c.win_emu.callbacks.on_thread_set_name(*thread);
-
+                const auto name_address = thread_information + sizeof(name_information);
+                c.emu.write_memory(name_address, thread->name.data(), name_bytes);
+                emulator_object<name_information>{c.emu, thread_information}.write(name_information{
+                    .ThreadName = {.Length = name_bytes, .MaximumLength = name_bytes, .Buffer = name_address},
+                });
                 return STATUS_SUCCESS;
             }
 
