@@ -14,6 +14,10 @@
 #define NT_SUCCESS(Status) ((static_cast<std::int32_t>(Status)) >= 0)
 #endif
 
+#ifndef NT_ERROR
+#define NT_ERROR(Status) ((static_cast<std::uint32_t>(Status) >> 30) == 3)
+#endif
+
 #define PROCESSOR_FEATURE_MAX                                           64
 #define GDI_HANDLE_BUFFER_SIZE32                                        34
 #define GDI_HANDLE_BUFFER_SIZE64                                        60
