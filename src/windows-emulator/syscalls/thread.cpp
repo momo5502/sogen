@@ -605,29 +605,6 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (info_class == ThreadNameInformation)
-            {
-                using name_information = THREAD_NAME_INFORMATION<EmulatorTraits<Emu64>>;
-                const auto name_bytes = static_cast<USHORT>(thread->name.size() * sizeof(char16_t));
-                const auto required = static_cast<uint32_t>(sizeof(name_information) + name_bytes);
-                if (return_length)
-                {
-                    return_length.write(required);
-                }
-
-                if (thread_information_length < required)
-                {
-                    return STATUS_BUFFER_TOO_SMALL;
-                }
-
-                const auto name_address = thread_information + sizeof(name_information);
-                c.emu.write_memory(name_address, thread->name.data(), name_bytes);
-                emulator_object<name_information>{c.emu, thread_information}.write(name_information{
-                    .ThreadName = {.Length = name_bytes, .MaximumLength = name_bytes, .Buffer = name_address},
-                });
-                return STATUS_SUCCESS;
-            }
-
             if (info_class == ThreadHideFromDebugger)
             {
                 if (thread_information != 0 && thread_information % 4 != 0)
