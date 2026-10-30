@@ -136,6 +136,13 @@ namespace sogen
         return context.win_emu.abi().syscall_argument(context.emu, index);
     }
 
+    inline void set_guest_last_error(const syscall_context& c, uint32_t last_error)
+    {
+        c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
+            teb.LastErrorValue = static_cast<ULONG>(last_error); //
+        });
+    }
+
     inline bool is_uppercase(const char character)
     {
         return toupper(character) == character;

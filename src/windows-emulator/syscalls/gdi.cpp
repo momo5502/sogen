@@ -49,6 +49,8 @@ namespace sogen
             constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
 
+            constexpr uint32_t k_error_invalid_handle = 6;
+
             constexpr uint32_t k_stock_white_brush_index = 0x00;
             constexpr uint32_t k_stock_black_pen_index = 0x06;
             constexpr uint32_t k_stock_system_font_index = 0x0D;
@@ -500,6 +502,263 @@ namespace sogen
 
                 addr = entry.Object;
                 return addr != 0;
+            }
+
+            // RGNATTR. gdi32 answers simple and null regions from it in user mode and edits it in place
+            // (CreateRectRgn, SetRectRgn, OffsetRgn, simple CombineRgn cases), so it is the authority for
+            // those; only complex regions keep their rectangles in process state.
+            struct gdi_region_attr
+            {
+                ULONG attr_flags;
+                ULONG complexity;
+                RECT bounds;
+            };
+
+            static_assert(sizeof(gdi_region_attr) <= k_gdi_region_attr_size);
+
+            using gdi_region_span = std::pair<LONG, LONG>;
+
+            bool is_empty_rect(const RECT& rect)
+            {
+                return rect.left >= rect.right || rect.top >= rect.bottom;
+            }
+
+            std::vector<RECT> rect_region(const RECT& rect)
+            {
+                return is_empty_rect(rect) ? std::vector<RECT>{} : std::vector<RECT>{rect};
+            }
+
+            RECT region_bounds(const std::vector<RECT>& rects)
+            {
+                if (rects.empty())
+                {
+                    return {};
+                }
+
+                auto bounds = rects.front();
+                for (const auto& rect : rects)
+                {
+                    bounds.left = (std::min)(bounds.left, rect.left);
+                    bounds.top = (std::min)(bounds.top, rect.top);
+                    bounds.right = (std::max)(bounds.right, rect.right);
+                    bounds.bottom = (std::max)(bounds.bottom, rect.bottom);
+                }
+
+                return bounds;
+            }
+
+            ULONG region_complexity(const std::vector<RECT>& rects)
+            {
+                if (rects.empty())
+                {
+                    return NULLREGION;
+                }
+
+                return rects.size() == 1 ? SIMPLEREGION : COMPLEXREGION;
+            }
+
+            std::optional<std::vector<RECT>> read_gdi_region(const syscall_context& c, const uint32_t region)
+            {
+                uint64_t attr_address = 0;
+                if (!get_gdi_object_address(c, region, k_gdi_region_type, attr_address))
+                {
+                    return std::nullopt;
+                }
+
+                gdi_region_attr attr{};
+                if (!c.win_emu.memory.try_read_memory(attr_address, &attr, sizeof(attr)))
+                {
+                    return std::nullopt;
+                }
+
+                switch (attr.complexity)
+                {
+                case NULLREGION:
+                    return std::vector<RECT>{};
+                case SIMPLEREGION:
+                    return rect_region(attr.bounds);
+                case COMPLEXREGION:
+                    if (const auto it = c.proc.gdi_regions.find(region); it != c.proc.gdi_regions.end())
+                    {
+                        return it->second;
+                    }
+                    break;
+                default:
+                    break;
+                }
+
+                c.win_emu.log.error("Region 0x%X has unsupported complexity %u\n", region, static_cast<uint32_t>(attr.complexity));
+                return std::nullopt;
+            }
+
+            int32_t store_gdi_region(const syscall_context& c, const uint32_t region, std::vector<RECT> rects)
+            {
+                uint64_t attr_address = 0;
+                if (!get_gdi_object_address(c, region, k_gdi_region_type, attr_address))
+                {
+                    return RGN_ERROR;
+                }
+
+                gdi_region_attr attr{};
+                if (!c.win_emu.memory.try_read_memory(attr_address, &attr, sizeof(attr)))
+                {
+                    return RGN_ERROR;
+                }
+
+                attr.complexity = region_complexity(rects);
+                attr.bounds = region_bounds(rects);
+                if (!c.win_emu.memory.try_write_memory(attr_address, &attr, sizeof(attr)))
+                {
+                    return RGN_ERROR;
+                }
+
+                if (attr.complexity == COMPLEXREGION)
+                {
+                    c.proc.gdi_regions[region] = std::move(rects);
+                }
+                else
+                {
+                    c.proc.gdi_regions.erase(region);
+                }
+
+                return static_cast<int32_t>(attr.complexity);
+            }
+
+            bool region_mode_includes(const int32_t mode, const bool in_first, const bool in_second)
+            {
+                switch (mode)
+                {
+                case RGN_AND:
+                    return in_first && in_second;
+                case RGN_OR:
+                    return in_first || in_second;
+                case RGN_XOR:
+                    return in_first != in_second;
+                case RGN_DIFF:
+                    return in_first && !in_second;
+                case RGN_COPY:
+                    return in_first;
+                default:
+                    return false;
+                }
+            }
+
+            struct gdi_region_source_rect
+            {
+                RECT rect;
+                bool from_second;
+            };
+
+            struct gdi_region_edge
+            {
+                LONG x;
+                bool from_second;
+                int32_t depth_change;
+            };
+
+            std::vector<gdi_region_span> combine_region_band(const std::vector<gdi_region_source_rect>& band_rects, const int32_t mode)
+            {
+                std::vector<gdi_region_edge> edges{};
+                edges.reserve(band_rects.size() * 2);
+                for (const auto& [rect, from_second] : band_rects)
+                {
+                    edges.push_back({.x = rect.left, .from_second = from_second, .depth_change = 1});
+                    edges.push_back({.x = rect.right, .from_second = from_second, .depth_change = -1});
+                }
+
+                std::ranges::sort(edges, {}, &gdi_region_edge::x);
+
+                std::vector<gdi_region_span> spans{};
+                int32_t first_depth = 0;
+                int32_t second_depth = 0;
+                for (size_t i = 0; i < edges.size();)
+                {
+                    const auto left = edges[i].x;
+                    for (; i < edges.size() && edges[i].x == left; ++i)
+                    {
+                        (edges[i].from_second ? second_depth : first_depth) += edges[i].depth_change;
+                    }
+
+                    if (i == edges.size() || !region_mode_includes(mode, first_depth > 0, second_depth > 0))
+                    {
+                        continue;
+                    }
+
+                    const auto right = edges[i].x;
+                    if (!spans.empty() && spans.back().second == left)
+                    {
+                        spans.back().second = right;
+                    }
+                    else
+                    {
+                        spans.emplace_back(left, right);
+                    }
+                }
+
+                return spans;
+            }
+
+            // GetRegionData exposes the y-x banded form Windows keeps regions in.
+            std::vector<RECT> combine_regions(const std::vector<RECT>& first, const std::vector<RECT>& second, const int32_t mode)
+            {
+                std::vector<LONG> band_edges{};
+                std::vector<gdi_region_source_rect> pending{};
+                const auto add_source = [&](const std::vector<RECT>& rects, const bool from_second) {
+                    for (const auto& rect : rects)
+                    {
+                        band_edges.insert(band_edges.end(), {rect.top, rect.bottom});
+                        pending.push_back({.rect = rect, .from_second = from_second});
+                    }
+                };
+
+                add_source(first, false);
+                add_source(second, true);
+
+                std::ranges::sort(band_edges);
+                band_edges.erase(std::ranges::unique(band_edges).begin(), band_edges.end());
+                std::ranges::sort(pending, {}, [](const gdi_region_source_rect& source) { return source.rect.top; });
+
+                std::vector<RECT> result{};
+                std::vector<gdi_region_span> previous_spans{};
+                size_t previous_band_start = 0;
+                std::vector<gdi_region_source_rect> band_rects{};
+                size_t next_pending = 0;
+
+                for (size_t i = 0; i + 1 < band_edges.size(); ++i)
+                {
+                    const auto top = band_edges[i];
+                    const auto bottom = band_edges[i + 1];
+
+                    std::erase_if(band_rects, [&](const gdi_region_source_rect& source) { return source.rect.bottom <= top; });
+                    for (; next_pending < pending.size() && pending[next_pending].rect.top <= top; ++next_pending)
+                    {
+                        band_rects.push_back(pending[next_pending]);
+                    }
+
+                    auto spans = combine_region_band(band_rects, mode);
+                    if (spans.empty())
+                    {
+                        continue;
+                    }
+
+                    if (spans == previous_spans && result.back().bottom == top)
+                    {
+                        for (auto j = previous_band_start; j < result.size(); ++j)
+                        {
+                            result[j].bottom = bottom;
+                        }
+                        continue;
+                    }
+
+                    previous_band_start = result.size();
+                    for (const auto& [left, right] : spans)
+                    {
+                        result.push_back(RECT{.left = left, .top = top, .right = right, .bottom = bottom});
+                    }
+                    previous_spans = std::move(spans);
+                }
+
+                return result;
             }
 
             void sync_surface_from_guest_dib(const syscall_context& c, gdi_bitmap_surface& surface)
@@ -2730,6 +2989,7 @@ namespace sogen
             c.proc.gdi_dc_states.erase(handle_value);
             c.proc.gdi_bitmap_surfaces.erase(handle_value);
             c.proc.gdi_fonts.erase(handle_value);
+            c.proc.gdi_regions.erase(handle_value);
             return 1;
         }
 
@@ -3525,62 +3785,60 @@ namespace sogen
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, const LONG x_left, const LONG y_top, const LONG x_right,
                                            const LONG y_bottom)
         {
-            const auto handle = allocate_gdi_object(c, k_gdi_region_type, k_gdi_region_attr_size);
-            uint64_t region_attr = 0;
-            if (handle != 0 && get_gdi_object_address(c, handle, k_gdi_region_type, region_attr))
-            {
-                const RECT rect{
-                    .left = x_left,
-                    .top = y_top,
-                    .right = x_right,
-                    .bottom = y_bottom,
-                };
-                c.emu.write_memory(region_attr, &rect, sizeof(rect));
-            }
-            return handle;
+            const auto region = allocate_gdi_object(c, k_gdi_region_type, k_gdi_region_attr_size);
+            const RECT rect{
+                .left = (std::min)(x_left, x_right),
+                .top = (std::min)(y_top, y_bottom),
+                .right = (std::max)(x_left, x_right),
+                .bottom = (std::max)(y_top, y_bottom),
+            };
+            (void)store_gdi_region(c, region, rect_region(rect));
+            return region;
         }
 
         bool set_gdi_region_rect(const syscall_context& c, const handle region, const RECT& rect)
         {
-            uint64_t region_attr = 0;
-            if (!get_gdi_object_address(c, static_cast<uint32_t>(region.bits), k_gdi_region_type, region_attr))
+            return store_gdi_region(c, static_cast<uint32_t>(region.bits), rect_region(rect)) != RGN_ERROR;
+        }
+
+        int32_t handle_NtGdiCombineRgn(const syscall_context& c, const handle destination, const handle first_source,
+                                       const handle second_source, const int32_t mode)
+        {
+            if (mode < RGN_AND || mode > RGN_COPY)
             {
-                return false;
+                c.win_emu.log.error("Unsupported region combine mode: %d\n", mode);
+                set_guest_last_error(c, k_error_invalid_parameter);
+                return RGN_ERROR;
             }
 
-            c.emu.write_memory(region_attr, &rect, sizeof(rect));
-            return true;
+            const auto first = read_gdi_region(c, static_cast<uint32_t>(first_source.bits));
+            const auto second =
+                mode == RGN_COPY ? std::optional{std::vector<RECT>{}} : read_gdi_region(c, static_cast<uint32_t>(second_source.bits));
+            if (!first || !second)
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+                return RGN_ERROR;
+            }
+
+            const auto result = store_gdi_region(c, static_cast<uint32_t>(destination.bits), combine_regions(*first, *second, mode));
+            if (result == RGN_ERROR)
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+            }
+
+            return result;
         }
 
         BOOL handle_NtGdiEqualRgn(const syscall_context& c, const handle first_region, const handle second_region)
         {
-            uint64_t first_attr = 0;
-            uint64_t second_attr = 0;
-            if (!get_gdi_object_address(c, static_cast<uint32_t>(first_region.bits), k_gdi_region_type, first_attr) ||
-                !get_gdi_object_address(c, static_cast<uint32_t>(second_region.bits), k_gdi_region_type, second_attr))
+            const auto first = read_gdi_region(c, static_cast<uint32_t>(first_region.bits));
+            const auto second = read_gdi_region(c, static_cast<uint32_t>(second_region.bits));
+            if (!first || !second)
             {
                 return FALSE;
             }
 
-            RECT first_rect{};
-            RECT second_rect{};
-            if (!c.win_emu.memory.try_read_memory(first_attr, &first_rect, sizeof(first_rect)) ||
-                !c.win_emu.memory.try_read_memory(second_attr, &second_rect, sizeof(second_rect)))
-            {
-                return FALSE;
-            }
-
-            const auto first_empty = first_rect.left >= first_rect.right || first_rect.top >= first_rect.bottom;
-            const auto second_empty = second_rect.left >= second_rect.right || second_rect.top >= second_rect.bottom;
-            if (first_empty || second_empty)
-            {
-                return first_empty == second_empty ? TRUE : FALSE;
-            }
-
-            return first_rect.left == second_rect.left && first_rect.top == second_rect.top && first_rect.right == second_rect.right &&
-                           first_rect.bottom == second_rect.bottom
-                       ? TRUE
-                       : FALSE;
+            return combine_regions(*first, *second, RGN_XOR).empty() ? TRUE : FALSE;
         }
 
         int32_t handle_NtGdiGetRandomRgn(const syscall_context&, const hdc dc, const uint64_t region, const LONG /*index*/)
@@ -3591,15 +3849,20 @@ namespace sogen
         uint32_t handle_NtGdiGetRegionData(const syscall_context& c, const handle hrgn, const ULONG buffer_size,
                                            const emulator_pointer region_data)
         {
-            uint64_t region_attr = 0;
-            if (!get_gdi_object_address(c, static_cast<uint32_t>(hrgn.bits), k_gdi_region_type, region_attr))
+            const auto rects = read_gdi_region(c, static_cast<uint32_t>(hrgn.bits));
+            if (!rects)
             {
                 return 0;
             }
 
-            (void)region_attr;
+            const auto rects_bytes = rects->size() * sizeof(RECT);
+            if (rects_bytes > std::numeric_limits<DWORD>::max() - sizeof(RGNDATAHEADER))
+            {
+                return 0;
+            }
 
-            constexpr DWORD required_size = sizeof(RGNDATAHEADER);
+            const auto rects_size = static_cast<DWORD>(rects_bytes);
+            const auto required_size = static_cast<DWORD>(sizeof(RGNDATAHEADER) + rects_bytes);
             if (region_data == 0)
             {
                 return required_size;
@@ -3607,16 +3870,22 @@ namespace sogen
 
             if (buffer_size < required_size)
             {
+                set_guest_last_error(c, k_error_invalid_parameter);
                 return 0;
             }
 
             RGNDATAHEADER header{};
             header.dwSize = sizeof(header);
             header.iType = RDH_RECTANGLES;
-            header.nCount = 0;
-            header.nRgnSize = 0;
-            header.rcBound = RECT{};
+            header.nCount = static_cast<DWORD>(rects->size());
+            header.nRgnSize = rects_size;
+            header.rcBound = region_bounds(*rects);
             c.emu.write_memory(region_data, &header, sizeof(header));
+            if (!rects->empty())
+            {
+                c.emu.write_memory(region_data + sizeof(header), rects->data(), rects_size);
+            }
+
             return required_size;
         }
 

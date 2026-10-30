@@ -926,6 +926,8 @@ namespace sogen
                                     handle color_transform);
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
         BOOL handle_NtGdiEqualRgn(const syscall_context& c, handle first_region, handle second_region);
+        int32_t handle_NtGdiCombineRgn(const syscall_context& c, handle destination, handle first_source, handle second_source,
+                                       int32_t mode);
         int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
         uint32_t handle_NtGdiGetRegionData(const syscall_context& c, handle hrgn, ULONG buffer_size, emulator_pointer region_data);
         int32_t handle_NtGdiGetAppClipBox(const syscall_context& c, hdc dc, emulator_object<RECT> rect);
@@ -1734,6 +1736,7 @@ namespace sogen
         add_handler(NtGdiGetGlyphIndicesW);
         add_handler(NtGdiCreateRectRgn);
         add_handler(NtGdiEqualRgn);
+        add_handler(NtGdiCombineRgn);
         add_handler(NtGdiGetRandomRgn);
         add_handler(NtGdiGetRegionData);
         add_handler(NtGdiGetAppClipBox);
