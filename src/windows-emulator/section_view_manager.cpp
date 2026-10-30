@@ -35,7 +35,8 @@ namespace sogen
     }
 
     uint64_t section_view_manager::map_view(memory_manager& memory, const uint64_t storage_id, const uint64_t offset, const size_t size,
-                                            const nt_memory_permission permissions, const uint64_t highest_address)
+                                            const nt_memory_permission permissions, const uint64_t highest_address,
+                                            const uint64_t requested_address)
     {
         const auto entry = this->storages_.find(storage_id);
         if (entry == this->storages_.end() || size == 0 || offset > entry->second.memory.size() ||
@@ -44,7 +45,19 @@ namespace sogen
             return 0;
         }
 
-        const auto address = memory.allocate_host_memory(size, entry->second.memory.data() + offset, permissions, highest_address);
+        auto* const host_pointer = entry->second.memory.data() + offset;
+        uint64_t address = requested_address;
+        if (address == 0)
+        {
+            address = memory.allocate_host_memory(size, host_pointer, permissions, highest_address);
+        }
+        else if (memory.get_region_kind(address) == memory_region_kind::placeholder
+                     ? !memory.replace_placeholder_with_host_memory(address, size, host_pointer, permissions)
+                     : !memory.allocate_host_memory_at(address, size, host_pointer, permissions))
+        {
+            address = 0;
+        }
+
         if (address == 0)
         {
             return 0;
@@ -86,7 +99,7 @@ namespace sogen
         return entry != this->views_.end() && size <= entry->second.size - (address - entry->first);
     }
 
-    bool section_view_manager::unmap_view(memory_manager& memory, const uint64_t address)
+    bool section_view_manager::unmap_view(memory_manager& memory, const uint64_t address, const bool preserve_placeholder)
     {
         const auto entry = this->find_view(address);
         if (entry == this->views_.end())
@@ -102,6 +115,12 @@ namespace sogen
         }
         this->views_.erase(entry);
         this->release_storage(mapped.storage_id);
+
+        if (preserve_placeholder &&
+            !memory.allocate_memory(base, static_cast<size_t>(mapped.size), memory_permission::none, true, memory_region_kind::placeholder))
+        {
+            throw std::runtime_error("Failed to leave a placeholder where a section view was");
+        }
         return true;
     }
 

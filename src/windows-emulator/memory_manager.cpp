@@ -358,6 +358,26 @@ namespace sogen
         return true;
     }
 
+    bool memory_manager::replace_placeholder_with_host_memory(const uint64_t address, const size_t size, void* host_pointer,
+                                                              const nt_memory_permission permissions)
+    {
+        const auto entry = this->reserved_regions_.find(address);
+        if (entry == this->reserved_regions_.end() || entry->second.kind != memory_region_kind::placeholder || entry->second.length != size)
+        {
+            return false;
+        }
+
+        auto placeholder = this->reserved_regions_.extract(entry);
+        if (this->register_host_memory(address, size, host_pointer, permissions))
+        {
+            return true;
+        }
+
+        this->reserved_regions_.insert(std::move(placeholder));
+        this->update_layout_version();
+        return false;
+    }
+
     bool memory_manager::register_host_memory(const uint64_t address, const size_t size, void* host_pointer,
                                               const nt_memory_permission permissions)
     {
