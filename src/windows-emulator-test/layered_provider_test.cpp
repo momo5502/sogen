@@ -303,6 +303,19 @@ namespace sogen::test
         EXPECT_TRUE(restarted->stat(guest({u"dir", u"moved.txt"})));
     }
 
+    TEST_F(LayeredProviderTest, AWriteThroughAnOldHandleDoesNotBringTheRenamedNameBack)
+    {
+        const auto provider = this->make_provider();
+
+        const auto result = provider->open(guest({u"file.txt"}), u"r+b");
+        ASSERT_TRUE(result.file);
+        ASSERT_EQ(STATUS_SUCCESS, provider->rename(guest({u"file.txt"}), guest({u"dir", u"moved.txt"})));
+
+        EXPECT_EQ(0u, write_text(*result.file, "NEW"));
+        EXPECT_FALSE(provider->stat(guest({u"file.txt"})));
+        EXPECT_FALSE(std::filesystem::exists(this->upper() / "file.txt"));
+    }
+
     TEST_F(LayeredProviderTest, ARenameThatCannotHideTheOldNameLeavesNothingBehind)
     {
         std::filesystem::create_directories(this->state() / "journal");

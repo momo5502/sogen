@@ -2,8 +2,14 @@
 #include "host_directory_provider.hpp"
 
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
+#include <string>
+#include <system_error>
+#include <vector>
 
 #include <sys/stat.h>
 
@@ -233,7 +239,8 @@ namespace sogen
             }
 
             const auto position = this->lower_->tell();
-            if (position < 0 || !this->provider_->copy_up(this->path_))
+            if (position < 0 || (!this->provider_->upper_->stat(this->path_) && !this->provider_->lower_visible(this->path_)) ||
+                !this->provider_->copy_up(this->path_))
             {
                 return false;
             }
@@ -276,6 +283,21 @@ namespace sogen
         for (const auto& entry : std::filesystem::directory_iterator(this->temporary_directory_, ec))
         {
             std::filesystem::remove_all(entry.path(), ec);
+        }
+
+        const auto probe = this->temporary_directory_ / "probe";
+        const auto probe_target = upper_directory / ".sogen-probe";
+        {
+            std::ofstream{probe};
+        }
+        std::filesystem::rename(probe, probe_target, ec);
+        const auto probe_error = ec;
+        std::filesystem::remove(probe, ec);
+        std::filesystem::remove(probe_target, ec);
+        if (probe_error)
+        {
+            throw std::runtime_error("The layer state directory must be on the same filesystem as the upper directory: " +
+                                     probe_error.message());
         }
 
         this->upper_ = std::make_unique<host_directory_provider>(std::move(upper_directory));

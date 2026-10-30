@@ -36,6 +36,13 @@ namespace sogen
     // Renaming a file that only the lower has is a copy followed by hiding the old name, so a crash in between leaves both
     // names, never neither. It cannot replace an existing destination yet and reports STATUS_OBJECT_NAME_COLLISION.
     //
+    // The state directory must be on the same filesystem as the upper directory, which the constructor verifies, because
+    // copies are staged there and published by rename.
+    //
+    // A handle opened on a lower file follows the path, not the file. Writing through it after the path was renamed or
+    // deleted fails; if the path was recreated in the upper meanwhile, the handle attaches to that file. Stable handle
+    // identity comes with the logical file IDs.
+    //
     // Renaming a directory that has lower content is not supported yet and reports STATUS_NOT_SAME_DEVICE, which makes
     // callers fall back to copying it.
     class layered_provider final : public mount_provider
