@@ -183,7 +183,8 @@ namespace sogen
                 });
             }
 
-            NTSTATUS validate_section_extended_parameters(const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
+            NTSTATUS validate_section_extended_parameters(const syscall_context& c,
+                                                          const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
                                                           const ULONG extended_parameter_count)
             {
                 if (!extended_parameters != (extended_parameter_count == 0))
@@ -201,8 +202,15 @@ namespace sogen
                         return STATUS_ACCESS_VIOLATION;
                     }
 
-                    all_valid =
-                        all_valid && parameter->Type == MemExtendedParameterNumaNode && parameter->Reserved == 0 && parameter->ULong64 == 0;
+                    if (parameter->Type == MemSectionExtendedParameterUserPhysicalFlags ||
+                        parameter->Type == MemSectionExtendedParameterSigningLevel)
+                    {
+                        c.win_emu.log.error("NtCreateSectionEx: Unsupported section parameter type %u\n",
+                                            static_cast<uint32_t>(parameter->Type));
+                    }
+
+                    all_valid = all_valid && parameter->Type == MemSectionExtendedParameterNumaNode && parameter->Reserved == 0 &&
+                                parameter->ULong64 == 0;
                 }
 
                 return all_valid ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
@@ -333,7 +341,7 @@ namespace sogen
                                           const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
                                           const ULONG extended_parameter_count)
         {
-            if (const auto status = validate_section_extended_parameters(extended_parameters, extended_parameter_count);
+            if (const auto status = validate_section_extended_parameters(c, extended_parameters, extended_parameter_count);
                 status != STATUS_SUCCESS)
             {
                 return status;

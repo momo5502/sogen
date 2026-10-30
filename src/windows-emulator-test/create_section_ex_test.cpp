@@ -110,7 +110,7 @@ namespace sogen::test
 
     TEST_F(CreateSectionExTest, NumaNodeZeroIsAccepted)
     {
-        this->set_parameter(0, MemExtendedParameterNumaNode, 0);
+        this->set_parameter(0, MemSectionExtendedParameterNumaNode, 0);
 
         ASSERT_EQ(STATUS_SUCCESS, this->create(this->parameters(), 1));
         EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), this->output_handle()));
@@ -127,7 +127,16 @@ namespace sogen::test
 
     TEST_F(CreateSectionExTest, OnlyNumaNodeIsAcceptedForSections)
     {
-        for (const uint64_t type : {0ull, 1ull, 3ull, 4ull, 5ull, 6ull, 7ull, 0xFFull})
+        constexpr std::array<uint64_t, 8> rejected_types{MemSectionExtendedParameterInvalidType,
+                                                         MemSectionExtendedParameterUserPhysicalFlags,
+                                                         MemSectionExtendedParameterSigningLevel,
+                                                         MemSectionExtendedParameterMax,
+                                                         5,
+                                                         6,
+                                                         7,
+                                                         0xFF};
+
+        for (const auto type : rejected_types)
         {
             this->set_parameter(0, type, 0);
             EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create(this->parameters(), 1)) << "type " << type;
@@ -137,14 +146,16 @@ namespace sogen::test
 
     TEST_F(CreateSectionExTest, InvalidNumaNodeEntriesAreRejected)
     {
-        this->set_parameter(0, MemExtendedParameterNumaNode, 0, 1);
+        this->set_parameter(0, MemSectionExtendedParameterNumaNode, 0, 1);
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create(this->parameters(), 1));
+        EXPECT_EQ(untouched, this->output_bits());
 
-        this->set_parameter(0, MemExtendedParameterNumaNode, 1);
+        this->set_parameter(0, MemSectionExtendedParameterNumaNode, 1);
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create(this->parameters(), 1));
+        EXPECT_EQ(untouched, this->output_bits());
 
-        this->set_parameter(0, MemExtendedParameterNumaNode, 0);
-        this->set_parameter(1, MemExtendedParameterNumaNode, 0);
+        this->set_parameter(0, MemSectionExtendedParameterNumaNode, 0);
+        this->set_parameter(1, MemSectionExtendedParameterNumaNode, 0);
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create(this->parameters(), 2));
         EXPECT_EQ(untouched, this->output_bits());
     }
