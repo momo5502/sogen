@@ -13,6 +13,11 @@
 #include <unordered_map>
 #include <vector>
 
+namespace ProcessProtocol
+{
+    struct MessageT;
+}
+
 namespace sogen
 {
     class managed_process_connection
@@ -35,6 +40,9 @@ namespace sogen
 
       private:
         bool handle_messages(managed_process_target& target, bool wait_for_resume);
+
+        template <typename T>
+        bool send(T payload);
 
         network::tcp_client_socket socket_{};
         process_create_request request_{};
@@ -68,9 +76,21 @@ namespace sogen
                                              memory_permission permission) override;
         process_memory_read_result read_memory(managed_process process, uint64_t address, uint64_t size) const override;
         process_memory_result write_memory(managed_process process, uint64_t address, std::span<const uint8_t> data) override;
+        process_debug_event_result next_debug_event(managed_process process) override;
+        process_error continue_debug_event(managed_process process, uint32_t thread_id, uint32_t status) override;
+        process_error detach_debugger(managed_process process) override;
+        process_thread_context_result get_thread_context(managed_process process, uint32_t thread_id, bool wow64) override;
+        process_error set_thread_context(managed_process process, uint32_t thread_id, std::span<const uint8_t> context,
+                                         bool wow64) override;
+        process_thread_information thread_information(managed_process process, uint32_t thread_id) override;
+        process_suspend_result suspend_thread(managed_process process, uint32_t thread_id, bool resume) override;
+        process_memory_region query_memory(managed_process process, uint64_t address) const override;
 
       private:
         struct process_entry;
+
+        template <typename Request>
+        std::optional<ProcessProtocol::MessageT> exchange(managed_process process, Request request, uint8_t response_type) const;
 
         std::shared_ptr<process_entry> find_process(managed_process process) const;
 

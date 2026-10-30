@@ -144,6 +144,49 @@ namespace sogen
         }
     };
 
+    // A debugger's view of the child processes it debugs; their events reach it through the process manager.
+    struct debug_object : ref_counted_object
+    {
+        struct debuggee
+        {
+            uint64_t process{};
+            uint32_t process_id{};
+            bool exit_reported{};
+            std::vector<uint32_t> thread_ids{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->process);
+                buffer.write(this->process_id);
+                buffer.write(this->exit_reported);
+                buffer.write_vector(this->thread_ids);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->process);
+                buffer.read(this->process_id);
+                buffer.read(this->exit_reported);
+                buffer.read_vector(this->thread_ids);
+            }
+        };
+
+        std::vector<debuggee> debuggees{};
+        bool kill_on_close{};
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write_vector(this->debuggees);
+            buffer.write(this->kill_on_close);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read_vector(this->debuggees);
+            buffer.read(this->kill_on_close);
+        }
+    };
+
     struct deferred_window_positions : ref_counted_object
     {
         std::vector<EMU_WINDOWPOS> positions{};

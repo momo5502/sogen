@@ -186,47 +186,6 @@ namespace sogen
             cpu.reg(arm64_register::pc, win_emu.process.ki_user_exception_dispatcher);
         }
 
-        WOW64_CONTEXT make_wow64_context(const CONTEXT64& ctx)
-        {
-            WOW64_CONTEXT result{};
-            result.ContextFlags = CONTEXT32_ALL;
-            result.Dr0 = static_cast<DWORD>(ctx.Dr0);
-            result.Dr1 = static_cast<DWORD>(ctx.Dr1);
-            result.Dr2 = static_cast<DWORD>(ctx.Dr2);
-            result.Dr3 = static_cast<DWORD>(ctx.Dr3);
-            result.Dr6 = static_cast<DWORD>(ctx.Dr6);
-            result.Dr7 = static_cast<DWORD>(ctx.Dr7);
-            result.SegGs = ctx.SegGs;
-            result.SegFs = ctx.SegFs;
-            result.SegEs = ctx.SegEs;
-            result.SegDs = ctx.SegDs;
-            result.Edi = static_cast<DWORD>(ctx.Rdi);
-            result.Esi = static_cast<DWORD>(ctx.Rsi);
-            result.Ebx = static_cast<DWORD>(ctx.Rbx);
-            result.Edx = static_cast<DWORD>(ctx.Rdx);
-            result.Ecx = static_cast<DWORD>(ctx.Rcx);
-            result.Eax = static_cast<DWORD>(ctx.Rax);
-            result.Ebp = static_cast<DWORD>(ctx.Rbp);
-            result.Eip = static_cast<DWORD>(ctx.Rip);
-            result.SegCs = ctx.SegCs;
-            result.EFlags = ctx.EFlags;
-            result.Esp = static_cast<DWORD>(ctx.Rsp);
-            result.SegSs = ctx.SegSs;
-            result.FloatSave.ControlWord = 0x037F;
-            result.FloatSave.TagWord = 0xFFFF;
-
-            XMM_SAVE_AREA32 xmm_state{};
-            xmm_state.ControlWord = 0x037F;
-            // FXSAVE abridged x87 tag: 0x00 = empty stack (fresh FPU). 0xFF (all valid) makes the next x87
-            // FLD overflow the stack and yield the x87 indefinite (NaN).
-            xmm_state.TagWord = 0x00;
-            xmm_state.MxCsr = 0x1F80;
-            xmm_state.MxCsr_Mask = 0xFFFFFFFF;
-            static_assert(sizeof(xmm_state) <= sizeof(result.ExtendedRegisters));
-            memcpy(result.ExtendedRegisters, &xmm_state, sizeof(xmm_state));
-            return result;
-        }
-
         void sync_wow64_cpu_reserved_context(windows_emulator& win_emu, x86_64_cpu& emu, emulator_thread& thread, const CONTEXT64& ctx)
         {
             if (!win_emu.process.is_wow64_process)
@@ -248,6 +207,47 @@ namespace sogen
             });
         }
 
+    }
+
+    WOW64_CONTEXT make_wow64_context(const CONTEXT64& ctx)
+    {
+        WOW64_CONTEXT result{};
+        result.ContextFlags = CONTEXT32_ALL;
+        result.Dr0 = static_cast<DWORD>(ctx.Dr0);
+        result.Dr1 = static_cast<DWORD>(ctx.Dr1);
+        result.Dr2 = static_cast<DWORD>(ctx.Dr2);
+        result.Dr3 = static_cast<DWORD>(ctx.Dr3);
+        result.Dr6 = static_cast<DWORD>(ctx.Dr6);
+        result.Dr7 = static_cast<DWORD>(ctx.Dr7);
+        result.SegGs = ctx.SegGs;
+        result.SegFs = ctx.SegFs;
+        result.SegEs = ctx.SegEs;
+        result.SegDs = ctx.SegDs;
+        result.Edi = static_cast<DWORD>(ctx.Rdi);
+        result.Esi = static_cast<DWORD>(ctx.Rsi);
+        result.Ebx = static_cast<DWORD>(ctx.Rbx);
+        result.Edx = static_cast<DWORD>(ctx.Rdx);
+        result.Ecx = static_cast<DWORD>(ctx.Rcx);
+        result.Eax = static_cast<DWORD>(ctx.Rax);
+        result.Ebp = static_cast<DWORD>(ctx.Rbp);
+        result.Eip = static_cast<DWORD>(ctx.Rip);
+        result.SegCs = ctx.SegCs;
+        result.EFlags = ctx.EFlags;
+        result.Esp = static_cast<DWORD>(ctx.Rsp);
+        result.SegSs = ctx.SegSs;
+        result.FloatSave.ControlWord = 0x037F;
+        result.FloatSave.TagWord = 0xFFFF;
+
+        XMM_SAVE_AREA32 xmm_state{};
+        xmm_state.ControlWord = 0x037F;
+        // FXSAVE abridged x87 tag: 0x00 = empty stack (fresh FPU). 0xFF (all valid) makes the next x87
+        // FLD overflow the stack and yield the x87 indefinite (NaN).
+        xmm_state.TagWord = 0x00;
+        xmm_state.MxCsr = 0x1F80;
+        xmm_state.MxCsr_Mask = 0xFFFFFFFF;
+        static_assert(sizeof(xmm_state) <= sizeof(result.ExtendedRegisters));
+        memcpy(result.ExtendedRegisters, &xmm_state, sizeof(xmm_state));
+        return result;
     }
 
     bool dispatch_debug_exception(windows_emulator& win_emu, CONTEXT64& ctx, EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>& record)
@@ -303,6 +303,15 @@ namespace sogen
             std::ranges::copy(parameters, record.ExceptionInformation);
             record.ExceptionAddress = ctx.Pc;
 
+            if (win_emu.debugger().is_attached())
+            {
+                arm64->reg(arm64_register::pc, ctx.Pc);
+                if (report_exception_to_debugger(win_emu, vcpu, record, true))
+                {
+                    return;
+                }
+            }
+
             dispatch_arm64_exception(win_emu, *arm64, record, ctx);
             return;
         }
@@ -311,7 +320,9 @@ namespace sogen
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;
         cpu_context::save(cpu, ctx);
-        ctx.Rip = win_emu.uses_instruction_precision() //
+
+        // A single step is a trap: it is raised after the instruction, which current_ip still names.
+        ctx.Rip = win_emu.uses_instruction_precision() && status != STATUS_SINGLE_STEP //
                       ? thread.current_ip
                       : vcpu.cpu.read_instruction_pointer();
 
@@ -345,7 +356,90 @@ namespace sogen
 
         record.ExceptionAddress = ctx.Rip;
 
+        if (win_emu.debugger().is_attached())
+        {
+            // A debugger sees a breakpoint with RIP past the int3, so continuing it moves on; the guest's handlers see
+            // RIP on the int3.
+            uint64_t debugger_ip = ctx.Rip;
+            if (status == STATUS_BREAKPOINT && !is_debug_exception)
+            {
+                std::array<uint8_t, 2> instruction{};
+                if (win_emu.memory.try_read_memory(ctx.Rip, instruction.data(), instruction.size()))
+                {
+                    if (instruction[0] == 0xCC)
+                    {
+                        debugger_ip += 1;
+                    }
+                    else if (instruction[0] == 0xCD && instruction[1] == 0x03)
+                    {
+                        debugger_ip += 2;
+                    }
+                }
+            }
+
+            // Like KiDispatchException, a breakpoint or single step in WoW64's 32-bit code reaches the debugger as its
+            // WX86 variant, which a 32-bit debugger's WoW64 layer turns back into the plain one.
+            auto debugger_record = record;
+            const auto bitness = segment_utils::get_segment_bitness(cpu, ctx.SegCs);
+            if (win_emu.process.is_wow64_process && bitness && *bitness == segment_utils::segment_bitness::bit32)
+            {
+                if (status == STATUS_BREAKPOINT)
+                {
+                    debugger_record.ExceptionCode = STATUS_WX86_BREAKPOINT;
+                }
+                else if (status == STATUS_SINGLE_STEP)
+                {
+                    debugger_record.ExceptionCode = STATUS_WX86_SINGLE_STEP;
+                }
+            }
+
+            cpu.reg(x86_register::rip, debugger_ip);
+            if (report_exception_to_debugger(win_emu, vcpu, debugger_record, true))
+            {
+                return;
+            }
+        }
+
         sync_wow64_cpu_reserved_context(win_emu, cpu, thread, ctx);
+
+        EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
+        pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);
+        pointers.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&record);
+        dispatch_exception_pointers(cpu, win_emu.process.ki_user_exception_dispatcher, pointers);
+    }
+
+    bool report_exception_to_debugger(windows_emulator& win_emu, vcpu_context& vcpu, const exception_record& record,
+                                      const bool first_chance)
+    {
+        if (!win_emu.debugger().is_attached())
+        {
+            return false;
+        }
+
+        process_debug_event event{
+            .kind = process_debug_event_kind::exception,
+            .thread_id = vcpu.thread().id,
+            .exception_code = record.ExceptionCode,
+            .exception_flags = record.ExceptionFlags,
+            .exception_address = record.ExceptionAddress,
+            .first_chance = first_chance,
+        };
+        const auto parameter_count = std::min<size_t>(record.NumberParameters, std::size(record.ExceptionInformation));
+        event.exception_parameters.assign(record.ExceptionInformation, record.ExceptionInformation + parameter_count);
+
+        return win_emu.report_debug_event(std::move(event)) != static_cast<uint32_t>(DBG_EXCEPTION_NOT_HANDLED);
+    }
+
+    void dispatch_exception_record(windows_emulator& win_emu, vcpu_context& vcpu, exception_record record, CONTEXT64 ctx)
+    {
+        auto& cpu = vcpu.x64_cpu();
+
+        // A chained record is a guest pointer here, which the dispatcher would read as a host one.
+        record.ExceptionRecord = 0;
+
+        // The kernel builds the dispatcher frame below the raising context's stack, not the syscall's.
+        cpu.reg(x86_register::rsp, ctx.Rsp);
+        sync_wow64_cpu_reserved_context(win_emu, cpu, vcpu.thread(), ctx);
 
         EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
         pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);

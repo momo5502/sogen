@@ -243,6 +243,27 @@ namespace sogen
                 }
                 return STATUS_SUCCESS;
             };
+            handle debug_object_handle{};
+            for (size_t i = 0; i < attribute_count; ++i)
+            {
+                const emulator_object<PS_ATTRIBUTE<EmulatorTraits<Emu64>>> attributes{
+                    c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>, Attributes)};
+                const auto attribute = attributes.read(i);
+                if ((attribute.Attribute & PS_ATTRIBUTE_NUMBER_MASK) == PsAttributeDebugObject)
+                {
+                    debug_object_handle.bits = attribute.Value;
+                }
+            }
+
+            if (debug_object_handle.bits)
+            {
+                if (!c.proc.debug_objects.get(debug_object_handle))
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+                request.debugged = true;
+            }
+
             bool explicit_handle_list{};
             for (size_t i = 0; i < attribute_count; ++i)
             {
@@ -330,6 +351,11 @@ namespace sogen
             child.native_environment = result.native_environment;
             child.compatibility_environment = result.compatibility_environment;
             const auto child_process_handle = c.proc.processes.store(std::move(child));
+
+            if (auto* debugger = c.proc.debug_objects.get(debug_object_handle))
+            {
+                debugger->debuggees.push_back({.process = result.process.value, .process_id = process_id, .thread_ids = {thread_id}});
+            }
 
             managed_process_thread initial_thread{};
             initial_thread.process = result.process;
@@ -1134,6 +1160,12 @@ namespace sogen
 
             if (c.proc.is_current_process_handle(process_handle))
             {
+                c.win_emu.report_debug_event({
+                    .kind = process_debug_event_kind::exit_process,
+                    .thread_id = c.thread().id,
+                    .exit_status = static_cast<uint32_t>(exit_status),
+                });
+
                 c.proc.exit_status = exit_status;
                 c.win_emu.stop();
                 return STATUS_SUCCESS;

@@ -30,6 +30,18 @@ namespace sogen
         NTSTATUS handle_NtOpenEvent(const syscall_context& c, emulator_object<uint64_t> event_handle, ACCESS_MASK desired_access,
                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
 
+        // syscalls/debug.cpp
+        NTSTATUS handle_NtCreateDebugObject(const syscall_context& c, emulator_object<handle> debug_object_handle,
+                                            ACCESS_MASK desired_access,
+                                            emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG flags);
+        NTSTATUS handle_NtWaitForDebugEvent(const syscall_context& c, handle debug_handle, BOOLEAN alertable,
+                                            emulator_object<LARGE_INTEGER> timeout, emulator_pointer state_change);
+        NTSTATUS handle_NtDebugContinue(const syscall_context& c, handle debug_handle, emulator_object<CLIENT_ID64> client_id,
+                                        NTSTATUS continue_status);
+        NTSTATUS handle_NtSetInformationDebugObject(const syscall_context& c, handle debug_handle, ULONG information_class,
+                                                    emulator_pointer information, ULONG length, emulator_object<ULONG> return_length);
+        NTSTATUS handle_NtRemoveProcessDebug(const syscall_context& c, handle process_handle, handle debug_handle);
+
         // syscalls/exception.cpp
         NTSTATUS handle_NtRaiseHardError(const syscall_context& c, NTSTATUS error_status, ULONG number_of_parameters,
                                          emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string_parameter_mask,
@@ -1314,11 +1326,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtCreateDebugObject()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
         NTSTATUS handle_NtAddAtomEx(const syscall_context& c, const uint64_t atom_name, const ULONG length,
                                     const emulator_object<RTL_ATOM> atom, const ULONG /*flags*/)
         {
@@ -1418,16 +1425,6 @@ namespace sogen
         NTSTATUS handle_NtSetWnfProcessNotificationEvent()
         {
             return STATUS_SUCCESS;
-        }
-
-        NTSTATUS handle_NtSetInformationDebugObject()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        NTSTATUS handle_NtRemoveProcessDebug()
-        {
-            return STATUS_NOT_SUPPORTED;
         }
 
         NTSTATUS handle_NtNotifyChangeDirectoryFileEx()
@@ -1965,6 +1962,8 @@ namespace sogen
         add_handler(NtSetSecurityObject);
         add_handler(NtSetInformationDebugObject);
         add_handler(NtRemoveProcessDebug);
+        add_handler(NtWaitForDebugEvent);
+        add_handler(NtDebugContinue);
         add_handler(NtNotifyChangeDirectoryFileEx);
         add_handler(NtUserGetHDevName);
         add_handler(NtFlushInstructionCache);

@@ -66,6 +66,7 @@ table ProcessCreateRequest {
     standard_error: ulong;
     inherited_pipes: [InheritedPipe];
     command_line: string (required);
+    debugged: bool;
 }
 
 table ProcessStarted {
@@ -131,6 +132,96 @@ table ReadMemoryResponse {
     data: [ubyte];
 }
 
+enum DebugEventKind : ubyte {
+    CreateProcess = 0,
+    CreateThread,
+    ExitThread,
+    ExitProcess,
+    Exception,
+    LoadDll,
+    UnloadDll,
+}
+
+table DebugEvent {
+    kind: DebugEventKind = CreateProcess;
+    thread_id: uint;
+    base_address: ulong;
+    start_address: ulong;
+    path: string;
+    exit_status: uint;
+    exception_code: uint;
+    exception_flags: uint;
+    exception_address: ulong;
+    exception_parameters: [ulong];
+    first_chance: bool;
+}
+
+table DebugEventRequest {}
+
+table DebugEventResponse {
+    error: ProcessError = None;
+    event: DebugEvent;
+}
+
+table DebugContinueRequest {
+    thread_id: uint;
+    status: uint;
+}
+
+table DebugDetachRequest {
+}
+
+table ThreadContextRequest {
+    thread_id: uint;
+    wow64: bool;
+}
+
+table ThreadContextResponse {
+    error: ProcessError = None;
+    context: [ubyte];
+}
+
+table SetThreadContextRequest {
+    thread_id: uint;
+    context: [ubyte];
+    wow64: bool;
+}
+
+table ThreadInformationRequest {
+    thread_id: uint;
+}
+
+table ThreadInformationResponse {
+    error: ProcessError = None;
+    teb: ulong;
+}
+
+table SuspendThreadRequest {
+    thread_id: uint;
+    resume: bool;
+}
+
+table SuspendThreadResponse {
+    error: ProcessError = None;
+    previous_count: uint;
+}
+
+table QueryMemoryRequest {
+    address: ulong;
+}
+
+table QueryMemoryResponse {
+    error: ProcessError = None;
+    base_address: ulong;
+    allocation_base: ulong;
+    allocation_protect: uint;
+    region_size: ulong;
+    state: uint;
+    protect: uint;
+    type: uint;
+    mapped_file: string;
+}
+
 union MessagePayload {
     Hello,
     ProcessCreateRequest,
@@ -146,6 +237,19 @@ union MessagePayload {
     ProcessMemoryResponse,
     ProcessErrorResponse,
     ReadMemoryResponse,
+    DebugEventRequest,
+    DebugEventResponse,
+    DebugContinueRequest,
+    ThreadContextRequest,
+    ThreadContextResponse,
+    SetThreadContextRequest,
+    SuspendThreadRequest,
+    SuspendThreadResponse,
+    QueryMemoryRequest,
+    QueryMemoryResponse,
+    ThreadInformationRequest,
+    ThreadInformationResponse,
+    DebugDetachRequest,
 }
 
 table Message {
