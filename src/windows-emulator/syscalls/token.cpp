@@ -378,7 +378,7 @@ namespace sogen
                 }
 
                 c.emu.write_memory(token_information, TOKEN_ELEVATION{
-                                                          .TokenIsElevated = 0,
+                                                          .TokenIsElevated = c.win_emu.runs_elevated() ? 1u : 0u,
                                                       });
                 return STATUS_SUCCESS;
             }
@@ -393,7 +393,8 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                // TokenElevationTypeDefault: no UAC split token (matches the non-elevated TokenElevation above).
+                // TokenElevationTypeDefault: no UAC split token, as for the built-in Administrator (RID 500) the token
+                // belongs to.
                 emulator_object<ULONG>{c.emu, token_information}.write(1);
                 return STATUS_SUCCESS;
             }
@@ -477,12 +478,16 @@ namespace sogen
 
             if (token_information_class == TokenIntegrityLevel)
             {
-                // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-                const uint8_t medium_integrity_sid[] = {
+                // S-1-16-8192 (medium) or S-1-16-12288 (high)
+                std::array<uint8_t, 20> integrity_sid = {
                     0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 };
+                if (c.win_emu.runs_elevated())
+                {
+                    integrity_sid[9] = 0x30;
+                }
 
-                constexpr auto required_size = sizeof(medium_integrity_sid) + sizeof(TOKEN_MANDATORY_LABEL64);
+                constexpr auto required_size = sizeof(integrity_sid) + sizeof(TOKEN_MANDATORY_LABEL64);
                 return_length.write(required_size);
 
                 if (required_size > token_information_length)
@@ -495,7 +500,7 @@ namespace sogen
                 label.Label.Sid = token_information + sizeof(TOKEN_MANDATORY_LABEL64);
 
                 emulator_object<TOKEN_MANDATORY_LABEL64>{c.emu, token_information}.write(label);
-                c.emu.write_memory(token_information + sizeof(TOKEN_MANDATORY_LABEL64), medium_integrity_sid, sizeof(medium_integrity_sid));
+                c.emu.write_memory(token_information + sizeof(TOKEN_MANDATORY_LABEL64), integrity_sid.data(), integrity_sid.size());
                 return STATUS_SUCCESS;
             }
 
