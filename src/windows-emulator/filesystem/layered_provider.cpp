@@ -41,8 +41,8 @@ namespace sogen
         {
 #ifdef OS_WINDOWS
             const auto serial = [](const std::filesystem::path& path) -> std::optional<DWORD> {
-                const auto handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                                                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+                auto* const handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                                 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
                 if (handle == INVALID_HANDLE_VALUE)
                 {
                     return std::nullopt;
@@ -104,9 +104,13 @@ namespace sogen
     layer_journal::layer_journal(std::filesystem::path file)
         : file_(std::move(file))
     {
-        std::ifstream stream(this->file_, std::ios::binary);
-        const std::string content{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
-        stream.close();
+        std::string content{};
+        std::error_code status_error{};
+        if (std::filesystem::is_regular_file(this->file_, status_error))
+        {
+            std::ifstream stream(this->file_, std::ios::binary);
+            content.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+        }
 
         // A record the crash cut short has no terminator. It is dropped and cut off, so that the next record does not
         // continue it.
@@ -551,7 +555,17 @@ namespace sogen
 
     NTSTATUS layered_provider::create_directory(const windows_path& path)
     {
-        ++this->generations_[path];
+        const auto status = this->create_directory_unchecked(path);
+        if (status == STATUS_SUCCESS)
+        {
+            ++this->generations_[path];
+        }
+
+        return status;
+    }
+
+    NTSTATUS layered_provider::create_directory_unchecked(const windows_path& path)
+    {
         if (this->stat(path))
         {
             return STATUS_OBJECT_NAME_COLLISION;
@@ -574,9 +588,18 @@ namespace sogen
 
     NTSTATUS layered_provider::rename(const windows_path& from, const windows_path& to)
     {
-        ++this->generations_[from];
-        ++this->generations_[to];
+        const auto status = this->rename_unchecked(from, to);
+        if (status == STATUS_SUCCESS)
+        {
+            ++this->generations_[from];
+            ++this->generations_[to];
+        }
 
+        return status;
+    }
+
+    NTSTATUS layered_provider::rename_unchecked(const windows_path& from, const windows_path& to)
+    {
         const auto source = this->stat(from);
         if (!source)
         {
@@ -639,8 +662,17 @@ namespace sogen
 
     NTSTATUS layered_provider::remove(const windows_path& path)
     {
-        ++this->generations_[path];
+        const auto status = this->remove_unchecked(path);
+        if (status == STATUS_SUCCESS)
+        {
+            ++this->generations_[path];
+        }
 
+        return status;
+    }
+
+    NTSTATUS layered_provider::remove_unchecked(const windows_path& path)
+    {
         const auto existing = this->stat(path);
         if (!existing)
         {

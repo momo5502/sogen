@@ -64,6 +64,9 @@ namespace sogen
 
         std::optional<std::filesystem::path> get_host_path(const windows_path& path) const override;
 
+        NTSTATUS create_directory_unchecked(const windows_path& path);
+        NTSTATUS rename_unchecked(const windows_path& from, const windows_path& to);
+        NTSTATUS remove_unchecked(const windows_path& path);
         uint64_t generation(const windows_path& path) const;
         bool lower_visible(const windows_path& path) const;
         std::optional<struct compat_stat> lower_stat(const windows_path& path) const;

@@ -333,6 +333,18 @@ namespace sogen::test
         EXPECT_EQ("own", read_host_file(this->upper() / "file.txt"));
     }
 
+    TEST_F(LayeredProviderTest, AFailedRenameKeepsOpenHandlesUsable)
+    {
+        write_host_file(this->upper() / "taken.txt", "x");
+        const auto provider = this->make_provider();
+
+        const auto result = provider->open(guest({u"file.txt"}), u"r+b");
+        ASSERT_TRUE(result.file);
+        EXPECT_NE(STATUS_SUCCESS, provider->rename(guest({u"file.txt"}), guest({u"taken.txt"})));
+
+        EXPECT_EQ(3u, write_text(*result.file, "NEW"));
+    }
+
     TEST_F(LayeredProviderTest, ARenameThatCannotHideTheOldNameLeavesNothingBehind)
     {
         std::filesystem::create_directories(this->state() / "journal");
