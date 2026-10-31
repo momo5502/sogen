@@ -223,6 +223,124 @@ namespace sogen::test
 
         ::munmap(host_buffer, host_page_size);
     }
+
+    TEST(FexWow64Test, LowGuestMemoryIsBackedByTheHostWindow)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        emu->notify_process_bitness(true);
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+
+        constexpr size_t page_size = 0x1000;
+        constexpr uint64_t aligned = 0x10000;
+        constexpr uint64_t unaligned = 0x21000;
+        ASSERT_TRUE(memory.allocate_memory(aligned, page_size, memory_permission::read_write));
+        ASSERT_TRUE(memory.allocate_memory(unaligned, page_size, memory_permission::read_write));
+
+        for (const uint64_t address : {aligned, unaligned})
+        {
+            const uint64_t value = 0x1122334455667788ULL ^ address;
+            memory.write_memory(address, value);
+            EXPECT_EQ(memory.read_memory<uint64_t>(address), value);
+
+            const uint64_t host_address = memory.host_placement_address(address);
+            EXPECT_NE(host_address, address);
+            EXPECT_GE(host_address, 0x100000000ULL);
+
+            uint64_t host_value{};
+            std::memcpy(&host_value, reinterpret_cast<const void*>(host_address), sizeof(host_value));
+            EXPECT_EQ(host_value, value);
+        }
+
+        ASSERT_TRUE(memory.protect_memory(unaligned, page_size, memory_permission::read));
+        EXPECT_EQ(memory.read_memory<uint64_t>(unaligned), 0x1122334455667788ULL ^ unaligned);
+
+        constexpr uint64_t loader_written = 0x8877665544332211ULL;
+        memory.write_memory(unaligned, loader_written);
+        EXPECT_EQ(memory.read_memory<uint64_t>(unaligned), loader_written);
+
+        constexpr size_t host_page_size = 0x4000;
+        void* const host_buffer = ::mmap(nullptr, host_page_size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0);
+        ASSERT_NE(host_buffer, MAP_FAILED);
+
+        const uint64_t alias = memory.allocate_host_memory(host_page_size, host_buffer, memory_permission::read_write, 0xFFFFFFFF);
+        ASSERT_NE(alias, 0u);
+        EXPECT_LT(alias, 0x100000000ULL);
+
+        constexpr uint32_t host_written = 0xC0FFEE11;
+        std::memcpy(host_buffer, &host_written, sizeof(host_written));
+        EXPECT_EQ(memory.read_memory<uint32_t>(alias), host_written);
+
+        constexpr uint32_t guest_written = 0x0DDBA11;
+        memory.write_memory(alias + sizeof(uint32_t), guest_written);
+        uint32_t seen_by_host{};
+        std::memcpy(&seen_by_host, static_cast<const std::byte*>(host_buffer) + sizeof(uint32_t), sizeof(seen_by_host));
+        EXPECT_EQ(seen_by_host, guest_written);
+
+        ::munmap(host_buffer, host_page_size);
+    }
+
+    TEST(FexWow64Test, GuestStoreToReadOnlyLowMemoryReportsTheGuestAddress)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        emu->notify_process_bitness(true);
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+
+        constexpr size_t page_size = 0x1000;
+        constexpr uint64_t code = 0x10000;
+        constexpr uint64_t target = 0x21000;
+        constexpr uint64_t gdt = 0x30000;
+        ASSERT_TRUE(memory.allocate_memory(code, page_size, memory_permission::read_write));
+        ASSERT_TRUE(memory.allocate_memory(target, page_size, memory_permission::read_write));
+        ASSERT_TRUE(memory.allocate_memory(gdt, page_size, memory_permission::read_write));
+
+        constexpr uint16_t long_mode_code_selector = 0x08;
+        constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+        emu->write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+        emu->load_gdt(gdt, page_size);
+        emu->reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+
+        // mov [rax], rbx; hlt
+        constexpr std::array<uint8_t, 4> guest_code = {0x48, 0x89, 0x18, 0xF4};
+        memory.write_memory(code, guest_code.data(), guest_code.size());
+        ASSERT_TRUE(memory.protect_memory(code, page_size, memory_permission::read_exec));
+        ASSERT_TRUE(memory.protect_memory(target, page_size, memory_permission::read));
+
+        bool observed = false;
+        uint64_t observed_address = 0;
+        memory_violation_type observed_type = memory_violation_type::unmapped;
+        emu->hook_memory_violation([&](cpu_interface& cpu, uint64_t address, size_t, memory_operation, memory_violation_type type) {
+            observed = true;
+            observed_address = address;
+            observed_type = type;
+            cpu.stop();
+            return memory_violation_continuation::stop;
+        });
+        emu->hook_interrupt([](cpu_interface& cpu, int) { cpu.stop(); });
+
+        emu->reg(x86_register::rip, code);
+        emu->reg(x86_register::rax, target);
+        emu->reg(x86_register::rbx, 0x1122334455667788ULL);
+        emu->start(0);
+
+        EXPECT_TRUE(observed);
+        EXPECT_EQ(observed_address, target);
+        EXPECT_EQ(observed_type, memory_violation_type::protection);
+        EXPECT_EQ(memory.read_memory<uint64_t>(target), 0u);
+    }
 #endif
 
     TEST(FexRegisterTest, ExtendedGprSubRegisterWrites)
