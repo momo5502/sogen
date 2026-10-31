@@ -383,6 +383,21 @@ namespace sogen::test
         EXPECT_EQ(context.io_status_block.read().Status, STATUS_PIPE_BROKEN);
     }
 
+    TEST_F(NamedPipeTest, WriteFailingImmediatelyPostsNoCompletion)
+    {
+        const auto completion = this->emu->process.io_completions.store(io_completion{});
+        ASSERT_EQ(this->emu->process.devices.get(this->writer)
+                      ->set_completion_association(this->emu->process, this->emu->vcpu(0).active_thread, completion, 0x1234),
+                  STATUS_SUCCESS);
+        ASSERT_EQ(this->close(this->reader), STATUS_SUCCESS);
+
+        const auto status = this->write("lost");
+        EXPECT_TRUE(NT_ERROR(status));
+
+        io_completion_message message{};
+        EXPECT_FALSE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
+    }
+
     TEST_F(NamedPipeTest, PendingIoQueryTracksReadCompletionAndCancellation)
     {
         const auto first = this->emu->process.threads.find_handle(this->emu->vcpu(0).active_thread);
