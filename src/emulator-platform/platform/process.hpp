@@ -1340,6 +1340,31 @@ namespace sogen
     };
 
     template <typename Traits>
+    struct SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX
+    {
+        Traits::PVOID Object;
+        Traits::ULONG_PTR UniqueProcessId;
+        Traits::ULONG_PTR HandleValue;
+        ULONG GrantedAccess;
+        USHORT CreatorBackTraceIndex;
+        USHORT ObjectTypeIndex;
+        ULONG HandleAttributes;
+        ULONG Reserved;
+    };
+
+    static_assert(sizeof(SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX<EmulatorTraits<Emu64>>) == 0x28);
+
+    template <typename Traits>
+    struct SYSTEM_HANDLE_INFORMATION_EX
+    {
+        Traits::ULONG_PTR NumberOfHandles;
+        Traits::ULONG_PTR Reserved;
+        SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX<Traits> Handles[ANYSIZE_ARRAY];
+    };
+
+    static_assert(offsetof(SYSTEM_HANDLE_INFORMATION_EX<EmulatorTraits<Emu64>>, Handles) == 0x10);
+
+    template <typename Traits>
     struct SYSTEM_THREAD_INFORMATION
     {
         LARGE_INTEGER KernelTime;
