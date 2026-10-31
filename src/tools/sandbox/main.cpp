@@ -3,6 +3,7 @@
 #include <emulator_process_target.hpp>
 #include <inherited_pipes.hpp>
 #include <registry/registry_file.hpp>
+#include <filesystem/document_mount.hpp>
 #include <snapshot.hpp>
 #include <utils/finally.hpp>
 #include <utils/executable_path.hpp>
@@ -95,9 +96,28 @@ namespace sogen::sandbox
             return configuration;
         }
 
+        std::vector<provider_mount> connect_document_mounts(const std::vector<document_mount>& document_mounts)
+        {
+            std::vector<provider_mount> mounts{};
+            for (const auto& mount : document_mounts)
+            {
+#if defined(__linux__)
+                mounts.push_back(provider_mount{
+                    .guest_path = mount.guest_path,
+                    .provider = connect_document_mount(mount),
+                    .mode = filesystem_mode::copy_on_write,
+                });
+#else
+                throw std::runtime_error("Document mounts are not supported on this platform: " + mount.guest_path.string());
+#endif
+            }
+
+            return mounts;
+        }
+
         int run(const std::span<const std::string_view> args, const filesystem_mode root_mode, std::vector<mount_spec> mounts,
-                const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
-                const std::vector<std::filesystem::path>& registry_files,
+                const std::vector<document_mount>& document_mounts, const std::filesystem::path& emulation_root,
+                const std::filesystem::path& registry_directory, const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
                 const bool spoof_gpu_features, const std::filesystem::path& snapshot_directory, const std::filesystem::path& resume_file,
                 managed_process_connection* managed_connection)
@@ -190,6 +210,11 @@ namespace sogen::sandbox
                                                                arguments.emplace_back("--mount");
                                                                arguments.push_back(render_mount_spec(mount));
                                                            }
+                                                           for (const auto& mount : document_mounts)
+                                                           {
+                                                               arguments.emplace_back("--document-mount");
+                                                               std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
+                                                           }
                                                            for (const auto& file : registry_files)
                                                            {
                                                                arguments.emplace_back("--reg-file");
@@ -214,11 +239,12 @@ namespace sogen::sandbox
             auto emulator = kvm::create_x86_64_emulator();
 #endif
 
-            auto win_emu_ptr = resume_file.empty() ? std::make_unique<windows_emulator>(std::move(emulator), std::move(app_settings),
-                                                                                        settings, std::move(callbacks),
-                                                                                        emulator_interfaces{.processes = &process_manager})
-                                                   : std::make_unique<windows_emulator>(std::move(emulator), settings, std::move(callbacks),
-                                                                                        emulator_interfaces{.processes = &process_manager});
+            emulator_interfaces interfaces{.processes = &process_manager, .mounts = connect_document_mounts(document_mounts)};
+            auto win_emu_ptr =
+                resume_file.empty()
+                    ? std::make_unique<windows_emulator>(std::move(emulator), std::move(app_settings), settings, std::move(callbacks),
+                                                         std::move(interfaces))
+                    : std::make_unique<windows_emulator>(std::move(emulator), settings, std::move(callbacks), std::move(interfaces));
             auto& win_emu = *win_emu_ptr;
             win_emu.log.disable_output(true);
 
@@ -338,6 +364,11 @@ namespace sogen::sandbox
             app.add_option("--mount", mount_specs, "Mount a host path into the guest file system (MODE is ro or rw)")
                 ->type_name("HOST:GUEST[:MODE]")
                 ->allow_extra_args(false);
+            std::vector<std::string> document_mount_values{};
+            app.add_option("--document-mount", document_mount_values, "Mount a document tree served by the parent process")
+                ->expected(static_cast<int>(document_mount::argument_count))
+                ->allow_extra_args(false)
+                ->group("");
             std::string root_mode{to_string(default_root_mode)};
             app.add_option("--root-mode", root_mode, "Access mode of the emulation root drives")
                 ->capture_default_str()
@@ -421,10 +452,17 @@ namespace sogen::sandbox
                     mounts.push_back(std::move(spec));
                 }
 
+                std::vector<document_mount> document_mounts{};
+                for (size_t i = 0; i + document_mount::argument_count <= document_mount_values.size(); i += document_mount::argument_count)
+                {
+                    document_mounts.push_back(
+                        document_mount::from_arguments(std::span(document_mount_values).subspan(i, document_mount::argument_count)));
+                }
+
                 const std::vector<std::string_view> views{application.begin(), application.end()};
-                return run(views, parse_filesystem_mode(root_mode).value(), std::move(mounts), emulation_root, registry_directory,
-                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features, snapshot_directory,
-                           resume_file, managed_process ? &*managed_process : nullptr);
+                return run(views, parse_filesystem_mode(root_mode).value(), std::move(mounts), document_mounts, emulation_root,
+                           registry_directory, registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features,
+                           snapshot_directory, resume_file, managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {
