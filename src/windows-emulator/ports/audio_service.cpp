@@ -18,12 +18,16 @@ namespace sogen
         // interface the client bound to. Windows changes their UUIDs between builds while keeping the versions.
         //   {923F85B3-BBEE-4EDF-8059-F569FA64A027} v1.6 = MMDevice enumeration (mmdevapi), 10.0.26100.
         //   {A3BE171F-A525-47A3-B75A-93DA9D645D1C} v1.6 = the same interface in 10.0.20348.
+        //   {8B71BD79-CCBB-47AB-BA09-97CA52C81DA9} v1.6 = the same interface in 10.0.19041, where mmdevapi's
+        //                                               AudiosrvGetDefaultAudioEndpoint is opnum 25 as well.
         //   {D574D111-6126-49D7-9B86-4DE6B650D4FC} v2.8 = "AudioClientRpc" / IAudioClient streaming (audioses), 10.0.26100.
         //   {98B2C141-ECA2-4919-98B4-A1980D00D234} v2.8 = the same interface in 10.0.20348.
         constexpr std::array<uint8_t, 16> k_iface_mmdevice_enum = {0xb3, 0x85, 0x3f, 0x92, 0xee, 0xbb, 0xdf, 0x4e,
                                                                    0x80, 0x59, 0xf5, 0x69, 0xfa, 0x64, 0xa0, 0x27};
         constexpr std::array<uint8_t, 16> k_iface_mmdevice_enum_20348 = {0x1f, 0x17, 0xbe, 0xa3, 0x25, 0xa5, 0xa3, 0x47,
                                                                          0xb7, 0x5a, 0x93, 0xda, 0x9d, 0x64, 0x5d, 0x1c};
+        constexpr std::array<uint8_t, 16> k_iface_mmdevice_enum_19041 = {0x79, 0xbd, 0x71, 0x8b, 0xbb, 0xcc, 0xab, 0x47,
+                                                                         0xba, 0x09, 0x97, 0xca, 0x52, 0xc8, 0x1d, 0xa9};
         constexpr std::array<uint8_t, 16> k_iface_audio_client = {0x11, 0xd1, 0x74, 0xd5, 0x26, 0x61, 0xd7, 0x49,
                                                                   0x9b, 0x86, 0x4d, 0xe6, 0xb6, 0x50, 0xd4, 0xfc};
         constexpr std::array<uint8_t, 16> k_iface_audio_client_20348 = {0x41, 0xc1, 0xb2, 0x98, 0xa2, 0xec, 0x19, 0x49,
@@ -882,7 +886,15 @@ namespace sogen
                     }
                 }
 
-                if (iface != k_iface_mmdevice_enum && iface != k_iface_mmdevice_enum_20348)
+                if (iface != k_iface_mmdevice_enum && iface != k_iface_mmdevice_enum_20348 && iface != k_iface_mmdevice_enum_19041)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                // On the 19041 interface only AudiosrvGetDefaultAudioEndpoint is known to match: its mmdevapi stub calls opnum
+                // 25 as (EDataFlow, ERole, [out] LPWSTR*, [out] int*), as 20348's does. The other opnums stay unanswered
+                // there until their 19041 layouts are checked.
+                if (iface == k_iface_mmdevice_enum_19041 && procedure_id != k_audio_opnum_get_default_endpoint)
                 {
                     return STATUS_NOT_SUPPORTED;
                 }

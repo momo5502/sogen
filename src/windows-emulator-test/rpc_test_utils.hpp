@@ -17,7 +17,7 @@ namespace sogen::test
             interfaces.console = std::make_unique<null_console_backend>();
             this->emu = std::make_unique<windows_emulator>(
                 create_x86_64_emulator_from_environment(),
-                emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = this->load_registry},
                 emulator_callbacks{}, std::move(interfaces));
             this->storage = this->emu->memory.allocate_memory(0x20000, memory_permission::read_write);
             constexpr std::array<uint8_t, 12> sid{1, 1, 0, 0, 0, 0, 0, 5, 18, 0, 0, 0};
@@ -73,6 +73,8 @@ namespace sogen::test
         std::unique_ptr<port> endpoint{};
         uint64_t storage{};
         size_t pointer_size{};
+        // A fixture whose service reads the registry sets this in its constructor to load the root's hives.
+        bool load_registry{};
 
       private:
         lpc_request_result request(ULONG length)
