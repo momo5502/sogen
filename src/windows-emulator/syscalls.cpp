@@ -819,6 +819,9 @@ namespace sogen
         int16_t handle_NtUserVkKeyScanEx();
         BOOL handle_NtUserSetLayeredWindowAttributes();
         BOOL handle_NtUserSetWindowFeedbackSetting();
+        BOOL handle_NtUserUpdateLayeredWindow(const syscall_context& c, hwnd window, hdc destination_dc, emulator_object<POINT> destination,
+                                              emulator_object<SIZE> size, hdc source_dc, emulator_object<POINT> source, COLORREF color_key,
+                                              emulator_pointer blend, DWORD flags, emulator_pointer dirty_rect);
         BOOL handle_NtUserUpdateClientRect(const syscall_context& c, hwnd window);
         int32_t handle_NtUserScrollWindowEx();
         BOOL handle_NtUserRedrawFrame(const syscall_context& c, hwnd window);
@@ -844,6 +847,7 @@ namespace sogen
         uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c);
         NTSTATUS handle_NtGdiDoPalette();
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
+        DWORD handle_NtUserGetGuiResources(const syscall_context& c, handle process, DWORD flags);
         int32_t handle_NtGdiSaveDC(const syscall_context& c, hdc dc);
         BOOL handle_NtGdiRestoreDC(const syscall_context& c, hdc dc, int32_t saved_dc);
         uint64_t handle_NtGdiAddFontMemResourceEx(const syscall_context& c, emulator_pointer buffer, uint32_t buffer_size,
@@ -2142,6 +2146,7 @@ namespace sogen
         add_handler(NtUserActivateKeyboardLayout);
         add_handler(NtUserLoadKeyboardLayoutEx);
         add_handler(NtUserGetGUIThreadInfo);
+        add_handler(NtUserGetGuiResources);
         add_handler(NtNotifyChangeDirectoryFile);
         add_handler(NtUserChangeWindowMessageFilter);
         add_handler(NtUserSetWinEventHook);
@@ -2154,6 +2159,7 @@ namespace sogen
         add_handler(NtUserVkKeyScanEx);
         add_handler(NtUserSetLayeredWindowAttributes);
         add_handler(NtUserSetWindowFeedbackSetting);
+        add_handler(NtUserUpdateLayeredWindow);
         add_handler(NtUserIsChildWindowDpiMessageEnabled);
 
 #undef add_handler

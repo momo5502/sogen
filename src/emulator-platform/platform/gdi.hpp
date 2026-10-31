@@ -203,6 +203,12 @@ namespace sogen
 
 #define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
 
+#define GR_GDIOBJECTS        0
+#define GR_USEROBJECTS       1
+#define GR_GDIOBJECTS_PEAK   2
+#define GR_USEROBJECTS_PEAK  4
+#define GR_GLOBAL            (-2)
+
     struct GDI_SHARED_MEMORY64
     {
         GDI_HANDLE_ENTRY64 Handles[GDI_MAX_HANDLE_COUNT];
