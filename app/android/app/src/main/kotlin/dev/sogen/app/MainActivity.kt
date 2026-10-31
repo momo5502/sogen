@@ -2,11 +2,9 @@ package dev.sogen.app
 
 import android.content.Intent
 import android.content.pm.ActivityInfo
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
-import android.provider.Settings
+import android.provider.DocumentsContract
+import android.util.Log
 import android.view.KeyEvent
 import dev.sogen.app.runtime.RunConfig
 import io.flutter.embedding.android.FlutterActivity
@@ -15,10 +13,12 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
     private var events: EventChannel.EventSink? = null
     private lateinit var session: SessionController
+    private var folderPick: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -71,9 +71,16 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(messenger, "dev.sogen.app/storage").setMethodCallHandler { call, result ->
             when (call.method) {
-                "hasAccess" -> result.success(hasStorageAccess())
-                "requestAccess" -> {
-                    requestStorageAccess()
+                "pickFolder" -> pickFolder(result)
+                "findExecutables" -> findExecutables(
+                    call.argument<String>("uri").orEmpty(),
+                    call.argument<Int>("maxDepth") ?: 0,
+                    result,
+                )
+
+                "persistedFolders" -> result.success(contentResolver.persistedUriPermissions.map { it.uri.toString() })
+                "releaseFolder" -> {
+                    releaseFolder(call.argument<String>("uri").orEmpty())
                     result.success(null)
                 }
 
@@ -141,6 +148,8 @@ class MainActivity : FlutterActivity() {
         arguments = call.argument<List<String>>("arguments").orEmpty(),
         environment = call.argument<Map<String, String>>("environment").orEmpty(),
         pathMappings = call.argument<Map<String, String>>("pathMappings").orEmpty(),
+        documentMounts = call.argument<Map<String, String>>("documentMounts").orEmpty(),
+        layerDirectory = call.argument<String>("layerDirectory").orEmpty(),
         workingDirectory = call.argument<String>("workingDirectory").orEmpty(),
         backend = call.argument<String>("backend").orEmpty(),
         liveNetwork = call.argument<Boolean>("liveNetwork") == true,
@@ -148,25 +157,85 @@ class MainActivity : FlutterActivity() {
         resumeFile = call.argument<String>("resumeFile").orEmpty(),
     )
 
-    // Games are run in place from shared storage, and native code needs plain file paths for that.
-    private fun hasStorageAccess(): Boolean =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
-            checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-        }
+    /** Completes with the tree URI of the chosen folder, which stays readable across restarts, or null. */
+    private fun pickFolder(result: MethodChannel.Result) {
+        folderPick?.success(null)
+        folderPick = result
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_FOLDER_REQUEST)
+    }
 
-    private fun requestStorageAccess() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            requestPermissions(arrayOf(android.Manifest.permission.READ_EXTERNAL_STORAGE), 0)
+    @Deprecated("FlutterActivity is not a ComponentActivity, so it has no activity result API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != PICK_FOLDER_REQUEST) {
+            @Suppress("DEPRECATION")
+            super.onActivityResult(requestCode, resultCode, data)
             return
         }
 
-        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
-        startActivity(intent)
+        val result = folderPick ?: return
+        folderPick = null
+
+        val tree = data?.data
+        if (resultCode != RESULT_OK || tree == null) {
+            result.success(null)
+            return
+        }
+
+        contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        result.success(tree.toString())
+    }
+
+    private fun releaseFolder(uri: String) {
+        try {
+            contentResolver.releasePersistableUriPermission(Uri.parse(uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (e: SecurityException) {
+            Log.w(TAG, "No access to release for $uri", e)
+        }
+    }
+
+    /** Relative paths of the executables up to [maxDepth] folders below the tree, shallowest first. */
+    private fun findExecutables(uri: String, maxDepth: Int, result: MethodChannel.Result) {
+        thread(name = "find-executables") {
+            val executables = ArrayList<String>()
+            try {
+                val tree = Uri.parse(uri)
+                val pending = ArrayDeque<Triple<String, String, Int>>()
+                pending.add(Triple(DocumentsContract.getTreeDocumentId(tree), "", 0))
+                while (pending.isNotEmpty()) {
+                    val (parent, prefix, depth) = pending.removeFirst()
+                    val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parent)
+                    contentResolver.query(children, executableColumns, null, null, null)?.use { cursor ->
+                        while (cursor.moveToNext()) {
+                            val path = prefix + cursor.getString(1)
+                            if (cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                                if (depth < maxDepth) {
+                                    pending.add(Triple(cursor.getString(0), "$path/", depth + 1))
+                                }
+                            } else if (path.endsWith(".exe", ignoreCase = true)) {
+                                executables.add(path)
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // An unreadable folder offers what was found before it.
+                Log.w(TAG, "Could not search $uri", e)
+            }
+
+            runOnUiThread { result.success(executables) }
+        }
     }
 
     private companion object {
+        const val TAG = "MainActivity"
+        const val PICK_FOLDER_REQUEST = 1
+
         val systemKeys = setOf(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)
+
+        val executableColumns = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
     }
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -159,7 +160,8 @@ class Game {
   final String id;
   final String name;
 
-  /// Host folder that is mapped to [guestGameDirectory].
+  /// Storage Access Framework tree URI of the folder that is mapped to [guestGameDirectory]. Games added before Sogen
+  /// read folders through the Storage Access Framework hold a plain host path instead, which it can no longer read.
   final String directory;
 
   /// Executable path relative to [directory], using `/` separators.
@@ -176,7 +178,7 @@ class Game {
 
   String get guestExecutable => _toGuestPath(executable);
 
-  String get hostExecutable => p.join(directory, executable);
+  bool get hasFolderAccess => isFolderUri(directory);
 
   String get guestWorkingDirectory => _toGuestPath(p.posix.dirname(executable));
 
@@ -221,6 +223,40 @@ class Game {
   };
 }
 
+bool isFolderUri(String directory) => directory.startsWith('content://');
+
+/// A readable form of a folder URI, e.g. `Games/Skyrim` for the tree of `primary:Games/Skyrim`.
+String describeFolder(String directory) {
+  if (!isFolderUri(directory)) {
+    return directory;
+  }
+
+  final segments = Uri.parse(directory).pathSegments;
+  final tree = segments.length >= 2 && segments[0] == 'tree' ? segments[1] : segments.lastOrNull ?? directory;
+  final separator = tree.indexOf(':');
+  return separator < 0 ? tree : tree.substring(separator + 1);
+}
+
+/// Where the changes a game makes to its folder are kept, since the folder itself is only read. Choosing another
+/// folder for the game starts with no changes instead of applying the old folder's to it.
+Future<Directory> layerDirectory(Game game) async {
+  return Directory(p.join((await _gameLayers(game)).path, _fnv1a(game.directory).toRadixString(16)));
+}
+
+/// Everything that is kept for the game besides its folder.
+Future<Directory> _gameLayers(Game game) async {
+  final support = await getApplicationSupportDirectory();
+  return Directory(p.join(support.path, 'layers', game.id));
+}
+
+int _fnv1a(String text) {
+  var hash = 0x811c9dc5;
+  for (final unit in utf8.encode(text)) {
+    hash = ((hash ^ unit) * 0x01000193) & 0xffffffff;
+  }
+  return hash;
+}
+
 /// Where a suspended game is saved, to continue from there when it is started again.
 Future<File> savedStateFile(Game game) async {
   final support = await getApplicationSupportDirectory();
@@ -228,6 +264,8 @@ Future<File> savedStateFile(Game game) async {
 }
 
 class GameLibrary extends ChangeNotifier {
+  static const _storage = MethodChannel('dev.sogen.app/storage');
+
   GameLibrary._(this._file, this._games);
 
   final File _file;
@@ -257,9 +295,16 @@ class GameLibrary extends ChangeNotifier {
   /// Replaces the game with the same id, which keeps its suspended state attached to it.
   Future<void> update(Game game) async {
     final index = _games.indexWhere((entry) => entry.id == game.id);
-    if (index >= 0) {
-      _games[index] = game;
-      await _save();
+    if (index < 0) {
+      return;
+    }
+
+    final previous = _games[index];
+    _games[index] = game;
+    await _save();
+
+    if (previous.directory != game.directory) {
+      await _deleteIfPresent(await layerDirectory(previous));
     }
   }
 
@@ -271,9 +316,27 @@ class GameLibrary extends ChangeNotifier {
     }
   }
 
+  /// Also deletes the changes the game made to its folder.
   Future<void> remove(Game game) async {
     _games.removeWhere((entry) => entry.id == game.id);
     await _save();
+    await _deleteIfPresent(await _gameLayers(game));
+  }
+
+  /// Android limits how many folder grants an app may keep, so the ones no game uses are given back, e.g. folders
+  /// picked in an editor that was cancelled, or the previous folder of an edited game.
+  Future<void> releaseUnusedFolders() async {
+    final granted = await _storage.invokeListMethod<String>('persistedFolders') ?? const [];
+    final used = _games.map((game) => game.directory).toSet();
+    for (final folder in granted.where((folder) => !used.contains(folder))) {
+      await _storage.invokeMethod('releaseFolder', {'uri': folder});
+    }
+  }
+
+  static Future<void> _deleteIfPresent(Directory directory) async {
+    if (directory.existsSync()) {
+      await directory.delete(recursive: true);
+    }
   }
 
   /// Writes a temporary file and renames it over the library, so that dying mid-write never truncates it. Writes run
