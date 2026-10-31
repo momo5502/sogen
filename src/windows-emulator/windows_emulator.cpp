@@ -576,10 +576,10 @@ namespace sogen
             const auto is_ready = thread.is_thread_ready(win_emu);
             const auto has_pending_status = thread.pending_status.has_value();
             const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
-            const auto can_run_low_level_hook =
-                !is_ready && thread.message_wait_return_register.has_value() && win_emu.has_low_level_hook_work(thread.id);
+            const auto can_run_message_hook = !is_ready && thread.message_wait_return_register.has_value() &&
+                                              (win_emu.has_low_level_hook_work(thread.id) || thread.has_hooked_message(win_emu));
 
-            if (!is_ready && !force && !can_dispatch_apcs && !can_run_low_level_hook)
+            if (!is_ready && !force && !can_dispatch_apcs && !can_run_message_hook)
             {
                 return false;
             }
@@ -605,7 +605,7 @@ namespace sogen
                 thread.mark_as_ready(STATUS_USER_APC);
                 dispatch_next_apc(win_emu, vcpu, thread);
             }
-            else if (can_run_low_level_hook)
+            else if (can_run_message_hook)
             {
                 // The message syscall runs the hook first when it executes again.
                 thread.restart_message_wait(emu, win_emu.abi());

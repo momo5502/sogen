@@ -34,6 +34,7 @@ namespace sogen
         constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
         constexpr uint32_t k_fn_hk_in_lp_cbt_create_struct_callback_id = 0x2A;
+        constexpr int k_wh_getmessage = 3;
         constexpr int k_wh_cbt = 5;
         constexpr int k_wh_keyboard_ll = 13;
         constexpr int k_wh_mouse_ll = 14;
@@ -1009,7 +1010,8 @@ namespace sogen
                                                                               .pixels = surface.pixels.data()});
         }
 
-        void dispatch_cbt_create_window(const syscall_context& c, window_create_state&& state, const window& win, const user_cbt_hook& hook)
+        void dispatch_cbt_create_window(const syscall_context& c, window_create_state&& state, const window& win,
+                                        const user_thread_hook& hook)
         {
             fn_hk_in_lp_cbt_create_struct_message args{};
             args.pwnd = win.guest.value();
@@ -3203,13 +3205,28 @@ namespace sogen
                 return handle;
             }
 
-            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || thread.cbt_hook)
+            if (instance != 0 || thread_id != thread.id)
+            {
+                return 0;
+            }
+
+            std::optional<user_thread_hook>* slot{};
+            if (hook_id == k_wh_cbt)
+            {
+                slot = &thread.cbt_hook;
+            }
+            else if (hook_id == k_wh_getmessage)
+            {
+                slot = &thread.get_message_hook;
+            }
+
+            if (!slot || *slot)
             {
                 return 0;
             }
 
             const auto handle = c.proc.next_hook_handle++;
-            thread.cbt_hook = user_cbt_hook{
+            *slot = user_thread_hook{
                 .handle = handle,
                 .proc = proc,
                 .ansi = ansi != FALSE,
@@ -3221,10 +3238,13 @@ namespace sogen
         {
             for (auto& thread : c.proc.threads | std::views::values)
             {
-                if (thread.cbt_hook && thread.cbt_hook->handle == hook)
+                for (auto* slot : {&thread.cbt_hook, &thread.get_message_hook})
                 {
-                    thread.cbt_hook.reset();
-                    return TRUE;
+                    if (*slot && (*slot)->handle == hook)
+                    {
+                        slot->reset();
+                        return TRUE;
+                    }
                 }
 
                 if (std::erase_if(thread.low_level_hooks, [&](const user_low_level_hook& entry) { return entry.handle == hook; }) != 0)
@@ -4351,6 +4371,10 @@ namespace sogen
                 message.write(*pending_msg);
                 t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
+                if (dispatch_get_message_hook(c, callback_id::NtUserGetMessage, *pending_msg, PM_REMOVE))
+                {
+                    return {};
+                }
                 return pending_msg->message != WM_QUIT ? TRUE : FALSE;
             }
 
@@ -4364,6 +4388,13 @@ namespace sogen
         BOOL completion_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                          const UINT msg_filter_min, const UINT msg_filter_max)
         {
+            if (c.current_completion_state)
+            {
+                const auto hooked = complete_get_message_hook(c);
+                message.write(hooked);
+                return hooked.message != WM_QUIT ? TRUE : FALSE;
+            }
+
             complete_low_level_hook(c);
             return handle_NtUserGetMessage(c, message, hwnd, msg_filter_min, msg_filter_max);
         }
@@ -4386,6 +4417,10 @@ namespace sogen
                 message.write(*pending_msg);
                 t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
+                if (dispatch_get_message_hook(c, callback_id::NtUserPeekMessage, *pending_msg, should_remove ? PM_REMOVE : PM_NOREMOVE))
+                {
+                    return {};
+                }
                 return TRUE;
             }
 
@@ -4395,6 +4430,12 @@ namespace sogen
         BOOL completion_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                           const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
         {
+            if (c.current_completion_state)
+            {
+                message.write(complete_get_message_hook(c));
+                return TRUE;
+            }
+
             complete_low_level_hook(c);
             return handle_NtUserPeekMessage(c, message, hwnd, msg_filter_min, msg_filter_max, remove_message);
         }
