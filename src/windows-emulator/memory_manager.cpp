@@ -1561,6 +1561,11 @@ namespace sogen
         return this->memory_->host_memory_aliasing_is_coherent();
     }
 
+    bool memory_manager::host_cached_memory_aliasing_is_coherent() const
+    {
+        return this->memory_->host_cached_memory_aliasing_is_coherent();
+    }
+
     void memory_manager::flush_host_memory_cache(const void* host_pointer, const size_t size)
     {
         this->memory_->flush_host_memory_cache(host_pointer, size);

@@ -94,6 +94,11 @@ namespace sogen
             return true;
         }
 
+        virtual bool host_cached_memory_aliasing_is_coherent() const
+        {
+            return this->host_memory_aliasing_is_coherent();
+        }
+
         virtual void flush_host_memory_cache(const void* /*host_pointer*/, size_t /*size*/)
         {
         }

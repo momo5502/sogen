@@ -139,9 +139,9 @@ namespace
 
     bool bridge_call(uint32_t code, const void* in, DWORD in_len, void* out, DWORD out_len)
     {
-        // Every other bridge call may make the host observe descriptor state (record, submit, ...), so drain
-        // pending updates first to keep host state identical to the un-batched path.
-        if (code != gb::ioctl_update_descriptor_sets_batch)
+        // Allocation cannot observe pending writes; every command that uses or invalidates existing sets
+        // must drain them first, including free, pool reset, and destruction.
+        if (code != gb::ioctl_update_descriptor_sets_batch && code != gb::ioctl_allocate_descriptor_sets)
         {
             flush_descriptor_updates();
         }

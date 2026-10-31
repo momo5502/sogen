@@ -443,6 +443,7 @@ namespace sogen
 
                 for (auto& [memory, mapping] : this->direct_mappings_)
                 {
+                    mapping.host_cached_coherent = this->vulkan_.is_host_cached_coherent_memory(memory);
                     void* host_ptr = nullptr;
                     if (mapping.placed)
                     {
@@ -485,6 +486,7 @@ namespace sogen
                 uint64_t device{};
                 void* host_ptr{};
                 bool placed{};
+                bool host_cached_coherent{};
             };
 
             std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
@@ -583,9 +585,10 @@ namespace sogen
                     return;
                 }
 
+                const bool cached_aliases_coherent = win_emu.memory.host_cached_memory_aliasing_is_coherent();
                 for (const auto& [id, mapping] : this->direct_mappings_)
                 {
-                    if (mapping.host_ptr != nullptr && mapping.size != 0)
+                    if ((!mapping.host_cached_coherent || !cached_aliases_coherent) && mapping.host_ptr != nullptr && mapping.size != 0)
                     {
                         win_emu.memory.flush_host_memory_cache(mapping.host_ptr, static_cast<size_t>(mapping.size));
                     }
@@ -2077,7 +2080,8 @@ namespace sogen
                 {
                     response.vk_result = 0; // vk_success
                     response.guest_address = (request.offset < placed->size) ? (placed->guest_address + request.offset) : 0;
-                    this->direct_mappings_[request.memory] = *placed;
+                    auto& mapping = this->direct_mappings_[request.memory] = *placed;
+                    mapping.host_cached_coherent = this->vulkan_.is_host_cached_coherent_memory(request.memory);
                     return write_output(win_emu, context, response);
                 }
 
@@ -2117,7 +2121,11 @@ namespace sogen
                 }
 
                 this->direct_mappings_[request.memory] =
-                    direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device, .host_ptr = host_ptr};
+                    direct_mapping{.guest_address = va,
+                                   .size = mapped_size,
+                                   .device = request.device,
+                                   .host_ptr = host_ptr,
+                                   .host_cached_coherent = this->vulkan_.is_host_cached_coherent_memory(request.memory)};
                 response.guest_address = (request.offset < mapped_size) ? (va + request.offset) : 0;
                 return write_output(win_emu, context, response);
             }

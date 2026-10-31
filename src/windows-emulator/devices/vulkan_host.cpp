@@ -1270,6 +1270,7 @@ namespace sogen
             bool placed{};
             bool imported{};
             bool non_coherent{};
+            bool host_cached_coherent{};
         };
 
         struct buffer_data
@@ -5925,13 +5926,17 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory,
-                                                            .device_id = device,
-                                                            .requested_size = size,
-                                                            .memory_type_index = memory_type_index,
-                                                            .flags = flags,
-                                                            .device_mask = device_mask,
-                                                            .allocation_size = aligned_size});
+        this->impl_->memories.emplace(
+            id, impl::memory_data{.handle = memory,
+                                  .device_id = device,
+                                  .requested_size = size,
+                                  .memory_type_index = memory_type_index,
+                                  .flags = flags,
+                                  .device_mask = device_mask,
+                                  .allocation_size = aligned_size,
+                                  .host_cached_coherent =
+                                      (type_flags & (VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                                      (VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)});
         out_memory = id;
         return VK_SUCCESS;
     }
@@ -6385,6 +6390,12 @@ namespace sogen
     {
         const auto mem = this->impl_->memories.find(memory);
         return mem != this->impl_->memories.end() && mem->second.imported && mem->second.non_coherent;
+    }
+
+    bool vulkan_host::is_host_cached_coherent_memory(const uint64_t memory) const
+    {
+        const auto mem = this->impl_->memories.find(memory);
+        return mem != this->impl_->memories.end() && mem->second.host_cached_coherent;
     }
 
     int32_t vulkan_host::flush_imported_memory(const std::span<const memory_range> ranges)
