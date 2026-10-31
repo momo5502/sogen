@@ -1205,7 +1205,7 @@ namespace sogen
             }
         }
 
-        NTSTATUS handle_NtQueryWnfStateData(const syscall_context&, const emulator_object<uint64_t> state_name,
+        NTSTATUS handle_NtQueryWnfStateData(const syscall_context& c, const emulator_object<uint64_t> state_name,
                                             const emulator_pointer /*type_id*/, const emulator_pointer /*explicit_scope*/,
                                             const emulator_object<ULONG> change_stamp, const emulator_pointer buffer,
                                             const emulator_object<ULONG> buffer_size)
@@ -1216,24 +1216,44 @@ namespace sogen
                 return STATUS_ACCESS_VIOLATION;
             }
 
-            // External WNF state names are XORed with this key; the decoded low bits hold the version and the data scope.
-            constexpr uint64_t state_name_key = 0x41C64E6DA3BC0074;
             constexpr uint64_t max_data_scope = 5;
-            const auto decoded = *name ^ state_name_key;
+            const auto decoded = *name ^ wnf_state_name_key;
             if ((decoded & 0xF) != 1 || ((decoded >> 6) & 0xF) > max_data_scope)
             {
                 return STATUS_INVALID_PARAMETER;
             }
 
+            // As 19041, the change stamp, the buffer size and the buffer (for that size) are probed for writing before the name
+            // is looked up, so an output that cannot be written fails the call before anything is written.
+            auto& memory = c.win_emu.memory;
             const auto size = buffer_size.try_read();
-            if (!change_stamp || !size || (!buffer && *size != 0))
+            if (!size || !is_writable_range(memory, change_stamp.value(), sizeof(ULONG)) ||
+                !is_writable_range(memory, buffer_size.value(), sizeof(ULONG)) || (*size != 0 && !is_writable_range(memory, buffer, *size)))
             {
                 return STATUS_ACCESS_VIOLATION;
             }
 
-            // There is no WNF store, so every well-formed name reads like one that was never published.
-            change_stamp.write(0);
-            buffer_size.write(0);
+            const auto state = c.proc.wnf_states.find(*name);
+            if (state == c.proc.wnf_states.end())
+            {
+                change_stamp.write(0);
+                buffer_size.write(0);
+                return STATUS_SUCCESS;
+            }
+
+            const auto data_size = static_cast<ULONG>(state->second.data.size());
+            change_stamp.write(state->second.change_stamp);
+            buffer_size.write(data_size);
+            if (*size < data_size)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            if (data_size != 0)
+            {
+                c.emu.write_memory(buffer, state->second.data.data(), data_size);
+            }
+
             return STATUS_SUCCESS;
         }
 

@@ -100,6 +100,30 @@ namespace sogen::test
         }
     }
 
+    TEST_F(WnfStateDataTest, PublishedStateReportsItsStampAndData)
+    {
+        this->emu->process.wnf_states[registered_name] = {.change_stamp = 7,
+                                                          .data = {std::byte{0x44}, std::byte{0x33}, std::byte{0x22}, std::byte{0x11}}};
+
+        const auto result = this->query(registered_name, 0x1000);
+        EXPECT_EQ(STATUS_SUCCESS, result.status);
+        EXPECT_EQ(7u, result.change_stamp);
+        EXPECT_EQ(4u, result.buffer_size);
+        EXPECT_EQ(0x11223344u, result.buffer_head);
+    }
+
+    TEST_F(WnfStateDataTest, ShortBufferReportsThePublishedSizeAndStamp)
+    {
+        this->emu->process.wnf_states[registered_name] = {.change_stamp = 7,
+                                                          .data = {std::byte{0x44}, std::byte{0x33}, std::byte{0x22}, std::byte{0x11}}};
+
+        const auto result = this->query(registered_name, 3);
+        EXPECT_EQ(STATUS_BUFFER_TOO_SMALL, result.status);
+        EXPECT_EQ(7u, result.change_stamp);
+        EXPECT_EQ(4u, result.buffer_size);
+        EXPECT_EQ(untouched, result.buffer_head);
+    }
+
     TEST_F(WnfStateDataTest, NullBufferIsAcceptedWhenItsSizeIsZero)
     {
         const auto result = this->query(registered_name, 0, {.buffer = false});
@@ -141,5 +165,46 @@ namespace sogen::test
         EXPECT_EQ(STATUS_ACCESS_VIOLATION, no_buffer.status);
         EXPECT_EQ(untouched, no_buffer.change_stamp);
         EXPECT_EQ(0x1000u, no_buffer.buffer_size);
+    }
+
+    TEST_F(WnfStateDataTest, UnwritableOutputsAreAccessViolationsAndWriteNothing)
+    {
+        auto& memory = this->emu->memory;
+        const auto read_only = memory.allocate_memory(0x1000, memory_permission::read);
+        const auto unmapped = memory.allocate_memory(0x1000, memory_permission::read_write, true);
+        const emulator_object<uint64_t> state_name{memory, this->storage};
+        const emulator_object<ULONG> change_stamp{memory, this->storage + 0x10};
+        const emulator_object<ULONG> buffer_size{memory, this->storage + 0x20};
+        const emulator_object<ULONG> buffer_head{memory, this->buffer_address()};
+        state_name.write(registered_name);
+
+        const auto query = [&](const uint64_t stamp_at, const uint64_t size_at, const uint64_t buffer) {
+            change_stamp.write(untouched);
+            buffer_size.write(0x1000);
+            buffer_head.write(untouched);
+            return syscalls::handle_NtQueryWnfStateData(this->context(), state_name, 0, 0, {memory, stamp_at}, buffer, {memory, size_at});
+        };
+
+        // Never published, then published: the outputs are probed before the name is looked up either way.
+        for (const auto published : {false, true})
+        {
+            if (published)
+            {
+                this->emu->process.wnf_states[registered_name] = {.change_stamp = 7, .data = {std::byte{0x44}}};
+            }
+
+            for (const auto bad : {read_only, unmapped})
+            {
+                EXPECT_EQ(STATUS_ACCESS_VIOLATION, query(bad, buffer_size.value(), this->buffer_address())) << published;
+                EXPECT_EQ(0x1000u, buffer_size.read()) << published;
+                EXPECT_EQ(STATUS_ACCESS_VIOLATION, query(change_stamp.value(), bad, this->buffer_address())) << published;
+                EXPECT_EQ(untouched, change_stamp.read()) << published;
+            }
+
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION, query(change_stamp.value(), buffer_size.value(), unmapped)) << published;
+            EXPECT_EQ(untouched, change_stamp.read()) << published;
+            EXPECT_EQ(0x1000u, buffer_size.read()) << published;
+            EXPECT_EQ(untouched, buffer_head.read()) << published;
+        }
     }
 }

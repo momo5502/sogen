@@ -867,6 +867,8 @@ namespace sogen
         buffer.write_map(this->audio_render_events_by_stream);
         buffer.write_map(this->pending_audio_render_events);
         buffer.write(this->next_audio_stream_id);
+        buffer.write_map(this->wnf_states);
+        buffer.write_map(this->service_status_state_names);
 
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
@@ -1000,6 +1002,8 @@ namespace sogen
         buffer.read_map(this->audio_render_events_by_stream);
         buffer.read_map(this->pending_audio_render_events);
         buffer.read(this->next_audio_stream_id);
+        buffer.read_map(this->wnf_states);
+        buffer.read_map(this->service_status_state_names);
 
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);

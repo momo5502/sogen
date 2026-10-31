@@ -19,6 +19,7 @@
 #include "emulator_thread.hpp"
 #include "port.hpp"
 #include "user_handle_table.hpp"
+#include "wnf_state.hpp"
 
 #include "apiset/apiset.hpp"
 
@@ -751,6 +752,9 @@ namespace sogen
         // Audio streams are numbered per process, so an endpoint port name identifies one stream across every
         // audio-service connection.
         uint32_t next_audio_stream_id{1};
+
+        std::map<uint64_t, wnf_state> wnf_states{};
+        utils::insensitive_u16string_map<uint64_t> service_status_state_names{};
 
         // Extended parameters from last NtMapViewOfSectionEx call
         // These can be used by other syscalls like NtAllocateVirtualMemoryEx
