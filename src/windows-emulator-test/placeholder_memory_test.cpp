@@ -10,6 +10,19 @@ namespace sogen::syscalls
                                               ULONG extended_parameter_count);
     NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                         emulator_object<uint64_t> bytes_to_allocate, uint32_t free_type);
+    NTSTATUS handle_NtCreateSection(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK desired_access,
+                                    emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                    emulator_object<ULARGE_INTEGER> maximum_size, ULONG section_page_protection,
+                                    ULONG allocation_attributes, handle file_handle);
+    NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, handle section_handle, handle process_handle,
+                                       emulator_object<uint64_t> base_address,
+                                       EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) zero_bits,
+                                       EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) commit_size,
+                                       emulator_object<LARGE_INTEGER> section_offset,
+                                       emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
+                                       SECTION_INHERIT inherit_disposition, ULONG allocation_type, ULONG win32_protect);
+    NTSTATUS handle_NtUnmapViewOfSectionEx(const syscall_context& c, handle process_handle, uint64_t base_address, ULONG flags);
+    NTSTATUS handle_NtClose(const syscall_context& c, handle h);
 }
 
 namespace sogen::test
@@ -55,6 +68,32 @@ namespace sogen::test
                 const syscall_context context{
                     .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 return syscalls::handle_NtFreeVirtualMemory(context, CURRENT_PROCESS, base, bytes, flags);
+            }
+
+            syscall_context context() const
+            {
+                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            }
+
+            handle create_pagefile_section(const uint64_t size)
+            {
+                const emulator_object<handle> section{this->emu->memory, this->storage};
+                const emulator_object<ULARGE_INTEGER> maximum_size{this->emu->memory, this->storage + 8};
+                maximum_size.write(ULARGE_INTEGER{.QuadPart = size});
+                EXPECT_EQ(syscalls::handle_NtCreateSection(this->context(), section, 0, {this->emu->memory}, maximum_size, PAGE_READWRITE,
+                                                           SEC_COMMIT, {}),
+                          STATUS_SUCCESS);
+                return section.read();
+            }
+
+            NTSTATUS map_view(const handle section, const uint64_t address, const uint64_t size, const ULONG allocation_type)
+            {
+                const emulator_object<uint64_t> base{this->emu->memory, this->storage};
+                const emulator_object<EmulatorTraits<Emu64>::SIZE_T> view_size{this->emu->memory, this->storage + 8};
+                base.write(address);
+                view_size.write(size);
+                return syscalls::handle_NtMapViewOfSection(this->context(), section, CURRENT_PROCESS, base, 0, 0, {this->emu->memory},
+                                                           view_size, ViewUnmap, allocation_type, PAGE_READWRITE);
             }
 
             std::unique_ptr<windows_emulator> emu;
@@ -162,5 +201,38 @@ namespace sogen::test
         EXPECT_EQ(this->free(base, 0x20000, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER), STATUS_CONFLICTING_ADDRESSES);
         EXPECT_EQ(this->emu->memory.get_region_info(base).allocation_length, 0x20000u);
         EXPECT_EQ(this->free(base, 0x10000, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER), STATUS_SUCCESS);
+    }
+
+    TEST_F(PlaceholderMemoryTest, SectionViewsReplacingPlaceholdersAliasTheSamePages)
+    {
+        if (!this->emu->memory.can_alias_host_memory_anywhere())
+        {
+            GTEST_SKIP() << "The backend cannot map host memory at a second address";
+        }
+
+        constexpr uint64_t size = 0x10000;
+        uint64_t base{};
+        ASSERT_EQ(this->allocate(base, size * 2, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER), STATUS_SUCCESS);
+        ASSERT_EQ(this->free(base, size, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER), STATUS_SUCCESS);
+
+        const auto section = this->create_pagefile_section(size);
+        ASSERT_EQ(this->map_view(section, base, size, MEM_REPLACE_PLACEHOLDER), STATUS_SUCCESS);
+        ASSERT_EQ(this->map_view(section, base + size, size, MEM_REPLACE_PLACEHOLDER), STATUS_SUCCESS);
+        EXPECT_NE(this->emu->memory.get_region_kind(base), memory_region_kind::placeholder);
+        EXPECT_NE(this->emu->memory.get_region_kind(base + size), memory_region_kind::placeholder);
+
+        this->emu->memory.write_memory<uint32_t>(base, 0x11223344);
+        this->emu->memory.write_memory<uint32_t>(base + (2 * size) - 4, 0x55667788);
+        EXPECT_EQ(this->emu->memory.read_memory<uint32_t>(base + size), 0x11223344u);
+        EXPECT_EQ(this->emu->memory.read_memory<uint32_t>(base + size - 4), 0x55667788u);
+
+        EXPECT_EQ(syscalls::handle_NtUnmapViewOfSectionEx(this->context(), CURRENT_PROCESS, base, MEM_PRESERVE_PLACEHOLDER),
+                  STATUS_SUCCESS);
+        EXPECT_EQ(this->emu->memory.get_region_kind(base), memory_region_kind::placeholder);
+        EXPECT_EQ(syscalls::handle_NtClose(this->context(), section), STATUS_SUCCESS);
+        EXPECT_EQ(this->emu->memory.read_memory<uint32_t>(base + size), 0x11223344u);
+
+        EXPECT_EQ(syscalls::handle_NtUnmapViewOfSectionEx(this->context(), CURRENT_PROCESS, base + size, 0), STATUS_SUCCESS);
+        EXPECT_FALSE(this->emu->process.section_views.contains(base + size, 1));
     }
 }
