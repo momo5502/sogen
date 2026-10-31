@@ -144,6 +144,10 @@ namespace sogen
         // Report Vulkan features DXVK requires to games even where the host GPU lacks them (Mali, older Adreno), so
         // DXVK accepts the adapter. A game that really uses one of them renders incorrectly there.
         bool spoof_gpu_features{false};
+
+        // Gives the process an elevated administrator token. Windows then starts elevation requests such as
+        // ShellExecute "runas" directly instead of going through the consent service, which is not emulated.
+        bool elevated{false};
     };
 
     struct emulator_interfaces
@@ -533,6 +537,11 @@ namespace sogen
             return this->spoof_gpu_features_;
         }
 
+        bool runs_elevated() const
+        {
+            return this->elevated_;
+        }
+
         uint32_t vcpu_count() const
         {
             return this->vcpu_count_;
@@ -697,6 +706,7 @@ namespace sogen
         bool intercept_rdtsc_{true};
         bool intercept_kusd_{true};
         bool spoof_gpu_features_{false};
+        bool elevated_{false};
         uint32_t vcpu_count_{1};
         std::atomic_bool suspend_requested_{false};
         std::atomic_bool should_stop{false};

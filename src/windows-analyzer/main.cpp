@@ -103,6 +103,10 @@ namespace sogen
             {
                 arguments.emplace_back("--spoof-gpu-features");
             }
+            if (options.elevated)
+            {
+                arguments.emplace_back("--elevated");
+            }
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
                 if (!path.empty())
@@ -551,6 +555,7 @@ namespace sogen
                 .mounts = options.mounts,
                 .network = options.network,
                 .spoof_gpu_features = options.spoof_gpu_features,
+                .elevated = options.elevated,
             };
         }
 
@@ -1045,6 +1050,7 @@ namespace sogen
             app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");
             app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
+            app.add_flag("--elevated", options.elevated, "Run the process with an elevated administrator token");
             app.add_flag("--no-inst-precision", options.disable_instruction_precision,
                          "Disable per-instruction precision (faster, less precise)");
             app.add_flag("--call-count", options.prepend_call_count, "Prefix function and syscall lines with a traced-call count");
