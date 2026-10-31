@@ -857,9 +857,9 @@ namespace sogen
         uint64_t handle_NtGdiCreateDIBSection(const syscall_context& c, hdc dc, uint64_t section_app, uint32_t offset,
                                               emulator_pointer info, uint32_t usage, uint32_t header_size, uint32_t flags,
                                               uint64_t color_space, emulator_object<emulator_pointer> bits);
-        uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, hdc dc, uint32_t width, uint32_t height, uint32_t usage,
-                                                    emulator_pointer bits, emulator_pointer info, uint32_t info_header_size, uint32_t init,
-                                                    uint32_t offset, uint32_t cj, uint32_t i_usage);
+        uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, hdc dc, int32_t width, int32_t height, uint32_t init,
+                                                    emulator_pointer bits, emulator_pointer info, uint32_t usage, uint32_t max_info,
+                                                    uint32_t max_bits, uint32_t flags, uint64_t color_transform);
         int handle_NtGdiSetDIBitsToDeviceInternal(const syscall_context& c, hdc dc, int x_dest, int y_dest, uint32_t width, uint32_t height,
                                                   int x_src, int y_src, uint32_t start_scan, uint32_t scan_lines, emulator_pointer bits,
                                                   emulator_pointer info, uint32_t color_use, uint32_t max_bits, uint32_t max_info,
@@ -896,6 +896,8 @@ namespace sogen
                                                             emulator_pointer unknown);
         BOOL handle_NtGdiGetTextExtent(const syscall_context& c, hdc dc, emulator_pointer text, int32_t char_count, emulator_pointer size,
                                        ULONG flags);
+        BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, hdc dc, emulator_pointer text, ULONG char_count, ULONG max_extent,
+                                          emulator_object<ULONG> fit, emulator_pointer extents, emulator_pointer size, ULONG flags);
         BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, hdc dc, UINT first_char, UINT char_count, emulator_pointer chars,
                                        UINT flags, emulator_pointer buffer);
         BOOL handle_NtGdiGetCharABCWidthsW(const syscall_context& c, hdc dc, UINT first_char, UINT char_count, emulator_pointer chars,
@@ -1709,6 +1711,7 @@ namespace sogen
         add_handler(NtGdiGetTextFaceW);
         add_handler(NtGdiGetKerningPairs);
         add_handler(NtGdiGetTextExtent);
+        add_handler(NtGdiGetTextExtentExW);
         add_handler(NtGdiGetCharWidthW);
         add_handler(NtGdiGetCharABCWidthsW);
         add_handler(NtGdiGetGlyphOutline);

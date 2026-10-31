@@ -46,6 +46,7 @@ namespace sogen
             constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0x20; // DC_ATTR.crBackgroundClr (SetBkColor)
             constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0x28;       // DC_ATTR.crForegroundClr (SetTextColor)
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
+            constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
 
             constexpr uint32_t k_stock_white_brush_index = 0x00;
@@ -139,6 +140,28 @@ namespace sogen
                 0x00F0F0F0u, // COLOR_MENUBAR
             };
 
+            // The logfonts GetObject reports for the stock fonts on Windows.
+            EMU_LOGFONTW stock_font_logfont(const uint32_t index)
+            {
+                EMU_LOGFONTW font{};
+                font.lfCharSet = DEFAULT_CHARSET;
+                if (index == k_stock_system_font_index)
+                {
+                    font.lfHeight = 16;
+                    font.lfWidth = 7;
+                    font.lfWeight = FW_BOLD;
+                    font.lfPitchAndFamily = VARIABLE_PITCH | FF_SWISS;
+                    std::ranges::copy(u"System", font.lfFaceName);
+                }
+                else
+                {
+                    font.lfHeight = -11;
+                    font.lfWeight = FW_NORMAL;
+                    std::ranges::copy(u"MS Shell Dlg", font.lfFaceName);
+                }
+                return font;
+            }
+
             struct gdi_batch_header
             {
                 int16_t size{};
@@ -159,7 +182,7 @@ namespace sogen
                 RECT rect{};
                 DWORD code_page{};
                 UINT count{};
-                UINT dx_size{};
+                UINT dx_offset{};
                 uint64_t font{};
                 FLONG text_align{};
                 POINTL viewport_org{};
@@ -1040,6 +1063,42 @@ namespace sogen
                 }
             }
 
+            // SetTextAlign chooses which point of the text (x, y) names; draw_text starts at the top-left corner.
+            POINT text_top_left(const int x, const int y, const uint32_t text_align, const size_t count, const uint32_t* dx)
+            {
+                constexpr uint32_t ta_right = 2;
+                constexpr uint32_t ta_center = 6;
+                constexpr uint32_t ta_bottom = 8;
+                constexpr uint32_t ta_baseline = 24;
+
+                int width = 0;
+                for (size_t i = 0; i < count; ++i)
+                {
+                    width += dx != nullptr ? static_cast<int32_t>(dx[i]) : k_text_cell_width;
+                }
+
+                POINT origin{.x = x, .y = y};
+                if ((text_align & ta_center) == ta_center)
+                {
+                    origin.x -= width / 2;
+                }
+                else if ((text_align & ta_right) != 0)
+                {
+                    origin.x -= width;
+                }
+
+                if ((text_align & ta_baseline) == ta_baseline)
+                {
+                    origin.y -= static_cast<int>(k_default_font_ascent);
+                }
+                else if ((text_align & ta_bottom) != 0)
+                {
+                    origin.y -= k_text_cell_height;
+                }
+
+                return origin;
+            }
+
             void fill_rect(gdi_bitmap_surface& surface, const int left, const int top, const int right, const int bottom,
                            const uint32_t color)
             {
@@ -1066,7 +1125,8 @@ namespace sogen
                 gdi_bitmap_surface* surface = nullptr;
                 int32_t origin_x = 0;
                 int32_t origin_y = 0;
-                if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+                uint32_t present_handle = 0;
+                if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !surface)
                 {
                     return true;
                 }
@@ -1096,24 +1156,28 @@ namespace sogen
                                       colorref_to_bgra(text_out->background));
                         }
 
-                        // The guest controls the batch contents: the variable payload after
-                        // `string` holds the dx array (dx_size bytes) followed by the text
-                        // (count * sizeof(char16_t) bytes). Validate both fit inside this
-                        // command before dereferencing, otherwise a malformed count/dx_size
-                        // would read past header->size and beyond batch.Buffer.
+                        // The payload after `string` holds the text, then the advances. dx_offset is 0 without advances and
+                        // otherwise the text size rounded up to a ULONG (GDIBSTEXTOUT::Size). The guest controls the batch, so
+                        // both parts are checked to fit inside this command before being read.
                         const auto payload_capacity = static_cast<size_t>(header->size) - offsetof(gdi_batch_text_out, string);
-                        const auto dx_bytes = static_cast<size_t>(text_out->dx_size);
+                        const auto dx_offset = static_cast<size_t>(text_out->dx_offset);
                         const auto text_bytes = static_cast<size_t>(text_out->count) * sizeof(char16_t);
-                        if (dx_bytes <= payload_capacity && text_bytes <= payload_capacity - dx_bytes)
+                        const auto dx_bytes = dx_offset != 0 ? static_cast<size_t>(text_out->count) * sizeof(uint32_t) : 0;
+                        if (text_bytes <= payload_capacity &&
+                            (dx_offset == 0 ||
+                             (dx_offset >= text_bytes && dx_offset <= payload_capacity && dx_bytes <= payload_capacity - dx_offset)))
                         {
-                            const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string.data());
-                            const auto* text =
-                                reinterpret_cast<const char16_t*>(text_out->string.data() + text_out->dx_size / sizeof(char16_t));
-                            draw_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
-                                      text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
+                            const auto* text = reinterpret_cast<const char16_t*>(text_out->string.data());
+                            const auto* advances = dx_offset != 0
+                                                       ? reinterpret_cast<const uint32_t*>(
+                                                             reinterpret_cast<const std::byte*>(text_out->string.data()) + dx_offset)
+                                                       : nullptr;
+                            const auto top_left = text_top_left(text_out->x + text_out->viewport_org.x + origin_x,
+                                                                text_out->y + text_out->viewport_org.y + origin_y, text_out->text_align,
+                                                                text_out->count, advances);
+                            draw_text(*surface, top_left.x, top_left.y, std::u16string_view(text, text_out->count),
                                       colorref_to_bgra(text_out->foreground),
-                                      has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
-                                      text_out->dx_size >= text_out->count * sizeof(uint32_t) ? dx : nullptr);
+                                      has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr, advances);
                         }
                     }
                     else if (header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
@@ -1142,6 +1206,7 @@ namespace sogen
                     offset += static_cast<size_t>(header->size);
                 }
 
+                present_win_surface(c, present_handle, surface);
                 return true;
             }
 
@@ -1301,6 +1366,10 @@ namespace sogen
                     else if (seed.type == k_gdi_pen_type)
                     {
                         set_gdi_object_color(c, handle, k_gdi_pen_type, 0x00000000u);
+                    }
+                    else if (seed.type == k_gdi_font_type)
+                    {
+                        c.proc.gdi_fonts[handle] = stock_font_logfont(seed.index);
                     }
 
                     if (seed.mirror_to_default_gui_slot)
@@ -1916,6 +1985,25 @@ namespace sogen
             return TRUE;
         }
 
+        void flush_gdi_batch(const syscall_context& c)
+        {
+            const auto& thread = c.thread();
+            ULONG batch_count = 0;
+            if (thread.teb64)
+            {
+                c.emu.read_memory(thread.teb64->value() + offsetof(TEB64, GdiBatchCount), &batch_count, sizeof(batch_count));
+            }
+            if (batch_count == 0 && thread.teb32)
+            {
+                c.emu.read_memory(thread.teb32->value() + offsetof(TEB32, GdiBatchCount), &batch_count, sizeof(batch_count));
+            }
+
+            if (batch_count != 0)
+            {
+                (void)handle_NtGdiFlush(c);
+            }
+        }
+
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, const uint32_t color, const uint64_t /*unused*/)
         {
             const auto handle = allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size);
@@ -2273,21 +2361,63 @@ namespace sogen
             return handle_value;
         }
 
-        uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height,
-                                                    const uint32_t /*usage*/, const emulator_pointer bits, const emulator_pointer /*info*/,
-                                                    const uint32_t /*info_header_size*/, const uint32_t /*init*/, const uint32_t /*offset*/,
-                                                    const uint32_t /*cj*/, const uint32_t /*i_usage*/)
+        uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, const hdc /*dc*/, const int32_t width, const int32_t height,
+                                                    const uint32_t init, const emulator_pointer bits, const emulator_pointer info,
+                                                    const uint32_t usage, const uint32_t /*max_info*/, const uint32_t max_bits,
+                                                    const uint32_t /*flags*/, const uint64_t /*color_transform*/)
         {
-            gdi_bitmap_surface* surface = nullptr;
-            const auto handle_value = create_gdi_bitmap_surface(c, width, height, k_default_bitmap_fill, &surface);
-            if (surface != nullptr)
+            // CreateDIBitmap passes the DIB's height through, which is negative for a top-down DIB.
+            if (width <= 0 || height == 0)
             {
-                if (bits != 0)
+                return 0;
+            }
+
+            const auto surface_width = static_cast<uint32_t>(width);
+            const auto surface_height = static_cast<uint32_t>(std::abs(static_cast<int64_t>(height)));
+            gdi_bitmap_surface* surface = nullptr;
+            const auto handle_value = create_gdi_bitmap_surface(c, surface_width, surface_height, k_default_bitmap_fill, &surface);
+            if (!surface || (init & CBM_INIT) == 0 || bits == 0 || info == 0)
+            {
+                return handle_value;
+            }
+
+            const auto header = read_bitmap_info_header(c, info);
+            if (!header || !is_supported_dib(*header, usage) || header->biHeight == 0)
+            {
+                c.win_emu.log.warn("NtGdiCreateDIBitmapInternal: unsupported initial DIB (usage=%u)\n", usage);
+                return handle_value;
+            }
+
+            const bool top_down = header->biHeight < 0;
+            const auto src_width = static_cast<uint32_t>(header->biWidth);
+            const auto src_height = static_cast<uint32_t>(std::abs(static_cast<int64_t>(header->biHeight)));
+            const auto bit_count = header->biBitCount;
+            const auto stride = dib_stride(src_width, bit_count);
+            const auto palette = read_dib_palette(c, info, *header);
+
+            std::vector<uint8_t> data(stride * src_height);
+            if (max_bits != 0 && data.size() > max_bits)
+            {
+                data.resize(max_bits);
+            }
+            c.emu.read_memory(bits, data.data(), data.size());
+            const auto available_rows = static_cast<uint32_t>(data.size() / stride);
+
+            for (uint32_t y = 0; y < std::min(surface_height, src_height); ++y)
+            {
+                const auto stored_row = top_down ? y : (src_height - 1 - y);
+                if (stored_row >= available_rows)
                 {
-                    const auto byte_count = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(uint32_t);
-                    c.emu.read_memory(bits, surface->pixels.data(), byte_count);
+                    continue;
+                }
+
+                const uint8_t* row = data.data() + static_cast<size_t>(stored_row) * stride;
+                for (uint32_t x = 0; x < std::min(surface_width, src_width); ++x)
+                {
+                    set_surface_pixel(*surface, static_cast<int>(x), static_cast<int>(y), dib_pixel_to_bgra32(row, x, bit_count, palette));
                 }
             }
+
             return handle_value;
         }
 
@@ -2307,8 +2437,16 @@ namespace sogen
             }
             const auto& surface = it->second;
 
+            // With a buffer, the caller's header describes the requested format, and a negative height asks for top-down rows.
+            int32_t requested_height = 0;
+            if (bits != 0)
+            {
+                c.emu.read_memory(info + 8, &requested_height, sizeof(requested_height));
+            }
+            const bool top_down = requested_height < 0;
+
             const auto bi_width = static_cast<int32_t>(surface.width);
-            const auto bi_height = static_cast<int32_t>(surface.height);
+            const auto bi_height = top_down ? -static_cast<int32_t>(surface.height) : static_cast<int32_t>(surface.height);
             const uint16_t planes = 1;
             const uint16_t bit_count = surface.guest_bpp == 1 ? 1 : 32;
             const uint32_t compression = 0; // BI_RGB
@@ -2327,7 +2465,6 @@ namespace sogen
                 return bi_height;
             }
 
-            // Copy the requested scanlines as a bottom-up DIB (row 0 is the bottom image row).
             uint32_t copied = 0;
             for (uint32_t row = 0; row < scan_lines; ++row)
             {
@@ -2341,7 +2478,7 @@ namespace sogen
                 {
                     break;
                 }
-                const uint32_t src_y = surface.height - 1 - dib_row;
+                const uint32_t src_y = top_down ? dib_row : surface.height - 1 - dib_row;
                 const auto* source = surface.pixels.data() + static_cast<size_t>(src_y) * surface.width;
                 if (bit_count == 1)
                 {
@@ -2592,6 +2729,7 @@ namespace sogen
 
             c.proc.gdi_dc_states.erase(handle_value);
             c.proc.gdi_bitmap_surfaces.erase(handle_value);
+            c.proc.gdi_fonts.erase(handle_value);
             return 1;
         }
 
@@ -2680,9 +2818,14 @@ namespace sogen
             return TRUE;
         }
 
-        uint64_t handle_NtGdiHfontCreate(const syscall_context& c, const emulator_pointer /*logfont*/, const uint32_t /*angle*/)
+        uint64_t handle_NtGdiHfontCreate(const syscall_context& c, const emulator_pointer logfont, const uint32_t /*angle*/)
         {
-            return allocate_gdi_object(c, k_gdi_font_type, k_gdi_font_attr_size);
+            const auto handle = allocate_gdi_object(c, k_gdi_font_type, k_gdi_font_attr_size);
+            if (handle != 0 && logfont != 0)
+            {
+                c.proc.gdi_fonts[handle] = emulator_object<EMU_LOGFONTW>{c.emu, logfont}.read();
+            }
+            return handle;
         }
 
         uint32_t handle_NtGdiExtGetObjectW(const syscall_context& c, const uint32_t handle_value, const uint32_t size,
@@ -2732,6 +2875,13 @@ namespace sogen
                     bitmap.as<uint16_t>(16).set(1);
                     bitmap.as<uint16_t>(18).set(bpp);
                     bitmap.as<uint32_t>(20).set(static_cast<uint32_t>(surface.guest_bits));
+                }
+            }
+            else if (entry.Type == k_gdi_font_type)
+            {
+                if (const auto font_it = c.proc.gdi_fonts.find(handle_value); font_it != c.proc.gdi_fonts.end())
+                {
+                    std::memcpy(object_data.data(), &font_it->second, std::min(object_data.size(), sizeof(font_it->second)));
                 }
             }
 
@@ -2986,6 +3136,39 @@ namespace sogen
                 .cy = static_cast<LONG>(k_default_font_height),
             };
             c.emu.write_memory(size, &text_size, sizeof(text_size));
+            return TRUE;
+        }
+
+        BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, const hdc dc, const emulator_pointer /*text*/, const ULONG char_count,
+                                          const ULONG max_extent, const emulator_object<ULONG> fit, const emulator_pointer extents,
+                                          const emulator_pointer size, const ULONG /*flags*/)
+        {
+            if (dc == 0 || size == 0)
+            {
+                return FALSE;
+            }
+
+            const SIZE text_size{
+                .cx = static_cast<LONG>(k_default_font_width * char_count),
+                .cy = static_cast<LONG>(k_default_font_height),
+            };
+            c.emu.write_memory(size, &text_size, sizeof(text_size));
+
+            if (fit)
+            {
+                fit.write(std::min<ULONG>(char_count, max_extent / k_default_font_width));
+            }
+
+            if (extents != 0 && char_count != 0)
+            {
+                std::vector<ULONG> partial_extents(char_count);
+                for (ULONG i = 0; i < char_count; ++i)
+                {
+                    partial_extents[i] = static_cast<ULONG>(k_default_font_width * (i + 1));
+                }
+                c.emu.write_memory(extents, partial_extents.data(), partial_extents.size() * sizeof(ULONG));
+            }
+
             return TRUE;
         }
 
@@ -4074,9 +4257,18 @@ namespace sogen
                 c.emu.read_memory(dx, advances.data(), advances.size() * sizeof(uint32_t));
             }
 
+            uint64_t dc_attr = 0;
+            uint32_t text_align = 0;
+            if (get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            {
+                c.emu.read_memory(dc_attr + k_gdi_dc_attr_text_align_offset, &text_align, sizeof(text_align));
+            }
+
             const auto color = get_dc_text_color(c, dc);
-            draw_text(*surface, x + origin_x, y + origin_y, glyphs, color, has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
-                      advances.empty() ? nullptr : advances.data());
+            const auto* dx_values = advances.empty() ? nullptr : advances.data();
+            const auto top_left = text_top_left(x + origin_x, y + origin_y, text_align, glyphs.size(), dx_values);
+            draw_text(*surface, top_left.x, top_left.y, glyphs, color, has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
+                      dx_values);
 
             dc_state->current_x = x + static_cast<int32_t>(count * k_text_cell_width);
             dc_state->current_y = y;
