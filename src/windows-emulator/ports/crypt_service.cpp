@@ -23,6 +23,11 @@ namespace sogen
         constexpr uint32_t k_catalog_prepare_for_call = 5; // s_SSCatDBPrepareForCall
         constexpr uint32_t k_cert_protect_function = 0;    // s_SSCertProtectFunction
 
+        // cryptsvc serves this function itself (CryptnetUrlCacheSvcTriggerPreFetch): while its URL cache service runs,
+        // which CertProtectStart starts with the service, it only queues a background job for it and reports success;
+        // before that it fails with ERROR_SERVICE_NOT_ACTIVE. The port answers as a running CryptSvc does.
+        constexpr uint32_t k_cert_protect_trigger_prefetch = 1000;
+
         constexpr uint32_t k_error_success = 0;
         constexpr uint32_t k_error_path_not_found = 3;
         constexpr uint32_t k_error_access_denied = 5;
@@ -154,7 +159,7 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS cert_protect_function(windows_emulator& win_emu, ndr_cursor& cursor)
+        NTSTATUS cert_protect_function(windows_emulator& win_emu, ndr_cursor& cursor, utils::aligned_binary_writer& writer)
         {
             uint32_t function_id{};
             if (!cursor.read_u32(function_id))
@@ -162,8 +167,16 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            win_emu.log.print(color::gray, "Unimplemented ICertProtect function: %u\n", function_id);
-            return STATUS_NOT_SUPPORTED;
+            if (function_id != k_cert_protect_trigger_prefetch)
+            {
+                win_emu.log.print(color::gray, "Unimplemented ICertProtect function: %u\n", function_id);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            writer.write_ndr_pointer(false); // *ppbOut
+            writer.write<uint32_t>(0);       // *pcbOut
+            write_return(writer, k_error_success);
+            return STATUS_SUCCESS;
         }
 
         struct crypt_service_port : rpc_port
@@ -188,7 +201,7 @@ namespace sogen
                 }
                 else if (this->bound_interface() == k_iface_cert_protect && procedure_id == k_cert_protect_function)
                 {
-                    return cert_protect_function(win_emu, cursor);
+                    return cert_protect_function(win_emu, cursor, writer);
                 }
 
                 win_emu.log.print(color::gray, "Unimplemented keysvc procedure: %u\n", procedure_id);
