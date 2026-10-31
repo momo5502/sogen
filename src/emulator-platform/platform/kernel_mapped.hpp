@@ -275,6 +275,15 @@ namespace sogen
         MemExtendedParameterMax
     } MEM_EXTENDED_PARAMETER_TYPE, *PMEM_EXTENDED_PARAMETER_TYPE;
 
+    typedef enum MEM_SECTION_EXTENDED_PARAMETER_TYPE
+    {
+        MemSectionExtendedParameterInvalidType = 0,
+        MemSectionExtendedParameterUserPhysicalFlags,
+        MemSectionExtendedParameterNumaNode,
+        MemSectionExtendedParameterSigningLevel,
+        MemSectionExtendedParameterMax
+    } MEM_SECTION_EXTENDED_PARAMETER_TYPE, *PMEM_SECTION_EXTENDED_PARAMETER_TYPE;
+
 #endif
 
     typedef struct _PEB_LDR_DATA64
