@@ -40,6 +40,7 @@ namespace sogen
             job,
             deferred_window_positions,
             thread_state_change,
+            debug_object,
         };
     };
 

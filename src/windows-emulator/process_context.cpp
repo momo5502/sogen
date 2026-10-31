@@ -871,6 +871,7 @@ namespace sogen
         buffer.write(this->private_namespaces);
         buffer.write(this->processes);
         buffer.write(this->managed_threads);
+        buffer.write(this->debug_objects);
         buffer.write_map(this->atoms);
         buffer.write_map(this->classes);
 
@@ -997,6 +998,7 @@ namespace sogen
         buffer.read(this->private_namespaces);
         buffer.read(this->processes);
         buffer.read(this->managed_threads);
+        buffer.read(this->debug_objects);
         buffer.read_map(this->atoms);
         buffer.read_map(this->classes);
 
@@ -1170,6 +1172,8 @@ namespace sogen
             return &this->processes;
         case handle_types::managed_thread:
             return &this->managed_threads;
+        case handle_types::debug_object:
+            return &this->debug_objects;
         case handle_types::thread:
             return &threads;
         case handle_types::event:

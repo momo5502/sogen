@@ -240,6 +240,10 @@ namespace sogen::sandbox
             if (managed_connection)
             {
                 win_emu.setup_process_if_necessary();
+                if (managed_connection->request().debugged)
+                {
+                    win_emu.attach_debugger();
+                }
                 install_inherited_pipes(win_emu, managed_connection->request(), managed_connection->take_inherited_pipes());
                 managed_target = std::make_unique<emulator_process_target>(win_emu);
                 if (!managed_connection->wait_for_resume(*managed_target))
