@@ -138,6 +138,47 @@ namespace sogen
             return obj;
         }
 
+        // Values longer than CM_KEY_VALUE_BIG are stored as a "db" cell that lists segment cells of
+        // up to that many bytes each.
+        constexpr size_t big_data_segment_size = 0x3FD8;
+
+        struct big_data_block_t
+        {
+            char signature[2]; // NOLINT(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+            uint16_t segment_count;
+            int32_t segment_list;
+        };
+
+        std::vector<std::byte> read_value_data(std::ifstream& file, const int data_offset, const size_t data_length)
+        {
+            const auto data_address = MAIN_ROOT_OFFSET + data_offset;
+            if (data_length <= big_data_segment_size)
+            {
+                return read_file_data(file, data_address, data_length);
+            }
+
+            const auto big_data = read_file_object<big_data_block_t>(file, data_address);
+            if (big_data.signature[0] != 'd' || big_data.signature[1] != 'b')
+            {
+                return read_file_data(file, data_address, data_length);
+            }
+
+            std::vector<std::byte> result{};
+            result.reserve(data_length);
+
+            const auto segment_list_address = MAIN_ROOT_OFFSET + big_data.segment_list + 4;
+            for (uint16_t i = 0; i < big_data.segment_count && result.size() < data_length; ++i)
+            {
+                const auto segment_offset = read_file_object<int32_t>(file, segment_list_address, i);
+                const auto segment_length = std::min(data_length - result.size(), big_data_segment_size);
+                const auto segment = read_file_data(file, MAIN_ROOT_OFFSET + segment_offset + 4, segment_length);
+                result.insert(result.end(), segment.begin(), segment.end());
+            }
+
+            result.resize(data_length);
+            return result;
+        }
+
         hive_key parse_root_block(std::ifstream& file, const std::filesystem::path& file_path)
         {
             try
@@ -172,7 +213,7 @@ namespace sogen
 
         if (!value.parsed)
         {
-            value.data = read_file_data(file, MAIN_ROOT_OFFSET + value.data_offset, value.data_length);
+            value.data = read_value_data(file, value.data_offset, value.data_length);
             value.parsed = true;
         }
 
@@ -251,11 +292,12 @@ namespace sogen
             raw_value.parsed = false;
             raw_value.type = value.value_type;
             raw_value.name = value_name;
-            raw_value.data_length = value.size & 0xffff;
+            raw_value.data_length = static_cast<uint32_t>(value.size);
             raw_value.data_offset = value.offset + 4;
 
             if (value.size & 1 << 31)
             {
+                raw_value.data_length = value.size & 0xffff;
                 raw_value.data_offset = offset + static_cast<int>(offsetof(value_block_t, offset));
             }
 
