@@ -2962,9 +2962,100 @@ namespace sogen
             return TRUE;
         }
 
-        uint64_t handle_NtUserGetProcessWindowStation()
+        uint64_t handle_NtUserGetProcessWindowStation(const syscall_context& c)
         {
-            return 1;
+            return c.proc.process_window_station;
+        }
+
+        bool is_window_station(const syscall_context& c, const handle station)
+        {
+            return station.bits == 1 || c.proc.window_stations.get(station) != nullptr;
+        }
+
+        uint64_t handle_NtUserCreateWindowStation(const syscall_context& c,
+                                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                                  const ACCESS_MASK /*desired_access*/)
+        {
+            std::u16string name{};
+            if (object_attributes)
+            {
+                const auto attributes = object_attributes.read();
+                if (attributes.ObjectName)
+                {
+                    name = read_unicode_string(c.emu, attributes.ObjectName);
+                }
+            }
+
+            // An unnamed window station gets a generated name, which Windows derives from the logon session.
+            if (name.empty())
+            {
+                std::array<char, 16> id{};
+                auto* const end = std::to_chars(id.data(), id.data() + id.size(), c.proc.next_window_station_id++, 16).ptr;
+                name = u"Service-0x0-" + u8_to_u16(std::string(id.data(), end)) + u"$";
+            }
+
+            window_station station{};
+            station.name = std::move(name);
+            return c.proc.window_stations.store(std::move(station)).bits;
+        }
+
+        BOOL handle_NtUserSetProcessWindowStation(const syscall_context& c, const handle station)
+        {
+            if (!is_window_station(c, station))
+            {
+                return FALSE;
+            }
+
+            c.proc.process_window_station = station.bits;
+            return TRUE;
+        }
+
+        BOOL handle_NtUserCloseWindowStation(const syscall_context& c, const handle station)
+        {
+            // The window station a process is assigned to cannot be closed.
+            if (station.bits == c.proc.process_window_station || station.bits == 1)
+            {
+                return FALSE;
+            }
+
+            return c.proc.window_stations.erase(station) ? TRUE : FALSE;
+        }
+
+        uint64_t handle_NtUserCreateDesktopEx(const syscall_context& c,
+                                              const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                              const emulator_pointer /*device*/, const emulator_pointer /*devmode*/, const DWORD /*flags*/,
+                                              const ACCESS_MASK /*desired_access*/, const ULONG /*heap_size*/)
+        {
+            if (!object_attributes)
+            {
+                return 0;
+            }
+
+            const auto attributes = object_attributes.read();
+            if (!attributes.ObjectName)
+            {
+                return 0;
+            }
+
+            desktop desk{};
+            desk.name = read_unicode_string(c.emu, attributes.ObjectName);
+            if (desk.name.empty())
+            {
+                return 0;
+            }
+
+            return c.proc.desktops.store(std::move(desk)).bits;
+        }
+
+        BOOL handle_NtUserCloseDesktop(const syscall_context& c, const handle desktop_handle)
+        {
+            // A desktop that threads are using cannot be closed.
+            if (desktop_handle == c.proc.default_desktop)
+            {
+                return FALSE;
+            }
+
+            return c.proc.desktops.erase(desktop_handle) ? TRUE : FALSE;
         }
 
         // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
@@ -6600,7 +6691,7 @@ namespace sogen
                 set_guest_last_error(c, error);
                 return FALSE;
             };
-            const bool window_station = object.bits == 1;
+            const bool window_station = is_window_station(c, object);
             const auto* desktop_object = c.proc.desktops.get(object);
             if (!window_station && !desktop_object)
             {
@@ -6638,7 +6729,11 @@ namespace sogen
             case 2:
             case 3: {
                 std::u16string_view name = u"WinSta0";
-                if (!window_station)
+                if (const auto* station = c.proc.window_stations.get(object))
+                {
+                    name = station->name;
+                }
+                else if (!window_station)
                 {
                     name = desktop_object->name;
                 }

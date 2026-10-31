@@ -658,6 +658,10 @@ namespace sogen
         handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
         handle default_desktop{};
         handle_store<handle_types::desktop, desktop> desktops{};
+        handle_store<handle_types::window_station, window_station> window_stations{};
+        // WinSta0, the interactive window station every process starts in, is the fixed handle 1.
+        uint64_t process_window_station{1};
+        uint32_t next_window_station_id{1};
         user_handle_store<handle_types::window, window> windows{user_handles};
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};

@@ -601,7 +601,17 @@ namespace sogen
                                            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name);
         BOOL handle_NtUserMoveWindow(const syscall_context& c, hwnd hwnd, int x, int y, int width, int height, BOOL repaint);
-        uint64_t handle_NtUserGetProcessWindowStation();
+        uint64_t handle_NtUserGetProcessWindowStation(const syscall_context& c);
+        uint64_t handle_NtUserCreateWindowStation(const syscall_context& c,
+                                                  emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                                  ACCESS_MASK desired_access);
+        BOOL handle_NtUserSetProcessWindowStation(const syscall_context& c, handle station);
+        BOOL handle_NtUserCloseWindowStation(const syscall_context& c, handle station);
+        uint64_t handle_NtUserCreateDesktopEx(const syscall_context& c,
+                                              emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                              emulator_pointer device, emulator_pointer devmode, DWORD flags, ACCESS_MASK desired_access,
+                                              ULONG heap_size);
+        BOOL handle_NtUserCloseDesktop(const syscall_context& c, handle desktop_handle);
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
         BOOL handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
         uint64_t handle_NtUserCallHwnd(const syscall_context& c, hwnd hwnd, uint32_t routine);
@@ -1899,6 +1909,11 @@ namespace sogen
         add_handler(NtCompareSigningLevels);
         add_handler(NtAreMappedFilesTheSame);
         add_handler(NtUserGetProcessWindowStation);
+        add_handler(NtUserCreateWindowStation);
+        add_handler(NtUserSetProcessWindowStation);
+        add_handler(NtUserCloseWindowStation);
+        add_handler(NtUserCreateDesktopEx);
+        add_handler(NtUserCloseDesktop);
         add_handler(NtUserCallHwndParam);
         add_handler(NtUserCallHwndLock);
         add_handler(NtUserCallHwnd);
