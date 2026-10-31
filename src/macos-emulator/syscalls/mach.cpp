@@ -1,4 +1,5 @@
 #include "macos_syscalls.hpp"
+#include "../macos_commpage.hpp"
 #include "../macos_emulator.hpp"
 #include "../macos_memory_protection.hpp"
 #include "../mig/macos_mig.hpp"
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace sogen
@@ -52,6 +54,11 @@ namespace sogen
     {
         constexpr uint64_t vm_flags_anywhere = 0x1;
 
+        if (size > MACOS_USER_ADDRESS_END || !std::in_range<size_t>(size) || mask >= MACOS_USER_ADDRESS_END)
+        {
+            return std::nullopt;
+        }
+
         auto& memory = emu.memory;
         auto allocation_address = address;
         if (flags & vm_flags_anywhere)
@@ -71,7 +78,8 @@ namespace sogen
                     static_cast<unsigned long long>(flags), static_cast<unsigned long long>(mask),
                     static_cast<unsigned long long>(allocation_address));
 
-        if (allocation_address == 0 || !memory.allocate_memory(allocation_address, static_cast<size_t>(size), permissions))
+        if (allocation_address == 0 || allocation_address > MACOS_USER_ADDRESS_END - size ||
+            !memory.allocate_memory(allocation_address, static_cast<size_t>(size), permissions))
         {
             return std::nullopt;
         }
@@ -100,7 +108,13 @@ namespace sogen
                 return;
             }
 
-            c.emu.write_memory(address_pointer, &*allocated, sizeof(*allocated));
+            if (!c.emu.try_write_memory(address_pointer, &*allocated, sizeof(*allocated)))
+            {
+                c.emu_ref.memory.release_memory(*allocated, static_cast<size_t>(size));
+                write_trap_result(c, macos_kern_return::KERN_INVALID_ADDRESS);
+                return;
+            }
+
             write_trap_result(c, macos_kern_return::KERN_SUCCESS);
         }
     }
@@ -171,9 +185,11 @@ namespace sogen
         constexpr uint64_t mach64_send_msg = 0x1;
         constexpr uint64_t mach64_rcv_msg = 0x2;
         constexpr uint64_t mach_msg_success = 0;
+        constexpr uint64_t mach_send_invalid_data = 0x10000002;
         constexpr uint64_t mach_send_invalid_dest = 0x10000003;
         constexpr uint64_t mach_send_msg_too_small = 0x10000008;
         constexpr uint64_t mach_rcv_too_large = 0x10004004;
+        constexpr uint64_t mach_rcv_invalid_data = 0x10004008;
         constexpr uint32_t max_message_size = 0x10000;
 
         const auto data = get_macos_syscall_argument(c.emu, 0);
@@ -194,7 +210,12 @@ namespace sogen
         }
 
         std::vector<std::byte> request(send_size);
-        c.emu.read_memory(data, request.data(), request.size());
+        if (!c.emu.try_read_memory(data, request.data(), request.size()))
+        {
+            write_trap_result(c, mach_send_invalid_data);
+            return;
+        }
+
         const auto header = read_mig_field<mach_msg_header>(request, 0);
 
         const auto* destination = c.emu_ref.mach_ports.find(header.remote_port);
@@ -214,7 +235,16 @@ namespace sogen
             return;
         }
 
-        const auto reply = routine(c, request);
+        std::vector<std::byte> reply{};
+        try
+        {
+            reply = routine(c, request);
+        }
+        catch (const mig_truncated_message&)
+        {
+            reply = make_mig_return_code_reply(request, static_cast<uint32_t>(MIG_BAD_ARGUMENTS));
+        }
+
         if (reply.empty())
         {
             c.emu_ref.stop();
@@ -224,8 +254,12 @@ namespace sogen
         if (options & mach64_rcv_msg)
         {
             uint64_t receive_size_and_priority{};
-            c.emu.read_memory(c.emu.reg(x86_register::rsp) + sizeof(uint64_t), &receive_size_and_priority,
-                              sizeof(receive_size_and_priority));
+            if (!c.emu.try_read_memory(c.emu.reg(x86_register::rsp) + sizeof(uint64_t), &receive_size_and_priority,
+                                       sizeof(receive_size_and_priority)))
+            {
+                write_trap_result(c, mach_rcv_invalid_data);
+                return;
+            }
 
             if (reply.size() > static_cast<uint32_t>(receive_size_and_priority))
             {
@@ -233,7 +267,11 @@ namespace sogen
                 return;
             }
 
-            c.emu.write_memory(data, reply.data(), reply.size());
+            if (!c.emu.try_write_memory(data, reply.data(), reply.size()))
+            {
+                write_trap_result(c, mach_rcv_invalid_data);
+                return;
+            }
         }
 
         write_trap_result(c, mach_msg_success);

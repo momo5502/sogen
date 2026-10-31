@@ -188,11 +188,20 @@ namespace sogen
     {
         constexpr size_t max_instruction_length = 15;
 
-        const auto last_address = address + std::max(size, max_instruction_length) - 1;
-        bool mapped_any = false;
-        for (auto page = page_align_down(address); page <= page_align_down(last_address); page += MACOS_PAGE_SIZE)
+        if (address < this->base_address_ || address - this->base_address_ >= this->size_)
         {
-            mapped_any |= this->map_page(page);
+            return false;
+        }
+
+        const auto remaining = this->size_ - (address - this->base_address_);
+        const auto access_length = std::min<uint64_t>(std::max(size, max_instruction_length), remaining);
+        const auto first_page = page_align_down(address);
+        const auto page_count = ((page_align_down(address + access_length - 1) - first_page) / MACOS_PAGE_SIZE) + 1;
+
+        bool mapped_any = false;
+        for (uint64_t i = 0; i < page_count; ++i)
+        {
+            mapped_any |= this->map_page(first_page + (i * MACOS_PAGE_SIZE));
         }
 
         return mapped_any;

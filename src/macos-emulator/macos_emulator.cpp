@@ -16,6 +16,7 @@
 #include <span>
 #include <string_view>
 #include <stdexcept>
+#include <utility>
 
 namespace sogen
 {
@@ -127,6 +128,24 @@ namespace sogen
             std::array<uint8_t, 16> uuid{};
         };
 
+        uint64_t validate_segment_range(const macho::segment_command_64& segment, const uint64_t slide)
+        {
+            if (slide > MACOS_USER_ADDRESS_END || segment.vmaddr > MACOS_USER_ADDRESS_END - slide ||
+                segment.vmsize > MACOS_USER_ADDRESS_END)
+            {
+                throw std::runtime_error("Mach-O segment lies outside the user address space");
+            }
+
+            const auto address = segment.vmaddr + slide;
+            const auto size = page_align_up(segment.vmsize);
+            if (size > MACOS_USER_ADDRESS_END - address || !std::in_range<size_t>(size))
+            {
+                throw std::runtime_error("Mach-O segment lies outside the user address space");
+            }
+
+            return address + size;
+        }
+
         void map_segment(posix_memory_manager& memory, const std::span<const std::byte> image, const macho::segment_command_64& segment,
                          const uint64_t slide)
         {
@@ -151,15 +170,15 @@ namespace sogen
             memory.protect_memory(address, static_cast<size_t>(size), to_memory_permission(segment.initprot));
         }
 
-        uint64_t read_unixthread_entry_point(const std::span<const std::byte> image, const uint64_t offset)
+        uint64_t read_unixthread_entry_point(const std::span<const std::byte> command_data)
         {
-            const auto thread = read_struct<macho::thread_command>(image, offset);
+            const auto thread = read_struct<macho::thread_command>(command_data, 0);
             if (thread.flavor != macho::X86_THREAD_STATE64)
             {
                 throw std::runtime_error("Unsupported LC_UNIXTHREAD flavor");
             }
 
-            return read_struct<macho::x86_thread_state64>(image, offset + sizeof(thread)).rip;
+            return read_struct<macho::x86_thread_state64>(command_data, sizeof(thread)).rip;
         }
 
         std::string read_dylinker_path(const std::span<const std::byte> command_data)
@@ -198,24 +217,33 @@ namespace sogen
                 throw std::runtime_error("Unexpected Mach-O file type");
             }
 
+            if (header.sizeofcmds > image.size() - sizeof(header))
+            {
+                throw std::runtime_error("Mach-O load commands exceed the file");
+            }
+
+            const auto commands = image.subspan(sizeof(header), header.sizeofcmds);
+
             mapped_image result{};
             std::optional<uint64_t> header_address{};
-            uint64_t offset = sizeof(header);
+            uint64_t offset = 0;
 
             for (uint32_t i = 0; i < header.ncmds; ++i)
             {
-                const auto command = read_struct<macho::load_command>(image, offset);
-                if (command.cmdsize < sizeof(command) || command.cmdsize > image.size() - offset)
+                const auto command = read_struct<macho::load_command>(commands, offset);
+                if (command.cmdsize < sizeof(command) || command.cmdsize > commands.size() - offset)
                 {
                     throw std::runtime_error("Invalid Mach-O load command size");
                 }
 
+                const auto command_data = commands.subspan(static_cast<size_t>(offset), command.cmdsize);
                 switch (command.cmd)
                 {
                 case macho::LC_SEGMENT_64: {
-                    const auto segment = read_struct<macho::segment_command_64>(image, offset);
+                    const auto segment = read_struct<macho::segment_command_64>(command_data, 0);
+                    const auto segment_end = validate_segment_range(segment, slide);
                     map_segment(memory, image, segment, slide);
-                    result.end_address = std::max(result.end_address, segment.vmaddr + slide + page_align_up(segment.vmsize));
+                    result.end_address = std::max(result.end_address, segment_end);
                     if (segment.fileoff == 0 && segment.filesize != 0)
                     {
                         header_address = segment.vmaddr + slide;
@@ -223,13 +251,13 @@ namespace sogen
                     break;
                 }
                 case macho::LC_UNIXTHREAD:
-                    result.unixthread_entry_point = read_unixthread_entry_point(image, offset) + slide;
+                    result.unixthread_entry_point = read_unixthread_entry_point(command_data) + slide;
                     break;
                 case macho::LC_UUID:
-                    result.uuid = read_struct<std::array<uint8_t, 16>>(image, offset + sizeof(command));
+                    result.uuid = read_struct<std::array<uint8_t, 16>>(command_data, sizeof(command));
                     break;
                 case macho::LC_LOAD_DYLINKER:
-                    result.dylinker_path = read_dylinker_path(image.subspan(static_cast<size_t>(offset), command.cmdsize));
+                    result.dylinker_path = read_dylinker_path(command_data);
                     break;
                 default:
                     break;

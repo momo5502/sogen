@@ -1,14 +1,17 @@
 #include "macos_syscalls.hpp"
+#include "../macos_commpage.hpp"
 #include "../macos_emulator.hpp"
 #include "../macos_memory_protection.hpp"
 
 #include <address_utils.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 // Page-in linking as XNU's dyld pager does it (osfmk/vm/vm_dyld_pager.c), restricted to the pointer formats an
@@ -151,45 +154,70 @@ namespace sogen
             } while (delta != 0);
         }
 
-        void map_region(macos_emulator& emu, const mwl_region& region, const std::span<const std::byte> blob, const mwl_info_hdr& hdr)
+        struct linked_region
+        {
+            macos_file* file{};
+            uint64_t file_offset{};
+            uint64_t address{};
+            size_t size{};
+            memory_permission permissions{};
+        };
+
+        linked_region validate_region(macos_emulator& emu, const mwl_region& region)
         {
             auto* file = emu.fds.get(region.fd);
-            if (file == nullptr || region.size == 0 || page_align_down(region.address) != region.address)
+            if (file == nullptr || file->is_socket || region.size == 0 || page_align_down(region.address) != region.address)
             {
                 throw std::runtime_error("Invalid page-in linking region");
             }
 
-            const auto size = static_cast<size_t>(page_align_up(region.size));
-            std::vector<std::byte> data(size);
-            file->read_at(region.file_offset, data);
-
-            for (uint64_t page_offset = 0; page_offset < size; page_offset += MACOS_PAGE_SIZE)
+            const auto file_size = page_align_up(file->size());
+            if (region.size > file_size)
             {
+                throw std::runtime_error("Page-in linking region exceeds its file");
+            }
+
+            const auto size = page_align_up(region.size);
+            if (region.file_offset > file_size - size || !std::in_range<size_t>(size) || region.address > MACOS_USER_ADDRESS_END ||
+                size > MACOS_USER_ADDRESS_END - region.address)
+            {
+                throw std::runtime_error("Page-in linking region exceeds its file or the user address space");
+            }
+
+            return {
+                .file = file,
+                .file_offset = region.file_offset,
+                .address = region.address,
+                .size = static_cast<size_t>(size),
+                .permissions = to_memory_permission(static_cast<uint32_t>(region.protections)),
+            };
+        }
+
+        template <typename PageHandler>
+        void link_pages(const linked_region& region, const std::span<const std::byte> blob, const mwl_info_hdr& hdr,
+                        const PageHandler& handle_page)
+        {
+            std::array<std::byte, MACOS_PAGE_SIZE> page{};
+            for (uint64_t page_offset = 0; page_offset < region.size; page_offset += MACOS_PAGE_SIZE)
+            {
+                page.fill(std::byte{0});
+                region.file->read_at(region.file_offset + page_offset, page);
+
                 const auto address = region.address + page_offset;
-                const auto segment = find_segment(blob, hdr, address);
-                if (!segment)
+                if (const auto segment = find_segment(blob, hdr, address))
                 {
-                    continue;
+                    const auto page_index = (address - hdr.image_address - segment->header.segment_offset) / MACOS_PAGE_SIZE;
+                    if (page_index >= segment->header.page_count)
+                    {
+                        throw std::runtime_error("Page-in linking page index out of range");
+                    }
+
+                    const auto first_start = read_blob<uint16_t>(blob, segment->page_starts_offset + (page_index * sizeof(uint16_t)));
+                    fixup_page64(page, blob, hdr, first_start);
                 }
 
-                const auto page_index = (address - hdr.image_address - segment->header.segment_offset) / MACOS_PAGE_SIZE;
-                if (page_index >= segment->header.page_count)
-                {
-                    throw std::runtime_error("Page-in linking page index out of range");
-                }
-
-                const auto first_start = read_blob<uint16_t>(blob, segment->page_starts_offset + (page_index * sizeof(uint16_t)));
-                fixup_page64(std::span{data}.subspan(static_cast<size_t>(page_offset), MACOS_PAGE_SIZE), blob, hdr, first_start);
+                handle_page(address, std::span<const std::byte>{page});
             }
-
-            auto& memory = emu.memory;
-            if (!memory.replace_memory(region.address, size, memory_permission::read_write))
-            {
-                throw std::runtime_error("Failed to map page-in linking region");
-            }
-
-            memory.write_memory(region.address, data.data(), data.size());
-            memory.protect_memory(region.address, size, to_memory_permission(static_cast<uint32_t>(region.protections)));
         }
     }
 
@@ -227,9 +255,32 @@ namespace sogen
 
         try
         {
+            std::vector<linked_region> linked_regions{};
+            linked_regions.reserve(regions.size());
             for (const auto& region : regions)
             {
-                map_region(c.emu_ref, region, blob, hdr);
+                linked_regions.push_back(validate_region(c.emu_ref, region));
+            }
+
+            // Every page is linked once before anything is mapped, so a malformed chain fails the call without touching
+            // the address space and no region has to be held in host memory.
+            for (const auto& region : linked_regions)
+            {
+                link_pages(region, blob, hdr, [](uint64_t, std::span<const std::byte>) {});
+            }
+
+            auto& memory = c.emu_ref.memory;
+            for (const auto& region : linked_regions)
+            {
+                if (!memory.replace_memory(region.address, region.size, memory_permission::read_write))
+                {
+                    throw std::runtime_error("Failed to map page-in linking region");
+                }
+
+                link_pages(region, blob, hdr, [&memory](const uint64_t address, const std::span<const std::byte> page) {
+                    memory.write_memory(address, page.data(), page.size());
+                });
+                memory.protect_memory(region.address, region.size, region.permissions);
             }
         }
         catch (const std::exception& e)

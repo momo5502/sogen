@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <iterator>
@@ -59,6 +60,37 @@ namespace sogen::macos_test
             0x0F, 0x05,                                                 // syscall
             0x89, 0xC7,                                                 // mov edi, eax
             0x11, 0xFF,                                                 // adc edi, edi
+            0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                                 // syscall
+        });
+
+        constexpr auto MACH_MSG_FROM_UNMAPPED_BUFFER_CODE = std::to_array<uint8_t>({
+            0xB8, 0x2F, 0x00, 0x00, 0x01,                               // mov eax, 0x100002F (mach_msg2)
+            0xBF, 0x00, 0x10, 0x00, 0x00,                               // mov edi, 0x1000 (unmapped)
+            0xBE, 0x01, 0x00, 0x00, 0x00,                               // mov esi, 1 (MACH64_SEND_MSG)
+            0x48, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, // mov rdx, 24 << 32 (send size)
+            0x0F, 0x05,                                                 // syscall
+            0x31, 0xFF,                                                 // xor edi, edi
+            0x3D, 0x02, 0x00, 0x00, 0x10,                               // cmp eax, 0x10000002 (MACH_SEND_INVALID_DATA)
+            0x40, 0x0F, 0x94, 0xC7,                                     // sete dil
+            0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                                 // syscall
+        });
+
+        constexpr auto TRUNCATED_TASK_INFO_CODE = std::to_array<uint8_t>({
+            0x48, 0x83, 0xEC, 0x40,                                     // sub rsp, 0x40
+            0xC7, 0x04, 0x24, 0x13, 0x00, 0x00, 0x00,                   // mov dword [rsp], 0x13 (copy send)
+            0xC7, 0x44, 0x24, 0x04, 0x18, 0x00, 0x00, 0x00,             // mov dword [rsp + 4], 24 (header only)
+            0xC7, 0x44, 0x24, 0x08, 0x03, 0x02, 0x00, 0x00,             // mov dword [rsp + 8], 0x203 (task port)
+            0xC7, 0x44, 0x24, 0x0C, 0x00, 0x00, 0x00, 0x00,             // mov dword [rsp + 12], 0
+            0xC7, 0x44, 0x24, 0x10, 0x00, 0x00, 0x00, 0x00,             // mov dword [rsp + 16], 0
+            0xC7, 0x44, 0x24, 0x14, 0x4D, 0x0D, 0x00, 0x00,             // mov dword [rsp + 20], 3405 (task_info)
+            0x48, 0x89, 0xE7,                                           // mov rdi, rsp
+            0xBE, 0x01, 0x00, 0x00, 0x00,                               // mov esi, 1 (MACH64_SEND_MSG)
+            0x48, 0xBA, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, // mov rdx, 24 << 32 (send size)
+            0xB8, 0x2F, 0x00, 0x00, 0x01,                               // mov eax, 0x100002F (mach_msg2)
+            0x0F, 0x05,                                                 // syscall
+            0x89, 0xC7,                                                 // mov edi, eax
             0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
             0x0F, 0x05,                                                 // syscall
         });
@@ -422,6 +454,20 @@ namespace sogen::macos_test
         EXPECT_EQ(result.exit_status, (efault * 2) + 1);
     }
 
+    TEST(MacosEmulationTest, FailsMachMessageFromUnmappedBuffer)
+    {
+        const auto result = run_image(make_test_image(MACH_MSG_FROM_UNMAPPED_BUFFER_CODE));
+
+        EXPECT_EQ(result.exit_status, 1);
+    }
+
+    TEST(MacosEmulationTest, AnswersTruncatedMigRequestWithoutStopping)
+    {
+        const auto result = run_image(make_test_image(TRUNCATED_TASK_INFO_CODE));
+
+        EXPECT_EQ(result.exit_status, 0);
+    }
+
     TEST(MacosEmulationTest, PassesArgumentCountOnInitialStack)
     {
         const auto result = run_image(make_test_image(EXIT_WITH_ARGC_CODE), {"test", "a", "b"});
@@ -489,6 +535,25 @@ namespace sogen::macos_test
         image.text.filesize = IMAGE_SIZE;
 
         expect_rejected(image);
+    }
+
+    TEST(MacosLoaderTest, RejectsSegmentOutsideUserAddressSpace)
+    {
+        auto image = make_test_image(HELLO_CODE);
+        image.text.vmaddr = 0x800000000000;
+
+        expect_rejected(image);
+    }
+
+    TEST(MacosLoaderTest, RejectsLoadCommandsBeyondSizeofcmds)
+    {
+        const auto image = make_test_image(HELLO_CODE);
+        auto data = image.serialize();
+
+        const auto truncated_size = static_cast<uint32_t>(sizeof(image.text));
+        std::memcpy(data.data() + offsetof(macho::mach_header_64, sizeofcmds), &truncated_size, sizeof(truncated_size));
+
+        expect_rejected(data);
     }
 
     TEST(MacosLoaderTest, RejectsUnsupportedThreadStateFlavor)

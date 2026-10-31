@@ -43,12 +43,23 @@ namespace sogen
     std::vector<std::byte> mig_task_info(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_mach_vm_map(const macos_syscall_context& c, std::span<const std::byte> request);
 
+    // MIG servers reply to a request shorter than the routine expects with MIG_BAD_ARGUMENTS.
+    constexpr int32_t MIG_BAD_ARGUMENTS = -304;
+
+    struct mig_truncated_message : std::runtime_error
+    {
+        mig_truncated_message()
+            : std::runtime_error("Truncated MIG message")
+        {
+        }
+    };
+
     template <typename T>
     T read_mig_field(const std::span<const std::byte> message, const size_t offset)
     {
         if (offset > message.size() || message.size() - offset < sizeof(T))
         {
-            throw std::runtime_error("Truncated MIG message");
+            throw mig_truncated_message{};
         }
 
         T value{};

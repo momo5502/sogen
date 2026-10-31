@@ -7,6 +7,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <system_error>
 
 namespace sogen
 {
@@ -24,6 +25,13 @@ namespace sogen
             this->stream.seekg(static_cast<std::streamoff>(position));
             this->stream.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
             return static_cast<size_t>(this->stream.gcount());
+        }
+
+        uint64_t size() const
+        {
+            std::error_code ec{};
+            const auto size = std::filesystem::file_size(this->host_path, ec);
+            return ec ? 0 : size;
         }
     };
 

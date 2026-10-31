@@ -67,10 +67,19 @@ namespace sogen
                     return;
                 }
 
-                c.emu.write_memory(old_buffer, entry.value.data(), entry.value.size());
+                if (!c.emu.try_write_memory(old_buffer, entry.value.data(), entry.value.size()))
+                {
+                    write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                    return;
+                }
             }
 
-            c.emu.write_memory(old_length_pointer, &value_size, sizeof(value_size));
+            if (!c.emu.try_write_memory(old_length_pointer, &value_size, sizeof(value_size)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                return;
+            }
+
             write_macos_syscall_success(c, 0);
         }
 
@@ -105,14 +114,20 @@ namespace sogen
             }
 
             const auto oid_size = it->oid.size() * sizeof(int32_t);
-            if (old_length < oid_size || !c.emu.try_write_memory(old_buffer, it->oid.data(), oid_size))
+            if (old_length < oid_size)
             {
                 write_macos_syscall_error(c, macos_errno::MACOS_ENOMEM);
                 return;
             }
 
             const uint64_t written = oid_size;
-            c.emu.write_memory(old_length_pointer, &written, sizeof(written));
+            if (!c.emu.try_write_memory(old_buffer, it->oid.data(), oid_size) ||
+                !c.emu.try_write_memory(old_length_pointer, &written, sizeof(written)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                return;
+            }
+
             write_macos_syscall_success(c, 0);
         }
 
