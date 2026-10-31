@@ -7,12 +7,8 @@ set_target_properties(arm64-hello-world PROPERTIES OUTPUT_NAME hello_world)
 add_executable(arm64-hello-crt hello_crt.c)
 set_target_properties(arm64-hello-crt PROPERTIES OUTPUT_NAME hello_crt)
 
-# The tree links the CRT dynamically and excludes libcmt.lib globally; this sample links it statically.
 add_executable(arm64-crt-static crt_static.c)
-get_target_property(crt_static_link_options arm64-crt-static LINK_OPTIONS)
-list(FILTER crt_static_link_options EXCLUDE REGEX "NODEFAULTLIB:libcmt\\.lib")
-set_target_properties(arm64-crt-static PROPERTIES OUTPUT_NAME crt_static MSVC_RUNTIME_LIBRARY MultiThreaded
-                                                   LINK_OPTIONS "${crt_static_link_options}")
+set_target_properties(arm64-crt-static PROPERTIES OUTPUT_NAME crt_static MSVC_RUNTIME_LIBRARY MultiThreaded)
 
 enable_language(ASM_MARMASM)
 add_executable(arm64-instrumentation-callback instrumentation_callback.c instrumentation_callback.asm)
