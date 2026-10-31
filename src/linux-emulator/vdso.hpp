@@ -1,7 +1,7 @@
 #pragma once
 
 #include "std_include.hpp"
-#include "linux_memory_manager.hpp"
+#include <posix_memory_manager.hpp>
 #include <serialization.hpp>
 
 // Synthetic vDSO (Virtual Dynamic Shared Object) for the Linux emulator.
@@ -43,7 +43,7 @@ namespace sogen
 
         // Build and map the synthetic vDSO into emulated memory.
         // Returns the base address (AT_SYSINFO_EHDR value) or 0 on failure.
-        uint64_t setup(linux_memory_manager& memory);
+        uint64_t setup(posix_memory_manager& memory);
 
         // Get the base address of the mapped vDSO.
         uint64_t get_base() const

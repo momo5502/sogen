@@ -1,16 +1,22 @@
 #pragma once
 
-#include "std_include.hpp"
+#include <filesystem>
+#include <iterator>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace sogen
 {
 
-    class linux_file_system
+    class posix_file_system
     {
       public:
-        linux_file_system() = default;
+        posix_file_system() = default;
 
-        explicit linux_file_system(std::filesystem::path root)
+        explicit posix_file_system(std::filesystem::path root)
             : root_(std::move(root))
         {
         }
@@ -197,11 +203,6 @@ namespace sogen
             return mapping != nullptr && mapping->read_only;
         }
 
-        static bool is_special_path(const std::string_view path)
-        {
-            return is_proc_self(path) || is_dev_null(path) || is_dev_zero(path) || is_dev_urandom(path);
-        }
-
         static std::filesystem::path normalize_guest_path(const std::string_view guest_path)
         {
             return std::filesystem::path{normalize_guest_path_string(guest_path)};
@@ -353,11 +354,6 @@ namespace sogen
             }
 
             return true;
-        }
-
-        static bool is_proc_self(const std::string_view path)
-        {
-            return path.starts_with("/proc/self/") || path == "/proc/self";
         }
 
         static bool is_dev_null(const std::string_view path)
