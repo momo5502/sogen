@@ -171,17 +171,8 @@ namespace sogen
             EmulatorTraits<Emu64>::PVOID NextFree;
         };
 
-        union
-        {
-            struct
-            {
-                USHORT ProcessId;
-                USHORT Lock : 1;
-                USHORT Count : 15;
-            };
-
-            ULONG Value;
-        } Owner;
+        // The owning process id, with the entry lock in bit 0. gdi32 compares it with the whole 32-bit process id.
+        ULONG Owner;
 
         USHORT Unique;
         UCHAR Type;
@@ -202,6 +193,12 @@ namespace sogen
     static_assert(sizeof(GDI_HANDLE_ENTRY32) == 0x10);
 
 #define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
+
+#define GR_GDIOBJECTS        0
+#define GR_USEROBJECTS       1
+#define GR_GDIOBJECTS_PEAK   2
+#define GR_USEROBJECTS_PEAK  4
+#define GR_GLOBAL            (-2)
 
     struct GDI_SHARED_MEMORY64
     {

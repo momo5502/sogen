@@ -132,6 +132,8 @@ namespace sogen
         int32_t current_x{};
         int32_t current_y{};
         bool is_memory_dc{};
+        // Retrieved with GetDC and friends, which hand out the desktop window's DC for no window.
+        bool is_window_dc{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -140,6 +142,7 @@ namespace sogen
             buffer.write(this->current_x);
             buffer.write(this->current_y);
             buffer.write(this->is_memory_dc);
+            buffer.write(this->is_window_dc);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -149,6 +152,7 @@ namespace sogen
             buffer.read(this->current_x);
             buffer.read(this->current_y);
             buffer.read(this->is_memory_dc);
+            buffer.read(this->is_window_dc);
         }
     };
 

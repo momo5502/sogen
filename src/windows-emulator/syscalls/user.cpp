@@ -1894,7 +1894,11 @@ namespace sogen
                 return 0;
             }
 
-            const auto window = it->second.target_window;
+            auto window = it->second.target_window;
+            if (window == 0 && it->second.is_window_dc)
+            {
+                window = c.proc.default_desktop_window_handle.bits;
+            }
             if (window == 0 || !c.proc.windows.get(window))
             {
                 return 0;
@@ -7817,6 +7821,85 @@ namespace sogen
 
         BOOL handle_NtUserSetLayeredWindowAttributes()
         {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserUpdateLayeredWindow(const syscall_context& c, const hwnd window, const hdc /*destination_dc*/,
+                                              const emulator_object<POINT> destination, const emulator_object<SIZE> size,
+                                              const hdc source_dc, const emulator_object<POINT> source, const COLORREF /*color_key*/,
+                                              const emulator_pointer /*blend*/, const DWORD /*flags*/,
+                                              const emulator_pointer /*dirty_rect*/)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (!win || (win->ex_style & WS_EX_LAYERED) == 0)
+            {
+                return FALSE;
+            }
+
+            auto x = win->x;
+            auto y = win->y;
+            auto width = win->width;
+            auto height = win->height;
+            if (destination)
+            {
+                const auto position = destination.read();
+                x = position.x;
+                y = position.y;
+            }
+            if (size)
+            {
+                const auto extent = size.read();
+                if (extent.cx <= 0 || extent.cy <= 0)
+                {
+                    return FALSE;
+                }
+                width = extent.cx;
+                height = extent.cy;
+            }
+
+            update_window_geometry(c, *win, x, y, width, height, false);
+            if (source_dc == 0)
+            {
+                return TRUE;
+            }
+
+            uint32_t source_present_handle{};
+            const auto* source_surface = get_dc_present_surface(c, source_dc, source_present_handle);
+            if (!source_surface || win->client_width() <= 0 || win->client_height() <= 0)
+            {
+                return FALSE;
+            }
+
+            // The layered bitmap covers the whole window rectangle, while the window surface only holds the client area.
+            const auto insets = win->nonclient_insets();
+            const auto origin = source ? source.read() : POINT{};
+            const auto surface_width = static_cast<uint32_t>(win->client_width());
+            const auto surface_height = static_cast<uint32_t>(win->client_height());
+            auto& surface = c.proc.gdi_window_surfaces[static_cast<uint32_t>(win->handle)];
+            surface.width = surface_width;
+            surface.height = surface_height;
+            surface.pixels.assign(static_cast<size_t>(surface_width) * surface_height, 0);
+
+            for (uint32_t row = 0; row < surface_height; ++row)
+            {
+                const auto source_y = static_cast<int64_t>(origin.y) + insets.top + row;
+                if (source_y < 0 || source_y >= source_surface->height)
+                {
+                    continue;
+                }
+
+                for (uint32_t column = 0; column < surface_width; ++column)
+                {
+                    const auto source_x = static_cast<int64_t>(origin.x) + insets.left + column;
+                    if (source_x >= 0 && source_x < source_surface->width)
+                    {
+                        surface.pixels[(static_cast<size_t>(row) * surface_width) + column] =
+                            source_surface->pixels[(static_cast<size_t>(source_y) * source_surface->width) + static_cast<size_t>(source_x)];
+                    }
+                }
+            }
+
+            present_existing_guest_window_surface(c, *win);
             return TRUE;
         }
 
