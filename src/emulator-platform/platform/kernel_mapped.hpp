@@ -1722,6 +1722,12 @@ namespace sogen
         LARGE_INTEGER UserTime;
     } KERNEL_USER_TIMES, *PKERNEL_USER_TIMES;
 
+    typedef struct _THREAD_CYCLE_TIME_INFORMATION
+    {
+        ULONGLONG AccumulatedCycles;
+        ULONGLONG CurrentCycleCount;
+    } THREAD_CYCLE_TIME_INFORMATION, *PTHREAD_CYCLE_TIME_INFORMATION;
+
     typedef struct _GROUP_AFFINITY
     {
         EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, KAFFINITY) Mask;
