@@ -1,6 +1,7 @@
 package dev.sogen.app.runtime
 
 import android.app.Service
+import android.content.ContentResolver
 import android.content.Intent
 import android.os.Bundle
 import android.os.IBinder
@@ -42,7 +43,7 @@ class SogenService : Service() {
                 }
 
                 try {
-                    val listener = CallbackListener(callback)
+                    val listener = CallbackListener(callback, contentResolver)
                     callbackListener = listener
                     this@SogenService.callback = callback
                     native = SogenNative(listener)
@@ -168,7 +169,15 @@ class SogenService : Service() {
     private fun runSession(config: RunConfig, callback: ISogenCallback) {
         val session = native ?: return
         val sandbox = File(applicationInfo.nativeLibraryDir, SANDBOX_LIBRARY)
-        val exitCode = session.run(config, if (sandbox.exists()) sandbox.path else "", prepareVulkanDriver())
+        val documentTrees = try {
+            listDocumentTrees(config)
+        } catch (e: Exception) {
+            Log.e(TAG, "Could not list the game folder", e)
+            reportFailure(callback, "Could not read the game folder: ${e.message}")
+            return
+        }
+
+        val exitCode = session.run(config, documentTrees, if (sandbox.exists()) sandbox.path else "", prepareVulkanDriver())
         synchronized(statsSampler) {
             statsSampler.shutdownNow()
         }
@@ -177,6 +186,26 @@ class SogenService : Service() {
             callback.onExit(exitCode)
         } catch (e: RemoteException) {
             Log.w(TAG, "Could not report exit code $exitCode", e)
+        }
+    }
+
+    private fun listDocumentTrees(config: RunConfig): List<DocumentTree> {
+        require(config.documentMounts.isEmpty() || config.layerDirectory.isNotEmpty()) { "Document mounts need a layer directory" }
+        return config.documentMounts.entries.mapIndexed { index, (guest, uri) ->
+            DocumentTree.list(contentResolver, guest, uri, File(config.layerDirectory, index.toString()))
+        }
+    }
+
+    private fun reportFailure(callback: ISogenCallback, message: String) {
+        synchronized(statsSampler) {
+            statsSampler.shutdownNow()
+        }
+
+        try {
+            callback.onOutput(message, LOGGER_COLOR_RED)
+            callback.onExit(1)
+        } catch (_: RemoteException) {
+            // The launcher is gone and has nothing left to show the error in.
         }
     }
 
@@ -220,7 +249,10 @@ class SogenService : Service() {
         return VulkanDriver(hookDirectory, directory.absolutePath, TURNIP_LIBRARY)
     }
 
-    private class CallbackListener(private val callback: ISogenCallback) : NativeListener {
+    private class CallbackListener(
+        private val callback: ISogenCallback,
+        private val resolver: ContentResolver,
+    ) : NativeListener {
         override fun onOutput(text: String, color: Int) = deliver { callback.onOutput(text, color) }
 
         override fun onConsoleOutput(data: ByteArray) = deliver { callback.onConsoleOutput(data) }
@@ -245,6 +277,8 @@ class SogenService : Service() {
             deliver { callback.onRelativeMouseChanged(window, relative) }
 
         override fun onSnapshot(path: String, error: String) = deliver { callback.onSnapshot(path, error) }
+
+        override fun openDocument(tree: String, documentId: String): Int = DocumentTree.open(resolver, tree, documentId)
 
         private inline fun deliver(action: () -> Unit) {
             try {
