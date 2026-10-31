@@ -637,6 +637,7 @@ namespace sogen
         BOOL handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
         uint64_t handle_NtUserCallHwnd(const syscall_context& c, hwnd hwnd, uint32_t routine);
         uint64_t handle_NtUserCallOneParam(const syscall_context& c, uint64_t param, uint32_t routine);
+        uint64_t handle_NtUserCallTwoParam(const syscall_context& c, uint64_t param1, uint64_t param2, uint32_t routine);
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_version,
@@ -1944,6 +1945,7 @@ namespace sogen
         add_handler(NtUserCallHwndLock);
         add_handler(NtUserCallHwnd);
         add_handler(NtUserCallOneParam);
+        add_handler(NtUserCallTwoParam);
         add_handler(NtUserRegisterClassExWOW);
         add_handler(NtUserUnregisterClass);
         add_handler(NtUserSetWindowsHookEx);
