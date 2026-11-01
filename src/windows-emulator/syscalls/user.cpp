@@ -1004,14 +1004,7 @@ namespace sogen
                 return;
             }
 
-            c.win_emu.ui().present_surface(top_level->handle, ui_surface_desc{.width = static_cast<int>(surface.width),
-                                                                              .height = static_cast<int>(surface.height),
-                                                                              .stride = static_cast<int>(surface.width * sizeof(uint32_t)),
-                                                                              .format = ui_surface_format::bgra8,
-                                                                              .pixels = surface.pixels.data(),
-                                                                              .layered = top_level->layered_blend,
-                                                                              .premultiplied_alpha = top_level->layered_premultiplied_alpha,
-                                                                              .constant_alpha = top_level->layered_constant_alpha});
+            c.win_emu.ui().present_surface(top_level->handle, make_window_surface_desc(surface, top_level));
         }
 
         void dispatch_cbt_create_window(const syscall_context& c, window_create_state&& state, const window& win,
@@ -1970,12 +1963,7 @@ namespace sogen
             if (auto* surface = get_dc_present_surface(c, dc, present_handle);
                 surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
             {
-                c.win_emu.ui().present_surface(present_handle,
-                                               ui_surface_desc{.width = static_cast<int>(surface->width),
-                                                               .height = static_cast<int>(surface->height),
-                                                               .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
-                                                               .format = ui_surface_format::bgra8,
-                                                               .pixels = surface->pixels.data()});
+                c.win_emu.ui().present_surface(present_handle, make_window_surface_desc(*surface, c.proc.windows.get(present_handle)));
             }
 
             (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(dc));
@@ -2433,12 +2421,7 @@ namespace sogen
                 if (auto* surface = get_dc_present_surface(c, ps.paint_hdc, present_handle);
                     surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
                 {
-                    c.win_emu.ui().present_surface(present_handle,
-                                                   ui_surface_desc{.width = static_cast<int>(surface->width),
-                                                                   .height = static_cast<int>(surface->height),
-                                                                   .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
-                                                                   .format = ui_surface_format::bgra8,
-                                                                   .pixels = surface->pixels.data()});
+                    c.win_emu.ui().present_surface(present_handle, make_window_surface_desc(*surface, c.proc.windows.get(present_handle)));
                 }
 
                 // BeginPaint allocated a fresh GDI DC (handle table entry + DC_ATTR block) via
