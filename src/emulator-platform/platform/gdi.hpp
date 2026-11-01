@@ -194,11 +194,13 @@ namespace sogen
 
 #define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
 
-#define GR_GDIOBJECTS        0
-#define GR_USEROBJECTS       1
-#define GR_GDIOBJECTS_PEAK   2
-#define GR_USEROBJECTS_PEAK  4
-#define GR_GLOBAL            (-2)
+    // What NtUserGetGuiResources takes. These describe the guest's ABI, so they have names of their own rather than
+    // the SDK's GR_*: WinUser.h spells GR_GLOBAL as a HANDLE and defines it only for WINVER >= 0x0601.
+    constexpr uint32_t gui_resources_gdiobjects = 0;
+    constexpr uint32_t gui_resources_userobjects = 1;
+    constexpr uint32_t gui_resources_gdiobjects_peak = 2;
+    constexpr uint32_t gui_resources_userobjects_peak = 4;
+    constexpr uint64_t gui_resources_global_process = static_cast<uint64_t>(-2);
 
     struct GDI_SHARED_MEMORY64
     {

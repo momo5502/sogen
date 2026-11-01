@@ -1960,7 +1960,7 @@ namespace sogen
 
         DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
         {
-            if (process.bits != static_cast<uint64_t>(GR_GLOBAL) && !c.proc.is_current_process_handle(process))
+            if (process.bits != gui_resources_global_process && !c.proc.is_current_process_handle(process))
             {
                 return 0;
             }
@@ -1968,11 +1968,11 @@ namespace sogen
             // Peaks are not tracked, so they report the current count.
             switch (flags)
             {
-            case GR_USEROBJECTS:
-            case GR_USEROBJECTS_PEAK:
+            case gui_resources_userobjects:
+            case gui_resources_userobjects_peak:
                 return static_cast<DWORD>(c.proc.user_handles.used_handle_count());
-            case GR_GDIOBJECTS:
-            case GR_GDIOBJECTS_PEAK: {
+            case gui_resources_gdiobjects:
+            case gui_resources_gdiobjects_peak: {
                 uint64_t table = 0;
                 c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
                 if (table == 0)
