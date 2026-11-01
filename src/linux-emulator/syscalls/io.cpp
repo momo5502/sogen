@@ -147,7 +147,7 @@ namespace sogen
         bool epoll_instance_has_ready_entries(linux_process_context& proc, const linux_epoll_instance& instance,
                                               std::vector<int>& epoll_stack);
 
-        bool fd_has_readable_data(linux_process_context& proc, const int fd, const linux_fd& fd_entry, std::vector<int>& epoll_stack)
+        bool fd_has_readable_data(linux_process_context& proc, const int fd, const posix_fd& fd_entry, std::vector<int>& epoll_stack)
         {
             if (fd_entry.type == fd_type::memory_file)
             {
@@ -186,7 +186,7 @@ namespace sogen
             return has_ready_entries;
         }
 
-        bool fd_accepts_write_ready(const linux_fd& fd)
+        bool fd_accepts_write_ready(const posix_fd& fd)
         {
             return fd.type == fd_type::file || fd.type == fd_type::pipe_write || fd.type == fd_type::socket;
         }
@@ -263,11 +263,11 @@ namespace sogen
         setvbuf(read_stream, nullptr, _IONBF, 0);
         setvbuf(write_stream, nullptr, _IONBF, 0);
 
-        linux_fd read_end{};
+        posix_fd read_end{};
         read_end.type = fd_type::pipe_read;
         read_end.handle = read_stream;
 
-        linux_fd write_end{};
+        posix_fd write_end{};
         write_end.type = fd_type::pipe_write;
         write_end.handle = write_stream;
 
@@ -330,13 +330,13 @@ namespace sogen
         setvbuf(read_stream, nullptr, _IONBF, 0);
         setvbuf(write_stream, nullptr, _IONBF, 0);
 
-        linux_fd read_end{};
+        posix_fd read_end{};
         read_end.type = fd_type::pipe_read;
         read_end.handle = read_stream;
         read_end.close_on_exec = cloexec;
         read_end.flags = flags & LINUX_O_NONBLOCK;
 
-        linux_fd write_end{};
+        posix_fd write_end{};
         write_end.type = fd_type::pipe_write;
         write_end.handle = write_stream;
         write_end.close_on_exec = cloexec;
@@ -357,7 +357,7 @@ namespace sogen
         // We create an fd entry but don't implement full eventfd semantics
         (void)get_linux_syscall_argument(c.emu, 0); // initval
 
-        linux_fd efd{};
+        posix_fd efd{};
         efd.type = fd_type::eventfd;
 
         const auto fd_num = c.proc.fds.allocate(std::move(efd));
@@ -372,7 +372,7 @@ namespace sogen
 
         constexpr int LINUX_O_CLOEXEC = 02000000;
 
-        linux_fd efd{};
+        posix_fd efd{};
         efd.type = fd_type::eventfd;
         efd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
@@ -402,7 +402,7 @@ namespace sogen
         const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         constexpr int LINUX_O_CLOEXEC = 02000000;
 
-        linux_fd efd{};
+        posix_fd efd{};
         efd.type = fd_type::epoll;
         efd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 

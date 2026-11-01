@@ -1,11 +1,14 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
+#include <posix_path_resolution.hpp>
+
 #include <array>
 #include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace sogen
 {
@@ -57,8 +60,9 @@ namespace sogen
 
         constexpr macos_timespec FILE_TIME{.seconds = MACOS_EPOCH_SECONDS, .nanoseconds = 0};
 
-        std::optional<macos_stat64> stat_host_path(macos_emulator& emu, const std::string& guest_path, const bool follow_symlinks)
+        std::optional<macos_stat64> stat_host_path(macos_emulator& emu, const std::string_view requested_path, const bool follow_symlinks)
         {
+            const auto guest_path = emu.resolve_guest_path(requested_path);
             const auto host_path = emu.file_system.translate(guest_path);
 
             std::error_code ec{};
@@ -129,6 +133,12 @@ namespace sogen
                 return;
             }
 
+            if (guest_path->empty())
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+                return;
+            }
+
             const auto result = stat_host_path(c.emu_ref, *guest_path, follow_symlinks);
             c.emu_ref.log.log("%sstat64(%s)%s\n", follow_symlinks ? "" : "l", guest_path->c_str(), result ? "" : " -> ENOENT");
             write_stat_result(c, result, get_macos_syscall_argument(c.emu, 1));
@@ -150,9 +160,16 @@ namespace sogen
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         const auto buffer = get_macos_syscall_argument(c.emu, 1);
 
+        const auto* file = c.emu_ref.fds.get(fd);
+        if (file == nullptr)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
+            return;
+        }
+
         // The standard streams are presented as pipes, as when output is captured, so runs do not depend on whether
         // the host has a terminal.
-        if (fd >= 0 && fd <= 2)
+        if (file->is_standard_stream())
         {
             macos_stat64 pipe{};
             pipe.st_mode = MACOS_S_IFIFO | PIPE_PERMISSIONS;
@@ -162,14 +179,43 @@ namespace sogen
             return;
         }
 
-        const auto* file = c.emu_ref.fds.get(fd);
-        if (file == nullptr)
+        write_stat_result(c, stat_host_path(c.emu_ref, file->guest_path, true), buffer);
+    }
+
+    void sys_fstatat64(const macos_syscall_context& c)
+    {
+        constexpr int at_fdcwd = -2;
+        constexpr uint64_t at_symlink_nofollow = 0x20;
+
+        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        const auto path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 1));
+        const auto buffer = get_macos_syscall_argument(c.emu, 2);
+        const auto flags = get_macos_syscall_argument(c.emu, 3);
+        if (!path)
         {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
             return;
         }
 
-        write_stat_result(c, stat_host_path(c.emu_ref, file->guest_path, true), buffer);
+        posix_path_error error{};
+        const auto directory_fd = fd == at_fdcwd ? std::nullopt : std::optional{fd};
+        const auto guest_path = posix_resolve_guest_path_at(c.emu_ref.fds, c.emu_ref.working_directory, directory_fd, *path, error);
+        if (!guest_path)
+        {
+            const auto is_not_directory = error == posix_path_error::not_a_directory;
+            write_macos_syscall_error(c, is_not_directory ? macos_errno::MACOS_ENOTDIR : macos_errno::MACOS_EBADF);
+            return;
+        }
+
+        if (path->empty())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+            return;
+        }
+
+        const auto result = stat_host_path(c.emu_ref, *guest_path, (flags & at_symlink_nofollow) == 0);
+        c.emu_ref.log.log("fstatat64(%d, %s)%s\n", fd, guest_path->c_str(), result ? "" : " -> ENOENT");
+        write_stat_result(c, result, buffer);
     }
 
     void sys_access(const macos_syscall_context& c)
@@ -182,6 +228,12 @@ namespace sogen
         if (!guest_path)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        if (guest_path->empty())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
             return;
         }
 
