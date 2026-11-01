@@ -1,9 +1,17 @@
 #include "emulation_test_utils.hpp"
 
 #include <registry/registry_file.hpp>
+#include <syscall_utils.hpp>
 
 #include <atomic>
 #include <fstream>
+
+namespace sogen::syscalls
+{
+    NTSTATUS handle_NtQueryLicenseValue(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,
+                                        emulator_object<uint32_t> type, uint64_t data, uint64_t data_size,
+                                        emulator_object<uint32_t> result_data_size);
+}
 
 namespace sogen::test
 {
@@ -43,6 +51,122 @@ namespace sogen::test
             data[offset + 5] = static_cast<std::byte>('f');
             write_uint16(data, offset + 6, 1);
             write_uint32(data, offset + 8, key_offset);
+        }
+
+        constexpr size_t big_data_segment_size = 0x3FD8;
+        constexpr uint32_t big_data_segment_stride = 0x4000;
+
+        void write_big_value(std::vector<std::byte>& data, const uint32_t value_offset, const std::string_view name,
+                             const std::span<const std::byte> payload, const uint32_t db_offset, const uint32_t first_segment_offset)
+        {
+            const auto value = hive_data_offset + value_offset;
+            data[value + 4] = static_cast<std::byte>('v');
+            data[value + 5] = static_cast<std::byte>('k');
+            write_uint16(data, value + 6, static_cast<uint16_t>(name.size()));
+            write_uint32(data, value + 8, static_cast<uint32_t>(payload.size()));
+            write_uint32(data, value + 12, db_offset);
+            write_uint32(data, value + 16, REG_BINARY);
+            for (size_t i = 0; i < name.size(); ++i)
+            {
+                data[value + 24 + i] = static_cast<std::byte>(name[i]);
+            }
+
+            const auto segment_count = (payload.size() + big_data_segment_size - 1) / big_data_segment_size;
+            const uint32_t segment_list_offset = db_offset + 0x10;
+
+            const auto db = hive_data_offset + db_offset;
+            data[db + 4] = static_cast<std::byte>('d');
+            data[db + 5] = static_cast<std::byte>('b');
+            write_uint16(data, db + 6, static_cast<uint16_t>(segment_count));
+            write_uint32(data, db + 8, segment_list_offset);
+
+            for (size_t segment = 0; segment < segment_count; ++segment)
+            {
+                const auto segment_offset = first_segment_offset + static_cast<uint32_t>(segment * big_data_segment_stride);
+                write_uint32(data, hive_data_offset + segment_list_offset + 4 + (segment * 4), segment_offset);
+
+                const auto chunk = payload.subspan(segment * big_data_segment_size,
+                                                   std::min(big_data_segment_size, payload.size() - (segment * big_data_segment_size)));
+                std::ranges::copy(chunk, data.begin() + static_cast<std::ptrdiff_t>(hive_data_offset + segment_offset + 4));
+            }
+        }
+
+        std::vector<std::byte> create_pattern(const size_t size)
+        {
+            std::vector<std::byte> result(size);
+            for (size_t i = 0; i < size; ++i)
+            {
+                result[i] = static_cast<std::byte>(i % 251);
+            }
+            return result;
+        }
+
+        void append_policy_entry(std::vector<std::byte>& policy, const std::u16string_view name, const uint16_t type,
+                                 const std::span<const std::byte> value)
+        {
+            const auto name_size = name.size() * sizeof(char16_t);
+            const auto entry_size = 16 + name_size + value.size();
+            const auto offset = policy.size();
+            policy.resize(offset + entry_size);
+
+            write_uint16(policy, offset, static_cast<uint16_t>(entry_size));
+            write_uint16(policy, offset + 2, static_cast<uint16_t>(name_size));
+            write_uint16(policy, offset + 4, type);
+            write_uint16(policy, offset + 6, static_cast<uint16_t>(value.size()));
+            for (size_t i = 0; i < name.size(); ++i)
+            {
+                write_uint16(policy, offset + 16 + (i * 2), static_cast<uint16_t>(name[i]));
+            }
+            std::ranges::copy(value, policy.begin() + static_cast<std::ptrdiff_t>(offset + 16 + name_size));
+        }
+
+        std::vector<std::byte> create_product_policy()
+        {
+            constexpr size_t header_size = 20;
+            constexpr uint32_t end_marker_size = 4;
+
+            std::vector<std::byte> policy(header_size);
+            const auto filler = create_pattern(0x8000);
+            for (const auto* name : {u"Filler-1", u"Filler-2", u"Filler-3"})
+            {
+                append_policy_entry(policy, name, REG_BINARY, filler);
+            }
+            append_policy_entry(policy, u"Kernel-Test", REG_DWORD,
+                                std::vector{std::byte{0x78}, std::byte{0x56}, std::byte{0x34}, std::byte{0x12}});
+
+            const auto data_size = static_cast<uint32_t>(policy.size() - header_size);
+            policy.resize(policy.size() + end_marker_size);
+            write_uint32(policy, 0, static_cast<uint32_t>(policy.size()));
+            write_uint32(policy, 4, data_size);
+            write_uint32(policy, 8, end_marker_size);
+            return policy;
+        }
+
+        std::vector<std::byte> create_system_hive()
+        {
+            std::vector<std::byte> data(hive_data_offset + 0x28000);
+            data[0] = static_cast<std::byte>('r');
+            data[1] = static_cast<std::byte>('e');
+            data[2] = static_cast<std::byte>('g');
+            data[3] = static_cast<std::byte>('f');
+
+            write_key(data, root_key_offset, {}, 0x200);
+            write_subkey_list(data, 0x200, 0x400);
+            write_key(data, hive_data_offset + 0x400, "ControlSet001", 0x600);
+            write_subkey_list(data, 0x600, 0x800);
+            write_key(data, hive_data_offset + 0x800, "Control", 0xA00);
+            write_subkey_list(data, 0xA00, 0xC00);
+
+            const auto product_options = hive_data_offset + 0xC00;
+            write_key(data, product_options, "ProductOptions", 0);
+            write_uint32(data, product_options + 40, 2);
+            write_uint32(data, product_options + 44, 0xE00);
+            write_uint32(data, hive_data_offset + 0xE00 + 4, 0x1000);
+            write_uint32(data, hive_data_offset + 0xE00 + 8, 0x1200);
+
+            write_big_value(data, 0x1000, "Pair", create_pattern(big_data_segment_size + 0x100), 0x1400, 0x2000);
+            write_big_value(data, 0x1200, "ProductPolicy", create_product_policy(), 0x1500, 0xA000);
+            return data;
         }
 
         std::vector<std::byte> create_software_hive()
@@ -115,10 +239,13 @@ namespace sogen::test
                     static_cast<std::byte>('g'),
                     static_cast<std::byte>('f'),
                 };
-                for (const auto* name : {"SYSTEM", "SECURITY", "SAM", "NTUSER.DAT"})
+                for (const auto* name : {"SECURITY", "SAM", "NTUSER.DAT"})
                 {
                     ASSERT_TRUE(write_hive(directory_ / name, empty_hive));
                 }
+
+                const auto system_hive = create_system_hive();
+                ASSERT_TRUE(write_hive(directory_ / "SYSTEM", system_hive));
 
                 const auto software_hive = create_software_hive();
                 ASSERT_TRUE(write_hive(directory_ / "SOFTWARE", software_hive));
@@ -144,9 +271,48 @@ namespace sogen::test
                 return key.value_or(registry_key{});
             }
 
+            const std::filesystem::path& directory() const
+            {
+                return directory_;
+            }
+
           private:
             std::filesystem::path directory_{};
             std::optional<registry_manager> registry_{};
+        };
+
+        class LicenseValueTest : public RegistryFileTest
+        {
+          protected:
+            void SetUp() override
+            {
+                RegistryFileTest::SetUp();
+
+                emulator_interfaces interfaces{};
+                interfaces.audio = std::make_unique<null_audio_backend>();
+                interfaces.console = std::make_unique<null_console_backend>();
+                interfaces.ui = std::make_unique<null_ui_backend>();
+                this->emu = std::make_unique<windows_emulator>(
+                    create_x86_64_emulator_from_environment(),
+                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                    emulator_callbacks{}, std::move(interfaces));
+                this->emu->registry = registry_manager{this->directory()};
+                this->storage = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            }
+
+            void TearDown() override
+            {
+                this->emu.reset();
+                RegistryFileTest::TearDown();
+            }
+
+            syscall_context context()
+            {
+                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            }
+
+            std::unique_ptr<windows_emulator> emu{};
+            uint64_t storage{};
         };
     }
 
@@ -336,5 +502,36 @@ namespace sogen::test
         const std::filesystem::path path{uR"(\Registry\NoSuchHive\Key)"};
         EXPECT_FALSE(registry().can_create_key(path));
         EXPECT_FALSE(registry().create_key(path).has_value());
+    }
+
+    TEST_F(RegistryFileTest, ReadsBigDataValuesFromEverySegment)
+    {
+        const auto key = get_key(uR"(\Registry\Machine\System\CurrentControlSet\Control\ProductOptions)");
+
+        const auto pair = registry().get_value(key, "Pair");
+        ASSERT_TRUE(pair.has_value());
+        EXPECT_EQ(pair->type, REG_BINARY);
+        EXPECT_EQ(std::vector(pair->data.begin(), pair->data.end()), create_pattern(big_data_segment_size + 0x100));
+
+        const auto policy = registry().get_value(key, "ProductPolicy");
+        ASSERT_TRUE(policy.has_value());
+        const auto expected_policy = create_product_policy();
+        ASSERT_GT(expected_policy.size(), 0x10000u);
+        EXPECT_EQ(std::vector(policy->data.begin(), policy->data.end()), expected_policy);
+    }
+
+    TEST_F(LicenseValueTest, ReadsALicenseValueStoredInABigDataProductPolicy)
+    {
+        emulator_allocator allocator{this->emu->memory, this->storage, 0x1000};
+        const auto name = allocator.make_unicode_string(u"Kernel-Test");
+        const auto type = allocator.reserve<uint32_t>();
+        const auto data = allocator.reserve<uint32_t>();
+        const auto result_size = allocator.reserve<uint32_t>();
+
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtQueryLicenseValue(this->context(), name, type, data.value(), sizeof(uint32_t), result_size));
+        EXPECT_EQ(type.read(), REG_DWORD);
+        EXPECT_EQ(result_size.read(), sizeof(uint32_t));
+        EXPECT_EQ(data.read(), 0x12345678u);
     }
 } // namespace sogen::test

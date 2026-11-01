@@ -1036,6 +1036,18 @@ namespace sogen::gpu_bridge
         uint64_t guest_address; // 0 => not mappable directly, caller falls back to staging
     };
 
+    inline constexpr uint64_t whole_size = ~0ULL; // VK_WHOLE_SIZE
+
+    constexpr bool is_direct_map_range_valid(const uint64_t mapping_size, const uint64_t offset, const uint64_t size)
+    {
+        if (offset >= mapping_size)
+        {
+            return false;
+        }
+
+        return size == whole_size || (size != 0 && size <= mapping_size - offset);
+    }
+
     struct unmap_memory_direct_request
     {
         object_id device;

@@ -14,6 +14,10 @@
 #define NT_SUCCESS(Status) ((static_cast<std::int32_t>(Status)) >= 0)
 #endif
 
+#ifndef NT_ERROR
+#define NT_ERROR(Status) ((static_cast<std::uint32_t>(Status) >> 30) == 3)
+#endif
+
 #define PROCESSOR_FEATURE_MAX                                           64
 #define GDI_HANDLE_BUFFER_SIZE32                                        34
 #define GDI_HANDLE_BUFFER_SIZE64                                        60
@@ -274,6 +278,15 @@ namespace sogen
         MemExtendedParameterImageMachine,
         MemExtendedParameterMax
     } MEM_EXTENDED_PARAMETER_TYPE, *PMEM_EXTENDED_PARAMETER_TYPE;
+
+    typedef enum MEM_SECTION_EXTENDED_PARAMETER_TYPE
+    {
+        MemSectionExtendedParameterInvalidType = 0,
+        MemSectionExtendedParameterUserPhysicalFlags,
+        MemSectionExtendedParameterNumaNode,
+        MemSectionExtendedParameterSigningLevel,
+        MemSectionExtendedParameterMax
+    } MEM_SECTION_EXTENDED_PARAMETER_TYPE, *PMEM_SECTION_EXTENDED_PARAMETER_TYPE;
 
 #endif
 
@@ -1712,6 +1725,12 @@ namespace sogen
         LARGE_INTEGER KernelTime;
         LARGE_INTEGER UserTime;
     } KERNEL_USER_TIMES, *PKERNEL_USER_TIMES;
+
+    typedef struct _THREAD_CYCLE_TIME_INFORMATION
+    {
+        ULONGLONG AccumulatedCycles;
+        ULONGLONG CurrentCycleCount;
+    } THREAD_CYCLE_TIME_INFORMATION, *PTHREAD_CYCLE_TIME_INFORMATION;
 
     typedef struct _GROUP_AFFINITY
     {
