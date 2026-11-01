@@ -5,6 +5,7 @@
 #include "pseudo_terminal.hpp"
 
 #include <frame_pacer.hpp>
+#include <filesystem/document_broker.hpp>
 
 #include <jni.h>
 
@@ -29,6 +30,16 @@ namespace sogen
 
 namespace sogen::android
 {
+    // A Storage Access Framework tree, listed by the app before the session starts, mounted copy-on-write.
+    struct document_tree
+    {
+        std::string guest_path{};
+        std::string uri{};
+        std::filesystem::path upper_directory{};
+        std::filesystem::path state_directory{};
+        std::vector<document_entry> entries{};
+    };
+
     struct run_config
     {
         std::filesystem::path emulation_root{};
@@ -36,6 +47,7 @@ namespace sogen::android
         std::vector<std::string> arguments{};
         std::vector<std::pair<std::string, std::string>> environment{};
         std::vector<std::pair<std::string, std::filesystem::path>> path_mappings{};
+        std::vector<document_tree> document_trees{};
         std::string working_directory{};
         std::string backend{};
         bool live_network{};
@@ -86,6 +98,7 @@ namespace sogen::android
       private:
         int run_emulator(const run_config& config);
         void report_snapshot(const snapshot::snapshot_outcome& outcome);
+        unique_fd open_document(const std::string& tree, const std::string& document_id);
 
         struct listener_methods
         {
@@ -99,6 +112,7 @@ namespace sogen::android
             jmethodID on_cursor_moved{};
             jmethodID on_relative_mouse_changed{};
             jmethodID on_snapshot{};
+            jmethodID open_document{};
         };
 
         jobject listener_{};
