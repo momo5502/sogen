@@ -1960,7 +1960,9 @@ namespace sogen
 
         DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
         {
-            if (process.bits != static_cast<uint64_t>(GR_GLOBAL) && !c.proc.is_current_process_handle(process))
+            // winuser.h spells GR_GLOBAL as a HANDLE rather than a number, so the value is written out here.
+            constexpr auto gr_global = static_cast<uint64_t>(-2);
+            if (process.bits != gr_global && !c.proc.is_current_process_handle(process))
             {
                 return 0;
             }
