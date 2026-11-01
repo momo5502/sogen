@@ -16,4 +16,4 @@ add_compile_definitions(
 
 set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
 
-add_subdirectory(zstd/build/cmake zstd)
+add_subdirectory(zstd/build/cmake zstd EXCLUDE_FROM_ALL)
