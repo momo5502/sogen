@@ -351,6 +351,22 @@ namespace sogen
         }
     };
 
+    struct get_message_hook_state : completion_state
+    {
+        msg message{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->message);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->message);
+        }
+    };
+
     class windows_emulator;
     struct vcpu_context;
 

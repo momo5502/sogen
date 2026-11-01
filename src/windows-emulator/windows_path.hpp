@@ -14,8 +14,18 @@ namespace sogen
     {
         constexpr std::u16string_view unc_prefix = u"\\??\\";
 
+        // Win32 long-path prefix. Ntdll converts "\\?\C:\..." to "\??\C:\..." before it reaches a
+        // syscall, but paths that come straight from guest user-mode code (LdrLoadDll's search of a
+        // module name, for instance) still carry it.
+        constexpr std::u16string_view long_path_prefix = u"\\\\?\\";
+
         inline std::u16string_view strip_unc_prefix(const std::u16string_view path)
         {
+            if (path.starts_with(long_path_prefix))
+            {
+                return path.substr(long_path_prefix.size());
+            }
+
             if (!path.starts_with(unc_prefix))
             {
                 return path;
@@ -46,7 +56,7 @@ namespace sogen
 
             for (const auto chr : canonical_path)
             {
-                if (chr == u':' && this->folders_.empty() && !this->drive_.has_value() && folder.size() == 1)
+                if (chr == u':' && this->spelled_folders_.empty() && !this->drive_.has_value() && folder.size() == 1)
                 {
                     this->drive_ = static_cast<char>(*folder.cbegin());
                     folder.clear();
@@ -60,7 +70,7 @@ namespace sogen
                         continue;
                     }
 
-                    this->folders_.push_back(std::move(folder));
+                    this->spelled_folders_.push_back(std::move(folder));
                     folder = {};
                     continue;
                 }
@@ -70,7 +80,7 @@ namespace sogen
 
             if (!folder.empty())
             {
-                this->folders_.push_back(folder);
+                this->spelled_folders_.push_back(folder);
             }
 
             this->canonicalize();
@@ -87,7 +97,7 @@ namespace sogen
 
         windows_path(const std::optional<char> drive, std::list<std::u16string> folders)
             : drive_(drive),
-              folders_(std::move(folders))
+              spelled_folders_(std::move(folders))
         {
             this->canonicalize();
         }
@@ -144,6 +154,8 @@ namespace sogen
             return std::u16string(windows_path_detail::unc_prefix) + this->u16string();
         }
 
+        // Keeps the case the path was given in, so files and directories are created on the host the way the guest
+        // spelled them.
         std::filesystem::path to_portable_path() const
         {
             std::u16string path{};
@@ -152,7 +164,7 @@ namespace sogen
                 path.push_back(static_cast<char16_t>(*this->drive_));
             }
 
-            for (const auto& folder : this->folders_)
+            for (const auto& folder : this->spelled_folders_)
             {
                 if (!path.empty())
                 {
@@ -172,16 +184,21 @@ namespace sogen
                 throw std::runtime_error("Device path can not be computed for relative paths!");
             }
 
-            const auto drive_index = this->drive_.value_or('a') - 'a';
-            const auto drive_number = std::to_string(drive_index + 1);
-            const std::u16string number(drive_number.begin(), drive_number.end());
-
-            std::u16string path = u"\\Device\\HarddiskVolume";
-            path.append(number);
+            auto path = this->volume_device_name();
             path.push_back(u'\\');
             path.append(this->without_drive().u16string());
 
             return path;
+        }
+
+        std::u16string volume_device_name() const
+        {
+            const auto drive_index = this->drive_.value_or('a') - 'a';
+            const auto drive_number = std::to_string(drive_index + 1);
+
+            std::u16string name = u"\\Device\\HarddiskVolume";
+            name.append(drive_number.begin(), drive_number.end());
+            return name;
         }
 
         std::optional<char> get_drive() const
@@ -191,7 +208,7 @@ namespace sogen
 
         windows_path without_drive() const
         {
-            return windows_path{std::nullopt, this->folders_};
+            return windows_path{std::nullopt, this->spelled_folders_};
         }
 
         windows_path operator/(const windows_path& path) const
@@ -201,9 +218,9 @@ namespace sogen
                 return path;
             }
 
-            auto folders = this->folders_;
+            auto folders = this->spelled_folders_;
 
-            for (const auto& folder : path.folders_)
+            for (const auto& folder : path.spelled_folders_)
             {
                 folders.push_back(folder);
             }
@@ -219,7 +236,7 @@ namespace sogen
 
         windows_path parent() const
         {
-            auto folders = this->folders_;
+            auto folders = this->spelled_folders_;
             if (!folders.empty())
             {
                 folders.pop_back();
@@ -232,7 +249,7 @@ namespace sogen
         {
             std::list<std::u16string> folders{};
 
-            for (const auto& folder : this->folders_)
+            for (const auto& folder : this->spelled_folders_)
             {
                 if (folder == u".")
                 {
@@ -272,6 +289,7 @@ namespace sogen
             }
 
             auto self_it = this->folders_.begin();
+            auto spelled_it = this->spelled_folders_.begin();
             for (const auto& base_folder : base.folders_)
             {
                 if (*self_it != base_folder)
@@ -279,9 +297,10 @@ namespace sogen
                     return std::nullopt;
                 }
                 ++self_it;
+                ++spelled_it;
             }
 
-            return windows_path{std::nullopt, std::list<std::u16string>(self_it, this->folders_.end())};
+            return windows_path{std::nullopt, std::list<std::u16string>(spelled_it, this->spelled_folders_.end())};
         }
 
         std::u16string leaf() const
@@ -297,13 +316,14 @@ namespace sogen
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write_optional(this->drive_);
-            buffer.write_list(this->folders_);
+            buffer.write_list(this->spelled_folders_);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read_optional(this->drive_);
-            buffer.read_list(this->folders_);
+            buffer.read_list(this->spelled_folders_);
+            this->canonicalize();
         }
 
         bool operator==(const windows_path& other) const
@@ -323,7 +343,9 @@ namespace sogen
 
       private:
         std::optional<char> drive_{};
+        // Components in lower case, which identify the path, and as they were given.
         std::list<std::u16string> folders_{};
+        std::list<std::u16string> spelled_folders_{};
 
         void canonicalize()
         {
@@ -332,6 +354,7 @@ namespace sogen
                 this->drive_ = utils::string::char_to_lower(*this->drive_);
             }
 
+            this->folders_ = this->spelled_folders_;
             for (auto& folder : this->folders_)
             {
                 for (auto& chr : folder)

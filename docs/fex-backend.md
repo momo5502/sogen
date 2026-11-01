@@ -17,7 +17,7 @@ Unicorn/Icicle (a fully software-simulated guest address space, sandboxed from t
 construction) or KVM/WHP (real hardware virtualization, a genuinely separate guest physical address
 space), FEX is an in-process JIT: it translates x86/x86-64 to ARM64 and executes the result directly
 inside this process, treating guest virtual addresses as host virtual addresses (a 1:1 mapping,
-`guest VA == host VA`). Concretely:
+`guest VA == host VA`, except for a WoW64 process's low 4GiB, see below). Concretely:
 
 - `map_memory()` is a real `mmap(MAP_FIXED)` at the guest address; `read_memory()`/`write_memory()`
   are a direct host `memcpy` once the range is known to be mapped — there is no page-table or bounds
@@ -44,7 +44,10 @@ inside this process, treating guest virtual addresses as host virtual addresses 
   sogen's memory manager. On Apple, the backend separately installs FEXCore allocator hooks that
   steer FEXCore's own anonymous internal mappings into a dedicated 4GiB host-reserved arena, keeping
   them out of guest allocation ranges. This is still only a collision mitigation, not isolation.
-  WoW64/32-bit processes remain unsupported by this backend.
+- A WoW64 process's low 4GiB is backed by a separate 4GiB host window, and FEX rebases every guest
+  access below 4GiB into it, since the host may already use that range (Android's ART heap) or cannot
+  map it at all (Darwin's `__PAGEZERO`). Host memory aliased below 4GiB is mapped a second time inside
+  the window instead of appearing at its own address.
 
 ## Architecture
 
@@ -74,11 +77,12 @@ root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requir
 
 ## Known limitations
 
-- **On Darwin, a protection fault from a plain `STR`/`STUR` store can be misclassified as a read.**
-  `decode_arm64_store` deliberately recognizes only the `STLR` family; a plain store to read-only
-  memory can therefore surface as an unhandled host signal instead of a guest
-  `STATUS_ACCESS_VIOLATION`, while an unmapped plain store reaches the guest with the operation marked
-  as a read. Android avoids this specific misclassification by using the kernel-provided ESR WnR bit.
+- **A read-modify-write to a `PAGE_NOACCESS` page is reported to the guest as a read.** Faults are
+  classified by the ESR WnR bit, and for an instruction that both reads and writes, Arm reports the
+  read that faults first. So `lock xadd`, `xchg`, `lock cmpxchg` or a plain `add [mem], reg` on a
+  no-access page raises `STATUS_ACCESS_VIOLATION` with `ExceptionInformation[0]` = 0, where Windows
+  reports a write. Stores, including stores to read-only memory, are write faults. When no ESR
+  describing a data abort is available, the `STLR`-only `decode_arm64_store` is still the fallback.
 - **`sync_host_page_apple`'s permission union can strip `PROT_EXEC` or over-grant write access near
   PE section boundaries.** Guest permissions are tracked per-4KB shadow slot but applied per-16KB
   Apple host page (four slots share one host page); when slots sharing a host page disagree, the

@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "linux_emulator.hpp"
+#include "linux_memory_layout.hpp"
 
 #include <address_utils.hpp>
 
@@ -8,7 +9,7 @@ namespace sogen
 
     namespace
     {
-        constexpr std::string_view LINUX_EMULATOR_STATE_VERSION = "linux-emulator-state-v1";
+        constexpr std::string_view LINUX_EMULATOR_STATE_VERSION = "linux-emulator-state-v2";
 
         // GDT constants — same as Windows emulator
         constexpr uint64_t GDT_ADDR = 0x35000;
@@ -53,7 +54,7 @@ namespace sogen
             emu.write_memory(offset, &entry, sizeof(entry));
         }
 
-        void setup_gdt(x86_64_emulator& emu, linux_memory_manager& memory)
+        void setup_gdt(x86_64_emulator& emu, posix_memory_manager& memory)
         {
             // Allocate GDT page
             memory.allocate_memory(GDT_ADDR, GDT_LIMIT, memory_permission::read_write);
@@ -93,7 +94,7 @@ namespace sogen
             memory_violation_type type{};
         };
 
-        std::optional<instruction_fetch_violation> classify_instruction_fetch_violation(const linux_memory_manager& memory,
+        std::optional<instruction_fetch_violation> classify_instruction_fetch_violation(const posix_memory_manager& memory,
                                                                                         const uint64_t address)
         {
             const auto region = memory.get_region_info(address);
@@ -124,7 +125,7 @@ namespace sogen
             uint64_t resume_rip{};
         };
 
-        int3_signal_location resolve_int3_signal_location(const linux_memory_manager& memory, const uint64_t reported_rip)
+        int3_signal_location resolve_int3_signal_location(const posix_memory_manager& memory, const uint64_t reported_rip)
         {
             uint8_t opcode{};
             if (memory.try_read_memory(reported_rip, &opcode, sizeof(opcode)) && opcode == X86_INT3_OPCODE)
@@ -146,7 +147,7 @@ namespace sogen
             std::string guest_path{};
         };
 
-        std::optional<std::string> guest_path_from_root(const linux_file_system& file_sys, const std::filesystem::path& host_path)
+        std::optional<std::string> guest_path_from_root(const posix_file_system& file_sys, const std::filesystem::path& host_path)
         {
             const auto& root = file_sys.root();
             if (root.empty())
@@ -162,10 +163,10 @@ namespace sogen
                 return std::nullopt;
             }
 
-            return linux_file_system::normalize_guest_path_string("/" + relative.generic_string());
+            return posix_file_system::normalize_guest_path_string("/" + relative.generic_string());
         }
 
-        resolved_application_path resolve_application_path(const linux_file_system& file_sys, const std::filesystem::path& executable)
+        resolved_application_path resolve_application_path(const posix_file_system& file_sys, const std::filesystem::path& executable)
         {
             std::error_code ec{};
             auto host_path = file_sys.translate(executable.string());
@@ -174,7 +175,7 @@ namespace sogen
                 auto guest_path = guest_path_from_root(file_sys, host_path);
                 if (!guest_path)
                 {
-                    guest_path = linux_file_system::normalize_guest_path_string(executable.generic_string());
+                    guest_path = posix_file_system::normalize_guest_path_string(executable.generic_string());
                 }
 
                 return {.host_path = std::move(host_path), .guest_path = std::move(*guest_path)};
@@ -186,7 +187,7 @@ namespace sogen
                 auto guest_path = guest_path_from_root(file_sys, host_path);
                 if (!guest_path)
                 {
-                    guest_path = linux_file_system::normalize_guest_path_string("/" + host_path.filename().generic_string());
+                    guest_path = posix_file_system::normalize_guest_path_string("/" + host_path.filename().generic_string());
                 }
 
                 return {.host_path = std::move(host_path), .guest_path = std::move(*guest_path)};
@@ -195,7 +196,7 @@ namespace sogen
             auto guest_path = guest_path_from_root(file_sys, host_path);
             if (!guest_path)
             {
-                guest_path = linux_file_system::normalize_guest_path_string(executable.generic_string());
+                guest_path = posix_file_system::normalize_guest_path_string(executable.generic_string());
             }
 
             return {.host_path = std::move(host_path), .guest_path = std::move(*guest_path)};
@@ -206,7 +207,7 @@ namespace sogen
         : emu_(std::move(emu)),
           emulation_root(emulation_root),
           file_sys(emulation_root),
-          memory(*this->emu_),
+          memory(*this->emu_, LINUX_MEMORY_LAYOUT),
           mod_manager(this->memory)
     {
         this->mod_manager.on_module_load.add([this](linux_mapped_module& module) { this->on_module_load(module); });
@@ -219,7 +220,7 @@ namespace sogen
         : emu_(std::move(emu)),
           emulation_root(emulation_root),
           file_sys(emulation_root),
-          memory(*this->emu_),
+          memory(*this->emu_, LINUX_MEMORY_LAYOUT),
           mod_manager(this->memory)
     {
         this->mod_manager.on_module_load.add([this](linux_mapped_module& module) { this->on_module_load(module); });

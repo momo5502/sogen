@@ -102,6 +102,16 @@ namespace sogen
                     continue;
                 }
 
+                // The emulation root is created in lower case, so that is the spelling almost every mismatched
+                // component has on a case sensitive host. Trying it first keeps a failed probe deep in System32
+                // from scanning every directory on the way down.
+                const std::filesystem::path lowered{utils::string::to_lower(component->u16string())};
+                if (std::filesystem::exists(resolved / lowered, ec))
+                {
+                    resolved /= lowered;
+                    continue;
+                }
+
                 const auto match = find_entry_ignoring_case(resolved, *component);
                 if (!match)
                 {
@@ -292,9 +302,22 @@ namespace sogen
         }
 
         std::error_code ec{};
-        if (!this->lookup_ignores_case_ && !std::filesystem::exists(candidate, ec))
+        if (!this->lookup_ignores_case_)
         {
-            candidate = recover_host_case(root, candidate);
+            // The emulation root is created in lower case, so that spelling is the hit for almost every guest path
+            // and is tried first, in one stat. The guest's own spelling comes next, for entries the guest created,
+            // and only a path that is neither is walked component by component.
+            auto lowered =
+                (this->target_ / std::filesystem::path{utils::string::to_lower(path.to_portable_path().u16string())}).lexically_normal();
+
+            if (is_subpath(root, lowered) && std::filesystem::exists(lowered, ec))
+            {
+                candidate = std::move(lowered);
+            }
+            else if (!std::filesystem::exists(candidate, ec))
+            {
+                candidate = recover_host_case(root, candidate);
+            }
         }
 
         auto resolved = weakly_canonical(candidate, ec);

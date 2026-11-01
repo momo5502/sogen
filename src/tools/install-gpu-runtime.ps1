@@ -1,7 +1,7 @@
 # Provisions the guest GPU runtime into an emulation root: drops the latest DXVK (D3D8-11) and
 # vkd3d-proton (D3D12) D3D->Vulkan translation DLLs over the bundled DirectX ones, replaces
-# opengl32.dll with Mesa's, and installs the GPU-bridge Vulkan shim as vulkan-1.dll. 64-bit files
-# go to system32, 32-bit files to syswow64.
+# opengl32.dll with Mesa's, and installs the GPU-bridge Vulkan shim as vulkan-1.dll and
+# winevulkan.dll. 64-bit files go to system32, 32-bit files to syswow64.
 
 [CmdletBinding()]
 param(
@@ -95,10 +95,14 @@ try {
     }
     Write-Host 'Mesa OpenGL installed (system32 + syswow64)'
 
-    # Install the GPU-bridge Vulkan shim as the system vulkan-1.dll DXVK loads.
-    Copy-Item -Path $Shim64 -Destination (Join-Path $system32 'vulkan-1.dll') -Force
-    Copy-Item -Path $Shim32 -Destination (Join-Path $syswow64 'vulkan-1.dll') -Force
-    Write-Host 'Vulkan shim installed as vulkan-1.dll (system32 + syswow64)'
+    # Install the GPU-bridge Vulkan shim as the system vulkan-1.dll DXVK loads. DXVK tries winevulkan.dll first, so
+    # the shim is installed under that name too: an app that ships its own vulkan-1.dll (Electron does) would otherwise
+    # hand DXVK the Khronos loader, which calls back into DXVK's dxgi to sort adapters and deadlocks.
+    foreach ($name in 'vulkan-1.dll', 'winevulkan.dll') {
+        Copy-Item -Path $Shim64 -Destination (Join-Path $system32 $name) -Force
+        Copy-Item -Path $Shim32 -Destination (Join-Path $syswow64 $name) -Force
+    }
+    Write-Host 'Vulkan shim installed as vulkan-1.dll and winevulkan.dll (system32 + syswow64)'
 }
 finally {
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
