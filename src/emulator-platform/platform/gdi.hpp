@@ -203,11 +203,14 @@ namespace sogen
 
 #define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
 
-#define GR_GDIOBJECTS        0
-#define GR_USEROBJECTS       1
-#define GR_GDIOBJECTS_PEAK   2
-#define GR_USEROBJECTS_PEAK  4
-#define GR_GLOBAL            (-2)
+// winuser.h defines these with the same values on Windows.
+#ifndef GR_GDIOBJECTS
+#define GR_GDIOBJECTS       0
+#define GR_USEROBJECTS      1
+#define GR_GDIOBJECTS_PEAK  2
+#define GR_USEROBJECTS_PEAK 4
+#define GR_GLOBAL           (-2)
+#endif
 
     struct GDI_SHARED_MEMORY64
     {
