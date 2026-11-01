@@ -595,20 +595,11 @@ namespace sogen::fex
         }
 
         // Store-release forms (STLR/STLRB/STLRH and STLUR/STLURB/STLURH), the counterpart to
-        // decode_arm64_load's LDAR/LDAPR/LDAPUR handling. Used only by handle_fault_signal's
-        // misaligned-atomic fallback; mmio_region's only
-        // consumer here is read-only.
+        // decode_arm64_load's LDAR/LDAPR/LDAPUR handling.
         //
         // Deliberately narrow: adding plain STR/STUR causes a reproducible hang in false-fault
         // emulation, isolated to this table (root cause not yet understood; decode_arm64_load's
         // equivalent plain-load coverage is safe).
-        //
-        // Known consequence: handle_general_memory_violation also uses this decoder to classify
-        // protection faults as reads vs. writes. Android gets this from ESR, but Darwin therefore
-        // reports plain STR faults as reads. A plain store to read-only memory can thus surface as
-        // an unhandled host signal instead of a guest STATUS_ACCESS_VIOLATION (e.g. packers/DRM);
-        // a plain store to unmapped memory reaches the guest, but ExceptionInformation[0] wrongly
-        // identifies it as a read.
         struct decoded_arm64_store
         {
             uint32_t size = 0; // bytes: 1, 2, 4, 8
@@ -699,6 +690,29 @@ namespace sogen::fex
                 prot &= ~PROT_EXEC;
             }
             return prot;
+        }
+
+        // Arm ARM, ESR_EL1 ISS for data aborts: WnR is set for every cache maintenance fault (CM). x86 checks the
+        // CLFLUSH/CLFLUSHOPT/CLWB that FEX emits as DC CIVAC/CVAC like a byte load (Intel SDM vol. 2A, CLFLUSH).
+        std::optional<memory_operation> data_abort_operation(const uint64_t esr)
+        {
+            constexpr uint64_t exception_class_shift = 26;
+            constexpr uint64_t exception_class_mask = 0x3F;
+            constexpr uint64_t data_abort_from_lower_el = 0x24;
+            constexpr uint64_t cache_maintenance = 1ULL << 8;
+            constexpr uint64_t write_not_read = 1ULL << 6;
+
+            if (((esr >> exception_class_shift) & exception_class_mask) != data_abort_from_lower_el)
+            {
+                return std::nullopt;
+            }
+
+            if ((esr & cache_maintenance) != 0 || (esr & write_not_read) == 0)
+            {
+                return memory_operation::read;
+            }
+
+            return memory_operation::write;
         }
 #endif
 
@@ -3867,6 +3881,12 @@ namespace sogen::fex
                 if (const auto* esr = find_aarch64_context<esr_context>(uctx, ESR_MAGIC))
                 {
                     operation = (esr->esr & esr_write_not_read) != 0 ? memory_operation::write : memory_operation::read;
+                }
+                else
+#elif defined(__APPLE__)
+                if (const auto data_abort = data_abort_operation(uctx->uc_mcontext->__es.__esr))
+                {
+                    operation = *data_abort;
                 }
                 else
 #endif
