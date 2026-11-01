@@ -29,14 +29,16 @@ namespace sogen
         void detach();
 
         // Runs on the emulation thread with the kernel lock held and returns the debugger's continue status.
-        uint32_t report(windows_emulator& win_emu, process_debug_event event);
+        // vcpu_index names the vCPU whose thread is reporting, because only vCPU 0 runs debugger requests.
+        uint32_t report(windows_emulator& win_emu, size_t vcpu_index, process_debug_event event);
 
         // Bracket the emulation loop; requests outside it run on the caller's thread.
         void begin_emulation();
         void end_emulation();
 
-        // The emulation loop calls this without the kernel lock.
-        void run_pending_tasks();
+        // The emulation loop calls this without the kernel lock. A debugger request runs its guest-state access
+        // against vCPU 0, so only that vCPU's loop may pick one up.
+        void run_pending_tasks(size_t vcpu_index);
 
         // These run on the process manager connection thread.
         std::optional<process_debug_event> take_event();
@@ -58,6 +60,7 @@ namespace sogen
         {
             std::optional<process_debug_event> undelivered{};
             std::optional<uint32_t> continue_status{};
+            size_t vcpu_index{};
         };
 
         mutable std::mutex mutex_{};

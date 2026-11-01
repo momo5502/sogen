@@ -4,6 +4,12 @@
 
 namespace sogen
 {
+    namespace
+    {
+        // Debugger requests read and write guest state through vCPU 0, so that vCPU owns them.
+        constexpr size_t debugger_vcpu_index = 0;
+    }
+
     bool debug_port::is_attached() const
     {
         const std::scoped_lock lock(this->mutex_);
@@ -56,13 +62,18 @@ namespace sogen
         }
     }
 
-    void debug_port::run_pending_tasks()
+    void debug_port::run_pending_tasks(const size_t vcpu_index)
     {
+        if (vcpu_index != debugger_vcpu_index)
+        {
+            return;
+        }
+
         std::unique_lock lock(this->mutex_);
         this->run_tasks(lock);
     }
 
-    uint32_t debug_port::report(windows_emulator& win_emu, process_debug_event event)
+    uint32_t debug_port::report(windows_emulator& win_emu, const size_t vcpu_index, process_debug_event event)
     {
         const auto thread_id = event.thread_id;
 
@@ -76,10 +87,11 @@ namespace sogen
             auto& stopped = this->stopped_[thread_id];
             stopped.continue_status.reset();
             stopped.undelivered = std::move(event);
+            stopped.vcpu_index = vcpu_index;
             this->report_order_.push_back(thread_id);
         }
 
-        return win_emu.run_without_kernel_lock([this, thread_id] {
+        return win_emu.run_without_kernel_lock([this, thread_id, vcpu_index] {
             std::unique_lock lock(this->mutex_);
 
             const auto continued = [this, thread_id] {
@@ -87,10 +99,18 @@ namespace sogen
                 return entry == this->stopped_.end() || entry->second.continue_status.has_value();
             };
 
+            // Only the vCPU a debugger request is run against may execute one, so a reporter parked on any other
+            // vCPU just waits: its host thread must not touch vCPU 0's registers while vCPU 0 runs guest code.
+            const auto runs_tasks = vcpu_index == debugger_vcpu_index;
+
             for (;;)
             {
-                this->condition_.wait(lock, [&] { return continued() || !this->tasks_.empty() || !this->attached_; });
-                this->run_tasks(lock);
+                this->condition_.wait(lock, [&] { return continued() || (runs_tasks && !this->tasks_.empty()) || !this->attached_; });
+
+                if (runs_tasks)
+                {
+                    this->run_tasks(lock);
+                }
 
                 if (continued() || !this->attached_)
                 {
@@ -158,7 +178,11 @@ namespace sogen
             }
 
             this->tasks_.push_back({.run = [&] { win_emu.synchronize(task); }, .done = &done});
-            stopped = !this->stopped_.empty();
+
+            // The task runs on vCPU 0, so it is woken: either it is parked in a report and runs the task from
+            // there, or its emulation loop has to be interrupted to reach run_pending_tasks.
+            stopped = std::ranges::any_of(this->stopped_ | std::views::values,
+                                          [](const stopped_thread& entry) { return entry.vcpu_index == debugger_vcpu_index; });
         }
 
         if (stopped)
