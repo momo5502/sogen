@@ -15,6 +15,7 @@ namespace sogen
     {
         constexpr uint64_t MACOS_O_ACCMODE = 0x3;
         constexpr uint64_t MACOS_O_RDONLY = 0x0;
+        constexpr uint64_t MACOS_O_DIRECTORY = 0x100000;
 
         constexpr uint64_t MACOS_F_GETFD = 1;
         constexpr uint64_t MACOS_F_SETFD = 2;
@@ -65,6 +66,16 @@ namespace sogen
             return fds.allocate(std::move(file));
         }
 
+        int open_directory(posix_fd_table& fds, std::string guest_path, const std::filesystem::path& host_path)
+        {
+            posix_fd directory{};
+            directory.type = fd_type::directory;
+            directory.host_path = utf8_path_string(host_path);
+            directory.guest_path = std::move(guest_path);
+            directory.flags = static_cast<int>(MACOS_O_RDONLY);
+            return fds.allocate(std::move(directory));
+        }
+
         int open_socket(posix_fd_table& fds)
         {
             posix_fd socket{};
@@ -113,27 +124,42 @@ namespace sogen
 
     void sys_open(const macos_syscall_context& c)
     {
-        const auto guest_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
+        const auto requested_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
         const auto flags = get_macos_syscall_argument(c.emu, 1);
 
-        if (!guest_path)
+        if (!requested_path)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
             return;
         }
 
+        const auto guest_path = c.emu_ref.resolve_guest_path(*requested_path);
         if ((flags & MACOS_O_ACCMODE) != MACOS_O_RDONLY)
         {
-            c.emu_ref.log.log("open(%s, 0x%llx) -> EROFS\n", guest_path->c_str(), static_cast<unsigned long long>(flags));
+            c.emu_ref.log.log("open(%s, 0x%llx) -> EROFS\n", guest_path.c_str(), static_cast<unsigned long long>(flags));
             write_macos_syscall_error(c, macos_errno::MACOS_EROFS);
             return;
         }
 
-        const auto host_path = c.emu_ref.file_system.translate(*guest_path);
-        const auto fd =
-            std::filesystem::is_regular_file(host_path) ? open_for_reading(c.emu_ref.fds, *guest_path, host_path) : std::nullopt;
+        const auto host_path = c.emu_ref.file_system.translate(guest_path);
+        const auto is_directory = std::filesystem::is_directory(host_path);
+        if ((flags & MACOS_O_DIRECTORY) && !is_directory && std::filesystem::exists(host_path))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOTDIR);
+            return;
+        }
 
-        c.emu_ref.log.log("open(%s, 0x%llx) -> %d\n", guest_path->c_str(), static_cast<unsigned long long>(flags), fd.value_or(-1));
+        std::optional<int> fd{};
+        if (is_directory)
+        {
+            fd = open_directory(c.emu_ref.fds, guest_path, host_path);
+        }
+        else if (std::filesystem::is_regular_file(host_path))
+        {
+            fd = open_for_reading(c.emu_ref.fds, guest_path, host_path);
+        }
+
+        c.emu_ref.log.log("open(%s, 0x%llx) -> %d\n", guest_path.c_str(), static_cast<unsigned long long>(flags), fd.value_or(-1));
 
         if (!fd)
         {

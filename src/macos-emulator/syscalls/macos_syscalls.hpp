@@ -11,6 +11,7 @@ namespace sogen
 {
     void sys_exit(const macos_syscall_context& c);
     void sys_getpid(const macos_syscall_context& c);
+    void sys_getuid(const macos_syscall_context& c);
     void sys_thread_selfid(const macos_syscall_context& c);
     void sys_bsdthread_register(const macos_syscall_context& c);
     void sys_mac_syscall(const macos_syscall_context& c);
@@ -34,6 +35,9 @@ namespace sogen
     void sys_stat64(const macos_syscall_context& c);
     void sys_fstat64(const macos_syscall_context& c);
     void sys_lstat64(const macos_syscall_context& c);
+    void sys_fstatat64(const macos_syscall_context& c);
+    void sys_fchdir(const macos_syscall_context& c);
+    void sys_getattrlistbulk(const macos_syscall_context& c);
     void sys_access(const macos_syscall_context& c);
     void sys_getattrlist(const macos_syscall_context& c);
     void sys_getfsstat64(const macos_syscall_context& c);

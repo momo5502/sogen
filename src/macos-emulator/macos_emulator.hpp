@@ -42,8 +42,14 @@ namespace sogen
         uint32_t signal_mask{};
         std::array<uint8_t, 16> executable_uuid{};
         std::string process_name{};
+        std::string working_directory{"/"};
 
         uint64_t next_entropy();
+
+        std::string resolve_guest_path(const std::string_view guest_path) const
+        {
+            return posix_file_system::resolve_guest_path_string(this->working_directory, guest_path);
+        }
 
         std::function<void(std::string_view data)> on_stdout{};
         std::function<void(std::string_view data)> on_stderr{};

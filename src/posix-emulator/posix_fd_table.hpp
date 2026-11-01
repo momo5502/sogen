@@ -83,6 +83,7 @@ namespace sogen
         FILE* handle{};
         std::shared_ptr<posix_memory_fd> memory_file{};
         int flags{};
+        uint64_t directory_position{};
         bool close_on_exec{};
         bool read_only_mapping{};
 
@@ -112,6 +113,7 @@ namespace sogen
               handle(std::exchange(other.handle, nullptr)),
               memory_file(std::move(other.memory_file)),
               flags(other.flags),
+              directory_position(other.directory_position),
               close_on_exec(other.close_on_exec),
               read_only_mapping(other.read_only_mapping),
               socket_state(std::move(other.socket_state))
@@ -129,6 +131,7 @@ namespace sogen
                 handle = std::exchange(other.handle, nullptr);
                 memory_file = std::move(other.memory_file);
                 flags = other.flags;
+                directory_position = other.directory_position;
                 close_on_exec = other.close_on_exec;
                 read_only_mapping = other.read_only_mapping;
                 socket_state = std::move(other.socket_state);
@@ -353,6 +356,7 @@ namespace sogen
             new_entry.host_path = existing.host_path;
             new_entry.guest_path = existing.guest_path;
             new_entry.flags = existing.flags;
+            new_entry.directory_position = existing.directory_position;
             new_entry.close_on_exec = false; // dup clears close-on-exec
             new_entry.read_only_mapping = existing.read_only_mapping;
 
