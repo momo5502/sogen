@@ -1747,20 +1747,7 @@ namespace sogen::fex
             }
         }
 
-        void request_thread_stop()
-        {
-            // Forces the in-flight ExecuteThread to return, from this thread or another. With
-            // Config.NeedsPendingInterruptFaultCheck set (see initialize_context's CONFIG_GDBSERVER
-            // comment) the JIT emits a `str zr, [InterruptFaultPage]` at every block entry, so
-            // protecting that page makes the next entry fault into handle_fault_signal, which redirects
-            // it to ThreadStopHandlerAddress without consulting stop_requested_.
-            if (this->thread_ == nullptr)
-            {
-                return;
-            }
-
-            ::mprotect(this->thread_->InterruptFaultPage, sizeof(this->thread_->InterruptFaultPage), PROT_NONE);
-        }
+        void request_thread_stop();
 
 #if SOGEN_FEX_HYPERVISOR
         void prepare_vm_thread();
@@ -5658,6 +5645,30 @@ namespace sogen::fex
         }
     }
 #endif
+
+    void fex_vcpu::request_thread_stop()
+    {
+        // Forces the in-flight ExecuteThread to return, from this thread or another. With
+        // Config.NeedsPendingInterruptFaultCheck set (see initialize_context's CONFIG_GDBSERVER
+        // comment) the JIT emits a `str zr, [InterruptFaultPage]` at every block entry, so
+        // protecting that page makes the next entry fault into handle_fault_signal, which redirects
+        // it to ThreadStopHandlerAddress without consulting stop_requested_.
+        if (this->thread_ == nullptr)
+        {
+            return;
+        }
+
+#if SOGEN_FEX_HYPERVISOR
+        // In the VM the page is taken out of the guest's view instead: it stays writable on the host, where it
+        // shares a page with the rest of InternalThreadState.
+        if (this->emulator_.hypervisor_)
+        {
+            this->set_interrupt_page_in_vm(false);
+            return;
+        }
+#endif
+        ::mprotect(this->thread_->InterruptFaultPage, sizeof(this->thread_->InterruptFaultPage), PROT_NONE);
+    }
 
     memory_interface& fex_vcpu::memory()
     {
