@@ -780,9 +780,11 @@ namespace sogen
     constexpr auto BASE_NAMED_OBJECTS_DIRECTORY = make_pseudo_handle(0x2, handle_types::directory);
     constexpr auto RPC_CONTROL_DIRECTORY = make_pseudo_handle(0x3, handle_types::directory);
     constexpr auto KNOWN_DLLS32_DIRECTORY = make_pseudo_handle(0x4, handle_types::directory);
+    constexpr auto DOS_DEVICES_DIRECTORY = make_pseudo_handle(0x5, handle_types::directory);
 
     constexpr auto KNOWN_DLLS_SYMLINK = make_pseudo_handle(0x1, handle_types::symlink);
     constexpr auto KNOWN_DLLS32_SYMLINK = make_pseudo_handle(0x2, handle_types::symlink);
+    constexpr uint32_t DRIVE_SYMLINK_BASE = 0x100;
     constexpr auto SHARED_SECTION = make_pseudo_handle(0x1, handle_types::section);
     constexpr auto DBWIN_BUFFER = make_pseudo_handle(0x2, handle_types::section);
 

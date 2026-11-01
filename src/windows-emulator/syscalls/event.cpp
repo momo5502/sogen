@@ -125,6 +125,24 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtResetEvent(const syscall_context& c, const handle event_handle, const emulator_object<LONG> previous_state)
+        {
+            if (const auto status = check_handle_type(event_handle, handle_types::event); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            auto* e = c.proc.events.get(event_handle);
+            if (!e)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            previous_state.write_if_valid(e->signaled ? 1 : 0);
+            e->signaled = false;
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtCreateEvent(const syscall_context& c, const emulator_object<handle> event_handle,
                                       const ACCESS_MASK /*desired_access*/,
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,

@@ -56,6 +56,14 @@ namespace sogen
         {
             event->set_signaled(true);
         }
+        // Windows queues no APC and posts no completion packet for an overlapped request that fails immediately; only its
+        // caller learns of the failure.
+        if (!was_pending && NT_ERROR(status))
+        {
+            win_emu.wake_idle_vcpu();
+            return;
+        }
+
         if (context.apc_routine)
         {
             if (auto* thread = win_emu.process.threads.get(operation.issuing_thread))

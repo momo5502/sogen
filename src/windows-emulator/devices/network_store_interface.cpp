@@ -30,26 +30,18 @@ namespace sogen
             uint64_t size{};
         };
 
-        struct nsi_request
+        // GetAllParameters and EnumerateObjectsAllParameters pass four buffers: the object key and its read-write,
+        // dynamic and static parameters. Pointers are native words, sizes are ULONGs, so under WoW64 the descriptors
+        // are packed tighter.
+        struct nsi_all_parameters
         {
             nsi_buffer key;
             nsi_buffer rw;
             nsi_buffer dynamic;
+            nsi_buffer static_parameters;
         };
 
-        // The NSI request structure stores pointers and lengths as native words, so under WoW64 it is
-        // packed with 4-byte fields at different offsets than the 64-bit layout.
-        struct nsi_offsets
-        {
-            ULONG key_address;
-            ULONG key_size;
-            ULONG rw_address;
-            ULONG rw_size;
-            ULONG dynamic_address;
-            ULONG dynamic_size;
-        };
-
-        uint64_t read_field(windows_emulator& win_emu, const io_device_context& c, const ULONG offset, const bool wow64)
+        uint64_t read_pointer(windows_emulator& win_emu, const io_device_context& c, const ULONG offset, const bool wow64)
         {
             const ULONG width = wow64 ? sizeof(uint32_t) : sizeof(uint64_t);
             if (c.input_buffer_length < offset + width)
@@ -65,18 +57,31 @@ namespace sogen
             return win_emu.emu().read_memory<uint64_t>(c.input_buffer + offset);
         }
 
-        nsi_buffer read_buffer(windows_emulator& win_emu, const io_device_context& c, const ULONG address_offset, const ULONG size_offset,
-                               const bool wow64)
+        uint64_t read_size(windows_emulator& win_emu, const io_device_context& c, const ULONG offset)
         {
-            return nsi_buffer{.address = read_field(win_emu, c, address_offset, wow64), .size = read_field(win_emu, c, size_offset, wow64)};
+            if (c.input_buffer_length < offset + sizeof(ULONG))
+            {
+                return 0;
+            }
+
+            return win_emu.emu().read_memory<ULONG>(c.input_buffer + offset);
         }
 
-        nsi_request read_request(windows_emulator& win_emu, const io_device_context& c, const nsi_offsets& offsets, const bool wow64)
+        nsi_buffer read_buffer(windows_emulator& win_emu, const io_device_context& c, const ULONG offset, const bool wow64)
         {
-            return nsi_request{
-                .key = read_buffer(win_emu, c, offsets.key_address, offsets.key_size, wow64),
-                .rw = read_buffer(win_emu, c, offsets.rw_address, offsets.rw_size, wow64),
-                .dynamic = read_buffer(win_emu, c, offsets.dynamic_address, offsets.dynamic_size, wow64),
+            const ULONG pointer_size = wow64 ? sizeof(uint32_t) : sizeof(uint64_t);
+            return nsi_buffer{.address = read_pointer(win_emu, c, offset, wow64), .size = read_size(win_emu, c, offset + pointer_size)};
+        }
+
+        nsi_all_parameters read_all_parameters(windows_emulator& win_emu, const io_device_context& c, const bool wow64)
+        {
+            const ULONG first = wow64 ? 0x18 : 0x28;
+            const ULONG stride = wow64 ? 0x8 : 0x10;
+            return nsi_all_parameters{
+                .key = read_buffer(win_emu, c, first, wow64),
+                .rw = read_buffer(win_emu, c, first + stride, wow64),
+                .dynamic = read_buffer(win_emu, c, first + (2 * stride), wow64),
+                .static_parameters = read_buffer(win_emu, c, first + (3 * stride), wow64),
             };
         }
 
@@ -99,7 +104,7 @@ namespace sogen
                 return;
             }
 
-            win_emu.emu().set_memory(buffer.address, 0, buffer.size);
+            win_emu.emu().set_memory(buffer.address, 0, static_cast<size_t>(buffer.size));
         }
 
         void write_adapter_key(windows_emulator& win_emu, const nsi_buffer buffer)
@@ -123,6 +128,15 @@ namespace sogen
             win_emu.emu().write_memory(buffer.address, k_adapter_parameter.data(), bytes_to_write);
         }
 
+        void write_adapter_object(windows_emulator& win_emu, const nsi_all_parameters& parameters)
+        {
+            write_adapter_key(win_emu, parameters.key);
+            write_zeroes(win_emu, parameters.rw);
+            write_zeroes(win_emu, parameters.dynamic);
+            write_adapter_parameter(win_emu, parameters.dynamic);
+            write_zeroes(win_emu, parameters.static_parameters);
+        }
+
         struct network_store_interface_device : stateless_device
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -131,61 +145,35 @@ namespace sogen
                 switch (c.io_control_code)
                 {
                 case k_nsi_get_parameter:
-                    return get_parameter(win_emu, c, read_request(win_emu, c, get_offsets(wow64), wow64));
+                    return get_parameter(win_emu, c, wow64);
                 case k_nsi_get_all_parameters:
-                    return get_all_parameters(win_emu, c, read_request(win_emu, c, get_offsets(wow64), wow64));
+                    write_adapter_object(win_emu, read_all_parameters(win_emu, c, wow64));
+                    write_io_information(c, 0);
+                    return STATUS_SUCCESS;
                 case k_nsi_enumerate_objects_all_parameters:
-                    return enumerate_objects_all_parameters(win_emu, c, read_request(win_emu, c, enumerate_offsets(wow64), wow64), wow64);
+                    return enumerate_objects_all_parameters(win_emu, c, wow64);
                 default:
                     return STATUS_SUCCESS;
                 }
             }
 
-            static nsi_offsets get_offsets(const bool wow64)
+            // GetParameter names one parameter: after the key comes the parameter type, then the output buffer, whose
+            // ULONG size is followed by the parameter's offset inside its structure.
+            static NTSTATUS get_parameter(windows_emulator& win_emu, const io_device_context& c, const bool wow64)
             {
-                return wow64 ? nsi_offsets{.key_address = 0x18,
-                                           .key_size = 0x1C,
-                                           .rw_address = 0x24,
-                                           .rw_size = 0x28,
-                                           .dynamic_address = 0x2C,
-                                           .dynamic_size = 0x30}
-                             : nsi_offsets{.key_address = 0x28,
-                                           .key_size = 0x30,
-                                           .rw_address = 0x40,
-                                           .rw_size = 0x48,
-                                           .dynamic_address = 0x50,
-                                           .dynamic_size = 0x58};
-            }
+                const ULONG data_offset = wow64 ? 0x24 : 0x40;
+                const auto data = read_buffer(win_emu, c, data_offset, wow64);
+                const nsi_buffer output{.address = data.address ? data.address : c.output_buffer,
+                                        .size = data.address ? data.size : c.output_buffer_length};
 
-            static nsi_offsets enumerate_offsets(const bool wow64)
-            {
-                return wow64 ? nsi_offsets{.key_address = 0x18,
-                                           .key_size = 0x1C,
-                                           .rw_address = 0x28,
-                                           .rw_size = 0x2C,
-                                           .dynamic_address = 0x30,
-                                           .dynamic_size = 0x34}
-                             : nsi_offsets{.key_address = 0x28,
-                                           .key_size = 0x30,
-                                           .rw_address = 0x48,
-                                           .rw_size = 0x50,
-                                           .dynamic_address = 0x58,
-                                           .dynamic_size = 0x60};
-            }
-
-            static NTSTATUS get_parameter(windows_emulator& win_emu, const io_device_context& c, const nsi_request& request)
-            {
-                const nsi_buffer output{.address = request.rw.address ? request.rw.address : c.output_buffer,
-                                        .size = c.output_buffer_length};
-
-                if (c.output_buffer_length == sizeof(uint32_t))
+                if (output.size == sizeof(uint32_t))
                 {
                     if (output.address)
                     {
                         win_emu.emu().write_memory<uint32_t>(output.address, 1);
                     }
                 }
-                else if (c.output_buffer_length == sizeof(uint64_t))
+                else if (output.size == sizeof(uint64_t))
                 {
                     if (output.address)
                     {
@@ -201,34 +189,16 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            static NTSTATUS get_all_parameters(windows_emulator& win_emu, const io_device_context& c, const nsi_request& request)
-            {
-                write_adapter_key(win_emu, request.key);
-                write_adapter_parameter(win_emu, request.rw);
-                write_zeroes(win_emu, request.dynamic);
-                write_io_information(c, 0);
-                return STATUS_SUCCESS;
-            }
-
-            static NTSTATUS enumerate_objects_all_parameters(windows_emulator& win_emu, const io_device_context& c,
-                                                             const nsi_request& request, const bool wow64)
+            static NTSTATUS enumerate_objects_all_parameters(windows_emulator& win_emu, const io_device_context& c, const bool wow64)
             {
                 // Report a single enumerated object by writing the count field that follows the buffer descriptors.
-                if (wow64)
+                const ULONG count_offset = wow64 ? 0x38 : 0x68;
+                if (c.input_buffer_length >= count_offset + sizeof(ULONG))
                 {
-                    if (c.input_buffer_length >= 0x3C)
-                    {
-                        win_emu.emu().write_memory<uint32_t>(c.input_buffer + 0x38, 1);
-                    }
-                }
-                else if (c.input_buffer_length >= 0x70)
-                {
-                    win_emu.emu().write_memory<uint64_t>(c.input_buffer + 0x68, 1);
+                    win_emu.emu().write_memory<ULONG>(c.input_buffer + count_offset, 1);
                 }
 
-                write_adapter_key(win_emu, request.key);
-                write_adapter_parameter(win_emu, request.rw);
-                write_zeroes(win_emu, request.dynamic);
+                write_adapter_object(win_emu, read_all_parameters(win_emu, c, wow64));
                 write_io_information(c, 0);
                 return STATUS_SUCCESS;
             }

@@ -10,6 +10,7 @@ namespace sogen
     namespace
     {
         constexpr int32_t vk_success = 0;
+        constexpr int32_t vk_error_memory_map_failed = -5;
 
         // Host endpoint of the GPU paravirtualization bridge. The guest reaches it by opening
         // \\.\SogenGpu and issuing IOCTLs; each control code maps to one bridge command, with the
@@ -2050,37 +2051,26 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                gpu_bridge::map_memory_direct_response response{};
-
                 // The whole VkDeviceMemory object is aliased once into the guest; any sub-range map is just
                 // an offset into that single coherent alias. If it's already aliased, return base + offset.
                 if (const auto imported = this->imported_memory_.find(request.memory);
                     imported != this->imported_memory_.end() && imported->second.device == request.device)
                 {
-                    response.vk_result = vk_success;
-                    response.guest_address =
-                        (request.offset < imported->second.size) ? (imported->second.guest_address + request.offset) : 0;
-                    return write_output(win_emu, context, response);
+                    return write_direct_mapping(win_emu, context, request, imported->second.guest_address, imported->second.size);
                 }
 
                 if (const auto existing = this->direct_mappings_.find(request.memory); existing != this->direct_mappings_.end())
                 {
-                    response.vk_result = 0; // vk_success
-                    // Only hand back an aliased address for offsets inside the mapping; an out-of-range
-                    // offset returns guest_address = 0 so the shim falls back to the bounded staging path.
-                    response.guest_address =
-                        (request.offset < existing->second.size) ? (existing->second.guest_address + request.offset) : 0;
-                    return write_output(win_emu, context, response);
+                    return write_direct_mapping(win_emu, context, request, existing->second.guest_address, existing->second.size);
                 }
 
                 if (const auto placed = this->map_memory_placed(win_emu, request.device, request.memory))
                 {
-                    response.vk_result = 0; // vk_success
-                    response.guest_address = (request.offset < placed->size) ? (placed->guest_address + request.offset) : 0;
                     this->direct_mappings_[request.memory] = *placed;
-                    return write_output(win_emu, context, response);
+                    return write_direct_mapping(win_emu, context, request, placed->guest_address, placed->size);
                 }
 
+                gpu_bridge::map_memory_direct_response response{};
                 void* host_ptr = nullptr;
                 uint64_t host_size = 0;
                 response.vk_result = this->vulkan_.map_memory(request.device, request.memory, host_ptr, host_size);
@@ -2118,8 +2108,26 @@ namespace sogen
 
                 this->direct_mappings_[request.memory] =
                     direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device, .host_ptr = host_ptr};
-                response.guest_address = (request.offset < mapped_size) ? (va + request.offset) : 0;
-                return write_output(win_emu, context, response);
+                return write_direct_mapping(win_emu, context, request, va, mapped_size);
+            }
+
+            static NTSTATUS write_direct_mapping(windows_emulator& win_emu, const io_device_context& context,
+                                                 const gpu_bridge::map_memory_direct_request& request, const uint64_t guest_address,
+                                                 const uint64_t mapping_size)
+            {
+                if (!gpu_bridge::is_direct_map_range_valid(mapping_size, request.offset, request.size))
+                {
+                    win_emu.log.error("[gpu-bridge] map_memory_direct: range 0x%llx+0x%llx is outside the 0x%llx-byte mapping\n",
+                                      static_cast<unsigned long long>(request.offset), static_cast<unsigned long long>(request.size),
+                                      static_cast<unsigned long long>(mapping_size));
+                    return write_output(
+                        win_emu, context,
+                        gpu_bridge::map_memory_direct_response{.vk_result = vk_error_memory_map_failed, .reserved = 0, .guest_address = 0});
+                }
+
+                return write_output(win_emu, context,
+                                    gpu_bridge::map_memory_direct_response{
+                                        .vk_result = vk_success, .reserved = 0, .guest_address = guest_address + request.offset});
             }
 
             std::function<bool(void*)> placer(const uint64_t device, const uint64_t memory, void*& host_ptr)

@@ -150,9 +150,11 @@ CALL :collect ncryptprov.dll
 CALL :collect ncryptsslp.dll
 CALL :collect netapi32.dll
 CALL :collect netmsg.dll
+CALL :collect netprofm.dll
 CALL :collect netutils.dll
 CALL :collect nlsbres.dll
 CALL :collect normaliz.dll
+CALL :collect npmproxy.dll
 CALL :collect nsi.dll
 CALL :collect ntasn1.dll
 CALL :collect ntdll.dll

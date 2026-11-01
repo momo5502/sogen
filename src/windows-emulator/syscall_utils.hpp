@@ -121,6 +121,16 @@ namespace sogen
         return highest_address + 1 == lowest_allocation_end ? STATUS_CONFLICTING_ADDRESSES : STATUS_SUCCESS;
     }
 
+    inline NTSTATUS check_handle_type(const handle h, const handle_types::type expected_type)
+    {
+        if (h.value.type == expected_type)
+        {
+            return STATUS_SUCCESS;
+        }
+
+        return h.value.type == handle_types::reserved ? STATUS_INVALID_HANDLE : STATUS_OBJECT_TYPE_MISMATCH;
+    }
+
     inline uint64_t get_syscall_argument(const syscall_context& context, const size_t index)
     {
         return context.win_emu.abi().syscall_argument(context.emu, index);

@@ -95,6 +95,11 @@ namespace sogen
 
     void file_system::map(const windows_path& guest_path, std::filesystem::path host_path, const filesystem_mode mode)
     {
+        if (mode == filesystem_mode::copy_on_write)
+        {
+            throw std::runtime_error("A copy-on-write mount needs a layered provider: " + guest_path.string());
+        }
+
         this->mount(guest_path, std::make_unique<host_directory_provider>(std::move(host_path)), mode);
     }
 
@@ -208,7 +213,7 @@ namespace sogen
     bool file_system::is_writable(const windows_path& path) const
     {
         const auto resolved = this->resolve(path);
-        return resolved && resolved->mode == filesystem_mode::read_write;
+        return resolved && allows_writes(resolved->mode);
     }
 
     open_result file_system::open(const windows_path& path, const std::u16string& mode)
@@ -219,7 +224,7 @@ namespace sogen
             return {.status = STATUS_OBJECT_PATH_NOT_FOUND};
         }
 
-        if (is_write_open_mode(mode) && resolved->mode != filesystem_mode::read_write)
+        if (is_write_open_mode(mode) && !allows_writes(resolved->mode))
         {
             return {.status = STATUS_ACCESS_DENIED};
         }
@@ -246,7 +251,7 @@ namespace sogen
             return STATUS_OBJECT_PATH_NOT_FOUND;
         }
 
-        if (resolved->mode != filesystem_mode::read_write)
+        if (!allows_writes(resolved->mode))
         {
             return STATUS_ACCESS_DENIED;
         }
@@ -264,8 +269,8 @@ namespace sogen
         }
 
         if (is_protected_mount_root(*source->provider, source->relative) ||
-            is_protected_mount_root(*destination->provider, destination->relative) || source->mode != filesystem_mode::read_write ||
-            destination->mode != filesystem_mode::read_write)
+            is_protected_mount_root(*destination->provider, destination->relative) || !allows_writes(source->mode) ||
+            !allows_writes(destination->mode))
         {
             return STATUS_ACCESS_DENIED;
         }
@@ -322,7 +327,7 @@ namespace sogen
             return STATUS_OBJECT_PATH_NOT_FOUND;
         }
 
-        if (is_protected_mount_root(*resolved->provider, resolved->relative) || resolved->mode != filesystem_mode::read_write)
+        if (is_protected_mount_root(*resolved->provider, resolved->relative) || !allows_writes(resolved->mode))
         {
             return STATUS_ACCESS_DENIED;
         }
