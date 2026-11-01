@@ -7,7 +7,7 @@
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/sogen?color=FF3131"/>
 </h1>
 
-Sogen runs Windows and Linux programs without a real operating system: It lets you see and control everything they do.
+Sogen runs Windows, Linux and [macOS](#macos-programs-rudimentary) programs, without a real operating system: It lets you see and control everything they do.
 
 Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at CPU and syscall level and runs the **real system DLLs**, so behavior closely matches the real OS.
 
@@ -141,3 +141,21 @@ The guest file system is read-only by default, and guest writes fail with `STATU
 Windows ARM64 executables run the same way, from an emulation root created with [create-root.bat](https://github.com/momo5502/sogen/blob/main/src/tools/create-root.bat) on a Windows ARM64 machine. They run on WHP on Windows ARM64, on Hypervisor.framework on Apple Silicon and on Unicorn elsewhere.
 
 `--backend` overrides environment-based selection. Outside Windows ARM64, where Unicorn's ARM64 backend is not built, `EMULATOR_UNICORN=1` runs ARM64 guests on Unicorn instead of the hypervisor.
+
+## macOS Programs (Rudimentary)
+
+macOS support is at an early stage. Sogen runs x86-64 macOS command-line programs through the real dyld and the system's dyld shared cache, which is enough for simple tools like `echo`. Most other programs still stop at an unimplemented syscall.
+
+1\. Build an emulation root on a Mac whose system still ships x86-64 slices. The script copies dyld, `/bin/echo` and the x86-64 shared cache:
+
+```bash
+src/tools/create-macos-root.sh macos-root
+```
+
+The macOS license does not allow redistributing the root or running it on non-Apple hardware, so it is not available for download and must stay on the Mac that built it.
+
+2\. Run a program from the root by setting `EMULATOR_MACOS=1`:
+
+```bash
+EMULATOR_MACOS=1 build/release/artifacts/analyzer --root macos-root macos-root/bin/echo hello
+```
