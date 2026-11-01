@@ -91,7 +91,7 @@ namespace sogen
         std::optional<int32_t> readable_bytes(const posix_fd& file)
         {
             std::error_code ec{};
-            const auto size = std::filesystem::file_size(path_from_utf8(file.host_path), ec);
+            const uint64_t size = std::filesystem::file_size(path_from_utf8(file.host_path), ec);
             const auto position = file.seek(0, SEEK_CUR);
             if (ec || !position)
             {
