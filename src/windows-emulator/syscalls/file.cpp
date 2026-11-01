@@ -1314,9 +1314,11 @@ namespace sogen
             io_status_block.write(block);
         }
 
+        // Lock offsets are unsigned (LockFileEx takes them as two DWORDs), so a lock far past the end of the file, such as one at
+        // 0xFFFFFFFF00000000, is valid.
         std::optional<uint64_t> get_lock_range_end(const LARGE_INTEGER& byte_offset, const LARGE_INTEGER& length)
         {
-            if (byte_offset.QuadPart < 0 || length.QuadPart == 0)
+            if (length.QuadPart == 0)
             {
                 return std::nullopt;
             }
@@ -1924,11 +1926,15 @@ namespace sogen
 
         constexpr std::u16string map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
         {
-            const auto wants_write = (desired_access & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA)) != 0;
+            const auto wants_write =
+                (desired_access & (GENERIC_WRITE | GENERIC_ALL | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA)) != 0;
             const auto wants_read =
-                (desired_access & (GENERIC_READ | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE)) != 0;
+                (desired_access & (GENERIC_READ | GENERIC_ALL | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE)) != 0;
 
-            if (desired_access & FILE_APPEND_DATA)
+            // A handle only appends when it may append but not write: FILE_GENERIC_WRITE grants both, and its writes go to the
+            // offset they name.
+            const auto may_write_anywhere = (desired_access & (GENERIC_WRITE | GENERIC_ALL | FILE_WRITE_DATA)) != 0;
+            if ((desired_access & FILE_APPEND_DATA) != 0 && !may_write_anywhere)
             {
                 return u"a+b";
             }

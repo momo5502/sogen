@@ -417,7 +417,7 @@ namespace sogen
 
     void linux_process_context::deserialize(utils::buffer_deserializer& buffer)
     {
-        linux_fd_table new_fds{};
+        posix_fd_table new_fds{};
         new_fds.deserialize(buffer);
         auto new_directory_entries = buffer.read_map<std::map<int, std::vector<linux_cached_dir_entry>>>();
         auto new_directory_offsets = buffer.read_map<std::map<int, size_t>>();

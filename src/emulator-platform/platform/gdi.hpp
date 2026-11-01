@@ -18,6 +18,7 @@ namespace sogen
 #define EASTEUROPE_CHARSET 238
 
 #define DEFAULT_PITCH      0
+#define VARIABLE_PITCH     2
 #define FF_SWISS           0x20
 #define FW_NORMAL          400
 #define FW_BOLD            700
@@ -202,6 +203,10 @@ namespace sogen
     static_assert(sizeof(GDI_HANDLE_ENTRY32) == 0x10);
 
 #define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
+
+#ifndef CBM_INIT
+#define CBM_INIT 0x04
+#endif
 
     struct GDI_SHARED_MEMORY64
     {

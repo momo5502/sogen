@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -156,7 +157,7 @@ namespace sogen
 
         struct linked_region
         {
-            macos_file* file{};
+            const posix_fd* file{};
             uint64_t file_offset{};
             uint64_t address{};
             size_t size{};
@@ -165,13 +166,20 @@ namespace sogen
 
         linked_region validate_region(macos_emulator& emu, const mwl_region& region)
         {
-            auto* file = emu.fds.get(region.fd);
-            if (file == nullptr || file->is_socket || region.size == 0 || page_align_down(region.address) != region.address)
+            const auto* file = emu.fds.get(region.fd);
+            if (file == nullptr || file->type != fd_type::file || file->is_standard_stream() || region.size == 0 ||
+                page_align_down(region.address) != region.address)
             {
                 throw std::runtime_error("Invalid page-in linking region");
             }
 
-            const auto file_size = page_align_up(file->size());
+            std::error_code ec{};
+            const auto file_size = page_align_up(std::filesystem::file_size(path_from_utf8(file->host_path), ec));
+            if (ec)
+            {
+                throw std::runtime_error("Page-in linking region file has no size");
+            }
+
             if (region.size > file_size)
             {
                 throw std::runtime_error("Page-in linking region exceeds its file");

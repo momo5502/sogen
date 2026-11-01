@@ -79,6 +79,8 @@ namespace sogen::py
             .value("es", x86_register::es)
             .value("fs", x86_register::fs)
             .value("gs", x86_register::gs)
+            .value("fs_base", x86_register::fs_base)
+            .value("gs_base", x86_register::gs_base)
             .value("xmm0", x86_register::xmm0)
             .value("xmm1", x86_register::xmm1)
             .value("xmm2", x86_register::xmm2)
