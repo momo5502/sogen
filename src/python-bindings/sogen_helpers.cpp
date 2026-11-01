@@ -279,6 +279,10 @@ namespace sogen::py
             settings.working_directory = get_kwarg<std::filesystem::path>(kwargs, "working_directory", {});
             settings.arguments = parse_arguments(args);
             settings.environment = parse_environment(kwargs.contains("environment") ? kwargs["environment"] : nb::none());
+            if (kwargs.contains("command_line") && !kwargs["command_line"].is_none())
+            {
+                settings.command_line = u8_to_u16(nb::cast<std::string>(kwargs["command_line"]));
+            }
             return settings;
         }
 
