@@ -34,6 +34,12 @@
 #include <tuple>
 #include <utility>
 
+// Something above pulls in excpt.h, which defines these as macros for the SEH keywords and so turns the identically
+// named fields of process_debug_event into a compile error. Which includes bring it in differs by configuration, so
+// the undef has to come after all of them.
+#undef exception_code
+#undef exception_info
+
 namespace sogen
 {
     namespace
