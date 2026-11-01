@@ -59,7 +59,7 @@ namespace sogen
         }
     };
 
-    struct user_cbt_hook
+    struct user_thread_hook
     {
         uint64_t handle{};
         uint64_t proc{};
@@ -393,6 +393,7 @@ namespace sogen
         uint64_t previous_ip{0};
 
         std::u16string name{};
+        ULONG io_priority{2};
 
         std::optional<NTSTATUS> exit_status{};
         std::vector<handle> await_objects{};
@@ -454,7 +455,8 @@ namespace sogen
 
         std::vector<callback_frame> callback_stack;
         std::optional<uint64_t> callback_return_rax{};
-        std::optional<user_cbt_hook> cbt_hook{};
+        std::optional<user_thread_hook> cbt_hook{};
+        std::optional<user_thread_hook> get_message_hook{};
         std::vector<user_low_level_hook> low_level_hooks{};
 
         std::optional<uint64_t> message_wait_return_register{};
@@ -473,6 +475,7 @@ namespace sogen
         void mark_as_ready(NTSTATUS status);
         void remember_message_wait(cpu_interface& emu, const windows_arch_abi& abi);
         void restart_message_wait(cpu_interface& emu, const windows_arch_abi& abi);
+        bool has_hooked_message(windows_emulator& win_emu);
 
         bool is_await_time_over(utils::clock& clock) const
         {
@@ -556,6 +559,7 @@ namespace sogen
             buffer.write(this->previous_ip);
 
             buffer.write_string(this->name);
+            buffer.write(this->io_priority);
 
             buffer.write_optional(this->exit_status);
             buffer.write_vector(this->await_objects);
@@ -600,6 +604,7 @@ namespace sogen
             buffer.write_vector(this->callback_stack);
             buffer.write_optional(this->callback_return_rax);
             buffer.write_optional(this->cbt_hook);
+            buffer.write_optional(this->get_message_hook);
             buffer.write_vector(this->low_level_hooks);
             buffer.write_optional(this->message_wait_return_register);
             buffer.write_optional(this->message_wait_deadline);
@@ -637,6 +642,7 @@ namespace sogen
             buffer.read(this->previous_ip);
 
             buffer.read_string(this->name);
+            buffer.read(this->io_priority);
 
             buffer.read_optional(this->exit_status);
             buffer.read_vector(this->await_objects);
@@ -681,6 +687,7 @@ namespace sogen
             buffer.read_vector(this->callback_stack);
             buffer.read_optional(this->callback_return_rax);
             buffer.read_optional(this->cbt_hook);
+            buffer.read_optional(this->get_message_hook);
             buffer.read_vector(this->low_level_hooks);
             buffer.read_optional(this->message_wait_return_register);
             buffer.read_optional(this->message_wait_deadline);

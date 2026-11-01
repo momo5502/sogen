@@ -95,7 +95,7 @@ namespace sogen
         }
     }
 
-    uint64_t linux_vdso::setup(linux_memory_manager& memory)
+    uint64_t linux_vdso::setup(posix_memory_manager& memory)
     {
         // ---- Define symbol names ----
         // We export both __vdso_xxx and bare xxx names (aliases).

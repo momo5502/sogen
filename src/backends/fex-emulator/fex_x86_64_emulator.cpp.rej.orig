@@ -1,0 +1,83 @@
+@@ -4154,59 +4704,39 @@
+ #endif
+         }
+ 
+-        // FEXCore's call-ret shadow stack has no notion of "logical guest thread" - callret_sp is just a
+-        // raw pointer into whatever host buffer this sets up. sogen models logical guest threads as
+-        // CPUState snapshots swapped in and out of one FEXCore thread, so a shared buffer would let one
+-        // logical thread's pushes corrupt the pending frames of another suspended mid-call-chain. Each
+-        // gets its own, identified by state._pad1, the unused CPUState padding right after callret_sp,
+-        // doubling as a marker: 0 means this snapshot has never been assigned one, non-zero is the
+-        // buffer's base, safe to reuse since it round-trips with the rest of the snapshot. Callers point
+-        // InternalThreadState::CallRetStackBase at it themselves.
+-        void ensure_callret_buffer(FEXCore::Core::CPUState& state)
+-        {
+-            if (state._pad1 == 0)
+-            {
+-                // Guard pages on both sides, sized to the real host page (getpagesize(), not the
+-                // guest's fixed 4KB) so mprotect can't spill onto the guard.
+-                const size_t host_page = static_cast<size_t>(::getpagesize());
+-                constexpr size_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
+-                const size_t callret_alloc_size = callret_stack_size + 2 * host_page;
+-
+-                // Routed through FEXCore::Allocator::mmap rather than raw ::mmap so that on Apple it
+-                // hits the fex_internal_arena hook and lands inside the guest-excluded arena. The JIT
+-                // consumes callret_sp as a plain host pointer, so a buffer aliasing the live guest stack
+-                // would let a host-side push/pop scribble guest memory with no guest instruction
+-                // involved. On Linux the hook defaults to raw ::mmap, so behavior there is unchanged.
+-                void* alloc_base = FEXCore::Allocator::mmap(nullptr, callret_alloc_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+-                if (alloc_base == MAP_FAILED)
++        // FEXCore's call-ret shadow stack holds <guest return RIP, host PC> pairs that RET only follows when the guest
++        // RIP matches, and FEXCore clears it whenever the code it points at goes away. The logical guest threads can
++        // therefore share one: a thread that is switched in starts at the default location, like a new FEXCore thread
++        // (ThreadManager::GetCallRetStackInfo's Base + size/4). FEXCore leaves allocating it to the embedder.
++        void reset_callret_stack(FEXCore::Core::CPUState& state)
++        {
++            constexpr size_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
++            if (this->callret_allocation_ == nullptr)
++            {
++                // Guard pages on both sides, sized to the real host page so mprotect can't spill onto the guard. Through
++                // FEXCore::Allocator::mmap so that on Apple it lands in the guest-excluded fex_internal_arena: the JIT
++                // pushes through callret_sp with no bounds check, so it must never alias guest memory.
++                const auto host_page = static_cast<size_t>(::getpagesize());
++                const size_t allocation_size = callret_stack_size + 2 * host_page;
++                void* allocation = FEXCore::Allocator::mmap(nullptr, allocation_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++                if (allocation == MAP_FAILED)
+                 {
+                     throw std::runtime_error("FEX backend failed to allocate the call-ret stack");
+                 }
+ 
+-                auto* callret_stack_base = static_cast<uint8_t*>(alloc_base) + host_page;
+-                if (::mprotect(callret_stack_base, callret_stack_size, PROT_READ | PROT_WRITE) != 0)
++                auto* stack_base = static_cast<uint8_t*>(allocation) + host_page;
++                if (::mprotect(stack_base, callret_stack_size, PROT_READ | PROT_WRITE) != 0)
+                 {
++                    FEXCore::Allocator::munmap(allocation, allocation_size);
+                     throw std::runtime_error("FEX backend failed to make the call-ret stack writable");
+                 }
+ 
+-                state._pad1 = reinterpret_cast<uint64_t>(callret_stack_base);
+-                // Leave headroom for underflows without hitting the guard page immediately, matching
+-                // ThreadManager::GetCallRetStackInfo's DefaultLocation (Base + size/4).
+-                state.callret_sp = reinterpret_cast<uint64_t>(callret_stack_base) + callret_stack_size / 4;
+-
+-                this->callret_buffers_.emplace(state._pad1, callret_buffer_record{
+-                                                                .allocation_base = alloc_base,
+-                                                                .allocation_size = callret_alloc_size,
+-                                                                .code_buffer_generation = this->thread_->CodeBufferGeneration,
+-                                                            });
++                this->callret_allocation_ = allocation;
++                this->callret_allocation_size_ = allocation_size;
++                this->thread_->CallRetStackBase = stack_base;
+             }
+-        }
+ 
+-        // Ensures the thread's call-ret buffer exists and points CallRetStackBase at it.
+-        void ensure_callret_stack(FEXCore::Core::CPUState& state)
+-        {
+-            this->ensure_callret_buffer(state);
+-            this->thread_->CallRetStackBase = reinterpret_cast<void*>(state._pad1);
++            state.callret_sp = reinterpret_cast<uint64_t>(this->thread_->CallRetStackBase) + callret_stack_size / 4;
+         }
+ 
+         // CPUState is owned by the thread frame once a thread exists. Before the thread is created we

@@ -1,5 +1,6 @@
 #include "../std_include.hpp"
 #include "elf_mapping.hpp"
+#include "../linux_memory_layout.hpp"
 
 #include <algorithm>
 #include <cstring>
@@ -451,7 +452,7 @@ namespace sogen
         return mod;
     }
 
-    linux_mapped_module map_elf_from_data(linux_memory_manager& memory, const std::span<const std::byte> data,
+    linux_mapped_module map_elf_from_data(posix_memory_manager& memory, const std::span<const std::byte> data,
                                           const std::filesystem::path& path, const uint64_t forced_base)
     {
         if (!is_valid_elf(data) || !is_elf64(data) || !is_little_endian(data))
@@ -665,7 +666,7 @@ namespace sogen
         return result;
     }
 
-    void apply_elf_relocations(linux_memory_manager& memory, linux_mapped_module& /*mod*/, const std::span<const std::byte> data,
+    void apply_elf_relocations(posix_memory_manager& memory, linux_mapped_module& /*mod*/, const std::span<const std::byte> data,
                                const int64_t base_delta)
     {
         const auto* ehdr = get_header(data);

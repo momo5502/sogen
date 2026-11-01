@@ -758,6 +758,25 @@ namespace sogen::test
         EXPECT_EQ(this->modules_.map_module(windows_path{"C:\\game\\missing.dll"}, this->log_), nullptr);
     }
 
+    TYPED_TEST(WindowsArchitectureTest, MemoryMappedModulesKeepACanonicalIdentity)
+    {
+        constexpr auto machine = TypeParam::pe_machine;
+        const auto image = make_test_image<uint64_t>(machine);
+        const auto mapped = map_module_from_data<uint64_t>(this->memory_, image, "spelled.dll", windows_path{"C:\\Game\\Spelled.DLL"});
+
+        const windows_path spelled{"C:\\Game\\Spelled.DLL"};
+        const auto* recorded = this->modules_.map_memory_module(mapped.image_base, mapped.size_of_image, spelled, this->log_);
+        ASSERT_NE(recorded, nullptr);
+
+        const windows_path lowered{"C:\\game\\spelled.dll"};
+
+        EXPECT_EQ(recorded->path, module_manager::module_identity(spelled));
+        EXPECT_EQ(recorded->path, module_manager::module_identity(lowered));
+        EXPECT_EQ(recorded->module_path, spelled);
+        EXPECT_EQ(this->modules_.get_module_load_count_by_path(spelled), this->modules_.get_module_load_count_by_path(lowered));
+        EXPECT_TRUE(this->modules_.get_module_load_count_by_path(lowered).has_value());
+    }
+
     TYPED_TEST(WindowsArchitectureTest, WrongCpuArchitectureAndInvalidBootstrapAreRejected)
     {
         EXPECT_EQ(guest_architecture_of(*this->machine_), this->architecture);

@@ -17,7 +17,7 @@ Unicorn/Icicle (a fully software-simulated guest address space, sandboxed from t
 construction) or KVM/WHP (real hardware virtualization, a genuinely separate guest physical address
 space), FEX is an in-process JIT: it translates x86/x86-64 to ARM64 and executes the result directly
 inside this process, treating guest virtual addresses as host virtual addresses (a 1:1 mapping,
-`guest VA == host VA`). Concretely:
+`guest VA == host VA`, except for a WoW64 process's low 4GiB, see below). Concretely:
 
 - `map_memory()` is a real `mmap(MAP_FIXED)` at the guest address; `read_memory()`/`write_memory()`
   are a direct host `memcpy` once the range is known to be mapped — there is no page-table or bounds
@@ -47,12 +47,14 @@ inside this process, treating guest virtual addresses as host virtual addresses 
 - Above 4GB, guest memory comes from a 256GB arena reserved at a fixed address: 64GB on Linux, 1TB on
   macOS, which keeps [64GB, 448GB) for itself. Guest addresses therefore no longer follow the host's
   ASLR, so runs are reproducible and a saved process can be restored in a new one. Images load inside
-  the arena, so an image without relocations cannot load at its preferred base. Saved register states
-  hold no host pointers, and the logical guest threads share FEXCore's call-ret shadow stack.
-  Only one emulator can exist per process.
-  WoW64/32-bit processes map the guest's low 4GB onto a host window. On Linux the window is reserved when
-  the first WoW64 process starts; on macOS only the hypervisor mode (`--backend hvf`) reserves it, so plain
-  FEX there still rejects WoW64 processes.
+  the arena, so an image without relocations cannot load at its preferred base. Only one emulator can
+  exist per process.
+- A WoW64 process's low 4GiB is backed by a separate 4GiB host window, and FEX rebases every guest
+  access below 4GiB into it, since the host may already use that range (Android's ART heap) or cannot
+  map it at all (Darwin's `__PAGEZERO`). Host memory aliased below 4GiB is mapped a second time inside
+  the window instead of appearing at its own address. On Linux the window is reserved when the first
+  WoW64 process starts; on macOS only the hypervisor mode (`--backend hvf`) reserves it, so plain FEX
+  there still rejects WoW64 processes.
 
 ## Architecture
 
@@ -91,11 +93,12 @@ root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requir
 
 ## Known limitations
 
-- **On Darwin, a protection fault from a plain `STR`/`STUR` store can be misclassified as a read.**
-  `decode_arm64_store` deliberately recognizes only the `STLR` family; a plain store to read-only
-  memory can therefore surface as an unhandled host signal instead of a guest
-  `STATUS_ACCESS_VIOLATION`, while an unmapped plain store reaches the guest with the operation marked
-  as a read. Android avoids this specific misclassification by using the kernel-provided ESR WnR bit.
+- **A read-modify-write to a `PAGE_NOACCESS` page is reported to the guest as a read.** Faults are
+  classified by the ESR WnR bit, and for an instruction that both reads and writes, Arm reports the
+  read that faults first. So `lock xadd`, `xchg`, `lock cmpxchg` or a plain `add [mem], reg` on a
+  no-access page raises `STATUS_ACCESS_VIOLATION` with `ExceptionInformation[0]` = 0, where Windows
+  reports a write. Stores, including stores to read-only memory, are write faults. When no ESR
+  describing a data abort is available, the `STLR`-only `decode_arm64_store` is still the fallback.
 - **`sync_host_page_apple`'s permission union can strip `PROT_EXEC` or over-grant write access near
   PE section boundaries.** Guest permissions are tracked per-4KB shadow slot but applied per-16KB
   Apple host page (four slots share one host page); when slots sharing a host page disagree, the
