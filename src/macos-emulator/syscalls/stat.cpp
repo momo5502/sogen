@@ -150,22 +150,22 @@ namespace sogen
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         const auto buffer = get_macos_syscall_argument(c.emu, 1);
 
+        const auto* file = c.emu_ref.fds.get(fd);
+        if (file == nullptr)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
+            return;
+        }
+
         // The standard streams are presented as pipes, as when output is captured, so runs do not depend on whether
         // the host has a terminal.
-        if (fd >= 0 && fd <= 2)
+        if (file->is_standard_stream())
         {
             macos_stat64 pipe{};
             pipe.st_mode = MACOS_S_IFIFO | PIPE_PERMISSIONS;
             pipe.st_nlink = 1;
             pipe.st_blksize = BLOCK_SIZE;
             write_stat_result(c, pipe, buffer);
-            return;
-        }
-
-        const auto* file = c.emu_ref.fds.get(fd);
-        if (file == nullptr)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
             return;
         }
 

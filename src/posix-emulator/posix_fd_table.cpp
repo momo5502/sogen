@@ -144,23 +144,6 @@ namespace sogen
             return static_cast<int64_t>(position);
         }
 
-        void close_if_owned(posix_fd& fd)
-        {
-            if (fd.handle && fd.handle != stdin && fd.handle != stdout && fd.handle != stderr)
-            {
-                std::fclose(fd.handle);
-                fd.handle = nullptr;
-            }
-        }
-
-        void close_restored(std::map<int, posix_fd>& fds)
-        {
-            for (auto& [_, fd] : fds)
-            {
-                close_if_owned(fd);
-            }
-        }
-
         void validate_serializable_fd(const int fd_number, const posix_fd& fd)
         {
             if (fd_number < 0)
@@ -216,6 +199,16 @@ namespace sogen
         return bytes_read;
     }
 
+    FILE* open_host_file(const std::filesystem::path& path, const std::string_view mode)
+    {
+#if defined(_WIN32)
+        const std::wstring wide_mode(mode.begin(), mode.end());
+        return _wfopen(path.c_str(), wide_mode.c_str());
+#else
+        return std::fopen(path.c_str(), std::string{mode}.c_str());
+#endif
+    }
+
     void posix_fd_table::serialize(utils::buffer_serializer& buffer) const
     {
         for (const auto& [fd_number, fd] : this->fds_)
@@ -250,80 +243,68 @@ namespace sogen
     void posix_fd_table::deserialize(utils::buffer_deserializer& buffer)
     {
         std::map<int, posix_fd> restored{};
-        try
+        const auto count = buffer.read<uint64_t>();
+        for (uint64_t i = 0; i < count; ++i)
         {
-            const auto count = buffer.read<uint64_t>();
-            for (uint64_t i = 0; i < count; ++i)
+            const auto fd_number = buffer.read<int>();
+            posix_fd fd{};
+            buffer.read(fd.type);
+            buffer.read(fd.host_path);
+            buffer.read(fd.guest_path);
+            buffer.read(fd.flags);
+            buffer.read(fd.close_on_exec);
+            buffer.read(fd.read_only_mapping);
+
+            if (fd.type == fd_type::memory_file)
             {
-                const auto fd_number = buffer.read<int>();
-                posix_fd fd{};
-                buffer.read(fd.type);
-                buffer.read(fd.host_path);
-                buffer.read(fd.guest_path);
-                buffer.read(fd.flags);
-                buffer.read(fd.close_on_exec);
-                buffer.read(fd.read_only_mapping);
-
-                if (fd.type == fd_type::memory_file)
+                fd.memory_file = std::make_shared<posix_memory_fd>();
+                buffer.read(fd.memory_file->content);
+                fd.memory_file->offset = static_cast<size_t>(buffer.read<uint64_t>());
+                if (fd.memory_file->offset > fd.memory_file->content.size())
                 {
-                    fd.memory_file = std::make_shared<posix_memory_fd>();
-                    buffer.read(fd.memory_file->content);
-                    fd.memory_file->offset = static_cast<size_t>(buffer.read<uint64_t>());
-                    if (fd.memory_file->offset > fd.memory_file->content.size())
-                    {
-                        throw std::runtime_error("fd snapshot has an invalid memory file offset");
-                    }
+                    throw std::runtime_error("fd snapshot has an invalid memory file offset");
                 }
-                else
-                {
-                    const auto offset = buffer.read<int64_t>();
-                    if (fd.type == fd_type::file)
-                    {
-                        if (auto* stdio_handle = stdio_handle_for_path(fd.host_path))
-                        {
-                            fd.handle = stdio_handle;
-                        }
-                        else
-                        {
-                            const auto host_fd = open_snapshot_host_file(fd.host_path, fd.flags);
-                            if (host_fd < 0)
-                            {
-                                throw std::runtime_error("Failed to reopen fd snapshot host file '" + fd.host_path + "'");
-                            }
-
-                            fd.handle = fdopen_snapshot_host_file(host_fd, fd.flags);
-                            if (!fd.handle)
-                            {
-                                const auto error = errno;
-                                close_snapshot_host_file(host_fd);
-                                errno = error;
-                            }
-                            if (!fd.handle)
-                            {
-                                throw std::runtime_error("Failed to reopen fd snapshot host file '" + fd.host_path + "'");
-                            }
-                            setvbuf(fd.handle, nullptr, _IONBF, 0);
-                            if (offset != 0 && !seek_host_file(fd.handle, offset))
-                            {
-                                throw std::runtime_error("Failed to restore fd snapshot offset for '" + fd.host_path + "'");
-                            }
-                        }
-                    }
-                }
-
-                restored.emplace(fd_number, std::move(fd));
             }
-        }
-        catch (...)
-        {
-            close_restored(restored);
-            throw;
+            else
+            {
+                const auto offset = buffer.read<int64_t>();
+                if (fd.type == fd_type::file)
+                {
+                    if (auto* stdio_handle = stdio_handle_for_path(fd.host_path))
+                    {
+                        fd.handle = stdio_handle;
+                    }
+                    else
+                    {
+                        const auto host_fd = open_snapshot_host_file(fd.host_path, fd.flags);
+                        if (host_fd < 0)
+                        {
+                            throw std::runtime_error("Failed to reopen fd snapshot host file '" + fd.host_path + "'");
+                        }
+
+                        fd.handle = fdopen_snapshot_host_file(host_fd, fd.flags);
+                        if (!fd.handle)
+                        {
+                            const auto error = errno;
+                            close_snapshot_host_file(host_fd);
+                            errno = error;
+                        }
+                        if (!fd.handle)
+                        {
+                            throw std::runtime_error("Failed to reopen fd snapshot host file '" + fd.host_path + "'");
+                        }
+                        setvbuf(fd.handle, nullptr, _IONBF, 0);
+                        if (offset != 0 && !seek_host_file(fd.handle, offset))
+                        {
+                            throw std::runtime_error("Failed to restore fd snapshot offset for '" + fd.host_path + "'");
+                        }
+                    }
+                }
+            }
+
+            restored.emplace(fd_number, std::move(fd));
         }
 
-        for (auto& [_, fd] : this->fds_)
-        {
-            close_if_owned(fd);
-        }
         this->fds_ = std::move(restored);
     }
 } // namespace sogen

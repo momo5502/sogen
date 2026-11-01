@@ -2,12 +2,14 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <optional>
 #include <serialization.hpp>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #if defined(_WIN32)
@@ -93,7 +95,11 @@ namespace sogen
 
         size_t read_at(uint64_t position, std::span<std::byte> buffer) const;
 
-        ~posix_fd() = default;
+        ~posix_fd()
+        {
+            this->close_handle();
+        }
+
         posix_fd() = default;
 
         posix_fd(const posix_fd&) = delete;
@@ -116,6 +122,7 @@ namespace sogen
         {
             if (this != &other)
             {
+                this->close_handle();
                 type = other.type;
                 host_path = std::move(other.host_path);
                 guest_path = std::move(other.guest_path);
@@ -128,7 +135,20 @@ namespace sogen
             }
             return *this;
         }
+
+      private:
+        void close_handle()
+        {
+            if (this->handle && !this->is_standard_stream())
+            {
+                std::fclose(this->handle);
+            }
+
+            this->handle = nullptr;
+        }
     };
+
+    FILE* open_host_file(const std::filesystem::path& path, std::string_view mode);
 
     class posix_fd_table
     {
@@ -192,21 +212,7 @@ namespace sogen
 
         bool close(const int fd)
         {
-            auto it = this->fds_.find(fd);
-            if (it == this->fds_.end())
-            {
-                return false;
-            }
-
-            // Don't fclose stdin/stdout/stderr
-            if (it->second.handle && it->second.handle != stdin && it->second.handle != stdout && it->second.handle != stderr)
-            {
-                fclose(it->second.handle);
-                it->second.handle = nullptr;
-            }
-
-            this->fds_.erase(it);
-            return true;
+            return this->fds_.erase(fd) != 0;
         }
 
         int dup_fd(const int oldfd, const int minimum_fd = 0)
