@@ -143,6 +143,16 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     app = None
     gc.collect()
 
+    fail_fast_app = win.create_application(
+        r"C:\test-sample.exe",
+        emulation_root=emulator_root,
+        command_line=r'"C:\test-sample.exe" -fail-fast',
+    )
+    fail_fast_app.start()
+    assert fail_fast_app.process.exit_status == 0xE0001234, f"exit: {fail_fast_app.process.exit_status}"
+    fail_fast_app = None
+    gc.collect()
+
 # temporary hook lifetime smoke test: returned Hook object must not be kept in Python
 # for hook to stay active.
 if hook_sample.exists():
