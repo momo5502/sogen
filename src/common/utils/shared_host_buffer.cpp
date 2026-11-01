@@ -7,6 +7,14 @@
 #include <string>
 #include <utility>
 
+// A named buffer needs POSIX shared memory. Emscripten has no second process to share one with, and bionic has no
+// shm_open at all, so there creating one falls back to an unnamed buffer and opening one finds nothing.
+#if defined(_WIN32) || (!defined(__EMSCRIPTEN__) && !defined(__ANDROID__))
+#define SOGEN_NAMED_SHARED_MEMORY 1
+#else
+#define SOGEN_NAMED_SHARED_MEMORY 0
+#endif
+
 #ifdef _WIN32
 #include "win.hpp"
 #elif defined(__EMSCRIPTEN__)
@@ -65,7 +73,7 @@ namespace sogen::utils
 #endif
         }
 
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(_WIN32) && SOGEN_NAMED_SHARED_MEMORY
         // POSIX shared memory names outlive their mappings until unlinked, so every process holding the buffer counts
         // itself in a header page after the data, and the last one to release it removes the name.
         constexpr size_t holder_header_size = page_size;
@@ -93,6 +101,7 @@ namespace sogen::utils
             return result;
         }
 
+#if SOGEN_NAMED_SHARED_MEMORY
         // A child outlives its parent, so the host can give the parent's process id to an unrelated new sogen process
         // while the child still holds a mapping named after it. A random part keeps those names apart, and anyone else
         // can create such a name in advance, which is why creating one checks that it did not exist and retries.
@@ -113,6 +122,7 @@ namespace sogen::utils
         }
 
         constexpr size_t name_attempts = 16;
+#endif
     }
 
     shared_host_buffer::shared_host_buffer(const size_t size)
@@ -127,7 +137,7 @@ namespace sogen::utils
 
     shared_host_buffer shared_host_buffer::create_named(const size_t size)
     {
-#ifdef __EMSCRIPTEN__
+#if !SOGEN_NAMED_SHARED_MEMORY
         return shared_host_buffer{size};
 #else
         shared_host_buffer buffer{};
@@ -200,7 +210,7 @@ namespace sogen::utils
 
     std::optional<shared_host_buffer> shared_host_buffer::open_named(const std::string& name, const size_t size)
     {
-#ifdef __EMSCRIPTEN__
+#if !SOGEN_NAMED_SHARED_MEMORY
         (void)name;
         (void)size;
         return std::nullopt;
@@ -302,7 +312,7 @@ namespace sogen::utils
             {
                 ::CloseHandle(this->mapping_);
             }
-#elif !defined(__EMSCRIPTEN__)
+#elif SOGEN_NAMED_SHARED_MEMORY
             if (this->data_)
             {
                 const auto last_holder = holder_count(this->data_, this->size_).fetch_sub(1) == 1;
