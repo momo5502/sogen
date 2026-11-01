@@ -4,6 +4,8 @@
 #include "../linux_stat.hpp"
 #include "../procfs.hpp"
 
+#include <posix_path_resolution.hpp>
+
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
@@ -23,8 +25,8 @@ namespace sogen
     using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
     void cleanup_linux_socket_state(int fd);
-    bool linux_socket_has_host_socket(const linux_fd& fd_entry);
-    void linux_socket_apply_fd_flags(int fd, const linux_fd& fd_entry);
+    bool linux_socket_has_host_socket(const posix_fd& fd_entry);
+    void linux_socket_apply_fd_flags(int fd, const posix_fd& fd_entry);
     int64_t linux_socket_send_guest_buffer(const linux_syscall_context& c, int fd, uint64_t buf_addr, size_t count, int flags);
     int64_t linux_socket_recv_guest_buffer(const linux_syscall_context& c, int fd, uint64_t buf_addr, size_t count, int flags);
     int64_t linux_socket_writev_from_guest(const linux_syscall_context& c, int fd, uint64_t iov_addr, int iovcnt);
@@ -101,20 +103,20 @@ namespace sogen
 #endif
         }
 
-        linux_fd make_memory_file_fd(std::string path, std::string content, const int flags)
+        posix_fd make_memory_file_fd(std::string path, std::string content, const int flags)
         {
-            linux_fd fd{};
+            posix_fd fd{};
             fd.type = fd_type::memory_file;
             fd.guest_path = path;
             fd.host_path = std::move(path);
-            fd.memory_file = std::make_shared<linux_memory_fd>();
+            fd.memory_file = std::make_shared<posix_memory_fd>();
             fd.memory_file->content = std::move(content);
             fd.flags = flags;
             fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
             return fd;
         }
 
-        size_t read_memory_file_at(const linux_fd& fd, uint8_t* buffer, const size_t count, const size_t offset)
+        size_t read_memory_file_at(const posix_fd& fd, uint8_t* buffer, const size_t count, const size_t offset)
         {
             const auto& content = fd.memory_file->content;
             if (count == 0)
@@ -132,14 +134,14 @@ namespace sogen
             return bytes_read;
         }
 
-        size_t read_memory_file(linux_fd& fd, uint8_t* buffer, const size_t count)
+        size_t read_memory_file(posix_fd& fd, uint8_t* buffer, const size_t count)
         {
             const auto bytes_read = read_memory_file_at(fd, buffer, count, fd.memory_file->offset);
             fd.memory_file->offset += bytes_read;
             return bytes_read;
         }
 
-        std::optional<size_t> seek_memory_file(linux_fd& fd, const int64_t offset, const int whence)
+        std::optional<size_t> seek_memory_file(posix_fd& fd, const int64_t offset, const int whence)
         {
             const auto content_size = static_cast<int64_t>(fd.memory_file->content.size());
             auto base = int64_t{0};
@@ -408,7 +410,7 @@ namespace sogen
             return access == LINUX_O_WRONLY || access == LINUX_O_RDWR || (flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0;
         }
 
-        bool fd_allows_read(const linux_fd& fd)
+        bool fd_allows_read(const posix_fd& fd)
         {
             return fd.type != fd_type::file || (fd.flags & 3) != LINUX_O_WRONLY;
         }
@@ -416,36 +418,12 @@ namespace sogen
         std::optional<std::string> resolve_guest_path_name_at(const linux_syscall_context& c, const int dirfd,
                                                               const std::string& guest_path, int64_t& linux_error)
         {
-            linux_error = LINUX_EBADF;
+            const auto directory_fd = dirfd == LINUX_AT_FDCWD ? std::nullopt : std::optional{dirfd};
 
-            if (guest_path.starts_with('/') || guest_path.starts_with('\\'))
-            {
-                return posix_file_system::normalize_guest_path_string(guest_path);
-            }
-
-            if (dirfd == LINUX_AT_FDCWD)
-            {
-                return posix_file_system::resolve_guest_path_string(c.proc.current_working_directory, guest_path);
-            }
-
-            auto* fd_entry = c.proc.fds.get(dirfd);
-            if (!fd_entry)
-            {
-                return std::nullopt;
-            }
-
-            if (fd_entry->type != fd_type::directory)
-            {
-                linux_error = LINUX_ENOTDIR;
-                return std::nullopt;
-            }
-
-            if (fd_entry->guest_path.empty())
-            {
-                return std::nullopt;
-            }
-
-            return posix_file_system::resolve_guest_path_string(fd_entry->guest_path, guest_path);
+            posix_path_error error{};
+            auto resolved = posix_resolve_guest_path_at(c.proc.fds, c.proc.current_working_directory, directory_fd, guest_path, error);
+            linux_error = error == posix_path_error::not_a_directory ? LINUX_ENOTDIR : LINUX_EBADF;
+            return resolved;
         }
 
         bool is_read_only_guest_path_at(const linux_syscall_context& c, const int dirfd, const std::string& guest_path)
@@ -735,7 +713,7 @@ namespace sogen
             return true;
         }
 
-        bool fill_memory_file_stat(const linux_syscall_context& c, const linux_fd& fd, linux_stat& ls)
+        bool fill_memory_file_stat(const linux_syscall_context& c, const posix_fd& fd, linux_stat& ls)
         {
             if (!fd.memory_file)
             {
@@ -1013,7 +991,7 @@ namespace sogen
                 return;
             }
 
-            linux_fd new_fd{};
+            posix_fd new_fd{};
             new_fd.type = fd_type::directory;
             new_fd.host_path = host_path.string();
             new_fd.guest_path = resolved_guest.value_or(std::string{});
@@ -1034,7 +1012,7 @@ namespace sogen
             return;
         }
 
-        linux_fd new_fd{};
+        posix_fd new_fd{};
         new_fd.type = fd_type::file;
         new_fd.host_path = host_path.string();
         new_fd.guest_path = resolved_guest.value_or(std::string{});
@@ -1257,7 +1235,7 @@ namespace sogen
                 return;
             }
 
-            linux_fd new_fd{};
+            posix_fd new_fd{};
             new_fd.type = fd_type::directory;
             new_fd.host_path = host_path.string();
             new_fd.guest_path = resolved_guest.value_or(std::string{});
@@ -1278,7 +1256,7 @@ namespace sogen
             return;
         }
 
-        linux_fd new_fd{};
+        posix_fd new_fd{};
         new_fd.type = fd_type::file;
         new_fd.host_path = host_path.string();
         new_fd.guest_path = resolved_guest.value_or(std::string{});

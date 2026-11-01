@@ -3,10 +3,10 @@
 #include <arch_emulator.hpp>
 #include <hook_interface.hpp>
 #include <logger.hpp>
+#include <posix_fd_table.hpp>
 #include <posix_file_system.hpp>
 #include <posix_memory_manager.hpp>
 
-#include "macos_fd_table.hpp"
 #include "macos_file_ids.hpp"
 #include "macos_mach_ports.hpp"
 #include "macos_shared_region.hpp"
@@ -33,7 +33,7 @@ namespace sogen
         logger log{};
         posix_memory_manager memory;
         posix_file_system file_system;
-        macos_fd_table fds{};
+        posix_fd_table fds{};
         macos_file_ids file_ids{};
         macos_mach_ports mach_ports{};
         macos_syscall_dispatcher dispatcher{};

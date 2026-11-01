@@ -22,6 +22,7 @@ namespace sogen
         constexpr uint64_t MACOS_ENOMEM = 12;
         constexpr uint64_t MACOS_EACCES = 13;
         constexpr uint64_t MACOS_EFAULT = 14;
+        constexpr uint64_t MACOS_ENODEV = 19;
         constexpr uint64_t MACOS_EINVAL = 22;
         constexpr uint64_t MACOS_ENOTTY = 25;
         constexpr uint64_t MACOS_ENOTSOCK = 38;

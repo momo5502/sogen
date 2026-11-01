@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,6 +37,30 @@ namespace sogen
             fwrite(data.data(), 1, data.size(), stream);
             fflush(stream);
         }
+
+        std::optional<int> open_for_reading(posix_fd_table& fds, std::string guest_path, const std::filesystem::path& host_path)
+        {
+            auto* handle = std::fopen(host_path.string().c_str(), "rb");
+            if (handle == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            posix_fd file{};
+            file.type = fd_type::file;
+            file.host_path = host_path.string();
+            file.guest_path = std::move(guest_path);
+            file.handle = handle;
+            file.flags = static_cast<int>(MACOS_O_RDONLY);
+            return fds.allocate(std::move(file));
+        }
+
+        int open_socket(posix_fd_table& fds)
+        {
+            posix_fd socket{};
+            socket.type = fd_type::socket;
+            return fds.allocate(std::move(socket));
+        }
     }
 
     void sys_write(const macos_syscall_context& c)
@@ -48,7 +73,8 @@ namespace sogen
         {
             // Files are only ever opened read-only and sockets never connect, so XNU would fail the write either way.
             const auto* file = c.emu_ref.fds.get(static_cast<int>(fd));
-            write_macos_syscall_error(c, file != nullptr && file->is_socket ? macos_errno::MACOS_ENOTCONN : macos_errno::MACOS_EBADF);
+            const auto is_socket = file != nullptr && file->type == fd_type::socket;
+            write_macos_syscall_error(c, is_socket ? macos_errno::MACOS_ENOTCONN : macos_errno::MACOS_EBADF);
             return;
         }
 
@@ -94,7 +120,8 @@ namespace sogen
         }
 
         const auto host_path = c.emu_ref.file_system.translate(*guest_path);
-        const auto fd = std::filesystem::is_regular_file(host_path) ? c.emu_ref.fds.open_for_reading(*guest_path, host_path) : std::nullopt;
+        const auto fd =
+            std::filesystem::is_regular_file(host_path) ? open_for_reading(c.emu_ref.fds, *guest_path, host_path) : std::nullopt;
 
         c.emu_ref.log.log("open(%s, 0x%llx) -> %d\n", guest_path->c_str(), static_cast<unsigned long long>(flags), fd.value_or(-1));
 
@@ -255,13 +282,13 @@ namespace sogen
             return;
         }
 
-        write_macos_syscall_success(c, static_cast<uint64_t>(c.emu_ref.fds.open_socket()));
+        write_macos_syscall_success(c, static_cast<uint64_t>(open_socket(c.emu_ref.fds)));
     }
 
     void sys_connect(const macos_syscall_context& c)
     {
         const auto* file = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
-        if (file == nullptr || !file->is_socket)
+        if (file == nullptr || file->type != fd_type::socket)
         {
             write_macos_syscall_error(c, file == nullptr ? macos_errno::MACOS_EBADF : macos_errno::MACOS_ENOTSOCK);
             return;
@@ -273,7 +300,7 @@ namespace sogen
     void sys_sendto(const macos_syscall_context& c)
     {
         const auto* file = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
-        if (file == nullptr || !file->is_socket)
+        if (file == nullptr || file->type != fd_type::socket)
         {
             write_macos_syscall_error(c, file == nullptr ? macos_errno::MACOS_EBADF : macos_errno::MACOS_ENOTSOCK);
             return;

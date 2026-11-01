@@ -61,7 +61,7 @@ namespace sogen
 
         auto& memory = c.emu_ref.memory;
         uint64_t mapped_addr = 0;
-        const linux_fd* mapped_fd_entry = nullptr;
+        const posix_fd* mapped_fd_entry = nullptr;
 
         if (flags & MAP_FIXED_NOREPLACE)
         {
@@ -135,16 +135,10 @@ namespace sogen
 
             mapped_fd_entry = fd_entry;
 
-            // Save current file position, seek to offset, read data, restore position
-            const auto saved_pos = ftell(fd_entry->handle);
-            fseek(fd_entry->handle, static_cast<long>(offset), SEEK_SET); // NOLINT(google-runtime-int)
-
             // Read min(length, file_remaining) bytes — don't read beyond the file
             const auto bytes_to_read = length; // length (not aligned_length) — the rest is zero-fill
-            std::vector<uint8_t> buffer(bytes_to_read);
-            const auto bytes_read = fread(buffer.data(), 1, bytes_to_read, fd_entry->handle);
-
-            fseek(fd_entry->handle, saved_pos, SEEK_SET);
+            std::vector<std::byte> buffer(bytes_to_read);
+            const auto bytes_read = fd_entry->read_at(offset, buffer);
 
             if (bytes_read > 0)
             {
