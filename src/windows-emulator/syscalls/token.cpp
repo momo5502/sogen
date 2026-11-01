@@ -34,14 +34,17 @@ namespace sogen
 
             std::vector<token_group> get_token_groups(const syscall_context& c, const std::span<const uint8_t> sid)
             {
+                constexpr ULONG se_group_default = 0x7; // SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED
+                constexpr ULONG se_group_owner = 0x8;
+
                 std::vector<token_group> groups{
-                    {sid, 0},
-                    {interactive_sid, 0x7}, // SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED
+                    token_group{.sid = sid, .attributes = 0},
+                    token_group{.sid = interactive_sid, .attributes = se_group_default},
                 };
 
                 if (c.win_emu.runs_elevated())
                 {
-                    groups.push_back({administrators_sid, 0xF}); // the above | SE_GROUP_OWNER
+                    groups.push_back(token_group{.sid = administrators_sid, .attributes = se_group_default | se_group_owner});
                 }
 
                 return groups;
