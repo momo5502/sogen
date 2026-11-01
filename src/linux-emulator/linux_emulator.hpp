@@ -9,8 +9,8 @@
 #include <utils/function.hpp>
 
 #include <logger.hpp>
-#include "linux_file_system.hpp"
-#include "linux_memory_manager.hpp"
+#include <posix_file_system.hpp>
+#include <posix_memory_manager.hpp>
 #include "linux_process_context.hpp"
 #include "linux_syscall_dispatcher.hpp"
 #include "signal_dispatch.hpp"
@@ -69,8 +69,8 @@ namespace sogen
       public:
         std::filesystem::path emulation_root{};
         logger log{};
-        linux_file_system file_sys{};
-        linux_memory_manager memory;
+        posix_file_system file_sys{};
+        posix_memory_manager memory;
         linux_module_manager mod_manager;
         linux_process_context process{};
         linux_syscall_dispatcher dispatcher{};

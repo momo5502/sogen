@@ -3,7 +3,7 @@
 #include "std_include.hpp"
 #include "linux_fd_table.hpp"
 #include "linux_thread.hpp"
-#include "linux_memory_manager.hpp"
+#include <posix_memory_manager.hpp>
 #include "module/elf_mapping.hpp"
 
 #include <arch_emulator.hpp>
@@ -85,7 +85,7 @@ namespace sogen
             return tid;
         }
 
-        void setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe,
+        void setup(x86_64_emulator& emu, posix_memory_manager& memory, const linux_mapped_module& exe,
                    const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values,
                    std::string process_executable_path, uint64_t interpreter_base = 0, uint64_t initial_rip = 0, uint64_t vdso_base = 0);
 
