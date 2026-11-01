@@ -982,7 +982,7 @@ namespace sogen
             // Idle: nothing is ready. Release the kernel lock while pumping UI events
             // and sleeping so other threads (UI delivery, vCPU workers) can run.
             lock.unlock();
-            this->debugger_.run_pending_tasks();
+            this->debugger_.run_pending_tasks(vcpu.cpu.index());
 
             if (this->vcpu_count_ == 1)
             {
@@ -1716,7 +1716,7 @@ namespace sogen
 
     uint32_t windows_emulator::report_debug_event(process_debug_event event)
     {
-        return this->debugger_.report(*this, std::move(event));
+        return this->debugger_.report(*this, this->active_vcpu().cpu.index(), std::move(event));
     }
 
     void windows_emulator::interrupt_for_debugger()
@@ -1937,7 +1937,7 @@ namespace sogen
         {
             lock.unlock();
             this->ui_backend_->pump_events();
-            this->debugger_.run_pending_tasks();
+            this->debugger_.run_pending_tasks(vcpu.cpu.index());
             lock.lock();
 
             if (vcpu.switch_thread || !vcpu.thread().is_thread_ready(*this))
