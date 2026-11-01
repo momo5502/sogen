@@ -106,7 +106,8 @@ print("exit status:", app.process.exit_status)
 `STATUS_ACCESS_DENIED`, and the host files do not change. `path_mappings={guest_path: host_path}` is the same as
 `mounts` with the default mode.
 
-Positional arguments after the application are joined into the process command line, each one quoted.
+Positional arguments after the application are joined into the process command line. An argument that is empty or
+contains a space, a tab or a quote is quoted, and its own quotes are escaped.
 `command_line="..."` sets the whole command line verbatim instead, program name included, as `CreateProcess` would
 receive it. When `command_line` is given, positional arguments are ignored.
 
