@@ -152,6 +152,33 @@ namespace sogen::test
         EXPECT_EQ(STATUS_INVALID_HANDLE, this->call(8, this->free_request(context, primary_oxid, {})).status);
     }
 
+    TEST_F(LocalObjectExporterTest, ReadsWindows10ConnectWithoutArchitecture)
+    {
+        this->emu->version.set_windows_build_number(19041);
+        this->bind(u"\\RPC Control\\epmapper", exporter_interface, 4);
+        std::vector<uint8_t> request;
+        utils::aligned_binary_writer writer(request, this->pointer_size);
+        writer.write_ndr_pointer(true);
+        writer.write_ndr_u16string(u"WinSta0\\Default");
+        writer.write_ndr_pointer(true);
+        writer.write_ndr_u16string(u"program.exe");
+        writer.write_ndr_pointer(true);
+        writer.align_to(8);
+        writer.write<uint32_t>(0);
+        writer.write<uint64_t>(0);
+        writer.write(std::array<uint32_t, 16>{});
+        writer.write(std::array<uint8_t, 16>{});
+        writer.write<uint32_t>(0);
+        writer.write<uint32_t>(3);
+        auto result = this->call(0, request);
+        ASSERT_EQ(STATUS_SUCCESS, result.status);
+        ASSERT_TRUE(result.payload.has_value());
+        result = this->call(6, this->allocate_request(read<connection_context>(*result.payload, 24)));
+        ASSERT_EQ(STATUS_SUCCESS, result.status);
+        ASSERT_TRUE(result.payload.has_value());
+        EXPECT_EQ(5u, read<uint64_t>(*result.payload, 56));
+    }
+
     TEST_F(LocalObjectExporterTest, RejectsTruncatedRequestsAndExcessiveReservations)
     {
         this->bind(u"\\RPC Control\\epmapper", exporter_interface, 4);
