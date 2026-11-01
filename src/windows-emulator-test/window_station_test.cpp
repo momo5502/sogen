@@ -11,6 +11,8 @@ namespace sogen::syscalls
                                           emulator_pointer device, emulator_pointer devmode, DWORD flags, ACCESS_MASK desired_access,
                                           ULONG heap_size);
     BOOL handle_NtUserSetProcessWindowStation(const syscall_context& c, handle station);
+    BOOL handle_NtUserCloseWindowStation(const syscall_context& c, handle station);
+    BOOL handle_NtUserCloseDesktop(const syscall_context& c, handle desktop_handle);
     BOOL handle_NtUserGetObjectInformation(const syscall_context& c, handle object, int index, uint64_t information, DWORD length,
                                            emulator_object<DWORD> needed);
 }
@@ -157,6 +159,34 @@ namespace sogen::test
         ASSERT_NE(0u, second);
         EXPECT_NE(first, second);
         EXPECT_EQ(second, this->create_desktop(u"Shared"));
+    }
+
+    TEST_F(WindowStationTest, EachOpenOfAStationIsItsOwnReference)
+    {
+        const auto first = this->create_station(u"Sandbox");
+        ASSERT_NE(0u, first);
+        const auto second = this->create_station(u"Sandbox");
+        ASSERT_EQ(first, second);
+
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(first)));
+        EXPECT_NE(nullptr, this->emu->process.window_stations.get(make_handle(second)));
+
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(second)));
+        EXPECT_EQ(nullptr, this->emu->process.window_stations.get(make_handle(second)));
+    }
+
+    TEST_F(WindowStationTest, EachOpenOfADesktopIsItsOwnReference)
+    {
+        const auto first = this->create_desktop(u"Shared");
+        ASSERT_NE(0u, first);
+        const auto second = this->create_desktop(u"Shared");
+        ASSERT_EQ(first, second);
+
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(first)));
+        EXPECT_NE(nullptr, this->emu->process.desktops.get(make_handle(second)));
+
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(second)));
+        EXPECT_EQ(nullptr, this->emu->process.desktops.get(make_handle(second)));
     }
 
     TEST_F(WindowStationTest, OnlyTheInteractiveStationIsVisible)

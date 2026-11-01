@@ -3055,6 +3055,13 @@ namespace sogen
                     return 0;
                 }
 
+                // Each open is its own reference, so closing one handle must not take the station away from the
+                // other. The interactive station is not in the store and cannot be closed.
+                if (existing != interactive_window_station)
+                {
+                    c.proc.window_stations.duplicate(make_handle(existing));
+                }
+
                 return existing;
             }
 
@@ -3111,6 +3118,7 @@ namespace sogen
             const auto station = c.proc.process_window_station;
             if (const auto existing = find_desktop(c, station, name); existing != 0)
             {
+                c.proc.desktops.duplicate(make_handle(existing));
                 return existing;
             }
 
