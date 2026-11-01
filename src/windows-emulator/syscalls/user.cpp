@@ -1004,11 +1004,7 @@ namespace sogen
                 return;
             }
 
-            c.win_emu.ui().present_surface(top_level->handle, ui_surface_desc{.width = static_cast<int>(surface.width),
-                                                                              .height = static_cast<int>(surface.height),
-                                                                              .stride = static_cast<int>(surface.width * sizeof(uint32_t)),
-                                                                              .format = ui_surface_format::bgra8,
-                                                                              .pixels = surface.pixels.data()});
+            c.win_emu.ui().present_surface(top_level->handle, make_window_surface_desc(surface, top_level));
         }
 
         void dispatch_cbt_create_window(const syscall_context& c, window_create_state&& state, const window& win,
@@ -1971,12 +1967,7 @@ namespace sogen
             if (auto* surface = get_dc_present_surface(c, dc, present_handle);
                 surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
             {
-                c.win_emu.ui().present_surface(present_handle,
-                                               ui_surface_desc{.width = static_cast<int>(surface->width),
-                                                               .height = static_cast<int>(surface->height),
-                                                               .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
-                                                               .format = ui_surface_format::bgra8,
-                                                               .pixels = surface->pixels.data()});
+                c.win_emu.ui().present_surface(present_handle, make_window_surface_desc(*surface, c.proc.windows.get(present_handle)));
             }
 
             (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(dc));
@@ -2434,12 +2425,7 @@ namespace sogen
                 if (auto* surface = get_dc_present_surface(c, ps.paint_hdc, present_handle);
                     surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
                 {
-                    c.win_emu.ui().present_surface(present_handle,
-                                                   ui_surface_desc{.width = static_cast<int>(surface->width),
-                                                                   .height = static_cast<int>(surface->height),
-                                                                   .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
-                                                                   .format = ui_surface_format::bgra8,
-                                                                   .pixels = surface->pixels.data()});
+                    c.win_emu.ui().present_surface(present_handle, make_window_surface_desc(*surface, c.proc.windows.get(present_handle)));
                 }
 
                 // BeginPaint allocated a fresh GDI DC (handle table entry + DC_ATTR block) via
@@ -7877,13 +7863,45 @@ namespace sogen
         BOOL handle_NtUserUpdateLayeredWindow(const syscall_context& c, const hwnd window, const hdc /*destination_dc*/,
                                               const emulator_object<POINT> destination, const emulator_object<SIZE> size,
                                               const hdc source_dc, const emulator_object<POINT> source, const COLORREF /*color_key*/,
-                                              const emulator_pointer /*blend*/, const DWORD /*flags*/,
-                                              const emulator_pointer /*dirty_rect*/)
+                                              const emulator_pointer blend, const DWORD flags, const emulator_pointer /*dirty_rect*/)
         {
+            constexpr DWORD ulw_colorkey = 0x1;
+            constexpr DWORD ulw_alpha = 0x2;
+            constexpr uint8_t ac_src_over = 0x00;
+            constexpr uint8_t ac_src_alpha = 0x01;
+
             auto* win = c.proc.windows.get(window);
             if (!win || (win->ex_style & WS_EX_LAYERED) == 0)
             {
                 return FALSE;
+            }
+
+            // The colour key would have to be applied while compositing the window, which presentation cannot do.
+            // Failing lets the caller fall back instead of showing the keyed colour as opaque.
+            if ((flags & ulw_colorkey) != 0)
+            {
+                return FALSE;
+            }
+
+            bool premultiplied_alpha = false;
+            auto constant_alpha = uint8_t{255};
+            const bool blend_alpha = (flags & ulw_alpha) != 0;
+            if (blend_alpha)
+            {
+                if (blend == 0)
+                {
+                    return FALSE;
+                }
+
+                // BLENDFUNCTION: BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat.
+                const auto blend_function = c.emu.read_memory<std::array<uint8_t, 4>>(blend);
+                if (blend_function[0] != ac_src_over)
+                {
+                    return FALSE;
+                }
+
+                constant_alpha = blend_function[2];
+                premultiplied_alpha = (blend_function[3] & ac_src_alpha) != 0;
             }
 
             auto x = win->x;
@@ -7907,21 +7925,30 @@ namespace sogen
                 height = extent.cy;
             }
 
+            // The layered bitmap covers the whole window rectangle, while the window surface only holds the client area.
+            const auto insets = win->nonclient_insets();
+
+            uint32_t source_present_handle{};
+            const gdi_bitmap_surface* source_surface = nullptr;
+            if (source_dc != 0)
+            {
+                source_surface = get_dc_present_surface(c, source_dc, source_present_handle);
+                if (!source_surface || width - insets.left - insets.right <= 0 || height - insets.top - insets.bottom <= 0)
+                {
+                    return FALSE;
+                }
+            }
+
+            win->layered_blend = blend_alpha;
+            win->layered_premultiplied_alpha = premultiplied_alpha;
+            win->layered_constant_alpha = constant_alpha;
+
             update_window_geometry(c, *win, x, y, width, height, false);
-            if (source_dc == 0)
+            if (!source_surface)
             {
                 return TRUE;
             }
 
-            uint32_t source_present_handle{};
-            const auto* source_surface = get_dc_present_surface(c, source_dc, source_present_handle);
-            if (!source_surface || win->client_width() <= 0 || win->client_height() <= 0)
-            {
-                return FALSE;
-            }
-
-            // The layered bitmap covers the whole window rectangle, while the window surface only holds the client area.
-            const auto insets = win->nonclient_insets();
             const auto origin = source ? source.read() : POINT{};
             const auto surface_width = static_cast<uint32_t>(win->client_width());
             const auto surface_height = static_cast<uint32_t>(win->client_height());
