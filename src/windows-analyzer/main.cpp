@@ -1000,8 +1000,10 @@ namespace sogen
                 }
             }
 
-            if (const auto running = manager->running_process_count(); running != 0)
+            // There is no manager unless the run uses the backend that spawns child processes.
+            if (manager && manager->running_process_count() != 0)
             {
+                const auto running = manager->running_process_count();
                 win_emu->log.print(color::gray, "Waiting up to %us for %zu child process(es) to exit\n", options.child_wait_seconds,
                                    running);
 
