@@ -138,8 +138,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            previous_state.write_if_valid(e->signaled ? 1 : 0);
-            e->signaled = false;
+            previous_state.write_if_valid(e->set_signaled(false) ? 1 : 0);
             return STATUS_SUCCESS;
         }
 

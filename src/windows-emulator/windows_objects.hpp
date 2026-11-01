@@ -932,6 +932,13 @@ namespace sogen
             return this->access([](const state& current) { return current.owner; });
         }
 
+        // What NtQueryMutant reports: the recursion count and the owner in one look, so a shared mutant cannot
+        // change between the two.
+        std::pair<uint32_t, uint64_t> lock_state() const
+        {
+            return this->access([](const state& current) { return std::pair{current.locked_count, current.owner}; });
+        }
+
         bool is_signaled(const uint64_t owner) const
         {
             return this->access(
