@@ -240,6 +240,7 @@ namespace sogen
 #define WS_EX_NOPARENTNOTIFY        0x00000004L
 #define WS_EX_TRANSPARENT           0x00000020L
 #define WS_EX_CLIENTEDGE            0x00000200L
+#define WS_EX_NOACTIVATE            0x08000000L
 
 #define SIZE_RESTORED               0
 #define SIZE_MAXIMIZED              2
