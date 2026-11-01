@@ -142,6 +142,15 @@ namespace sogen
                 }
             }
 
+            if (value.type == handle_types::registry)
+            {
+                auto* key = c.proc.registry_keys.get(h);
+                if (key && key->ref_count == 1)
+                {
+                    registry_notification::close(c, *key);
+                }
+            }
+
             uint64_t section_backing_address = 0;
             uint32_t section_mapped_views = 0;
             uint64_t section_view_storage_id = 0;
