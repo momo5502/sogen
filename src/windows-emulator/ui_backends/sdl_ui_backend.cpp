@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "surface_alpha.hpp"
 #include "../vulkan_handle_utils.hpp"
 #include <platform/ui_backend.hpp>
 
@@ -671,6 +672,8 @@ namespace sogen
                 int texture_height{};
                 ui_surface_format texture_format{ui_surface_format::bgra8};
                 bool has_surface{};
+                bool translucent{};
+                std::vector<uint32_t> blended_pixels{};
             };
 
             struct pending_key_release
@@ -1129,6 +1132,12 @@ namespace sogen
             static Uint64 host_window_flags(const ui_window_desc& desc)
             {
                 Uint64 flags = 0;
+                // A layered window's bitmap carries alpha the host compositor has to blend, which only a transparent
+                // host window lets through.
+                if ((desc.ex_style & WS_EX_LAYERED) != 0)
+                {
+                    flags |= SDL_WINDOW_TRANSPARENT;
+                }
                 if (!desc.visible)
                 {
                     flags |= SDL_WINDOW_HIDDEN;
@@ -1630,7 +1639,6 @@ namespace sogen
                                                   surface.width, surface.height);
                 if (state.texture)
                 {
-                    SDL_SetTextureBlendMode(state.texture, SDL_BLENDMODE_NONE);
                     // Nearest-neighbour keeps the guest frame crisp when the window is resized larger than the
                     // guest resolution (the letterbox fit would otherwise blur it with linear filtering). At the
                     // default 1:1 size this is identical to linear.
@@ -1655,7 +1663,28 @@ namespace sogen
                     return;
                 }
 
-                SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
+                state.translucent = surface.layered;
+                SDL_SetTextureBlendMode(state.texture, state.translucent ? SDL_BLENDMODE_BLEND_PREMULTIPLIED : SDL_BLENDMODE_NONE);
+
+                if (!state.translucent)
+                {
+                    SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
+                    return;
+                }
+
+                const auto width = static_cast<size_t>(surface.width);
+                const auto row_stride = static_cast<size_t>(surface.stride);
+                state.blended_pixels.resize(width * static_cast<size_t>(surface.height));
+
+                const auto* source = static_cast<const uint8_t*>(surface.pixels);
+                for (size_t row = 0; row < static_cast<size_t>(surface.height); ++row)
+                {
+                    const auto destination = std::span{state.blended_pixels}.subspan(row * width, width);
+                    memcpy(destination.data(), source + (row * row_stride), width * sizeof(uint32_t));
+                    apply_layered_blend(destination, surface.premultiplied_alpha, surface.constant_alpha);
+                }
+
+                SDL_UpdateTexture(state.texture, nullptr, state.blended_pixels.data(), static_cast<int>(width * sizeof(uint32_t)));
             }
 
             static void render_window(window_state& state)
@@ -1671,7 +1700,7 @@ namespace sogen
                     // makes SDL_RenderCoordinatesFromWindow map host mouse positions back to guest pixels.
                     SDL_SetRenderLogicalPresentation(state.renderer, state.texture_width, state.texture_height,
                                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
-                    SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
+                    SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, state.translucent ? 0 : 255);
                     SDL_RenderClear(state.renderer);
                     SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
                     SDL_RenderPresent(state.renderer);

@@ -125,6 +125,22 @@ namespace sogen
         }
     };
 
+    // Every path that presents a window surface goes through this, so none of them can drop the layered-window
+    // alpha and have the compositor show a layered window opaque.
+    inline ui_surface_desc make_window_surface_desc(const gdi_bitmap_surface& surface, const window* win)
+    {
+        return ui_surface_desc{
+            .width = static_cast<int>(surface.width),
+            .height = static_cast<int>(surface.height),
+            .stride = static_cast<int>(surface.width * sizeof(uint32_t)),
+            .format = ui_surface_format::bgra8,
+            .pixels = surface.pixels.data(),
+            .layered = win && win->layered_blend,
+            .premultiplied_alpha = win && win->layered_premultiplied_alpha,
+            .constant_alpha = win ? win->layered_constant_alpha : uint8_t{255},
+        };
+    }
+
     struct gdi_dc_state
     {
         uint32_t selected_bitmap{};
@@ -132,6 +148,8 @@ namespace sogen
         int32_t current_x{};
         int32_t current_y{};
         bool is_memory_dc{};
+        // Retrieved with GetDC and friends, which hand out the desktop window's DC for no window.
+        bool is_window_dc{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -140,6 +158,7 @@ namespace sogen
             buffer.write(this->current_x);
             buffer.write(this->current_y);
             buffer.write(this->is_memory_dc);
+            buffer.write(this->is_window_dc);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -149,6 +168,7 @@ namespace sogen
             buffer.read(this->current_x);
             buffer.read(this->current_y);
             buffer.read(this->is_memory_dc);
+            buffer.read(this->is_window_dc);
         }
     };
 

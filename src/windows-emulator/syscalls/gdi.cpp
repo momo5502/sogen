@@ -433,7 +433,7 @@ namespace sogen
                     entry_obj.access([&](GDI_HANDLE_ENTRY64& writable) {
                         writable = {};
                         writable.Object = object_ptr;
-                        writable.Owner.ProcessId = static_cast<uint16_t>(c.proc.process_id);
+                        writable.Owner = c.proc.process_id;
                         writable.Unique = unique;
                         writable.Type = type;
                         writable.Flags = 0;
@@ -1958,6 +1958,38 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
+        {
+            if (process.bits != gui_resources_global_process && !c.proc.is_current_process_handle(process))
+            {
+                return 0;
+            }
+
+            // Peaks are not tracked, so they report the current count.
+            switch (flags)
+            {
+            case gui_resources_userobjects:
+            case gui_resources_userobjects_peak:
+                return static_cast<DWORD>(c.proc.user_handles.used_handle_count());
+            case gui_resources_gdiobjects:
+            case gui_resources_gdiobjects_peak: {
+                uint64_t table = 0;
+                c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
+                if (table == 0)
+                {
+                    return 0;
+                }
+
+                std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
+                c.emu.read_memory(table, entries.data(), entries.size() * sizeof(GDI_HANDLE_ENTRY64));
+                return static_cast<DWORD>(std::ranges::count_if(
+                    entries, [&](const GDI_HANDLE_ENTRY64& entry) { return entry.Type != 0 && (entry.Owner & ~1u) == c.proc.process_id; }));
+            }
+            default:
+                return 0;
+            }
+        }
+
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, const hdc /*dc*/)
         {
             uint64_t dc_attr = 0;
@@ -1991,7 +2023,9 @@ namespace sogen
             const auto dc = allocate_gdi_dc(c, dc_attr);
             if (dc != 0)
             {
-                c.proc.gdi_dc_states[dc].target_window = window;
+                auto& state = c.proc.gdi_dc_states[dc];
+                state.target_window = window;
+                state.is_window_dc = true;
             }
             return dc;
         }
@@ -4204,7 +4238,7 @@ namespace sogen
             {
                 GDI_HANDLE_ENTRY32 entry32{};
                 entry32.Object = static_cast<uint32_t>(entry.Object & std::numeric_limits<uint32_t>::max());
-                entry32.OwnerValue = entry.Owner.Value;
+                entry32.OwnerValue = entry.Owner;
                 entry32.Unique = entry.Unique;
                 entry32.Type = entry.Type;
                 entry32.Flags = entry.Flags;

@@ -50,6 +50,13 @@ namespace sogen
         int stride{};
         ui_surface_format format{ui_surface_format::bgra8};
         const void* pixels{};
+
+        // What UpdateLayeredWindow's BLENDFUNCTION asked for. A layered surface is blended by the host compositor;
+        // premultiplied_alpha mirrors AC_SRC_ALPHA, which decides whether the source pixels carry their own alpha
+        // or the window shows at constant_alpha alone.
+        bool layered{};
+        bool premultiplied_alpha{};
+        uint8_t constant_alpha{255};
     };
 
     struct ui_extent
