@@ -1776,6 +1776,62 @@ namespace sogen
 
                 return out;
             }
+
+            // Windows fails a request whose output would exceed this many bytes before writing anything.
+            constexpr uint64_t max_char_metric_output_size = 0x2710000;
+
+            bool is_char_metric_request_valid(const syscall_context& c, const hdc dc, const UINT char_count, const size_t entry_size,
+                                              const emulator_pointer chars, const emulator_pointer buffer)
+            {
+                return dc != 0 && buffer != 0 && char_count != 0 &&
+                       static_cast<uint64_t>(char_count) * entry_size <= max_char_metric_output_size &&
+                       (chars == 0 || is_readable_range(c.win_emu.memory, chars, static_cast<uint64_t>(char_count) * sizeof(char16_t)));
+            }
+
+            bool write_guest_block(const syscall_context& c, const emulator_pointer address, const void* data, const size_t size)
+            {
+                return is_writable_range(c.win_emu.memory, address, size) && c.emu.try_write_memory(address, data, size);
+            }
+
+            bool write_guest_bytes_up_to_fault(const syscall_context& c, const emulator_pointer address, const void* data,
+                                               const size_t size)
+            {
+                const auto* bytes = static_cast<const std::byte*>(data);
+                for (size_t offset = 0; offset < size;)
+                {
+                    const auto current = address + offset;
+                    const auto piece = static_cast<size_t>(std::min<uint64_t>(size - offset, page_align_up(current + 1) - current));
+                    if (!write_guest_block(c, current, bytes + offset, piece))
+                    {
+                        return false;
+                    }
+
+                    offset += piece;
+                }
+
+                return true;
+            }
+
+            template <typename Entry, typename Writer>
+            bool write_repeated_entries(const syscall_context& c, const emulator_pointer buffer, const UINT count, const Entry& entry,
+                                        const Writer& write_block)
+            {
+                std::array<Entry, 0x100> chunk{};
+                chunk.fill(entry);
+                for (UINT written = 0; written < count;)
+                {
+                    const auto chunk_count = std::min<size_t>(chunk.size(), count - written);
+                    if (!write_block(c, buffer + (static_cast<uint64_t>(written) * sizeof(Entry)), chunk.data(),
+                                     chunk_count * sizeof(Entry)))
+                    {
+                        return false;
+                    }
+
+                    written += static_cast<UINT>(chunk_count);
+                }
+
+                return true;
+            }
         }
 
         // Returns the surface a paint DC should be presented to, and (via present_handle) the host window handle it
@@ -3198,22 +3254,21 @@ namespace sogen
         }
 
         BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
-                                       const emulator_pointer /*chars*/, const UINT /*flags*/, const emulator_pointer buffer)
+                                       const emulator_pointer chars, const UINT /*flags*/, const emulator_pointer buffer)
         {
-            if (dc == 0 || buffer == 0)
+            if (!is_char_metric_request_valid(c, dc, char_count, sizeof(int32_t), chars, buffer))
             {
                 return FALSE;
             }
 
-            const std::vector<int32_t> widths(char_count, static_cast<int32_t>(k_default_font_width));
-            c.emu.write_memory(buffer, widths.data(), widths.size() * sizeof(int32_t));
-            return TRUE;
+            const auto width = static_cast<int32_t>(k_default_font_width);
+            return write_repeated_entries(c, buffer, char_count, width, write_guest_block) ? TRUE : FALSE;
         }
 
         BOOL handle_NtGdiGetCharABCWidthsW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
-                                           const emulator_pointer /*chars*/, const UINT /*flags*/, const emulator_pointer buffer)
+                                           const emulator_pointer chars, const UINT /*flags*/, const emulator_pointer buffer)
         {
-            if (dc == 0 || buffer == 0)
+            if (!is_char_metric_request_valid(c, dc, char_count, sizeof(ABC), chars, buffer))
             {
                 return FALSE;
             }
@@ -3223,9 +3278,9 @@ namespace sogen
                 .abcB = k_default_font_width,
                 .abcC = 0,
             };
-            const std::vector<ABC> widths(char_count, metrics);
-            c.emu.write_memory(buffer, widths.data(), widths.size() * sizeof(ABC));
-            return TRUE;
+            // Windows fills ABC entries up to the first unwritable page; NtGdiGetCharWidthW instead leaves the whole block
+            // untouched.
+            return write_repeated_entries(c, buffer, char_count, metrics, write_guest_bytes_up_to_fault) ? TRUE : FALSE;
         }
 
         uint32_t handle_NtGdiGetGlyphOutline(const syscall_context& c, const hdc dc, const UINT character, const UINT format,
