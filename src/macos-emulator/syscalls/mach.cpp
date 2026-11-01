@@ -163,6 +163,33 @@ namespace sogen
         write_trap_result(c, c.emu_ref.mach_ports.allocate_receive_right());
     }
 
+    void mach_host_create_mach_voucher_trap(const macos_syscall_context& c)
+    {
+        const auto host = static_cast<uint32_t>(get_macos_syscall_argument(c.emu, 0));
+        const auto voucher_pointer = get_macos_syscall_argument(c.emu, 3);
+
+        const auto* host_entry = c.emu_ref.mach_ports.find(host);
+        if (host_entry == nullptr || host_entry->object != mach_port_object::host)
+        {
+            write_trap_result(c, macos_kern_return::KERN_INVALID_ARGUMENT);
+            return;
+        }
+
+        const auto voucher = c.emu_ref.mach_ports.create_kernel_object(mach_port_object::voucher);
+        if (!c.emu.try_write_memory(voucher_pointer, &voucher, sizeof(voucher)))
+        {
+            write_trap_result(c, macos_kern_return::KERN_INVALID_ADDRESS);
+            return;
+        }
+
+        write_trap_result(c, macos_kern_return::KERN_SUCCESS);
+    }
+
+    void mach_thread_get_special_reply_port(const macos_syscall_context& c)
+    {
+        write_trap_result(c, c.emu_ref.mach_ports.allocate_receive_right());
+    }
+
     void mach_thread_self_trap(const macos_syscall_context& c)
     {
         write_trap_result(c, macos_mach_ports::THREAD_PORT_NAME);

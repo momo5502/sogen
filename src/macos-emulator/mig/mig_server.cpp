@@ -6,6 +6,7 @@ namespace sogen
     {
         constexpr int32_t HOST_INFO_ID = 200;
         constexpr int32_t HOST_GET_CLOCK_SERVICE_ID = 206;
+        constexpr int32_t HOST_GET_SPECIAL_PORT_ID = 412;
         constexpr int32_t TASK_INFO_ID = 3405;
         constexpr int32_t TASK_GET_SPECIAL_PORT_ID = 3409;
         constexpr int32_t TASK_SET_SPECIAL_PORT_ID = 3410;
@@ -25,6 +26,8 @@ namespace sogen
                 return mig_host_info;
             case HOST_GET_CLOCK_SERVICE_ID:
                 return mig_host_get_clock_service;
+            case HOST_GET_SPECIAL_PORT_ID:
+                return mig_host_get_special_port;
             default:
                 break;
             }

@@ -52,6 +52,21 @@ namespace sogen::macos_test
             0x0F, 0x05,                   // syscall
         });
 
+        constexpr auto DUPLICATED_STDERR_WRITE_CODE = std::to_array<uint8_t>({
+            0xB8, 0x29, 0x00, 0x00, 0x02,             // mov eax, 0x2000029 (dup)
+            0xBF, 0x02, 0x00, 0x00, 0x00,             // mov edi, 2
+            0x0F, 0x05,                               // syscall
+            0x89, 0xC7,                               // mov edi, eax
+            0xB8, 0x04, 0x00, 0x00, 0x02,             // mov eax, 0x2000004 (write)
+            0x48, 0x8D, 0x35, 0x10, 0x00, 0x00, 0x00, // lea rsi, [rip + message]
+            0xBA, 0x06, 0x00, 0x00, 0x00,             // mov edx, 6
+            0x0F, 0x05,                               // syscall
+            0xB8, 0x01, 0x00, 0x00, 0x02,             // mov eax, 0x2000001 (exit)
+            0x31, 0xFF,                               // xor edi, edi
+            0x0F, 0x05,                               // syscall
+            'h',  'e',  'l',  'l',  'o',  '\n',       // message
+        });
+
         constexpr auto OVERSIZED_WRITE_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02,                               // mov eax, 0x2000004 (write)
             0xBF, 0x01, 0x00, 0x00, 0x00,                               // mov edi, 1
@@ -444,6 +459,15 @@ namespace sogen::macos_test
 
         constexpr int ebadf = 9;
         EXPECT_EQ(result.exit_status, (ebadf * 2) + 1);
+    }
+
+    TEST(MacosEmulationTest, WritesThroughDuplicatedStandardStream)
+    {
+        const auto result = run_image(make_test_image(DUPLICATED_STDERR_WRITE_CODE));
+
+        EXPECT_EQ(result.stderr_data, "hello\n");
+        EXPECT_TRUE(result.stdout_data.empty());
+        EXPECT_EQ(result.exit_status, 0);
     }
 
     TEST(MacosEmulationTest, FailsWriteFromUnreadableRangeWithoutHostAllocation)

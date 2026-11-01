@@ -35,6 +35,7 @@ namespace sogen
 
     std::vector<std::byte> mig_host_info(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_host_get_clock_service(const macos_syscall_context& c, std::span<const std::byte> request);
+    std::vector<std::byte> mig_host_get_special_port(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_semaphore_create(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_restartable_ranges_register(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_restartable_ranges_synchronize(const macos_syscall_context& c, std::span<const std::byte> request);

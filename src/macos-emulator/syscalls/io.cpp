@@ -2,6 +2,8 @@
 #include "../macos_emulator.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
@@ -15,15 +17,21 @@ namespace sogen
     {
         constexpr uint64_t MACOS_O_ACCMODE = 0x3;
         constexpr uint64_t MACOS_O_RDONLY = 0x0;
+        constexpr uint64_t MACOS_O_RDWR = 0x2;
         constexpr uint64_t MACOS_O_DIRECTORY = 0x100000;
 
+        constexpr uint64_t MACOS_F_DUPFD = 0;
         constexpr uint64_t MACOS_F_GETFD = 1;
         constexpr uint64_t MACOS_F_SETFD = 2;
+        constexpr uint64_t MACOS_F_GETFL = 3;
+        constexpr uint64_t MACOS_F_DUPFD_CLOEXEC = 67;
+        constexpr uint64_t MACOS_FD_CLOEXEC = 1;
         constexpr uint64_t MACOS_F_NOCACHE = 48;
         constexpr uint64_t MACOS_F_GETPATH = 50;
         constexpr size_t MACOS_MAXPATHLEN = 1024;
 
         constexpr uint64_t WRITE_CHUNK_SIZE = 0x10000;
+        constexpr uint64_t READ_CHUNK_SIZE = 0x10000;
 
         void write_standard_stream(macos_emulator& emu, FILE* stream, const std::string_view data)
         {
@@ -43,12 +51,6 @@ namespace sogen
             return file.handle == stdout || file.handle == stderr;
         }
 
-        // XNU's F_GETPATH and F_NOCACHE only apply to vnodes; pipes and sockets get EBADF.
-        bool is_vnode(const posix_fd& file)
-        {
-            return (file.type == fd_type::file && !file.is_standard_stream()) || file.type == fd_type::directory;
-        }
-
         std::optional<int> open_for_reading(posix_fd_table& fds, std::string guest_path, const std::filesystem::path& host_path)
         {
             auto* handle = open_host_file(host_path, "rb");
@@ -66,6 +68,39 @@ namespace sogen
             return fds.allocate(std::move(file));
         }
 
+        void duplicate_descriptor(const macos_syscall_context& c, const int fd, const uint64_t minimum_fd, const bool close_on_exec)
+        {
+            if (minimum_fd >= MACOS_DESCRIPTOR_LIMIT)
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+                return;
+            }
+
+            const auto new_fd = c.emu_ref.fds.dup_fd(fd, static_cast<int>(minimum_fd));
+            if (new_fd < 0 || static_cast<uint64_t>(new_fd) >= MACOS_DESCRIPTOR_LIMIT)
+            {
+                c.emu_ref.fds.close(new_fd);
+                write_macos_syscall_error(c, new_fd < 0 ? macos_errno::MACOS_EBADF : macos_errno::MACOS_EMFILE);
+                return;
+            }
+
+            c.emu_ref.fds.set_close_on_exec(new_fd, close_on_exec);
+            write_macos_syscall_success(c, static_cast<uint64_t>(new_fd));
+        }
+
+        std::optional<int32_t> readable_bytes(const posix_fd& file)
+        {
+            std::error_code ec{};
+            const auto size = std::filesystem::file_size(path_from_utf8(file.host_path), ec);
+            const auto position = file.seek(0, SEEK_CUR);
+            if (ec || !position)
+            {
+                return std::nullopt;
+            }
+
+            return static_cast<int32_t>(std::min<uint64_t>(size - std::min(size, *position), INT32_MAX));
+        }
+
         int open_directory(posix_fd_table& fds, std::string guest_path, const std::filesystem::path& host_path)
         {
             posix_fd directory{};
@@ -80,6 +115,7 @@ namespace sogen
         {
             posix_fd socket{};
             socket.type = fd_type::socket;
+            socket.flags = static_cast<int>(MACOS_O_RDWR);
             return fds.allocate(std::move(socket));
         }
     }
@@ -120,6 +156,86 @@ namespace sogen
         }
 
         write_macos_syscall_success(c, written);
+    }
+
+    void sys_read(const macos_syscall_context& c)
+    {
+        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        const auto buffer = get_macos_syscall_argument(c.emu, 1);
+        const auto size = get_macos_syscall_argument(c.emu, 2);
+
+        const auto* file = c.emu_ref.fds.get(fd);
+        if (file == nullptr || is_output_stream(*file))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
+            return;
+        }
+
+        if (file->type == fd_type::directory || file->type == fd_type::socket)
+        {
+            write_macos_syscall_error(c, file->type == fd_type::directory ? macos_errno::MACOS_EISDIR : macos_errno::MACOS_ENOTCONN);
+            return;
+        }
+
+        std::vector<std::byte> data(static_cast<size_t>(std::min(size, READ_CHUNK_SIZE)));
+        const auto bytes_read = file->read(data);
+        if (!bytes_read)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EIO);
+            return;
+        }
+
+        if (!c.emu.try_write_memory(buffer, data.data(), *bytes_read))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        write_macos_syscall_success(c, *bytes_read);
+    }
+
+    void sys_lseek(const macos_syscall_context& c)
+    {
+        constexpr std::array host_origins{SEEK_SET, SEEK_CUR, SEEK_END};
+
+        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        const auto offset = static_cast<int64_t>(get_macos_syscall_argument(c.emu, 1));
+        const auto whence = get_macos_syscall_argument(c.emu, 2);
+
+        const auto* file = c.emu_ref.fds.get(fd);
+        if (file == nullptr)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
+            return;
+        }
+
+        if (file->type == fd_type::directory)
+        {
+            c.emu_ref.log.error("Unhandled lseek on directory %d\n", fd);
+            c.emu_ref.stop();
+            return;
+        }
+
+        if (file->type != fd_type::file || file->is_standard_stream())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ESPIPE);
+            return;
+        }
+
+        if (whence >= host_origins.size())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        const auto position = file->seek(offset, host_origins.at(static_cast<size_t>(whence)));
+        if (!position)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        write_macos_syscall_success(c, *position);
     }
 
     void sys_open(const macos_syscall_context& c)
@@ -176,6 +292,36 @@ namespace sogen
         write_macos_syscall_success(c, static_cast<uint64_t>(*fd));
     }
 
+    void sys_dup(const macos_syscall_context& c)
+    {
+        duplicate_descriptor(c, static_cast<int>(get_macos_syscall_argument(c.emu, 0)), 0, false);
+    }
+
+    void sys_dup2(const macos_syscall_context& c)
+    {
+        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        const auto new_fd = static_cast<int>(get_macos_syscall_argument(c.emu, 1));
+
+        if (c.emu_ref.fds.get(fd) == nullptr || new_fd < 0 || static_cast<uint64_t>(new_fd) >= MACOS_DESCRIPTOR_LIMIT)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
+            return;
+        }
+
+        if (c.emu_ref.fds.dup2_fd(fd, new_fd) < 0)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EMFILE);
+            return;
+        }
+
+        write_macos_syscall_success(c, static_cast<uint64_t>(new_fd));
+    }
+
+    void sys_getdtablesize(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, MACOS_DESCRIPTOR_LIMIT);
+    }
+
     void sys_close(const macos_syscall_context& c)
     {
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
@@ -206,10 +352,21 @@ namespace sogen
 
         switch (command)
         {
+        case MACOS_F_DUPFD:
+        case MACOS_F_DUPFD_CLOEXEC:
+            duplicate_descriptor(c, fd, argument, command == MACOS_F_DUPFD_CLOEXEC);
+            return;
         case MACOS_F_GETFD:
+            write_macos_syscall_success(c, file->close_on_exec ? MACOS_FD_CLOEXEC : 0);
+            return;
         case MACOS_F_SETFD:
+            c.emu_ref.fds.set_close_on_exec(fd, (argument & MACOS_FD_CLOEXEC) != 0);
             write_macos_syscall_success(c, 0);
             return;
+        case MACOS_F_GETFL:
+            write_macos_syscall_success(c, static_cast<uint64_t>(file->flags));
+            return;
+        // XNU's F_GETPATH and F_NOCACHE only apply to vnodes; pipes and sockets get EBADF.
         case MACOS_F_NOCACHE:
             if (!is_vnode(*file))
             {
@@ -279,8 +436,9 @@ namespace sogen
         write_macos_syscall_error(c, name ? macos_errno::MACOS_ENOENT : macos_errno::MACOS_EFAULT);
     }
 
-    // The standard streams behave like pipes (XNU's pipe_ioctl): non-blocking, async and readable-byte queries
-    // succeed, close-on-exec is handled by the syscall layer, and everything else is ENOTTY.
+    // Close-on-exec is handled by the syscall layer for every descriptor. The standard streams then behave like
+    // pipes (XNU's pipe_ioctl) and files like vnodes (vn_ioctl): non-blocking, async and readable-byte queries
+    // succeed, and everything else is ENOTTY.
     void sys_ioctl(const macos_syscall_context& c)
     {
         constexpr uint64_t fioclex = 0x20006601;
@@ -300,24 +458,24 @@ namespace sogen
             return;
         }
 
-        if (!file->is_standard_stream())
+        const auto is_pipe = file->is_standard_stream();
+        const auto is_file = file->type == fd_type::file && !is_pipe;
+        if (request == fioclex || request == fionclex || ((is_pipe || is_file) && (request == fionbio || request == fioasync)))
         {
-            c.emu_ref.log.error("Unhandled ioctl(%d, 0x%llx)\n", fd, static_cast<unsigned long long>(request));
-            c.emu_ref.stop();
+            write_macos_syscall_success(c, 0);
             return;
         }
 
-        switch (request)
+        if ((is_pipe || is_file) && request == fionread)
         {
-        case fioclex:
-        case fionclex:
-        case fionbio:
-        case fioasync:
-            write_macos_syscall_success(c, 0);
-            return;
-        case fionread: {
-            constexpr int32_t available = 0;
-            if (!c.emu.try_write_memory(argument, &available, sizeof(available)))
+            const auto available = is_pipe ? std::optional<int32_t>{0} : readable_bytes(*file);
+            if (!available)
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EIO);
+                return;
+            }
+
+            if (!c.emu.try_write_memory(argument, &*available, sizeof(*available)))
             {
                 write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
                 return;
@@ -326,10 +484,15 @@ namespace sogen
             write_macos_syscall_success(c, 0);
             return;
         }
-        default:
+
+        if (is_pipe || is_file)
+        {
             write_macos_syscall_error(c, macos_errno::MACOS_ENOTTY);
             return;
         }
+
+        c.emu_ref.log.error("Unhandled ioctl(%d, 0x%llx)\n", fd, static_cast<unsigned long long>(request));
+        c.emu_ref.stop();
     }
 
     // Local sockets can be created, but no daemon listens anywhere in the emulation root, so every address a
@@ -382,5 +545,17 @@ namespace sogen
 
         const auto address = get_macos_syscall_argument(c.emu, 4);
         write_macos_syscall_error(c, address == 0 ? macos_errno::MACOS_ENOTCONN : macos_errno::MACOS_ENOENT);
+    }
+
+    void sys_getpeername(const macos_syscall_context& c)
+    {
+        const auto* file = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
+        if (file == nullptr || file->type != fd_type::socket)
+        {
+            write_macos_syscall_error(c, file == nullptr ? macos_errno::MACOS_EBADF : macos_errno::MACOS_ENOTSOCK);
+            return;
+        }
+
+        write_macos_syscall_error(c, macos_errno::MACOS_ENOTCONN);
     }
 }
