@@ -81,6 +81,9 @@ namespace sogen::sandbox
             configuration += "registry=" + describe_path(settings.registry_directory) + "\n";
             configuration += "network=" + std::string{network::to_string(settings.network)} + "\n";
             configuration += std::string{"spoof-gpu-features="} + (settings.spoof_gpu_features ? "on" : "off") + "\n";
+            // Elevation is not part of the snapshot: the token queries and access checks read it from the current
+            // settings, so a snapshot has to refuse to resume under the other setting.
+            configuration += std::string{"elevated="} + (settings.elevated ? "on" : "off") + "\n";
 
             for (const auto& mount : settings.mounts)
             {
