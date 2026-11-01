@@ -746,6 +746,7 @@ namespace sogen
                    .has_value();
     }
 
+    // A parked thread resumes right after its syscall instruction.
     void emulator_thread::restart_message_wait(cpu_interface& emu, const windows_arch_abi& abi)
     {
         const auto return_register = *this->message_wait_return_register;
