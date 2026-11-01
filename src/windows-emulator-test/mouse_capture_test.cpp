@@ -60,6 +60,34 @@ namespace sogen::test
         EXPECT_EQ(0u, this->capture_count());
     }
 
+    TEST_F(MouseCaptureTest, RestoringAStateReestablishesTheCaptureCount)
+    {
+        auto& process = this->emu->process;
+        auto* thread = process.threads.get(this->thread_handle);
+        ASSERT_NE(nullptr, thread);
+
+        const auto window_handle = this->create_window(thread->id);
+
+        // What a snapshot from a build that did not maintain the count restores: the capture window is set, but the
+        // count in guest memory is still zero.
+        process.mouse_capture_window = window_handle;
+        ASSERT_EQ(0u, this->capture_count());
+
+        process.restore_after_state_restore(*this->emu);
+
+        EXPECT_EQ(window_handle, process.mouse_capture_window);
+        EXPECT_EQ(1u, this->capture_count());
+    }
+
+    TEST_F(MouseCaptureTest, RestoringAStateWithoutACaptureKeepsTheCountClear)
+    {
+        auto& process = this->emu->process;
+        process.restore_after_state_restore(*this->emu);
+
+        EXPECT_EQ(hwnd{}, process.mouse_capture_window);
+        EXPECT_EQ(0u, this->capture_count());
+    }
+
     TEST_F(MouseCaptureTest, ReleasingAnotherWindowKeepsTheCapture)
     {
         auto& process = this->emu->process;

@@ -1059,6 +1059,10 @@ namespace sogen
     {
         this->section_views.restore_views(win_emu.memory);
 
+        // captureCount lives in guest memory, which a snapshot taken before it was maintained restores as 0 while
+        // mouse_capture_window is set. user32 reads the count to decide whether to ask for the capture window at all.
+        this->set_mouse_capture(this->mouse_capture_window);
+
         restore_windows_after_state_restore(win_emu);
 
         for (auto& device : this->devices | std::views::values)
