@@ -21,7 +21,11 @@ namespace sogen
         {
             const std::scoped_lock lock(this->mutex_);
             this->attached_ = false;
-            this->undelivered_.reset();
+            this->report_order_.clear();
+            for (auto& stopped : this->stopped_ | std::views::values)
+            {
+                stopped.undelivered.reset();
+            }
         }
         this->condition_.notify_all();
     }
@@ -60,6 +64,8 @@ namespace sogen
 
     uint32_t debug_port::report(windows_emulator& win_emu, process_debug_event event)
     {
+        const auto thread_id = event.thread_id;
+
         {
             const std::scoped_lock lock(this->mutex_);
             if (!this->attached_)
@@ -67,44 +73,72 @@ namespace sogen
                 return DBG_CONTINUE;
             }
 
-            this->stopped_thread_ = event.thread_id;
-            this->continue_status_.reset();
-            this->undelivered_ = std::move(event);
+            auto& stopped = this->stopped_[thread_id];
+            stopped.continue_status.reset();
+            stopped.undelivered = std::move(event);
+            this->report_order_.push_back(thread_id);
         }
 
-        return win_emu.run_without_kernel_lock([this] {
+        return win_emu.run_without_kernel_lock([this, thread_id] {
             std::unique_lock lock(this->mutex_);
+
+            const auto continued = [this, thread_id] {
+                const auto entry = this->stopped_.find(thread_id);
+                return entry == this->stopped_.end() || entry->second.continue_status.has_value();
+            };
+
             for (;;)
             {
-                this->condition_.wait(lock, [this] { return this->continue_status_ || !this->tasks_.empty() || !this->attached_; });
+                this->condition_.wait(lock, [&] { return continued() || !this->tasks_.empty() || !this->attached_; });
                 this->run_tasks(lock);
 
-                if (this->continue_status_ || !this->attached_)
+                if (continued() || !this->attached_)
                 {
                     break;
                 }
             }
 
-            this->stopped_thread_.reset();
-            return std::exchange(this->continue_status_, std::nullopt).value_or(static_cast<uint32_t>(DBG_CONTINUE));
+            auto status = static_cast<uint32_t>(DBG_CONTINUE);
+            if (const auto entry = this->stopped_.find(thread_id); entry != this->stopped_.end())
+            {
+                status = entry->second.continue_status.value_or(status);
+                this->stopped_.erase(entry);
+            }
+
+            std::erase(this->report_order_, thread_id);
+            return status;
         });
     }
 
     std::optional<process_debug_event> debug_port::take_event()
     {
         const std::scoped_lock lock(this->mutex_);
-        return std::exchange(this->undelivered_, std::nullopt);
+
+        while (!this->report_order_.empty())
+        {
+            const auto thread_id = this->report_order_.front();
+            this->report_order_.pop_front();
+
+            const auto entry = this->stopped_.find(thread_id);
+            if (entry != this->stopped_.end() && entry->second.undelivered)
+            {
+                return std::exchange(entry->second.undelivered, std::nullopt);
+            }
+        }
+
+        return std::nullopt;
     }
 
     bool debug_port::continue_event(const uint32_t thread_id, const uint32_t status)
     {
         {
             const std::scoped_lock lock(this->mutex_);
-            if (!this->stopped_thread_ || *this->stopped_thread_ != thread_id || this->undelivered_)
+            const auto entry = this->stopped_.find(thread_id);
+            if (entry == this->stopped_.end() || entry->second.undelivered || entry->second.continue_status)
             {
                 return false;
             }
-            this->continue_status_ = status;
+            entry->second.continue_status = status;
         }
         this->condition_.notify_all();
         return true;
@@ -124,7 +158,7 @@ namespace sogen
             }
 
             this->tasks_.push_back({.run = [&] { win_emu.synchronize(task); }, .done = &done});
-            stopped = this->stopped_thread_.has_value();
+            stopped = !this->stopped_.empty();
         }
 
         if (stopped)

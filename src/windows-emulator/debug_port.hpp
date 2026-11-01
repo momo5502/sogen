@@ -4,6 +4,7 @@
 
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <functional>
 #include <future>
 #include <mutex>
@@ -51,13 +52,20 @@ namespace sogen
             std::promise<void>* done{};
         };
 
+        // One per thread stopped at an event. Several threads can report before the debugger takes the first event,
+        // so each keeps its own event and its own continue status and is continued by its thread id.
+        struct stopped_thread
+        {
+            std::optional<process_debug_event> undelivered{};
+            std::optional<uint32_t> continue_status{};
+        };
+
         mutable std::mutex mutex_{};
         std::condition_variable condition_{};
         bool attached_{};
         bool emulating_{};
-        std::optional<process_debug_event> undelivered_{};
-        std::optional<uint32_t> stopped_thread_{};
-        std::optional<uint32_t> continue_status_{};
+        std::map<uint32_t, stopped_thread> stopped_{};
+        std::deque<uint32_t> report_order_{};
         std::deque<pending_task> tasks_{};
 
         void run_tasks(std::unique_lock<std::mutex>& lock);

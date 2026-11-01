@@ -59,10 +59,14 @@ namespace sogen
             const auto record = exception_record.read();
             const auto context = thread_context.read();
 
+            // The raising context becomes the thread's state before the debugger is told, as it already is on the
+            // hardware exception path. Otherwise the debugger's GetThreadContext shows this syscall's stub registers,
+            // and a SetThreadContext it makes before DBG_CONTINUE is overwritten here afterwards.
+            cpu_context::restore(c.x64_cpu(), context);
+
             if (report_exception_to_debugger(c.win_emu, c.vcpu, record, first_chance != FALSE))
             {
                 c.write_status = false;
-                cpu_context::restore(c.x64_cpu(), context);
                 return STATUS_SUCCESS;
             }
 

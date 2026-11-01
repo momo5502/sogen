@@ -1263,18 +1263,23 @@ namespace sogen
         {
             // An idle vCPU (the debugger asks between time slices) has no thread loaded.
             auto* active = c.vcpu.active_thread;
-            if (&thread == active)
+            if (&thread == active && !c.vcpu.active_thread_saved)
             {
                 access();
                 return true;
             }
 
-            if (active)
+            // This vCPU's own thread, parked in a host call such as a debugger report, keeps its registers in its
+            // saved state. Saving the CPU over them would lose them, and a change written to the CPU would be undone
+            // when the saved state is reloaded, so the saved state is what gets restored, changed and written back.
+            const bool parked_here = &thread == active;
+
+            if (active && !parked_here)
             {
                 active->save(c.emu);
             }
             const auto _ = utils::finally([&] {
-                if (active)
+                if (active && !parked_here)
                 {
                     active->restore(c.emu, c.proc.gdt_base);
                 }

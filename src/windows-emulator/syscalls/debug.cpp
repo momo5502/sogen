@@ -187,6 +187,31 @@ namespace sogen
         return false;
     }
 
+    void release_debug_object(windows_emulator& win_emu, debug_object& object)
+    {
+        auto* manager = win_emu.processes();
+        if (!manager)
+        {
+            object.debuggees.clear();
+            return;
+        }
+
+        for (const auto& debuggee : object.debuggees)
+        {
+            const managed_process process{debuggee.process};
+            if (object.kill_on_close)
+            {
+                std::ignore = manager->terminate_process(process, STATUS_DEBUGGER_INACTIVE);
+            }
+            else
+            {
+                std::ignore = manager->detach_debugger(process);
+            }
+        }
+
+        object.debuggees.clear();
+    }
+
     namespace syscalls
     {
         NTSTATUS handle_NtCreateDebugObject(const syscall_context& c, const emulator_object<handle> debug_object_handle,
