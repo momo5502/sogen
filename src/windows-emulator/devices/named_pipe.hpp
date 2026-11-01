@@ -8,7 +8,16 @@ namespace sogen
     // FSCTL_PIPE_PEEK = CTL_CODE(FILE_DEVICE_NAMED_PIPE, 3, METHOD_BUFFERED, FILE_READ_DATA)
     constexpr ULONG FSCTL_PIPE_PEEK = 0x11400C;
     constexpr ULONG FSCTL_PIPE_LISTEN = 0x110008;
+    constexpr ULONG FSCTL_PIPE_WAIT = 0x110018;
     constexpr ULONG FILE_PIPE_CONNECTED_STATE = 3;
+
+    struct file_pipe_wait_for_buffer
+    {
+        LARGE_INTEGER timeout;
+        ULONG name_length;
+        BOOLEAN timeout_specified;
+        std::array<char16_t, 1> name;
+    };
 
     // Header of FILE_PIPE_PEEK_BUFFER; the peeked data follows immediately after.
     struct file_pipe_peek_buffer
@@ -32,6 +41,7 @@ namespace sogen
         ULONG inbound_quota{};
         ULONG outbound_quota{};
         ULONG create_options{};
+        bool server_end{};
         bool signaled{true};
         LARGE_INTEGER default_timeout{};
 
@@ -45,6 +55,8 @@ namespace sogen
         void release_references(process_context& process) override;
         NTSTATUS start_io(windows_emulator& win_emu, io_device_context context, bool reading);
         void copy_configuration(const named_pipe& source);
+        void complete_waits(windows_emulator& win_emu, const windows_path& pipe_path, NTSTATUS status);
+        void complete_waits_if_last_server_end(windows_emulator& win_emu) const;
 
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
         {
@@ -55,6 +67,10 @@ namespace sogen
             if (c.io_control_code == FSCTL_PIPE_PEEK)
             {
                 return this->peek(win_emu, c);
+            }
+            if (c.io_control_code == FSCTL_PIPE_WAIT)
+            {
+                return this->start_wait(win_emu, c);
             }
 
             win_emu.log.warn("Unsupported named pipe FSCTL: 0x%X\n", static_cast<uint32_t>(c.io_control_code));
@@ -70,6 +86,19 @@ namespace sogen
             read,
             write,
             listen,
+            wait,
+            decided,
+        };
+
+        struct awaited_pipe
+        {
+            std::u16string name;
+            std::optional<std::chrono::steady_clock::time_point> deadline;
+
+            bool has_expired(utils::clock& clock) const
+            {
+                return this->deadline && *this->deadline <= clock.steady_now();
+            }
         };
 
         struct pending_operation
@@ -78,15 +107,29 @@ namespace sogen
             std::unique_ptr<utils::host_pipe_operation> operation{};
             handle issuing_thread{};
             operation_kind kind{};
+            awaited_pipe awaited{};
+            NTSTATUS decided_status{};
+        };
+
+        struct operation_result
+        {
+            NTSTATUS status{};
+            uint32_t transferred{};
         };
 
         std::vector<pending_operation> pending_;
 
         NTSTATUS start_listen(windows_emulator& win_emu, io_device_context context);
+        NTSTATUS start_wait(windows_emulator& win_emu, io_device_context context);
+        NTSTATUS prepare_wait(windows_emulator& win_emu, const io_device_context& context, awaited_pipe& awaited) const;
+        bool is_directory() const;
+        bool is_synchronous() const;
         NTSTATUS enqueue_operation(windows_emulator& win_emu, io_device_context context,
-                                   std::unique_ptr<utils::host_pipe_operation> operation, operation_kind kind);
+                                   std::unique_ptr<utils::host_pipe_operation> operation, operation_kind kind, awaited_pipe awaited = {},
+                                   NTSTATUS decided_status = STATUS_PENDING);
 
-        void complete(windows_emulator& win_emu, const pending_operation& operation, utils::pipe_io_result result, bool was_pending);
+        operation_result poll(windows_emulator& win_emu, const pending_operation& operation) const;
+        void complete(windows_emulator& win_emu, const pending_operation& operation, operation_result result, bool was_pending);
         static void release_operation(process_context& process, pending_operation& operation);
 
         NTSTATUS peek(windows_emulator& win_emu, const io_device_context& c) const
@@ -131,5 +174,14 @@ namespace sogen
             return available > data.size() ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;
         }
     };
+
+    struct named_pipe_instances
+    {
+        named_pipe* any{};
+        named_pipe* listening{};
+    };
+
+    named_pipe_instances find_named_pipe_instances(process_context& process, std::u16string_view name, const named_pipe* ignored = nullptr);
+    void complete_named_pipe_waits(windows_emulator& win_emu, std::u16string_view name, NTSTATUS status);
 
 } // namespace sogen
