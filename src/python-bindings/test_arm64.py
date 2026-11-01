@@ -114,6 +114,19 @@ class Arm64BindingsTest(unittest.TestCase):
         self.assertEqual(app.process.exit_status, 0)
         self.assertIn("Hello, world!", "".join(output))
 
+    def test_windows_application_vector_registers_hold_128_bits(self):
+        root = os.getenv("EMULATOR_ARM64_ROOT")
+        if not root or not os.path.isfile(os.path.join(root, "filesys", "c", "hello_crt.exe")):
+            self.skipTest("Set EMULATOR_ARM64_ROOT to an ARM64 root containing C:\\hello_crt.exe")
+        app = sogen.windows.create_application(r"C:\hello_crt.exe", emulation_root=root)
+        app.setup_process_if_necessary()
+        reg = sogen.arm64.Register
+        wide = bytes(range(16))
+        app.write_register_bytes(reg.v31, wide)
+        self.assertEqual(app.read_register_bytes(reg.v31, 16), wide)
+        app.write_register(reg.fpcr, 0x0400000)
+        self.assertEqual(app.read_register(reg.fpcr), 0x0400000)
+
     def test_mounted_arm64_application_only_writes_to_explicit_scratch_mount(self):
         root = os.getenv("EMULATOR_ARM64_ROOT")
         if not root or not os.path.isfile(os.path.join(root, "filesys", "c", "crt_static.exe")):

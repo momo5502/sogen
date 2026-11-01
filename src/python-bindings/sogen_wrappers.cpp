@@ -239,6 +239,18 @@ namespace sogen::py
         this->emu->x64_emu().reg<uint64_t>(reg, value);
     }
 
+    nb::bytes sogen_windows_emulator::read_register_bytes(const x86_register reg, const size_t size) const
+    {
+        std::vector<uint8_t> value(size);
+        const size_t read = this->emu->x64_emu().read_register(reg, value.data(), value.size());
+        return nb::bytes(reinterpret_cast<const char*>(value.data()), std::min(read, size));
+    }
+
+    void sogen_windows_emulator::write_register_bytes(const x86_register reg, const nb::bytes& value) const
+    {
+        this->emu->x64_emu().write_register(reg, value.c_str(), value.size());
+    }
+
     namespace
     {
         arm64_cpu& active_arm64_cpu(const windows_emulator& emu)
@@ -260,6 +272,18 @@ namespace sogen::py
     void sogen_windows_emulator::write_register(const arm64_register reg, const uint64_t value) const
     {
         active_arm64_cpu(*this->emu).reg<uint64_t>(reg, value);
+    }
+
+    nb::bytes sogen_windows_emulator::read_register_bytes(const arm64_register reg, const size_t size) const
+    {
+        std::vector<uint8_t> value(size);
+        const size_t read = active_arm64_cpu(*this->emu).read_register(reg, value.data(), value.size());
+        return nb::bytes(reinterpret_cast<const char*>(value.data()), std::min(read, size));
+    }
+
+    void sogen_windows_emulator::write_register_bytes(const arm64_register reg, const nb::bytes& value) const
+    {
+        active_arm64_cpu(*this->emu).write_register(reg, value.c_str(), value.size());
     }
 
     uint16_t sogen_windows_emulator::get_host_port(const uint16_t emulator_port) const
