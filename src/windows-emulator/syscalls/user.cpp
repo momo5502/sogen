@@ -1007,6 +1007,7 @@ namespace sogen
                                                                               .stride = static_cast<int>(surface.width * sizeof(uint32_t)),
                                                                               .format = ui_surface_format::bgra8,
                                                                               .pixels = surface.pixels.data(),
+                                                                              .layered = top_level->layered_blend,
                                                                               .premultiplied_alpha = top_level->layered_premultiplied_alpha,
                                                                               .constant_alpha = top_level->layered_constant_alpha});
         }
@@ -7847,7 +7848,8 @@ namespace sogen
 
             bool premultiplied_alpha = false;
             auto constant_alpha = uint8_t{255};
-            if ((flags & ulw_alpha) != 0)
+            const bool blend_alpha = (flags & ulw_alpha) != 0;
+            if (blend_alpha)
             {
                 if (blend == 0)
                 {
@@ -7900,6 +7902,7 @@ namespace sogen
                 }
             }
 
+            win->layered_blend = blend_alpha;
             win->layered_premultiplied_alpha = premultiplied_alpha;
             win->layered_constant_alpha = constant_alpha;
 

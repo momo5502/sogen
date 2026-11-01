@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "surface_alpha.hpp"
 #include "../vulkan_handle_utils.hpp"
 #include <platform/ui_backend.hpp>
 
@@ -672,6 +673,7 @@ namespace sogen
                 ui_surface_format texture_format{ui_surface_format::bgra8};
                 bool has_surface{};
                 bool translucent{};
+                std::vector<uint32_t> blended_pixels{};
             };
 
             struct pending_key_release
@@ -1661,12 +1663,28 @@ namespace sogen
                     return;
                 }
 
-                state.translucent = surface.premultiplied_alpha || surface.constant_alpha != 255;
-                SDL_SetTextureBlendMode(state.texture, surface.premultiplied_alpha
-                                                           ? SDL_BLENDMODE_BLEND_PREMULTIPLIED
-                                                           : (state.translucent ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE));
-                SDL_SetTextureAlphaMod(state.texture, surface.constant_alpha);
-                SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
+                state.translucent = surface.layered;
+                SDL_SetTextureBlendMode(state.texture, state.translucent ? SDL_BLENDMODE_BLEND_PREMULTIPLIED : SDL_BLENDMODE_NONE);
+
+                if (!state.translucent)
+                {
+                    SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
+                    return;
+                }
+
+                const auto width = static_cast<size_t>(surface.width);
+                const auto row_stride = static_cast<size_t>(surface.stride);
+                state.blended_pixels.resize(width * static_cast<size_t>(surface.height));
+
+                const auto* source = static_cast<const uint8_t*>(surface.pixels);
+                for (size_t row = 0; row < static_cast<size_t>(surface.height); ++row)
+                {
+                    const auto destination = std::span{state.blended_pixels}.subspan(row * width, width);
+                    memcpy(destination.data(), source + (row * row_stride), width * sizeof(uint32_t));
+                    apply_layered_blend(destination, surface.premultiplied_alpha, surface.constant_alpha);
+                }
+
+                SDL_UpdateTexture(state.texture, nullptr, state.blended_pixels.data(), static_cast<int>(width * sizeof(uint32_t)));
             }
 
             static void render_window(window_state& state)

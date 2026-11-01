@@ -111,10 +111,17 @@ namespace sogen::test
     TEST_F(LayeredWindowTest, AlphaModeIsRememberedForPresentation)
     {
         ASSERT_EQ(TRUE, this->update(0, this->destination(30, 40), ulw_alpha, this->blend_function(128, 1)));
+        EXPECT_TRUE(this->guest_window().layered_blend);
         EXPECT_TRUE(this->guest_window().layered_premultiplied_alpha);
         EXPECT_EQ(128, this->guest_window().layered_constant_alpha);
 
+        ASSERT_EQ(TRUE, this->update(0, this->destination(30, 40), ulw_alpha, this->blend_function(64, 0)));
+        EXPECT_TRUE(this->guest_window().layered_blend);
+        EXPECT_FALSE(this->guest_window().layered_premultiplied_alpha);
+        EXPECT_EQ(64, this->guest_window().layered_constant_alpha);
+
         ASSERT_EQ(TRUE, this->update(0, this->destination(30, 40), 0));
+        EXPECT_FALSE(this->guest_window().layered_blend);
         EXPECT_FALSE(this->guest_window().layered_premultiplied_alpha);
         EXPECT_EQ(255, this->guest_window().layered_constant_alpha);
     }

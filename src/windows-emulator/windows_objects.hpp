@@ -273,6 +273,7 @@ namespace sogen
         hmenu system_menu_handle{};
         bool host_surface_window{};
         // What the last NtUserUpdateLayeredWindow asked for, so presenting the window again keeps its alpha.
+        bool layered_blend{};
         bool layered_premultiplied_alpha{};
         uint8_t layered_constant_alpha{255};
         bool message_only{};
@@ -397,6 +398,7 @@ namespace sogen
             buffer.write(this->wnd_proc);
             buffer.write(this->system_menu_handle);
             buffer.write(this->host_surface_window);
+            buffer.write(this->layered_blend);
             buffer.write(this->layered_premultiplied_alpha);
             buffer.write(this->layered_constant_alpha);
             buffer.write(this->message_only);
@@ -426,6 +428,7 @@ namespace sogen
             buffer.read(this->wnd_proc);
             buffer.read(this->system_menu_handle);
             buffer.read(this->host_surface_window);
+            buffer.read(this->layered_blend);
             buffer.read(this->layered_premultiplied_alpha);
             buffer.read(this->layered_constant_alpha);
             buffer.read(this->message_only);
