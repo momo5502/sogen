@@ -52,7 +52,8 @@ namespace sogen
 
         // Reads the whole journal and cuts off a record a crash left unfinished. Only call it under the layer lock.
         void load();
-        void refresh();
+        // Fails when the new records cannot be read; a writer must not change the layer then.
+        bool refresh();
 
         bool is_hidden(const windows_path& path) const;
         bool hides_lower_children(const windows_path& path) const;
@@ -88,7 +89,8 @@ namespace sogen
     //
     // A handle opened on a lower file follows the path until it copies up. Removing, renaming or creating that path
     // invalidates the handle, so a later write through it fails instead of resurrecting the old name or modifying an
-    // unrelated file that now has the same path. This holds across processes, since the journal records it.
+    // unrelated file that now has the same path. This holds across processes: the invalidation is journaled before the
+    // change, and a change whose invalidation cannot be journaled is not made.
     //
     // Several processes may use the same upper and state directory. Every change to the layer runs under a lock file in
     // the state directory and starts from the journal as the other processes left it. A handle that read the lower before

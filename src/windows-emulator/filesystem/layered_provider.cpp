@@ -209,24 +209,50 @@ namespace sogen
         }
     }
 
-    void layer_journal::refresh()
+    bool layer_journal::refresh()
     {
         std::error_code ec{};
-        const auto size = std::filesystem::file_size(this->file_, ec);
-        if (ec || size <= this->offset_)
+        const auto journal_status = std::filesystem::status(this->file_, ec);
+        if (journal_status.type() == std::filesystem::file_type::not_found)
         {
-            return;
+            return true;
+        }
+
+        if (ec)
+        {
+            return false;
+        }
+
+        if (journal_status.type() != std::filesystem::file_type::regular)
+        {
+            return true;
+        }
+
+        const auto size = std::filesystem::file_size(this->file_, ec);
+        if (ec)
+        {
+            return false;
+        }
+
+        if (size <= this->offset_)
+        {
+            return true;
         }
 
         std::ifstream stream(this->file_, std::ios::binary);
-        stream.seekg(static_cast<std::streamoff>(this->offset_));
+        if (!stream.is_open() || !stream.seekg(static_cast<std::streamoff>(this->offset_)))
+        {
+            return false;
+        }
+
         const std::string content{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
         if (stream.bad())
         {
-            return;
+            return false;
         }
 
         this->offset_ += this->apply(content);
+        return true;
     }
 
     size_t layer_journal::apply(const std::string_view records)
@@ -301,14 +327,7 @@ namespace sogen
             records += "G\t" + path.string() + '\n';
         }
 
-        if (this->append(records))
-        {
-            return true;
-        }
-
-        // Handles of this process must not outlive the change even when the other processes cannot learn about it.
-        (void)this->apply(records);
-        return false;
+        return this->append(records);
     }
 
     bool layer_journal::append(const std::string& records)
@@ -417,8 +436,9 @@ namespace sogen
 
             {
                 const layer_lock::guard guard{this->provider_->lock_};
-                this->provider_->journal_.refresh();
-                if (this->provider_->journal_.generation(this->path_) != this->generation_ || !this->provider_->copy_up(this->path_))
+                auto& journal = this->provider_->journal_;
+                if (!journal.refresh() || journal.generation(this->path_) != this->generation_ ||
+                    !this->provider_->lower_visible(this->path_) || !this->provider_->copy_up(this->path_))
                 {
                     return false;
                 }
@@ -670,7 +690,11 @@ namespace sogen
         }
 
         const layer_lock::guard guard{this->lock_};
-        this->journal_.refresh();
+        if (!this->journal_.refresh())
+        {
+            return {.status = STATUS_ACCESS_DENIED};
+        }
+
         return this->open_for_write(path, mode);
     }
 
@@ -710,15 +734,12 @@ namespace sogen
     NTSTATUS layered_provider::create_directory(const windows_path& path)
     {
         const layer_lock::guard guard{this->lock_};
-        this->journal_.refresh();
-
-        const auto status = this->create_directory_unchecked(path);
-        if (status == STATUS_SUCCESS)
+        if (!this->journal_.refresh())
         {
-            (void)this->journal_.advance_generations({path});
+            return STATUS_ACCESS_DENIED;
         }
 
-        return status;
+        return this->create_directory_unchecked(path);
     }
 
     NTSTATUS layered_provider::create_directory_unchecked(const windows_path& path)
@@ -731,6 +752,11 @@ namespace sogen
         if (const auto status = this->create_upper_parents(path); status != STATUS_SUCCESS)
         {
             return status;
+        }
+
+        if (!this->journal_.advance_generations({path}))
+        {
+            return STATUS_ACCESS_DENIED;
         }
 
         // A deleted lower directory must not bring its old content back when it is created again.
@@ -746,15 +772,12 @@ namespace sogen
     NTSTATUS layered_provider::rename(const windows_path& from, const windows_path& to)
     {
         const layer_lock::guard guard{this->lock_};
-        this->journal_.refresh();
-
-        const auto status = this->rename_unchecked(from, to);
-        if (status == STATUS_SUCCESS)
+        if (!this->journal_.refresh())
         {
-            (void)this->journal_.advance_generations({from, to});
+            return STATUS_ACCESS_DENIED;
         }
 
-        return status;
+        return this->rename_unchecked(from, to);
     }
 
     NTSTATUS layered_provider::rename_unchecked(const windows_path& from, const windows_path& to)
@@ -778,13 +801,24 @@ namespace sogen
             return STATUS_ACCESS_DENIED;
         }
 
+        if (is_directory(*source) && in_lower)
+        {
+            return STATUS_NOT_SAME_DEVICE;
+        }
+
+        // Replacing needs the old destination to survive a failed or interrupted rename, which has no durable record yet.
+        if (!in_upper && this->stat(to))
+        {
+            return STATUS_OBJECT_NAME_COLLISION;
+        }
+
+        if (!this->journal_.advance_generations({from, to}))
+        {
+            return STATUS_ACCESS_DENIED;
+        }
+
         if (is_directory(*source))
         {
-            if (in_lower)
-            {
-                return STATUS_NOT_SAME_DEVICE;
-            }
-
             return this->upper_->rename(from, to);
         }
 
@@ -797,12 +831,6 @@ namespace sogen
             }
 
             return this->upper_->rename(from, to);
-        }
-
-        // Replacing needs the old destination to survive a failed or interrupted rename, which has no durable record yet.
-        if (this->stat(to))
-        {
-            return STATUS_OBJECT_NAME_COLLISION;
         }
 
         if (!this->copy_to_upper(from, to))
@@ -822,15 +850,12 @@ namespace sogen
     NTSTATUS layered_provider::remove(const windows_path& path)
     {
         const layer_lock::guard guard{this->lock_};
-        this->journal_.refresh();
-
-        const auto status = this->remove_unchecked(path);
-        if (status == STATUS_SUCCESS)
+        if (!this->journal_.refresh())
         {
-            (void)this->journal_.advance_generations({path});
+            return STATUS_ACCESS_DENIED;
         }
 
-        return status;
+        return this->remove_unchecked(path);
     }
 
     NTSTATUS layered_provider::remove_unchecked(const windows_path& path)
@@ -844,6 +869,11 @@ namespace sogen
         if (is_directory(*existing) && !this->list(path).empty())
         {
             return STATUS_DIRECTORY_NOT_EMPTY;
+        }
+
+        if (!this->journal_.advance_generations({path}))
+        {
+            return STATUS_ACCESS_DENIED;
         }
 
         if (this->lower_stat(path) && !this->journal_.hide(path))

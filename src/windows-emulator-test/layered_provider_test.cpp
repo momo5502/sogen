@@ -4,6 +4,7 @@
 #include <file_system.hpp>
 #include <filesystem/host_directory_provider.hpp>
 #include <filesystem/layered_provider.hpp>
+#include <utils/finally.hpp>
 
 #include <fstream>
 #include <random>
@@ -615,5 +616,48 @@ namespace sogen::test
         const auto restarted = this->make_provider();
         EXPECT_FALSE(restarted->stat(guest({u"dir", u"old.txt"})));
         EXPECT_TRUE(restarted->stat(guest({u"dir", u"keep.txt"})));
+    }
+
+    TEST_F(LayeredProviderTest, AStaleHandleDoesNotWriteIntoAFileRecreatedByACrashedProcess)
+    {
+        const auto provider = this->make_provider();
+        const auto stale = provider->open(guest({u"file.txt"}), u"r+b");
+        ASSERT_TRUE(stale.file);
+
+        {
+            std::ofstream journal(this->state() / "journal", std::ios::binary | std::ios::app);
+            journal << "H\tfile.txt\n";
+        }
+        write_host_file(this->upper() / "file.txt", "new");
+
+        EXPECT_EQ(0u, write_text(*stale.file, "X"));
+        EXPECT_EQ("new", read_host_file(this->upper() / "file.txt"));
+    }
+
+    TEST_F(LayeredProviderTest, AWriterThatCannotReadTheJournalLeavesTheOthersRecordsAlone)
+    {
+        const auto first = this->make_provider();
+        const auto second = this->make_provider();
+        ASSERT_EQ(STATUS_SUCCESS, first->remove(guest({u"file.txt"})));
+
+        std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::owner_write,
+                                     std::filesystem::perm_options::replace);
+        const auto restore = utils::finally([&] {
+            std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::owner_all,
+                                         std::filesystem::perm_options::replace);
+        });
+
+        if (std::ifstream{this->state() / "journal"})
+        {
+            GTEST_SKIP() << "the host does not enforce unreadable files";
+        }
+
+        EXPECT_NE(STATUS_SUCCESS, second->remove(guest({u"dir", u"old.txt"})));
+        EXPECT_EQ(nullptr, second->open(guest({u"dir", u"new.txt"}), u"wb").file);
+
+        std::filesystem::permissions(this->state() / "journal", std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+        const auto restarted = this->make_provider();
+        EXPECT_FALSE(restarted->stat(guest({u"file.txt"})));
+        EXPECT_TRUE(restarted->stat(guest({u"dir", u"old.txt"})));
     }
 }
