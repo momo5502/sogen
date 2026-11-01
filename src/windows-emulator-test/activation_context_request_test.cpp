@@ -114,8 +114,8 @@ namespace sogen::test
 
     TEST_F(ActivationContextRequestTest, AcceptsLongPathPrefixedManifestAndAssemblyDirectory)
     {
-        // Node.js loads native addons through a "\\?\"-prefixed path, and kernel32 forwards that
-        // spelling here when it probes the addon for a manifest.
+        // A loader that opens a module through a "\\?\"-prefixed path reaches here unconverted:
+        // kernel32 forwards that spelling when it probes the module for a manifest.
         this->write_string(0x38, u"\\\\?\\C:\\application\\program.exe", this->storage + 0x1000);
         this->write_string(0xa0, u"\\\\?\\C:\\application", this->storage + 0x1200);
         ASSERT_EQ(STATUS_SUCCESS, this->port->handle_request(*this->emu, this->request).status);
