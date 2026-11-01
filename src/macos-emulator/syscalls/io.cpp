@@ -133,6 +133,12 @@ namespace sogen
             return;
         }
 
+        if (requested_path->empty())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+            return;
+        }
+
         const auto guest_path = c.emu_ref.resolve_guest_path(*requested_path);
         if ((flags & MACOS_O_ACCMODE) != MACOS_O_RDONLY)
         {

@@ -133,6 +133,12 @@ namespace sogen
                 return;
             }
 
+            if (guest_path->empty())
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+                return;
+            }
+
             const auto result = stat_host_path(c.emu_ref, *guest_path, follow_symlinks);
             c.emu_ref.log.log("%sstat64(%s)%s\n", follow_symlinks ? "" : "l", guest_path->c_str(), result ? "" : " -> ENOENT");
             write_stat_result(c, result, get_macos_syscall_argument(c.emu, 1));
@@ -201,6 +207,12 @@ namespace sogen
             return;
         }
 
+        if (path->empty())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+            return;
+        }
+
         const auto result = stat_host_path(c.emu_ref, *guest_path, (flags & at_symlink_nofollow) == 0);
         c.emu_ref.log.log("fstatat64(%d, %s)%s\n", fd, guest_path->c_str(), result ? "" : " -> ENOENT");
         write_stat_result(c, result, buffer);
@@ -216,6 +228,12 @@ namespace sogen
         if (!guest_path)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        if (guest_path->empty())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
             return;
         }
 

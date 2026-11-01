@@ -25,6 +25,7 @@ namespace sogen
             ATTR_CMN_NAME | ATTR_CMN_DEVID | ATTR_CMN_OBJTYPE | ATTR_CMN_FILEID | ATTR_CMN_RETURNED_ATTRS;
         constexpr uint32_t SUPPORTED_FILE_ATTRIBUTES = ATTR_FILE_LINKCOUNT;
 
+        constexpr uint16_t ATTR_BIT_MAP_COUNT = 5;
         constexpr uint64_t FSOPT_PACK_INVAL_ATTRS = 0x8;
 
         constexpr uint32_t VNON = 0;
@@ -82,7 +83,7 @@ namespace sogen
             std::error_code ec{};
             for (const auto& entry : std::filesystem::directory_iterator(path_from_utf8(directory.host_path), ec))
             {
-                auto name = entry.path().filename().string();
+                auto name = utf8_path_string(entry.path().filename());
                 const auto guest_path = posix_file_system::resolve_guest_path_string(directory.guest_path, name);
                 entries.push_back(
                     {.name = std::move(name), .file_id = emu.file_ids.id_for(guest_path).object_id, .vnode_type = vnode_type(entry)});
@@ -188,6 +189,14 @@ namespace sogen
             return builder.finish();
         }
 
+        // getattrlistbulk(2) requires the name and the returned attribute set in every entry.
+        bool is_valid_request(const attribute_list& request)
+        {
+            constexpr uint32_t required_common_attributes = ATTR_CMN_NAME | ATTR_CMN_RETURNED_ATTRS;
+            return request.bitmap_count == ATTR_BIT_MAP_COUNT &&
+                   (request.attributes.common & required_common_attributes) == required_common_attributes;
+        }
+
         bool is_supported_request(const attribute_set& requested)
         {
             return (requested.common & ~SUPPORTED_COMMON_ATTRIBUTES) == 0 && requested.volume == 0 && requested.directory == 0 &&
@@ -241,6 +250,12 @@ namespace sogen
             return;
         }
 
+        if (!is_valid_request(request))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
         const auto& requested = request.attributes;
         if (!is_supported_request(requested))
         {
@@ -269,7 +284,7 @@ namespace sogen
         const auto returned = position - directory->directory_position;
         if (returned == 0 && position < entries.size())
         {
-            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            write_macos_syscall_error(c, macos_errno::MACOS_ERANGE);
             return;
         }
 

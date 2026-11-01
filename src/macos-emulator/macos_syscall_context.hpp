@@ -31,6 +31,7 @@ namespace sogen
         constexpr uint64_t MACOS_ENOTCONN = 57;
         constexpr uint64_t MACOS_ENOSPC = 28;
         constexpr uint64_t MACOS_EROFS = 30;
+        constexpr uint64_t MACOS_ERANGE = 34;
         constexpr uint64_t MACOS_ENAMETOOLONG = 63;
     }
 
