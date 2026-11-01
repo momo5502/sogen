@@ -211,7 +211,7 @@ namespace sogen
 
         // Puts back what consume_object_signal took. A wait-all that has already taken some objects and then finds a
         // later one gone, because another process took it, has to leave all of them as it found them and keep waiting.
-        void release_consumed_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
+        void release_consumed_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id, const wait_state taken_as)
         {
             auto& c = win_emu.process;
             switch (h.value.type)
@@ -229,7 +229,21 @@ namespace sogen
             case handle_types::mutant:
                 if (auto* mutant = c.mutants.get(h))
                 {
-                    std::ignore = mutant->release(mutant::make_owner(c.process_id, current_thread_id));
+                    mutant->unlock_and_restore(mutant::make_owner(c.process_id, current_thread_id), taken_as == wait_state::abandoned);
+                }
+                break;
+
+            case handle_types::semaphore:
+                if (auto* semaphore = c.semaphores.get(h))
+                {
+                    std::ignore = semaphore->release(1);
+                }
+                break;
+
+            case handle_types::timer:
+                if (auto* timer = c.timers.get(h))
+                {
+                    timer->restore_signal();
                 }
                 break;
 
@@ -1248,7 +1262,6 @@ namespace sogen
         if (this->await_msg_mask.has_value() || !this->await_objects.empty())
         {
             bool all_signaled = this->await_objects.empty();
-            std::optional<uint32_t> abandoned_index{};
 
             if (!this->await_objects.empty())
             {
@@ -1260,11 +1273,6 @@ namespace sogen
                     const auto state = observe_object_signal(win_emu, obj, this->id);
                     const auto signaled = state != wait_state::not_signaled;
                     all_signaled &= signaled;
-
-                    if (state == wait_state::abandoned && !abandoned_index.has_value())
-                    {
-                        abandoned_index = i;
-                    }
 
                     if (signaled && this->await_any)
                     {
@@ -1303,30 +1311,42 @@ namespace sogen
 
             if (!this->await_any && all_signaled && (!this->await_msg_mask.has_value() || message_ready))
             {
-                std::vector<handle> consumed{};
-                consumed.reserve(this->await_objects.size());
+                // What was taken is always a prefix of the objects, so a count describes it, and a wait names at most
+                // MAXIMUM_WAIT_OBJECTS of them, so one bit each records which came back abandoned.
+                size_t consumed = 0;
+                uint64_t abandoned_mask = 0;
 
-                for (const auto& obj : this->await_objects)
+                for (; consumed < this->await_objects.size(); ++consumed)
                 {
-                    if (!consume_object_signal(win_emu, obj, this->id).has_value())
+                    const auto consumed_state = consume_object_signal(win_emu, this->await_objects[consumed], this->id);
+                    if (!consumed_state.has_value())
                     {
                         break;
                     }
 
-                    consumed.push_back(obj);
+                    if (*consumed_state == wait_state::abandoned)
+                    {
+                        abandoned_mask |= uint64_t{1} << consumed;
+                    }
                 }
 
-                if (consumed.size() != this->await_objects.size())
+                const auto was_abandoned = [&](const size_t index) { return (abandoned_mask & (uint64_t{1} << index)) != 0; };
+
+                if (consumed != this->await_objects.size())
                 {
-                    for (const auto& obj : consumed)
+                    for (size_t i = 0; i < consumed; ++i)
                     {
-                        release_consumed_signal(win_emu, obj, this->id);
+                        release_consumed_signal(win_emu, this->await_objects[i], this->id,
+                                                was_abandoned(i) ? wait_state::abandoned : wait_state::signaled);
                     }
 
                     return complete_if_timed_out(STATUS_TIMEOUT);
                 }
 
-                this->mark_as_ready(abandoned_index.has_value() ? (STATUS_ABANDONED_WAIT_0 + *abandoned_index) : STATUS_SUCCESS);
+                // The status describes what was taken here: an owner that died between the two passes turns a take
+                // into an abandoned one the observing pass did not see.
+                const auto first_abandoned = std::countr_zero(abandoned_mask);
+                this->mark_as_ready(abandoned_mask != 0 ? (STATUS_ABANDONED_WAIT_0 + first_abandoned) : STATUS_SUCCESS);
                 return true;
             }
 

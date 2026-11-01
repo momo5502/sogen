@@ -152,7 +152,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto [locked_count, owner] = mutant->lock_state();
+            const auto [locked_count, owner, abandoned] = mutant->lock_state();
             const auto is_owned = locked_count > 0;
             const auto owning_process_id = static_cast<uint32_t>(owner >> 32);
             const auto owning_thread_id = static_cast<uint32_t>(owner);
@@ -162,7 +162,7 @@ namespace sogen
                 emulator_object<MUTANT_BASIC_INFORMATION>{c.emu, mutant_information}.access([&](MUTANT_BASIC_INFORMATION& info) {
                     info.CurrentCount = 1 - static_cast<LONG>(locked_count);
                     info.OwnedByCaller = is_owned && owner == mutant::make_owner(c.proc.process_id, c.thread().id);
-                    info.AbandonedState = mutant->is_abandoned();
+                    info.AbandonedState = abandoned;
                 });
             }
             else

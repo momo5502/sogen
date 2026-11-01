@@ -133,6 +133,15 @@ namespace sogen
             }
         }
 
+        // Puts back what consume_signal took.
+        void restore_signal()
+        {
+            if (this->synchronization)
+            {
+                this->signaled = true;
+            }
+        }
+
         void cancel()
         {
             this->due_time.reset();
@@ -932,11 +941,20 @@ namespace sogen
             return this->access([](const state& current) { return current.owner; });
         }
 
-        // What NtQueryMutant reports: the recursion count and the owner in one look, so a shared mutant cannot
-        // change between the two.
-        std::pair<uint32_t, uint64_t> lock_state() const
+        struct lock_info
         {
-            return this->access([](const state& current) { return std::pair{current.locked_count, current.owner}; });
+            uint32_t locked_count{};
+            uint64_t owner{};
+            bool abandoned{};
+        };
+
+        // What NtQueryMutant reports, in one look, so a shared mutant whose owner dies cannot be described by a mix
+        // of two states.
+        lock_info lock_state() const
+        {
+            return this->access([](const state& current) {
+                return lock_info{.locked_count = current.locked_count, .owner = current.owner, .abandoned = current.abandoned != 0};
+            });
         }
 
         bool is_signaled(const uint64_t owner) const
@@ -990,6 +1008,30 @@ namespace sogen
         void abandon()
         {
             this->access([](state& current) { abandon(current); });
+        }
+
+        // Undoes a try_lock, including the abandoned flag it cleared, for a wait-all that has to put back what it
+        // took after a later object turned out to be gone.
+        void unlock_and_restore(const uint64_t owner, const bool was_abandoned)
+        {
+            this->access([&](state& current) {
+                if (current.locked_count == 0 || current.owner != owner)
+                {
+                    return;
+                }
+
+                --current.locked_count;
+                if (current.locked_count == 0)
+                {
+                    current.owner = 0;
+                    current.owner_host_process = 0;
+                }
+
+                if (was_abandoned)
+                {
+                    current.abandoned = 1;
+                }
+            });
         }
 
         void abandon_if_owned_by(const uint64_t owner)
