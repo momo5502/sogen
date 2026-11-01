@@ -671,6 +671,7 @@ namespace sogen
                 int texture_height{};
                 ui_surface_format texture_format{ui_surface_format::bgra8};
                 bool has_surface{};
+                bool translucent{};
             };
 
             struct pending_key_release
@@ -1129,6 +1130,12 @@ namespace sogen
             static Uint64 host_window_flags(const ui_window_desc& desc)
             {
                 Uint64 flags = 0;
+                // A layered window's bitmap carries alpha the host compositor has to blend, which only a transparent
+                // host window lets through.
+                if ((desc.ex_style & WS_EX_LAYERED) != 0)
+                {
+                    flags |= SDL_WINDOW_TRANSPARENT;
+                }
                 if (!desc.visible)
                 {
                     flags |= SDL_WINDOW_HIDDEN;
@@ -1630,7 +1637,6 @@ namespace sogen
                                                   surface.width, surface.height);
                 if (state.texture)
                 {
-                    SDL_SetTextureBlendMode(state.texture, SDL_BLENDMODE_NONE);
                     // Nearest-neighbour keeps the guest frame crisp when the window is resized larger than the
                     // guest resolution (the letterbox fit would otherwise blur it with linear filtering). At the
                     // default 1:1 size this is identical to linear.
@@ -1655,6 +1661,11 @@ namespace sogen
                     return;
                 }
 
+                state.translucent = surface.premultiplied_alpha || surface.constant_alpha != 255;
+                SDL_SetTextureBlendMode(state.texture, surface.premultiplied_alpha
+                                                           ? SDL_BLENDMODE_BLEND_PREMULTIPLIED
+                                                           : (state.translucent ? SDL_BLENDMODE_BLEND : SDL_BLENDMODE_NONE));
+                SDL_SetTextureAlphaMod(state.texture, surface.constant_alpha);
                 SDL_UpdateTexture(state.texture, nullptr, surface.pixels, surface.stride);
             }
 
@@ -1671,7 +1682,7 @@ namespace sogen
                     // makes SDL_RenderCoordinatesFromWindow map host mouse positions back to guest pixels.
                     SDL_SetRenderLogicalPresentation(state.renderer, state.texture_width, state.texture_height,
                                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
-                    SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
+                    SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, state.translucent ? 0 : 255);
                     SDL_RenderClear(state.renderer);
                     SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
                     SDL_RenderPresent(state.renderer);

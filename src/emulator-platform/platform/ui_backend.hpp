@@ -50,6 +50,12 @@ namespace sogen
         int stride{};
         ui_surface_format format{ui_surface_format::bgra8};
         const void* pixels{};
+
+        // A layered window updated with ULW_ALPHA and AC_SRC_ALPHA supplies premultiplied pixels whose alpha the
+        // host compositor has to honour; ULW_ALPHA without AC_SRC_ALPHA applies SourceConstantAlpha to the whole
+        // window instead.
+        bool premultiplied_alpha{};
+        uint8_t constant_alpha{255};
     };
 
     struct ui_extent
