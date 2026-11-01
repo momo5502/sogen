@@ -32,11 +32,14 @@ if(MSVC)
 elseif(UNIX AND NOT APPLE)
   # Override the global -z defs / --no-undefined for the Python extension.
   target_link_options(sogen PRIVATE -Wl,-z,undefs)
-  # Export the module's entry only: its own copy of the C++ runtime must not
-  # stand in for another extension's in the same process.
-  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sogen.map" "{ global: PyInit_sogen; local: *; };\n")
-  target_link_options(sogen PRIVATE -Wl,--exclude-libs,ALL
-                      "-Wl,--version-script=${CMAKE_CURRENT_BINARY_DIR}/sogen.map")
+  # A static build is one ELF image carrying its own C++ runtime, which must not stand in for
+  # another extension's in the same process, so it exports only the entry point. Shared builds keep
+  # their exports: EMULATOR_INTERFACE types share their RTTI across the backend libraries.
+  if(SOGEN_BUILD_STATIC)
+    set(SOGEN_PYTHON_EXPORTS "${CMAKE_CURRENT_SOURCE_DIR}/sogen.map")
+    target_link_options(sogen PRIVATE -Wl,--exclude-libs,ALL "-Wl,--version-script=${SOGEN_PYTHON_EXPORTS}")
+    set_property(TARGET sogen APPEND PROPERTY LINK_DEPENDS "${SOGEN_PYTHON_EXPORTS}")
+  endif()
 endif()
 
 nanobind_add_stub(
