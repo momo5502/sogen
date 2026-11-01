@@ -3139,13 +3139,26 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, const hdc dc, const emulator_pointer /*text*/, const ULONG char_count,
+        BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, const hdc dc, const emulator_pointer text, const ULONG char_count,
                                           const ULONG max_extent, const emulator_object<ULONG> fit, const emulator_pointer extents,
                                           const emulator_pointer size, const ULONG /*flags*/)
         {
             if (dc == 0 || size == 0)
             {
                 return FALSE;
+            }
+
+            // The count sizes buffers the guest passed, so the text is checked before anything is derived from it.
+            // Windows reads the text first, so a count larger than that buffer fails there; the width here does not
+            // depend on the characters, but a bogus count must still fail rather than be believed.
+            if (char_count != 0)
+            {
+                char16_t last_character{};
+                const auto last = text + (static_cast<uint64_t>(char_count) - 1) * sizeof(char16_t);
+                if (text == 0 || !c.win_emu.memory.try_read_memory(last, &last_character, sizeof(last_character)))
+                {
+                    return FALSE;
+                }
             }
 
             const SIZE text_size{
@@ -3161,12 +3174,24 @@ namespace sogen
 
             if (extents != 0 && char_count != 0)
             {
-                std::vector<ULONG> partial_extents(char_count);
-                for (ULONG i = 0; i < char_count; ++i)
+                // Written in fixed chunks: nothing host-side is sized by the guest's count.
+                constexpr ULONG chunk_size = 256;
+                std::array<ULONG, chunk_size> partial_extents{};
+
+                for (ULONG written = 0; written < char_count; written += chunk_size)
                 {
-                    partial_extents[i] = static_cast<ULONG>(k_default_font_width * (i + 1));
+                    const auto count = std::min(chunk_size, char_count - written);
+                    for (ULONG i = 0; i < count; ++i)
+                    {
+                        partial_extents[i] = static_cast<ULONG>(k_default_font_width * (written + i + 1));
+                    }
+
+                    const auto destination = extents + static_cast<uint64_t>(written) * sizeof(ULONG);
+                    if (!c.win_emu.memory.try_write_memory(destination, partial_extents.data(), count * sizeof(ULONG)))
+                    {
+                        return FALSE;
+                    }
                 }
-                c.emu.write_memory(extents, partial_extents.data(), partial_extents.size() * sizeof(ULONG));
             }
 
             return TRUE;
