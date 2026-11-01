@@ -81,10 +81,10 @@ namespace sogen
 
             if (value.type == handle_types::debug_object)
             {
-                auto* object = c.proc.debug_objects.get(h);
-                if (object && object->ref_count == 1)
+                auto* debug = c.proc.debug_objects.get(h);
+                if (debug && debug->ref_count == 1)
                 {
-                    release_debug_object(c.win_emu, *object);
+                    release_debug_object(c.win_emu, *debug);
                 }
             }
 
