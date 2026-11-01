@@ -696,12 +696,7 @@ namespace sogen
                     return;
                 }
 
-                c.win_emu.ui().present_surface(present_handle,
-                                               ui_surface_desc{.width = static_cast<int>(surface->width),
-                                                               .height = static_cast<int>(surface->height),
-                                                               .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
-                                                               .format = ui_surface_format::bgra8,
-                                                               .pixels = surface->pixels.data()});
+                c.win_emu.ui().present_surface(present_handle, make_window_surface_desc(*surface, c.proc.windows.get(present_handle)));
             }
 
             void set_surface_pixel(gdi_bitmap_surface& surface, const int x, const int y, const uint32_t color)
@@ -1956,6 +1951,39 @@ namespace sogen
         NTSTATUS handle_NtGdiDoPalette()
         {
             return STATUS_SUCCESS;
+        }
+
+        DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
+        {
+            if (process.bits != gui_resources_global_process && !c.proc.is_current_process_handle(process))
+            {
+                return 0;
+            }
+
+            // Peaks are not tracked, so they report the current count.
+            switch (flags)
+            {
+            case gui_resources_userobjects:
+            case gui_resources_userobjects_peak:
+                return static_cast<DWORD>(c.proc.user_handles.used_handle_count());
+            case gui_resources_gdiobjects:
+            case gui_resources_gdiobjects_peak: {
+                uint64_t table = 0;
+                c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
+                if (table == 0)
+                {
+                    return 0;
+                }
+
+                std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
+                c.emu.read_memory(table, entries.data(), entries.size() * sizeof(GDI_HANDLE_ENTRY64));
+                return static_cast<DWORD>(std::ranges::count_if(entries, [&](const GDI_HANDLE_ENTRY64& entry) {
+                    return entry.Type != 0 && entry.Owner.ProcessId == static_cast<uint16_t>(c.proc.process_id);
+                }));
+            }
+            default:
+                return 0;
+            }
         }
 
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, const hdc /*dc*/)

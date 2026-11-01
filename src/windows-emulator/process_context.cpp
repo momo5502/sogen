@@ -1174,14 +1174,7 @@ namespace sogen
                 continue;
             }
 
-            const auto& restored = surface->second;
-            win_emu.ui().present_surface(win.handle, ui_surface_desc{
-                                                         .width = static_cast<int>(restored.width),
-                                                         .height = static_cast<int>(restored.height),
-                                                         .stride = static_cast<int>(restored.width * sizeof(uint32_t)),
-                                                         .format = ui_surface_format::bgra8,
-                                                         .pixels = restored.pixels.data(),
-                                                     });
+            win_emu.ui().present_surface(win.handle, make_window_surface_desc(surface->second, &win));
         }
     }
 
