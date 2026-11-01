@@ -14,8 +14,18 @@ namespace sogen
     {
         constexpr std::u16string_view unc_prefix = u"\\??\\";
 
+        // Win32 long-path prefix. Ntdll converts "\\?\C:\..." to "\??\C:\..." before it reaches a
+        // syscall, but paths that come straight from guest user-mode code (LdrLoadDll's search of a
+        // module name, for instance) still carry it.
+        constexpr std::u16string_view long_path_prefix = u"\\\\?\\";
+
         inline std::u16string_view strip_unc_prefix(const std::u16string_view path)
         {
+            if (path.starts_with(long_path_prefix))
+            {
+                return path.substr(long_path_prefix.size());
+            }
+
             if (!path.starts_with(unc_prefix))
             {
                 return path;
@@ -172,16 +182,21 @@ namespace sogen
                 throw std::runtime_error("Device path can not be computed for relative paths!");
             }
 
-            const auto drive_index = this->drive_.value_or('a') - 'a';
-            const auto drive_number = std::to_string(drive_index + 1);
-            const std::u16string number(drive_number.begin(), drive_number.end());
-
-            std::u16string path = u"\\Device\\HarddiskVolume";
-            path.append(number);
+            auto path = this->volume_device_name();
             path.push_back(u'\\');
             path.append(this->without_drive().u16string());
 
             return path;
+        }
+
+        std::u16string volume_device_name() const
+        {
+            const auto drive_index = this->drive_.value_or('a') - 'a';
+            const auto drive_number = std::to_string(drive_index + 1);
+
+            std::u16string name = u"\\Device\\HarddiskVolume";
+            name.append(drive_number.begin(), drive_number.end());
+            return name;
         }
 
         std::optional<char> get_drive() const
