@@ -149,7 +149,7 @@ macOS support is at an early stage. Sogen runs x86-64 macOS command-line program
 1\. Build an emulation root on a Mac whose system still ships x86-64 slices. The script copies dyld, `/bin/echo` and the x86-64 shared cache:
 
 ```bash
-src/tools/create-macos-root.sh macos-root
+src/tools/create-macos-root.sh /tmp/macos-root
 ```
 
 The macOS license does not allow redistributing the root or running it on non-Apple hardware, so it is not available for download and must stay on the Mac that built it.
@@ -157,5 +157,5 @@ The macOS license does not allow redistributing the root or running it on non-Ap
 2\. Run a program from the root by setting `EMULATOR_MACOS=1`:
 
 ```bash
-EMULATOR_MACOS=1 build/release/artifacts/analyzer --root macos-root macos-root/bin/echo hello
+EMULATOR_MACOS=1 build/release/artifacts/analyzer --root /tmp/macos-root /tmp/macos-root/bin/echo hello
 ```
