@@ -11,6 +11,37 @@ namespace sogen::syscalls
     NTSTATUS handle_NtQueryLicenseValue(const syscall_context& c, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,
                                         emulator_object<uint32_t> type, uint64_t data, uint64_t data_size,
                                         emulator_object<uint32_t> result_data_size);
+    NTSTATUS handle_NtOpenKey(const syscall_context& c, emulator_object<handle> key_handle, ACCESS_MASK desired_access,
+                              emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
+    NTSTATUS handle_NtCreateKey(const syscall_context& c, emulator_object<handle> key_handle, ACCESS_MASK desired_access,
+                                emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG title_index,
+                                emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name, ULONG create_options,
+                                emulator_object<ULONG> disposition);
+    NTSTATUS handle_NtQueryKey(const syscall_context& c, handle key_handle, KEY_INFORMATION_CLASS key_information_class,
+                               uint64_t key_information, ULONG length, emulator_object<ULONG> result_length);
+    NTSTATUS handle_NtQueryValueKey(const syscall_context& c, handle key_handle,
+                                    emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name,
+                                    KEY_VALUE_INFORMATION_CLASS key_value_information_class, uint64_t key_value_information, ULONG length,
+                                    emulator_object<ULONG> result_length);
+    NTSTATUS handle_NtSetValueKey(const syscall_context& c, handle key_handle,
+                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name, ULONG title_index, ULONG type,
+                                  uint64_t data, ULONG data_size);
+    NTSTATUS handle_NtDeleteValueKey(const syscall_context& c, handle key_handle,
+                                     emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name);
+    NTSTATUS handle_NtDeleteKey(const syscall_context& c, handle key_handle);
+    NTSTATUS handle_NtEnumerateKey(const syscall_context& c, handle key_handle, ULONG index, KEY_INFORMATION_CLASS key_information_class,
+                                   uint64_t key_information, ULONG length, emulator_object<ULONG> result_length);
+    NTSTATUS handle_NtEnumerateValueKey(const syscall_context& c, handle key_handle, ULONG index,
+                                        KEY_VALUE_INFORMATION_CLASS key_value_information_class, uint64_t key_value_information,
+                                        ULONG length, emulator_object<ULONG> result_length);
+    NTSTATUS handle_NtQueryMultipleValueKey(const syscall_context& c, handle key_handle, emulator_object<KEY_VALUE_ENTRY> value_entries,
+                                            ULONG entry_count, uint64_t value_buffer, emulator_object<ULONG> buffer_length,
+                                            emulator_object<ULONG> required_buffer_length);
+    NTSTATUS handle_NtSetInformationKey(const syscall_context& c, handle key_handle, KEY_SET_INFORMATION_CLASS key_information_class,
+                                        uint64_t key_information, ULONG length);
+    NTSTATUS handle_NtQueryObject(const syscall_context& c, handle handle, OBJECT_INFORMATION_CLASS object_information_class,
+                                  emulator_pointer object_information, ULONG object_information_length,
+                                  emulator_object<ULONG> return_length);
 }
 
 namespace sogen::test
@@ -169,9 +200,35 @@ namespace sogen::test
             return data;
         }
 
+        void write_dword_value(std::vector<std::byte>& data, const uint32_t value_offset, const std::string_view name, const uint32_t value)
+        {
+            const auto offset = hive_data_offset + value_offset;
+            data[offset + 4] = static_cast<std::byte>('v');
+            data[offset + 5] = static_cast<std::byte>('k');
+            write_uint16(data, offset + 6, static_cast<uint16_t>(name.size()));
+            write_uint32(data, offset + 8, 0x80000000u | static_cast<uint32_t>(sizeof(value)));
+            write_uint32(data, offset + 12, value);
+            write_uint32(data, offset + 16, REG_DWORD);
+            for (size_t i = 0; i < name.size(); ++i)
+            {
+                data[offset + 24 + i] = static_cast<std::byte>(name[i]);
+            }
+        }
+
+        void write_value_list(std::vector<std::byte>& data, const size_t key_offset, const uint32_t list_offset,
+                              const std::span<const uint32_t> value_offsets)
+        {
+            write_uint32(data, key_offset + 40, static_cast<uint32_t>(value_offsets.size()));
+            write_uint32(data, key_offset + 44, list_offset);
+            for (size_t i = 0; i < value_offsets.size(); ++i)
+            {
+                write_uint32(data, hive_data_offset + list_offset + 4 + (i * 4), value_offsets[i]);
+            }
+        }
+
         std::vector<std::byte> create_software_hive()
         {
-            std::vector<std::byte> data(hive_data_offset + 0x1200);
+            std::vector<std::byte> data(hive_data_offset + 0x1800);
             data[0] = static_cast<std::byte>('r');
             data[1] = static_cast<std::byte>('e');
             data[2] = static_cast<std::byte>('g');
@@ -185,7 +242,14 @@ namespace sogen::test
             write_subkey_list(data, 0xA00, 0xC00);
             write_key(data, hive_data_offset + 0xC00, "CurrentVersion", 0xE00);
             write_subkey_list(data, 0xE00, 0x1000);
-            write_key(data, hive_data_offset + 0x1000, "ProfileList", 0);
+            write_key(data, hive_data_offset + 0x1000, "ProfileList", 0x1200);
+            write_subkey_list(data, 0x1200, 0x1300);
+            write_key(data, hive_data_offset + 0x1300, "Profile", 0);
+
+            constexpr std::array<uint32_t, 2> profile_list_values{0x1500, 0x1680};
+            write_value_list(data, hive_data_offset + 0x1000, 0x1480, profile_list_values);
+            write_dword_value(data, profile_list_values[0], "First", 1);
+            write_dword_value(data, profile_list_values[1], "Second", 2);
             return data;
         }
 
@@ -314,6 +378,196 @@ namespace sogen::test
             std::unique_ptr<windows_emulator> emu{};
             uint64_t storage{};
         };
+
+        class RegistrySyscallTest : public RegistryFileTest
+        {
+          protected:
+            void SetUp() override
+            {
+                RegistryFileTest::SetUp();
+
+                emulator_interfaces interfaces{};
+                interfaces.audio = std::make_unique<null_audio_backend>();
+                interfaces.console = std::make_unique<null_console_backend>();
+                interfaces.ui = std::make_unique<null_ui_backend>();
+                this->emu = std::make_unique<windows_emulator>(
+                    create_x86_64_emulator_from_environment(),
+                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                    emulator_callbacks{}, std::move(interfaces));
+                this->emu->registry = registry_manager{this->directory()};
+
+                constexpr uint64_t storage_size = 0x10000;
+                const auto storage = this->emu->memory.allocate_memory(storage_size, memory_permission::read_write);
+                this->allocator.emplace(this->emu->memory, storage, storage_size);
+            }
+
+            void TearDown() override
+            {
+                this->allocator.reset();
+                this->emu.reset();
+                RegistryFileTest::TearDown();
+            }
+
+            syscall_context context()
+            {
+                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            }
+
+            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> make_string(const std::u16string_view text)
+            {
+                return this->allocator->make_unicode_string(text);
+            }
+
+            emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> key_attributes(const std::u16string_view path, const handle root)
+            {
+                const auto name = this->make_string(path);
+                const auto attributes = this->allocator->reserve<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>();
+                OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>> values{};
+                values.Length = sizeof(values);
+                values.RootDirectory = root.bits;
+                values.ObjectName = name.value();
+                attributes.write(values);
+                return attributes;
+            }
+
+            NTSTATUS open_key(const std::u16string_view path, handle& key_handle, const handle root = {})
+            {
+                const auto output = this->allocator->reserve<handle>();
+                const auto status = syscalls::handle_NtOpenKey(this->context(), output, 0, this->key_attributes(path, root));
+                key_handle = output.read();
+                return status;
+            }
+
+            NTSTATUS create_key(const std::u16string_view path, handle& key_handle, ULONG& disposition, const handle root = {})
+            {
+                const auto output = this->allocator->reserve<handle>();
+                const auto disposition_output = this->allocator->reserve<ULONG>();
+                const auto status = syscalls::handle_NtCreateKey(this->context(), output, 0, this->key_attributes(path, root), 0,
+                                                                 {this->emu->memory, uint64_t{0}}, 0, disposition_output);
+                key_handle = output.read();
+                disposition = disposition_output.read();
+                return status;
+            }
+
+            NTSTATUS query_value(const handle key_handle, const std::u16string_view name)
+            {
+                const auto buffer = this->allocator->reserve(0x100, 8);
+                const auto result_length = this->allocator->reserve<ULONG>();
+                return syscalls::handle_NtQueryValueKey(this->context(), key_handle, this->make_string(name), KeyValuePartialInformation,
+                                                        buffer, 0x100, result_length);
+            }
+
+            NTSTATUS delete_value(const handle key_handle, const std::u16string_view name)
+            {
+                return syscalls::handle_NtDeleteValueKey(this->context(), key_handle, this->make_string(name));
+            }
+
+            NTSTATUS set_value(const handle key_handle, const std::u16string_view name)
+            {
+                const auto data = this->allocator->reserve<DWORD>();
+                return syscalls::handle_NtSetValueKey(this->context(), key_handle, this->make_string(name), 0, REG_DWORD, data.value(),
+                                                      static_cast<ULONG>(sizeof(DWORD)));
+            }
+
+            NTSTATUS enumerate_key(const handle key_handle, const ULONG index)
+            {
+                const auto buffer = this->allocator->reserve(0x100, 8);
+                const auto result_length = this->allocator->reserve<ULONG>();
+                return syscalls::handle_NtEnumerateKey(this->context(), key_handle, index, KeyBasicInformation, buffer, 0x100,
+                                                       result_length);
+            }
+
+            NTSTATUS enumerate_value(const handle key_handle, const ULONG index)
+            {
+                const auto buffer = this->allocator->reserve(0x100, 8);
+                const auto result_length = this->allocator->reserve<ULONG>();
+                return syscalls::handle_NtEnumerateValueKey(this->context(), key_handle, index, KeyValueBasicInformation, buffer, 0x100,
+                                                            result_length);
+            }
+
+            NTSTATUS query_key(const handle key_handle, const KEY_INFORMATION_CLASS information_class)
+            {
+                const auto buffer = this->allocator->reserve(0x100, 8);
+                const auto result_length = this->allocator->reserve<ULONG>();
+                return syscalls::handle_NtQueryKey(this->context(), key_handle, information_class, buffer, 0x100, result_length);
+            }
+
+            NTSTATUS query_multiple_values(const handle key_handle, const std::u16string_view name)
+            {
+                KEY_VALUE_ENTRY entry{};
+                entry.ValueName = this->make_string(name).value();
+                const auto entries = this->allocator->reserve<KEY_VALUE_ENTRY>();
+                entries.write(entry);
+
+                const auto buffer = this->allocator->reserve(0x100, 8);
+                const auto buffer_length = this->allocator->reserve<ULONG>();
+                buffer_length.write(0x100);
+                return syscalls::handle_NtQueryMultipleValueKey(this->context(), key_handle, entries, 1, buffer, buffer_length,
+                                                                {this->emu->memory, uint64_t{0}});
+            }
+
+            NTSTATUS query_object_name(const handle key_handle)
+            {
+                const auto buffer = this->allocator->reserve(0x100, 8);
+                const auto return_length = this->allocator->reserve<ULONG>();
+                return syscalls::handle_NtQueryObject(this->context(), key_handle, ObjectNameInformation, buffer, 0x100, return_length);
+            }
+
+            NTSTATUS set_handle_tags(const handle key_handle, const ULONG tags)
+            {
+                const auto info = this->allocator->reserve<KEY_HANDLE_TAGS_INFORMATION>();
+                info.write(KEY_HANDLE_TAGS_INFORMATION{.HandleTags = tags});
+                return syscalls::handle_NtSetInformationKey(this->context(), key_handle, KeySetHandleTagsInformation, info.value(),
+                                                            static_cast<ULONG>(sizeof(KEY_HANDLE_TAGS_INFORMATION)));
+            }
+
+            void expect_key_deleted(const handle key_handle)
+            {
+                EXPECT_EQ(STATUS_KEY_DELETED, this->query_key(key_handle, KeyBasicInformation));
+                EXPECT_EQ(STATUS_KEY_DELETED, this->query_value(key_handle, u"Fresh"));
+                EXPECT_EQ(STATUS_KEY_DELETED, this->enumerate_value(key_handle, 0));
+                EXPECT_EQ(STATUS_KEY_DELETED, this->query_object_name(key_handle));
+                EXPECT_EQ(STATUS_KEY_DELETED, this->set_value(key_handle, u"Stale"));
+                EXPECT_EQ(STATUS_KEY_DELETED, this->delete_value(key_handle, u"Fresh"));
+            }
+
+            void expect_old_handles_stay_deleted_after_recreate(const std::u16string_view path, const std::u16string_view alias)
+            {
+                handle first{};
+                ULONG disposition{};
+                ASSERT_EQ(STATUS_SUCCESS, this->create_key(path, first, disposition));
+                handle second{};
+                ASSERT_EQ(STATUS_SUCCESS, this->open_key(alias, second));
+                ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), first));
+
+                handle recreated{};
+                ASSERT_EQ(STATUS_SUCCESS, this->create_key(path, recreated, disposition));
+                EXPECT_EQ(static_cast<ULONG>(REG_CREATED_NEW_KEY), disposition);
+                ASSERT_EQ(STATUS_SUCCESS, this->set_value(recreated, u"Fresh"));
+
+                for (const auto stale : {first, second})
+                {
+                    this->expect_key_deleted(stale);
+                }
+
+                EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), first));
+                EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), second));
+
+                handle reopened{};
+                ASSERT_EQ(STATUS_SUCCESS, this->open_key(alias, reopened));
+                EXPECT_EQ(STATUS_SUCCESS, this->query_value(reopened, u"Fresh"));
+                EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->query_value(reopened, u"Stale"));
+                EXPECT_EQ(STATUS_SUCCESS, this->query_value(recreated, u"Fresh"));
+            }
+
+            std::unique_ptr<windows_emulator> emu{};
+            std::optional<emulator_allocator> allocator{};
+        };
+
+        constexpr std::u16string_view profile_list_path = uR"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\ProfileList)";
+        constexpr std::u16string_view profile_path =
+            uR"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\ProfileList\Profile)";
+        constexpr std::u16string_view overlay_path = uR"(\Registry\Machine\Software\Vendor\Temporary)";
     }
 
     TEST_F(RegistryFileTest, ImportsUtf8BomStringsEscapesAndDword)
@@ -533,5 +787,372 @@ namespace sogen::test
         EXPECT_EQ(type.read(), REG_DWORD);
         EXPECT_EQ(result_size.read(), sizeof(uint32_t));
         EXPECT_EQ(data.read(), 0x12345678u);
+    }
+
+    TEST_F(RegistryFileTest, DeletedHiveValuesAreHiddenFromLookupEnumerationAndCounts)
+    {
+        const auto key = get_key(profile_list_path);
+        ASSERT_EQ(registry().get_value_count(key), 2u);
+
+        EXPECT_TRUE(registry().delete_value(key, "first"));
+        EXPECT_FALSE(registry().get_value(key, "First").has_value());
+        EXPECT_FALSE(registry().delete_value(key, "First"));
+        EXPECT_FALSE(registry().delete_value(key, "Missing"));
+        ASSERT_EQ(registry().get_value_count(key), 1u);
+
+        const auto remaining = registry().get_value(key, size_t{0});
+        ASSERT_TRUE(remaining.has_value());
+        EXPECT_EQ(remaining->name, "Second");
+        EXPECT_FALSE(registry().get_value(key, size_t{1}).has_value());
+
+        registry().set_value(key, "First", REG_BINARY, std::vector{std::byte{9}});
+        EXPECT_EQ(registry().get_value_count(key), 2u);
+        const auto restored = registry().get_value(key, "First");
+        ASSERT_TRUE(restored.has_value());
+        EXPECT_EQ(restored->type, REG_BINARY);
+    }
+
+    TEST_F(RegistryFileTest, DeletedOverlayValueIsRemoved)
+    {
+        const auto key = get_key(profile_list_path);
+        registry().set_value(key, "Third", REG_BINARY, std::vector{std::byte{3}});
+        ASSERT_EQ(registry().get_value_count(key), 3u);
+
+        EXPECT_TRUE(registry().delete_value(key, "Third"));
+        EXPECT_FALSE(registry().get_value(key, "Third").has_value());
+        EXPECT_EQ(registry().get_value_count(key), 2u);
+        EXPECT_FALSE(registry().get_value(key, size_t{2}).has_value());
+    }
+
+    TEST_F(RegistryFileTest, DeletedHiveKeyIsHiddenUntilRecreatedEmpty)
+    {
+        const auto parent = get_key(profile_list_path);
+        registry().delete_key(get_key(profile_path));
+
+        EXPECT_FALSE(registry().get_key(utils::path_key{std::filesystem::path{profile_path}}).has_value());
+        EXPECT_EQ(registry().get_sub_key_count(parent), 0u);
+        EXPECT_FALSE(registry().get_sub_key_name(parent, 0).has_value());
+
+        registry().delete_key(parent);
+        EXPECT_FALSE(registry().get_key(utils::path_key{std::filesystem::path{profile_list_path}}).has_value());
+        EXPECT_EQ(registry().get_sub_key_count(get_key(uR"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion)")), 0u);
+
+        const auto recreated = registry().create_key(std::filesystem::path{profile_list_path});
+        ASSERT_TRUE(recreated.has_value());
+        EXPECT_EQ(registry().get_value_count(*recreated), 0u);
+        EXPECT_FALSE(registry().get_value(*recreated, "First").has_value());
+        EXPECT_EQ(registry().get_sub_key_count(*recreated), 0u);
+
+        const auto current_version = get_key(uR"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion)");
+        ASSERT_EQ(registry().get_sub_key_count(current_version), 1u);
+        const auto name = registry().get_sub_key_name(current_version, 0);
+        ASSERT_TRUE(name.has_value());
+        EXPECT_EQ(*name, "ProfileList");
+    }
+
+    TEST_F(RegistryFileTest, DeletedOverlayKeyIsRemovedFromItsParent)
+    {
+        const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Temporary)"};
+        const auto created = registry().create_key(path);
+        ASSERT_TRUE(created.has_value());
+        registry().set_value(*created, "Value", REG_BINARY, std::vector{std::byte{1}});
+
+        const auto vendor = get_key(uR"(\Registry\Machine\Software\Vendor)");
+        ASSERT_EQ(registry().get_sub_key_count(vendor), 1u);
+
+        registry().delete_key(*created);
+        EXPECT_FALSE(registry().get_key(utils::path_key{path}).has_value());
+        EXPECT_EQ(registry().get_sub_key_count(vendor), 0u);
+
+        const auto recreated = registry().create_key(path);
+        ASSERT_TRUE(recreated.has_value());
+        EXPECT_FALSE(registry().get_value(*recreated, "Value").has_value());
+    }
+
+    TEST_F(RegistryFileTest, DeletionsSurviveARuntimeStateRoundTrip)
+    {
+        registry().delete_key(get_key(profile_path));
+        ASSERT_TRUE(registry().delete_value(get_key(profile_list_path), "First"));
+
+        utils::buffer_serializer snapshot{};
+        registry().serialize_runtime_state(snapshot);
+
+        registry_manager restored{directory()};
+        utils::buffer_deserializer input{snapshot};
+        restored.deserialize_runtime_state(input);
+
+        EXPECT_FALSE(restored.get_key(utils::path_key{std::filesystem::path{profile_path}}).has_value());
+        const auto parent = restored.get_key(utils::path_key{std::filesystem::path{profile_list_path}});
+        ASSERT_TRUE(parent.has_value());
+        EXPECT_EQ(restored.get_sub_key_count(*parent), 0u);
+        EXPECT_FALSE(restored.get_value(*parent, "First").has_value());
+        EXPECT_EQ(restored.get_value_count(*parent), 1u);
+    }
+
+    TEST_F(RegistrySyscallTest, DeletedKeyIsNotFoundByNameAndItsHandlesReportKeyDeleted)
+    {
+        constexpr std::u16string_view path = uR"(\Registry\Machine\Software\Vendor\Temporary)";
+        handle key{};
+        ULONG disposition{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(path, key, disposition));
+        ASSERT_EQ(static_cast<ULONG>(REG_CREATED_NEW_KEY), disposition);
+
+        handle second{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(path, second));
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), key));
+
+        handle reopened{};
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->open_key(path, reopened));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), key));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), second));
+        EXPECT_EQ(STATUS_KEY_DELETED, this->query_value(second, u"Value"));
+        EXPECT_EQ(STATUS_KEY_DELETED, this->enumerate_key(second, 0));
+
+        const auto data = this->allocator->reserve<DWORD>();
+        EXPECT_EQ(STATUS_KEY_DELETED, syscalls::handle_NtSetValueKey(this->context(), second, this->make_string(u"Value"), 0, REG_DWORD,
+                                                                     data.value(), static_cast<ULONG>(sizeof(DWORD))));
+
+        const auto result_length = this->allocator->reserve<ULONG>();
+        EXPECT_EQ(STATUS_KEY_DELETED, syscalls::handle_NtQueryKey(this->context(), second, KeyFullInformation,
+                                                                  this->allocator->reserve(0x100, 8), 0x100, result_length));
+
+        handle vendor{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(uR"(\Registry\Machine\Software\Vendor)", vendor));
+        EXPECT_EQ(STATUS_NO_MORE_ENTRIES, this->enumerate_key(vendor, 0));
+    }
+
+    TEST_F(RegistrySyscallTest, KeyWithSubKeysAndRegistryRootCannotBeDeleted)
+    {
+        handle profile_list{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, profile_list));
+        EXPECT_EQ(STATUS_CANNOT_DELETE, syscalls::handle_NtDeleteKey(this->context(), profile_list));
+
+        handle machine{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(uR"(\Registry\Machine)", machine));
+        EXPECT_EQ(STATUS_CANNOT_DELETE, syscalls::handle_NtDeleteKey(this->context(), machine));
+
+        EXPECT_EQ(STATUS_SUCCESS, this->enumerate_key(profile_list, 0));
+    }
+
+    TEST_F(RegistrySyscallTest, HiveKeyCanBeDeletedLeafFirstAndRecreatedEmpty)
+    {
+        handle profile{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, profile));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), profile));
+
+        handle profile_list{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, profile_list));
+        EXPECT_EQ(STATUS_NO_MORE_ENTRIES, this->enumerate_key(profile_list, 0));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), profile_list));
+
+        handle recreated{};
+        ULONG disposition{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(profile_list_path, recreated, disposition));
+        EXPECT_EQ(static_cast<ULONG>(REG_CREATED_NEW_KEY), disposition);
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->query_value(recreated, u"First"));
+        EXPECT_EQ(STATUS_NO_MORE_ENTRIES, this->enumerate_value(recreated, 0));
+        EXPECT_EQ(STATUS_NO_MORE_ENTRIES, this->enumerate_key(recreated, 0));
+    }
+
+    TEST_F(RegistrySyscallTest, DeletedValueIsNotFoundAndNotEnumerated)
+    {
+        handle key{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, key));
+
+        EXPECT_EQ(STATUS_SUCCESS, this->delete_value(key, u"First"));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->query_value(key, u"First"));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->delete_value(key, u"First"));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->delete_value(key, u"Missing"));
+
+        EXPECT_EQ(STATUS_SUCCESS, this->query_value(key, u"Second"));
+        EXPECT_EQ(STATUS_SUCCESS, this->enumerate_value(key, 0));
+        EXPECT_EQ(STATUS_NO_MORE_ENTRIES, this->enumerate_value(key, 1));
+    }
+
+    TEST_F(RegistrySyscallTest, HiveRootOpenedByNameCannotBeDeleted)
+    {
+        handle child{};
+        ULONG disposition{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(uR"(\Registry\Machine\Software\Vendor)", child, disposition));
+
+        handle software{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(uR"(\Registry\Machine\Software)", software));
+
+        const auto data = this->allocator->reserve<DWORD>();
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetValueKey(this->context(), software, this->make_string(u"RootValue"), 0, REG_DWORD,
+                                                                 data.value(), static_cast<ULONG>(sizeof(DWORD))));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), child));
+
+        EXPECT_EQ(STATUS_CANNOT_DELETE, syscalls::handle_NtDeleteKey(this->context(), software));
+        EXPECT_EQ(STATUS_SUCCESS, this->query_value(software, u"RootValue"));
+
+        handle reopened{};
+        EXPECT_EQ(STATUS_SUCCESS, this->open_key(uR"(\Registry\Machine\Software)", reopened));
+        EXPECT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, reopened));
+    }
+
+    TEST_F(RegistrySyscallTest, DeletedKeyHandleTagsCanStillBeSetAndQueried)
+    {
+        handle key{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, key));
+        handle second{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, second));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), key));
+
+        ULONG tags = 5;
+        for (const auto stale : {key, second})
+        {
+            EXPECT_EQ(STATUS_SUCCESS, this->set_handle_tags(stale, tags));
+
+            const auto info = this->allocator->reserve<KEY_HANDLE_TAGS_INFORMATION>();
+            const auto result_length = this->allocator->reserve<ULONG>();
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryKey(this->context(), stale, KeyHandleTagsInformation, info.value(),
+                                                                  static_cast<ULONG>(sizeof(KEY_HANDLE_TAGS_INFORMATION)), result_length));
+            EXPECT_EQ(tags, info.read().HandleTags);
+            EXPECT_EQ(STATUS_KEY_DELETED, this->query_key(stale, KeyBasicInformation));
+            ++tags;
+        }
+    }
+
+    TEST_F(RegistrySyscallTest, DeletedKeyReportsKeyDeletedForCachedInformationMultipleValuesAndObjectName)
+    {
+        handle profile{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, profile));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), profile));
+
+        handle key{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, key));
+        handle second{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, second));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->query_key(key, KeyCachedInformation));
+        ASSERT_EQ(STATUS_SUCCESS, this->query_multiple_values(key, u"First"));
+        ASSERT_EQ(STATUS_SUCCESS, this->query_object_name(key));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), key));
+
+        for (const auto stale : {key, second})
+        {
+            EXPECT_EQ(STATUS_KEY_DELETED, this->query_key(stale, KeyCachedInformation));
+            EXPECT_EQ(STATUS_KEY_DELETED, this->query_multiple_values(stale, u"First"));
+            EXPECT_EQ(STATUS_KEY_DELETED, this->query_object_name(stale));
+        }
+    }
+
+    TEST_F(RegistrySyscallTest, KeysCannotBeOpenedOrCreatedRelativeToADeletedKey)
+    {
+        handle key{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, key));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), key));
+
+        handle relative{};
+        EXPECT_EQ(STATUS_KEY_DELETED, this->open_key(u"", relative, key));
+
+        ULONG disposition{};
+        EXPECT_EQ(STATUS_KEY_DELETED, this->create_key(u"Sub", relative, disposition, key));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->open_key(std::u16string{profile_path} + u"\\Sub", relative));
+    }
+
+    TEST_F(RegistrySyscallTest, DeletingANullValueNameIsAnAccessViolation)
+    {
+        handle key{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, key));
+
+        const auto data = this->allocator->reserve<DWORD>();
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetValueKey(this->context(), key, this->make_string(u""), 0, REG_DWORD, data.value(),
+                                                                 static_cast<ULONG>(sizeof(DWORD))));
+
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, syscalls::handle_NtDeleteValueKey(this->context(), key, {this->emu->memory, uint64_t{0}}));
+        EXPECT_EQ(STATUS_SUCCESS, this->query_value(key, u""));
+        EXPECT_EQ(STATUS_SUCCESS, this->delete_value(key, u""));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->query_value(key, u""));
+    }
+
+    TEST_F(RegistrySyscallTest, OldHandlesToAnOverlayKeyStayDeletedAfterItIsCreatedAgain)
+    {
+        this->expect_old_handles_stay_deleted_after_recreate(uR"(\Registry\Machine\Software\Policies\Probe)",
+                                                             uR"(\Registry\Machine\Software\Wow6432Node\Policies\Probe)");
+    }
+
+    TEST_F(RegistrySyscallTest, OldHandlesToAHiveKeyStayDeletedAfterItIsCreatedAgain)
+    {
+        this->expect_old_handles_stay_deleted_after_recreate(
+            profile_path, uR"(\Registry\Machine\Software\Wow6432Node\Microsoft\Windows NT\CurrentVersion\ProfileList\Profile)");
+    }
+
+    TEST_F(RegistrySyscallTest, EachRecreatedKeyOnlyAcceptsHandlesOpenedForIt)
+    {
+        handle first{};
+        ULONG disposition{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(overlay_path, first, disposition));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), first));
+
+        handle recreated{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(overlay_path, recreated, disposition));
+        handle later{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(overlay_path, later));
+        EXPECT_EQ(STATUS_SUCCESS, this->set_value(later, u"Fresh"));
+        EXPECT_EQ(STATUS_SUCCESS, this->query_value(recreated, u"Fresh"));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), later));
+
+        handle third{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(overlay_path, third, disposition));
+        EXPECT_EQ(static_cast<ULONG>(REG_CREATED_NEW_KEY), disposition);
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->query_value(third, u"Fresh"));
+
+        for (const auto stale : {first, recreated, later})
+        {
+            this->expect_key_deleted(stale);
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), stale));
+        }
+
+        EXPECT_EQ(STATUS_SUCCESS, this->query_key(third, KeyBasicInformation));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->query_value(third, u"Stale"));
+
+        handle reopened{};
+        EXPECT_EQ(STATUS_SUCCESS, this->open_key(overlay_path, reopened));
+    }
+
+    TEST_F(RegistrySyscallTest, KeysCannotBeOpenedOrCreatedRelativeToAnOldHandleAfterTheKeyIsCreatedAgain)
+    {
+        handle key{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, key));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), key));
+
+        handle recreated{};
+        ULONG disposition{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(profile_path, recreated, disposition));
+
+        handle relative{};
+        EXPECT_EQ(STATUS_KEY_DELETED, this->open_key(u"", relative, key));
+        EXPECT_EQ(STATUS_KEY_DELETED, this->create_key(u"Sub", relative, disposition, key));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->open_key(std::u16string{profile_path} + u"\\Sub", relative));
+        EXPECT_EQ(STATUS_SUCCESS, this->open_key(u"", relative, recreated));
+    }
+
+    TEST_F(RegistrySyscallTest, OldHandlesStayDeletedAcrossASnapshotRoundTrip)
+    {
+        handle first{};
+        ULONG disposition{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(overlay_path, first, disposition));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), first));
+
+        handle recreated{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(overlay_path, recreated, disposition));
+        ASSERT_EQ(STATUS_SUCCESS, this->set_value(recreated, u"Fresh"));
+
+        utils::buffer_serializer snapshot{};
+        this->emu->registry.serialize_runtime_state(snapshot);
+        snapshot.write(this->emu->process.registry_keys);
+
+        this->emu->registry = registry_manager{this->directory()};
+        utils::buffer_deserializer input{snapshot};
+        this->emu->registry.deserialize_runtime_state(input);
+        input.read(this->emu->process.registry_keys);
+
+        this->expect_key_deleted(first);
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), first));
+        EXPECT_EQ(STATUS_SUCCESS, this->query_value(recreated, u"Fresh"));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->query_value(recreated, u"Stale"));
     }
 } // namespace sogen::test

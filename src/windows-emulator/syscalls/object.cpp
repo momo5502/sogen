@@ -362,6 +362,11 @@ namespace sogen
                         return STATUS_INVALID_HANDLE;
                     }
 
+                    if (!c.win_emu.registry.key_exists(*registry))
+                    {
+                        return STATUS_KEY_DELETED;
+                    }
+
                     // Build the full registry path in device format
                     auto registry_path = (registry->hive.get() / registry->path.get()).u16string();
 
