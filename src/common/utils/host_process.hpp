@@ -36,6 +36,10 @@ namespace sogen::utils
       private:
         uint32_t process_id_{};
         void* handle_{};
+        // Whether the process could be opened and, when it could not, why. Asking the thread's current last error
+        // later would read whatever happened since.
+        bool opened_{};
+        uint32_t open_error_{};
 
         void release();
     };

@@ -33,6 +33,8 @@ namespace sogen::utils
         if (process_id != 0 && process_id != current_host_process_id())
         {
             this->handle_ = ::OpenProcess(SYNCHRONIZE, FALSE, process_id);
+            this->opened_ = this->handle_ != nullptr;
+            this->open_error_ = this->opened_ ? 0u : static_cast<uint32_t>(::GetLastError());
         }
 #endif
     }
@@ -54,6 +56,8 @@ namespace sogen::utils
             this->release();
             this->process_id_ = std::exchange(obj.process_id_, 0);
             this->handle_ = std::exchange(obj.handle_, nullptr);
+            this->opened_ = std::exchange(obj.opened_, false);
+            this->open_error_ = std::exchange(obj.open_error_, 0);
         }
 
         return *this;
@@ -69,6 +73,8 @@ namespace sogen::utils
 #endif
         this->handle_ = nullptr;
         this->process_id_ = 0;
+        this->opened_ = false;
+        this->open_error_ = 0;
     }
 
     bool host_process_watch::alive() const
@@ -84,10 +90,11 @@ namespace sogen::utils
         }
 
 #ifdef _WIN32
-        if (!this->handle_)
+        if (!this->opened_)
         {
-            // Another user's process is alive but not ours to open; only a missing one is gone for good.
-            return ::GetLastError() != ERROR_INVALID_PARAMETER;
+            // Another user's process is alive but not ours to open; only a missing one is gone for good. The error
+            // is the one the open reported, not whatever the thread has set since.
+            return this->open_error_ != ERROR_INVALID_PARAMETER;
         }
 
         return ::WaitForSingleObject(this->handle_, 0) == WAIT_TIMEOUT;

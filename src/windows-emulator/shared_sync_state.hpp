@@ -23,8 +23,10 @@ namespace sogen
             uint64_t owner;
             uint32_t abandoned;
             // The host process of the emulator whose guest thread owns this, so a process that is killed or crashes
-            // while holding a mutant does not leave every other process waiting on it forever.
+            // while holding a mutant does not leave every other process waiting on it forever, and a counter that
+            // every acquisition raises, because a host process id can be reused by a later owner.
             uint32_t owner_host_process;
+            uint32_t owner_generation;
         };
 
         static shared_sync_state create()
@@ -87,7 +89,7 @@ namespace sogen
             // the watch is opened once per owner, so the check this is reached by on every readiness pass costs a
             // single call rather than opening and closing a process handle each time.
             if (state.values.locked_count > 0 && state.values.owner_host_process != 0 && state.values.owner_host_process != self &&
-                !this->owner_is_alive(state.values.owner_host_process))
+                !this->owner_is_alive(state.values.owner_host_process, state.values.owner_generation))
             {
                 // The order matters because any of these stores can be the last one a dying process makes: abandoned
                 // first, so a free mutant is never left unreported, then the count, so a held count always still has
@@ -108,17 +110,21 @@ namespace sogen
             fields values;
         };
 
-        bool owner_is_alive(const uint32_t process_id) const
+        // The watch is replaced whenever ownership changes, not only when the process id differs: a released and
+        // exited owner whose id a later owner is given would otherwise be answered from the dead process's handle.
+        bool owner_is_alive(const uint32_t process_id, const uint32_t generation) const
         {
-            if (this->owner_watch_.process_id() != process_id)
+            if (this->owner_watch_.process_id() != process_id || this->watched_generation_ != generation)
             {
                 this->owner_watch_ = utils::host_process_watch{process_id};
+                this->watched_generation_ = generation;
             }
 
             return this->owner_watch_.alive();
         }
 
         mutable utils::host_process_watch owner_watch_{};
+        mutable uint32_t watched_generation_{};
 
         utils::shared_host_buffer buffer_{};
 

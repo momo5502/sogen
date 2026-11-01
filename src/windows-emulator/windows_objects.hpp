@@ -976,6 +976,7 @@ namespace sogen
                     // death in between leaves it free rather than held by nobody recovery can identify.
                     current.owner = owner;
                     current.owner_host_process = utils::current_host_process_id();
+                    ++current.owner_generation;
                     current.locked_count = 1;
                     return std::exchange(current.abandoned, 0) != 0;
                 }
@@ -1065,6 +1066,7 @@ namespace sogen
                 if ((current.owner >> 32) == process_id)
                 {
                     current.owner_host_process = utils::current_host_process_id();
+                    ++current.owner_generation;
                     return;
                 }
 
