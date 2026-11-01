@@ -568,6 +568,12 @@ namespace sogen
             return wide_args;
         }
 
+        backend_type backend_from_environment_for(const PEMachineType machine)
+        {
+            return get_machine_type(machine) == machine_type::arm64 ? get_arm64_emulator_backend_from_environment()
+                                                                    : get_x86_64_emulator_backend_from_environment();
+        }
+
         // Under a hypervisor, precision turns every guest instruction into a VM exit, so it has to be asked for there.
         // Reproducible runs keep it: their clock advances with the executed instruction count. Without --backend the
         // backend comes from the environment, and which environment answers depends on the guest machine, so a run
@@ -584,9 +590,7 @@ namespace sogen
                 return true;
             }
 
-            const auto backend = options.backend                                     ? *options.backend
-                                 : get_machine_type(*machine) == machine_type::arm64 ? get_arm64_emulator_backend_from_environment()
-                                                                                     : get_x86_64_emulator_backend_from_environment();
+            const auto backend = options.backend ? *options.backend : backend_from_environment_for(*machine);
 
             return backend != backend_type::hvf;
         }

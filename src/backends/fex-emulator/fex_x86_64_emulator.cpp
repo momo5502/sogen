@@ -2638,7 +2638,7 @@ namespace sogen::fex
             // VM_FLAGS_OVERWRITE replaces the reservation the memory manager put at the target;
             // copy=FALSE creates a second mapping of the caller-owned pages rather than copying them.
             const uint64_t claim_start = host_page_align_down_apple(address);
-            const size_t claim_size = static_cast<size_t>(host_page_align_up_apple(address + size) - claim_start);
+            const auto claim_size = static_cast<size_t>(host_page_align_up_apple(address + size) - claim_start);
             if (!this->host_range_is_claimed(claim_start, claim_size))
             {
                 this->claim_host_range(claim_start, claim_size);
@@ -3150,13 +3150,13 @@ namespace sogen::fex
                 }
 
 #ifdef __APPLE__
-                mach_vm_address_t target = host_address;
-                const kern_return_t result = ::mach_vm_allocate(mach_task_self(), &target, span_size, VM_FLAGS_FIXED);
+                mach_vm_address_t reserved = host_address;
+                const kern_return_t result = ::mach_vm_allocate(mach_task_self(), &reserved, span_size, VM_FLAGS_FIXED);
                 if (result == KERN_NO_SPACE)
                 {
                     throw host_memory_collision{};
                 }
-                if (result != KERN_SUCCESS || target != host_address)
+                if (result != KERN_SUCCESS || reserved != host_address)
                 {
                     std::array<char, 128> message{};
                     snprintf(message.data(), message.size(),
@@ -3166,7 +3166,7 @@ namespace sogen::fex
                 }
                 if (::mprotect(reinterpret_cast<void*>(host_address), span_size, PROT_NONE) != 0)
                 {
-                    ::mach_vm_deallocate(mach_task_self(), target, span_size);
+                    ::mach_vm_deallocate(mach_task_self(), reserved, span_size);
                     throw std::runtime_error("FEX backend failed to protect a guest address reservation");
                 }
 #else
