@@ -62,10 +62,11 @@ namespace sogen
             // The raising context becomes the thread's state before the debugger is told, as it already is on the
             // hardware exception path. Otherwise the debugger's GetThreadContext shows this syscall's stub registers,
             // and a SetThreadContext it makes before DBG_CONTINUE is overwritten afterwards. Only an attached
-            // debugger looks, and only an x86-64 guest has a CONTEXT64 to load.
-            if (c.win_emu.debugger().is_attached())
+            // debugger looks, and only an x86-64 guest has a CONTEXT64 to load: an ARM64 child can be started under a
+            // debugger too.
+            if (auto* x64 = dynamic_cast<x86_64_cpu*>(&c.emu); x64 && c.win_emu.debugger().is_attached())
             {
-                cpu_context::restore(c.x64_cpu(), context);
+                cpu_context::restore(*x64, context);
             }
 
             if (report_exception_to_debugger(c.win_emu, c.vcpu, record, first_chance != FALSE))
