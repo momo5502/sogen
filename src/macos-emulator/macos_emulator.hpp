@@ -10,6 +10,7 @@
 #include "macos_file_ids.hpp"
 #include "macos_mach_ports.hpp"
 #include "macos_shared_region.hpp"
+#include "macos_signals.hpp"
 #include "macos_syscall_dispatcher.hpp"
 
 #include <array>
@@ -39,7 +40,7 @@ namespace sogen
         macos_syscall_dispatcher dispatcher{};
         std::optional<macos_shared_region> shared_region{};
         std::optional<int> exit_status{};
-        uint32_t signal_mask{};
+        macos_signal_state signals{};
         std::array<uint8_t, 16> executable_uuid{};
         std::string process_name{};
         std::string working_directory{"/"};

@@ -111,4 +111,18 @@ namespace sogen
         const auto port = c.emu_ref.mach_ports.kernel_object_send_right(mach_port_object::clock, static_cast<uint32_t>(clock_id));
         return make_mig_port_reply(request, port);
     }
+
+    std::vector<std::byte> mig_host_get_special_port(const macos_syscall_context& c, const std::span<const std::byte> request)
+    {
+        constexpr int32_t host_port = 1;
+
+        const auto which = read_mig_field<int32_t>(request, MIG_BODY_OFFSET + sizeof(int32_t));
+        if (which != host_port)
+        {
+            c.emu_ref.log.error("Unhandled host_get_special_port(%d)\n", which);
+            return {};
+        }
+
+        return make_mig_port_reply(request, macos_mach_ports::HOST_PORT_NAME);
+    }
 }

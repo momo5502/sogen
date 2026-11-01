@@ -93,4 +93,29 @@ namespace sogen::macos_dyld_test
         EXPECT_EQ(result.stdout_data, "alpha\nbeta\nsubdirectory\n");
         EXPECT_EQ(result.exit_status, 0);
     }
+
+    TEST(MacosDyldTest, RunsBashBuiltins)
+    {
+        const auto root = get_emulation_root();
+        if (!root)
+        {
+            GTEST_SKIP() << "MACOS_EMULATOR_ROOT is not set";
+        }
+
+        const auto listed_directory = std::filesystem::path{::testing::TempDir()} / "macos-dyld-test-bash";
+        std::filesystem::remove_all(listed_directory);
+        std::filesystem::create_directories(listed_directory / "subdirectory");
+        for (const auto* name : {"beta", "alpha"})
+        {
+            const std::ofstream file{listed_directory / name};
+        }
+
+        const auto result =
+            run_root_binary(*root, "/bin/bash", {"/bin/bash", "-c", "cd /listed/subdirectory/.. && pwd && echo *; exit 3"},
+                            [&](macos_emulator& emu) { emu.file_system.add_path_mapping("/listed", listed_directory, true); });
+        std::filesystem::remove_all(listed_directory);
+
+        EXPECT_EQ(result.stdout_data, "/listed\nalpha beta subdirectory\n");
+        EXPECT_EQ(result.exit_status, 3);
+    }
 }

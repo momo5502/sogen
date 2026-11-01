@@ -13,6 +13,7 @@ namespace sogen
         thread,
         clock,
         semaphore,
+        voucher,
         // A port whose receive right nobody holds, such as the bootstrap port without launchd.
         dead,
     };
