@@ -2497,6 +2497,12 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (object_name == u"\\??" || object_name == u"\\GLOBAL??")
+            {
+                directory_handle.write(DOS_DEVICES_DIRECTORY);
+                return STATUS_SUCCESS;
+            }
+
             return STATUS_NOT_SUPPORTED;
         }
 
@@ -2527,7 +2533,39 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            return STATUS_NOT_SUPPORTED;
+            // Drive letters are links in the DOS device directory to their volume device, which QueryDosDevice reads to map
+            // NT device paths back to drives.
+            std::u16string_view link_name = object_name;
+            if (attributes.RootDirectory != DOS_DEVICES_DIRECTORY.bits)
+            {
+                for (const std::u16string_view prefix : {u"\\??\\", u"\\GLOBAL??\\"})
+                {
+                    if (link_name.starts_with(prefix))
+                    {
+                        link_name.remove_prefix(prefix.size());
+                        break;
+                    }
+                }
+
+                if (link_name.size() == object_name.size())
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+            }
+
+            if (link_name.size() != 2 || link_name[1] != u':' || link_name[0] > 0x7F)
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            const auto drive = utils::string::char_to_lower(static_cast<char>(link_name[0]));
+            if (drive < 'a' || drive > 'z' || !c.win_emu.file_sys.list_drives().contains(drive))
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            link_handle.write(make_pseudo_handle(DRIVE_SYMLINK_BASE + static_cast<uint32_t>(drive - 'a'), handle_types::symlink));
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtQuerySymbolicLinkObject(const syscall_context& c, const handle link_handle,
@@ -2565,6 +2603,13 @@ namespace sogen
             if (link_handle == KNOWN_DLLS32_SYMLINK)
             {
                 return write_target((system_root / "SysWOW64").u16string());
+            }
+
+            if (link_handle.value.is_pseudo && link_handle.value.type == handle_types::symlink &&
+                link_handle.value.id >= DRIVE_SYMLINK_BASE && link_handle.value.id < DRIVE_SYMLINK_BASE + 26)
+            {
+                const auto drive = static_cast<char>('a' + (link_handle.value.id - DRIVE_SYMLINK_BASE));
+                return write_target(windows_path{drive, {}}.volume_device_name());
             }
 
             return STATUS_NOT_SUPPORTED;
