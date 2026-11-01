@@ -238,7 +238,13 @@ namespace sogen
             return;
         }
 
-        get_attributes(c, *path);
+        if (path->empty())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+            return;
+        }
+
+        get_attributes(c, c.emu_ref.resolve_guest_path(*path));
     }
 
     void sys_fgetattrlist(const macos_syscall_context& c)
