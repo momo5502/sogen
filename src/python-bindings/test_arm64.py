@@ -124,6 +124,8 @@ class Arm64BindingsTest(unittest.TestCase):
         wide = bytes(range(16))
         app.write_register_bytes(reg.v31, wide)
         self.assertEqual(app.read_register_bytes(reg.v31, 16), wide)
+        app.write_register_bytes(reg.v31, b"\x01")
+        self.assertEqual(app.read_register_bytes(reg.v31, 16), b"\x01" + bytes(15))
         app.write_register(reg.fpcr, 0x0400000)
         self.assertEqual(app.read_register(reg.fpcr), 0x0400000)
 

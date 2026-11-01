@@ -82,6 +82,10 @@ assert hasattr(emu, "deserialize_state")
 wide = bytes(range(16))
 emu.write_register_bytes(mod.Register.xmm0, wide)
 assert emu.read_register_bytes(mod.Register.xmm0, 16) == wide
+emu.write_register(mod.Register.rax, 0xFFFFFFFFFFFFFFFF)
+emu.write_register_bytes(mod.Register.rax, b"\x01")
+assert emu.read_register(mod.Register.rax) == 1
+assert emu.read_register_bytes(mod.Register.rax, 16) == b"\x01" + bytes(15)
 
 emu.callbacks.on_stdout = lambda s: None
 emu.process.callbacks.on_thread_create = lambda h, t: None
