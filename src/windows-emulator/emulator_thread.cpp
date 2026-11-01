@@ -737,7 +737,6 @@ namespace sogen
         this->message_wait_return_register = abi.return_value(emu);
     }
 
-    // A parked thread resumes right after its syscall instruction.
     // A WH_GETMESSAGE hook sees a message before GetMessage returns it, so a waiting GetMessage runs again instead of
     // being completed by the scheduler.
     bool emulator_thread::has_hooked_message(windows_emulator& win_emu)

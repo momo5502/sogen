@@ -24,7 +24,7 @@ namespace sogen
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
                 char magic[4] = {'S', 'N', 'A', 'P'};
-                uint32_t version{15};
+                uint32_t version{16};
                 uint32_t machine{static_cast<uint32_t>(PEMachineType::AMD64)};
                 uint32_t reserved{};
                 // A streamed zstd frame does not record its decompressed size.
