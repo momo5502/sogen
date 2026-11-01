@@ -92,7 +92,8 @@ namespace sogen
         process_suspend_result suspend_thread(managed_process process, uint32_t thread_id, bool resume) override;
         process_memory_region query_memory(managed_process process, uint64_t address) const override;
         size_t running_process_count() const override;
-        void wait_for_processes() override;
+        bool wait_for_processes(std::chrono::milliseconds timeout) override;
+        void terminate_running_processes(uint64_t exit_code) override;
 
       private:
         struct process_entry;
@@ -101,6 +102,7 @@ namespace sogen
         std::optional<ProcessProtocol::MessageT> exchange(managed_process process, Request request, uint8_t response_type) const;
 
         std::shared_ptr<process_entry> find_process(managed_process process) const;
+        std::vector<std::shared_ptr<process_entry>> all_processes() const;
 
         std::filesystem::path executable_{};
         argument_factory arguments_{};

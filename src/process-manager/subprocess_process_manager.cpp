@@ -843,17 +843,60 @@ namespace sogen
         return running;
     }
 
-    void subprocess_process_manager::wait_for_processes()
+    std::vector<std::shared_ptr<subprocess_process_manager::process_entry>> subprocess_process_manager::all_processes() const
     {
         std::vector<std::shared_ptr<process_entry>> processes{};
+
+        const std::scoped_lock lock(this->mutex_);
+        processes.reserve(this->processes_.size());
+        for (const auto& [handle, process] : this->processes_)
         {
-            const std::scoped_lock lock(this->mutex_);
-            processes.reserve(this->processes_.size());
-            for (const auto& [handle, process] : this->processes_)
+            (void)handle;
+            processes.push_back(process);
+        }
+
+        return processes;
+    }
+
+    bool subprocess_process_manager::wait_for_processes(const std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (this->running_process_count() != 0)
+        {
+            if (std::chrono::steady_clock::now() >= deadline)
             {
-                (void)handle;
-                processes.push_back(process);
+                return false;
             }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+
+        for (const auto& process : this->all_processes())
+        {
+            if (process->output_thread.joinable())
+            {
+                process->output_thread.join();
+            }
+        }
+
+        return true;
+    }
+
+    void subprocess_process_manager::terminate_running_processes(const uint64_t exit_code)
+    {
+        const auto processes = this->all_processes();
+
+        for (const auto& process : processes)
+        {
+            {
+                const std::scoped_lock state_lock(process->state_mutex);
+                if (process->exit)
+                {
+                    continue;
+                }
+                process->termination_code = exit_code;
+            }
+            process->kill_requested = true;
         }
 
         for (const auto& process : processes)

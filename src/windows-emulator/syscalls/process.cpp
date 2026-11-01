@@ -296,12 +296,13 @@ namespace sogen
                     }
                 }
                 std::vector<handle> inheritable_objects{};
-                const auto collect_inheritable = [&](const auto& objects) {
-                    for (const auto& [index, object] : objects)
+                // Inheritance is a property of the handle, so each value is asked rather than each object.
+                const auto collect_inheritable = [&](auto& objects) {
+                    for (const auto object_handle : objects.handle_values())
                     {
-                        if (object.inherit)
+                        if (objects.attributes_of(object_handle).inherit)
                         {
-                            inheritable_objects.push_back(objects.make_handle(index));
+                            inheritable_objects.push_back(object_handle);
                         }
                     }
                 };

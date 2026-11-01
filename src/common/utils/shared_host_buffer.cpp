@@ -3,6 +3,8 @@
 #include <atomic>
 #include <limits>
 #include <new>
+#include <random>
+#include <string>
 #include <utility>
 
 #ifdef _WIN32
@@ -11,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #else
+#include <cerrno>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -79,18 +82,37 @@ namespace sogen::utils
         }
 #endif
 
+        std::string to_hex(uint64_t value, const size_t digits)
+        {
+            std::string result(digits, '0');
+            for (size_t i = digits; i > 0 && value != 0; --i, value >>= 4)
+            {
+                result[i - 1] = "0123456789abcdef"[value & 0xF];
+            }
+
+            return result;
+        }
+
+        // A child outlives its parent, so the host can give the parent's process id to an unrelated new sogen process
+        // while the child still holds a mapping named after it. A random part keeps those names apart, and anyone else
+        // can create such a name in advance, which is why creating one checks that it did not exist and retries.
         std::string make_unique_name()
         {
             static std::atomic<uint64_t> counter{};
+            std::random_device device{};
+            const auto salt = (static_cast<uint64_t>(device()) << 32) | device();
+
 #ifdef _WIN32
             const auto process_id = static_cast<uint64_t>(::GetCurrentProcessId());
-            return "Local\\sogen-" + std::to_string(process_id) + "-" + std::to_string(counter++);
+            return "Local\\sogen-" + to_hex(process_id, 8) + "-" + to_hex(counter++, 4) + "-" + to_hex(salt, 16);
 #else
             // macOS limits shared memory names to 31 characters.
             const auto process_id = static_cast<uint64_t>(::getpid());
-            return "/sogen." + std::to_string(process_id) + "." + std::to_string(counter++);
+            return "/sogen." + to_hex(salt ^ process_id, 12) + "." + to_hex(counter++, 4);
 #endif
         }
+
+        constexpr size_t name_attempts = 16;
     }
 
     shared_host_buffer::shared_host_buffer(const size_t size)
@@ -110,40 +132,61 @@ namespace sogen::utils
 #else
         shared_host_buffer buffer{};
         buffer.size_ = round_up_to_page(size);
-        buffer.name_ = make_unique_name();
 
 #ifdef _WIN32
-        const auto wide_name = std::wstring(buffer.name_.begin(), buffer.name_.end());
         const auto size64 = static_cast<uint64_t>(buffer.size_);
-        auto* mapping = ::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, static_cast<DWORD>(size64 >> 32),
-                                             static_cast<DWORD>(size64), wide_name.c_str());
-        if (!mapping)
-        {
-            throw std::bad_alloc();
-        }
 
-        buffer.mapping_ = mapping;
-        buffer.data_ = static_cast<uint8_t*>(::MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, buffer.size_));
+        for (size_t attempt = 0; attempt < name_attempts && !buffer.data_; ++attempt)
+        {
+            buffer.name_ = make_unique_name();
+            const auto wide_name = std::wstring(buffer.name_.begin(), buffer.name_.end());
+            auto* mapping = ::CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, static_cast<DWORD>(size64 >> 32),
+                                                 static_cast<DWORD>(size64), wide_name.c_str());
+            if (!mapping)
+            {
+                throw std::bad_alloc();
+            }
+
+            // CreateFileMappingW opens an existing mapping of the same name and says so only through this error,
+            // which would make two unrelated emulations share pages.
+            if (::GetLastError() == ERROR_ALREADY_EXISTS)
+            {
+                ::CloseHandle(mapping);
+                continue;
+            }
+
+            buffer.mapping_ = mapping;
+            buffer.data_ = static_cast<uint8_t*>(::MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, buffer.size_));
+        }
 #else
-        const auto fd = ::shm_open(buffer.name_.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
-        if (fd < 0)
+        for (size_t attempt = 0; attempt < name_attempts && !buffer.data_; ++attempt)
         {
-            throw std::bad_alloc();
-        }
+            buffer.name_ = make_unique_name();
+            const auto fd = ::shm_open(buffer.name_.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
+            if (fd < 0)
+            {
+                if (errno == EEXIST)
+                {
+                    continue;
+                }
 
-        if (::ftruncate(fd, static_cast<off_t>(buffer.size_) + static_cast<off_t>(holder_header_size)) == 0)
-        {
-            buffer.data_ = map_shared_memory(fd, buffer.size_);
-        }
-        ::close(fd);
+                throw std::bad_alloc();
+            }
 
-        if (!buffer.data_)
-        {
-            ::shm_unlink(buffer.name_.c_str());
-            throw std::bad_alloc();
-        }
+            if (::ftruncate(fd, static_cast<off_t>(buffer.size_) + static_cast<off_t>(holder_header_size)) == 0)
+            {
+                buffer.data_ = map_shared_memory(fd, buffer.size_);
+            }
+            ::close(fd);
 
-        holder_count(buffer.data_, buffer.size_).store(1);
+            if (!buffer.data_)
+            {
+                ::shm_unlink(buffer.name_.c_str());
+                throw std::bad_alloc();
+            }
+
+            holder_count(buffer.data_, buffer.size_).store(1);
+        }
 #endif
 
         if (!buffer.data_)

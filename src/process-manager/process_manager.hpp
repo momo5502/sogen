@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include "memory_permission.hpp"
 
 #include <compare>
@@ -373,7 +375,15 @@ namespace sogen
             return 0;
         }
 
-        virtual void wait_for_processes()
+        // Waits at most timeout for the children to exit on their own. False when some are still running, which the
+        // caller answers by terminating them: an analysis run must not hang on a watchdog or a service a sample left
+        // behind.
+        virtual bool wait_for_processes(std::chrono::milliseconds /*timeout*/)
+        {
+            return true;
+        }
+
+        virtual void terminate_running_processes(uint64_t /*exit_code*/)
         {
         }
 

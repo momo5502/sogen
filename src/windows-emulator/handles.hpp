@@ -188,11 +188,28 @@ namespace sogen
         virtual void deserialize_object(utils::buffer_deserializer& buffer) = 0;
     };
 
+    // On Windows these belong to the handle, not to the object, so two values for one object can differ.
+    struct handle_attributes
+    {
+        bool inherit{};
+        bool protect_from_close{};
+    };
+
     struct generic_handle_store
     {
         virtual ~generic_handle_store() = default;
         virtual bool erase(handle h) = 0;
         virtual std::optional<handle> duplicate(handle h) = 0;
+
+        virtual handle_attributes attributes_of(handle)
+        {
+            return {};
+        }
+
+        virtual bool set_attributes(handle, handle_attributes)
+        {
+            return false;
+        }
 
         virtual ref_counted_object* get_object(handle)
         {
@@ -331,7 +348,66 @@ namespace sogen
             ++static_cast<ref_counted_object&>(entry->second).ref_count;
             const auto index = this->find_free_index();
             this->aliases_.emplace(index, entry->first);
+            this->alias_attributes_.emplace(index, handle_attributes{});
             return this->make_handle(index);
+        }
+
+        // The value the object was stored under is its first handle, whose attributes live on the object and are
+        // what the serialized object carries. Every duplicate keeps its own.
+        handle_attributes attributes_of(const handle h) override
+        {
+            const auto index = static_cast<index_type>(h.value.id);
+            if (this->aliases_.contains(index))
+            {
+                const auto entry = this->alias_attributes_.find(index);
+                return entry == this->alias_attributes_.end() ? handle_attributes{} : entry->second;
+            }
+
+            const auto* object = this->get(h);
+            if (!object)
+            {
+                return {};
+            }
+
+            return {.inherit = object->inherit, .protect_from_close = object->protect_from_close};
+        }
+
+        bool set_attributes(const handle h, const handle_attributes attributes) override
+        {
+            auto* object = this->get(h);
+            if (!object)
+            {
+                return false;
+            }
+
+            const auto index = static_cast<index_type>(h.value.id);
+            if (this->aliases_.contains(index))
+            {
+                this->alias_attributes_[index] = attributes;
+                return true;
+            }
+
+            object->inherit = attributes.inherit;
+            object->protect_from_close = attributes.protect_from_close;
+            return true;
+        }
+
+        // Every value that refers to an object: the one it was stored under and each duplicate.
+        std::vector<handle> handle_values() const
+        {
+            std::vector<handle> values{};
+            values.reserve(this->store_.size() + this->aliases_.size());
+
+            for (const auto& entry : this->store_)
+            {
+                values.push_back(this->make_handle(entry.first));
+            }
+            for (const auto& alias : this->aliases_)
+            {
+                values.push_back(this->make_handle(alias.first));
+            }
+
+            return values;
         }
 
         std::pair<iterator, bool> erase(const iterator& entry)
@@ -355,6 +431,13 @@ namespace sogen
             }
 
             const auto index = entry->first;
+            for (const auto& [alias_index, target] : this->aliases_)
+            {
+                if (target == index)
+                {
+                    this->alias_attributes_.erase(alias_index);
+                }
+            }
             std::erase_if(this->aliases_, [&](const auto& alias) { return alias.second == index; });
             auto new_iter = this->store_.erase(entry);
             return {new_iter, true};
@@ -372,40 +455,15 @@ namespace sogen
             {
                 const auto target = alias->second;
                 this->aliases_.erase(alias);
+                this->alias_attributes_.erase(index);
                 return this->erase(this->store_.find(target)).second;
             }
 
-            auto entry = this->store_.find(index);
-            if (entry == this->store_.end())
-            {
-                return false;
-            }
-
-            // The object outlives the closed handle when duplicates remain, so it moves to one of their values.
-            const auto successor = std::ranges::find_if(this->aliases_, [&](const auto& alias) { return alias.second == index; });
-            if (successor != this->aliases_.end())
-            {
-                if (this->block_mutation_)
-                {
-                    throw std::runtime_error("Mutation of handle store is blocked!");
-                }
-
-                const auto new_index = successor->first;
-                this->aliases_.erase(successor);
-                for (auto& [alias_index, target] : this->aliases_)
-                {
-                    if (target == index)
-                    {
-                        target = new_index;
-                    }
-                }
-
-                auto node = this->store_.extract(entry);
-                node.key() = new_index;
-                entry = this->store_.insert(std::move(node)).position;
-            }
-
-            return this->erase(entry).second;
+            // The object stays at the index it was stored under for its whole life, even once that first handle is
+            // closed and only duplicates remain. Everything that kept the value, such as a file's completion port
+            // association or a pending request's event, keeps resolving to it, and the index is not handed out
+            // again while the object is there. The object goes when its last reference does.
+            return this->erase(this->store_.find(index)).second;
         }
 
         bool erase(const handle h) override
@@ -432,6 +490,7 @@ namespace sogen
             buffer.write(this->block_mutation_);
             buffer.write_map(this->store_);
             buffer.write_map(this->aliases_);
+            buffer.write_map(this->alias_attributes_);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -439,6 +498,7 @@ namespace sogen
             buffer.read(this->block_mutation_);
             buffer.read_map(this->store_);
             buffer.read_map(this->aliases_);
+            buffer.read_map(this->alias_attributes_);
         }
 
         value_map::iterator find(const T& value)
@@ -547,6 +607,7 @@ namespace sogen
         value_map store_{};
         // Duplicated handle values, mapped to the index their object is stored under.
         std::map<index_type, index_type> aliases_{};
+        std::map<index_type, handle_attributes> alias_attributes_{};
     };
 
     template <handle_types::type Type, typename T>

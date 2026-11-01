@@ -54,8 +54,7 @@ namespace sogen
             }
 
             auto* handle_store = c.proc.get_handle_store(h);
-            const auto* object = handle_store ? handle_store->get_object(h) : nullptr;
-            if (object && object->protect_from_close)
+            if (handle_store && handle_store->attributes_of(h).protect_from_close)
             {
                 return STATUS_HANDLE_NOT_CLOSABLE;
             }
@@ -345,10 +344,15 @@ namespace sogen
             }
 
             const auto resolved_source_handle = c.proc.resolve_object_pseudo_handle(source_handle, c.vcpu.active_thread);
+            const bool close_source = (options & duplicate_close_source) != 0;
 
             if (resolved_source_handle.value.is_pseudo)
             {
-                target_handle.write(resolved_source_handle);
+                if (target_handle)
+                {
+                    target_handle.write(resolved_source_handle);
+                }
+
                 return STATUS_SUCCESS;
             }
 
@@ -357,14 +361,18 @@ namespace sogen
             {
                 if (source->get_internal_device<named_pipe>())
                 {
-                    auto duplicate = source->duplicate((options & duplicate_same_access) ? source->granted_access : desired_access,
-                                                       (handle_attributes & OBJ_INHERIT) != 0);
-                    target_handle.write(c.proc.devices.store(std::move(duplicate)));
-                    if (options & duplicate_close_source)
+                    if (target_handle || !close_source)
                     {
-                        return handle_NtClose(c, resolved_source_handle);
+                        auto duplicate = source->duplicate((options & duplicate_same_access) ? source->granted_access : desired_access,
+                                                           (handle_attributes & OBJ_INHERIT) != 0);
+                        const auto duplicated = c.proc.devices.store(std::move(duplicate));
+                        if (target_handle)
+                        {
+                            target_handle.write(duplicated);
+                        }
                     }
-                    return STATUS_SUCCESS;
+
+                    return close_source ? handle_NtClose(c, resolved_source_handle) : STATUS_SUCCESS;
                 }
             }
             if (!store)
@@ -377,14 +385,24 @@ namespace sogen
                 return *status;
             }
 
-            const auto new_handle = store->duplicate(resolved_source_handle);
-            if (!new_handle)
+            // The close-only form passes no TargetHandle and only closes the source, as in the cross-process path.
+            if (target_handle || !close_source)
             {
-                return STATUS_INVALID_HANDLE;
+                const auto new_handle = store->duplicate(resolved_source_handle);
+                if (!new_handle)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                store->set_attributes(*new_handle, {.inherit = (handle_attributes & OBJ_INHERIT) != 0});
+
+                if (target_handle)
+                {
+                    target_handle.write(*new_handle);
+                }
             }
 
-            target_handle.write(*new_handle);
-            return STATUS_SUCCESS;
+            return close_source ? handle_NtClose(c, resolved_source_handle) : STATUS_SUCCESS;
         }
 
         std::u16string get_type_name(const handle_types::type type)
@@ -704,9 +722,9 @@ namespace sogen
                 return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(
                     c.emu, object_information, object_information_length, return_length, [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
                         auto* store = c.proc.get_handle_store(effective_handle);
-                        const auto* object = store ? store->get_object(effective_handle) : nullptr;
-                        info.Inherit = object && object->inherit;
-                        info.ProtectFromClose = object && object->protect_from_close;
+                        const auto attributes = store ? store->attributes_of(effective_handle) : handle_attributes{};
+                        info.Inherit = attributes.inherit;
+                        info.ProtectFromClose = attributes.protect_from_close;
                     });
             }
 
@@ -1151,8 +1169,7 @@ namespace sogen
 
             const emulator_object<OBJECT_HANDLE_FLAG_INFORMATION> info{c.emu, object_information};
             const auto flags = info.read();
-            object->inherit = flags.Inherit != 0;
-            object->protect_from_close = flags.ProtectFromClose != 0;
+            store->set_attributes(effective_handle, {.inherit = flags.Inherit != 0, .protect_from_close = flags.ProtectFromClose != 0});
 
             return STATUS_SUCCESS;
         }
