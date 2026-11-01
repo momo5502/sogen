@@ -87,6 +87,7 @@ namespace sogen
             uint16_t managed_process_port{};
             std::string managed_process_token{};
             managed_process_connection* managed_process{};
+            uint32_t child_wait_seconds{10};
             filesystem_mode root_mode{default_root_mode};
             std::vector<mount_spec> mounts{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
@@ -102,6 +103,10 @@ namespace sogen
             if (options.spoof_gpu_features)
             {
                 arguments.emplace_back("--spoof-gpu-features");
+            }
+            if (options.elevated)
+            {
+                arguments.emplace_back("--elevated");
             }
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
@@ -551,6 +556,7 @@ namespace sogen
                 .mounts = options.mounts,
                 .network = options.network,
                 .spoof_gpu_features = options.spoof_gpu_features,
+                .elevated = options.elevated,
             };
         }
 
@@ -735,6 +741,10 @@ namespace sogen
             if (options.managed_process)
             {
                 win_emu->setup_process_if_necessary();
+                if (options.managed_process->request().debugged)
+                {
+                    win_emu->attach_debugger();
+                }
                 install_inherited_pipes(*win_emu, options.managed_process->request(), options.managed_process->take_inherited_pipes());
                 managed_target = std::make_unique<emulator_process_target>(*win_emu);
                 if (!options.managed_process->wait_for_resume(*managed_target))
@@ -984,9 +994,26 @@ namespace sogen
             if (options.managed_process && win_emu->process.exit_status)
             {
                 const auto exit_status = static_cast<uint64_t>(static_cast<uint32_t>(*win_emu->process.exit_status));
-                if (!options.managed_process->notify_exit(exit_status))
+                if (!options.managed_process->notify_exit(exit_status, win_emu->process.get_accumulated_cycles()))
                 {
                     throw std::runtime_error("Reporting managed process exit failed");
+                }
+            }
+
+            // There is no manager unless the run uses the backend that spawns child processes.
+            if (manager && manager->running_process_count() != 0)
+            {
+                const auto running = manager->running_process_count();
+                win_emu->log.print(color::gray, "Waiting up to %us for %zu child process(es) to exit\n", options.child_wait_seconds,
+                                   running);
+
+                // A sample that leaves a watchdog, a persistence helper or a service behind must not keep the run
+                // from finishing, so what is still there afterwards is terminated.
+                if (!manager->wait_for_processes(std::chrono::seconds(options.child_wait_seconds)))
+                {
+                    win_emu->log.print(color::gray, "Terminating %zu child process(es) that did not exit\n",
+                                       manager->running_process_count());
+                    manager->terminate_running_processes(STATUS_UNSUCCESSFUL);
                 }
             }
 #endif
@@ -1045,6 +1072,7 @@ namespace sogen
             app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");
             app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
+            app.add_flag("--elevated", options.elevated, "Run the process with an elevated administrator token");
             app.add_flag("--no-inst-precision", options.disable_instruction_precision,
                          "Disable per-instruction precision (faster, less precise)");
             app.add_flag("--call-count", options.prepend_call_count, "Prefix function and syscall lines with a traced-call count");
@@ -1077,6 +1105,10 @@ namespace sogen
             app.add_option("--network", network_name, "Guest network access: offline (no host network) or live")
                 ->capture_default_str()
                 ->check(CLI::IsMember({"offline", "live"}));
+
+            app.add_option("--child-wait", options.child_wait_seconds,
+                           "Seconds to wait for child processes to exit before terminating them")
+                ->capture_default_str();
 
             std::string backend_name{};
             app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm, fex or hvf (overrides env)")

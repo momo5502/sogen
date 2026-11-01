@@ -4,6 +4,7 @@
 #include "cpu_context.hpp"
 #include "process_context.hpp"
 #include "io_completion_wait.hpp"
+#include "debug_object.hpp"
 #include "syscall_utils.hpp"
 
 namespace sogen
@@ -84,7 +85,7 @@ namespace sogen
                 break;
 
             case handle_types::process:
-                if (h == GUEST_PROCESS_HANDLE && c.exit_status.has_value())
+                if (c.is_current_process_handle(h) && c.exit_status.has_value())
                 {
                     return wait_state::signaled;
                 }
@@ -119,7 +120,7 @@ namespace sogen
                 }
 
                 const auto* e = c.events.get(h);
-                if (e && e->signaled)
+                if (e && e->is_signaled())
                 {
                     return wait_state::signaled;
                 }
@@ -148,9 +149,9 @@ namespace sogen
 
             case handle_types::mutant: {
                 const auto* e = c.mutants.get(h);
-                if (e && e->is_signaled(current_thread_id))
+                if (e && e->is_signaled(mutant::make_owner(c.process_id, current_thread_id)))
                 {
-                    return e->abandoned ? wait_state::abandoned : wait_state::signaled;
+                    return e->is_abandoned() ? wait_state::abandoned : wait_state::signaled;
                 }
 
                 break;
@@ -208,6 +209,52 @@ namespace sogen
             return wait_state::not_signaled;
         }
 
+        // Puts back what consume_object_signal took. A wait-all that has already taken some objects and then finds a
+        // later one gone, because another process took it, has to leave all of them as it found them and keep waiting.
+        void release_consumed_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id, const wait_state taken_as)
+        {
+            auto& c = win_emu.process;
+            switch (h.value.type)
+            {
+            case handle_types::event:
+                // Only a synchronization event is reset by taking it; consuming a notification event changes
+                // nothing, so re-signaling one would undo another process's reset.
+                if (!h.value.is_pseudo)
+                {
+                    if (auto* event = c.events.get(h); event && event->type == SynchronizationEvent)
+                    {
+                        event->set_signaled(true);
+                    }
+                }
+                break;
+
+            case handle_types::mutant:
+                if (auto* mutant = c.mutants.get(h))
+                {
+                    mutant->unlock_and_restore(mutant::make_owner(c.process_id, current_thread_id), taken_as == wait_state::abandoned);
+                }
+                break;
+
+            case handle_types::semaphore:
+                if (auto* semaphore = c.semaphores.get(h))
+                {
+                    std::ignore = semaphore->release(1);
+                }
+                break;
+
+            case handle_types::timer:
+                if (auto* timer = c.timers.get(h))
+                {
+                    timer->restore_signal();
+                }
+                break;
+
+            default:
+                // Nothing else takes anything: consuming them only reads their state.
+                break;
+            }
+        }
+
         std::optional<wait_state> consume_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
         {
             auto& c = win_emu.process;
@@ -219,7 +266,7 @@ namespace sogen
                 return pipe && pipe->signaled ? std::optional{wait_state::signaled} : std::nullopt;
             }
             case handle_types::process: {
-                if (h == GUEST_PROCESS_HANDLE)
+                if (c.is_current_process_handle(h))
                 {
                     return c.exit_status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
                 }
@@ -252,14 +299,9 @@ namespace sogen
                 }
 
                 auto* event = c.events.get(h);
-                if (!event || !event->signaled)
+                if (!event || !event->try_acquire())
                 {
                     return std::nullopt;
-                }
-
-                if (event->type == SynchronizationEvent)
-                {
-                    event->signaled = false;
                 }
 
                 return wait_state::signaled;
@@ -287,7 +329,7 @@ namespace sogen
                     return std::nullopt;
                 }
 
-                const auto acquired = mutant->try_lock(current_thread_id);
+                const auto acquired = mutant->try_lock(mutant::make_owner(c.process_id, current_thread_id));
                 if (!acquired.has_value())
                 {
                     return std::nullopt;
@@ -767,6 +809,7 @@ namespace sogen
         this->await_msg = {};
         this->await_msg_mask = {};
         this->await_io_completion = {};
+        this->await_debug_event = {};
         this->await_file_io = {};
         this->await_host_condition = {};
 
@@ -1230,7 +1273,6 @@ namespace sogen
         if (this->await_msg_mask.has_value() || !this->await_objects.empty())
         {
             bool all_signaled = this->await_objects.empty();
-            std::optional<uint32_t> abandoned_index{};
 
             if (!this->await_objects.empty())
             {
@@ -1243,17 +1285,15 @@ namespace sogen
                     const auto signaled = state != wait_state::not_signaled;
                     all_signaled &= signaled;
 
-                    if (state == wait_state::abandoned && !abandoned_index.has_value())
-                    {
-                        abandoned_index = i;
-                    }
-
                     if (signaled && this->await_any)
                     {
                         const auto consumed_state = consume_object_signal(win_emu, obj, this->id);
                         if (!consumed_state.has_value())
                         {
-                            throw std::runtime_error("Failed to consume object signal!");
+                            // A shared object another process took between observing and taking it. It is not ours,
+                            // so the wait goes on instead of ending the emulator.
+                            all_signaled = false;
+                            continue;
                         }
 
                         if (this->await_msg_mask.has_value())
@@ -1282,16 +1322,42 @@ namespace sogen
 
             if (!this->await_any && all_signaled && (!this->await_msg_mask.has_value() || message_ready))
             {
-                for (const auto& obj : this->await_objects)
+                // What was taken is always a prefix of the objects, so a count describes it, and a wait names at most
+                // MAXIMUM_WAIT_OBJECTS of them, so one bit each records which came back abandoned.
+                size_t consumed = 0;
+                uint64_t abandoned_mask = 0;
+
+                for (; consumed < this->await_objects.size(); ++consumed)
                 {
-                    const auto consumed_state = consume_object_signal(win_emu, obj, this->id);
+                    const auto consumed_state = consume_object_signal(win_emu, this->await_objects[consumed], this->id);
                     if (!consumed_state.has_value())
                     {
-                        throw std::runtime_error("Failed to consume object signal!");
+                        break;
+                    }
+
+                    if (*consumed_state == wait_state::abandoned)
+                    {
+                        abandoned_mask |= uint64_t{1} << consumed;
                     }
                 }
 
-                this->mark_as_ready(abandoned_index.has_value() ? (STATUS_ABANDONED_WAIT_0 + *abandoned_index) : STATUS_SUCCESS);
+                const auto was_abandoned = [&](const size_t index) { return (abandoned_mask & (uint64_t{1} << index)) != 0; };
+
+                if (consumed != this->await_objects.size())
+                {
+                    for (size_t i = 0; i < consumed; ++i)
+                    {
+                        release_consumed_signal(win_emu, this->await_objects[i], this->id,
+                                                was_abandoned(i) ? wait_state::abandoned : wait_state::signaled);
+                    }
+
+                    return complete_if_timed_out(STATUS_TIMEOUT);
+                }
+
+                // The status describes what was taken here: an owner that died between the two passes turns a take
+                // into an abandoned one the observing pass did not see.
+                const auto first_abandoned = std::countr_zero(abandoned_mask);
+                this->mark_as_ready(abandoned_mask != 0 ? (STATUS_ABANDONED_WAIT_0 + first_abandoned) : STATUS_SUCCESS);
                 return true;
             }
 
@@ -1326,6 +1392,25 @@ namespace sogen
             }
 
             return complete_if_timed_out(STATUS_TIMEOUT);
+        }
+
+        if (this->await_debug_event.has_value())
+        {
+            const auto wait = *this->await_debug_event;
+            if (deliver_debug_event(win_emu, wait.debug_object, wait.state_change))
+            {
+                this->mark_as_ready(STATUS_SUCCESS);
+                return true;
+            }
+
+            constexpr auto infinite = std::chrono::steady_clock::time_point::min();
+            if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < clock.steady_now())
+            {
+                this->mark_as_ready(STATUS_TIMEOUT);
+                return true;
+            }
+
+            return false;
         }
 
         if (this->await_io_completion.has_value())

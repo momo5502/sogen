@@ -2,6 +2,7 @@
 
 #include "handles.hpp"
 #include "memory_manager.hpp"
+#include "shared_sync_state.hpp"
 #include "filesystem/guest_file.hpp"
 
 #include <algorithm>
@@ -17,19 +18,55 @@ namespace sogen
 
     struct job_object : ref_counted_object
     {
+        // The x64 JOBOBJECT_EXTENDED_LIMIT_INFORMATION, whose first part is the JOBOBJECT_BASIC_LIMIT_INFORMATION.
+        static constexpr size_t extended_limit_information_size = 144;
+        static constexpr size_t basic_limit_information_size = 64;
+        static constexpr size_t limit_flags_offset = 16;
+
+        struct member
+        {
+            uint64_t process{};
+            uint32_t process_id{};
+            bool exit_reported{};
+        };
+
         std::u16string name{};
-        uint32_t limit_flags{};
+        std::array<uint8_t, extended_limit_information_size> extended_limits{};
+        uint32_t ui_restrictions{};
+        // Managed child processes assigned to the job.
+        std::vector<member> processes{};
+        // The completion port job notifications are posted to, once one is associated.
+        handle completion_port{};
+        uint64_t completion_key{};
+        bool active_process_zero_reported{};
+
+        uint32_t limit_flags() const
+        {
+            uint32_t flags{};
+            memcpy(&flags, this->extended_limits.data() + limit_flags_offset, sizeof(flags));
+            return flags;
+        }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
-            buffer.write(this->limit_flags);
+            buffer.write(this->extended_limits);
+            buffer.write(this->ui_restrictions);
+            buffer.write_vector(this->processes);
+            buffer.write(this->completion_port);
+            buffer.write(this->completion_key);
+            buffer.write(this->active_process_zero_reported);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->name);
-            buffer.read(this->limit_flags);
+            buffer.read(this->extended_limits);
+            buffer.read(this->ui_restrictions);
+            buffer.read_vector(this->processes);
+            buffer.read(this->completion_port);
+            buffer.read(this->completion_key);
+            buffer.read(this->active_process_zero_reported);
         }
     };
 
@@ -96,6 +133,15 @@ namespace sogen
             }
         }
 
+        // Puts back what consume_signal took.
+        void restore_signal()
+        {
+            if (this->synchronization)
+            {
+                this->signaled = true;
+            }
+        }
+
         void cancel()
         {
             this->due_time.reset();
@@ -125,22 +171,123 @@ namespace sogen
 
     struct event : ref_counted_object
     {
-        bool signaled{};
         EVENT_TYPE type{};
         std::u16string name{};
+        // Set once a handle to the event is passed to another process.
+        std::optional<shared_sync_state> shared{};
+
+        bool is_signaled() const
+        {
+            if (this->shared)
+            {
+                return this->shared->access([](const shared_sync_state::fields& state) { return state.signaled != 0; });
+            }
+            return this->signaled_;
+        }
+
+        bool set_signaled(const bool signaled)
+        {
+            if (this->shared)
+            {
+                return this->shared->access(
+                    [&](shared_sync_state::fields& state) { return std::exchange(state.signaled, signaled ? 1u : 0u) != 0; });
+            }
+            return std::exchange(this->signaled_, signaled);
+        }
+
+        // Satisfies a wait: reports whether the event is signaled and resets it if it is a synchronization event.
+        bool try_acquire()
+        {
+            const auto auto_reset = this->type == SynchronizationEvent;
+            if (this->shared)
+            {
+                return this->shared->access([&](shared_sync_state::fields& state) {
+                    const auto signaled = state.signaled != 0;
+                    if (signaled && auto_reset)
+                    {
+                        state.signaled = 0;
+                    }
+                    return signaled;
+                });
+            }
+
+            const auto signaled = this->signaled_;
+            if (signaled && auto_reset)
+            {
+                this->signaled_ = false;
+            }
+            return signaled;
+        }
+
+        const std::string& share()
+        {
+            if (!this->shared)
+            {
+                this->shared = shared_sync_state::create();
+                this->shared->access([&](shared_sync_state::fields& state) { state.signaled = this->signaled_ ? 1 : 0; });
+            }
+            return this->shared->name();
+        }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
-            buffer.write(this->signaled);
+            buffer.write(this->is_signaled());
             buffer.write(this->type);
             buffer.write(this->name);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
-            buffer.read(this->signaled);
+            buffer.read(this->signaled_);
             buffer.read(this->type);
             buffer.read(this->name);
+            this->shared.reset();
+        }
+
+      private:
+        bool signaled_{};
+    };
+
+    // A debugger's view of the child processes it debugs; their events reach it through the process manager.
+    struct debug_object : ref_counted_object
+    {
+        struct debuggee
+        {
+            uint64_t process{};
+            uint32_t process_id{};
+            bool exit_reported{};
+            std::vector<uint32_t> thread_ids{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->process);
+                buffer.write(this->process_id);
+                buffer.write(this->exit_reported);
+                buffer.write_vector(this->thread_ids);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->process);
+                buffer.read(this->process_id);
+                buffer.read(this->exit_reported);
+                buffer.read_vector(this->thread_ids);
+            }
+        };
+
+        std::vector<debuggee> debuggees{};
+        bool kill_on_close{};
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write_vector(this->debuggees);
+            buffer.write(this->kill_on_close);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read_vector(this->debuggees);
+            buffer.read(this->kill_on_close);
         }
     };
 
@@ -673,81 +820,298 @@ namespace sogen
         }
     };
 
+    struct token_privilege
+    {
+        uint32_t luid{};
+        uint32_t attributes{};
+    };
+
+    // The privileges of an interactive user's token on Windows 10 and 11, as `whoami /priv` lists them, or those of the
+    // built-in Administrator's elevated token.
+    inline std::vector<token_privilege> default_token_privileges(const bool elevated)
+    {
+        constexpr std::array<uint32_t, 5> standard_privileges{19, 23, 25, 33, 34};
+        constexpr std::array<uint32_t, 24> elevated_privileges{5,  8,  9,  10, 11, 12, 13, 14, 15, 17, 18, 19,
+                                                               20, 22, 23, 24, 25, 28, 29, 30, 33, 34, 35, 36};
+        constexpr std::array<uint32_t, 3> enabled_by_default{23, 29, 30};
+        constexpr uint32_t enabled = 0x3;
+
+        const auto luids = elevated ? std::span<const uint32_t>{elevated_privileges} : std::span<const uint32_t>{standard_privileges};
+        std::vector<token_privilege> privileges{};
+        privileges.reserve(luids.size());
+        for (const auto luid : luids)
+        {
+            privileges.push_back(
+                {.luid = luid, .attributes = std::ranges::find(enabled_by_default, luid) != enabled_by_default.end() ? enabled : 0});
+        }
+        return privileges;
+    }
+
+    // A handle to one of the tokens the emulator models, which are identified by their pseudo-handle.
+    struct token_object : ref_counted_object
+    {
+        handle identity{};
+        // Unset for handles to the process token, whose privileges belong to the process. A token created from another
+        // one has its own.
+        std::optional<std::vector<token_privilege>> privileges{};
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->identity);
+            buffer.write(this->privileges.has_value());
+            if (this->privileges)
+            {
+                buffer.write_vector(*this->privileges);
+            }
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->identity);
+            this->privileges.reset();
+            if (buffer.read<bool>())
+            {
+                buffer.read_vector(this->privileges.emplace());
+            }
+        }
+    };
+
     struct mutant : ref_counted_object
     {
-        uint32_t locked_count{0};
-        uint32_t owning_thread_id{};
-        bool abandoned{false};
-        std::u16string name{};
+      private:
+        using state = shared_sync_state::fields;
+        state local_{};
 
-        bool is_signaled(const uint32_t thread_id) const
+        static void abandon(state& current)
         {
-            return this->abandoned || this->locked_count == 0 || this->owning_thread_id == thread_id;
-        }
-
-        std::optional<bool> try_lock(const uint32_t thread_id)
-        {
-            if (this->locked_count == 0)
-            {
-                ++this->locked_count;
-                this->owning_thread_id = thread_id;
-                const auto was_abandoned = this->abandoned;
-                this->abandoned = false;
-                return was_abandoned;
-            }
-
-            if (this->owning_thread_id != thread_id)
-            {
-                return std::nullopt;
-            }
-
-            ++this->locked_count;
-            return false;
-        }
-
-        std::pair<uint32_t, bool> release(const uint32_t thread_id)
-        {
-            const auto old_count = this->locked_count;
-
-            if (this->locked_count <= 0 || this->owning_thread_id != thread_id)
-            {
-                return {old_count, false};
-            }
-
-            --this->locked_count;
-            if (this->locked_count == 0)
-            {
-                this->owning_thread_id = 0;
-            }
-            return {old_count, true};
-        }
-
-        void abandon()
-        {
-            if (this->locked_count == 0)
+            if (current.locked_count == 0)
             {
                 return;
             }
 
-            this->locked_count = 0;
-            this->owning_thread_id = 0;
-            this->abandoned = true;
+            // Any of these stores can be the last one a dying process makes: abandoned first, so a free mutant is
+            // never left unreported, then the count, so a held count always still has a host owner recovery can
+            // check and an owner a thread can match.
+            current.abandoned = 1;
+            current.locked_count = 0;
+            current.owner = 0;
+            current.owner_host_process = 0;
+        }
+
+        template <typename Function>
+        auto access(Function&& function) const
+        {
+            if (this->shared)
+            {
+                return this->shared->access(std::forward<Function>(function));
+            }
+            return function(this->local_);
+        }
+
+        template <typename Function>
+        auto access(Function&& function)
+        {
+            if (this->shared)
+            {
+                return this->shared->access(std::forward<Function>(function));
+            }
+            return function(this->local_);
+        }
+
+      public:
+        std::u16string name{};
+        // Set once a handle to the mutant is passed to another process.
+        std::optional<shared_sync_state> shared{};
+
+        // Thread IDs are only unique within a process, so ownership names both.
+        static uint64_t make_owner(const uint32_t process_id, const uint32_t thread_id)
+        {
+            return (static_cast<uint64_t>(process_id) << 32) | thread_id;
+        }
+
+        bool is_locked() const
+        {
+            return this->access([](const state& current) { return current.locked_count != 0; });
+        }
+
+        bool is_abandoned() const
+        {
+            return this->access([](const state& current) { return current.abandoned != 0; });
+        }
+
+        uint64_t owner() const
+        {
+            return this->access([](const state& current) { return current.owner; });
+        }
+
+        struct lock_info
+        {
+            uint32_t locked_count{};
+            uint64_t owner{};
+            bool abandoned{};
+        };
+
+        // What NtQueryMutant reports, in one look, so a shared mutant whose owner dies cannot be described by a mix
+        // of two states.
+        lock_info lock_state() const
+        {
+            return this->access([](const state& current) {
+                return lock_info{.locked_count = current.locked_count, .owner = current.owner, .abandoned = current.abandoned != 0};
+            });
+        }
+
+        bool is_signaled(const uint64_t owner) const
+        {
+            return this->access(
+                [&](const state& current) { return current.abandoned != 0 || current.locked_count == 0 || current.owner == owner; });
+        }
+
+        // Returns whether the mutant was abandoned, or nothing if another thread owns it.
+        std::optional<bool> try_lock(const uint64_t owner)
+        {
+            return this->access([&](state& current) -> std::optional<bool> {
+                if (current.locked_count == 0)
+                {
+                    // The owner and its host process are in place before the count says the mutant is held, so a
+                    // death in between leaves it free rather than held by nobody recovery can identify.
+                    current.owner = owner;
+                    current.owner_host_process = utils::current_host_process_id();
+                    ++current.owner_generation;
+                    current.locked_count = 1;
+                    return std::exchange(current.abandoned, 0) != 0;
+                }
+
+                if (current.owner != owner)
+                {
+                    return std::nullopt;
+                }
+
+                ++current.locked_count;
+                return false;
+            });
+        }
+
+        std::pair<uint32_t, bool> release(const uint64_t owner)
+        {
+            return this->access([&](state& current) -> std::pair<uint32_t, bool> {
+                const auto old_count = current.locked_count;
+                if (current.locked_count == 0 || current.owner != owner)
+                {
+                    return {old_count, false};
+                }
+
+                --current.locked_count;
+                if (current.locked_count == 0)
+                {
+                    current.owner = 0;
+                    current.owner_host_process = 0;
+                }
+
+                return {old_count, true};
+            });
+        }
+
+        void abandon()
+        {
+            this->access([](state& current) { abandon(current); });
+        }
+
+        // Undoes a try_lock, including the abandoned flag it cleared, for a wait-all that has to put back what it
+        // took after a later object turned out to be gone.
+        void unlock_and_restore(const uint64_t owner, const bool was_abandoned)
+        {
+            this->access([&](state& current) {
+                if (current.locked_count == 0 || current.owner != owner)
+                {
+                    return;
+                }
+
+                if (was_abandoned)
+                {
+                    current.abandoned = 1;
+                }
+
+                --current.locked_count;
+                if (current.locked_count == 0)
+                {
+                    current.owner = 0;
+                    current.owner_host_process = 0;
+                }
+            });
+        }
+
+        void abandon_if_owned_by(const uint64_t owner)
+        {
+            this->access([&](state& current) {
+                if (current.owner == owner)
+                {
+                    abandon(current);
+                }
+            });
+        }
+
+        // A restored lock belongs to this emulator again only when its owner is one of this process's threads.
+        // Anything else, such as a mutant a child held when the parent saved its state, has no thread left that could
+        // release it, so it comes back abandoned, as Windows reports an owner that is gone. Called once the process id
+        // is known, which is read after the mutants.
+        void adopt_restored_lock(const uint32_t process_id)
+        {
+            this->access([&](state& current) {
+                if (current.locked_count == 0)
+                {
+                    current.owner_host_process = 0;
+                    return;
+                }
+
+                if ((current.owner >> 32) == process_id)
+                {
+                    current.owner_host_process = utils::current_host_process_id();
+                    ++current.owner_generation;
+                    return;
+                }
+
+                abandon(current);
+            });
+        }
+
+        void abandon_if_owned_by_process(const uint32_t process_id)
+        {
+            this->access([&](state& current) {
+                if ((current.owner >> 32) == process_id)
+                {
+                    abandon(current);
+                }
+            });
+        }
+
+        const std::string& share()
+        {
+            if (!this->shared)
+            {
+                const auto local = this->local_;
+                this->shared = shared_sync_state::create();
+                this->shared->access([&](state& current) { current = local; });
+            }
+            return this->shared->name();
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
-            buffer.write(this->locked_count);
-            buffer.write(this->owning_thread_id);
-            buffer.write(this->abandoned);
+            const auto current = this->access([](const state& values) { return values; });
+            buffer.write(current.locked_count);
+            buffer.write(current.owner);
+            buffer.write(current.abandoned);
             buffer.write(this->name);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
-            buffer.read(this->locked_count);
-            buffer.read(this->owning_thread_id);
-            buffer.read(this->abandoned);
+            buffer.read(this->local_.locked_count);
+            buffer.read(this->local_.owner);
+            buffer.read(this->local_.abandoned);
             buffer.read(this->name);
+            this->shared.reset();
+            this->local_.owner_host_process = 0;
         }
     };
 
@@ -854,7 +1218,45 @@ namespace sogen
 
     struct section : ref_counted_object
     {
+        static constexpr ACCESS_MASK all_access = 0xF001F;
+
+        static ACCESS_MASK map_generic_access(ACCESS_MASK access)
+        {
+            constexpr ACCESS_MASK generic_read = 0x80000000;
+            constexpr ACCESS_MASK generic_write = 0x40000000;
+            constexpr ACCESS_MASK generic_execute = 0x20000000;
+            constexpr ACCESS_MASK generic_all = 0x10000000;
+            constexpr ACCESS_MASK maximum_allowed = 0x02000000;
+            constexpr ACCESS_MASK section_query = 0x1;
+            constexpr ACCESS_MASK section_map_write = 0x2;
+            constexpr ACCESS_MASK section_map_read = 0x4;
+            constexpr ACCESS_MASK section_map_execute = 0x8;
+            constexpr ACCESS_MASK read_control = 0x20000;
+            constexpr ACCESS_MASK synchronize_and_standard = 0x000F0000;
+
+            if (access & (generic_all | maximum_allowed))
+            {
+                access |= all_access;
+            }
+            if (access & generic_read)
+            {
+                access |= section_query | section_map_read | read_control;
+            }
+            if (access & generic_write)
+            {
+                access |= section_map_write | read_control;
+            }
+            if (access & generic_execute)
+            {
+                access |= section_map_execute | read_control;
+            }
+
+            return access & (all_access | synchronize_and_standard);
+        }
+
         std::u16string name{};
+        // Section handles that differ in access are separate objects sharing one backing, as a handle's access is fixed.
+        ACCESS_MASK granted_access{all_access};
         std::u16string file_name{};
         uint64_t maximum_size{};
         uint32_t section_page_protection{};
@@ -914,6 +1316,7 @@ namespace sogen
             buffer.write(this->maximum_size);
             buffer.write(this->section_page_protection);
             buffer.write(this->allocation_attributes);
+            buffer.write(this->granted_access);
             buffer.write(this->backing_address);
             buffer.write(this->mapped_view_count);
             buffer.write(this->view_storage_id);
@@ -927,6 +1330,7 @@ namespace sogen
             buffer.read(this->maximum_size);
             buffer.read(this->section_page_protection);
             buffer.read(this->allocation_attributes);
+            buffer.read(this->granted_access);
             buffer.read(this->backing_address);
             buffer.read(this->mapped_view_count);
             buffer.read(this->view_storage_id);

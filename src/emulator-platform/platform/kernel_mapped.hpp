@@ -1726,11 +1726,24 @@ namespace sogen
         LARGE_INTEGER UserTime;
     } KERNEL_USER_TIMES, *PKERNEL_USER_TIMES;
 
+    typedef struct _PROCESS_CYCLE_TIME_INFORMATION
+    {
+        ULONGLONG AccumulatedCycles;
+        ULONGLONG CurrentCycleCount;
+    } PROCESS_CYCLE_TIME_INFORMATION, *PPROCESS_CYCLE_TIME_INFORMATION;
+
     typedef struct _THREAD_CYCLE_TIME_INFORMATION
     {
         ULONGLONG AccumulatedCycles;
         ULONGLONG CurrentCycleCount;
     } THREAD_CYCLE_TIME_INFORMATION, *PTHREAD_CYCLE_TIME_INFORMATION;
+
+    typedef struct _SYSTEM_HANDLECOUNT_INFORMATION
+    {
+        ULONG ProcessCount;
+        ULONG ThreadCount;
+        ULONG HandleCount;
+    } SYSTEM_HANDLECOUNT_INFORMATION, *PSYSTEM_HANDLECOUNT_INFORMATION;
 
     typedef struct _GROUP_AFFINITY
     {

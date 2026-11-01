@@ -16,7 +16,7 @@ namespace sogen
                 switch (target_object_handle.value.type)
                 {
                 case handle_types::process: {
-                    if (target_object_handle == GUEST_PROCESS_HANDLE)
+                    if (process.is_current_process_handle(target_object_handle))
                     {
                         return process.exit_status.has_value();
                     }
@@ -40,7 +40,7 @@ namespace sogen
 
                 case handle_types::event: {
                     const auto* e = process.events.get(target_object_handle);
-                    return e && e->signaled;
+                    return e && e->is_signaled();
                 }
                 case handle_types::thread: {
                     const auto* thread = process.threads.get(target_object_handle);
@@ -59,7 +59,7 @@ namespace sogen
 
                 case handle_types::mutant: {
                     const auto* mutant = process.mutants.get(target_object_handle);
-                    return mutant && mutant->locked_count == 0;
+                    return mutant && !mutant->is_locked();
                 }
 
                 case handle_types::timer: {
@@ -81,10 +81,9 @@ namespace sogen
                 switch (target_object_handle.value.type)
                 {
                 case handle_types::event: {
-                    auto* e = process.events.get(target_object_handle);
-                    if (e && e->type == SynchronizationEvent)
+                    if (auto* e = process.events.get(target_object_handle))
                     {
-                        e->signaled = false;
+                        (void)e->try_acquire();
                     }
                     break;
                 }
@@ -189,6 +188,10 @@ namespace sogen
             }
 
             retained_handle = *duplicated;
+            // A duplicate is a value of its own, but the low bits are the caller's: ntdll passes an event handle
+            // through verbatim and user mode tags it there, which is how a tagged event suppresses the completion
+            // packet. Losing the tag would queue a packet the caller asked to be left out.
+            retained_handle.value.reserved = resolved_source_handle.value.reserved;
             return true;
         }
 
@@ -260,6 +263,7 @@ namespace sogen
         void materialize_signaled_wait_packets(windows_emulator& win_emu, const handle io_completion_handle)
         {
             auto& process = win_emu.process;
+            process.post_exited_job_processes(win_emu, io_completion_handle);
             auto* completion = process.io_completions.get(io_completion_handle);
             if (!completion)
             {
@@ -273,7 +277,7 @@ namespace sogen
                     continue;
                 }
 
-                if (wait_packet.io_completion_handle != io_completion_handle)
+                if (process.io_completions.get(wait_packet.io_completion_handle) != completion)
                 {
                     continue;
                 }

@@ -99,8 +99,8 @@ namespace sogen::sandbox
                 const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
                 const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
-                const bool spoof_gpu_features, const std::filesystem::path& snapshot_directory, const std::filesystem::path& resume_file,
-                managed_process_connection* managed_connection)
+                const bool spoof_gpu_features, const bool elevated, const std::filesystem::path& snapshot_directory,
+                const std::filesystem::path& resume_file, managed_process_connection* managed_connection)
         {
             application_settings app_settings{
                 .application = args.empty() ? std::u8string{} : std::u8string(args[0].begin(), args[0].end()),
@@ -151,6 +151,7 @@ namespace sogen::sandbox
                 .registry_directory = registry_directory.empty() ? get_current_binary_dir() / "registry" : registry_directory,
                 .network = network_mode,
                 .spoof_gpu_features = spoof_gpu_features,
+                .elevated = elevated,
             };
 
             if (!emulation_root.empty())
@@ -177,6 +178,10 @@ namespace sogen::sandbox
                                                            if (spoof_gpu_features)
                                                            {
                                                                arguments.emplace_back("--spoof-gpu-features");
+                                                           }
+                                                           if (elevated)
+                                                           {
+                                                               arguments.emplace_back("--elevated");
                                                            }
                                                            if (!settings.emulation_root.empty())
                                                            {
@@ -240,6 +245,10 @@ namespace sogen::sandbox
             if (managed_connection)
             {
                 win_emu.setup_process_if_necessary();
+                if (managed_connection->request().debugged)
+                {
+                    win_emu.attach_debugger();
+                }
                 install_inherited_pipes(win_emu, managed_connection->request(), managed_connection->take_inherited_pipes());
                 managed_target = std::make_unique<emulator_process_target>(win_emu);
                 if (!managed_connection->wait_for_resume(*managed_target))
@@ -313,7 +322,8 @@ namespace sogen::sandbox
                 return 1;
             }
 
-            if (managed_connection && !managed_connection->notify_exit(static_cast<uint64_t>(static_cast<uint32_t>(*exit_status))))
+            if (managed_connection && !managed_connection->notify_exit(static_cast<uint64_t>(static_cast<uint32_t>(*exit_status)),
+                                                                       win_emu.process.get_accumulated_cycles()))
             {
                 throw std::runtime_error("Reporting managed process exit failed");
             }
@@ -360,6 +370,10 @@ namespace sogen::sandbox
                 ->capture_default_str()
                 ->check(CLI::IsMember({"offline", "live"}));
             bool spoof_gpu_features{};
+            bool elevated = false;
+            app.add_flag("--elevated", elevated,
+                         "Run the guest with an elevated administrator token, as an installer or a service expects");
+
             app.add_flag("--spoof-gpu-features", spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
             std::filesystem::path snapshot_directory{"snapshots"};
@@ -423,8 +437,8 @@ namespace sogen::sandbox
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_filesystem_mode(root_mode).value(), std::move(mounts), emulation_root, registry_directory,
-                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features, snapshot_directory,
-                           resume_file, managed_process ? &*managed_process : nullptr);
+                           registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features, elevated,
+                           snapshot_directory, resume_file, managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {

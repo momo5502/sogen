@@ -13,11 +13,17 @@
 #include "exception_dispatch.hpp"
 #include "apiset/apiset.hpp"
 #include "syscall_dispatcher.hpp"
+#include "syscall_utils.hpp"
 
 #include "memory_permission_ext.hpp"
 
 namespace sogen
 {
+    namespace syscalls
+    {
+        NTSTATUS handle_NtClose(const syscall_context& c, handle h);
+    }
+
     constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
     constexpr auto MAX_BASIC_BLOCKS_PER_TIME_SLICE = 0x8000;
 
@@ -841,6 +847,7 @@ namespace sogen
           intercept_rdtsc_(settings.intercept_rdtsc),
           intercept_kusd_(settings.intercept_kusd),
           spoof_gpu_features_(settings.spoof_gpu_features),
+          elevated_(settings.elevated),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
     {
         if (this->vcpu_count_ == 0)
@@ -873,6 +880,7 @@ namespace sogen
             this->vcpus_.push_back(std::make_unique<vcpu_context>(this->emu_->get_guest_cpu(i)));
         }
 
+        this->process.token_privileges = default_token_privileges(this->elevated_);
         this->ui_backend_->set_event_sink([this](const ui_event& event) { this->handle_ui_event(event); });
 #ifndef OS_WINDOWS
         if (this->emulation_root.empty())
@@ -894,7 +902,10 @@ namespace sogen
         this->setup_hooks();
     }
 
-    windows_emulator::~windows_emulator() = default;
+    windows_emulator::~windows_emulator()
+    {
+        this->process.abandon_shared_mutants();
+    }
 
     void windows_emulator::setup_process_if_necessary()
     {
@@ -982,6 +993,7 @@ namespace sogen
             // Idle: nothing is ready. Release the kernel lock while pumping UI events
             // and sleeping so other threads (UI delivery, vCPU workers) can run.
             lock.unlock();
+            this->debugger_.run_pending_tasks(vcpu.cpu.index());
 
             if (this->vcpu_count_ == 1)
             {
@@ -1029,6 +1041,13 @@ namespace sogen
 
         while (!this->should_stop)
         {
+            // Debugger requests run before the scheduling decision, as the single-vCPU loop does: one of them can
+            // suspend a thread, and running them afterwards would let a suspend land on the thread just chosen, which
+            // would then run a quantum even though the debugger was told the suspend succeeded.
+            lock.unlock();
+            this->debugger_.run_pending_tasks(vcpu.cpu.index());
+            lock.lock();
+
             // A loop rather than a single check: the register transfer of a switch releases the kernel lock, so the
             // chosen thread can be terminated or suspended before it runs.
             bool switched = true;
@@ -1328,9 +1347,28 @@ namespace sogen
             {
                 this->install_section_first_execution_hook(mod, i);
             }
+
+            if (this->debugger_saw_process_ && this->reports_module_to_debugger(mod))
+            {
+                this->report_debug_event({
+                    .kind = process_debug_event_kind::load_dll,
+                    .thread_id = this->current_thread().id,
+                    .base_address = mod.image_base,
+                    .path = u16_to_u8(mod.module_path.u16string()),
+                });
+            }
         });
 
         this->callbacks.on_module_unload.add([this](mapped_module& mod) {
+            if (this->debugger_saw_process_ && this->reports_module_to_debugger(mod))
+            {
+                this->report_debug_event({
+                    .kind = process_debug_event_kind::unload_dll,
+                    .thread_id = this->current_thread().id,
+                    .base_address = mod.image_base,
+                });
+            }
+
             const auto hooks = this->section_first_execution_hooks_.extract(mod.image_base);
             if (hooks)
             {
@@ -1510,7 +1548,7 @@ namespace sogen
         }
         case 0xF003:
             this->callbacks.on_fast_fail(cpu.reg<uint32_t>(arm64_register::w0));
-            this->process.exit_status = STATUS_FAIL_FAST_EXCEPTION;
+            this->process.mark_exited(STATUS_FAIL_FAST_EXCEPTION);
             this->stop();
             return;
         case 0xF004:
@@ -1621,7 +1659,7 @@ namespace sogen
                 return;
             case 41:
                 this->callbacks.on_fast_fail(acting.reg<uint32_t>(x86_register::ecx));
-                this->process.exit_status = STATUS_FAIL_FAST_EXCEPTION;
+                this->process.mark_exited(STATUS_FAIL_FAST_EXCEPTION);
                 this->stop();
                 return;
             case 45:
@@ -1672,12 +1710,127 @@ namespace sogen
         }
     }
 
+    void windows_emulator::attach_debugger()
+    {
+        this->debugger_.attach();
+        this->process.peb64.access([](PEB64& peb) { peb.BeingDebugged = TRUE; });
+        if (this->process.peb32)
+        {
+            this->process.peb32->access([](PEB32& peb) { peb.BeingDebugged = TRUE; });
+        }
+    }
+
+    bool windows_emulator::close_handle(const handle h)
+    {
+        auto& vcpu = this->vcpu(0);
+        const syscall_context context{.win_emu = *this, .emu = vcpu.cpu, .vcpu = vcpu, .proc = this->process};
+        return NT_SUCCESS(syscalls::handle_NtClose(context, h));
+    }
+
+    void windows_emulator::detach_debugger()
+    {
+        this->debugger_.run_on_emulation_thread(*this, [this] {
+            this->process.peb64.access([](PEB64& peb) { peb.BeingDebugged = FALSE; });
+            if (this->process.peb32)
+            {
+                this->process.peb32->access([](PEB32& peb) { peb.BeingDebugged = FALSE; });
+            }
+        });
+        this->debugger_.detach();
+    }
+
+    uint32_t windows_emulator::report_debug_event(process_debug_event event)
+    {
+        return this->debugger_.report(*this, this->active_vcpu().cpu.index(), std::move(event));
+    }
+
+    void windows_emulator::interrupt_for_debugger()
+    {
+        {
+            const std::scoped_lock lock(this->kernel_lock_);
+            auto& vcpu = this->vcpu(0);
+            if (vcpu.cpu.is_stop_thread_safe())
+            {
+                vcpu.switch_thread = true;
+                vcpu.cpu.stop();
+            }
+        }
+
+        this->wake_idle_vcpu();
+    }
+
+    // Only images backed by a file are reported, which leaves out the emulator's own code (the WOW64 heaven gate).
+    // A WOW64 process's 64-bit modules (native ntdll, wow64*.dll) lie above 4GB, out of a 32-bit debugger's reach.
+    bool windows_emulator::reports_module_to_debugger(const mapped_module& mod) const
+    {
+        if (mod.module_path.empty())
+        {
+            return false;
+        }
+
+        return !this->process.is_wow64_process || mod.image_base + mod.size_of_image <= 0x100000000ULL;
+    }
+
+    // Like the kernel at process creation: the image first, then every module mapped before the first instruction.
+    void windows_emulator::report_debugger_process_start()
+    {
+        if (this->debugger_saw_process_ || !this->debugger_.is_attached())
+        {
+            return;
+        }
+
+        const std::scoped_lock lock(this->kernel_lock_);
+        this->debugger_saw_process_ = true;
+
+        const auto thread_id = this->process.initial_thread_id;
+
+        // The debugger reads and writes the initial thread's registers at these events, so it has to be on the vCPU
+        // already, as for its first time slice.
+        auto& vcpu = this->vcpu(0);
+        if (!vcpu.active_thread)
+        {
+            for (auto& thread : this->process.threads | std::views::values)
+            {
+                if (thread.id == thread_id)
+                {
+                    switch_to_thread(*this, vcpu, thread, true);
+                    break;
+                }
+            }
+        }
+        const auto* executable = this->mod_manager.executable;
+        this->report_debug_event({
+            .kind = process_debug_event_kind::create_process,
+            .thread_id = thread_id,
+            .base_address = executable ? executable->image_base : 0,
+            .start_address = executable ? executable->entry_point : 0,
+            .path = executable ? u16_to_u8(executable->module_path.u16string()) : std::string{},
+        });
+
+        for (const auto& mod : this->mod_manager.modules() | std::views::values)
+        {
+            if (&mod != executable && this->reports_module_to_debugger(mod))
+            {
+                this->report_debug_event({
+                    .kind = process_debug_event_kind::load_dll,
+                    .thread_id = thread_id,
+                    .base_address = mod.image_base,
+                    .path = u16_to_u8(mod.module_path.u16string()),
+                });
+            }
+        }
+    }
+
     void windows_emulator::start(size_t count)
     {
         this->should_stop = false;
         this->last_stop_reason_ = stop_reason::none;
         this->last_stop_detail_.clear();
         this->setup_process_if_necessary();
+
+        this->debugger_.begin_emulation();
+        const auto end_debugger_emulation = utils::finally([this] { this->debugger_.end_emulation(); });
+        this->report_debugger_process_start();
 
         if (count > 0 && this->vcpu_count_ > 1)
         {
@@ -1809,6 +1962,7 @@ namespace sogen
         {
             lock.unlock();
             this->ui_backend_->pump_events();
+            this->debugger_.run_pending_tasks(vcpu.cpu.index());
             lock.lock();
 
             if (vcpu.switch_thread || !vcpu.thread().is_thread_ready(*this))
@@ -2581,9 +2735,8 @@ namespace sogen
                 continue;
             }
 
-            if (!entry->signaled)
+            if (!entry->set_signaled(true))
             {
-                entry->signaled = true;
                 if (--it->second == 0)
                 {
                     it = this->pending_event_signals_.erase(it);
