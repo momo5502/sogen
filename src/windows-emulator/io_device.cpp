@@ -242,7 +242,7 @@ namespace sogen
 
     void io_device::queue_io_completion(windows_emulator& win_emu, const io_device_context& context)
     {
-        if (!context.completion_port.bits || !context.io_status_block)
+        if (!context.completion_port.bits || !context.io_status_block || context.suppresses_completion_packet())
         {
             return;
         }
