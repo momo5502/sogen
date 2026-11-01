@@ -2130,6 +2130,8 @@ namespace sogen::whp
             std::unordered_map<uint64_t, patched_execution_breakpoint> patched_execution_breakpoints_{};
             std::unordered_map<uint64_t, mmio_region> mmio_regions_{};
             std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> mmio_read_grace_deadlines_{};
+            // Serializes MMIO page refreshes, from the region callback through publishing the copy.
+            std::mutex mmio_refresh_mutex_{};
             // Installed once during setup, before any vCPU runs, and read-only afterwards; the syscall
             // dispatch hot path deliberately reads it without taking partition_mutex_.
             instruction_hook_entry* syscall_hook_ = nullptr;
@@ -4000,6 +4002,20 @@ namespace sogen::whp
                 {
                     const auto page_base = align_down_to_page(mmio_address);
                     const auto is_write = operation == memory_operation::write;
+
+                    // vCPUs that fault together must not publish out of order: an older copy published over a newer
+                    // one moves KUSD time backwards for every guest thread, which Windows never does.
+                    const std::scoped_lock refresh_lock(this->mmio_refresh_mutex_);
+
+                    if (!is_write)
+                    {
+                        std::shared_lock lock(this->partition_mutex_);
+                        const auto page_it = this->mapped_pages_.find(page_base);
+                        if (page_it != this->mapped_pages_.end() && page_it->second && is_readable(page_it->second->permissions))
+                        {
+                            return true; // another vCPU refreshed the page since this one faulted
+                        }
+                    }
 
                     // Refresh the page content through the region callback outside the lock, then
                     // publish it into the backing page under it.
