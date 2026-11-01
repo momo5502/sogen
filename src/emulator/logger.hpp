@@ -4,6 +4,7 @@
 #include <utils/function.hpp>
 #include <utils/win.hpp>
 
+#include <chrono>
 #include <mutex>
 #include <string_view>
 #include <utility>
@@ -21,8 +22,8 @@ namespace sogen
         // output is disabled, so they observe all log activity.
         using sink = utils::optional_function<void(color c, std::string_view message)>;
 
-#ifdef _WIN32
         logger();
+#ifdef _WIN32
         ~logger() override;
 #endif
         void print(color c, std::string_view message) override;
@@ -69,8 +70,10 @@ namespace sogen
 #endif
         bool disable_output_{false};
         bool silent_{false};
+        bool terminal_{true};
         sink sink_{};
         mutable std::mutex print_mutex_{};
+        mutable std::chrono::steady_clock::time_point last_flush_{};
         void print_message(color c, std::string_view message, bool force = false) const;
     };
 
