@@ -1960,9 +1960,7 @@ namespace sogen
 
         DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
         {
-            // winuser.h spells GR_GLOBAL as a HANDLE rather than a number, so the value is written out here.
-            constexpr auto gr_global = static_cast<uint64_t>(-2);
-            if (process.bits != gr_global && !c.proc.is_current_process_handle(process))
+            if (process.bits != gui_resources_global_process && !c.proc.is_current_process_handle(process))
             {
                 return 0;
             }
@@ -1970,11 +1968,11 @@ namespace sogen
             // Peaks are not tracked, so they report the current count.
             switch (flags)
             {
-            case GR_USEROBJECTS:
-            case GR_USEROBJECTS_PEAK:
+            case gui_resources_userobjects:
+            case gui_resources_userobjects_peak:
                 return static_cast<DWORD>(c.proc.user_handles.used_handle_count());
-            case GR_GDIOBJECTS:
-            case GR_GDIOBJECTS_PEAK: {
+            case gui_resources_gdiobjects:
+            case gui_resources_gdiobjects_peak: {
                 uint64_t table = 0;
                 c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
                 if (table == 0)
