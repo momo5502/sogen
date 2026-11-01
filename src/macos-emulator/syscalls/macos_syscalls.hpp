@@ -11,6 +11,9 @@
 namespace sogen
 {
     void sys_exit(const macos_syscall_context& c);
+    void sys_fork(const macos_syscall_context& c);
+    void sys_execve(const macos_syscall_context& c);
+    void sys_wait4(const macos_syscall_context& c);
     void sys_getpid(const macos_syscall_context& c);
     void sys_getppid(const macos_syscall_context& c);
     void sys_getpgrp(const macos_syscall_context& c);

@@ -1,9 +1,14 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
+#include <utils/io.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <filesystem>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace sogen
@@ -11,15 +16,181 @@ namespace sogen
     namespace
     {
         constexpr uint64_t MAIN_THREAD_ID = 0x1000;
-        constexpr uint64_t PROCESS_UNIQUE_ID = 0x1000;
-        constexpr uint32_t PARENT_PROCESS_ID = 1;
-        constexpr uint64_t PARENT_UNIQUE_ID = 0x1;
+        constexpr size_t MACOS_ARG_MAX = 1024 * 1024;
+        constexpr size_t MACOS_MAXPATHLEN = 1024;
+
+        // execve's argv and envp: a NULL-terminated array of string pointers, where a NULL array is empty. Together they
+        // must fit in ARG_MAX bytes, terminators included.
+        uint64_t read_exec_strings(x86_64_emulator& emu, const uint64_t array, size_t& remaining_size, std::vector<std::string>& strings)
+        {
+            if (array == 0)
+            {
+                return 0;
+            }
+
+            for (uint64_t index = 0;; ++index)
+            {
+                uint64_t address{};
+                if (!emu.try_read_memory(array + (index * sizeof(address)), &address, sizeof(address)))
+                {
+                    return macos_errno::MACOS_EFAULT;
+                }
+
+                if (address == 0)
+                {
+                    return 0;
+                }
+
+                auto& string = strings.emplace_back();
+                while (true)
+                {
+                    char character{};
+                    if (!emu.try_read_memory(address + string.size(), &character, sizeof(character)))
+                    {
+                        return macos_errno::MACOS_EFAULT;
+                    }
+
+                    if (remaining_size == 0)
+                    {
+                        return macos_errno::MACOS_E2BIG;
+                    }
+
+                    --remaining_size;
+                    if (character == '\0')
+                    {
+                        break;
+                    }
+
+                    string.push_back(character);
+                }
+            }
+        }
+
+        uint64_t check_executable_file(const std::filesystem::path& host_path)
+        {
+            constexpr auto any_execute =
+                std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
+
+            std::error_code error{};
+            const auto status = std::filesystem::status(host_path, error);
+            if (!std::filesystem::exists(status))
+            {
+                return macos_errno::MACOS_ENOENT;
+            }
+
+            if (!std::filesystem::is_regular_file(status) || (status.permissions() & any_execute) == std::filesystem::perms::none)
+            {
+                return macos_errno::MACOS_EACCES;
+            }
+
+            return 0;
+        }
     }
 
     void sys_exit(const macos_syscall_context& c)
     {
         c.emu_ref.exit_status = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         c.emu_ref.stop();
+    }
+
+    void sys_fork(const macos_syscall_context& c)
+    {
+        auto& emu = c.emu_ref;
+        emu.after_syscall([&emu] {
+            const auto child_id = emu.fork_process([](macos_emulator& child) {
+                const macos_syscall_context child_context{.emu_ref = child, .emu = child.emu()};
+                write_macos_syscall_success(child_context, child.identity.process_id);
+                child.emu().reg(x86_register::rdx, uint64_t{1});
+            });
+
+            write_macos_syscall_success({.emu_ref = emu, .emu = emu.emu()}, child_id);
+            emu.emu().reg(x86_register::rdx, uint64_t{0});
+        });
+    }
+
+    void sys_execve(const macos_syscall_context& c)
+    {
+        const auto path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0), MACOS_MAXPATHLEN);
+        if (!path)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        if (path->empty())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+            return;
+        }
+
+        std::vector<std::string> argv{};
+        std::vector<std::string> envp{};
+        size_t remaining_size = MACOS_ARG_MAX;
+        for (const auto& [array, strings] :
+             {std::pair{get_macos_syscall_argument(c.emu, 1), &argv}, std::pair{get_macos_syscall_argument(c.emu, 2), &envp}})
+        {
+            if (const auto error = read_exec_strings(c.emu, array, remaining_size, *strings))
+            {
+                write_macos_syscall_error(c, error);
+                return;
+            }
+        }
+
+        const auto host_path = c.emu_ref.file_system.translate(c.emu_ref.resolve_guest_path(*path));
+        if (const auto error = check_executable_file(host_path))
+        {
+            c.emu_ref.log.log("execve(%s) -> %llu\n", path->c_str(), static_cast<unsigned long long>(error));
+            write_macos_syscall_error(c, error);
+            return;
+        }
+
+        std::vector<std::byte> image{};
+        if (!utils::io::read_file(host_path, &image))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EIO);
+            return;
+        }
+
+        if (!is_macos_executable(image))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOEXEC);
+            return;
+        }
+
+        c.emu_ref.log.log("execve(%s)\n", path->c_str());
+
+        auto& emu = c.emu_ref;
+        emu.after_syscall([&emu, image = std::move(image), path = *path, argv = std::move(argv), envp = std::move(envp)] {
+            emu.exec_image(image, path, argv, envp);
+        });
+    }
+
+    // Children have always terminated by the time their parent runs, so waiting never blocks.
+    void sys_wait4(const macos_syscall_context& c)
+    {
+        constexpr size_t rusage_size = 144;
+
+        const auto selector = static_cast<int32_t>(get_macos_syscall_argument(c.emu, 0));
+        const auto status_address = get_macos_syscall_argument(c.emu, 1);
+        const auto rusage_address = get_macos_syscall_argument(c.emu, 3);
+
+        const auto child = c.emu_ref.children.find(selector, c.emu_ref.identity.process_group_id);
+        if (!child)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ECHILD);
+            return;
+        }
+
+        constexpr std::array<std::byte, rusage_size> rusage{};
+        if ((rusage_address != 0 && !c.emu.try_write_memory(rusage_address, rusage.data(), rusage.size())) ||
+            (status_address != 0 && !c.emu.try_write_memory(status_address, &child->wait_status, sizeof(child->wait_status))))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        c.emu_ref.children.reap(child->process_id);
+        write_macos_syscall_success(c, child->process_id);
     }
 
     void sys_thread_selfid(const macos_syscall_context& c)
@@ -29,7 +200,7 @@ namespace sogen
 
     void sys_getpid(const macos_syscall_context& c)
     {
-        write_macos_syscall_success(c, MACOS_PROCESS_ID);
+        write_macos_syscall_success(c, c.emu_ref.identity.process_id);
     }
 
     void sys_getgroups(const macos_syscall_context& c)
@@ -60,10 +231,10 @@ namespace sogen
 
     void sys_getpgrp(const macos_syscall_context& c)
     {
-        write_macos_syscall_success(c, MACOS_PROCESS_ID);
+        write_macos_syscall_success(c, c.emu_ref.identity.process_group_id);
     }
 
-    // The process is alone in its group, and there are no children to move.
+    // Only the calling process can join its own group: children have terminated by the time the parent runs again.
     void sys_setpgid(const macos_syscall_context& c)
     {
         const auto pid = static_cast<int32_t>(get_macos_syscall_argument(c.emu, 0));
@@ -75,13 +246,14 @@ namespace sogen
             return;
         }
 
-        if (pid != 0 && pid != static_cast<int32_t>(MACOS_PROCESS_ID))
+        const auto& identity = c.emu_ref.identity;
+        if (pid != 0 && pid != static_cast<int32_t>(identity.process_id))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_ESRCH);
             return;
         }
 
-        if (group != 0 && group != static_cast<int32_t>(MACOS_PROCESS_ID))
+        if (group != 0 && group != static_cast<int32_t>(identity.process_group_id))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EPERM);
             return;
@@ -92,7 +264,7 @@ namespace sogen
 
     void sys_getppid(const macos_syscall_context& c)
     {
-        write_macos_syscall_success(c, PARENT_PROCESS_ID);
+        write_macos_syscall_success(c, c.emu_ref.identity.parent_process_id);
     }
 
     void sys_getuid(const macos_syscall_context& c)
@@ -214,7 +386,9 @@ namespace sogen
         const auto buffer = get_macos_syscall_argument(c.emu, 4);
         const auto buffer_size = get_macos_syscall_argument(c.emu, 5);
 
-        if (call == proc_info_call_pidinfo && flavor == proc_pidt_shortbsdinfo && pid == MACOS_PROCESS_ID)
+        const auto& identity = c.emu_ref.identity;
+
+        if (call == proc_info_call_pidinfo && flavor == proc_pidt_shortbsdinfo && pid == identity.process_id)
         {
             struct proc_bsdshortinfo
             {
@@ -235,9 +409,9 @@ namespace sogen
             constexpr uint32_t status_running = 2;
 
             proc_bsdshortinfo info{
-                .pid = MACOS_PROCESS_ID,
-                .parent_pid = PARENT_PROCESS_ID,
-                .process_group = MACOS_PROCESS_ID,
+                .pid = identity.process_id,
+                .parent_pid = identity.parent_process_id,
+                .process_group = identity.process_group_id,
                 .status = status_running,
                 .command = {},
                 .flags = process_flags,
@@ -258,7 +432,7 @@ namespace sogen
             return;
         }
 
-        if (call == proc_info_call_pidinfo && flavor == proc_pid_uniqidentifierinfo && pid == MACOS_PROCESS_ID)
+        if (call == proc_info_call_pidinfo && flavor == proc_pid_uniqidentifierinfo && pid == identity.process_id)
         {
             struct proc_uniqidentifierinfo
             {
@@ -275,8 +449,8 @@ namespace sogen
 
             const proc_uniqidentifierinfo info{
                 .uuid = c.emu_ref.executable_uuid,
-                .unique_id = PROCESS_UNIQUE_ID,
-                .parent_unique_id = PARENT_UNIQUE_ID,
+                .unique_id = identity.unique_id,
+                .parent_unique_id = identity.parent_unique_id,
                 .id_version = static_cast<int32_t>(MACOS_PROCESS_ID_VERSION),
                 .reserved2 = 0,
                 .reserved3 = 0,
@@ -352,7 +526,7 @@ namespace sogen
             const auto buffer = get_macos_syscall_argument(c.emu, 2);
             const auto size = get_macos_syscall_argument(c.emu, 3);
 
-            if (pid != 0 && pid != MACOS_PROCESS_ID)
+            if (pid != 0 && pid != c.emu_ref.identity.process_id)
             {
                 write_macos_syscall_error(c, macos_errno::MACOS_ESRCH);
                 return;
@@ -397,7 +571,7 @@ namespace sogen
             return;
         }
 
-        if (token[5] != MACOS_PROCESS_ID || token[7] != MACOS_PROCESS_ID_VERSION)
+        if (token[5] != c.emu_ref.identity.process_id || token[7] != MACOS_PROCESS_ID_VERSION)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_ESRCH);
             return;

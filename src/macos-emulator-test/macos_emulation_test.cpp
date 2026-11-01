@@ -24,6 +24,11 @@ namespace sogen::macos_test
 {
     namespace
     {
+        std::unique_ptr<x86_64_emulator> create_backend()
+        {
+            return create_x86_64_emulator_from_environment();
+        }
+
         constexpr uint64_t IMAGE_BASE = 0x100000000;
         constexpr uint64_t IMAGE_SIZE = 0x1000;
         constexpr uint32_t CPU_TYPE_ARM64 = 0x0100000C;
@@ -133,6 +138,31 @@ namespace sogen::macos_test
             0x89, 0xC7,                                                 // mov edi, eax
             0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
             0x0F, 0x05,                                                 // syscall
+        });
+
+        constexpr auto FORK_AND_WAIT_CODE = std::to_array<uint8_t>({
+            0xB8, 0x02, 0x00, 0x00, 0x02, // mov eax, 0x2000002 (fork)
+            0x0F, 0x05,                   // syscall
+            0x85, 0xD2,                   // test edx, edx
+            0x75, 0x30,                   // jnz child
+            0x89, 0xC3,                   // mov ebx, eax
+            0x48, 0x83, 0xEC, 0x10,       // sub rsp, 16
+            0xBF, 0xFF, 0xFF, 0xFF, 0xFF, // mov edi, -1
+            0x48, 0x89, 0xE6,             // mov rsi, rsp
+            0x31, 0xD2,                   // xor edx, edx
+            0x4D, 0x31, 0xD2,             // xor r10, r10
+            0xB8, 0x07, 0x00, 0x00, 0x02, // mov eax, 0x2000007 (wait4)
+            0x0F, 0x05,                   // syscall
+            0x8B, 0x3C, 0x24,             // mov edi, [rsp]
+            0xC1, 0xEF, 0x08,             // shr edi, 8
+            0x39, 0xD8,                   // cmp eax, ebx
+            0x74, 0x05,                   // je exit
+            0xBF, 0xFF, 0x00, 0x00, 0x00, // mov edi, 0xFF
+            0xB8, 0x01, 0x00, 0x00, 0x02, // exit: mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                   // syscall
+            0xBF, 0x07, 0x00, 0x00, 0x00, // child: mov edi, 7
+            0xB8, 0x01, 0x00, 0x00, 0x02, // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                   // syscall
         });
 
         constexpr auto EXIT_WITH_ARGC_CODE = std::to_array<uint8_t>({
@@ -437,7 +467,7 @@ namespace sogen::macos_test
         run_result run_binary(const std::span<const std::byte> data, const std::vector<std::string>& argv = {"test"},
                               const std::filesystem::path& emulation_root = {})
         {
-            macos_emulator emu{create_x86_64_emulator_from_environment(), emulation_root, data, "/test", argv, {}};
+            macos_emulator emu{create_backend, emulation_root, data, "/test", argv, {}};
             emu.log.disable_output(true);
 
             run_result result{};
@@ -458,9 +488,7 @@ namespace sogen::macos_test
 
         void expect_rejected(const std::span<const std::byte> data, const std::filesystem::path& emulation_root = {})
         {
-            auto backend = create_x86_64_emulator_from_environment();
-
-            EXPECT_THROW(macos_emulator(std::move(backend), emulation_root, data, "/test", {"test"}, {}), std::runtime_error);
+            EXPECT_THROW(macos_emulator(create_backend, emulation_root, data, "/test", {"test"}, {}), std::runtime_error);
         }
 
         void expect_rejected(const test_image& image, const std::filesystem::path& emulation_root = {})
@@ -526,6 +554,13 @@ namespace sogen::macos_test
         const auto result = run_image(make_test_image(TRUNCATED_TASK_INFO_CODE));
 
         EXPECT_EQ(result.exit_status, 0);
+    }
+
+    TEST(MacosEmulationTest, ReapsForkedChildWithItsExitStatus)
+    {
+        const auto result = run_image(make_test_image(FORK_AND_WAIT_CODE));
+
+        EXPECT_EQ(result.exit_status, 7);
     }
 
     TEST(MacosEmulationTest, PassesArgumentCountOnInitialStack)

@@ -33,10 +33,12 @@ namespace sogen
         constexpr uint64_t MACH_HOST_SELF_TRAP = 29;
 
         constexpr uint64_t MACOS_SYS_exit = 1;
+        constexpr uint64_t MACOS_SYS_fork = 2;
         constexpr uint64_t MACOS_SYS_read = 3;
         constexpr uint64_t MACOS_SYS_write = 4;
         constexpr uint64_t MACOS_SYS_open = 5;
         constexpr uint64_t MACOS_SYS_close = 6;
+        constexpr uint64_t MACOS_SYS_wait4 = 7;
         constexpr uint64_t MACOS_SYS_chdir = 12;
         constexpr uint64_t MACOS_SYS_fchdir = 13;
         constexpr uint64_t MACOS_SYS_getpid = 20;
@@ -52,6 +54,7 @@ namespace sogen
         constexpr uint64_t MACOS_SYS_sigprocmask = 48;
         constexpr uint64_t MACOS_SYS_sigaltstack = 53;
         constexpr uint64_t MACOS_SYS_ioctl = 54;
+        constexpr uint64_t MACOS_SYS_execve = 59;
         constexpr uint64_t MACOS_SYS_munmap = 73;
         constexpr uint64_t MACOS_SYS_mprotect = 74;
         constexpr uint64_t MACOS_SYS_getgroups = 79;
@@ -89,6 +92,7 @@ namespace sogen
         constexpr uint64_t MACOS_SYS_write_nocancel = 397;
         constexpr uint64_t MACOS_SYS_open_nocancel = 398;
         constexpr uint64_t MACOS_SYS_close_nocancel = 399;
+        constexpr uint64_t MACOS_SYS_wait4_nocancel = 400;
         constexpr uint64_t MACOS_SYS_fcntl_nocancel = 406;
         constexpr uint64_t MACOS_SYS_thread_selfid = 372;
         constexpr uint64_t MACOS_SYS_fsgetpath = 427;
@@ -104,10 +108,12 @@ namespace sogen
     macos_syscall_dispatcher::macos_syscall_dispatcher()
     {
         this->register_unix_handler(MACOS_SYS_exit, sys_exit, "exit");
+        this->register_unix_handler(MACOS_SYS_fork, sys_fork, "fork");
         this->register_unix_handler(MACOS_SYS_read, sys_read, "read");
         this->register_unix_handler(MACOS_SYS_write, sys_write, "write");
         this->register_unix_handler(MACOS_SYS_open, sys_open, "open");
         this->register_unix_handler(MACOS_SYS_close, sys_close, "close");
+        this->register_unix_handler(MACOS_SYS_wait4, sys_wait4, "wait4");
         this->register_unix_handler(MACOS_SYS_chdir, sys_chdir, "chdir");
         this->register_unix_handler(MACOS_SYS_fchdir, sys_fchdir, "fchdir");
         this->register_unix_handler(MACOS_SYS_getpid, sys_getpid, "getpid");
@@ -123,6 +129,7 @@ namespace sogen
         this->register_unix_handler(MACOS_SYS_sigprocmask, sys_sigprocmask, "sigprocmask");
         this->register_unix_handler(MACOS_SYS_sigaltstack, sys_sigaltstack, "sigaltstack");
         this->register_unix_handler(MACOS_SYS_ioctl, sys_ioctl, "ioctl");
+        this->register_unix_handler(MACOS_SYS_execve, sys_execve, "execve");
         this->register_unix_handler(MACOS_SYS_munmap, sys_munmap, "munmap");
         this->register_unix_handler(MACOS_SYS_mprotect, sys_mprotect, "mprotect");
         this->register_unix_handler(MACOS_SYS_getgroups, sys_getgroups, "getgroups");
@@ -160,6 +167,7 @@ namespace sogen
         this->register_unix_handler(MACOS_SYS_write_nocancel, sys_write, "write_nocancel");
         this->register_unix_handler(MACOS_SYS_open_nocancel, sys_open, "open_nocancel");
         this->register_unix_handler(MACOS_SYS_close_nocancel, sys_close, "close_nocancel");
+        this->register_unix_handler(MACOS_SYS_wait4_nocancel, sys_wait4, "wait4_nocancel");
         this->register_unix_handler(MACOS_SYS_fcntl_nocancel, sys_fcntl, "fcntl_nocancel");
         this->register_unix_handler(MACOS_SYS_thread_selfid, sys_thread_selfid, "thread_selfid");
         this->register_unix_handler(MACOS_SYS_mac_syscall, sys_mac_syscall, "__mac_syscall");

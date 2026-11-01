@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iterator>
 #include <limits>
+#include <span>
 
 namespace sogen
 {
@@ -63,6 +64,34 @@ namespace sogen
             data.resize(region.second.length);
             this->read_memory(region.first, data.data(), region.second.length);
             buffer.write(data.data(), region.second.length);
+        }
+    }
+
+    // Fresh mappings are zero-filled, so all-zero chunks are left unwritten: large reservations such as malloc's stay
+    // untouched instead of being committed in both processes.
+    void posix_memory_manager::copy_address_space(const posix_memory_manager& source)
+    {
+        constexpr size_t chunk_size = 0x10000;
+
+        this->unmap_all_memory();
+        this->mmap_base_ = source.mmap_base_;
+        this->reserved_ranges_ = source.reserved_ranges_;
+
+        std::vector<std::byte> chunk(chunk_size);
+        for (const auto& [base, region] : source.mapped_regions_)
+        {
+            this->map_memory(base, region.length, region.permissions);
+            this->mapped_regions_[base] = region;
+
+            for (size_t offset = 0; offset < region.length; offset += chunk_size)
+            {
+                const auto data = std::span{chunk}.first(std::min(chunk_size, region.length - offset));
+                source.read_memory(base + offset, data.data(), data.size());
+                if (std::ranges::any_of(data, [](const std::byte value) { return value != std::byte{0}; }))
+                {
+                    this->write_memory(base + offset, data.data(), data.size());
+                }
+            }
         }
     }
 
@@ -449,6 +478,8 @@ namespace sogen
         }
 
         this->mapped_regions_.clear();
+        this->reserved_ranges_.clear();
+        this->mmap_base_ = this->layout_.default_mmap_base;
     }
 
     uint64_t posix_memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const

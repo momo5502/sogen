@@ -19,7 +19,10 @@ namespace sogen
         constexpr uint64_t MACOS_ENOENT = 2;
         constexpr uint64_t MACOS_ESRCH = 3;
         constexpr uint64_t MACOS_EIO = 5;
+        constexpr uint64_t MACOS_E2BIG = 7;
+        constexpr uint64_t MACOS_ENOEXEC = 8;
         constexpr uint64_t MACOS_EBADF = 9;
+        constexpr uint64_t MACOS_ECHILD = 10;
         constexpr uint64_t MACOS_ENOMEM = 12;
         constexpr uint64_t MACOS_EACCES = 13;
         constexpr uint64_t MACOS_EFAULT = 14;
@@ -51,6 +54,7 @@ namespace sogen
 
     // Not 1: dyld and libSystem take launchd-only paths for pid 1.
     constexpr uint32_t MACOS_PROCESS_ID = 100;
+    constexpr uint64_t MACOS_PROCESS_UNIQUE_ID = 0x1000;
 
     // Distinguishes successive processes that reuse a pid; libxpc rejects an audit token whose version is zero.
     constexpr uint32_t MACOS_PROCESS_ID_VERSION = 1;

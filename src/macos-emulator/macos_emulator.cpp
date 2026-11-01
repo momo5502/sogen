@@ -361,21 +361,92 @@ namespace sogen
             return stack_pointer;
         }
 
+        // A new image starts from a clean thread state, as XNU's thread_state_initialize leaves it.
+        void reset_thread_state(x86_64_emulator& emu)
+        {
+            constexpr std::array registers{
+                x86_register::rax, x86_register::rbx, x86_register::rcx, x86_register::rdx,     x86_register::rsi,    x86_register::rdi,
+                x86_register::rbp, x86_register::r8,  x86_register::r9,  x86_register::r10,     x86_register::r11,    x86_register::r12,
+                x86_register::r13, x86_register::r14, x86_register::r15, x86_register::fs_base, x86_register::gs_base};
+            for (const auto reg : registers)
+            {
+                emu.reg(reg, uint64_t{0});
+            }
+        }
     }
 
-    macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, std::filesystem::path emulation_root,
+    bool is_macos_executable(const std::span<const std::byte> image)
+    {
+        try
+        {
+            const auto slice = select_x86_64_slice(image);
+            const auto header = read_struct<macho::mach_header_64>(slice, 0);
+            return header.magic == macho::MH_MAGIC_64 && header.cputype == macho::CPU_TYPE_X86_64 && header.filetype == macho::MH_EXECUTE;
+        }
+        catch (const std::runtime_error&)
+        {
+            return false;
+        }
+    }
+
+    macos_emulator::macos_emulator(x86_64_emulator_factory create_backend, std::filesystem::path emulation_root,
                                    const std::filesystem::path& executable, const std::vector<std::string>& argv,
                                    const std::vector<std::string>& envp)
-        : macos_emulator(std::move(emu), std::move(emulation_root), read_binary_file(executable), executable.string(), argv, envp)
+        : macos_emulator(std::move(create_backend), std::move(emulation_root), read_binary_file(executable), executable.string(), argv,
+                         envp)
     {
     }
 
-    macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, std::filesystem::path emulation_root,
+    macos_emulator::macos_emulator(x86_64_emulator_factory create_backend, std::filesystem::path emulation_root,
                                    const std::span<const std::byte> image, const std::string& executable_path,
                                    const std::vector<std::string>& argv, const std::vector<std::string>& envp)
-        : emu_(std::move(emu)),
+        : system_(std::make_shared<macos_system>(macos_system{.create_backend = std::move(create_backend)})),
+          emu_(this->system_->create_backend()),
           memory(*this->emu_, MACOS_MEMORY_LAYOUT),
           file_system(std::move(emulation_root))
+    {
+        this->load_image(image, executable_path, argv, envp);
+        this->setup_hooks();
+    }
+
+    // XNU's fork: the child gets a copy of the address space and of the calling thread, shares the parent's open file
+    // descriptions, signal dispositions and working directory, and starts with a fresh Mach IPC space.
+    macos_emulator::macos_emulator(forked_tag, macos_emulator& parent)
+        : system_(parent.system_),
+          emu_(this->system_->create_backend()),
+          memory(*this->emu_, MACOS_MEMORY_LAYOUT),
+          file_system(parent.file_system),
+          fds(parent.fds.fork()),
+          file_ids(parent.file_ids),
+          mach_ports(parent.mach_ports.for_new_task()),
+          shared_region(parent.shared_region),
+          signals(parent.signals),
+          identity{
+              .process_id = ++this->system_->last_process_id,
+              .parent_process_id = parent.identity.process_id,
+              .process_group_id = parent.identity.process_group_id,
+              .unique_id = ++this->system_->last_unique_id,
+              .parent_unique_id = parent.identity.unique_id,
+          },
+          executable_uuid(parent.executable_uuid),
+          process_name(parent.process_name),
+          working_directory(parent.working_directory),
+          on_stdout(parent.on_stdout),
+          on_stderr(parent.on_stderr),
+          entropy_state_(parent.entropy_state_)
+    {
+        this->log.disable_output(parent.log.is_output_disabled());
+        this->log.set_silent(parent.log.is_silent());
+
+        this->memory.copy_address_space(parent.memory);
+
+        this->emu().restore_registers(parent.emu().save_registers());
+
+        this->setup_hooks();
+    }
+
+    void macos_emulator::load_image(const std::span<const std::byte> image, const std::string& executable_path,
+                                    const std::vector<std::string>& argv, const std::vector<std::string>& envp)
     {
         const auto executable_image = map_image(this->memory, select_x86_64_slice(image), macho::MH_EXECUTE, 0);
 
@@ -397,8 +468,8 @@ namespace sogen
             const auto shared_cache_file = this->file_system.translate(SHARED_CACHE_PATH);
             if (std::filesystem::exists(shared_cache_file))
             {
-                this->shared_region.emplace(this->memory, shared_cache_file, std::string{SHARED_CACHE_PATH},
-                                            this->file_ids.id_for(std::string{SHARED_CACHE_PATH}));
+                this->shared_region = std::make_shared<macos_shared_region>(this->memory, shared_cache_file, std::string{SHARED_CACHE_PATH},
+                                                                            this->file_ids.id_for(std::string{SHARED_CACHE_PATH}));
             }
         }
 
@@ -414,8 +485,44 @@ namespace sogen
         this->emu().reg(x86_register::rip, *entry_point);
         this->emu().reg(x86_register::rsp, stack_pointer);
         this->emu().reg(x86_register::rflags, INITIAL_RFLAGS);
+    }
 
-        this->setup_hooks();
+    // The process keeps its identity, working directory, signal mask and the descriptors not marked close-on-exec;
+    // everything else belongs to the image being replaced.
+    void macos_emulator::exec_image(const std::span<const std::byte> image, const std::string& executable_path,
+                                    const std::vector<std::string>& argv, const std::vector<std::string>& envp)
+    {
+        this->memory.unmap_all_memory();
+        this->shared_region.reset();
+        this->mach_ports = this->mach_ports.for_new_task();
+        this->signals.reset_on_exec();
+        this->fds.close_descriptors_on_exec();
+        reset_thread_state(this->emu());
+
+        this->load_image(image, executable_path, argv, envp);
+    }
+
+    // Processes never run concurrently: the child runs until it terminates before the parent resumes, so it is
+    // already waitable when fork returns in the parent.
+    uint32_t macos_emulator::fork_process(const std::function<void(macos_emulator& child)>& prepare_child)
+    {
+        macos_emulator child{forked_tag{}, *this};
+        prepare_child(child);
+        child.start();
+
+        this->children.add_terminated({
+            .process_id = child.identity.process_id,
+            .process_group_id = child.identity.process_group_id,
+            .wait_status = child.wait_status(),
+        });
+
+        return child.identity.process_id;
+    }
+
+    // A process the emulator had to stop without an exit status is reported as killed.
+    int macos_emulator::wait_status() const
+    {
+        return this->exit_status ? posix_exited_wait_status(*this->exit_status) : posix_signaled_wait_status(MACOS_SIGKILL);
     }
 
     void macos_emulator::start()
@@ -438,6 +545,12 @@ namespace sogen
                 throw;
             }
 
+            if (this->after_syscall_)
+            {
+                std::exchange(this->after_syscall_, {})();
+                continue;
+            }
+
             if (!this->emu().has_violation())
             {
                 break;
@@ -448,6 +561,12 @@ namespace sogen
     void macos_emulator::stop()
     {
         this->should_stop_ = true;
+        this->emu().stop();
+    }
+
+    void macos_emulator::after_syscall(std::function<void()> operation)
+    {
+        this->after_syscall_ = std::move(operation);
         this->emu().stop();
     }
 
@@ -471,7 +590,7 @@ namespace sogen
                 // Backends disagree on how they report a fetch from a page that is not mapped yet (Icicle reports a
                 // protection fault), so any fault inside the shared region is offered to it; it declines pages that are
                 // already mapped.
-                if (this->shared_region && this->shared_region->handle_fault(address, size))
+                if (this->shared_region && this->shared_region->handle_fault(this->memory, address, size))
                 {
                     return memory_violation_continuation::restart;
                 }

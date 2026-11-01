@@ -23,6 +23,38 @@ namespace sogen
         return make_mig_return_code_reply(request, macos_kern_return::KERN_SUCCESS);
     }
 
+    // The request carries one port descriptor per registered port.
+    std::vector<std::byte> mig_mach_ports_register(const macos_syscall_context& c, const std::span<const std::byte> request)
+    {
+        constexpr size_t descriptor_size = 12;
+        constexpr size_t descriptors_offset = sizeof(mach_msg_header) + sizeof(uint32_t);
+
+        const auto descriptor_count = read_mig_field<uint32_t>(request, sizeof(mach_msg_header));
+        if (descriptor_count != macos_mach_ports::REGISTERED_PORT_COUNT)
+        {
+            return make_mig_return_code_reply(request, static_cast<uint32_t>(MIG_BAD_ARGUMENTS));
+        }
+
+        std::array<uint32_t, macos_mach_ports::REGISTERED_PORT_COUNT> names{};
+        for (size_t i = 0; i < names.size(); ++i)
+        {
+            names.at(i) = read_mig_field<uint32_t>(request, descriptors_offset + (i * descriptor_size));
+        }
+
+        if (!c.emu_ref.mach_ports.register_ports(names))
+        {
+            c.emu_ref.log.error("mach_ports_register with an unknown port name\n");
+            return {};
+        }
+
+        return make_mig_return_code_reply(request, macos_kern_return::KERN_SUCCESS);
+    }
+
+    std::vector<std::byte> mig_mach_ports_lookup(const macos_syscall_context& c, const std::span<const std::byte> request)
+    {
+        return make_mig_ports_reply(request, c.emu_ref.mach_ports.lookup_registered_ports());
+    }
+
     // There is no launchd: the bootstrap port is a send right to a port nobody receives on.
     std::vector<std::byte> mig_task_get_special_port(const macos_syscall_context& c, const std::span<const std::byte> request)
     {
@@ -71,8 +103,8 @@ namespace sogen
         }
 
         // audit_token_t: audit user, effective user and group, real user and group, pid, audit session, pid version.
-        const std::array<uint32_t, 8> audit_token{USER_ID,  USER_ID,          GROUP_ID,         USER_ID,
-                                                  GROUP_ID, MACOS_PROCESS_ID, audit_session_id, MACOS_PROCESS_ID_VERSION};
+        const std::array<uint32_t, 8> audit_token{
+            USER_ID, USER_ID, GROUP_ID, USER_ID, GROUP_ID, c.emu_ref.identity.process_id, audit_session_id, MACOS_PROCESS_ID_VERSION};
 
         if (requested_count < audit_token.size())
         {

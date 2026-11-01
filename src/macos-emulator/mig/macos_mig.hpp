@@ -39,6 +39,8 @@ namespace sogen
     std::vector<std::byte> mig_semaphore_create(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_restartable_ranges_register(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_restartable_ranges_synchronize(const macos_syscall_context& c, std::span<const std::byte> request);
+    std::vector<std::byte> mig_mach_ports_register(const macos_syscall_context& c, std::span<const std::byte> request);
+    std::vector<std::byte> mig_mach_ports_lookup(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_get_special_port(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_set_special_port(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_info(const macos_syscall_context& c, std::span<const std::byte> request);
@@ -71,18 +73,16 @@ namespace sogen
     constexpr uint32_t MACH_MSGH_BITS_LOCAL_SEND_ONCE = 18 << 8;
     constexpr int32_t MIG_REPLY_ID_OFFSET = 100;
 
-    // A complex reply carrying a single send right, laid out as MIG expects: header with the complex bit, one
-    // descriptor, then the port descriptor itself (no NDR record).
-    inline std::vector<std::byte> make_mig_port_reply(const std::span<const std::byte> request, const uint32_t port_name)
+    // A complex reply carrying send rights, laid out as MIG expects: header with the complex bit, the descriptor count,
+    // then one port descriptor per right (no NDR record).
+    inline std::vector<std::byte> make_mig_ports_reply(const std::span<const std::byte> request, const std::span<const uint32_t> port_names)
     {
         constexpr uint32_t mach_msgh_bits_complex = 0x80000000;
         constexpr uint8_t mach_msg_type_port_send = 17;
         constexpr uint8_t mach_msg_port_descriptor = 0;
 
-        struct port_reply
+        struct port_descriptor
         {
-            mach_msg_header header;
-            uint32_t descriptor_count;
             uint32_t name;
             uint32_t pad1;
             uint16_t pad2;
@@ -90,30 +90,45 @@ namespace sogen
             uint8_t type;
         };
 
-        static_assert(sizeof(port_reply) == 40);
+        static_assert(sizeof(port_descriptor) == 12);
 
         const auto request_header = read_mig_field<mach_msg_header>(request, 0);
-        const port_reply reply{
-            .header =
-                {
-                    .bits = MACH_MSGH_BITS_LOCAL_SEND_ONCE | mach_msgh_bits_complex,
-                    .size = sizeof(port_reply),
-                    .remote_port = 0,
-                    .local_port = request_header.local_port,
-                    .voucher_port = 0,
-                    .id = request_header.id + MIG_REPLY_ID_OFFSET,
-                },
-            .descriptor_count = 1,
-            .name = port_name,
-            .pad1 = 0,
-            .pad2 = 0,
-            .disposition = mach_msg_type_port_send,
-            .type = mach_msg_port_descriptor,
+        const auto descriptor_count = static_cast<uint32_t>(port_names.size());
+
+        std::vector<std::byte> data(sizeof(mach_msg_header) + sizeof(descriptor_count) + (port_names.size() * sizeof(port_descriptor)));
+        const mach_msg_header header{
+            .bits = MACH_MSGH_BITS_LOCAL_SEND_ONCE | mach_msgh_bits_complex,
+            .size = static_cast<uint32_t>(data.size()),
+            .remote_port = 0,
+            .local_port = request_header.local_port,
+            .voucher_port = 0,
+            .id = request_header.id + MIG_REPLY_ID_OFFSET,
         };
 
-        std::vector<std::byte> data(sizeof(reply));
-        std::memcpy(data.data(), &reply, sizeof(reply));
+        std::memcpy(data.data(), &header, sizeof(header));
+        std::memcpy(data.data() + sizeof(header), &descriptor_count, sizeof(descriptor_count));
+
+        auto offset = sizeof(header) + sizeof(descriptor_count);
+        for (const auto name : port_names)
+        {
+            const port_descriptor descriptor{
+                .name = name,
+                .pad1 = 0,
+                .pad2 = 0,
+                .disposition = mach_msg_type_port_send,
+                .type = mach_msg_port_descriptor,
+            };
+
+            std::memcpy(data.data() + offset, &descriptor, sizeof(descriptor));
+            offset += sizeof(descriptor);
+        }
+
         return data;
+    }
+
+    inline std::vector<std::byte> make_mig_port_reply(const std::span<const std::byte> request, const uint32_t port_name)
+    {
+        return make_mig_ports_reply(request, std::span{&port_name, 1});
     }
 
     // A reply as the kernel delivers it: received on the request's reply port through a send-once right,
