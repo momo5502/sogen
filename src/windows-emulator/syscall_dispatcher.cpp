@@ -6,6 +6,10 @@
 
 namespace sogen
 {
+    namespace syscalls
+    {
+        void flush_gdi_batch(const syscall_context& c);
+    }
 
     static void serialize(utils::buffer_serializer& buffer, const syscall_handler_entry& obj)
     {
@@ -69,6 +73,8 @@ namespace sogen
 
     void syscall_dispatcher::dispatch(windows_emulator& win_emu, vcpu_context& vcpu)
     {
+        constexpr uint32_t k_win32k_service_table = 0x1000;
+
         const scheduler_clock::scope time_scope{win_emu.scheduling_clock()};
         auto& emu = vcpu.cpu;
         auto& context = win_emu.process;
@@ -117,6 +123,13 @@ namespace sogen
                 abi.return_value(c.emu, STATUS_NOT_SUPPORTED);
                 win_emu.stop();
                 return;
+            }
+
+            // Like KiSystemCall64, a win32k service first runs the GDI calls gdi32 batched in the TEB, so their output
+            // is in place before anything the service does. Apps rely on this to read DIB sections they just drew to.
+            if ((syscall_id & k_win32k_service_table) != 0)
+            {
+                syscalls::flush_gdi_batch(c);
             }
 
             entry->second.handler(c);

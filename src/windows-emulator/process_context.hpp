@@ -474,6 +474,7 @@ namespace sogen
         // Per-DC stack of states pushed by NtGdiSaveDC and popped by NtGdiRestoreDC.
         std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
+        std::map<uint32_t, EMU_LOGFONTW> gdi_fonts{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         dxgk_state dxgk{};
