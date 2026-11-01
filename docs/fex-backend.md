@@ -17,7 +17,7 @@ Unicorn/Icicle (a fully software-simulated guest address space, sandboxed from t
 construction) or KVM/WHP (real hardware virtualization, a genuinely separate guest physical address
 space), FEX is an in-process JIT: it translates x86/x86-64 to ARM64 and executes the result directly
 inside this process, treating guest virtual addresses as host virtual addresses (a 1:1 mapping,
-`guest VA == host VA`). Concretely:
+`guest VA == host VA`, except for a WoW64 process's low 4GiB, see below). Concretely:
 
 - `map_memory()` is a real `mmap(MAP_FIXED)` at the guest address; `read_memory()`/`write_memory()`
   are a direct host `memcpy` once the range is known to be mapped — there is no page-table or bounds
@@ -44,7 +44,10 @@ inside this process, treating guest virtual addresses as host virtual addresses 
   sogen's memory manager. On Apple, the backend separately installs FEXCore allocator hooks that
   steer FEXCore's own anonymous internal mappings into a dedicated 4GiB host-reserved arena, keeping
   them out of guest allocation ranges. This is still only a collision mitigation, not isolation.
-  WoW64/32-bit processes remain unsupported by this backend.
+- A WoW64 process's low 4GiB is backed by a separate 4GiB host window, and FEX rebases every guest
+  access below 4GiB into it, since the host may already use that range (Android's ART heap) or cannot
+  map it at all (Darwin's `__PAGEZERO`). Host memory aliased below 4GiB is mapped a second time inside
+  the window instead of appearing at its own address.
 
 ## Architecture
 

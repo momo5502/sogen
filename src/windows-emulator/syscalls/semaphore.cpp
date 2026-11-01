@@ -118,6 +118,40 @@ namespace sogen
 
             return STATUS_SUCCESS;
         }
+
+        NTSTATUS handle_NtQuerySemaphore(const syscall_context& c, const handle semaphore_handle, const ULONG semaphore_information_class,
+                                         const emulator_object<SEMAPHORE_BASIC_INFORMATION> semaphore_information,
+                                         const ULONG semaphore_information_length, const emulator_object<ULONG> return_length)
+        {
+            if (semaphore_information_class != SemaphoreBasicInformation)
+            {
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
+            if (semaphore_information_length != sizeof(SEMAPHORE_BASIC_INFORMATION))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            if (const auto status = check_handle_type(semaphore_handle, handle_types::semaphore); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            const auto* semaphore = c.proc.semaphores.get(semaphore_handle);
+            if (!semaphore)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            semaphore_information.write({
+                .CurrentCount = static_cast<LONG>(semaphore->current_count),
+                .MaximumCount = static_cast<LONG>(semaphore->max_count),
+            });
+
+            return_length.write_if_valid(sizeof(SEMAPHORE_BASIC_INFORMATION));
+            return STATUS_SUCCESS;
+        }
     }
 
 } // namespace sogen
