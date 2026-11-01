@@ -86,14 +86,15 @@ namespace sogen::test
                 return section.read();
             }
 
-            NTSTATUS map_view(const handle section, const uint64_t address, const uint64_t size, const ULONG allocation_type)
+            NTSTATUS map_view(const handle section, const uint64_t address, const uint64_t size, const ULONG allocation_type,
+                              const uint64_t zero_bits = 0)
             {
                 const emulator_object<uint64_t> base{this->emu->memory, this->storage};
                 const emulator_object<EmulatorTraits<Emu64>::SIZE_T> view_size{this->emu->memory, this->storage + 8};
                 base.write(address);
                 view_size.write(size);
-                return syscalls::handle_NtMapViewOfSection(this->context(), section, CURRENT_PROCESS, base, 0, 0, {this->emu->memory},
-                                                           view_size, ViewUnmap, allocation_type, PAGE_READWRITE);
+                return syscalls::handle_NtMapViewOfSection(this->context(), section, CURRENT_PROCESS, base, zero_bits, 0,
+                                                           {this->emu->memory}, view_size, ViewUnmap, allocation_type, PAGE_READWRITE);
             }
 
             std::unique_ptr<windows_emulator> emu;
@@ -234,5 +235,31 @@ namespace sogen::test
 
         EXPECT_EQ(syscalls::handle_NtUnmapViewOfSectionEx(this->context(), CURRENT_PROCESS, base + size, 0), STATUS_SUCCESS);
         EXPECT_FALSE(this->emu->process.section_views.contains(base + size, 1));
+    }
+
+    TEST_F(PlaceholderMemoryTest, RequestedViewBaseStaysInsideTheAllocationRange)
+    {
+        constexpr uint64_t size = 0x1000;
+        const auto section = this->create_pagefile_section(size);
+
+        for (const auto base : {uint64_t{0x1000}, UINT64_MAX - size + 1, this->emu->highest_user_address() - size + 2})
+        {
+            EXPECT_EQ(this->map_view(section, base, size, 0), STATUS_CONFLICTING_ADDRESSES) << std::hex << base;
+            EXPECT_FALSE(this->emu->memory.get_region_info(base).is_reserved) << std::hex << base;
+            EXPECT_FALSE(this->emu->process.section_views.contains(base, 1)) << std::hex << base;
+        }
+    }
+
+    TEST_F(PlaceholderMemoryTest, RequestedViewBaseRespectsZeroBits)
+    {
+        constexpr uint64_t size = 0x1000;
+        const auto section = this->create_pagefile_section(size);
+
+        constexpr uint64_t above_the_32_bit_limit = 0x3000'0000'0000;
+        ASSERT_FALSE(this->emu->memory.get_region_info(above_the_32_bit_limit).is_reserved);
+
+        EXPECT_EQ(this->map_view(section, above_the_32_bit_limit, size, 0, 32), STATUS_CONFLICTING_ADDRESSES);
+        EXPECT_FALSE(this->emu->memory.get_region_info(above_the_32_bit_limit).is_reserved);
+        EXPECT_FALSE(this->emu->process.section_views.contains(above_the_32_bit_limit, 1));
     }
 }

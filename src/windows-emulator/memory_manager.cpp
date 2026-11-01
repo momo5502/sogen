@@ -329,6 +329,11 @@ namespace sogen
     bool memory_manager::allocate_host_memory_at(const uint64_t address, const size_t size, void* host_pointer,
                                                  const nt_memory_permission permissions)
     {
+        if (size == 0 || address < MIN_ALLOCATION_ADDRESS || address >= MAX_ALLOCATION_END_EXCL || size > MAX_ALLOCATION_END_EXCL - address)
+        {
+            return false;
+        }
+
         const bool uses_existing_host_mapping =
             this->memory_->host_memory_mapping_requires_identity() ||
             (this->memory_->host_memory_can_stay_in_place() && address == get_untagged_pointer_address(host_pointer));

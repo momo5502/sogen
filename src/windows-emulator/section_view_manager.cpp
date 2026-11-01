@@ -47,6 +47,12 @@ namespace sogen
 
         auto* const host_pointer = entry->second.memory.data() + offset;
         uint64_t address = requested_address;
+        if (address != 0 && (address < MIN_ALLOCATION_ADDRESS || address >= MAX_ALLOCATION_END_EXCL ||
+                             size > MAX_ALLOCATION_END_EXCL - address || address + size - 1 > highest_address))
+        {
+            return 0;
+        }
+
         if (address == 0)
         {
             address = memory.allocate_host_memory(size, host_pointer, permissions, highest_address);
