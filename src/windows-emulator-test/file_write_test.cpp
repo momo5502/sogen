@@ -48,6 +48,7 @@ namespace sogen::test
                                                      });
             emu.memory.write_memory(storage + 0x200, OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>{
                                                          .Length = sizeof(OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>),
+                                                         .RootDirectory = 0,
                                                          .ObjectName = storage + 0x300,
                                                      });
 
