@@ -209,6 +209,36 @@ namespace sogen
             return wait_state::not_signaled;
         }
 
+        // Puts back what consume_object_signal took. A wait-all that has already taken some objects and then finds a
+        // later one gone, because another process took it, has to leave all of them as it found them and keep waiting.
+        void release_consumed_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
+        {
+            auto& c = win_emu.process;
+            switch (h.value.type)
+            {
+            case handle_types::event:
+                if (!h.value.is_pseudo)
+                {
+                    if (auto* event = c.events.get(h))
+                    {
+                        event->set_signaled(true);
+                    }
+                }
+                break;
+
+            case handle_types::mutant:
+                if (auto* mutant = c.mutants.get(h))
+                {
+                    std::ignore = mutant->release(mutant::make_owner(c.process_id, current_thread_id));
+                }
+                break;
+
+            default:
+                // Nothing else takes anything: consuming them only reads their state.
+                break;
+            }
+        }
+
         std::optional<wait_state> consume_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
         {
             auto& c = win_emu.process;
@@ -1241,7 +1271,10 @@ namespace sogen
                         const auto consumed_state = consume_object_signal(win_emu, obj, this->id);
                         if (!consumed_state.has_value())
                         {
-                            throw std::runtime_error("Failed to consume object signal!");
+                            // A shared object another process took between observing and taking it. It is not ours,
+                            // so the wait goes on instead of ending the emulator.
+                            all_signaled = false;
+                            continue;
                         }
 
                         if (this->await_msg_mask.has_value())
@@ -1270,13 +1303,27 @@ namespace sogen
 
             if (!this->await_any && all_signaled && (!this->await_msg_mask.has_value() || message_ready))
             {
+                std::vector<handle> consumed{};
+                consumed.reserve(this->await_objects.size());
+
                 for (const auto& obj : this->await_objects)
                 {
-                    const auto consumed_state = consume_object_signal(win_emu, obj, this->id);
-                    if (!consumed_state.has_value())
+                    if (!consume_object_signal(win_emu, obj, this->id).has_value())
                     {
-                        throw std::runtime_error("Failed to consume object signal!");
+                        break;
                     }
+
+                    consumed.push_back(obj);
+                }
+
+                if (consumed.size() != this->await_objects.size())
+                {
+                    for (const auto& obj : consumed)
+                    {
+                        release_consumed_signal(win_emu, obj, this->id);
+                    }
+
+                    return complete_if_timed_out(STATUS_TIMEOUT);
                 }
 
                 this->mark_as_ready(abandoned_index.has_value() ? (STATUS_ABANDONED_WAIT_0 + *abandoned_index) : STATUS_SUCCESS);

@@ -6,6 +6,7 @@
 #include <string>
 #include <thread>
 
+#include <utils/host_process.hpp>
 #include <utils/shared_host_buffer.hpp>
 
 namespace sogen
@@ -21,6 +22,9 @@ namespace sogen
             uint32_t locked_count;
             uint64_t owner;
             uint32_t abandoned;
+            // The host process of the emulator whose guest thread owns this, so a process that is killed or crashes
+            // while holding a mutant does not leave every other process waiting on it forever.
+            uint32_t owner_host_process;
         };
 
         static shared_sync_state create()
@@ -49,8 +53,22 @@ namespace sogen
         {
             auto& state = *reinterpret_cast<layout*>(this->buffer_.data());
             std::atomic_ref lock{state.lock};
-            while (lock.exchange(1, std::memory_order_acquire) != 0)
+
+            // The lock word holds the host process id of its holder rather than a flag, so a process killed in the
+            // middle of an update can be recovered instead of leaving every survivor spinning. Taking it over is
+            // safe because the dead holder cannot still be writing.
+            const auto self = utils::current_host_process_id();
+            for (uint32_t holder = 0; !lock.compare_exchange_weak(holder, self, std::memory_order_acquire);)
             {
+                if (holder != 0 && !utils::host_process_alive(holder))
+                {
+                    if (lock.compare_exchange_strong(holder, self, std::memory_order_acquire))
+                    {
+                        break;
+                    }
+                }
+
+                holder = 0;
                 std::this_thread::yield();
             }
 
@@ -63,6 +81,17 @@ namespace sogen
                     this->lock.store(0, std::memory_order_release);
                 }
             } const unlock{lock};
+
+            // An owner whose emulator is gone never releases, so its ownership is handed on as abandoned, which is
+            // what Windows reports when the owning process dies.
+            if (state.values.locked_count > 0 && state.values.owner_host_process != 0 &&
+                !utils::host_process_alive(state.values.owner_host_process))
+            {
+                state.values.locked_count = 0;
+                state.values.owner = 0;
+                state.values.owner_host_process = 0;
+                state.values.abandoned = 1;
+            }
 
             return function(state.values);
         }

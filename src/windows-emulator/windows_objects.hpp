@@ -882,6 +882,7 @@ namespace sogen
 
             current.locked_count = 0;
             current.owner = 0;
+            current.owner_host_process = 0;
             current.abandoned = 1;
         }
 
@@ -945,6 +946,7 @@ namespace sogen
                 {
                     ++current.locked_count;
                     current.owner = owner;
+                    current.owner_host_process = utils::current_host_process_id();
                     return std::exchange(current.abandoned, 0) != 0;
                 }
 
@@ -971,6 +973,7 @@ namespace sogen
                 if (current.locked_count == 0)
                 {
                     current.owner = 0;
+                    current.owner_host_process = 0;
                 }
 
                 return {old_count, true};
