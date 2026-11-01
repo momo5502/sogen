@@ -294,7 +294,20 @@ namespace sogen
         std::error_code ec{};
         if (!this->lookup_ignores_case_ && !std::filesystem::exists(candidate, ec))
         {
-            candidate = recover_host_case(root, candidate);
+            // The emulation root is created in lower case, so on a case sensitive host the lower case spelling is
+            // the hit for almost every guest path. Only when that is missing too is it worth scanning directories
+            // for a case insensitive match.
+            auto lowered =
+                (this->target_ / std::filesystem::path{utils::string::to_lower(path.to_portable_path().u16string())}).lexically_normal();
+
+            if (is_subpath(root, lowered) && std::filesystem::exists(lowered, ec))
+            {
+                candidate = std::move(lowered);
+            }
+            else
+            {
+                candidate = recover_host_case(root, candidate);
+            }
         }
 
         auto resolved = weakly_canonical(candidate, ec);
