@@ -60,8 +60,9 @@ namespace sogen
             case memory_operation::read:
                 return 0;
             case memory_operation::write:
-            case memory_operation::exec:
                 return 1;
+            case memory_operation::exec:
+                return 8;
             }
         }
 

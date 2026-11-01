@@ -14,8 +14,6 @@
 #include "apiset/apiset.hpp"
 #include "syscall_dispatcher.hpp"
 
-#include "memory_permission_ext.hpp"
-
 namespace sogen
 {
     constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
@@ -1380,12 +1378,11 @@ namespace sogen
                 }
             }
 
-            auto region = this->memory.get_region_info(address);
-            if (region.permissions.is_guarded())
+            if (const auto guarded_address = this->memory.find_guard_page_violation_address(address, size, operation))
             {
                 // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
-                this->memory.protect_memory(region.allocation_base, region.length, region.permissions & ~memory_permission_ext::guard);
-                dispatch_guard_page_violation(*this, vcpu, address, operation);
+                this->memory.release_guard_page(*guarded_address);
+                dispatch_guard_page_violation(*this, vcpu, *guarded_address, operation);
             }
             else
             {

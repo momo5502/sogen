@@ -95,6 +95,10 @@ namespace sogen
         bool protect_memory(uint64_t address, size_t size, nt_memory_permission permissions,
                             nt_memory_permission* old_permissions = nullptr);
 
+        bool is_guard_page(uint64_t address);
+        bool release_guard_page(uint64_t address);
+        std::optional<uint64_t> find_guard_page_violation_address(uint64_t address, size_t size, memory_permission operation);
+
         // Pre-reserves the host ranges the backend reports (memory_interface::reserved_host_ranges) so
         // later guest allocations steer clear. Only ever adds ranges, so it is cheap enough to call
         // before every dynamic allocation and can never momentarily drop a reservation.

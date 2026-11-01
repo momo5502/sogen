@@ -853,6 +853,7 @@ namespace sogen
 
             std::vector<uint8_t> memory(page_size, 0);
             uint64_t bytes_read = 0;
+            bool stopped_at_guard_page = false;
             while (bytes_read < number_of_bytes_to_read)
             {
                 const auto current_base = static_cast<uint64_t>(base_address) + bytes_read;
@@ -863,6 +864,12 @@ namespace sogen
 
                 if (c.proc.is_current_process_handle(process_handle))
                 {
+                    if (c.win_emu.memory.is_guard_page(current_base))
+                    {
+                        stopped_at_guard_page = true;
+                        break;
+                    }
+
                     if (!c.emu.try_read_memory(current_base, memory.data(), chunk_size))
                     {
                         break;
@@ -884,6 +891,12 @@ namespace sogen
                     std::ranges::copy(result.data, memory.begin());
                 }
 
+                if (c.win_emu.memory.release_guard_page(current_buffer))
+                {
+                    stopped_at_guard_page = true;
+                    break;
+                }
+
                 if (!c.emu.try_write_memory(current_buffer, memory.data(), chunk_size))
                 {
                     break;
@@ -898,7 +911,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            return bytes_read == 0 ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
+            return bytes_read == 0 && !stopped_at_guard_page ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
         }
 
         NTSTATUS handle_NtWriteVirtualMemory(const syscall_context& c, const handle process_handle, const emulator_pointer base_address,
@@ -920,6 +933,7 @@ namespace sogen
 
             std::vector<uint8_t> memory(page_size, 0);
             uint64_t bytes_written = 0;
+            bool stopped_at_guard_page = false;
             while (bytes_written < number_of_bytes_to_write)
             {
                 const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_written;
@@ -935,6 +949,12 @@ namespace sogen
 
                 if (c.proc.is_current_process_handle(process_handle))
                 {
+                    if (c.win_emu.memory.release_guard_page(current_base))
+                    {
+                        stopped_at_guard_page = true;
+                        break;
+                    }
+
                     if (!c.emu.try_write_memory(current_base, memory.data(), chunk_size))
                     {
                         break;
@@ -964,7 +984,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            return bytes_written == 0 ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
+            return bytes_written == 0 && !stopped_at_guard_page ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
         }
 
         NTSTATUS handle_NtGetWriteWatch(const syscall_context&, handle, ULONG, uint64_t, uint64_t, uint64_t, emulator_object<uint64_t>,
