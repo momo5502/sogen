@@ -1030,6 +1030,13 @@ namespace sogen
 
         while (!this->should_stop)
         {
+            // Debugger requests run before the scheduling decision, as the single-vCPU loop does: one of them can
+            // suspend a thread, and running them afterwards would let a suspend land on the thread just chosen, which
+            // would then run a quantum even though the debugger was told the suspend succeeded.
+            lock.unlock();
+            this->debugger_.run_pending_tasks(vcpu.cpu.index());
+            lock.lock();
+
             // A loop rather than a single check: the register transfer of a switch releases the kernel lock, so the
             // chosen thread can be terminated or suspended before it runs.
             bool switched = true;
@@ -1050,12 +1057,6 @@ namespace sogen
             // Guest code executes with the kernel lock released; hook callbacks
             // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.
             lock.unlock();
-
-            // A debugger request runs against this vCPU, so it is picked up on the normal scheduling path too:
-            // interrupt_for_debugger stops vCPU 0 mid-quantum, and a switch that finds another runnable thread
-            // would otherwise resume guest code and leave the request waiting until this vCPU ran out of threads.
-            this->debugger_.run_pending_tasks(vcpu.cpu.index());
-
             vcpu.cpu.start();
             lock.lock();
 
