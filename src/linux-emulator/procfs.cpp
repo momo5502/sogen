@@ -85,7 +85,7 @@ namespace sogen
 
         if (path == "/proc/self/cwd")
         {
-            return linux_file_system::normalize_guest_path_string(emu.process.current_working_directory);
+            return posix_file_system::normalize_guest_path_string(emu.process.current_working_directory);
         }
 
         // /proc/self/fd/N
@@ -103,7 +103,7 @@ namespace sogen
                 {
                     if (!it->second.guest_path.empty())
                     {
-                        return linux_file_system::normalize_guest_path_string(it->second.guest_path);
+                        return posix_file_system::normalize_guest_path_string(it->second.guest_path);
                     }
                     if (!it->second.host_path.empty())
                     {

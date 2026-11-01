@@ -2186,9 +2186,9 @@ namespace sogen
         add_callback(NtUserMessageCall, message_call_state);
         add_callback(NtUserGetComboBoxInfo, message_call_state);
         add_callback(NtUserUpdateWindow, window_update_state);
+        add_callback(NtUserGetMessage, get_message_hook_state);
+        add_callback(NtUserPeekMessage, get_message_hook_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);
-        add_stateless_callback(NtUserGetMessage);
-        add_stateless_callback(NtUserPeekMessage);
         add_stateless_callback(NtUserWaitMessage);
         add_stateless_callback(NtUserMsgWaitForMultipleObjectsEx);
 
