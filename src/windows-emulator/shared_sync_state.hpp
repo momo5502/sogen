@@ -87,12 +87,13 @@ namespace sogen
             if (state.values.locked_count > 0 && state.values.owner_host_process != 0 &&
                 !utils::host_process_alive(state.values.owner_host_process))
             {
-                // Abandoned goes first: a second death in between must not leave an unowned mutant that nobody
-                // reports as abandoned.
+                // The order matters because any of these stores can be the last one a dying process makes: abandoned
+                // first, so a free mutant is never left unreported, then the count, so a held count always still has
+                // a host owner recovery can check.
                 state.values.abandoned = 1;
+                state.values.locked_count = 0;
                 state.values.owner = 0;
                 state.values.owner_host_process = 0;
-                state.values.locked_count = 0;
             }
 
             return function(state.values);

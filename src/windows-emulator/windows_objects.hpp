@@ -889,12 +889,13 @@ namespace sogen
                 return;
             }
 
-            // Abandoned goes first: a process that dies between the stores must not leave a free mutant that nobody
-            // reports as abandoned, which recovery cannot repair because it only acts on a held count.
+            // Any of these stores can be the last one a dying process makes: abandoned first, so a free mutant is
+            // never left unreported, then the count, so a held count always still has a host owner recovery can
+            // check and an owner a thread can match.
             current.abandoned = 1;
+            current.locked_count = 0;
             current.owner = 0;
             current.owner_host_process = 0;
-            current.locked_count = 0;
         }
 
         template <typename Function>
@@ -1029,13 +1030,12 @@ namespace sogen
                     current.abandoned = 1;
                 }
 
-                if (current.locked_count == 1)
+                --current.locked_count;
+                if (current.locked_count == 0)
                 {
                     current.owner = 0;
                     current.owner_host_process = 0;
                 }
-
-                --current.locked_count;
             });
         }
 
