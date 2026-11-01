@@ -22,6 +22,8 @@
 #include <windows.h>
 #include <io.h>
 #else
+#include <fcntl.h>
+#include <sys/file.h>
 #include <unistd.h>
 #endif
 
@@ -101,10 +103,73 @@ namespace sogen
         }
     }
 
+    layer_lock::layer_lock(const std::filesystem::path& file)
+    {
+        std::error_code ec{};
+        std::filesystem::create_directories(file.parent_path(), ec);
+
+#ifdef OS_WINDOWS
+        this->handle_ = CreateFileW(file.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                    nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (this->handle_ == INVALID_HANDLE_VALUE)
+        {
+            throw std::runtime_error("Failed to open the layer lock: " + file.string());
+        }
+#else
+        this->fd_ = ::open(file.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        if (this->fd_ < 0)
+        {
+            throw std::runtime_error("Failed to open the layer lock: " + file.string());
+        }
+#endif
+    }
+
+    layer_lock::~layer_lock()
+    {
+#ifdef OS_WINDOWS
+        CloseHandle(this->handle_);
+#else
+        ::close(this->fd_);
+#endif
+    }
+
+    layer_lock::guard::guard(layer_lock& lock)
+        : lock_(&lock)
+    {
+#ifdef OS_WINDOWS
+        OVERLAPPED overlapped{};
+        if (!LockFileEx(this->lock_->handle_, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &overlapped))
+        {
+            throw std::runtime_error("Failed to take the layer lock");
+        }
+#else
+        while (::flock(this->lock_->fd_, LOCK_EX) != 0)
+        {
+            if (errno != EINTR)
+            {
+                throw std::runtime_error("Failed to take the layer lock");
+            }
+        }
+#endif
+    }
+
+    layer_lock::guard::~guard()
+    {
+#ifdef OS_WINDOWS
+        OVERLAPPED overlapped{};
+        UnlockFileEx(this->lock_->handle_, 0, MAXDWORD, MAXDWORD, &overlapped);
+#else
+        ::flock(this->lock_->fd_, LOCK_UN);
+#endif
+    }
+
     layer_journal::layer_journal(std::filesystem::path file)
         : file_(std::move(file))
     {
-        std::string content{};
+    }
+
+    void layer_journal::load()
+    {
         std::error_code status_error{};
         const auto journal_status = std::filesystem::status(this->file_, status_error);
         if (journal_status.type() != std::filesystem::file_type::not_found && status_error)
@@ -112,33 +177,96 @@ namespace sogen
             throw std::runtime_error("Failed to read the layer journal: " + this->file_.string());
         }
 
-        if (journal_status.type() == std::filesystem::file_type::regular)
+        this->offset_ = 0;
+        this->hidden_.clear();
+        this->opaque_.clear();
+        this->generations_.clear();
+
+        if (journal_status.type() != std::filesystem::file_type::regular)
         {
-            std::ifstream stream(this->file_, std::ios::binary);
-            content.assign(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
-            if (!stream.is_open() || stream.bad())
-            {
-                throw std::runtime_error("Failed to read the layer journal: " + this->file_.string());
-            }
+            return;
         }
+
+        std::ifstream stream(this->file_, std::ios::binary);
+        const std::string content{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+        if (!stream.is_open() || stream.bad())
+        {
+            throw std::runtime_error("Failed to read the layer journal: " + this->file_.string());
+        }
+
+        this->offset_ = this->apply(content);
 
         // A record the crash cut short has no terminator. It is dropped and cut off, so that the next record does not
         // continue it.
-        const auto last_newline = content.find_last_of('\n');
-        const auto complete = last_newline == std::string::npos ? 0 : last_newline + 1;
-        if (complete != content.size())
+        if (this->offset_ != content.size())
         {
             std::error_code ec{};
-            std::filesystem::resize_file(this->file_, complete, ec);
+            std::filesystem::resize_file(this->file_, this->offset_, ec);
             if (ec)
             {
                 throw std::runtime_error("Failed to recover the layer journal: " + this->file_.string());
             }
         }
+    }
 
-        std::istringstream records(content.substr(0, complete));
+    bool layer_journal::refresh()
+    {
+        std::error_code ec{};
+        const auto journal_status = std::filesystem::status(this->file_, ec);
+        if (journal_status.type() == std::filesystem::file_type::not_found)
+        {
+            return true;
+        }
+
+        if (ec)
+        {
+            return false;
+        }
+
+        if (journal_status.type() != std::filesystem::file_type::regular)
+        {
+            return true;
+        }
+
+        const auto size = std::filesystem::file_size(this->file_, ec);
+        if (ec)
+        {
+            return false;
+        }
+
+        if (size <= this->offset_)
+        {
+            return true;
+        }
+
+        std::ifstream stream(this->file_, std::ios::binary);
+        if (!stream.is_open() || !stream.seekg(static_cast<std::streamoff>(this->offset_)))
+        {
+            return false;
+        }
+
+        const std::string content{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+        if (stream.bad())
+        {
+            return false;
+        }
+
+        this->offset_ += this->apply(content);
+        return true;
+    }
+
+    size_t layer_journal::apply(const std::string_view records)
+    {
+        const auto last_newline = records.find_last_of('\n');
+        if (last_newline == std::string_view::npos)
+        {
+            return 0;
+        }
+
+        std::istringstream lines(std::string{records.substr(0, last_newline + 1)});
+
         std::string line{};
-        while (std::getline(records, line))
+        while (std::getline(lines, line))
         {
             if (line.size() < 3 || line[1] != '\t')
             {
@@ -146,15 +274,23 @@ namespace sogen
             }
 
             const windows_path path{std::filesystem::path{u8_to_u16(std::string_view{line}.substr(2))}};
-            if (line[0] == 'H')
+            switch (line[0])
             {
+            case 'H':
                 this->hidden_.insert(path);
-            }
-            else if (line[0] == 'O')
-            {
+                break;
+            case 'O':
                 this->opaque_.insert(path);
+                break;
+            case 'G':
+                ++this->generations_[path];
+                break;
+            default:
+                break;
             }
         }
+
+        return last_newline + 1;
     }
 
     bool layer_journal::is_hidden(const windows_path& path) const
@@ -167,42 +303,48 @@ namespace sogen
         return this->opaque_.contains(path);
     }
 
+    uint64_t layer_journal::generation(const windows_path& path) const
+    {
+        const auto entry = this->generations_.find(path);
+        return entry == this->generations_.end() ? 0 : entry->second;
+    }
+
     bool layer_journal::hide(const windows_path& path)
     {
-        if (this->hidden_.contains(path))
-        {
-            return true;
-        }
-
-        if (!this->append('H', path))
-        {
-            return false;
-        }
-
-        this->hidden_.insert(path);
-        return true;
+        return this->hidden_.contains(path) || this->append("H\t" + path.string() + '\n');
     }
 
     bool layer_journal::hide_lower_children(const windows_path& path)
     {
-        if (this->opaque_.contains(path))
-        {
-            return true;
-        }
-
-        if (!this->append('O', path))
-        {
-            return false;
-        }
-
-        this->opaque_.insert(path);
-        return true;
+        return this->opaque_.contains(path) || this->append("O\t" + path.string() + '\n');
     }
 
-    bool layer_journal::append(const char kind, const windows_path& path)
+    bool layer_journal::advance_generations(const std::initializer_list<windows_path> paths)
+    {
+        std::string records{};
+        for (const auto& path : paths)
+        {
+            records += "G\t" + path.string() + '\n';
+        }
+
+        return this->append(records);
+    }
+
+    bool layer_journal::append(const std::string& records)
     {
         std::error_code ec{};
         std::filesystem::create_directories(this->file_.parent_path(), ec);
+
+        // Only a writer that crashed leaves bytes past the last record this one read, since writers hold the layer lock.
+        const auto size = std::filesystem::file_size(this->file_, ec);
+        if (!ec && size > this->offset_)
+        {
+            std::filesystem::resize_file(this->file_, this->offset_, ec);
+            if (ec)
+            {
+                return false;
+            }
+        }
 
         FILE* raw{};
         open_unicode(&raw, this->file_, u"ab");
@@ -212,8 +354,13 @@ namespace sogen
         }
 
         const unique_stream stream{raw};
-        const auto record = std::string{kind} + '\t' + path.string() + '\n';
-        return fwrite(record.data(), 1, record.size(), stream.get()) == record.size() && sync_stream(stream.get());
+        if (fwrite(records.data(), 1, records.size(), stream.get()) != records.size() || !sync_stream(stream.get()))
+        {
+            return false;
+        }
+
+        this->offset_ += this->apply(records);
+        return true;
     }
 
     class cow_file final : public i_file
@@ -224,7 +371,7 @@ namespace sogen
               path_(std::move(path)),
               lower_(std::move(lower)),
               mode_(std::move(mode)),
-              generation_(provider.generation(path_))
+              generation_(provider.journal_.generation(path_))
         {
         }
 
@@ -282,7 +429,16 @@ namespace sogen
             }
 
             const auto position = this->lower_->tell();
-            if (position < 0 || this->provider_->generation(this->path_) != this->generation_ || !this->provider_->copy_up(this->path_))
+            if (position < 0)
+            {
+                return false;
+            }
+
+            // The copy is opened before the lock is released, so no other process can replace it under this name first.
+            const layer_lock::guard guard{this->provider_->lock_};
+            auto& journal = this->provider_->journal_;
+            if (!journal.refresh() || journal.generation(this->path_) != this->generation_ ||
+                !this->provider_->lower_visible(this->path_) || !this->provider_->copy_up(this->path_))
             {
                 return false;
             }
@@ -316,13 +472,17 @@ namespace sogen
                                        const std::filesystem::path& state_directory)
         : lower_(std::move(lower)),
           temporary_directory_(state_directory / "tmp"),
+          lock_(state_directory / "lock"),
           journal_(state_directory / "journal")
     {
         std::error_code ec{};
         std::filesystem::create_directories(upper_directory, ec);
         std::filesystem::create_directories(this->temporary_directory_, ec);
 
-        // Copies a crash left half-written were never published.
+        const layer_lock::guard guard{this->lock_};
+        this->journal_.load();
+
+        // Copies are only staged while the lock is held, so whatever is left was abandoned by a crash.
         for (const auto& entry : std::filesystem::directory_iterator(this->temporary_directory_, ec))
         {
             std::filesystem::remove_all(entry.path(), ec);
@@ -366,6 +526,7 @@ namespace sogen
 
     std::optional<struct compat_stat> layered_provider::stat(const windows_path& path) const
     {
+        this->journal_.refresh();
         if (auto upper = this->upper_->stat(path))
         {
             return upper;
@@ -376,6 +537,7 @@ namespace sogen
 
     std::vector<directory_entry> layered_provider::list(const windows_path& path) const
     {
+        this->journal_.refresh();
         auto entries = this->upper_->list(path);
 
         std::unordered_set<std::u16string> names{};
@@ -509,11 +671,11 @@ namespace sogen
 
     open_result layered_provider::open(const windows_path& path, const std::u16string& mode)
     {
-        const auto upper = this->upper_->stat(path);
+        this->journal_.refresh();
 
         if (!is_write_open_mode(mode))
         {
-            if (upper)
+            if (this->upper_->stat(path))
             {
                 return this->upper_->open(path, mode);
             }
@@ -526,7 +688,18 @@ namespace sogen
             return this->lower_->open(path, mode);
         }
 
-        if (upper)
+        const layer_lock::guard guard{this->lock_};
+        if (!this->journal_.refresh())
+        {
+            return {.status = STATUS_ACCESS_DENIED};
+        }
+
+        return this->open_for_write(path, mode);
+    }
+
+    open_result layered_provider::open_for_write(const windows_path& path, const std::u16string& mode)
+    {
+        if (this->upper_->stat(path))
         {
             return this->upper_->open(path, mode);
         }
@@ -557,21 +730,15 @@ namespace sogen
         return {.file = std::make_unique<cow_file>(*this, path, std::move(input.file), mode), .status = STATUS_SUCCESS};
     }
 
-    uint64_t layered_provider::generation(const windows_path& path) const
-    {
-        const auto entry = this->generations_.find(path);
-        return entry == this->generations_.end() ? 0 : entry->second;
-    }
-
     NTSTATUS layered_provider::create_directory(const windows_path& path)
     {
-        const auto status = this->create_directory_unchecked(path);
-        if (status == STATUS_SUCCESS)
+        const layer_lock::guard guard{this->lock_};
+        if (!this->journal_.refresh())
         {
-            ++this->generations_[path];
+            return STATUS_ACCESS_DENIED;
         }
 
-        return status;
+        return this->create_directory_unchecked(path);
     }
 
     NTSTATUS layered_provider::create_directory_unchecked(const windows_path& path)
@@ -586,6 +753,11 @@ namespace sogen
             return status;
         }
 
+        if (!this->journal_.advance_generations({path}))
+        {
+            return STATUS_ACCESS_DENIED;
+        }
+
         // A deleted lower directory must not bring its old content back when it is created again.
         const auto hidden = this->lower_->stat(path);
         if (hidden && is_directory(*hidden) && !this->journal_.hide_lower_children(path))
@@ -598,14 +770,13 @@ namespace sogen
 
     NTSTATUS layered_provider::rename(const windows_path& from, const windows_path& to)
     {
-        const auto status = this->rename_unchecked(from, to);
-        if (status == STATUS_SUCCESS)
+        const layer_lock::guard guard{this->lock_};
+        if (!this->journal_.refresh())
         {
-            ++this->generations_[from];
-            ++this->generations_[to];
+            return STATUS_ACCESS_DENIED;
         }
 
-        return status;
+        return this->rename_unchecked(from, to);
     }
 
     NTSTATUS layered_provider::rename_unchecked(const windows_path& from, const windows_path& to)
@@ -629,13 +800,24 @@ namespace sogen
             return STATUS_ACCESS_DENIED;
         }
 
+        if (is_directory(*source) && in_lower)
+        {
+            return STATUS_NOT_SAME_DEVICE;
+        }
+
+        // Replacing needs the old destination to survive a failed or interrupted rename, which has no durable record yet.
+        if (!in_upper && this->stat(to))
+        {
+            return STATUS_OBJECT_NAME_COLLISION;
+        }
+
+        if (!this->journal_.advance_generations({from, to}))
+        {
+            return STATUS_ACCESS_DENIED;
+        }
+
         if (is_directory(*source))
         {
-            if (in_lower)
-            {
-                return STATUS_NOT_SAME_DEVICE;
-            }
-
             return this->upper_->rename(from, to);
         }
 
@@ -648,12 +830,6 @@ namespace sogen
             }
 
             return this->upper_->rename(from, to);
-        }
-
-        // Replacing needs the old destination to survive a failed or interrupted rename, which has no durable record yet.
-        if (this->stat(to))
-        {
-            return STATUS_OBJECT_NAME_COLLISION;
         }
 
         if (!this->copy_to_upper(from, to))
@@ -672,13 +848,13 @@ namespace sogen
 
     NTSTATUS layered_provider::remove(const windows_path& path)
     {
-        const auto status = this->remove_unchecked(path);
-        if (status == STATUS_SUCCESS)
+        const layer_lock::guard guard{this->lock_};
+        if (!this->journal_.refresh())
         {
-            ++this->generations_[path];
+            return STATUS_ACCESS_DENIED;
         }
 
-        return status;
+        return this->remove_unchecked(path);
     }
 
     NTSTATUS layered_provider::remove_unchecked(const windows_path& path)
@@ -692,6 +868,11 @@ namespace sogen
         if (is_directory(*existing) && !this->list(path).empty())
         {
             return STATUS_DIRECTORY_NOT_EMPTY;
+        }
+
+        if (!this->journal_.advance_generations({path}))
+        {
+            return STATUS_ACCESS_DENIED;
         }
 
         if (this->lower_stat(path) && !this->journal_.hide(path))
@@ -709,6 +890,7 @@ namespace sogen
 
     std::optional<std::filesystem::path> layered_provider::get_host_path(const windows_path& path) const
     {
+        this->journal_.refresh();
         if (!this->upper_->stat(path) && this->lower_stat(path))
         {
             return this->lower_->get_host_path(path);
