@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <random>
+#include <set>
 
 namespace sogen
 {
@@ -242,6 +243,26 @@ namespace sogen::test
         EXPECT_TRUE(fs.open(writable, u"wb").file);
         EXPECT_EQ(STATUS_SUCCESS, fs.create_directory(windows_path{'c', {u"mnt", u"dir"}}));
         EXPECT_EQ(STATUS_SUCCESS, fs.remove(writable));
+    }
+
+    TEST_F(FileSystemTest, CreatedEntriesKeepTheGuestSpelling)
+    {
+        file_system fs{this->root, filesystem_mode::read_only};
+        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped", filesystem_mode::read_write);
+
+        ASSERT_EQ(STATUS_SUCCESS, fs.create_directory(windows_path{u"C:\\Mnt\\RiotClientElectron"}));
+        ASSERT_TRUE(fs.open(windows_path{u"C:\\MNT\\RiotClientElectron\\Snapshot_Blob.bin"}, u"wb").file);
+
+        std::set<std::string> names{};
+        for (const auto& entry : std::filesystem::directory_iterator(this->root / "mapped"))
+        {
+            names.insert(entry.path().filename().string());
+        }
+        EXPECT_TRUE(names.contains("RiotClientElectron"));
+        EXPECT_EQ("Snapshot_Blob.bin",
+                  std::filesystem::directory_iterator(this->root / "mapped" / "RiotClientElectron")->path().filename());
+
+        EXPECT_TRUE(fs.stat(windows_path{u"c:\\mnt\\riotclientelectron\\snapshot_blob.bin"}));
     }
 
     TEST_F(FileSystemTest, ExplicitMountReplacesRootDrive)
