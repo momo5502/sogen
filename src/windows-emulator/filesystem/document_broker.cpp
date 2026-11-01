@@ -555,6 +555,7 @@ namespace sogen
             entry.socket = std::move(client);
             entry.thread = std::thread([this, &entry] {
                 this->serve(entry.socket.get());
+                ::shutdown(entry.socket.get(), SHUT_RDWR);
                 entry.finished = true;
             });
         }
