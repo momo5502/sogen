@@ -7276,6 +7276,14 @@ namespace sogen
             return TRUE;
         }
 
+        // Enabling swaps the legacy WM_MOUSE* messages for WM_POINTER ones, and nothing here produces WM_POINTER,
+        // so that request is refused deliberately, although Windows would accept it. Disabling asks for the mode a
+        // process is already in, and succeeds as it does on Windows.
+        BOOL handle_NtUserEnableMouseInPointer(const syscall_context& /*c*/, const BOOL enable)
+        {
+            return enable ? FALSE : TRUE;
+        }
+
         namespace
         {
             constexpr uint32_t k_spi_get_icontitle_logfont = 0x1F;
