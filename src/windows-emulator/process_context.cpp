@@ -1061,7 +1061,12 @@ namespace sogen
 
         // captureCount lives in guest memory, which a snapshot taken before it was maintained restores as 0 while
         // mouse_capture_window is set. user32 reads the count to decide whether to ask for the capture window at all.
-        this->set_mouse_capture(this->mouse_capture_window);
+        // A process that never created a user object has no server info to write to, so only a real capture is
+        // reestablished.
+        if (this->mouse_capture_window != 0)
+        {
+            this->set_mouse_capture(this->mouse_capture_window);
+        }
 
         restore_windows_after_state_restore(win_emu);
 
