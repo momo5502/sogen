@@ -73,6 +73,8 @@ if(SOGEN_ENABLE_FEX)
       -DBUILD_FEX_LINUX_TESTS=OFF
       -DBUILD_TESTING=OFF
       -DENABLE_OFFLINE_TELEMETRY=OFF
+      # FEX prefers a host fmt over its bundled one, and newer releases (e.g. Homebrew's) no longer build it.
+      -DCMAKE_DISABLE_FIND_PACKAGE_fmt=ON
       # Do not let FEX replace the process allocator; sogen owns it when FEXCore is embedded.
       -DENABLE_FEX_ALLOCATOR=OFF
       -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF

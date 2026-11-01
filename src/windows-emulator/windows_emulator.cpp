@@ -1214,7 +1214,7 @@ namespace sogen
 
     bool windows_emulator::uses_section_first_execution_hooks() const
     {
-        return !this->emu().supports_global_memory_execution_hooks();
+        return !this->uses_instruction_precision();
     }
 
     void windows_emulator::track_section_first_execution(const uint64_t address)

@@ -428,7 +428,7 @@ namespace sogen
                              const std::u16string& executable, uint32_t process_flags, uint16_t architecture, uint32_t reserve_count)
             {
                 const auto process_id = static_cast<uint32_t>(win_emu.process.process_id);
-                const auto context_id = static_cast<uint64_t>(this->clients_.size() + 1);
+                const auto context_id = static_cast<uint64_t>(this->clients_.size()) + 1;
                 if (this->next_id_ > std::numeric_limits<uint64_t>::max() - reserve_count)
                 {
                     return STATUS_INVALID_PARAMETER;
