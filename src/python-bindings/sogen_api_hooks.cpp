@@ -278,6 +278,11 @@ namespace sogen::py
 
     void api_hook_registry::refresh_index()
     {
+        // Runs from the module load and unload callbacks, which the emulator raises on its own thread while
+        // start() holds the GIL released. Rebuilding the index destroys and creates hook_handle objects, and
+        // each one owns an nb::object, so every other callback in these bindings acquires the GIL too.
+        nb::gil_scoped_acquire gil{};
+
         this->address_index.clear();
         for (auto& [_, entry] : this->entries)
         {
