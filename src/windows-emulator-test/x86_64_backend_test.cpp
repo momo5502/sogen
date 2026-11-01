@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -13,7 +14,18 @@ namespace sogen::test
 {
     namespace
     {
-        constexpr uint64_t test_range_size = 0x140010000ull;
+        constexpr uint64_t high_test_offset = 0x140000000ull;
+
+        // The reservation has to cover the highest address any test uses, and one of them sits 5GB past the base.
+        // A host whose size_t is 32 bits cannot ask for that, so there it reserves what the other tests need and
+        // that one test skips.
+#if SIZE_MAX > 0xFFFFFFFFull
+        constexpr bool host_reaches_high_addresses = true;
+        constexpr size_t test_range_size = static_cast<size_t>(high_test_offset) + 0x10000;
+#else
+        constexpr bool host_reaches_high_addresses = false;
+        constexpr size_t test_range_size = 0x70000;
+#endif
 
         // Backends that place guest memory at its host address only accept some ranges, so the memory manager picks
         // one large enough for every test and gives it back for the tests to allocate inside.
@@ -270,7 +282,7 @@ namespace sogen::test
         });
         stop_on_syscall();
 
-        for (const auto [destination, source, expected] : {std::tuple{5u, 3u, 1u}, std::tuple{3u, 5u, 2u}})
+        for (const auto& [destination, source, expected] : {std::tuple{5u, 3u, 1u}, std::tuple{3u, 5u, 2u}})
         {
             for (const bool stop : {false, true})
             {
@@ -366,23 +378,30 @@ namespace sogen::test
 
     TEST_F(X8664BackendTest, GuestAccessesMemoryThroughItsTranslationsAcrossRuns)
     {
-        const uint64_t base = base_address + 0x140000000ull;
-        ASSERT_TRUE(memory.allocate_memory(base, 0x2000, memory_permission::read_write));
-        // mov rax, [rcx]; mov [rcx+0xFFC], rax; syscall
-        load_code(std::array<uint8_t, 12>{0x48, 0x8B, 0x01, 0x48, 0x89, 0x81, 0xFC, 0x0F, 0x00, 0x00, 0x0F, 0x05});
-        machine->reg(x86_register::rcx, base);
-        machine->write_memory(base, uint64_t{41});
-        stop_on_syscall();
+        if constexpr (!host_reaches_high_addresses)
+        {
+            GTEST_SKIP() << "A 32-bit host cannot reserve a range reaching 5GB past the base";
+        }
+        else
+        {
+            const uint64_t base = base_address + high_test_offset;
+            ASSERT_TRUE(memory.allocate_memory(base, 0x2000, memory_permission::read_write));
+            // mov rax, [rcx]; mov [rcx+0xFFC], rax; syscall
+            load_code(std::array<uint8_t, 12>{0x48, 0x8B, 0x01, 0x48, 0x89, 0x81, 0xFC, 0x0F, 0x00, 0x00, 0x0F, 0x05});
+            machine->reg(x86_register::rcx, base);
+            machine->write_memory(base, uint64_t{41});
+            stop_on_syscall();
 
-        machine->start();
-        EXPECT_EQ(machine->read_memory<uint64_t>(base + 0xFFC), 41u);
+            machine->start();
+            EXPECT_EQ(machine->read_memory<uint64_t>(base + 0xFFC), 41u);
 
-        ASSERT_TRUE(memory.release_memory(base, 0x2000));
-        ASSERT_TRUE(memory.allocate_memory(base, 0x2000, memory_permission::read_write));
-        machine->write_memory(base, uint64_t{57});
-        machine->reg(x86_register::rip, code_address);
-        machine->reg(x86_register::rcx, base);
-        machine->start();
-        EXPECT_EQ(machine->read_memory<uint64_t>(base + 0xFFC), 57u);
+            ASSERT_TRUE(memory.release_memory(base, 0x2000));
+            ASSERT_TRUE(memory.allocate_memory(base, 0x2000, memory_permission::read_write));
+            machine->write_memory(base, uint64_t{57});
+            machine->reg(x86_register::rip, code_address);
+            machine->reg(x86_register::rcx, base);
+            machine->start();
+            EXPECT_EQ(machine->read_memory<uint64_t>(base + 0xFFC), 57u);
+        }
     }
 }
