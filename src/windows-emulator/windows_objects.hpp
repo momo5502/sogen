@@ -969,9 +969,11 @@ namespace sogen
             return this->access([&](state& current) -> std::optional<bool> {
                 if (current.locked_count == 0)
                 {
-                    ++current.locked_count;
+                    // The owner and its host process are in place before the count says the mutant is held, so a
+                    // death in between leaves it free rather than held by nobody recovery can identify.
                     current.owner = owner;
                     current.owner_host_process = utils::current_host_process_id();
+                    current.locked_count = 1;
                     return std::exchange(current.abandoned, 0) != 0;
                 }
 
@@ -1081,6 +1083,10 @@ namespace sogen
             buffer.read(this->local_.abandoned);
             buffer.read(this->name);
             this->shared.reset();
+
+            // A restored mutant that is still locked is owned by this emulator again, so its host owner is this
+            // process. Leaving it at 0 would make share() publish a locked mutant nobody can ever abandon.
+            this->local_.owner_host_process = this->local_.locked_count > 0 ? utils::current_host_process_id() : 0;
         }
     };
 
