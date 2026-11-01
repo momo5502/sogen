@@ -1926,9 +1926,10 @@ namespace sogen
 
         constexpr std::u16string map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
         {
-            const auto wants_write = (desired_access & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA)) != 0;
+            const auto wants_write =
+                (desired_access & (GENERIC_WRITE | GENERIC_ALL | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA)) != 0;
             const auto wants_read =
-                (desired_access & (GENERIC_READ | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE)) != 0;
+                (desired_access & (GENERIC_READ | GENERIC_ALL | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE)) != 0;
 
             // A handle only appends when it may append but not write: FILE_GENERIC_WRITE grants both, and its writes go to the
             // offset they name.
