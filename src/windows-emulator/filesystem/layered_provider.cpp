@@ -434,14 +434,13 @@ namespace sogen
                 return false;
             }
 
+            // The copy is opened before the lock is released, so no other process can replace it under this name first.
+            const layer_lock::guard guard{this->provider_->lock_};
+            auto& journal = this->provider_->journal_;
+            if (!journal.refresh() || journal.generation(this->path_) != this->generation_ ||
+                !this->provider_->lower_visible(this->path_) || !this->provider_->copy_up(this->path_))
             {
-                const layer_lock::guard guard{this->provider_->lock_};
-                auto& journal = this->provider_->journal_;
-                if (!journal.refresh() || journal.generation(this->path_) != this->generation_ ||
-                    !this->provider_->lower_visible(this->path_) || !this->provider_->copy_up(this->path_))
-                {
-                    return false;
-                }
+                return false;
             }
 
             const bool appending = this->mode_.find(u'a') != std::u16string::npos;
