@@ -68,7 +68,7 @@ namespace sogen
                 }
 
                 case handle_types::file: {
-                    // Only the console pseudo handles reach here; see is_wait_completion_target_type.
+                    // Only STDIN_HANDLE and NUL_HANDLE reach here; see is_wait_completion_target_type.
                     if (target_object_handle == STDIN_HANDLE)
                     {
                         return win_emu.console().input_available();
@@ -166,10 +166,11 @@ namespace sogen
                 return true;
 
             // libuv registers a thread-pool wait on the console input handle to read a raw TTY, so
-            // without this a guest cannot start a terminal UI. Only the console pseudo handles are
-            // accepted: a real file object carries no signal the emulator tracks.
+            // without this a guest cannot start a terminal UI. Only console input and NUL are accepted:
+            // a wait on console output never completes on Windows, and a real file object carries no
+            // signal the emulator tracks.
             case handle_types::file:
-                return target_object_handle.value.is_pseudo;
+                return target_object_handle == STDIN_HANDLE || target_object_handle == NUL_HANDLE;
 
             default:
                 return false;

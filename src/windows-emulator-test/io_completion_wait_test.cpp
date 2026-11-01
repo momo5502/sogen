@@ -258,6 +258,11 @@ namespace sogen::test
         EXPECT_EQ(message.apc_context, 0x5678u);
     }
 
+    TEST_F(ConsoleWaitCompletionTest, ConsoleOutputHandleStaysUnsupported)
+    {
+        EXPECT_EQ(this->associate(STDOUT_HANDLE), STATUS_OBJECT_TYPE_MISMATCH);
+    }
+
     TEST_F(ConsoleWaitCompletionTest, RealFileHandleStaysUnsupported)
     {
         const auto file_handle = this->emu->process.files.store(file{});
