@@ -393,6 +393,7 @@ namespace sogen
         uint64_t previous_ip{0};
 
         std::u16string name{};
+        ULONG io_priority{2};
 
         std::optional<NTSTATUS> exit_status{};
         std::vector<handle> await_objects{};
@@ -558,6 +559,7 @@ namespace sogen
             buffer.write(this->previous_ip);
 
             buffer.write_string(this->name);
+            buffer.write(this->io_priority);
 
             buffer.write_optional(this->exit_status);
             buffer.write_vector(this->await_objects);
@@ -640,6 +642,7 @@ namespace sogen
             buffer.read(this->previous_ip);
 
             buffer.read_string(this->name);
+            buffer.read(this->io_priority);
 
             buffer.read_optional(this->exit_status);
             buffer.read_vector(this->await_objects);

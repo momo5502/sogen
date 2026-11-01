@@ -2054,20 +2054,11 @@ namespace sogen
             descriptor_pool_params create{};
         };
 
-        struct bound_buffer_info
-        {
-            uint64_t buffer_id{};
-            uint64_t offset{};
-            uint64_t range{};
-            uint32_t type{};
-        };
-
         struct descriptor_set_data
         {
             VkDescriptorSet handle{};
             uint64_t device_id{};
             uint64_t pool_id{};
-            std::unordered_map<uint32_t, bound_buffer_info> buffer_bindings;
             uint64_t layout_id{};
             std::shared_ptr<const set_layout_params> layout_create{};
             std::optional<uint32_t> variable_descriptor_count{};
@@ -9372,7 +9363,7 @@ namespace sogen
         for (size_t i = 0; i < sets.size(); ++i)
         {
             const uint64_t id = this->impl_->allocate_id();
-            impl::descriptor_set_data data{.handle = sets[i], .device_id = device, .pool_id = pool, .buffer_bindings = {}};
+            impl::descriptor_set_data data{.handle = sets[i], .device_id = device, .pool_id = pool};
             data.layout_id = set_layouts[i];
             data.layout_create = this->impl_->descriptor_set_layouts.at(set_layouts[i]).create;
             if (!variable_descriptor_counts.empty())
@@ -9471,12 +9462,6 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             vw.dstSet = cached_set_handle;
-
-            if (vw.pBufferInfo && w.buffer_or_view != 0)
-            {
-                cached_set->buffer_bindings[w.dst_binding] =
-                    impl::bound_buffer_info{.buffer_id = w.buffer_or_view, .offset = w.offset, .range = w.range, .type = w.descriptor_type};
-            }
             vk_writes.push_back(vw);
         }
 
