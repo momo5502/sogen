@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "window_geometry.hpp"
 #include "../vulkan_handle_utils.hpp"
 #include <platform/ui_backend.hpp>
 
@@ -788,7 +789,9 @@ namespace sogen
                         {
                             const auto position = (static_cast<uint64_t>(static_cast<uint16_t>(event.window.data2)) << 16) |
                                                   static_cast<uint16_t>(event.window.data1);
-                            this->post_event(guest, WM_MOVE, 0, position);
+                            this->track_host_window_move(guest, event.window.data1, event.window.data2);
+                            this->post_event(guest, WM_MOVE, 0, position, std::nullopt,
+                                             std::pair<int32_t, int32_t>{event.window.data1, event.window.data2});
                         }
                         break;
 
@@ -1136,13 +1139,12 @@ namespace sogen
                 render_window(state);
             }
 
-            // Popup menus, tooltips and drop-downs: Windows shows them without activating them, and the toolkits that
-            // create them close them as soon as their owner loses activation.
+            // Only WS_EX_NOACTIVATE makes a window never activated. Menus and tooltips stay inactive through how they
+            // are shown (SW_SHOWNA, SWP_NOACTIVATE) or through MA_NOACTIVATE instead, and a borderless popup with
+            // WS_EX_TOOLWINDOW is the usual way to keep a window that does need the keyboard off the taskbar.
             static bool is_never_activated(const ui_window_desc& desc)
             {
-                const bool captionless_tool_popup =
-                    (desc.style & WS_POPUP) != 0 && (desc.style & WS_CAPTION) != WS_CAPTION && (desc.ex_style & WS_EX_TOOLWINDOW) != 0;
-                return captionless_tool_popup || (desc.ex_style & WS_EX_NOACTIVATE) != 0;
+                return (desc.ex_style & WS_EX_NOACTIVATE) != 0;
             }
 
             static Uint64 host_window_flags(const ui_window_desc& desc)
@@ -1809,24 +1811,39 @@ namespace sogen
             }
 
             void post_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param,
-                            const std::optional<std::pair<int32_t, int32_t>>& relative = std::nullopt) const
+                            const std::optional<std::pair<int32_t, int32_t>>& relative = std::nullopt,
+                            const std::optional<std::pair<int32_t, int32_t>>& host_position = std::nullopt) const
             {
                 if (this->sink_)
                 {
-                    this->sink_(
-                        ui_event{.window = window, .message = message, .wParam = w_param, .lParam = l_param, .relative_motion = relative});
+                    this->sink_(ui_event{.window = window,
+                                         .message = message,
+                                         .wParam = w_param,
+                                         .lParam = l_param,
+                                         .relative_motion = relative,
+                                         .host_position = host_position});
                 }
+            }
+
+            // The user moved the host window, so the frame origin this backend converts screen coordinates against has
+            // to follow, without calling SDL_SetWindowPosition again. A screen-space cursor clip is re-applied so it
+            // stays where it is on screen instead of travelling with the window.
+            void track_host_window_move(const hwnd window, const int32_t x, const int32_t y)
+            {
+                auto* state = this->resolve_window(window);
+                if (!state)
+                {
+                    return;
+                }
+
+                move_window_origin(state->desc.rect, x, y);
+                this->apply_cursor_capture();
             }
 
             // SDL exposes only the drawable client area, while emulated screen coordinates include the guest frame.
             static std::pair<float, float> screen_to_window_point(const window_state& state, const int32_t screen_x, const int32_t screen_y)
             {
-                const auto outer_width = std::max<int32_t>(0, state.desc.rect.right - state.desc.rect.left);
-                const auto outer_height = std::max<int32_t>(0, state.desc.rect.bottom - state.desc.rect.top);
-                const auto client_x_offset = std::min<int32_t>(outer_width, state.desc.client_insets.left);
-                const auto client_y_offset = std::min<int32_t>(outer_height, state.desc.client_insets.top);
-                auto window_x = static_cast<float>(screen_x - state.desc.rect.left - client_x_offset);
-                auto window_y = static_cast<float>(screen_y - state.desc.rect.top - client_y_offset);
+                auto [window_x, window_y] = screen_point_in_window(state.desc, screen_x, screen_y);
                 // The frame is letterboxed into the window, so guest pixels are not at the same position in
                 // the host window; map through the same transform map_window_point inverts.
                 if (state.renderer)

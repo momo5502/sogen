@@ -88,6 +88,10 @@ namespace sogen
         bool injected{};
         uint64_t extra_info{};
         char16_t injected_character{};
+
+        // A host window move carries the position SDL reported. WM_MOVE's lParam is 16-bit, but the window model and
+        // GetWindowRect keep the full int32 coordinates, which a virtual desktop needs.
+        std::optional<std::pair<int32_t, int32_t>> host_position{};
     };
 
     class ui_backend

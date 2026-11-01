@@ -2298,7 +2298,8 @@ namespace sogen
 
         if (event.message == WM_MOVE)
         {
-            this->move_window_from_host(event.window, point_x(event.lParam), point_y(event.lParam));
+            const auto [x, y] = event.host_position.value_or(std::pair{point_x(event.lParam), point_y(event.lParam)});
+            this->move_window_from_host(event.window, x, y);
             return;
         }
 
