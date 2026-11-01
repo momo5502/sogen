@@ -484,4 +484,136 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, fs.remove(windows_path{'c', {u"dir", u"old.txt"}}));
         EXPECT_THROW(fs.map(windows_path{'d', {}}, this->root, filesystem_mode::copy_on_write), std::runtime_error);
     }
+
+    TEST_F(LayeredProviderTest, RemovalsInOneProcessHideTheFileInTheOther)
+    {
+        const auto first = this->make_provider();
+        const auto second = this->make_provider();
+
+        ASSERT_TRUE(second->stat(guest({u"file.txt"})));
+        ASSERT_EQ(STATUS_SUCCESS, first->remove(guest({u"file.txt"})));
+
+        EXPECT_FALSE(second->stat(guest({u"file.txt"})));
+        EXPECT_EQ(0u, names_in(*second, {}).count(u"file.txt"));
+        EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, second->open(guest({u"file.txt"}), u"rb").status);
+    }
+
+    TEST_F(LayeredProviderTest, ACopyUpInOneProcessIsReadByTheOther)
+    {
+        const auto first = this->make_provider();
+        const auto second = this->make_provider();
+
+        {
+            const auto result = first->open(guest({u"file.txt"}), u"r+b");
+            ASSERT_TRUE(result.file);
+            ASSERT_EQ(1u, write_text(*result.file, "L"));
+        }
+
+        const auto result = second->open(guest({u"file.txt"}), u"rb");
+        ASSERT_TRUE(result.file);
+        EXPECT_EQ("Lower contents", read_all(*result.file));
+    }
+
+    TEST_F(LayeredProviderTest, WritersInTwoProcessesShareOneCopyOfALowerFile)
+    {
+        const auto first = this->make_provider();
+        const auto second = this->make_provider();
+
+        const auto mine = first->open(guest({u"file.txt"}), u"r+b");
+        const auto theirs = second->open(guest({u"file.txt"}), u"r+b");
+        ASSERT_TRUE(mine.file);
+        ASSERT_TRUE(theirs.file);
+
+        ASSERT_TRUE(theirs.file->seek(6, SEEK_SET));
+        EXPECT_EQ(3u, write_text(*mine.file, "AAA"));
+        EXPECT_EQ(3u, write_text(*theirs.file, "BBB"));
+        ASSERT_TRUE(mine.file->flush());
+        ASSERT_TRUE(theirs.file->flush());
+
+        EXPECT_EQ("AAAer BBBtents", read_host_file(this->upper() / "file.txt"));
+    }
+
+    TEST_F(LayeredProviderTest, ARenameInOneProcessInvalidatesHandlesOfTheOther)
+    {
+        const auto first = this->make_provider();
+        const auto second = this->make_provider();
+
+        const auto stale = second->open(guest({u"file.txt"}), u"r+b");
+        ASSERT_TRUE(stale.file);
+        ASSERT_EQ(STATUS_SUCCESS, first->rename(guest({u"file.txt"}), guest({u"moved.txt"})));
+
+        EXPECT_EQ(0u, write_text(*stale.file, "X"));
+        EXPECT_FALSE(second->stat(guest({u"file.txt"})));
+        EXPECT_TRUE(second->stat(guest({u"moved.txt"})));
+        EXPECT_FALSE(std::filesystem::exists(this->upper() / "file.txt"));
+    }
+
+    TEST_F(LayeredProviderTest, AFileRecreatedInOneProcessIsNotModifiedThroughTheOther)
+    {
+        const auto first = this->make_provider();
+        const auto second = this->make_provider();
+
+        const auto stale = second->open(guest({u"file.txt"}), u"r+b");
+        ASSERT_TRUE(stale.file);
+
+        ASSERT_EQ(STATUS_SUCCESS, first->remove(guest({u"file.txt"})));
+        {
+            const auto recreated = first->open(guest({u"file.txt"}), u"wb");
+            ASSERT_TRUE(recreated.file);
+            ASSERT_EQ(3u, write_text(*recreated.file, "new"));
+        }
+
+        EXPECT_EQ(0u, write_text(*stale.file, "X"));
+        EXPECT_EQ("new", read_host_file(this->upper() / "file.txt"));
+    }
+
+    TEST_F(LayeredProviderTest, ADirectoryRecreatedInOneProcessStaysEmptyInTheOther)
+    {
+        const auto first = this->make_provider();
+        const auto second = this->make_provider();
+
+        ASSERT_EQ(STATUS_SUCCESS, first->remove(guest({u"dir", u"old.txt"})));
+        ASSERT_EQ(STATUS_SUCCESS, first->remove(guest({u"dir", u"keep.txt"})));
+        ASSERT_EQ(STATUS_SUCCESS, first->remove(guest({u"dir"})));
+        ASSERT_EQ(STATUS_SUCCESS, first->create_directory(guest({u"dir"})));
+
+        EXPECT_TRUE(second->stat(guest({u"dir"})));
+        EXPECT_TRUE(names_in(*second, guest({u"dir"})).empty());
+        EXPECT_EQ(STATUS_OBJECT_NAME_COLLISION, second->create_directory(guest({u"dir"})));
+    }
+
+    TEST_F(LayeredProviderTest, RecordsFromBothProcessesSurviveARestart)
+    {
+        {
+            const auto first = this->make_provider();
+            const auto second = this->make_provider();
+
+            ASSERT_EQ(STATUS_SUCCESS, first->remove(guest({u"file.txt"})));
+            ASSERT_EQ(STATUS_SUCCESS, second->remove(guest({u"dir", u"old.txt"})));
+            ASSERT_EQ(STATUS_SUCCESS, first->rename(guest({u"dir", u"keep.txt"}), guest({u"kept.txt"})));
+        }
+
+        const auto restarted = this->make_provider();
+        EXPECT_FALSE(restarted->stat(guest({u"file.txt"})));
+        EXPECT_FALSE(restarted->stat(guest({u"dir", u"old.txt"})));
+        EXPECT_FALSE(restarted->stat(guest({u"dir", u"keep.txt"})));
+        EXPECT_EQ("keep", read_host_file(this->upper() / "kept.txt"));
+    }
+
+    TEST_F(LayeredProviderTest, AnUnfinishedRecordOfAnotherWriterIsCutBeforeAppending)
+    {
+        const auto provider = this->make_provider();
+
+        {
+            std::ofstream journal(this->state() / "journal", std::ios::binary | std::ios::app);
+            journal << "H\tdir\\ke";
+        }
+
+        EXPECT_TRUE(provider->stat(guest({u"dir", u"keep.txt"})));
+        ASSERT_EQ(STATUS_SUCCESS, provider->remove(guest({u"dir", u"old.txt"})));
+
+        const auto restarted = this->make_provider();
+        EXPECT_FALSE(restarted->stat(guest({u"dir", u"old.txt"})));
+        EXPECT_TRUE(restarted->stat(guest({u"dir", u"keep.txt"})));
+    }
 }
