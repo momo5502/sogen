@@ -2666,10 +2666,7 @@ namespace sogen
                 pipe_device->server_end = true;
                 container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
                 pipe_device->default_timeout = default_timeout.read();
-                auto endpoints =
-                    utils::host_pipe::create_pair(named_pipe_type != 0, std::max<ULONG>({inbound_quota, outbound_quota, 4096}));
-                pipe_device->endpoint = std::move(endpoints.first);
-                pipe_device->unopened_peer = std::move(endpoints.second);
+                pipe_device->create_endpoints();
             }
             else
             {
