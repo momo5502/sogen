@@ -3,7 +3,9 @@
 #if defined(__ANDROID__) || defined(__APPLE__)
 #include <memory_manager.hpp>
 
+#include <algorithm>
 #include <array>
+#include <span>
 #endif
 
 #ifdef __APPLE__
@@ -222,6 +224,92 @@ namespace sogen::test
         EXPECT_EQ(emu->reg(x86_register::rbx), initial_value);
 
         ::munmap(host_buffer, host_page_size);
+    }
+
+    namespace
+    {
+        constexpr size_t recommit_region_size = 0x4000;
+
+        struct recommit_case
+        {
+            memory_permission permission;
+            bool commit_whole_region;
+        };
+
+        constexpr std::array recommit_cases{
+            recommit_case{.permission = memory_permission::read_write, .commit_whole_region = false},
+            recommit_case{.permission = memory_permission::read, .commit_whole_region = false},
+            recommit_case{.permission = memory_permission::read_write, .commit_whole_region = true},
+        };
+
+        void expect_recommitted_page_is_zero_filled(memory_manager& memory, const uint64_t region, const recommit_case& test_case)
+        {
+            constexpr size_t page_size = 0x1000;
+            constexpr uint8_t old_contents = 0xAB;
+
+            std::array<uint8_t, recommit_region_size> contents{};
+            contents.fill(old_contents);
+            memory.write_memory(region, contents.data(), contents.size());
+            ASSERT_TRUE(memory.protect_memory(region, recommit_region_size, test_case.permission));
+
+            const uint64_t page = region + page_size;
+            ASSERT_TRUE(memory.decommit_memory(page, page_size));
+            if (test_case.commit_whole_region)
+            {
+                ASSERT_TRUE(memory.commit_memory(region, recommit_region_size, test_case.permission));
+            }
+            else
+            {
+                ASSERT_TRUE(memory.commit_memory(page, page_size, test_case.permission));
+            }
+
+            contents.fill(0);
+            memory.read_memory(region, contents.data(), contents.size());
+            const auto recommitted = std::span{contents}.subspan(page_size, page_size);
+            EXPECT_EQ(std::ranges::count(recommitted, uint8_t{0}), std::ssize(recommitted));
+            EXPECT_EQ(std::ranges::count(contents, old_contents), std::ssize(contents) - std::ssize(recommitted));
+        }
+    }
+
+    TEST(FexMemoryTest, PageRecommittedBesideCommittedPagesIsZeroFilled)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+
+        for (const auto& test_case : recommit_cases)
+        {
+            const uint64_t region = memory.allocate_memory(recommit_region_size, memory_permission::read_write);
+            ASSERT_NE(region, 0u);
+            expect_recommitted_page_is_zero_filled(memory, region, test_case);
+        }
+    }
+
+    TEST(FexWow64Test, PageRecommittedBesideCommittedPagesIsZeroFilled)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        emu->notify_process_bitness(true);
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+
+        uint64_t region = 0x10000;
+        for (const auto& test_case : recommit_cases)
+        {
+            ASSERT_TRUE(memory.allocate_memory(region, recommit_region_size, memory_permission::read_write));
+            expect_recommitted_page_is_zero_filled(memory, region, test_case);
+            region += 0x10000;
+        }
     }
 
     TEST(FexWow64Test, LowGuestMemoryIsBackedByTheHostWindow)

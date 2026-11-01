@@ -2335,6 +2335,7 @@ namespace sogen::fex
             this->reserve_guest_address_range(address, size);
             this->set_shadow_range_apple(address, size, permissions);
             this->sync_host_pages_covering_apple(address, size);
+            this->zero_range_in_shared_host_pages_apple(address, size);
 #else
             if (!this->host_range_is_claimed(address, size))
             {
@@ -3430,6 +3431,51 @@ namespace sogen::fex
             for (uint64_t host_page = start; host_page < end; host_page += host_page_size_apple)
             {
                 this->sync_host_page_apple(host_page);
+            }
+        }
+
+        bool host_page_maps_pages_outside_apple(const uint64_t host_page_addr, const uint64_t address, const uint64_t end) const
+        {
+            for (uint64_t page = host_page_addr; page < host_page_addr + host_page_size_apple; page += page_size)
+            {
+                if ((page < address || page >= end) && this->page_shadow_apple_.contains(page))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        // A host page stays mapped while any of its guest pages is, so a guest page unmapped from it keeps
+        // its old contents. Mapping that guest page again must still hand out the zero-filled page that
+        // MEM_COMMIT guarantees.
+        void zero_range_in_shared_host_pages_apple(const uint64_t address, const size_t size)
+        {
+            const uint64_t end = address + size;
+            for (uint64_t host_page = host_page_align_down_apple(address); host_page < end; host_page += host_page_size_apple)
+            {
+                if (!this->host_page_maps_pages_outside_apple(host_page, address, end))
+                {
+                    continue;
+                }
+
+                const uint64_t zero_start = std::max(address, host_page);
+                const size_t zero_size = static_cast<size_t>(std::min(end, host_page + host_page_size_apple) - zero_start);
+                const auto host_permission = this->shadow_permission_apple(host_page).value_or(memory_permission::none);
+                const bool needs_temporary_write = (host_permission & memory_permission::write) == memory_permission::none;
+
+                if (needs_temporary_write)
+                {
+                    this->set_temporary_access(zero_start, zero_size, memory_permission::write, true);
+                }
+
+                std::memset(reinterpret_cast<void*>(this->to_host_address(zero_start)), 0, zero_size);
+
+                if (needs_temporary_write)
+                {
+                    this->set_temporary_access(zero_start, zero_size, memory_permission::write, false);
+                }
             }
         }
 #endif
