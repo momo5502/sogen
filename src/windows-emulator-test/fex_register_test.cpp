@@ -8,6 +8,8 @@
 
 #ifdef __APPLE__
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include <sys/mman.h>
 #endif
@@ -340,6 +342,140 @@ namespace sogen::test
         EXPECT_EQ(observed_address, target);
         EXPECT_EQ(observed_type, memory_violation_type::protection);
         EXPECT_EQ(memory.read_memory<uint64_t>(target), 0u);
+    }
+
+    namespace
+    {
+        struct guest_access
+        {
+            const char* name;
+            std::vector<uint8_t> code;
+        };
+
+        struct observed_violation
+        {
+            uint64_t target = 0;
+            bool observed = false;
+            uint64_t address = 0;
+            memory_operation operation = memory_operation::exec;
+            memory_violation_type type = memory_violation_type::unmapped;
+        };
+
+        observed_violation run_against_protected_page(x86_64_emulator& emu, const guest_access& access,
+                                                      const memory_permission target_permission)
+        {
+            memory_manager memory{emu};
+            memory.reserve_host_memory_ranges();
+            constexpr size_t page_size = 0x1000;
+            const uint64_t code = memory.allocate_memory(page_size, memory_permission::read_write);
+            const uint64_t gdt = memory.allocate_memory(page_size, memory_permission::read_write);
+            const uint64_t target = memory.allocate_memory(page_size, memory_permission::read_write);
+            EXPECT_NE(code, 0u);
+            EXPECT_NE(gdt, 0u);
+            EXPECT_NE(target, 0u);
+
+            constexpr uint16_t long_mode_code_selector = 0x08;
+            constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+            emu.write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+            emu.load_gdt(gdt, page_size);
+            emu.reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+
+            constexpr uint8_t hlt = 0xF4;
+            std::vector<uint8_t> guest_code = access.code;
+            guest_code.push_back(hlt);
+            memory.write_memory(code, guest_code.data(), guest_code.size());
+            EXPECT_TRUE(memory.protect_memory(code, page_size, memory_permission::read_exec));
+            EXPECT_TRUE(memory.protect_memory(target, page_size, target_permission));
+
+            observed_violation violation{.target = target};
+            emu.hook_memory_violation(
+                [&](cpu_interface& cpu, uint64_t address, size_t, memory_operation operation, memory_violation_type type) {
+                    violation.observed = true;
+                    violation.address = address;
+                    violation.operation = operation;
+                    violation.type = type;
+                    cpu.stop();
+                    return memory_violation_continuation::stop;
+                });
+            emu.hook_interrupt([](cpu_interface& cpu, int) { cpu.stop(); });
+
+            emu.reg(x86_register::rip, code);
+            emu.reg(x86_register::rax, 0);
+            emu.reg(x86_register::rdx, 0);
+            emu.reg(x86_register::rbx, 0x1122334455667788ULL);
+            emu.reg(x86_register::rcx, 16);
+            emu.reg(x86_register::rdi, target);
+            emu.start(0);
+
+            return violation;
+        }
+
+        std::string guest_access_name(const testing::TestParamInfo<guest_access>& info)
+        {
+            return info.param.name;
+        }
+    }
+
+    class FexStoreToReadOnlyMemoryTest : public testing::TestWithParam<guest_access>
+    {
+    };
+
+    TEST_P(FexStoreToReadOnlyMemoryTest, IsReportedAsWrite)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        const auto violation = run_against_protected_page(*emu, GetParam(), memory_permission::read);
+
+        EXPECT_TRUE(violation.observed);
+        EXPECT_EQ(violation.address, violation.target);
+        EXPECT_EQ(violation.operation, memory_operation::write);
+        EXPECT_EQ(violation.type, memory_violation_type::protection);
+    }
+
+    INSTANTIATE_TEST_SUITE_P(GuestStoreForms, FexStoreToReadOnlyMemoryTest,
+                             testing::Values(guest_access{.name = "Mov", .code = {0x48, 0x89, 0x1F}},
+                                             guest_access{.name = "Movnti", .code = {0x48, 0x0F, 0xC3, 0x1F}},
+                                             guest_access{.name = "Movdqu", .code = {0xF3, 0x0F, 0x7F, 0x07}},
+                                             guest_access{.name = "RepStosb", .code = {0xF3, 0xAA}},
+                                             guest_access{.name = "LockXadd", .code = {0xF0, 0x48, 0x0F, 0xC1, 0x1F}},
+                                             guest_access{.name = "LockCmpxchg16b", .code = {0xF0, 0x48, 0x0F, 0xC7, 0x0F}}),
+                             guest_access_name);
+
+    TEST(FexMemoryViolationTest, VectorStoreToInaccessibleMemoryIsWrite)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        const auto violation =
+            run_against_protected_page(*emu, {.name = "Movdqu", .code = {0xF3, 0x0F, 0x7F, 0x07}}, memory_permission::none);
+
+        EXPECT_TRUE(violation.observed);
+        EXPECT_EQ(violation.address, violation.target);
+        EXPECT_EQ(violation.operation, memory_operation::write);
+        EXPECT_EQ(violation.type, memory_violation_type::protection);
+    }
+
+    TEST(FexMemoryViolationTest, ClflushOfInaccessibleMemoryIsRead)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        const auto violation = run_against_protected_page(*emu, {.name = "Clflush", .code = {0x0F, 0xAE, 0x3F}}, memory_permission::none);
+
+        EXPECT_TRUE(violation.observed);
+        EXPECT_EQ(violation.address, violation.target);
+        EXPECT_EQ(violation.operation, memory_operation::read);
+        EXPECT_EQ(violation.type, memory_violation_type::protection);
     }
 #endif
 
