@@ -659,17 +659,21 @@ namespace sogen
     {
         std::u16string name{};
         uint64_t mapped_object{};
+        // Desktop names are scoped to a window station, so the same name in two stations is two desktops.
+        uint64_t window_station{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
             buffer.write(this->mapped_object);
+            buffer.write(this->window_station);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->name);
             buffer.read(this->mapped_object);
+            buffer.read(this->window_station);
         }
     };
 

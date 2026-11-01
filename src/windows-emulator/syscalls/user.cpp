@@ -179,6 +179,9 @@ namespace sogen
             pointer callback{};
         };
 
+        // The interactive station, which the process starts on and which is not held in the store.
+        constexpr uint64_t interactive_window_station = 1;
+
         void set_guest_last_error(const syscall_context& c, uint32_t last_error)
         {
             c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
@@ -1862,6 +1865,7 @@ namespace sogen
                 {
                     desktop desk{};
                     desk.name = u"Default";
+                    desk.window_station = interactive_window_station;
                     c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
                 }
 
@@ -2972,26 +2976,86 @@ namespace sogen
             return station.bits == 1 || c.proc.window_stations.get(station) != nullptr;
         }
 
+        // A window station or desktop name names a single object, so Windows refuses a backslash in it.
+        bool is_valid_user_object_name(const std::u16string_view name)
+        {
+            return !name.empty() && name.find(u'\\') == std::u16string_view::npos;
+        }
+
+        uint64_t find_window_station(const syscall_context& c, const std::u16string_view name)
+        {
+            if (utils::string::equals_ignore_case(name, std::u16string_view{u"WinSta0"}))
+            {
+                return interactive_window_station;
+            }
+
+            for (const auto& [index, station] : c.proc.window_stations)
+            {
+                if (utils::string::equals_ignore_case(std::u16string_view{station.name}, name))
+                {
+                    return c.proc.window_stations.make_handle(index).bits;
+                }
+            }
+
+            return 0;
+        }
+
+        uint64_t find_desktop(const syscall_context& c, const uint64_t window_station, const std::u16string_view name)
+        {
+            for (const auto& [index, desk] : c.proc.desktops)
+            {
+                if (desk.window_station == window_station && utils::string::equals_ignore_case(std::u16string_view{desk.name}, name))
+                {
+                    return c.proc.desktops.make_handle(index).bits;
+                }
+            }
+
+            return 0;
+        }
+
         uint64_t handle_NtUserCreateWindowStation(const syscall_context& c,
                                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                   const ACCESS_MASK /*desired_access*/)
         {
+            constexpr ULONG obj_openif = 0x80;
+            constexpr uint32_t error_invalid_parameter = 87;
+            constexpr uint32_t error_already_exists = 183;
+
             std::u16string name{};
+            ULONG attribute_flags = 0;
             if (object_attributes)
             {
                 const auto attributes = object_attributes.read();
+                attribute_flags = attributes.Attributes;
                 if (attributes.ObjectName)
                 {
                     name = read_unicode_string(c.emu, attributes.ObjectName);
                 }
             }
 
-            // An unnamed window station gets a generated name, which Windows derives from the logon session.
+            // Windows names an unnamed window station after the logon session, so every unnamed create in a process
+            // names the same station. 0x3e7 is the SYSTEM logon session this emulator's process runs in.
             if (name.empty())
             {
-                std::array<char, 16> id{};
-                auto* const end = std::to_chars(id.data(), id.data() + id.size(), c.proc.next_window_station_id++, 16).ptr;
-                name = u"Service-0x0-" + u8_to_u16(std::string(id.data(), end)) + u"$";
+                name = u"Service-0x0-3e7$";
+            }
+
+            if (!is_valid_user_object_name(name))
+            {
+                set_guest_last_error(c, error_invalid_parameter);
+                return 0;
+            }
+
+            // user32 asks for open-if unless CWF_CREATE_ONLY was passed, so an existing name opens that station.
+            if (const auto existing = find_window_station(c, name); existing != 0)
+            {
+                if ((attribute_flags & obj_openif) == 0)
+                {
+                    set_guest_last_error(c, error_already_exists);
+                    return 0;
+                }
+
+                return existing;
             }
 
             window_station station{};
@@ -3037,12 +3101,22 @@ namespace sogen
                 return 0;
             }
 
-            desktop desk{};
-            desk.name = read_unicode_string(c.emu, attributes.ObjectName);
-            if (desk.name.empty())
+            auto name = read_unicode_string(c.emu, attributes.ObjectName);
+            if (!is_valid_user_object_name(name))
             {
                 return 0;
             }
+
+            // CommonCreateDesktop always asks for open-if, scoped to the process window station.
+            const auto station = c.proc.process_window_station;
+            if (const auto existing = find_desktop(c, station, name); existing != 0)
+            {
+                return existing;
+            }
+
+            desktop desk{};
+            desk.name = std::move(name);
+            desk.window_station = station;
 
             return c.proc.desktops.store(std::move(desk)).bits;
         }
@@ -6722,8 +6796,12 @@ namespace sogen
                     DWORD flags;
                 };
 
-                const user_object_flags flags{
-                    .inherit = desktop_object && desktop_object->inherit, .reserved = FALSE, .flags = window_station ? 1u : 0u};
+                // WSF_VISIBLE, which only the interactive station has. A process moved to a noninteractive station
+                // reads 0 here, which is how .NET's Environment.UserInteractive decides.
+                constexpr uint32_t wsf_visible = 1;
+                const user_object_flags flags{.inherit = desktop_object && desktop_object->inherit,
+                                              .reserved = FALSE,
+                                              .flags = (window_station && object.bits == interactive_window_station) ? wsf_visible : 0u};
                 return write(&flags, sizeof(flags));
             }
             case 2:

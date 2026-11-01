@@ -864,7 +864,6 @@ namespace sogen
         buffer.write(this->desktops);
         buffer.write(this->window_stations);
         buffer.write(this->process_window_station);
-        buffer.write(this->next_window_station_id);
         buffer.write(this->windows);
         buffer.write(this->menus);
         buffer.write(this->timers);
@@ -993,7 +992,6 @@ namespace sogen
         buffer.read(this->desktops);
         buffer.read(this->window_stations);
         buffer.read(this->process_window_station);
-        buffer.read(this->next_window_station_id);
         buffer.read(this->windows);
         buffer.read(this->menus);
         buffer.read(this->timers);
