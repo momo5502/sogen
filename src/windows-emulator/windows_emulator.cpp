@@ -1389,14 +1389,16 @@ namespace sogen
                 // return address so the missing function's call site can be identified.
                 if (x64 && address < 0x1000)
                 {
-                    const auto sp = x64->reg<uint32_t>(x86_register::esp);
-                    uint32_t return_address = 0;
-                    if (x64->try_read_memory(sp, &return_address, sizeof(return_address)))
+                    const auto is_32bit = is_32bit_code_segment(*x64);
+                    const uint64_t sp = is_32bit ? x64->reg<uint32_t>(x86_register::esp) : x64->read_stack_pointer();
+                    uint64_t return_address = 0;
+                    if (x64->try_read_memory(sp, &return_address, is_32bit ? sizeof(uint32_t) : sizeof(uint64_t)))
                     {
                         const auto* mod = this->mod_manager.find_by_address(return_address);
-                        this->log.error("Null-pointer call to 0x%llx; caller return address 0x%x (%s+0x%llx)\n",
-                                        static_cast<unsigned long long>(address), return_address, mod ? mod->name.c_str() : "?",
-                                        mod ? static_cast<unsigned long long>(return_address - mod->image_base) : return_address);
+                        this->log.error("Null-pointer call to 0x%llx; caller return address 0x%llx (%s+0x%llx)\n",
+                                        static_cast<unsigned long long>(address), static_cast<unsigned long long>(return_address),
+                                        mod ? mod->name.c_str() : "?",
+                                        static_cast<unsigned long long>(mod ? return_address - mod->image_base : return_address));
                     }
                 }
 
