@@ -173,9 +173,27 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority || info_class == ThreadAffinityMask ||
-                info_class == ThreadPriorityBoost || info_class == ThreadEnableAlignmentFaultFixup)
+            if (info_class == ThreadSchedulerSharedDataSlot || info_class == ThreadBasePriority || info_class == ThreadActualBasePriority ||
+                info_class == ThreadAffinityMask || info_class == ThreadPriorityBoost || info_class == ThreadEnableAlignmentFaultFixup)
             {
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == ThreadPowerThrottlingState)
+            {
+                // THREAD_POWER_THROTTLING_STATE: Version, ControlMask, StateMask. Throttling is only a scheduling hint.
+                constexpr ULONG state_size = 3 * sizeof(ULONG);
+                if (thread_information_length != state_size)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                constexpr ULONG current_version = 1;
+                if (emulator_object<ULONG>{c.emu, thread_information}.read() != current_version)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 return STATUS_SUCCESS;
             }
 
@@ -291,6 +309,24 @@ namespace sogen
                     }
                 }
 
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == ThreadIoPriority)
+            {
+                if (thread_information_length != sizeof(ULONG))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                // IO_PRIORITY_HINT stops at IoPriorityCritical.
+                const auto priority = emulator_object<ULONG>{c.emu, thread_information}.read();
+                if (priority > 4)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                thread->io_priority = priority;
                 return STATUS_SUCCESS;
             }
 
@@ -532,6 +568,40 @@ namespace sogen
                 const emulator_object<LARGE_INTEGER> info{c.emu, thread_information};
                 info.write({});
 
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == ThreadCycleTime)
+            {
+                if (return_length)
+                {
+                    return_length.write(sizeof(THREAD_CYCLE_TIME_INFORMATION));
+                }
+
+                if (thread_information_length != sizeof(THREAD_CYCLE_TIME_INFORMATION))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                // CPU cycles are not modeled; executed instructions are the closest measure.
+                const emulator_object<THREAD_CYCLE_TIME_INFORMATION> info{c.emu, thread_information};
+                info.write(THREAD_CYCLE_TIME_INFORMATION{.AccumulatedCycles = thread->executed_instructions, .CurrentCycleCount = 0});
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == ThreadIoPriority)
+            {
+                if (return_length)
+                {
+                    return_length.write(sizeof(ULONG));
+                }
+
+                if (thread_information_length != sizeof(ULONG))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                emulator_object<ULONG>{c.emu, thread_information}.write(thread->io_priority);
                 return STATUS_SUCCESS;
             }
 
