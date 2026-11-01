@@ -112,6 +112,19 @@ namespace sogen::test
         EXPECT_TRUE(this->emu->memory.release_memory(address, 0));
     }
 
+    TEST_F(ActivationContextRequestTest, AcceptsLongPathPrefixedManifestAndAssemblyDirectory)
+    {
+        // Node.js loads native addons through a "\\?\"-prefixed path, and kernel32 forwards that
+        // spelling here when it probes the addon for a manifest.
+        this->write_string(0x38, u"\\\\?\\C:\\application\\program.exe", this->storage + 0x1000);
+        this->write_string(0xa0, u"\\\\?\\C:\\application", this->storage + 0x1200);
+        ASSERT_EQ(STATUS_SUCCESS, this->port->handle_request(*this->emu, this->request).status);
+        const auto address = emulator_object<uint64_t>{this->emu->memory, this->storage + 0x3000}.read();
+        ASSERT_NE(0, address);
+        EXPECT_EQ(0x78746341, (emulator_object<uint32_t>{this->emu->memory, address}.read()));
+        EXPECT_TRUE(this->emu->memory.release_memory(address, 0));
+    }
+
     TEST_F(ActivationContextRequestTest, MissingRequiredDependencyReturnsSxsFailureWithoutAllocating)
     {
         constexpr std::string_view manifest =

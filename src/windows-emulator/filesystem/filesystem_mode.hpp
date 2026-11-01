@@ -9,6 +9,7 @@ namespace sogen
     {
         read_only,
         read_write,
+        copy_on_write,
     };
 
     inline constexpr auto default_root_mode = filesystem_mode::read_only;
@@ -29,6 +30,11 @@ namespace sogen
         return std::nullopt;
     }
 
+    constexpr bool allows_writes(const filesystem_mode mode)
+    {
+        return mode != filesystem_mode::read_only;
+    }
+
     inline std::string_view to_string(const filesystem_mode mode)
     {
         switch (mode)
@@ -37,6 +43,8 @@ namespace sogen
             return "ro";
         case filesystem_mode::read_write:
             return "rw";
+        case filesystem_mode::copy_on_write:
+            return "cow";
         }
 
         throw std::runtime_error("Unknown filesystem mode");
