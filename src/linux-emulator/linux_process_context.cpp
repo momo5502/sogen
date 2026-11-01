@@ -383,7 +383,6 @@ namespace sogen
     {
         this->fds.serialize(buffer);
         buffer.write_map(this->directory_entries);
-        buffer.write_map(this->directory_offsets);
 
         buffer.write<uint64_t>(this->epoll_instances.size());
         for (const auto& [fd, instance] : this->epoll_instances)
@@ -420,7 +419,6 @@ namespace sogen
         posix_fd_table new_fds{};
         new_fds.deserialize(buffer);
         auto new_directory_entries = buffer.read_map<std::map<int, std::vector<linux_cached_dir_entry>>>();
-        auto new_directory_offsets = buffer.read_map<std::map<int, size_t>>();
 
         std::map<int, std::shared_ptr<linux_epoll_instance>> new_epoll_instances{};
         const auto epoll_count = buffer.read<uint64_t>();
@@ -453,7 +451,6 @@ namespace sogen
 
         this->fds = std::move(new_fds);
         this->directory_entries = std::move(new_directory_entries);
-        this->directory_offsets = std::move(new_directory_offsets);
         this->epoll_instances = std::move(new_epoll_instances);
         this->brk_base = new_brk_base;
         this->brk_current = new_brk_current;

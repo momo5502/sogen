@@ -40,7 +40,6 @@ namespace sogen
     {
         posix_fd_table fds{};
         std::map<int, std::vector<linux_cached_dir_entry>> directory_entries{};
-        std::map<int, size_t> directory_offsets{};
         std::map<int, std::shared_ptr<linux_epoll_instance>> epoll_instances{};
 
         uint64_t brk_base{};

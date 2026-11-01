@@ -112,7 +112,6 @@ namespace sogen
             fd.memory_file = std::make_shared<posix_memory_fd>();
             fd.memory_file->content = std::move(content);
             fd.flags = flags;
-            fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
             return fd;
         }
 
@@ -289,13 +288,20 @@ namespace sogen
         void init_directory_fd_state(linux_process_context& proc, const int fd, const std::filesystem::path& dir_path)
         {
             proc.directory_entries[fd] = build_cached_dir_entries(dir_path);
-            proc.directory_offsets[fd] = 0;
+        }
+
+        void copy_directory_entries(linux_process_context& proc, const int oldfd, const int newfd)
+        {
+            const auto entries = proc.directory_entries.find(oldfd);
+            if (entries != proc.directory_entries.end())
+            {
+                proc.directory_entries[newfd] = entries->second;
+            }
         }
 
         void cleanup_closed_fd(linux_process_context& proc, const int fd)
         {
             proc.directory_entries.erase(fd);
-            proc.directory_offsets.erase(fd);
             proc.epoll_instances.erase(fd);
 
             std::vector<linux_epoll_instance*> cleaned_instances{};
@@ -330,7 +336,13 @@ namespace sogen
                 return -1;
             }
             const auto result = proc.fds.dup_fd(oldfd, minimum_fd);
-            if (result >= 0 && duplicates_epoll)
+            if (result < 0)
+            {
+                return result;
+            }
+
+            copy_directory_entries(proc, oldfd, result);
+            if (duplicates_epoll)
             {
                 proc.epoll_instances[result] = epoll_instance;
             }
@@ -357,6 +369,11 @@ namespace sogen
             if (replaces_existing_fd)
             {
                 cleanup_closed_fd(proc, newfd);
+            }
+
+            if (oldfd != newfd)
+            {
+                copy_directory_entries(proc, oldfd, newfd);
             }
 
             if (duplicates_epoll)
@@ -957,7 +974,7 @@ namespace sogen
 
             auto new_fd = make_memory_file_fd(*resolved_guest, std::move(*content), flags);
 
-            const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+            const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
             write_linux_syscall_result(c, fd_num);
             return;
         }
@@ -997,9 +1014,8 @@ namespace sogen
             new_fd.guest_path = resolved_guest.value_or(std::string{});
             new_fd.flags = flags;
             new_fd.read_only_mapping = read_only_mapping;
-            new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
-            const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+            const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
             init_directory_fd_state(c.proc, fd_num, host_path);
             write_linux_syscall_result(c, fd_num);
             return;
@@ -1019,9 +1035,8 @@ namespace sogen
         new_fd.handle = handle;
         new_fd.flags = flags;
         new_fd.read_only_mapping = read_only_mapping;
-        new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
-        const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+        const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
         write_linux_syscall_result(c, fd_num);
     }
 
@@ -1201,7 +1216,7 @@ namespace sogen
 
             auto new_fd = make_memory_file_fd(*resolved_guest, std::move(*content), flags);
 
-            const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+            const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
             write_linux_syscall_result(c, fd_num);
             return;
         }
@@ -1241,9 +1256,8 @@ namespace sogen
             new_fd.guest_path = resolved_guest.value_or(std::string{});
             new_fd.flags = flags;
             new_fd.read_only_mapping = read_only_mapping;
-            new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
-            const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+            const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
             init_directory_fd_state(c.proc, fd_num, host_path);
             write_linux_syscall_result(c, fd_num);
             return;
@@ -1263,9 +1277,8 @@ namespace sogen
         new_fd.handle = handle;
         new_fd.flags = flags;
         new_fd.read_only_mapping = read_only_mapping;
-        new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
-        const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+        const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
         write_linux_syscall_result(c, fd_num);
     }
 
@@ -1606,10 +1619,10 @@ namespace sogen
             break;
         }
         case LINUX_F_GETFD:
-            write_linux_syscall_result(c, fd_entry->close_on_exec ? 1 : 0);
+            write_linux_syscall_result(c, c.proc.fds.is_close_on_exec(fd) ? 1 : 0);
             break;
         case LINUX_F_SETFD:
-            fd_entry->close_on_exec = (arg & 1) != 0;
+            c.proc.fds.set_close_on_exec(fd, (arg & 1) != 0);
             write_linux_syscall_result(c, 0);
             break;
         case LINUX_F_GETFL:
@@ -1849,7 +1862,7 @@ namespace sogen
         }
 
         auto& entries = entries_it->second;
-        auto& offset = c.proc.directory_offsets[fd];
+        auto& offset = fd_entry->directory_position;
 
         size_t written = 0;
 
