@@ -373,7 +373,7 @@ namespace sogen
                 }
                 else
                 {
-                    process.mouse_capture_window = 0;
+                    process.set_mouse_capture(0);
                 }
 
                 return {.window = top_level, .x = x, .y = y};
@@ -576,10 +576,10 @@ namespace sogen
             const auto is_ready = thread.is_thread_ready(win_emu);
             const auto has_pending_status = thread.pending_status.has_value();
             const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
-            const auto can_run_low_level_hook =
-                !is_ready && thread.message_wait_return_register.has_value() && win_emu.has_low_level_hook_work(thread.id);
+            const auto can_run_message_hook = !is_ready && thread.message_wait_return_register.has_value() &&
+                                              (win_emu.has_low_level_hook_work(thread.id) || thread.has_hooked_message(win_emu));
 
-            if (!is_ready && !force && !can_dispatch_apcs && !can_run_low_level_hook)
+            if (!is_ready && !force && !can_dispatch_apcs && !can_run_message_hook)
             {
                 return false;
             }
@@ -605,7 +605,7 @@ namespace sogen
                 thread.mark_as_ready(STATUS_USER_APC);
                 dispatch_next_apc(win_emu, vcpu, thread);
             }
-            else if (can_run_low_level_hook)
+            else if (can_run_message_hook)
             {
                 // The message syscall runs the hook first when it executes again.
                 thread.restart_message_wait(emu, win_emu.abi());
@@ -1389,14 +1389,16 @@ namespace sogen
                 // return address so the missing function's call site can be identified.
                 if (x64 && address < 0x1000)
                 {
-                    const auto sp = x64->reg<uint32_t>(x86_register::esp);
-                    uint32_t return_address = 0;
-                    if (x64->try_read_memory(sp, &return_address, sizeof(return_address)))
+                    const auto is_32bit = is_32bit_code_segment(*x64);
+                    const uint64_t sp = is_32bit ? x64->reg<uint32_t>(x86_register::esp) : x64->read_stack_pointer();
+                    uint64_t return_address = 0;
+                    if (x64->try_read_memory(sp, &return_address, is_32bit ? sizeof(uint32_t) : sizeof(uint64_t)))
                     {
                         const auto* mod = this->mod_manager.find_by_address(return_address);
-                        this->log.error("Null-pointer call to 0x%llx; caller return address 0x%x (%s+0x%llx)\n",
-                                        static_cast<unsigned long long>(address), return_address, mod ? mod->name.c_str() : "?",
-                                        mod ? static_cast<unsigned long long>(return_address - mod->image_base) : return_address);
+                        this->log.error("Null-pointer call to 0x%llx; caller return address 0x%llx (%s+0x%llx)\n",
+                                        static_cast<unsigned long long>(address), static_cast<unsigned long long>(return_address),
+                                        mod ? mod->name.c_str() : "?",
+                                        static_cast<unsigned long long>(mod ? return_address - mod->image_base : return_address));
                     }
                 }
 

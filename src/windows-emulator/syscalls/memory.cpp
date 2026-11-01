@@ -182,6 +182,12 @@ namespace sogen
                                              const uint32_t info_class, const uint64_t memory_information,
                                              const uint64_t memory_information_length, const emulator_object<uint64_t> return_length)
         {
+            if (info_class >= MaxMemoryInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtQueryVirtualMemory info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;

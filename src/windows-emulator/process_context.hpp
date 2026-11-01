@@ -641,6 +641,8 @@ namespace sogen
         uint32_t registry_display_height{default_display_height};
 
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
+        void set_mouse_capture(hwnd window);
+        void release_mouse_capture(hwnd window);
         handle_store<handle_types::event, event> events{};
         handle_store<handle_types::file, file> files{};
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
