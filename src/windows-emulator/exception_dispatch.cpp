@@ -449,9 +449,14 @@ namespace sogen
 
     void dispatch_exception_record(windows_emulator& win_emu, vcpu_context& vcpu, exception_record record, const arm64_context& ctx)
     {
+        auto& cpu = vcpu.arm64_cpu_ref();
+
         // A chained record is a guest pointer here, which the dispatcher would read as a host one.
         record.ExceptionRecord = 0;
-        dispatch_arm64_exception(win_emu, vcpu.arm64_cpu_ref(), record, ctx);
+
+        // The kernel builds the dispatcher frame below the raising context's stack, not the syscall's.
+        cpu.reg(arm64_register::sp, ctx.Sp);
+        dispatch_arm64_exception(win_emu, cpu, record, ctx);
     }
 
     void dispatch_access_violation(windows_emulator& win_emu, vcpu_context& vcpu, const uint64_t address, const memory_operation operation)
