@@ -65,7 +65,9 @@ namespace sogen
         uint32_t dpi96DialogBaseUnitHeight;
         uint8_t pad_1410[0x73C];
         uint32_t asyncKeyStateGeneration;
-        uint8_t pad_1b50[0x6];
+        // user32's GetCapture only asks win32k for the capture window while this is nonzero.
+        uint32_t captureCount;
+        uint8_t pad_1b54[0x2];
         uint16_t systemDpi;
         uint8_t pad_1b58[0x286];
         uint64_t foregroundWindow;
@@ -81,6 +83,7 @@ namespace sogen
     static_assert(offsetof(USER_SERVERINFO, defaultFontHeightScale) == 0x138C);
     static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
     static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitWidth) == 0x1408);
+    static_assert(offsetof(USER_SERVERINFO, captureCount) == 0x1B50);
     static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitHeight) == 0x140C);
     static_assert(offsetof(USER_SERVERINFO, asyncKeyStateGeneration) == 0x1B4C);
     static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);

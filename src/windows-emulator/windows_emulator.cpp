@@ -373,7 +373,7 @@ namespace sogen
                 }
                 else
                 {
-                    process.mouse_capture_window = 0;
+                    process.set_mouse_capture(0);
                 }
 
                 return {.window = top_level, .x = x, .y = y};
