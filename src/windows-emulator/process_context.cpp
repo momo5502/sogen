@@ -1285,6 +1285,11 @@ namespace sogen
         }
 
         active_thread = this->threads.get(buffer.read<uint64_t>());
+
+        for (auto& entry : this->mutants | std::views::values)
+        {
+            entry.adopt_restored_lock(this->process_id);
+        }
     }
 
     void process_context::prepare_for_state_restore(windows_emulator& win_emu)

@@ -889,10 +889,12 @@ namespace sogen
                 return;
             }
 
-            current.locked_count = 0;
+            // Abandoned goes first: a process that dies between the stores must not leave a free mutant that nobody
+            // reports as abandoned, which recovery cannot repair because it only acts on a held count.
+            current.abandoned = 1;
             current.owner = 0;
             current.owner_host_process = 0;
-            current.abandoned = 1;
+            current.locked_count = 0;
         }
 
         template <typename Function>
@@ -1022,17 +1024,18 @@ namespace sogen
                     return;
                 }
 
-                --current.locked_count;
-                if (current.locked_count == 0)
+                if (was_abandoned)
+                {
+                    current.abandoned = 1;
+                }
+
+                if (current.locked_count == 1)
                 {
                     current.owner = 0;
                     current.owner_host_process = 0;
                 }
 
-                if (was_abandoned)
-                {
-                    current.abandoned = 1;
-                }
+                --current.locked_count;
             });
         }
 
@@ -1043,6 +1046,29 @@ namespace sogen
                 {
                     abandon(current);
                 }
+            });
+        }
+
+        // A restored lock belongs to this emulator again only when its owner is one of this process's threads.
+        // Anything else, such as a mutant a child held when the parent saved its state, has no thread left that could
+        // release it, so it comes back abandoned, as Windows reports an owner that is gone. Called once the process id
+        // is known, which is read after the mutants.
+        void adopt_restored_lock(const uint32_t process_id)
+        {
+            this->access([&](state& current) {
+                if (current.locked_count == 0)
+                {
+                    current.owner_host_process = 0;
+                    return;
+                }
+
+                if ((current.owner >> 32) == process_id)
+                {
+                    current.owner_host_process = utils::current_host_process_id();
+                    return;
+                }
+
+                abandon(current);
             });
         }
 
@@ -1083,10 +1109,7 @@ namespace sogen
             buffer.read(this->local_.abandoned);
             buffer.read(this->name);
             this->shared.reset();
-
-            // A restored mutant that is still locked is owned by this emulator again, so its host owner is this
-            // process. Leaving it at 0 would make share() publish a locked mutant nobody can ever abandon.
-            this->local_.owner_host_process = this->local_.locked_count > 0 ? utils::current_host_process_id() : 0;
+            this->local_.owner_host_process = 0;
         }
     };
 

@@ -217,9 +217,11 @@ namespace sogen
             switch (h.value.type)
             {
             case handle_types::event:
+                // Only a synchronization event is reset by taking it; consuming a notification event changes
+                // nothing, so re-signaling one would undo another process's reset.
                 if (!h.value.is_pseudo)
                 {
-                    if (auto* event = c.events.get(h))
+                    if (auto* event = c.events.get(h); event && event->type == SynchronizationEvent)
                     {
                         event->set_signaled(true);
                     }
