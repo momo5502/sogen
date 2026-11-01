@@ -738,6 +738,15 @@ namespace sogen
         this->message_wait_return_register = abi.return_value(emu);
     }
 
+    // A WH_GETMESSAGE hook sees a message before GetMessage returns it, so a waiting GetMessage runs again instead of
+    // being completed by the scheduler.
+    bool emulator_thread::has_hooked_message(windows_emulator& win_emu)
+    {
+        return this->get_message_hook && this->await_msg &&
+               this->peek_pending_message(win_emu, this->await_msg->hwnd_filter, this->await_msg->filter_min, this->await_msg->filter_max)
+                   .has_value();
+    }
+
     // A parked thread resumes right after its syscall instruction.
     void emulator_thread::restart_message_wait(cpu_interface& emu, const windows_arch_abi& abi)
     {
@@ -1407,6 +1416,11 @@ namespace sogen
 
         if (this->await_msg.has_value())
         {
+            if (this->get_message_hook)
+            {
+                return false;
+            }
+
             if (const auto m = this->peek_pending_message(win_emu, this->await_msg->hwnd_filter, this->await_msg->filter_min,
                                                           this->await_msg->filter_max, true))
             {

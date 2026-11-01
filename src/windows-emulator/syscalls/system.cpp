@@ -16,6 +16,9 @@ namespace sogen
 
             constexpr uint64_t wow64_large_address_aware_maximum = 0xFFFEFFFF;
 
+            // Windows 11 26200 still answers class 0x100, one past the last class SYSTEM_INFORMATION_CLASS names.
+            constexpr uint32_t last_system_information_class = 0x100;
+
             NTSTATUS handle_system_memory_usage_information(const syscall_context& c, const uint32_t info_class,
                                                             const uint64_t system_information, const uint32_t system_information_length,
                                                             const emulator_object<uint32_t> return_length)
@@ -264,7 +267,18 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
-                c.win_emu.log.error("Unsupported processor relationship: 0x%X\n", request);
+                c.win_emu.log.error("Unsupported processor relationship: 0x%X\n", static_cast<uint32_t>(request));
+
+                if (static_cast<uint32_t>(request) > RelationProcessorModule)
+                {
+                    if (return_length)
+                    {
+                        return_length.write(0);
+                    }
+
+                    return STATUS_UNSUCCESSFUL;
+                }
+
                 c.emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }
@@ -523,6 +537,12 @@ namespace sogen
                                                    const uint32_t input_buffer_length, const uint64_t system_information,
                                                    const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
         {
+            if (info_class > last_system_information_class)
+            {
+                c.win_emu.log.error("Unsupported NtQuerySystemInformation(Ex) info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             switch (info_class)
             {
             case SystemBasicProcessInformation:
