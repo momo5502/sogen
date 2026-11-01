@@ -1,5 +1,7 @@
 #include "host_process.hpp"
 
+#include <utility>
+
 #ifdef _WIN32
 #include "win.hpp"
 #else
@@ -21,30 +23,77 @@ namespace sogen::utils
 
     bool host_process_alive(const uint32_t process_id)
     {
-        if (process_id == 0)
+        return host_process_watch{process_id}.alive();
+    }
+
+    host_process_watch::host_process_watch(const uint32_t process_id)
+        : process_id_(process_id)
+    {
+#ifdef _WIN32
+        if (process_id != 0 && process_id != current_host_process_id())
+        {
+            this->handle_ = ::OpenProcess(SYNCHRONIZE, FALSE, process_id);
+        }
+#endif
+    }
+
+    host_process_watch::~host_process_watch()
+    {
+        this->release();
+    }
+
+    host_process_watch::host_process_watch(host_process_watch&& obj) noexcept
+    {
+        *this = std::move(obj);
+    }
+
+    host_process_watch& host_process_watch::operator=(host_process_watch&& obj) noexcept
+    {
+        if (this != &obj)
+        {
+            this->release();
+            this->process_id_ = std::exchange(obj.process_id_, 0);
+            this->handle_ = std::exchange(obj.handle_, nullptr);
+        }
+
+        return *this;
+    }
+
+    void host_process_watch::release()
+    {
+#ifdef _WIN32
+        if (this->handle_)
+        {
+            ::CloseHandle(this->handle_);
+        }
+#endif
+        this->handle_ = nullptr;
+        this->process_id_ = 0;
+    }
+
+    bool host_process_watch::alive() const
+    {
+        if (this->process_id_ == 0)
         {
             return false;
         }
 
-        if (process_id == current_host_process_id())
+        if (this->process_id_ == current_host_process_id())
         {
             return true;
         }
 
 #ifdef _WIN32
-        auto* process = ::OpenProcess(SYNCHRONIZE, FALSE, process_id);
-        if (!process)
+        if (!this->handle_)
         {
             // Another user's process is alive but not ours to open; only a missing one is gone for good.
             return ::GetLastError() != ERROR_INVALID_PARAMETER;
         }
 
-        const auto alive = ::WaitForSingleObject(process, 0) == WAIT_TIMEOUT;
-        ::CloseHandle(process);
-        return alive;
+        return ::WaitForSingleObject(this->handle_, 0) == WAIT_TIMEOUT;
 #else
         // A zombie still answers here, which is correct: it has not been reaped, so its state is not up for grabs.
-        return ::kill(static_cast<pid_t>(process_id), 0) == 0 || errno != ESRCH;
+        return ::kill(static_cast<pid_t>(this->process_id_), 0) == 0 || errno != ESRCH;
 #endif
     }
 }

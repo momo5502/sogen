@@ -83,9 +83,11 @@ namespace sogen
             } const unlock{lock};
 
             // An owner whose emulator is gone never releases, so its ownership is handed on as abandoned, which is
-            // what Windows reports when the owning process dies.
-            if (state.values.locked_count > 0 && state.values.owner_host_process != 0 &&
-                !utils::host_process_alive(state.values.owner_host_process))
+            // what Windows reports when the owning process dies. Only another process's ownership is checked, and
+            // the watch is opened once per owner, so the check this is reached by on every readiness pass costs a
+            // single call rather than opening and closing a process handle each time.
+            if (state.values.locked_count > 0 && state.values.owner_host_process != 0 && state.values.owner_host_process != self &&
+                !this->owner_is_alive(state.values.owner_host_process))
             {
                 // The order matters because any of these stores can be the last one a dying process makes: abandoned
                 // first, so a free mutant is never left unreported, then the count, so a held count always still has
@@ -105,6 +107,18 @@ namespace sogen
             alignas(8) uint32_t lock;
             fields values;
         };
+
+        bool owner_is_alive(const uint32_t process_id) const
+        {
+            if (this->owner_watch_.process_id() != process_id)
+            {
+                this->owner_watch_ = utils::host_process_watch{process_id};
+            }
+
+            return this->owner_watch_.alive();
+        }
+
+        mutable utils::host_process_watch owner_watch_{};
 
         utils::shared_host_buffer buffer_{};
 
