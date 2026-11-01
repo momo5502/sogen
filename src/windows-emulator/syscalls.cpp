@@ -1100,8 +1100,11 @@ namespace sogen
             {
                 if (performance_counter)
                 {
+                    // With the reference TSC page this is the value ntdll computes from it in user mode, from the same TSC.
+                    const auto tsc = c.proc.kusd.reference_tsc_page() ? c.emu.read_native_timestamp_counter() : std::nullopt;
                     performance_counter.access([&](LARGE_INTEGER& value) {
-                        value.QuadPart = c.win_emu.clock().steady_now().time_since_epoch().count(); //
+                        value.QuadPart = tsc ? static_cast<LONGLONG>(c.proc.kusd.query_performance_counter(*tsc))
+                                             : c.win_emu.clock().steady_now().time_since_epoch().count();
                     });
                 }
 

@@ -334,7 +334,7 @@ namespace sogen
             this->gdt_base = setup_gdt(win_emu.x64_emu(), win_emu.memory);
         }
 
-        this->kusd.setup(version, fake_env);
+        this->kusd.setup(version, fake_env, win_emu.native_timestamp_counter_frequency());
 
         if (auto* arm64 = dynamic_cast<arm64_cpu*>(&emu.get_guest_cpu(0)))
         {

@@ -1265,6 +1265,11 @@ namespace sogen::whp
                 return true;
             }
 
+            std::optional<uint64_t> read_native_timestamp_counter() override
+            {
+                return this->get_register(WHvX64RegisterTsc).Reg64;
+            }
+
             WHV_REGISTER_VALUE get_register(const WHV_REGISTER_NAME name) const
             {
                 WHV_REGISTER_VALUE value{};
@@ -2038,6 +2043,19 @@ namespace sogen::whp
             bool supports_native_timestamp_counter() const override
             {
                 return true;
+            }
+
+            std::optional<uint64_t> native_timestamp_counter_frequency() const override
+            {
+                UINT64 frequency{};
+                UINT32 bytes_written{};
+                if (FAILED(WHvGetCapability(WHvCapabilityCodeProcessorClockFrequency, &frequency, sizeof(frequency), &bytes_written)) ||
+                    frequency == 0)
+                {
+                    return std::nullopt;
+                }
+
+                return frequency;
             }
 
             bool supports_global_memory_execution_hooks() const override
