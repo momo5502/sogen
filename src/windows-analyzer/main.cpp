@@ -569,17 +569,34 @@ namespace sogen
         }
 
         // Under a hypervisor, precision turns every guest instruction into a VM exit, so it has to be asked for there.
-        // Reproducible runs keep it: their clock advances with the executed instruction count.
-        bool uses_instruction_precision(const analysis_options& options)
+        // Reproducible runs keep it: their clock advances with the executed instruction count. Without --backend the
+        // backend comes from the environment, and which environment answers depends on the guest machine, so a run
+        // whose machine is not known yet keeps precision.
+        bool uses_instruction_precision(const analysis_options& options, const std::optional<PEMachineType> machine)
         {
-            return options.instruction_precision.value_or(options.reproducible || options.backend != backend_type::hvf);
+            if (options.instruction_precision)
+            {
+                return *options.instruction_precision;
+            }
+
+            if (options.reproducible || !machine)
+            {
+                return true;
+            }
+
+            const auto backend = options.backend                                     ? *options.backend
+                                 : get_machine_type(*machine) == machine_type::arm64 ? get_arm64_emulator_backend_from_environment()
+                                                                                     : get_x86_64_emulator_backend_from_environment();
+
+            return backend != backend_type::hvf;
         }
 
-        emulator_settings create_emulator_settings(const analysis_options& options)
+        emulator_settings create_emulator_settings(const analysis_options& options,
+                                                   const std::optional<PEMachineType> machine = std::nullopt)
         {
             return {
                 .use_relative_time = options.reproducible,
-                .use_instruction_precision = uses_instruction_precision(options),
+                .use_instruction_precision = uses_instruction_precision(options, machine),
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
                 .root_mode = options.root_mode,
@@ -666,7 +683,7 @@ namespace sogen
         std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options, emulator_interfaces interfaces = {},
                                                                 const PEMachineType machine = PEMachineType::AMD64)
         {
-            const auto settings = create_emulator_settings(options);
+            const auto settings = create_emulator_settings(options, machine);
             return std::make_unique<windows_emulator>(create_configured_backend(options, machine), settings, emulator_callbacks{},
                                                       std::move(interfaces));
         }
@@ -676,8 +693,8 @@ namespace sogen
                                                                       emulator_interfaces interfaces = {})
         {
             auto app_settings = create_application_settings(options, args);
-            const auto settings = create_emulator_settings(options);
-            const auto machine = get_application_machine(settings, app_settings);
+            const auto machine = get_application_machine(create_emulator_settings(options), app_settings);
+            const auto settings = create_emulator_settings(options, machine);
             return std::make_unique<windows_emulator>(create_configured_backend(options, machine), std::move(app_settings), settings,
                                                       emulator_callbacks{}, std::move(interfaces));
         }

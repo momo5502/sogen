@@ -2,9 +2,12 @@
 #include <memory_manager.hpp>
 
 #include <gtest/gtest.h>
+#include <platform/compiler.hpp>
 #include <utils/finally.hpp>
 
+#ifdef OS_MAC
 #include <sys/mman.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -688,6 +691,8 @@ namespace sogen::test
         EXPECT_EQ(machine->reg(arm64_register::wvr0), data_address);
     }
 
+#ifdef OS_MAC
+    // MAP_JIT, and the rule this checks, exist only on Apple platforms.
     TEST_F(Arm64BackendTest, HostMemoryBacksGuestPagesOnlyWhenItIsNotExecutable)
     {
         if (machine->get_name() != "hvf-arm64")
@@ -730,6 +735,7 @@ namespace sogen::test
         machine->start();
         EXPECT_EQ(machine->reg(arm64_register::x0), value);
     }
+#endif
 
     namespace
     {

@@ -1639,17 +1639,18 @@ namespace sogen::hvf
                 }
             }
 
-            // A vCPU entering while a peer refreshes the pages skips its own refresh: the pages are brought up to
-            // date as it enters either way.
+            // A vCPU entering while a peer refreshes the pages waits for that copy to finish, so it never enters on
+            // half-copied pages, and then skips its own: the peer's copy is as fresh as the one it would make.
             void refresh_mmio()
             {
                 if (!has_mmio_.load(std::memory_order_relaxed))
                 {
                     return;
                 }
-                const std::unique_lock writer(mmio_mutex_, std::try_to_lock);
+                std::unique_lock writer(mmio_mutex_, std::try_to_lock);
                 if (!writer.owns_lock())
                 {
+                    writer.lock();
                     return;
                 }
                 const std::shared_lock lock(state_mutex_);
