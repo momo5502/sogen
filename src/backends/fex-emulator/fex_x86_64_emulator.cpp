@@ -1786,13 +1786,6 @@ namespace sogen::fex
 
     class fex_x86_64_emulator final : public x86_64_emulator
     {
-        struct callret_buffer_record
-        {
-            void* allocation_base = nullptr;
-            size_t allocation_size = 0;
-            uint64_t code_buffer_generation = 0;
-        };
-
       public:
         explicit fex_x86_64_emulator(const bool in_hypervisor = false)
             : hypervisor_(in_hypervisor)
@@ -1897,37 +1890,28 @@ namespace sogen::fex
             return this->vcpu_.write_raw_register(reg, value, size);
         }
 
-        std::vector<std::byte> save_registers() const override
-        {
-            return this->vcpu_.save_registers();
-        }
-
-        // Preserves the fields that are per-FEXCore-thread-global rather than per-logical-guest-thread:
-        // FEXCore rewrites L1Pointer/L1Mask itself whenever the JIT lookup cache reallocates, so the
-        // live values are always the correct ones and a stale snapshot must not clobber them. The
-        // segment_arrays point at the process-wide descriptor tables that load_gdt installs.
-        // callret_sp/_pad1 are handled by ensure_callret_buffer.
+        // Saved states hold no host pointers (see save_registers), so the host-side fields stay those of the live
+        // thread: FEXCore rewrites L1Pointer/L1Mask when the lookup cache reallocates, segment_arrays point at the
+        // descriptor tables load_gdt installs, InlineJITBlockHeader is the block running now, and the call-ret stack
+        // is shared (see reset_callret_stack).
         void restore_state_into(FEXCore::Core::InternalThreadState* thread, const FEXCore::Core::CPUState& restored)
         {
             auto& state = thread->CurrentFrame->State;
             const auto l1_pointer = state.L1Pointer;
             const auto l1_mask = state.L1Mask;
             const auto segment_arrays = std::to_array(state.segment_arrays);
+            const auto block_header = state.InlineJITBlockHeader;
             std::memcpy(&state, &restored, sizeof(state));
             state.L1Pointer = l1_pointer;
             state.L1Mask = l1_mask;
             std::ranges::copy(segment_arrays, std::begin(state.segment_arrays));
-            this->ensure_callret_buffer(thread, state);
-            thread->CallRetStackBase = reinterpret_cast<void*>(state._pad1);
+            state.InlineJITBlockHeader = block_header;
+            this->reset_callret_stack(state);
+        }
 
-            auto& buffer = this->callret_buffers_.at(state._pad1);
-            if (buffer.code_buffer_generation != thread->CodeBufferGeneration)
-            {
-                constexpr size_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
-                FEXCore::Allocator::VirtualDontNeed(thread->CallRetStackBase, callret_stack_size);
-                state.callret_sp = state._pad1 + callret_stack_size / 4;
-                buffer.code_buffer_generation = thread->CodeBufferGeneration;
-            }
+        std::vector<std::byte> save_registers() const override
+        {
+            return this->vcpu_.save_registers();
         }
 
         void restore_registers(const std::vector<std::byte>& register_data) override
@@ -4492,6 +4476,41 @@ namespace sogen::fex
         }
 #endif
 
+        // FEXCore's call-ret shadow stack holds <guest return RIP, host PC> pairs that RET only follows when the guest
+        // RIP matches, and FEXCore clears it whenever the code it points at goes away. The logical guest threads can
+        // therefore share one: a thread that is switched in starts at the default location, like a new FEXCore thread
+        // (ThreadManager::GetCallRetStackInfo's Base + size/4). FEXCore leaves allocating it to the embedder.
+        void reset_callret_stack(FEXCore::Core::CPUState& state)
+        {
+            constexpr size_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
+            if (this->callret_allocation_ == nullptr)
+            {
+                // Guard pages on both sides, sized to the real host page so mprotect can't spill onto the guard. Through
+                // FEXCore::Allocator::mmap so that on Apple it lands in the guest-excluded fex_internal_arena: the JIT
+                // pushes through callret_sp with no bounds check, so it must never alias guest memory.
+                const auto host_page = static_cast<size_t>(::getpagesize());
+                const size_t allocation_size = callret_stack_size + 2 * host_page;
+                void* allocation = FEXCore::Allocator::mmap(nullptr, allocation_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                if (allocation == MAP_FAILED)
+                {
+                    throw std::runtime_error("FEX backend failed to allocate the call-ret stack");
+                }
+
+                auto* stack_base = static_cast<uint8_t*>(allocation) + host_page;
+                if (::mprotect(stack_base, callret_stack_size, PROT_READ | PROT_WRITE) != 0)
+                {
+                    FEXCore::Allocator::munmap(allocation, allocation_size);
+                    throw std::runtime_error("FEX backend failed to make the call-ret stack writable");
+                }
+
+                this->callret_allocation_ = allocation;
+                this->callret_allocation_size_ = allocation_size;
+                this->vcpu_.thread_->CallRetStackBase = stack_base;
+            }
+
+            state.callret_sp = reinterpret_cast<uint64_t>(this->vcpu_.thread_->CallRetStackBase) + callret_stack_size / 4;
+        }
+
         void defer_hook_dispatch(ucontext_t* context, const pending_fault_dispatch& dispatch, bool state_already_spilled)
         {
             this->pending_fault_dispatch_ = dispatch;
@@ -5220,7 +5239,7 @@ namespace sogen::fex
             // FEXCore's core does not set up the call-ret shadow stack; on Linux that is embedder glue
             // in ThreadManager::CreateThread, replicated here. Without it the first x86 CALL in compiled
             // code dereferences a null callret_sp and crashes.
-            this->ensure_callret_stack(vcpu.thread_, vcpu.thread_->CurrentFrame->State);
+            this->reset_callret_stack(vcpu.thread_->CurrentFrame->State);
 
 #if SOGEN_FEX_HYPERVISOR
             if (this->hypervisor_)
@@ -5236,61 +5255,6 @@ namespace sogen::fex
             g_original_exit_function_link = vcpu.thread_->CurrentFrame->Pointers.ExitFunctionLink;
             vcpu.thread_->CurrentFrame->Pointers.ExitFunctionLink = reinterpret_cast<uint64_t>(&exit_function_link_jit_write_wrapper);
 #endif
-        }
-
-        // FEXCore's call-ret shadow stack has no notion of "logical guest thread" - callret_sp is just a
-        // raw pointer into whatever host buffer this sets up. sogen models logical guest threads as
-        // CPUState snapshots swapped in and out of one FEXCore thread, so a shared buffer would let one
-        // logical thread's pushes corrupt the pending frames of another suspended mid-call-chain. Each
-        // gets its own, identified by state._pad1, the unused CPUState padding right after callret_sp,
-        // doubling as a marker: 0 means this snapshot has never been assigned one, non-zero is the
-        // buffer's base, safe to reuse since it round-trips with the rest of the snapshot. Callers point
-        // InternalThreadState::CallRetStackBase at it themselves.
-        void ensure_callret_buffer(FEXCore::Core::InternalThreadState* thread, FEXCore::Core::CPUState& state)
-        {
-            if (state._pad1 == 0)
-            {
-                // Guard pages on both sides, sized to the real host page (getpagesize(), not the
-                // guest's fixed 4KB) so mprotect can't spill onto the guard.
-                const size_t host_page = static_cast<size_t>(::getpagesize());
-                constexpr size_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
-                const size_t callret_alloc_size = callret_stack_size + 2 * host_page;
-
-                // Routed through FEXCore::Allocator::mmap rather than raw ::mmap so that on Apple it
-                // hits the fex_internal_arena hook and lands inside the guest-excluded arena. The JIT
-                // consumes callret_sp as a plain host pointer, so a buffer aliasing the live guest stack
-                // would let a host-side push/pop scribble guest memory with no guest instruction
-                // involved. On Linux the hook defaults to raw ::mmap, so behavior there is unchanged.
-                void* alloc_base = FEXCore::Allocator::mmap(nullptr, callret_alloc_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-                if (alloc_base == MAP_FAILED)
-                {
-                    throw std::runtime_error("FEX backend failed to allocate the call-ret stack");
-                }
-
-                auto* callret_stack_base = static_cast<uint8_t*>(alloc_base) + host_page;
-                if (::mprotect(callret_stack_base, callret_stack_size, PROT_READ | PROT_WRITE) != 0)
-                {
-                    throw std::runtime_error("FEX backend failed to make the call-ret stack writable");
-                }
-
-                state._pad1 = reinterpret_cast<uint64_t>(callret_stack_base);
-                // Leave headroom for underflows without hitting the guard page immediately, matching
-                // ThreadManager::GetCallRetStackInfo's DefaultLocation (Base + size/4).
-                state.callret_sp = reinterpret_cast<uint64_t>(callret_stack_base) + callret_stack_size / 4;
-
-                this->callret_buffers_.emplace(state._pad1, callret_buffer_record{
-                                                                .allocation_base = alloc_base,
-                                                                .allocation_size = callret_alloc_size,
-                                                                .code_buffer_generation = thread->CodeBufferGeneration,
-                                                            });
-            }
-        }
-
-        // Ensures the thread's call-ret buffer exists and points CallRetStackBase at it.
-        void ensure_callret_stack(FEXCore::Core::InternalThreadState* thread, FEXCore::Core::CPUState& state)
-        {
-            this->ensure_callret_buffer(thread, state);
-            thread->CallRetStackBase = reinterpret_cast<void*>(state._pad1);
         }
 
         static void invalidate_code_range_in(FEXCore::Context::Context* context, FEXCore::Core::InternalThreadState* thread,
@@ -5383,12 +5347,8 @@ namespace sogen::fex
         // Bringing a stale chunk up to date only changes host protections and caches, which reads do as well.
         mutable std::map<uint64_t, tracked_range> tracked_ranges_;
 
-        // Every per-logical-thread call-ret buffer ever allocated by ensure_callret_buffer, so the
-        // destructor can release them - these live outside regions_ (host allocator space, not the
-        // guest address space) and outlive any individual CPUState snapshot they were allocated for.
-        std::unordered_map<uint64_t, callret_buffer_record> callret_buffers_;
-        uint64_t instance_id_{std::random_device{}() | (static_cast<uint64_t>(std::random_device{}()) << 32)};
-
+        // The call-ret shadow stack the logical guest threads share, released by the destructor: it lives
+        // outside regions_ (host allocator space, not the guest address space).
         void* callret_allocation_{};
         size_t callret_allocation_size_{};
 
@@ -5714,42 +5674,36 @@ namespace sogen::fex
         this->emulator_.run(*this, count);
     }
 
-    // The whole architectural state lives in a single CPUState struct, followed by the id of the emulator it came from.
+    // The whole architectural state lives in a single CPUState struct. Its host-side fields are cleared, so a saved
+    // state is the same in every process and restore_state_into keeps the live ones.
     std::vector<std::byte> fex_vcpu::save_registers() const
     {
-        const auto& state = this->cpu_state();
-        std::vector<std::byte> data(sizeof(FEXCore::Core::CPUState) + sizeof(this->emulator_.instance_id_));
+        FEXCore::Core::CPUState state{};
+        std::memcpy(&state, &this->cpu_state(), sizeof(state));
+        state.L1Pointer = 0;
+        state.L1Mask = 0;
+        std::ranges::fill(state.segment_arrays, nullptr);
+        state.InlineJITBlockHeader = 0;
+        state.callret_sp = 0;
+
+        std::vector<std::byte> data(sizeof(state));
         std::memcpy(data.data(), &state, sizeof(state));
-        std::memcpy(data.data() + sizeof(state), &this->emulator_.instance_id_, sizeof(this->emulator_.instance_id_));
         return data;
     }
 
     void fex_vcpu::restore_registers(const std::vector<std::byte>& register_data)
     {
         FEXCore::Core::CPUState restored{};
-        uint64_t instance_id{};
-        if (register_data.size() != sizeof(restored) + sizeof(instance_id))
+        if (register_data.size() != sizeof(restored))
         {
             throw std::runtime_error("FEX register snapshot has unexpected size");
         }
 
         std::memcpy(&restored, register_data.data(), sizeof(restored));
-        std::memcpy(&instance_id, register_data.data() + sizeof(restored), sizeof(instance_id));
-
-        // The call-ret buffer, descriptor tables and JIT blocks are host memory of the emulator that saved the state,
-        // so a state from a saved process gets its own.
-        if (instance_id != this->emulator_.instance_id_)
-        {
-            restored._pad1 = 0;
-            restored.callret_sp = 0;
-            restored.InlineJITBlockHeader = 0;
-        }
 
         if (this->thread_ == nullptr)
         {
-            // No thread yet: writing into staged_state_, which create_thread() will seed the
-            // real thread from (including installing L1Pointer/L1Mask/callret_sp correctly
-            // itself afterward).
+            // create_thread() seeds the thread from staged_state_ and installs the host-side fields itself.
             const auto segment_arrays = std::to_array(this->staged_state_.segment_arrays);
             std::memcpy(&this->staged_state_, &restored, sizeof(restored));
             std::ranges::copy(segment_arrays, std::begin(this->staged_state_.segment_arrays));

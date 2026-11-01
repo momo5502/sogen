@@ -52,9 +52,8 @@ inside this process, treating guest virtual addresses as host virtual addresses 
 - A WoW64 process's low 4GiB is backed by a separate 4GiB host window, and FEX rebases every guest
   access below 4GiB into it, since the host may already use that range (Android's ART heap) or cannot
   map it at all (Darwin's `__PAGEZERO`). Host memory aliased below 4GiB is mapped a second time inside
-  the window instead of appearing at its own address. On Linux the window is reserved when the first
-  WoW64 process starts; on macOS only the hypervisor mode (`--backend hvf`) reserves it, so plain FEX
-  there still rejects WoW64 processes.
+  the window instead of appearing at its own address. The window is reserved when the first WoW64
+  process starts.
 
 ## Architecture
 
