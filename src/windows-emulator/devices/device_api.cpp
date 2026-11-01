@@ -247,15 +247,140 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // PiCMGetDeviceInterfaceList. The emulator has no device interfaces, just as it has no devices, so every class
-            // gets the list IopGetDeviceInterfaces builds when nothing matches, a lone terminator, for any device ID
-            // RtlInitUnicodeStringEx takes. A size query's 20-byte buffer has no room for it, so it learns the size from a
-            // STATUS_BUFFER_TOO_SMALL reply.
+            // PnpStringFromGuid: the class's key name under Control\DeviceClasses.
+            static std::u16string device_class_key_name(const std::array<uint8_t, 16>& guid)
+            {
+                uint32_t data1{};
+                uint16_t data2{};
+                uint16_t data3{};
+                memcpy(&data1, guid.data(), sizeof(data1));
+                memcpy(&data2, guid.data() + 4, sizeof(data2));
+                memcpy(&data3, guid.data() + 6, sizeof(data3));
+
+                std::array<char, 39> name{};
+                snprintf(name.data(), name.size(), "{%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}", data1, data2, data3, guid[8],
+                         guid[9], guid[10], guid[11], guid[12], guid[13], guid[14], guid[15]);
+                return u8_to_u16(name.data());
+            }
+
+            // CmDeviceClassesSubkeyCallback: each "##?#<device path>" key under the class key is an interface key, and each
+            // of its "#<reference string>" subkeys an interface. Its link swaps "##?#" for "\\?\" and appends
+            // "\<reference string>" when that is not empty.
+            static std::optional<std::u16string> device_interface_link(const std::u16string_view interface_key,
+                                                                       const std::u16string_view reference_key)
+            {
+                if (interface_key.size() <= 4 || !interface_key.starts_with(u"##?#") || !reference_key.starts_with(u"#"))
+                {
+                    return std::nullopt;
+                }
+
+                std::u16string link{u"\\\\?\\"};
+                link += interface_key.substr(4);
+                if (reference_key.size() > 1)
+                {
+                    link += u'\\';
+                    link += reference_key.substr(1);
+                }
+
+                return link;
+            }
+
+            // DEVPKEY_DeviceInterfaceClass_DefaultInterface in the class key's property store, when the class names one.
+            static std::optional<std::u16string> default_device_interface(windows_emulator& win_emu, const std::u16string& class_path)
+            {
+                constexpr uint32_t devprop_type_string = 0x12;
+                const auto key = win_emu.registry.get_key({class_path + u"\\Properties\\{14C83A99-0B3F-44B7-BE4C-A178D3990564}\\0002"});
+                const auto value = key ? win_emu.registry.get_value(*key, "") : std::nullopt;
+                if (!value || (value->type & 0xFFFF) != devprop_type_string || value->data.size() < sizeof(char16_t))
+                {
+                    return std::nullopt;
+                }
+
+                std::u16string link(value->data.size() / sizeof(char16_t), u'\0');
+                memcpy(link.data(), value->data.data(), link.size() * sizeof(char16_t));
+                if (const auto end = link.find(u'\0'); end != std::u16string::npos)
+                {
+                    link.resize(end);
+                }
+
+                return link.empty() ? std::nullopt : std::optional{std::move(link)};
+            }
+
+            // IopGetDeviceInterfaces for a user-mode caller: every interface of the class that matches, as NUL-terminated
+            // links with the class's default interface first, ending in an empty string. A device ID keeps the interfaces
+            // whose DeviceInstance names it. A present-only query keeps the interfaces the PnP manager has enabled
+            // (PiControlGetDeviceInterfaceEnabled); the emulator starts no devices, so it has enabled none.
+            static std::u16string device_interface_list(windows_emulator& win_emu, const std::array<uint8_t, 16>& interface_class,
+                                                        const std::u16string_view device_id, const bool present_only)
+            {
+                std::vector<std::u16string> links;
+                const auto class_path =
+                    u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\DeviceClasses\\" + device_class_key_name(interface_class);
+                const auto class_key = present_only ? std::nullopt : win_emu.registry.get_key({class_path});
+                for (size_t index = 0; class_key && index < win_emu.registry.get_sub_key_count(*class_key); ++index)
+                {
+                    const auto interface_name = win_emu.registry.get_sub_key_name(*class_key, index);
+                    if (!interface_name || !interface_name->starts_with("##?#"))
+                    {
+                        continue;
+                    }
+
+                    const auto interface_key_name = u8_to_u16(*interface_name);
+                    std::u16string interface_path{class_path};
+                    interface_path.append(u"\\").append(interface_key_name);
+                    const auto interface_key = win_emu.registry.get_key({interface_path});
+                    if (!interface_key)
+                    {
+                        continue;
+                    }
+
+                    if (!device_id.empty())
+                    {
+                        const auto instance = win_emu.registry.get_value(*interface_key, "DeviceInstance");
+                        const auto instance_id = instance ? instance->as_string() : std::nullopt;
+                        if (!instance_id || !utils::string::equals_ignore_case(std::u16string_view{*instance_id}, device_id))
+                        {
+                            continue;
+                        }
+                    }
+
+                    for (size_t reference = 0; reference < win_emu.registry.get_sub_key_count(*interface_key); ++reference)
+                    {
+                        const auto reference_name = win_emu.registry.get_sub_key_name(*interface_key, reference);
+                        if (auto link =
+                                reference_name ? device_interface_link(interface_key_name, u8_to_u16(*reference_name)) : std::nullopt)
+                        {
+                            links.push_back(std::move(*link));
+                        }
+                    }
+                }
+
+                if (const auto default_link = class_key ? default_device_interface(win_emu, class_path) : std::nullopt)
+                {
+                    const auto match = std::ranges::find_if(
+                        links, [&](const std::u16string& link) { return utils::string::equals_ignore_case(link, *default_link); });
+                    if (match != links.end())
+                    {
+                        std::rotate(links.begin(), match, match + 1);
+                    }
+                }
+
+                std::u16string list;
+                for (const auto& link : links)
+                {
+                    list += link;
+                    list += u'\0';
+                }
+
+                list += u'\0';
+                return list;
+            }
+
+            // PiCMGetDeviceInterfaceList. A size query's 20-byte buffer has no room for the list, so it learns the size from
+            // a STATUS_BUFFER_TOO_SMALL reply.
             static NTSTATUS get_device_interface_list(windows_emulator& win_emu, const io_device_context& c)
             {
                 constexpr uint32_t present_only = 0x10000;
-                constexpr std::array<uint8_t, sizeof(char16_t)> empty_list{};
-                constexpr auto empty_list_bytes = static_cast<uint32_t>(empty_list.size());
 
                 interface_list_input input{};
                 std::u16string device_id{};
@@ -274,12 +399,15 @@ namespace sogen
                     return return_buffer_result(win_emu, c, STATUS_NAME_TOO_LONG, 0, {}, input.result_size);
                 }
 
-                if (c.output_buffer_length - sizeof(buffer_result) < empty_list_bytes)
+                const auto list = device_interface_list(win_emu, input.interface_class, device_id, (input.flags & present_only) != 0);
+                const std::span list_bytes{reinterpret_cast<const uint8_t*>(list.data()), list.size() * sizeof(char16_t)};
+                const auto list_size = static_cast<uint32_t>(list_bytes.size());
+                if (c.output_buffer_length - sizeof(buffer_result) < list_size)
                 {
-                    return return_buffer_result(win_emu, c, STATUS_BUFFER_TOO_SMALL, empty_list_bytes, {}, input.result_size);
+                    return return_buffer_result(win_emu, c, STATUS_BUFFER_TOO_SMALL, list_size, {}, input.result_size);
                 }
 
-                return return_buffer_result(win_emu, c, STATUS_SUCCESS, empty_list_bytes, empty_list, input.result_size);
+                return return_buffer_result(win_emu, c, STATUS_SUCCESS, list_size, list_bytes, input.result_size);
             }
 
             // The class key request cfgmgr32's InitializeInputRegistryData builds. WoW64 callers send a 36-byte layout
