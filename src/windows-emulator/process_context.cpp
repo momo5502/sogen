@@ -775,6 +775,20 @@ namespace sogen
         return cls_ptr;
     }
 
+    void process_context::set_mouse_capture(const hwnd window)
+    {
+        this->mouse_capture_window = window;
+        this->user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) { server_info.captureCount = window != 0 ? 1 : 0; });
+    }
+
+    void process_context::release_mouse_capture(const hwnd window)
+    {
+        if (this->mouse_capture_window == window)
+        {
+            this->set_mouse_capture(0);
+        }
+    }
+
     void process_context::terminate_job_processes(windows_emulator& win_emu, const job_object& job)
     {
         constexpr uint32_t kill_on_job_close = 0x2000;
@@ -1304,6 +1318,15 @@ namespace sogen
     {
         this->section_views.restore_views(win_emu.memory);
 
+        // captureCount lives in guest memory, which a snapshot taken before it was maintained restores as 0 while
+        // mouse_capture_window is set. user32 reads the count to decide whether to ask for the capture window at all.
+        // A process that never created a user object has no server info to write to, so only a real capture is
+        // reestablished.
+        if (this->mouse_capture_window != 0)
+        {
+            this->set_mouse_capture(this->mouse_capture_window);
+        }
+
         restore_windows_after_state_restore(win_emu);
 
         for (auto& device : this->devices | std::views::values)
@@ -1636,6 +1659,7 @@ namespace sogen
             }
 
             i->second.ref_count = 1;
+            this->release_mouse_capture(i->second.handle);
             this->gdi_window_surfaces.erase(static_cast<uint32_t>(i->second.handle));
             i = this->windows.erase(i).first;
         }

@@ -15,6 +15,9 @@ namespace sogen
             constexpr uint32_t token_id = 0x1001;
             constexpr uint32_t token_modified_id = 0x1002;
 
+            // Windows 11 26200 answers classes up to 0x3A, past the last one TOKEN_INFORMATION_CLASS names.
+            constexpr ULONG last_token_information_class = 0x3A;
+
             constexpr std::array<uint8_t, 12> interactive_sid = {
                 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x04, 0x00, 0x00, 0x00,
             };
@@ -279,6 +282,13 @@ namespace sogen
                                                 const TOKEN_INFORMATION_CLASS token_information_class, const uint64_t token_information,
                                                 const ULONG token_information_length, const emulator_object<ULONG> return_length)
         {
+            if (token_information_class < TokenUser || static_cast<ULONG>(token_information_class) > last_token_information_class)
+            {
+                c.win_emu.log.error("Unsupported NtQueryInformationToken info class: 0x%X\n",
+                                    static_cast<uint32_t>(token_information_class));
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             const auto token_handle = resolve_token(c, requested_token);
             if (token_handle == 0 && requested_token == CURRENT_THREAD_TOKEN)
             {

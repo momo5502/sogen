@@ -77,11 +77,12 @@ root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requir
 
 ## Known limitations
 
-- **On Darwin, a protection fault from a plain `STR`/`STUR` store can be misclassified as a read.**
-  `decode_arm64_store` deliberately recognizes only the `STLR` family; a plain store to read-only
-  memory can therefore surface as an unhandled host signal instead of a guest
-  `STATUS_ACCESS_VIOLATION`, while an unmapped plain store reaches the guest with the operation marked
-  as a read. Android avoids this specific misclassification by using the kernel-provided ESR WnR bit.
+- **A read-modify-write to a `PAGE_NOACCESS` page is reported to the guest as a read.** Faults are
+  classified by the ESR WnR bit, and for an instruction that both reads and writes, Arm reports the
+  read that faults first. So `lock xadd`, `xchg`, `lock cmpxchg` or a plain `add [mem], reg` on a
+  no-access page raises `STATUS_ACCESS_VIOLATION` with `ExceptionInformation[0]` = 0, where Windows
+  reports a write. Stores, including stores to read-only memory, are write faults. When no ESR
+  describing a data abort is available, the `STLR`-only `decode_arm64_store` is still the fallback.
 - **`sync_host_page_apple`'s permission union can strip `PROT_EXEC` or over-grant write access near
   PE section boundaries.** Guest permissions are tracked per-4KB shadow slot but applied per-16KB
   Apple host page (four slots share one host page); when slots sharing a host page disagree, the

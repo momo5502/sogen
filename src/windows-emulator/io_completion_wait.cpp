@@ -188,6 +188,10 @@ namespace sogen
             }
 
             retained_handle = *duplicated;
+            // A duplicate is a value of its own, but the low bits are the caller's: ntdll passes an event handle
+            // through verbatim and user mode tags it there, which is how a tagged event suppresses the completion
+            // packet. Losing the tag would queue a packet the caller asked to be left out.
+            retained_handle.value.reserved = resolved_source_handle.value.reserved;
             return true;
         }
 

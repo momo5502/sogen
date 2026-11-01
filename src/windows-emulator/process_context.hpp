@@ -645,6 +645,8 @@ namespace sogen
         uint32_t registry_display_height{default_display_height};
 
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
+        void set_mouse_capture(hwnd window);
+        void release_mouse_capture(hwnd window);
         // The storage a pagefile section's views alias, created on first use. 0 when the section's views share one guest
         // backing instead, because they cannot alias host memory or the section only reserves.
         uint64_t section_view_storage(section& section_entry, bool can_alias_host_memory, bool shareable);

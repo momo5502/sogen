@@ -734,7 +734,9 @@ namespace sogen
     {
         mapped_module binary{};
         binary.name = u16_to_u8(module_path.leaf());
-        binary.path = module_path.to_portable_path();
+        // mapped_module::path is the module identity the load counts, the duplicate checks and the loaded-module
+        // comparisons key on, so it stays canonical and lower case even though the guest path keeps its spelling.
+        binary.path = std::filesystem::path{utils::string::to_lower(module_path.lexically_normal().to_portable_path().u16string())};
         binary.module_path = std::move(module_path);
         binary.image_base = base_address;
         binary.image_base_file = base_address;

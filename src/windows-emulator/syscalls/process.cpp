@@ -426,6 +426,12 @@ namespace sogen
                                                   const uint64_t process_information, const uint32_t process_information_length,
                                                   const emulator_object<uint32_t> return_length)
         {
+            if (info_class >= MaxProcessInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtQueryInformationProcess info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             if (!c.proc.is_current_process_handle(process_handle))
             {
                 const auto* managed = c.proc.processes.get(process_handle);
@@ -914,6 +920,12 @@ namespace sogen
         NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, const handle process_handle, const uint32_t info_class,
                                                 const uint64_t process_information, const uint32_t process_information_length)
         {
+            if (info_class >= MaxProcessInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtSetInformationProcess info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             if (!c.proc.is_current_process_handle(process_handle))
             {
                 return STATUS_NOT_SUPPORTED;

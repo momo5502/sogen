@@ -31,9 +31,10 @@ namespace sogen
         size_t storage_size(uint64_t storage_id) const;
         const utils::shared_host_buffer* storage_memory(uint64_t storage_id) const;
 
+        // Maps the view at address, or in place of a placeholder there, when it is nonzero.
         uint64_t map_view(memory_manager& memory, uint64_t storage_id, uint64_t offset, size_t size, nt_memory_permission permissions,
-                          uint64_t highest_address);
-        bool unmap_view(memory_manager& memory, uint64_t address);
+                          uint64_t highest_address, uint64_t address = 0);
+        bool unmap_view(memory_manager& memory, uint64_t address, bool preserve_placeholder = false);
         bool contains(uint64_t address, uint64_t size) const;
 
         void serialize(utils::buffer_serializer& buffer, const memory_manager& memory) const;

@@ -467,8 +467,23 @@ namespace sogen
 
             if (object_information_class == ObjectNameInformation)
             {
+                if (effective_handle == CURRENT_THREAD_TOKEN || effective_handle == CURRENT_THREAD_EFFECTIVE_TOKEN)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                const auto unsupported_pseudo_handle = [&] {
+                    c.win_emu.log.error("Unsupported pseudo handle for name information query: %" PRIX64 "\n", effective_handle.bits);
+                    c.emu.stop();
+                    return STATUS_NOT_SUPPORTED;
+                };
+
+                // Windows rejects the -4 pseudo handle here, but NtOpenProcessToken returns it as the real token handle.
+                const auto is_process_token = effective_handle == CURRENT_PROCESS_TOKEN;
+                const auto type = is_process_token ? handle_types::token : static_cast<handle_types::type>(effective_handle.value.type);
+
                 std::u16string device_path;
-                switch (effective_handle.value.type)
+                switch (type)
                 {
                 case handle_types::reserved: {
                     return STATUS_NOT_SUPPORTED;
@@ -623,6 +638,97 @@ namespace sogen
 
                     break;
                 }
+                case handle_types::event: {
+                    if (effective_handle.value.is_pseudo)
+                    {
+                        return unsupported_pseudo_handle();
+                    }
+
+                    const auto* event = c.proc.events.get(effective_handle);
+                    if (!event)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    device_path = event->name;
+                    break;
+                }
+                case handle_types::mutant: {
+                    const auto* mutant = c.proc.mutants.get(effective_handle);
+                    if (!mutant)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    device_path = mutant->name;
+                    break;
+                }
+                case handle_types::semaphore: {
+                    const auto* semaphore = c.proc.semaphores.get(effective_handle);
+                    if (!semaphore)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    device_path = semaphore->name;
+                    break;
+                }
+                case handle_types::timer: {
+                    const auto* timer = c.proc.timers.get(effective_handle);
+                    if (!timer)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    device_path = timer->name;
+                    break;
+                }
+                case handle_types::section: {
+                    if (effective_handle.value.is_pseudo)
+                    {
+                        return unsupported_pseudo_handle();
+                    }
+
+                    const auto* section = c.proc.sections.get(effective_handle);
+                    if (!section)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    device_path = section->name;
+                    break;
+                }
+                case handle_types::token: {
+                    if (!is_process_token && effective_handle != DUMMY_IMPERSONATION_TOKEN &&
+                        effective_handle != ANONYMOUS_IMPERSONATION_TOKEN)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    break;
+                }
+                case handle_types::symlink: {
+                    if (effective_handle == KNOWN_DLLS_SYMLINK)
+                    {
+                        device_path = u"\\KnownDlls\\KnownDllPath";
+                    }
+                    else if (effective_handle == KNOWN_DLLS32_SYMLINK)
+                    {
+                        device_path = u"\\KnownDlls32\\KnownDllPath";
+                    }
+                    else if (effective_handle.value.is_pseudo && effective_handle.value.id >= DRIVE_SYMLINK_BASE &&
+                             effective_handle.value.id < DRIVE_SYMLINK_BASE + 26)
+                    {
+                        device_path = u"\\GLOBAL??\\";
+                        device_path += static_cast<char16_t>(u'A' + (effective_handle.value.id - DRIVE_SYMLINK_BASE));
+                        device_path += u':';
+                    }
+                    else
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+                    break;
+                }
                 default:
                     c.win_emu.log.error("Unsupported handle type for name information query: %X\n", effective_handle.value.type);
                     c.emu.stop();
@@ -635,7 +741,7 @@ namespace sogen
 
                 if (required_size > object_information_length)
                 {
-                    return STATUS_BUFFER_TOO_SMALL;
+                    return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
                 if (device_path.empty())

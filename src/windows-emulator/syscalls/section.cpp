@@ -219,7 +219,8 @@ namespace sogen
             NTSTATUS map_section_storage_view(const syscall_context& c, const section& section_entry, const uint64_t offset,
                                               const nt_memory_permission protection, const uint64_t highest_address,
                                               const emulator_object<uint64_t> base_address,
-                                              const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size)
+                                              const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
+                                              const ULONG allocation_type)
             {
                 const auto storage_size = c.proc.section_views.storage_size(section_entry.view_storage_id);
                 if (offset >= storage_size)
@@ -238,11 +239,19 @@ namespace sogen
                     size = page_align_up(offset + requested_size) - aligned_offset;
                 }
 
-                const auto address = c.proc.section_views.map_view(c.win_emu.memory, section_entry.view_storage_id, aligned_offset,
-                                                                   static_cast<size_t>(size), protection, highest_address);
+                const auto requested_address = base_address ? base_address.read() : 0;
+                if ((allocation_type & MEM_REPLACE_PLACEHOLDER) != 0 &&
+                    (requested_address == 0 || c.win_emu.memory.get_region_kind(requested_address) != memory_region_kind::placeholder))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto address =
+                    c.proc.section_views.map_view(c.win_emu.memory, section_entry.view_storage_id, aligned_offset,
+                                                  static_cast<size_t>(size), protection, highest_address, requested_address);
                 if (address == 0)
                 {
-                    return STATUS_NO_MEMORY;
+                    return requested_address != 0 ? STATUS_CONFLICTING_ADDRESSES : STATUS_NO_MEMORY;
                 }
 
                 if (view_size)
@@ -487,7 +496,7 @@ namespace sogen
                                            const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) /*commit_size*/,
                                            const emulator_object<LARGE_INTEGER> section_offset,
                                            const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
-                                           const SECTION_INHERIT /*inherit_disposition*/, const ULONG /*allocation_type*/,
+                                           const SECTION_INHERIT /*inherit_disposition*/, const ULONG allocation_type,
                                            const ULONG /*win32_protect*/)
         {
             if (!c.proc.is_current_process_handle(process_handle))
@@ -620,7 +629,7 @@ namespace sogen
                 if (section_entry->view_storage_id != 0)
                 {
                     return map_section_storage_view(c, *section_entry, static_cast<uint64_t>(offset), protection, highest_address,
-                                                    base_address, view_size);
+                                                    base_address, view_size, allocation_type);
                 }
 
                 // Without host memory that can be aliased anywhere, all views share ONE persistent guest backing
@@ -881,6 +890,12 @@ namespace sogen
             if (flags & ~(MEM_UNMAP_WITH_TRANSIENT_BOOST | MEM_PRESERVE_PLACEHOLDER))
             {
                 return STATUS_INVALID_PARAMETER_3;
+            }
+
+            if ((flags & MEM_PRESERVE_PLACEHOLDER) != 0 && c.proc.is_current_process_handle(process_handle) &&
+                c.proc.section_views.contains(base_address, 1))
+            {
+                return c.proc.section_views.unmap_view(c.win_emu.memory, base_address, true) ? STATUS_SUCCESS : STATUS_NOT_MAPPED_VIEW;
             }
 
             return handle_NtUnmapViewOfSection(c, process_handle, base_address);
