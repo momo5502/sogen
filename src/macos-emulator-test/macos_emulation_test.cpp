@@ -67,6 +67,31 @@ namespace sogen::macos_test
             'h',  'e',  'l',  'l',  'o',  '\n',       // message
         });
 
+        constexpr auto READ_AFTER_FAULTING_READ_CODE = std::to_array<uint8_t>({
+            0x48, 0x8D, 0x3D, 0x44, 0x00, 0x00, 0x00, // lea rdi, [rip + path]
+            0x31, 0xF6,                               // xor esi, esi (O_RDONLY)
+            0xB8, 0x05, 0x00, 0x00, 0x02,             // mov eax, 0x2000005 (open)
+            0x0F, 0x05,                               // syscall
+            0x89, 0xC3,                               // mov ebx, eax
+            0x89, 0xDF,                               // mov edi, ebx
+            0xBE, 0x00, 0x10, 0x00, 0x00,             // mov esi, 0x1000 (unmapped)
+            0xBA, 0x01, 0x00, 0x00, 0x00,             // mov edx, 1
+            0xB8, 0x03, 0x00, 0x00, 0x02,             // mov eax, 0x2000003 (read)
+            0x0F, 0x05,                               // syscall
+            0x41, 0x89, 0xC4,                         // mov r12d, eax
+            0x89, 0xDF,                               // mov edi, ebx
+            0x48, 0x89, 0xE6,                         // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00,             // mov edx, 1
+            0xB8, 0x03, 0x00, 0x00, 0x02,             // mov eax, 0x2000003 (read)
+            0x0F, 0x05,                               // syscall
+            0x41, 0xC1, 0xE4, 0x08,                   // shl r12d, 8
+            0x0F, 0xB6, 0x3C, 0x24,                   // movzx edi, byte [rsp]
+            0x44, 0x01, 0xE7,                         // add edi, r12d
+            0xB8, 0x01, 0x00, 0x00, 0x02,             // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                               // syscall
+            '/',  'd',  'a',  't',  'a',  '\0',       // path
+        });
+
         constexpr auto OVERSIZED_WRITE_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02,                               // mov eax, 0x2000004 (write)
             0xBF, 0x01, 0x00, 0x00, 0x00,                               // mov edi, 1
@@ -468,6 +493,17 @@ namespace sogen::macos_test
         EXPECT_EQ(result.stderr_data, "hello\n");
         EXPECT_TRUE(result.stdout_data.empty());
         EXPECT_EQ(result.exit_status, 0);
+    }
+
+    TEST(MacosEmulationTest, FailsReadIntoUnwritableRangeWithoutConsumingInput)
+    {
+        const temporary_root root{};
+        root.add_file("/data", std::as_bytes(std::span{std::string_view{"AB"}}));
+
+        const auto result = run_image(make_test_image(READ_AFTER_FAULTING_READ_CODE), {"test"}, root.path());
+
+        constexpr int efault = 14;
+        EXPECT_EQ(result.exit_status, (efault << 8) + 'A');
     }
 
     TEST(MacosEmulationTest, FailsWriteFromUnreadableRangeWithoutHostAllocation)

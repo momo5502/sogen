@@ -177,7 +177,15 @@ namespace sogen
             return;
         }
 
+        // A stream cannot give back what it delivered, so the whole destination must be writable before anything
+        // is taken from the host; XNU only consumes what it copies out.
         std::vector<std::byte> data(static_cast<size_t>(std::min(size, READ_CHUNK_SIZE)));
+        if (!c.emu_ref.memory.is_writable_range(buffer, data.size()))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
         const auto bytes_read = file->read(data);
         if (!bytes_read)
         {

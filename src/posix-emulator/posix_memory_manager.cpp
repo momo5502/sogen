@@ -347,6 +347,29 @@ namespace sogen
         return make_region_info(start, region);
     }
 
+    bool posix_memory_manager::is_writable_range(const uint64_t address, const size_t size) const
+    {
+        if (address > std::numeric_limits<uint64_t>::max() - size)
+        {
+            return false;
+        }
+
+        const auto end = address + size;
+        auto current = address;
+        while (current < end)
+        {
+            const auto region = this->get_region_info(current);
+            if (!region || !is_writable(region->permissions))
+            {
+                return false;
+            }
+
+            current = region->start + region->length;
+        }
+
+        return true;
+    }
+
     posix_memory_stats posix_memory_manager::compute_memory_stats() const
     {
         posix_memory_stats stats{};
