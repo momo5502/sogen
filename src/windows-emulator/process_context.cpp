@@ -792,7 +792,7 @@ namespace sogen
         }
     }
 
-    void process_context::post_job_notification(job_object& job, const uint32_t message, const uint32_t process_id)
+    void process_context::post_job_notification(job_object& job, const uint32_t message, const uint32_t member_process_id)
     {
         auto* port = this->io_completions.get(job.completion_port);
         if (!port)
@@ -802,7 +802,7 @@ namespace sogen
 
         io_completion_message notification{};
         notification.key_context = job.completion_key;
-        notification.apc_context = process_id;
+        notification.apc_context = member_process_id;
         notification.io_status_block.Information = message;
         port->enqueue(notification);
     }

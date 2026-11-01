@@ -90,6 +90,7 @@ namespace sogen::utils
         }
 #endif
 
+#if SOGEN_NAMED_SHARED_MEMORY
         std::string to_hex(uint64_t value, const size_t digits)
         {
             std::string result(digits, '0');
@@ -101,7 +102,6 @@ namespace sogen::utils
             return result;
         }
 
-#if SOGEN_NAMED_SHARED_MEMORY
         // A child outlives its parent, so the host can give the parent's process id to an unrelated new sogen process
         // while the child still holds a mapping named after it. A random part keeps those names apart, and anyone else
         // can create such a name in advance, which is why creating one checks that it did not exist and retries.

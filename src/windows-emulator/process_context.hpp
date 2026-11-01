@@ -655,7 +655,7 @@ namespace sogen
         // Mutants other processes hold handles to stay owned after this process ends unless they are abandoned, as Windows
         // does when the owning thread exits.
         void abandon_shared_mutants();
-        void post_job_notification(job_object& job, uint32_t message, uint32_t process_id);
+        void post_job_notification(job_object& job, uint32_t message, uint32_t member_process_id);
         // Posts the exit notifications of jobs associated with the completion port, whose member processes run elsewhere.
         void post_exited_job_processes(windows_emulator& win_emu, handle io_completion_handle);
         void mark_exited(NTSTATUS status);
