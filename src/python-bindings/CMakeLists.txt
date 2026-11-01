@@ -32,6 +32,11 @@ if(MSVC)
 elseif(UNIX AND NOT APPLE)
   # Override the global -z defs / --no-undefined for the Python extension.
   target_link_options(sogen PRIVATE -Wl,-z,undefs)
+  # Export the module's entry only: its own copy of the C++ runtime must not
+  # stand in for another extension's in the same process.
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sogen.map" "{ global: PyInit_sogen; local: *; };\n")
+  target_link_options(sogen PRIVATE -Wl,--exclude-libs,ALL
+                      "-Wl,--version-script=${CMAKE_CURRENT_BINARY_DIR}/sogen.map")
 endif()
 
 nanobind_add_stub(
