@@ -57,19 +57,45 @@ namespace sogen
                                          const emulator_object<CONTEXT64> thread_context, const BOOLEAN first_chance)
         {
             const auto record = exception_record.read();
-            const auto context = thread_context.read();
+
+            // The guest passes the context of its own architecture, so the read has to match it: an ARM64 context is
+            // smaller than a CONTEXT64 and reading the larger one can run off the end of its mapping.
+            auto* arm64 = dynamic_cast<arm64_cpu*>(&c.emu);
+            const auto arm64_raising_context = arm64 ? c.emu.read_memory<arm64_context>(thread_context.value()) : arm64_context{};
+            const auto context = arm64 ? CONTEXT64{} : thread_context.read();
+
+            // The raising context becomes the thread's state before the debugger is told, as it already is on the
+            // hardware exception path. Otherwise the debugger's GetThreadContext shows this syscall's stub registers,
+            // and a SetThreadContext it makes before DBG_CONTINUE is overwritten afterwards.
+            if (c.win_emu.debugger().is_attached())
+            {
+                if (arm64)
+                {
+                    cpu_context::restore(*arm64, arm64_raising_context);
+                }
+                else
+                {
+                    cpu_context::restore(c.x64_cpu(), context);
+                }
+            }
 
             if (report_exception_to_debugger(c.win_emu, c.vcpu, record, first_chance != FALSE))
             {
                 c.write_status = false;
-                cpu_context::restore(c.x64_cpu(), context);
                 return STATUS_SUCCESS;
             }
 
             if (first_chance)
             {
                 c.write_status = false;
-                dispatch_exception_record(c.win_emu, c.vcpu, record, context);
+                if (arm64)
+                {
+                    dispatch_exception_record(c.win_emu, c.vcpu, record, arm64_raising_context);
+                }
+                else
+                {
+                    dispatch_exception_record(c.win_emu, c.vcpu, record, context);
+                }
                 return STATUS_SUCCESS;
             }
 
