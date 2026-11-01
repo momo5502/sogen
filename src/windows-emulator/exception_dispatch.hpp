@@ -2,6 +2,7 @@
 
 #include <arch_emulator.hpp>
 
+#include <platform/arm64_context.hpp>
 #include <platform/traits.hpp>
 #include <platform/primitives.hpp>
 
@@ -45,6 +46,8 @@ namespace sogen
     // Hands an exception the guest raised itself (NtRaiseException) to its handlers through KiUserExceptionDispatcher.
     void dispatch_exception_record(windows_emulator& win_emu, vcpu_context& vcpu, EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>> record,
                                    CONTEXT64 ctx);
+    void dispatch_exception_record(windows_emulator& win_emu, vcpu_context& vcpu, EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>> record,
+                                   const arm64_context& ctx);
     void dispatch_access_violation(windows_emulator& win_emu, vcpu_context& vcpu, uint64_t address, memory_operation operation);
     void dispatch_guard_page_violation(windows_emulator& win_emu, vcpu_context& vcpu, uint64_t address, memory_operation operation);
     void dispatch_illegal_instruction_violation(windows_emulator& win_emu, vcpu_context& vcpu);

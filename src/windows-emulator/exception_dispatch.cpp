@@ -447,6 +447,13 @@ namespace sogen
         dispatch_exception_pointers(cpu, win_emu.process.ki_user_exception_dispatcher, pointers);
     }
 
+    void dispatch_exception_record(windows_emulator& win_emu, vcpu_context& vcpu, exception_record record, const arm64_context& ctx)
+    {
+        // A chained record is a guest pointer here, which the dispatcher would read as a host one.
+        record.ExceptionRecord = 0;
+        dispatch_arm64_exception(win_emu, vcpu.arm64_cpu_ref(), record, ctx);
+    }
+
     void dispatch_access_violation(windows_emulator& win_emu, vcpu_context& vcpu, const uint64_t address, const memory_operation operation)
     {
         dispatch_exception(win_emu, vcpu, STATUS_ACCESS_VIOLATION,

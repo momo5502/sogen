@@ -200,6 +200,17 @@ namespace sogen
 
             return *x64;
         }
+
+        arm64_cpu& arm64_cpu_ref() const
+        {
+            auto* arm64 = dynamic_cast<arm64_cpu*>(&this->cpu);
+            if (!arm64)
+            {
+                throw std::runtime_error("This operation is only implemented for ARM64 guest CPUs");
+            }
+
+            return *arm64;
+        }
     };
 
     // The COFF machine of an application, resolved through its working directory and the settings' emulation
