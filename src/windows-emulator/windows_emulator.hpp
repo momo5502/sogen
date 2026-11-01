@@ -179,6 +179,7 @@ namespace sogen
         guest_cpu& cpu;
         emulator_thread* active_thread{};
         std::atomic_bool switch_thread{false};
+        std::atomic<std::thread::id> runner{};
         // Set while this vCPU waits in wait_for_thread_registers or runs a host call through run_without_kernel_lock.
         // Its active thread's registers are saved meanwhile, and it reloads them before it continues.
         bool active_thread_saved{false};

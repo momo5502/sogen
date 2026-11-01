@@ -1029,6 +1029,9 @@ namespace sogen
 
     void windows_emulator::vcpu_worker(vcpu_context& vcpu)
     {
+        vcpu.runner = std::this_thread::get_id();
+        const auto clear_runner = utils::finally([&vcpu] { vcpu.runner = std::thread::id{}; });
+
         std::unique_lock lock(this->kernel_lock_);
 
         while (!this->should_stop)
@@ -1805,6 +1808,8 @@ namespace sogen
         }
 
         auto& vcpu = this->vcpu(0);
+        vcpu.runner = std::this_thread::get_id();
+        const auto clear_runner = utils::finally([&vcpu] { vcpu.runner = std::thread::id{}; });
 
         std::unique_lock lock(this->kernel_lock_);
 
@@ -2666,7 +2671,13 @@ namespace sogen
 
         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
         {
-            this->vcpu(i).cpu.stop();
+            // A backend whose stop is not thread-safe races with its own execution when stopped from another thread,
+            // such as a Python thread timing out a run. Its vCPU picks up should_stop at the next time-slice yield.
+            auto& vcpu = this->vcpu(i);
+            if (vcpu.cpu.is_stop_thread_safe() || vcpu.runner.load() == std::this_thread::get_id())
+            {
+                vcpu.cpu.stop();
+            }
         }
     }
 
