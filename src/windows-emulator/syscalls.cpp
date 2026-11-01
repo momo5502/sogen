@@ -24,6 +24,7 @@ namespace sogen
                                      emulator_object<EVENT_BASIC_INFORMATION> event_information, uint32_t event_information_length,
                                      emulator_object<uint32_t> return_length);
         NTSTATUS handle_NtClearEvent(const syscall_context& c, handle event_handle);
+        NTSTATUS handle_NtResetEvent(const syscall_context& c, handle event_handle, emulator_object<LONG> previous_state);
         NTSTATUS handle_NtCreateEvent(const syscall_context& c, emulator_object<handle> event_handle, ACCESS_MASK desired_access,
                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, EVENT_TYPE event_type,
                                       BOOLEAN initial_state);
@@ -193,6 +194,8 @@ namespace sogen
                                      emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
         NTSTATUS handle_NtCreateMutant(const syscall_context& c, emulator_object<handle> mutant_handle, ACCESS_MASK desired_access,
                                        emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, BOOLEAN initial_owner);
+        NTSTATUS handle_NtQueryMutant(const syscall_context& c, handle mutant_handle, ULONG mutant_information_class,
+                                      uint64_t mutant_information, ULONG mutant_information_length, emulator_object<ULONG> return_length);
 
         // syscalls/namespace.cpp:
         NTSTATUS handle_NtCreatePrivateNamespace(const syscall_context& c, emulator_object<handle> namespace_handle,
@@ -368,6 +371,11 @@ namespace sogen
                                         emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                         emulator_object<ULARGE_INTEGER> maximum_size, ULONG section_page_protection,
                                         ULONG allocation_attributes, handle file_handle);
+        NTSTATUS handle_NtCreateSectionEx(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK desired_access,
+                                          emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                          emulator_object<ULARGE_INTEGER> maximum_size, ULONG section_page_protection,
+                                          ULONG allocation_attributes, handle file_handle,
+                                          emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters, ULONG extended_parameter_count);
         NTSTATUS handle_NtOpenSection(const syscall_context& c, emulator_object<handle> section_handle, ACCESS_MASK /*desired_access*/,
                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
         NTSTATUS handle_NtQuerySection(const syscall_context& c, handle section_handle, SECTION_INFORMATION_CLASS section_information_class,
@@ -399,6 +407,9 @@ namespace sogen
                                           ACCESS_MASK /*desired_access*/,
                                           emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, LONG initial_count,
                                           LONG maximum_count);
+        NTSTATUS handle_NtQuerySemaphore(const syscall_context& c, handle semaphore_handle, ULONG semaphore_information_class,
+                                         emulator_object<SEMAPHORE_BASIC_INFORMATION> semaphore_information,
+                                         ULONG semaphore_information_length, emulator_object<ULONG> return_length);
 
         // syscalls/system.cpp:
         NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, uint32_t info_class, uint64_t system_information,
@@ -1616,6 +1627,7 @@ namespace sogen
         add_handler(NtQueryVolumeInformationFile);
         add_handler(NtApphelpCacheControl);
         add_handler(NtCreateSection);
+        add_handler(NtCreateSectionEx);
         add_handler(NtQuerySection);
         add_handler(NtConnectPort);
         add_handler(NtSecureConnectPort);
@@ -1790,6 +1802,7 @@ namespace sogen
         add_handler(NtWaitForMultipleObjects32);
         add_handler(NtCreateMutant);
         add_handler(NtReleaseMutant);
+        add_handler(NtQueryMutant);
         add_handler(NtCreatePrivateNamespace);
         add_handler(NtOpenPrivateNamespace);
         add_handler(NtDeletePrivateNamespace);
@@ -1829,6 +1842,7 @@ namespace sogen
         add_handler(NtUserEndPaint);
         add_handler(NtUserGetDpiForCurrentProcess);
         add_handler(NtReleaseSemaphore);
+        add_handler(NtQuerySemaphore);
         add_handler(NtEnumerateKey);
         add_handler(NtEnumerateValueKey);
         add_handler(NtAlpcCreatePort);
@@ -1872,6 +1886,7 @@ namespace sogen
         add_handler(NtChangeThreadState);
         add_handler(NtResumeThread);
         add_handler(NtClearEvent);
+        add_handler(NtResetEvent);
         add_handler(NtTraceControl);
         add_handler(NtUserGetProcessUIContextInformation);
         add_handler(NtQueueApcThreadEx2);
