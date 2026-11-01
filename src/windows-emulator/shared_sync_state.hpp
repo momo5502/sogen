@@ -11,6 +11,29 @@
 
 namespace sogen
 {
+    namespace shared_sync_detail
+    {
+        // Some C++20 standard libraries, the Android NDK's among them, do not ship std::atomic_ref yet. Where it is
+        // missing the compiler builtins give the same guarantees on the word in shared memory.
+        inline bool take(uint32_t& word, uint32_t& expected, const uint32_t desired)
+        {
+#ifdef __cpp_lib_atomic_ref
+            return std::atomic_ref<uint32_t>{word}.compare_exchange_strong(expected, desired, std::memory_order_acquire);
+#else
+            return __atomic_compare_exchange_n(&word, &expected, desired, false, __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE);
+#endif
+        }
+
+        inline void release(uint32_t& word)
+        {
+#ifdef __cpp_lib_atomic_ref
+            std::atomic_ref<uint32_t>{word}.store(0, std::memory_order_release);
+#else
+            __atomic_store_n(&word, 0u, __ATOMIC_RELEASE);
+#endif
+        }
+    }
+
     // The state of an event or mutant that several emulated processes hold handles to. It lives in host shared memory,
     // so each process sees the others' changes; a spinlock in the same memory makes every update atomic.
     class shared_sync_state
@@ -54,20 +77,16 @@ namespace sogen
         auto access(Function&& function) const
         {
             auto& state = *reinterpret_cast<layout*>(this->buffer_.data());
-            std::atomic_ref lock{state.lock};
 
             // The lock word holds the host process id of its holder rather than a flag, so a process killed in the
             // middle of an update can be recovered instead of leaving every survivor spinning. Taking it over is
             // safe because the dead holder cannot still be writing.
             const auto self = utils::current_host_process_id();
-            for (uint32_t holder = 0; !lock.compare_exchange_weak(holder, self, std::memory_order_acquire);)
+            for (uint32_t holder = 0; !shared_sync_detail::take(state.lock, holder, self);)
             {
-                if (holder != 0 && !utils::host_process_alive(holder))
+                if (holder != 0 && !utils::host_process_alive(holder) && shared_sync_detail::take(state.lock, holder, self))
                 {
-                    if (lock.compare_exchange_strong(holder, self, std::memory_order_acquire))
-                    {
-                        break;
-                    }
+                    break;
                 }
 
                 holder = 0;
@@ -76,13 +95,13 @@ namespace sogen
 
             struct unlock_on_exit
             {
-                std::atomic_ref<uint32_t>& lock;
+                uint32_t& lock;
 
                 ~unlock_on_exit()
                 {
-                    this->lock.store(0, std::memory_order_release);
+                    shared_sync_detail::release(this->lock);
                 }
-            } const unlock{lock};
+            } const unlock{state.lock};
 
             // An owner whose emulator is gone never releases, so its ownership is handed on as abandoned, which is
             // what Windows reports when the owning process dies. Only another process's ownership is checked, and
