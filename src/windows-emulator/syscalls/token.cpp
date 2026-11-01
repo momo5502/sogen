@@ -29,7 +29,13 @@ namespace sogen
                 1, 3, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, token_authentication_id & 0xFF, token_authentication_id >> 8, 0, 0,
             };
 
+            // S-1-5-32-544, BUILTIN\Administrators
+            constexpr std::array<uint8_t, 16> administrators_sid = {
+                0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00,
+            };
+
             constexpr ULONG se_group_default = 0x7;
+            constexpr ULONG se_group_owner = 0x8;
             constexpr ULONG se_group_logon_id = 0xC0000000;
 
             struct token_group
@@ -80,18 +86,25 @@ namespace sogen
                 return privileges ? *privileges : std::vector<token_privilege>{};
             }
 
-            std::vector<token_group> get_token_groups(const std::span<const uint8_t> user_sid, const bool anonymous)
+            std::vector<token_group> get_token_groups(const std::span<const uint8_t> user_sid, const bool anonymous, const bool elevated)
             {
                 if (anonymous)
                 {
                     return {};
                 }
 
-                return {
+                std::vector<token_group> groups{
                     {.sid = user_sid, .attributes = 0},
                     {.sid = interactive_sid, .attributes = se_group_default},
                     {.sid = logon_sid, .attributes = se_group_default | se_group_logon_id},
                 };
+
+                if (elevated)
+                {
+                    groups.push_back({.sid = administrators_sid, .attributes = se_group_default | se_group_owner});
+                }
+
+                return groups;
             }
 
             NTSTATUS write_token_groups(const syscall_context& c, const uint64_t token_information, const ULONG token_information_length,
@@ -369,7 +382,8 @@ namespace sogen
 
             if (token_information_class == TokenGroups)
             {
-                return write_token_groups(c, token_information, token_information_length, return_length, get_token_groups(sid, anonymous));
+                return write_token_groups(c, token_information, token_information_length, return_length,
+                                          get_token_groups(sid, anonymous, c.win_emu.runs_elevated()));
             }
 
             if (token_information_class == TokenLogonSid)
@@ -379,7 +393,7 @@ namespace sogen
                     return STATUS_NOT_FOUND;
                 }
 
-                const auto groups = get_token_groups(sid, anonymous);
+                const auto groups = get_token_groups(sid, anonymous, c.win_emu.runs_elevated());
                 const auto logon = std::ranges::find_if(
                     groups, [](const token_group& group) { return (group.attributes & se_group_logon_id) == se_group_logon_id; });
                 return write_token_groups(c, token_information, token_information_length, return_length, std::span{logon, 1});
@@ -545,7 +559,7 @@ namespace sogen
                 }
 
                 c.emu.write_memory(token_information, TOKEN_ELEVATION{
-                                                          .TokenIsElevated = c.win_emu.runs_elevated() ? 1u : 0u,
+                                                          .TokenIsElevated = !anonymous && c.win_emu.runs_elevated() ? 1u : 0u,
                                                       });
                 return STATUS_SUCCESS;
             }
@@ -612,7 +626,7 @@ namespace sogen
                 stats.ExpirationTime.QuadPart = std::numeric_limits<LONGLONG>::max();
                 stats.TokenType = get_token_type(token_handle);
                 stats.ImpersonationLevel = !anonymous && stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
-                stats.GroupCount = static_cast<ULONG>(get_token_groups(sid, anonymous).size());
+                stats.GroupCount = static_cast<ULONG>(get_token_groups(sid, anonymous, c.win_emu.runs_elevated()).size());
                 const auto* privileges = find_token_privileges(c, requested_token);
                 stats.PrivilegeCount = privileges ? static_cast<ULONG>(privileges->size()) : 0;
                 stats.ModifiedId.LowPart = token_modified_id;
@@ -650,7 +664,7 @@ namespace sogen
                 std::array<uint8_t, 20> integrity_sid = {
                     0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 };
-                if (c.win_emu.runs_elevated())
+                if (!anonymous && c.win_emu.runs_elevated())
                 {
                     integrity_sid[9] = 0x30;
                 }
@@ -764,10 +778,10 @@ namespace sogen
                     const auto ace_sid = ace_address + offsetof(ACCESS_ALLOWED_ACE, SidStart);
                     const auto anonymous = client_token == ANONYMOUS_IMPERSONATION_TOKEN;
                     const auto user_sid = anonymous ? std::span<const uint8_t>{anonymous_sid} : std::span<const uint8_t>{c.proc.sid};
-                    const auto applies = sid_matches(c.emu.memory(), ace_sid, user_sid) ||
-                                         std::ranges::any_of(get_token_groups(user_sid, anonymous), [&](const token_group& group) {
-                                             return sid_matches(c.emu.memory(), ace_sid, group.sid);
-                                         });
+                    const auto applies =
+                        sid_matches(c.emu.memory(), ace_sid, user_sid) ||
+                        std::ranges::any_of(get_token_groups(user_sid, anonymous, c.win_emu.runs_elevated()),
+                                            [&](const token_group& group) { return sid_matches(c.emu.memory(), ace_sid, group.sid); });
                     if (applies && ace.Header.AceType == 1 && (ace_mask & remaining) != 0)
                     {
                         denied = true;
