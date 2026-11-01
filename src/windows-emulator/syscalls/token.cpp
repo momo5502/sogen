@@ -21,6 +21,32 @@ namespace sogen
 
             constexpr std::array<uint8_t, 12> anonymous_sid{1, 1, 0, 0, 0, 0, 0, 5, 7, 0, 0, 0};
 
+            // S-1-5-32-544, BUILTIN\Administrators
+            constexpr std::array<uint8_t, 16> administrators_sid = {
+                0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00,
+            };
+
+            struct token_group
+            {
+                std::span<const uint8_t> sid;
+                ULONG attributes;
+            };
+
+            std::vector<token_group> get_token_groups(const syscall_context& c, const std::span<const uint8_t> sid)
+            {
+                std::vector<token_group> groups{
+                    {sid, 0},
+                    {interactive_sid, 0x7}, // SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED
+                };
+
+                if (c.win_emu.runs_elevated())
+                {
+                    groups.push_back({administrators_sid, 0xF}); // the above | SE_GROUP_OWNER
+                }
+
+                return groups;
+            }
+
             handle resolve_token(const syscall_context& c, const handle token)
             {
                 if (token == CURRENT_THREAD_TOKEN || token == CURRENT_THREAD_EFFECTIVE_TOKEN)
@@ -193,8 +219,15 @@ namespace sogen
                     c.emu.write_memory(token_information, ULONG{0});
                     return STATUS_SUCCESS;
                 }
+                const auto entries = get_token_groups(c, sid);
+
                 constexpr auto group_entry_size = sizeof(SID_AND_ATTRIBUTES64);
-                const auto required_size = sizeof(TOKEN_GROUPS64) + group_entry_size + sid.size() + interactive_sid.size();
+                auto required_size = sizeof(TOKEN_GROUPS64) + (entries.size() - 1) * group_entry_size;
+                for (const auto& entry : entries)
+                {
+                    required_size += entry.sid.size();
+                }
+
                 return_length.write(static_cast<ULONG>(required_size));
 
                 if (required_size > token_information_length)
@@ -202,19 +235,28 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
+                auto sid_cursor = token_information + sizeof(TOKEN_GROUPS64) + (entries.size() - 1) * group_entry_size;
+
                 TOKEN_GROUPS64 groups{};
-                groups.GroupCount = 2;
-                groups.Groups[0].Attributes = 0;
-                groups.Groups[0].Sid = token_information + sizeof(TOKEN_GROUPS64) + group_entry_size;
-
-                SID_AND_ATTRIBUTES64 interactive_group{};
-                interactive_group.Attributes = 0x7; // SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED
-                interactive_group.Sid = groups.Groups[0].Sid + sid.size();
-
+                groups.GroupCount = static_cast<ULONG>(entries.size());
+                groups.Groups[0].Attributes = entries[0].attributes;
+                groups.Groups[0].Sid = sid_cursor;
                 emulator_object<TOKEN_GROUPS64>{c.emu, token_information}.write(groups);
-                c.emu.write_memory(token_information + sizeof(TOKEN_GROUPS64), interactive_group);
-                c.emu.write_memory(groups.Groups[0].Sid, sid.data(), sid.size());
-                c.emu.write_memory(interactive_group.Sid, interactive_sid);
+
+                for (size_t i = 0; i < entries.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        SID_AND_ATTRIBUTES64 group{};
+                        group.Attributes = entries[i].attributes;
+                        group.Sid = sid_cursor;
+                        c.emu.write_memory(token_information + sizeof(TOKEN_GROUPS64) + (i - 1) * group_entry_size, group);
+                    }
+
+                    c.emu.write_memory(sid_cursor, entries[i].sid.data(), entries[i].sid.size());
+                    sid_cursor += entries[i].sid.size();
+                }
+
                 return STATUS_SUCCESS;
             }
 
@@ -378,7 +420,7 @@ namespace sogen
                 }
 
                 c.emu.write_memory(token_information, TOKEN_ELEVATION{
-                                                          .TokenIsElevated = c.win_emu.runs_elevated() ? 1u : 0u,
+                                                          .TokenIsElevated = !anonymous && c.win_emu.runs_elevated() ? 1u : 0u,
                                                       });
                 return STATUS_SUCCESS;
             }
@@ -445,7 +487,7 @@ namespace sogen
                 stats.ExpirationTime.QuadPart = std::numeric_limits<LONGLONG>::max();
                 stats.TokenType = get_token_type(token_handle);
                 stats.ImpersonationLevel = !anonymous && stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
-                stats.GroupCount = anonymous ? 0 : 2;
+                stats.GroupCount = anonymous ? 0 : static_cast<ULONG>(get_token_groups(c, sid).size());
                 stats.PrivilegeCount = 0;
                 stats.ModifiedId.LowPart = token_modified_id;
 
@@ -482,7 +524,7 @@ namespace sogen
                 std::array<uint8_t, 20> integrity_sid = {
                     0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 };
-                if (c.win_emu.runs_elevated())
+                if (!anonymous && c.win_emu.runs_elevated())
                 {
                     integrity_sid[9] = 0x30;
                 }
@@ -596,8 +638,10 @@ namespace sogen
                     const auto ace_sid = ace_address + offsetof(ACCESS_ALLOWED_ACE, SidStart);
                     const auto anonymous = client_token == ANONYMOUS_IMPERSONATION_TOKEN;
                     const auto user_sid = anonymous ? std::span<const uint8_t>{anonymous_sid} : std::span<const uint8_t>{c.proc.sid};
-                    const auto applies = sid_matches(c.emu.memory(), ace_sid, user_sid) ||
-                                         (!anonymous && sid_matches(c.emu.memory(), ace_sid, interactive_sid));
+                    const auto applies =
+                        sid_matches(c.emu.memory(), ace_sid, user_sid) ||
+                        (!anonymous && (sid_matches(c.emu.memory(), ace_sid, interactive_sid) ||
+                                        (c.win_emu.runs_elevated() && sid_matches(c.emu.memory(), ace_sid, administrators_sid))));
                     if (applies && ace.Header.AceType == 1 && (ace_mask & remaining) != 0)
                     {
                         denied = true;
