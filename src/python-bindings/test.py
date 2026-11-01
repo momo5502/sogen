@@ -78,6 +78,15 @@ assert hasattr(emu, "save_snapshot")
 assert hasattr(emu, "restore_snapshot")
 assert hasattr(emu, "serialize_state")
 assert hasattr(emu, "deserialize_state")
+
+wide = bytes(range(16))
+emu.write_register_bytes(mod.Register.xmm0, wide)
+assert emu.read_register_bytes(mod.Register.xmm0, 16) == wide
+emu.write_register(mod.Register.rax, 0xFFFFFFFFFFFFFFFF)
+emu.write_register_bytes(mod.Register.rax, b"\x01")
+assert emu.read_register(mod.Register.rax) == 1
+assert emu.read_register_bytes(mod.Register.rax, 16) == b"\x01" + bytes(15)
+
 emu.callbacks.on_stdout = lambda s: None
 emu.process.callbacks.on_thread_create = lambda h, t: None
 emu.callbacks.on_module_load = lambda m: None
@@ -141,6 +150,15 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     assert all(arg in {0, 1} for arg in sleep_hits["args"])
 
     app = None
+    gc.collect()
+
+    teb_app = win.create_application(r"C:\test-sample.exe", emulation_root=emulator_root)
+    teb_app.setup_process_if_necessary()
+    teb = teb_app.read_register(mod.Register.gs_base)
+    assert teb != 0
+    # NT_TIB.Self: the TEB points to itself.
+    assert int.from_bytes(teb_app.read_memory(teb + 0x30, 8), "little") == teb
+    teb_app = None
     gc.collect()
 
 # temporary hook lifetime smoke test: returned Hook object must not be kept in Python

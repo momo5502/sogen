@@ -149,7 +149,14 @@ namespace sogen::py
             .value("sp", arm64_register::sp)
             .value("nzcv", arm64_register::nzcv)
             .value("pstate", arm64_register::pstate)
-            .value("xzr", arm64_register::xzr);
+            .value("xzr", arm64_register::xzr)
+            .value("fpcr", arm64_register::fpcr)
+            .value("fpsr", arm64_register::fpsr);
+        for (int index = 0; index <= 31; ++index)
+        {
+            registers.value(("v" + std::to_string(index)).c_str(),
+                            static_cast<arm64_register>(static_cast<int>(arm64_register::v0) + index));
+        }
 
         nb::class_<arm64_machine>(module, "Emulator")
             .def(nb::init<>())
