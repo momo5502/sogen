@@ -92,9 +92,11 @@ namespace sogen
                 auto* device = c.proc.devices.get(h);
                 if (device && device->ref_count == 1)
                 {
-                    if (device->is_last_file_reference() && device->get_internal_device<named_pipe>())
+                    const auto* pipe = device->is_last_file_reference() ? device->get_internal_device<named_pipe>() : nullptr;
+                    if (pipe)
                     {
                         device->cancel_io(c.win_emu, 0);
+                        pipe->complete_waits_if_last_server_end(c.win_emu);
                     }
                     device->release_references(c.proc);
                 }
