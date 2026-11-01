@@ -64,6 +64,7 @@ class _HomePageState extends State<HomePage> {
     if (game != null) {
       await widget.library.add(game);
     }
+    await widget.library.releaseUnusedFolders();
   }
 
   void _openSettings() {
@@ -124,6 +125,7 @@ class _HomePageState extends State<HomePage> {
     if (edited != null) {
       await widget.library.update(edited);
     }
+    await widget.library.releaseUnusedFolders();
   }
 
   void _showGameMenu(Game game) {
@@ -161,7 +163,9 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Remove ${game.name}?'),
-        content: const Text('The game files stay where they are.'),
+        content: const Text(
+          'The game files stay where they are. Saves and settings the game kept in its folder are deleted.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Remove')),
@@ -171,6 +175,7 @@ class _HomePageState extends State<HomePage> {
 
     if (remove == true) {
       await widget.library.remove(game);
+      await widget.library.releaseUnusedFolders();
     }
   }
 
