@@ -174,7 +174,7 @@ namespace sogen
             }
 
             std::error_code ec{};
-            const auto file_size = page_align_up(std::filesystem::file_size(file->host_path, ec));
+            const auto file_size = page_align_up(std::filesystem::file_size(path_from_utf8(file->host_path), ec));
             if (ec)
             {
                 throw std::runtime_error("Page-in linking region file has no size");

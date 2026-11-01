@@ -58,7 +58,7 @@ namespace sogen
 
             posix_fd file{};
             file.type = fd_type::file;
-            file.host_path = host_path.string();
+            file.host_path = utf8_path_string(host_path);
             file.guest_path = std::move(guest_path);
             file.handle = handle;
             file.flags = static_cast<int>(MACOS_O_RDONLY);
