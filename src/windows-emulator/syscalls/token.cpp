@@ -53,28 +53,6 @@ namespace sogen
                 return groups;
             }
 
-            bool is_writable_range(memory_manager& memory, const uint64_t address, const uint64_t size)
-            {
-                const auto end = address + size;
-                if (address == 0 || end < address)
-                {
-                    return false;
-                }
-
-                for (auto current = address; current < end;)
-                {
-                    const auto region = memory.get_region_info(current);
-                    if (!region.is_committed || !is_writable(region.permissions.common))
-                    {
-                        return false;
-                    }
-
-                    current = region.start + region.length;
-                }
-
-                return true;
-            }
-
             handle resolve_token(const syscall_context& c, const handle token)
             {
                 if (token == CURRENT_THREAD_TOKEN || token == CURRENT_THREAD_EFFECTIVE_TOKEN)
