@@ -36,7 +36,7 @@ elseif(UNIX AND NOT APPLE)
   # another extension's in the same process, so it exports only the entry point. Shared builds keep
   # their exports: EMULATOR_INTERFACE types share their RTTI across the backend libraries.
   if(SOGEN_BUILD_STATIC)
-    set(SOGEN_PYTHON_EXPORTS "${CMAKE_CURRENT_SOURCE_DIR}/sogen.map")
+    set(SOGEN_PYTHON_EXPORTS "${CMAKE_CURRENT_SOURCE_DIR}/sogen.def")
     target_link_options(sogen PRIVATE -Wl,--exclude-libs,ALL "-Wl,--version-script=${SOGEN_PYTHON_EXPORTS}")
     set_property(TARGET sogen APPEND PROPERTY LINK_DEPENDS "${SOGEN_PYTHON_EXPORTS}")
   endif()
