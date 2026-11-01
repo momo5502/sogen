@@ -183,6 +183,39 @@ namespace sogen
                 });
             }
 
+            NTSTATUS validate_section_extended_parameters(const syscall_context& c,
+                                                          const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
+                                                          const ULONG extended_parameter_count)
+            {
+                if (!extended_parameters != (extended_parameter_count == 0))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                // Windows captures the whole array before validating it, so an unreadable entry anywhere wins over an invalid one.
+                bool all_valid = extended_parameter_count <= 1;
+                for (ULONG i = 0; i < extended_parameter_count; ++i)
+                {
+                    const auto parameter = extended_parameters.try_read(i);
+                    if (!parameter)
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+
+                    if (parameter->Type == MemSectionExtendedParameterUserPhysicalFlags ||
+                        parameter->Type == MemSectionExtendedParameterSigningLevel)
+                    {
+                        c.win_emu.log.error("NtCreateSectionEx: Unsupported section parameter type %u\n",
+                                            static_cast<uint32_t>(parameter->Type));
+                    }
+
+                    all_valid = all_valid && parameter->Type == MemSectionExtendedParameterNumaNode && parameter->Reserved == 0 &&
+                                parameter->ULong64 == 0;
+                }
+
+                return all_valid ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+            }
+
             NTSTATUS map_section_storage_view(const syscall_context& c, const section& section_entry, const uint64_t offset,
                                               const nt_memory_permission protection, const uint64_t highest_address,
                                               const emulator_object<uint64_t> base_address,
@@ -330,6 +363,24 @@ namespace sogen
             section_handle.write(h);
 
             return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtCreateSectionEx(const syscall_context& c, const emulator_object<handle> section_handle,
+                                          const ACCESS_MASK desired_access,
+                                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                          const emulator_object<ULARGE_INTEGER> maximum_size, const ULONG section_page_protection,
+                                          const ULONG allocation_attributes, const handle file_handle,
+                                          const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
+                                          const ULONG extended_parameter_count)
+        {
+            if (const auto status = validate_section_extended_parameters(c, extended_parameters, extended_parameter_count);
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            return handle_NtCreateSection(c, section_handle, desired_access, object_attributes, maximum_size, section_page_protection,
+                                          allocation_attributes, file_handle);
         }
 
         NTSTATUS handle_NtOpenSection(const syscall_context& c, const emulator_object<handle> section_handle,
