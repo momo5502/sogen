@@ -781,6 +781,14 @@ namespace sogen
         this->user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) { server_info.captureCount = window != 0 ? 1 : 0; });
     }
 
+    void process_context::release_mouse_capture(const hwnd window)
+    {
+        if (this->mouse_capture_window == window)
+        {
+            this->set_mouse_capture(0);
+        }
+    }
+
     void process_context::serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const
     {
         buffer.write_vector(this->sid);
@@ -1367,6 +1375,7 @@ namespace sogen
             }
 
             i->second.ref_count = 1;
+            this->release_mouse_capture(i->second.handle);
             this->gdi_window_surfaces.erase(static_cast<uint32_t>(i->second.handle));
             i = this->windows.erase(i).first;
         }

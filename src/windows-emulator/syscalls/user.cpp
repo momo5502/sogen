@@ -3666,6 +3666,7 @@ namespace sogen
                 {
                     release_window_create_allocations();
                     c.win_emu.ui().destroy_window(win->handle);
+                    c.proc.release_mouse_capture(win->handle);
                     c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win->handle));
                     (void)c.proc.windows.erase(s.handle);
                     return 0;
