@@ -46,11 +46,10 @@ namespace sogen::test
                                                          .MaximumLength = name_bytes,
                                                          .Buffer = storage + 0x400,
                                                      });
-            emu.memory.write_memory(storage + 0x200, OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>{
-                                                         .Length = sizeof(OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>),
-                                                         .RootDirectory = 0,
-                                                         .ObjectName = storage + 0x300,
-                                                     });
+            OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>> attributes{};
+            attributes.Length = sizeof(attributes);
+            attributes.ObjectName = storage + 0x300;
+            emu.memory.write_memory(storage + 0x200, attributes);
 
             const emulator_object<handle> file_handle{emu.memory, storage};
             EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateFile(context, file_handle, access, {emu.memory, storage + 0x200},
