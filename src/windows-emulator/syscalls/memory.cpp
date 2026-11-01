@@ -5,6 +5,7 @@
 #include "../syscall_utils.hpp"
 #include "../memory_manager.hpp"
 #include "../windows_path.hpp"
+#include "../emulator_process_target.hpp"
 
 namespace sogen
 {
@@ -147,9 +148,9 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            std::optional<std::u16string> get_mapped_filename(const syscall_context& c, const uint64_t base_address)
+            std::optional<std::u16string> get_mapped_filename(windows_emulator& win_emu, const uint64_t base_address)
             {
-                if (const auto mapped_filename = c.win_emu.memory.get_region_mapped_filename(base_address))
+                if (const auto mapped_filename = win_emu.memory.get_region_mapped_filename(base_address))
                 {
                     try
                     {
@@ -161,7 +162,7 @@ namespace sogen
                     }
                 }
 
-                const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
+                const auto* mod = win_emu.mod_manager.find_by_address(base_address);
                 if (!mod || mod->module_path.empty())
                 {
                     return std::nullopt;
@@ -178,6 +179,73 @@ namespace sogen
             }
         }
 
+        NTSTATUS query_child_memory(const syscall_context& c, const emulator_process& process, const uint64_t base_address,
+                                    const uint32_t info_class, const uint64_t memory_information, const uint64_t memory_information_length,
+                                    const emulator_object<uint64_t> return_length)
+        {
+            auto* manager = c.win_emu.processes();
+            if (!manager)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            const auto region = manager->query_memory(process.process, base_address);
+            if (!region)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (info_class == MemoryBasicInformation || info_class == MemoryPrivilegedBasicInformation)
+            {
+                return_length.write_if_valid(sizeof(EMU_MEMORY_BASIC_INFORMATION64));
+                if (memory_information_length < sizeof(EMU_MEMORY_BASIC_INFORMATION64))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                EMU_MEMORY_BASIC_INFORMATION64 info{};
+                info.BaseAddress = region.base_address;
+                info.AllocationBase = region.allocation_base;
+                info.AllocationProtect = region.allocation_protect;
+                info.RegionSize = static_cast<int64_t>(region.region_size);
+                info.State = region.state;
+                info.Protect = region.protect;
+                info.Type = region.type;
+                c.emu.write_memory(memory_information, info);
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == MemoryMappedFilenameInformation)
+            {
+                if (region.mapped_file.empty())
+                {
+                    return STATUS_INVALID_ADDRESS;
+                }
+
+                const auto name = u8_to_u16(region.mapped_file);
+                const auto string_bytes = static_cast<uint32_t>(name.size() * sizeof(char16_t));
+                const auto required_length =
+                    static_cast<uint32_t>(sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + string_bytes + sizeof(char16_t));
+                return_length.write_if_valid(required_length);
+                if (memory_information_length < required_length)
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                const auto buffer = memory_information + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
+                UNICODE_STRING<EmulatorTraits<Emu64>> filename{};
+                filename.Length = static_cast<USHORT>(string_bytes);
+                filename.MaximumLength = static_cast<USHORT>(string_bytes + sizeof(char16_t));
+                filename.Buffer = buffer;
+                c.emu.write_memory(memory_information, filename);
+                c.emu.write_memory(buffer, name.data(), string_bytes);
+                c.emu.write_memory<char16_t>(buffer + string_bytes, u'\0');
+                return STATUS_SUCCESS;
+            }
+
+            return STATUS_NOT_SUPPORTED;
+        }
+
         NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, const handle process_handle, const uint64_t base_address,
                                              const uint32_t info_class, const uint64_t memory_information,
                                              const uint64_t memory_information_length, const emulator_object<uint64_t> return_length)
@@ -190,7 +258,10 @@ namespace sogen
 
             if (!c.proc.is_current_process_handle(process_handle))
             {
-                return STATUS_NOT_SUPPORTED;
+                const auto* process = get_managed_process(c, process_handle);
+                return process ? query_child_memory(c, *process, base_address, info_class, memory_information, memory_information_length,
+                                                    return_length)
+                               : STATUS_NOT_SUPPORTED;
             }
 
             if (info_class == MemoryWorkingSetExInformation || info_class == MemoryImageExtensionInformation)
@@ -252,7 +323,7 @@ namespace sogen
 
             if (info_class == MemoryMappedFilenameInformation)
             {
-                const auto mapped_filename = get_mapped_filename(c, base_address);
+                const auto mapped_filename = get_mapped_filename(c.win_emu, base_address);
                 if (!mapped_filename)
                 {
                     return STATUS_INVALID_ADDRESS;
@@ -1042,6 +1113,29 @@ namespace sogen
 
             return STATUS_SUCCESS;
         }
+    }
+
+    process_memory_region describe_memory_region(windows_emulator& win_emu, const uint64_t address)
+    {
+        const auto region_info = win_emu.memory.get_region_info(address);
+        const auto state = region_info.is_reserved ? MEM_RESERVE : MEM_FREE;
+
+        process_memory_region region{
+            .base_address = region_info.start,
+            .allocation_base = region_info.allocation_base,
+            .allocation_protect = map_emulator_to_nt_protection(region_info.initial_permissions),
+            .region_size = region_info.length,
+            .state = static_cast<uint32_t>(region_info.is_committed ? MEM_COMMIT : state),
+            .protect = map_emulator_to_nt_protection(region_info.permissions),
+            .type = region_info.is_reserved ? memory_region_policy::to_memory_basic_information_type(region_info.kind) : 0,
+        };
+
+        if (const auto mapped_filename = syscalls::get_mapped_filename(win_emu, address))
+        {
+            region.mapped_file = u16_to_u8(*mapped_filename);
+        }
+
+        return region;
     }
 
 } // namespace sogen

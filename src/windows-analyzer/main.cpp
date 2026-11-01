@@ -735,6 +735,10 @@ namespace sogen
             if (options.managed_process)
             {
                 win_emu->setup_process_if_necessary();
+                if (options.managed_process->request().debugged)
+                {
+                    win_emu->attach_debugger();
+                }
                 install_inherited_pipes(*win_emu, options.managed_process->request(), options.managed_process->take_inherited_pipes());
                 managed_target = std::make_unique<emulator_process_target>(*win_emu);
                 if (!options.managed_process->wait_for_resume(*managed_target))

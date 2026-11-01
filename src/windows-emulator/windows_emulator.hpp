@@ -4,6 +4,7 @@
 #include <arch_emulator.hpp>
 #include <machine_type.hpp>
 #include "process_manager.hpp"
+#include "debug_port.hpp"
 
 #include <stop_reason.hpp>
 #include <utils/finally.hpp>
@@ -199,6 +200,17 @@ namespace sogen
 
             return *x64;
         }
+
+        arm64_cpu& arm64_cpu_ref() const
+        {
+            auto* arm64 = dynamic_cast<arm64_cpu*>(&this->cpu);
+            if (!arm64)
+            {
+                throw std::runtime_error("This operation is only implemented for ARM64 guest CPUs");
+            }
+
+            return *arm64;
+        }
     };
 
     // The COFF machine of an application, resolved through its working directory and the settings' emulation
@@ -224,6 +236,8 @@ namespace sogen
         std::unique_ptr<audio_backend> audio_backend_{};
         std::unique_ptr<crypt_protect_backend> crypt_protect_backend_{};
         process_manager* process_manager_{};
+        debug_port debugger_{};
+        bool debugger_saw_process_{};
         std::unique_ptr<console_backend> console_backend_{};
         bool setup_completed_{false};
 
@@ -366,6 +380,23 @@ namespace sogen
         {
             return this->process_manager_;
         }
+
+        debug_port& debugger()
+        {
+            return this->debugger_;
+        }
+
+        // Makes this process the debuggee of a debugger in the parent process.
+        void attach_debugger();
+        // Runs on the process manager connection thread.
+        void detach_debugger();
+
+        // Stops the current thread until the debugger continues the event; returns the continue status. Needs the
+        // kernel lock, and does nothing without a debugger.
+        uint32_t report_debug_event(process_debug_event event);
+
+        // Brings the emulation loop around to its next scheduling point soon, where it runs the debugger's requests.
+        void interrupt_for_debugger();
 
         console_backend& console()
         {
@@ -688,6 +719,8 @@ namespace sogen
         void set_foreground_window(hwnd window);
         void deliver_ui_event(const ui_event& event);
         void resize_window_from_host(hwnd window_handle, bool maximized, int32_t client_width, int32_t client_height);
+        void report_debugger_process_start();
+        bool reports_module_to_debugger(const mapped_module& mod) const;
         std::pair<int32_t, int32_t> cursor_after_pointer_event(const ui_event& event) const;
         std::pair<emulator_thread*, const user_low_level_hook*> find_low_level_hook(uint64_t handle);
         void wake_thread(emulator_thread& thread);

@@ -224,6 +224,27 @@ namespace sogen
         }
     };
 
+    struct pending_debug_event_wait
+    {
+        handle debug_object{};
+        emulator_pointer state_change{};
+        std::optional<std::chrono::steady_clock::time_point> timeout{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->debug_object);
+            buffer.write(this->state_change);
+            buffer.write_optional(this->timeout);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->debug_object);
+            buffer.read(this->state_change);
+            buffer.read_optional(this->timeout);
+        }
+    };
+
     enum class callback_id : uint32_t
     {
         Invalid = 0,
@@ -417,6 +438,7 @@ namespace sogen
         std::optional<pending_msg> await_msg{};
         std::optional<DWORD> await_msg_mask{};
         std::optional<pending_io_completion_wait> await_io_completion{};
+        std::optional<pending_debug_event_wait> await_debug_event{};
         std::optional<emulator_pointer> await_file_io{};
 
         // When set, the thread is parked until this host-side predicate returns true. Used by the GPU
@@ -575,6 +597,7 @@ namespace sogen
             buffer.write_optional(this->await_msg);
             buffer.write_optional(this->await_msg_mask);
             buffer.write_optional(this->await_io_completion);
+            buffer.write_optional(this->await_debug_event);
             buffer.write_optional(this->await_file_io);
 
             buffer.write(this->apc_alertable);
@@ -658,6 +681,7 @@ namespace sogen
             buffer.read_optional(this->await_msg, [this] { return pending_msg{*this->memory_ptr}; });
             buffer.read_optional(this->await_msg_mask);
             buffer.read_optional(this->await_io_completion, [] { return pending_io_completion_wait{}; });
+            buffer.read_optional(this->await_debug_event, [] { return pending_debug_event_wait{}; });
             buffer.read_optional(this->await_file_io);
 
             buffer.read(this->apc_alertable);
