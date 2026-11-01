@@ -40,6 +40,7 @@ namespace sogen
     void sys_getattrlistbulk(const macos_syscall_context& c);
     void sys_access(const macos_syscall_context& c);
     void sys_getattrlist(const macos_syscall_context& c);
+    void sys_fgetattrlist(const macos_syscall_context& c);
     void sys_getfsstat64(const macos_syscall_context& c);
     void sys_sigprocmask(const macos_syscall_context& c);
     void sys_gettimeofday(const macos_syscall_context& c);

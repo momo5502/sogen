@@ -52,6 +52,7 @@ namespace sogen
         constexpr uint64_t MACOS_SYS_mmap = 197;
         constexpr uint64_t MACOS_SYS_sysctl = 202;
         constexpr uint64_t MACOS_SYS_getattrlist = 220;
+        constexpr uint64_t MACOS_SYS_fgetattrlist = 228;
         constexpr uint64_t MACOS_SYS_shm_open = 266;
         constexpr uint64_t MACOS_SYS_shared_region_check_np = 294;
         constexpr uint64_t MACOS_SYS_issetugid = 327;
@@ -99,6 +100,7 @@ namespace sogen
         this->register_unix_handler(MACOS_SYS_mmap, sys_mmap, "mmap");
         this->register_unix_handler(MACOS_SYS_sysctl, sys_sysctl, "sysctl");
         this->register_unix_handler(MACOS_SYS_getattrlist, sys_getattrlist, "getattrlist");
+        this->register_unix_handler(MACOS_SYS_fgetattrlist, sys_fgetattrlist, "fgetattrlist");
         this->register_unix_handler(MACOS_SYS_shm_open, sys_shm_open, "shm_open");
         this->register_unix_handler(MACOS_SYS_shared_region_check_np, sys_shared_region_check_np, "shared_region_check_np");
         this->register_unix_handler(MACOS_SYS_issetugid, sys_issetugid, "issetugid");

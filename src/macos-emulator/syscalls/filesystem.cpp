@@ -6,9 +6,10 @@
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <string>
-#include <vector>
 #include <string_view>
+#include <vector>
 
 namespace sogen
 {
@@ -105,18 +106,21 @@ namespace sogen
         }
     }
 
-    // Only the volume query dyld's FileManager makes on the root volume is answered: device and fsid, then the
-    // volume capabilities and UUID, packed in attribute bit order after a leading length.
-    void sys_getattrlist(const macos_syscall_context& c)
+    namespace
     {
-        constexpr uint32_t attr_cmn_devid = 0x2;
-        constexpr uint32_t attr_cmn_fsid = 0x4;
-        constexpr uint32_t attr_cmn_fullpath = 0x08000000;
-        constexpr uint32_t attr_vol_info = 0x80000000;
-        constexpr uint32_t attr_vol_capabilities = 0x20000;
-        constexpr uint32_t attr_vol_uuid = 0x40000;
-        constexpr uint32_t vol_cap_fmt_persistentobjectids = 0x1;
-        constexpr std::array<uint8_t, 16> root_volume_uuid{0x53, 0x4F, 0x47, 0x45, 0x4E, 0x2D, 0x52, 0x4F,
+        constexpr uint32_t ATTR_CMN_DEVID = 0x2;
+        constexpr uint32_t ATTR_CMN_FSID = 0x4;
+        constexpr uint32_t ATTR_CMN_FULLPATH = 0x08000000;
+        constexpr uint32_t ATTR_VOL_MOUNTFLAGS = 0x4000;
+        constexpr uint32_t ATTR_VOL_CAPABILITIES = 0x20000;
+        constexpr uint32_t ATTR_VOL_UUID = 0x40000;
+        constexpr uint32_t ATTR_VOL_INFO = 0x80000000;
+
+        constexpr uint32_t SUPPORTED_COMMON_ATTRIBUTES = ATTR_CMN_DEVID | ATTR_CMN_FSID;
+        constexpr uint32_t SUPPORTED_VOLUME_ATTRIBUTES = ATTR_VOL_MOUNTFLAGS | ATTR_VOL_CAPABILITIES | ATTR_VOL_UUID | ATTR_VOL_INFO;
+
+        constexpr uint32_t VOL_CAP_FMT_PERSISTENTOBJECTIDS = 0x1;
+        constexpr std::array<uint8_t, 16> ROOT_VOLUME_UUID{0x53, 0x4F, 0x47, 0x45, 0x4E, 0x2D, 0x52, 0x4F,
                                                            0x4F, 0x54, 0x2D, 0x56, 0x4F, 0x4C, 0x00, 0x01};
 
         struct attribute_list
@@ -130,59 +134,123 @@ namespace sogen
             uint32_t fork;
         };
 
-#pragma pack(push, 1)
-
-        struct root_volume_attributes
+        template <typename T>
+        void append_attribute(std::vector<std::byte>& data, const T& value)
         {
-            uint32_t length;
-            int32_t device;
-            std::array<int32_t, 2> fsid;
-            std::array<uint32_t, 4> capabilities;
-            std::array<uint32_t, 4> valid;
-            std::array<uint8_t, 16> uuid;
-        };
+            const auto start = data.size();
+            data.resize(start + sizeof(value));
+            std::memcpy(data.data() + start, &value, sizeof(value));
+        }
 
-#pragma pack(pop)
+        // Every path lies on the single root volume, so device, fsid and volume attributes are the same for all of
+        // them. They are packed in attribute bit order after a leading length, common attributes first.
+        std::optional<std::vector<std::byte>> pack_volume_attributes(const attribute_list& request)
+        {
+            const auto has_volume_attributes = request.volume != 0;
+            if ((request.common & ~SUPPORTED_COMMON_ATTRIBUTES) != 0 || (request.volume & ~SUPPORTED_VOLUME_ATTRIBUTES) != 0 ||
+                (has_volume_attributes && (request.volume & ATTR_VOL_INFO) == 0) || request.directory != 0 || request.file != 0 ||
+                request.fork != 0)
+            {
+                return std::nullopt;
+            }
 
+            std::vector<std::byte> data(sizeof(uint32_t));
+            if (request.common & ATTR_CMN_DEVID)
+            {
+                append_attribute(data, macos_file_ids::ROOT_FSID[0]);
+            }
+
+            if (request.common & ATTR_CMN_FSID)
+            {
+                append_attribute(data, macos_file_ids::ROOT_FSID);
+            }
+
+            if (request.volume & ATTR_VOL_MOUNTFLAGS)
+            {
+                append_attribute(data, root_filesystem().f_flags);
+            }
+
+            if (request.volume & ATTR_VOL_CAPABILITIES)
+            {
+                constexpr std::array<uint32_t, 4> capabilities{VOL_CAP_FMT_PERSISTENTOBJECTIDS, 0, 0, 0};
+                append_attribute(data, capabilities);
+                append_attribute(data, capabilities);
+            }
+
+            if (request.volume & ATTR_VOL_UUID)
+            {
+                append_attribute(data, ROOT_VOLUME_UUID);
+            }
+
+            const auto length = static_cast<uint32_t>(data.size());
+            std::memcpy(data.data(), &length, sizeof(length));
+            return data;
+        }
+
+        void get_attributes(const macos_syscall_context& c, const std::string& guest_path)
+        {
+            attribute_list request{};
+            if (!c.emu.try_read_memory(get_macos_syscall_argument(c.emu, 1), &request, sizeof(request)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                return;
+            }
+
+            if (request.common == ATTR_CMN_FULLPATH && request.volume == 0 && request.directory == 0 && request.file == 0)
+            {
+                write_full_path_attribute(c, guest_path);
+                return;
+            }
+
+            const auto attributes = pack_volume_attributes(request);
+            if (!attributes)
+            {
+                c.emu_ref.log.error("Unhandled getattrlist(%s, common 0x%x, volume 0x%x)\n", guest_path.c_str(), request.common,
+                                    request.volume);
+                c.emu_ref.stop();
+                return;
+            }
+
+            if (!std::filesystem::exists(c.emu_ref.file_system.translate(guest_path)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+                return;
+            }
+
+            const auto buffer_size = get_macos_syscall_argument(c.emu, 3);
+            if (buffer_size < attributes->size() ||
+                !c.emu.try_write_memory(get_macos_syscall_argument(c.emu, 2), attributes->data(), attributes->size()))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                return;
+            }
+
+            write_macos_syscall_success(c, 0);
+        }
+    }
+
+    void sys_getattrlist(const macos_syscall_context& c)
+    {
         const auto path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
-        attribute_list request{};
-        if (!path || !c.emu.try_read_memory(get_macos_syscall_argument(c.emu, 1), &request, sizeof(request)))
+        if (!path)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
             return;
         }
 
-        if (request.common == attr_cmn_fullpath && request.volume == 0 && request.directory == 0 && request.file == 0)
+        get_attributes(c, *path);
+    }
+
+    void sys_fgetattrlist(const macos_syscall_context& c)
+    {
+        const auto* file = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
+        if (file == nullptr || file->is_standard_stream() || (file->type != fd_type::file && file->type != fd_type::directory))
         {
-            write_full_path_attribute(c, *path);
+            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
             return;
         }
 
-        if (*path != "/" || request.common != (attr_cmn_devid | attr_cmn_fsid) ||
-            request.volume != (attr_vol_info | attr_vol_capabilities | attr_vol_uuid) || request.directory != 0 || request.file != 0)
-        {
-            c.emu_ref.log.error("Unhandled getattrlist(%s, common 0x%x, volume 0x%x)\n", path->c_str(), request.common, request.volume);
-            c.emu_ref.stop();
-            return;
-        }
-
-        root_volume_attributes attributes{};
-        attributes.length = sizeof(attributes);
-        attributes.device = macos_file_ids::ROOT_FSID[0];
-        attributes.fsid = macos_file_ids::ROOT_FSID;
-        attributes.capabilities[0] = vol_cap_fmt_persistentobjectids;
-        attributes.valid[0] = vol_cap_fmt_persistentobjectids;
-        attributes.uuid = root_volume_uuid;
-
-        const auto buffer_size = get_macos_syscall_argument(c.emu, 3);
-        if (buffer_size < sizeof(attributes) ||
-            !c.emu.try_write_memory(get_macos_syscall_argument(c.emu, 2), &attributes, sizeof(attributes)))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-            return;
-        }
-
-        write_macos_syscall_success(c, 0);
+        get_attributes(c, file->guest_path);
     }
 
     void sys_getfsstat64(const macos_syscall_context& c)
