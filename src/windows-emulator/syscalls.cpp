@@ -789,7 +789,7 @@ namespace sogen
         uint32_t handle_NtUserGetCaretBlinkTime();
         BOOL handle_NtUserFlashWindowEx();
         BOOL handle_NtUserModifyWindowTouchCapability();
-        BOOL handle_NtUserEnableMouseInPointer();
+        BOOL handle_NtUserEnableMouseInPointer(const syscall_context&, BOOL enable);
         uint32_t handle_NtUserGetClipboardSequenceNumber();
         BOOL handle_NtUserOpenClipboard();
         BOOL handle_NtUserCloseClipboard();

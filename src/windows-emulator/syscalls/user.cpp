@@ -7095,12 +7095,12 @@ namespace sogen
             return TRUE;
         }
 
-        // Opting in swaps legacy WM_MOUSE* messages for WM_POINTER ones, and there is no pointer input stack
-        // here, so reporting success would leave the caller waiting for messages that never arrive. Failing is
-        // what Windows itself does where pointer input is unavailable, and keeps the caller on the mouse path.
-        BOOL handle_NtUserEnableMouseInPointer()
+        // Enabling swaps the legacy WM_MOUSE* messages for WM_POINTER ones, and nothing here produces WM_POINTER,
+        // so that request is refused deliberately, although Windows would accept it. Disabling asks for the mode a
+        // process is already in, and succeeds as it does on Windows.
+        BOOL handle_NtUserEnableMouseInPointer(const syscall_context& /*c*/, const BOOL enable)
         {
-            return FALSE;
+            return enable ? FALSE : TRUE;
         }
 
         namespace
