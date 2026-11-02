@@ -196,7 +196,7 @@ namespace sogen
 #define AFD_QUERY_RECEIVE_INFO          12
 #define AFD_QUERY_HANDLES               13
 #define AFD_SET_INFORMATION             14
-#define AFD_GET_CONTEXT_LENGTH          15
+#define AFD_GET_REMOTE_ADDRESS          15
 #define AFD_GET_CONTEXT                 16
 #define AFD_SET_CONTEXT                 17
 
@@ -235,6 +235,7 @@ namespace sogen
 #define AFD_ADDRESS_LIST_CHANGE         45
 #define AFD_JOIN_LEAF                   46
 #define AFD_TRANSPORT_IOCTL             47
+#define AFD_SUPER_CONNECT               49
 
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
