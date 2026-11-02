@@ -20,6 +20,8 @@ namespace sogen::syscalls
     NTSTATUS handle_NtAdjustPrivilegesToken(const syscall_context& c, handle requested_token, BOOLEAN disable_all_privileges,
                                             emulator_pointer new_state, ULONG buffer_length, emulator_pointer previous_state,
                                             emulator_object<ULONG> return_length);
+    NTSTATUS handle_NtPrivilegeCheck(const syscall_context& c, handle client_token, emulator_pointer required_privileges,
+                                     emulator_object<BOOLEAN> result);
 }
 
 namespace sogen::test
@@ -48,6 +50,24 @@ namespace sogen::test
             syscall_context context()
             {
                 return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            }
+
+            NTSTATUS privilege_check(const handle token, const ULONG count, const ULONG control, const ULONG luid,
+                                     const uint64_t set_address)
+            {
+                this->emu->memory.write_memory(set_address, std::array<ULONG, 5>{count, control, luid, 0, 0});
+                this->emu->memory.write_memory(this->storage, BOOLEAN{0xAA});
+                return syscalls::handle_NtPrivilegeCheck(this->context(), token, set_address, {this->emu->memory, this->storage});
+            }
+
+            NTSTATUS privilege_check(const handle token, const ULONG count, const ULONG control, const ULONG luid)
+            {
+                return this->privilege_check(token, count, control, luid, this->storage + 0x100);
+            }
+
+            BOOLEAN privilege_check_result()
+            {
+                return this->emu->memory.read_memory<BOOLEAN>(this->storage);
             }
 
             NTSTATUS query(TOKEN_INFORMATION_CLASS information_class, ULONG size, const handle token = CURRENT_PROCESS_TOKEN)
@@ -239,4 +259,177 @@ namespace sogen::test
         EXPECT_EQ(23u, (emulator_object<ULONG>{this->emu->memory, previous_state + sizeof(ULONG)}.read()));
         EXPECT_TRUE(std::ranges::none_of(this->privileges(), [](const auto& privilege) { return (privilege.second & 2) != 0; }));
     }
+
+    TEST_F(TokenInformationTest, PrivilegeCheckGrantsEmptyAllNecessarySetsAndDeniesUnheldPrivileges)
+    {
+        constexpr ULONG all_necessary = 1;
+        constexpr ULONG se_tcb = 7;
+        for (const auto token : {CURRENT_PROCESS_TOKEN, DUMMY_IMPERSONATION_TOKEN, ANONYMOUS_IMPERSONATION_TOKEN})
+        {
+            ASSERT_EQ(STATUS_SUCCESS, this->privilege_check(token, 0, all_necessary, 0));
+            EXPECT_EQ(TRUE, this->privilege_check_result());
+            ASSERT_EQ(STATUS_SUCCESS, this->privilege_check(token, 0, 0, 0));
+            EXPECT_EQ(FALSE, this->privilege_check_result());
+            for (const auto luid : std::array<ULONG, 3>{se_tcb, 0, 0x7FFF})
+            {
+                for (const auto control : std::array<ULONG, 3>{0, all_necessary, 2})
+                {
+                    ASSERT_EQ(STATUS_SUCCESS, this->privilege_check(token, 1, control, luid));
+                    EXPECT_EQ(FALSE, this->privilege_check_result());
+                }
+            }
+        }
+    }
+
+    TEST_F(TokenInformationTest, PrivilegeCheckFollowsTheTokensEnabledPrivileges)
+    {
+        constexpr ULONG all_necessary = 1;
+        constexpr ULONG used_for_access = 0x80000000;
+        constexpr ULONG se_change_notify = 23;
+        constexpr ULONG se_shutdown = 19;
+        constexpr ULONG se_tcb = 7;
+        const auto set = this->storage + 0x100;
+        const emulator_object<ULONG> attributes{this->emu->memory, set + 0x10};
+
+        for (const auto control : std::array<ULONG, 2>{0, all_necessary})
+        {
+            ASSERT_EQ(STATUS_SUCCESS, this->privilege_check(CURRENT_PROCESS_TOKEN, 1, control, se_change_notify));
+            EXPECT_EQ(TRUE, this->privilege_check_result());
+            EXPECT_EQ(used_for_access, attributes.read() & used_for_access);
+
+            for (const auto luid : std::array<ULONG, 2>{se_shutdown, se_tcb})
+            {
+                ASSERT_EQ(STATUS_SUCCESS, this->privilege_check(CURRENT_PROCESS_TOKEN, 1, control, luid)) << luid;
+                EXPECT_EQ(FALSE, this->privilege_check_result()) << luid;
+                EXPECT_EQ(0u, attributes.read() & used_for_access) << luid;
+            }
+        }
+
+        this->emu->memory.write_memory(set, std::array<ULONG, 8>{2, 0, se_change_notify, 0, 0, se_shutdown, 0, 0});
+        this->emu->memory.write_memory(this->storage, BOOLEAN{0xAA});
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtPrivilegeCheck(this->context(), CURRENT_PROCESS_TOKEN, set, {this->emu->memory, this->storage}));
+        EXPECT_EQ(TRUE, this->privilege_check_result());
+
+        this->emu->memory.write_memory(set, std::array<ULONG, 8>{2, all_necessary, se_change_notify, 0, 0, se_shutdown, 0, 0});
+        this->emu->memory.write_memory(this->storage, BOOLEAN{0xAA});
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtPrivilegeCheck(this->context(), CURRENT_PROCESS_TOKEN, set, {this->emu->memory, this->storage}));
+        EXPECT_EQ(FALSE, this->privilege_check_result());
+    }
+
+    TEST_F(TokenInformationTest, PrivilegeCheckAcceptsAnOpenedTokenAndUsesItsOwnPrivileges)
+    {
+        constexpr ULONG disable_max_privilege = 0x1;
+        constexpr ULONG se_change_notify = 23;
+        constexpr ULONG se_shutdown = 19;
+        emulator_object<handle> output{this->emu->memory, this->storage + 0x200};
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtFilterToken(this->context(), CURRENT_PROCESS_TOKEN, disable_max_privilege, 0, 0, 0, output));
+
+        const auto filtered = output.read();
+        ASSERT_EQ(STATUS_SUCCESS, this->privilege_check(filtered, 1, 0, se_change_notify));
+        EXPECT_EQ(TRUE, this->privilege_check_result());
+        ASSERT_EQ(STATUS_SUCCESS, this->privilege_check(filtered, 1, 0, se_shutdown));
+        EXPECT_EQ(FALSE, this->privilege_check_result());
+    }
+
+    TEST_F(TokenInformationTest, PrivilegeCheckRejectsNonTokenHandlesAndUnreadableArguments)
+    {
+        constexpr ULONG se_change_notify = 23;
+        const auto event_handle = this->emu->process.events.store(event{});
+        const std::array<std::pair<handle, NTSTATUS>, 4> handles{{
+            {handle{}, STATUS_INVALID_HANDLE},
+            {make_handle(0x1234), STATUS_INVALID_HANDLE},
+            {CURRENT_THREAD_EFFECTIVE_TOKEN, STATUS_INVALID_HANDLE},
+            {event_handle, STATUS_OBJECT_TYPE_MISMATCH},
+        }};
+        for (const auto& [token, status] : handles)
+        {
+            EXPECT_EQ(status, this->privilege_check(token, 1, 0, se_change_notify));
+            EXPECT_EQ(0xAA, this->privilege_check_result());
+        }
+
+        const auto end_of_storage = this->storage + 0x1000 - 0x14;
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->privilege_check(DUMMY_IMPERSONATION_TOKEN, 0x100, 0, se_change_notify, end_of_storage));
+        EXPECT_EQ(0xAA, this->privilege_check_result());
+
+        const auto set = this->storage + 0x100;
+        const emulator_object<BOOLEAN> result{this->emu->memory, this->storage};
+        const emulator_object<BOOLEAN> no_result{this->emu->memory, 0};
+        for (const auto token : {DUMMY_IMPERSONATION_TOKEN, ANONYMOUS_IMPERSONATION_TOKEN})
+        {
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION, syscalls::handle_NtPrivilegeCheck(this->context(), token, 0, result));
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION, syscalls::handle_NtPrivilegeCheck(this->context(), token, set, no_result));
+        }
+
+        const auto garbage = make_handle(0x1234);
+        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtPrivilegeCheck(this->context(), garbage, 0, result));
+        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtPrivilegeCheck(this->context(), garbage, set, no_result));
+        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtPrivilegeCheck(this->context(), garbage, 0, no_result));
+    }
+
+    TEST_F(TokenInformationTest, PrivilegeCheckProbesTheWholeSetBeforeRejectingMoreThanSixtySixEntries)
+    {
+        constexpr uint64_t header_size = 8;
+        constexpr uint64_t entry_size = 12;
+        constexpr size_t page_size = 0x1000;
+        const emulator_object<BOOLEAN> result{this->emu->memory, this->storage};
+        const emulator_object<BOOLEAN> no_result{this->emu->memory, 0};
+        const auto check = [&](const ULONG count, const uint64_t set, const emulator_object<BOOLEAN> target) {
+            this->emu->memory.write_memory(set, std::array<ULONG, 2>{count, 0});
+            result.write(BOOLEAN{0xAA});
+            return syscalls::handle_NtPrivilegeCheck(this->context(), DUMMY_IMPERSONATION_TOKEN, set, target);
+        };
+        const auto set_with_readable_entries = [&](const uint64_t mapped_end, const uint64_t entries) {
+            return mapped_end - header_size - (entries * entry_size);
+        };
+
+        const auto storage_end = this->storage + page_size;
+        EXPECT_EQ(STATUS_SUCCESS, check(66, set_with_readable_entries(storage_end, 66), result));
+        EXPECT_EQ(FALSE, this->privilege_check_result());
+
+        for (const ULONG count : {67u, 0x100u})
+        {
+            EXPECT_EQ(STATUS_INVALID_PARAMETER, check(count, set_with_readable_entries(storage_end, count), result)) << count;
+            EXPECT_EQ(0xAA, this->privilege_check_result()) << count;
+        }
+
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, check(66, set_with_readable_entries(storage_end, 65), result));
+        EXPECT_EQ(0xAA, this->privilege_check_result());
+
+        for (const ULONG count : {0u, 1u, 67u, 0x100000u, 0x7FFFFFFFu, 0xFFFFFFFFu})
+        {
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION, check(count, set_with_readable_entries(storage_end, 0), result)) << count;
+            EXPECT_EQ(0xAA, this->privilege_check_result()) << count;
+        }
+
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, check(67, set_with_readable_entries(storage_end, 67), no_result));
+        EXPECT_EQ(0xAA, this->privilege_check_result());
+
+        constexpr ULONG large_count = 0x100000;
+        constexpr uint64_t large_size = (header_size + (large_count * entry_size) + 0xFFF) & ~uint64_t{0xFFF};
+        const auto large = this->emu->memory.allocate_memory(static_cast<size_t>(large_size), memory_permission::read_write);
+        ASSERT_NE(0u, large);
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, check(large_count, large, result));
+        EXPECT_EQ(0xAA, this->privilege_check_result());
+
+        const auto read_only = this->emu->memory.allocate_memory(page_size, memory_permission::read_write);
+        ASSERT_NE(0u, read_only);
+        const auto read_only_end = read_only + page_size;
+        for (const ULONG count : {1u, 66u, 67u})
+        {
+            this->emu->memory.write_memory(set_with_readable_entries(read_only_end, count), std::array<ULONG, 2>{count, 0});
+        }
+        ASSERT_TRUE(this->emu->memory.protect_memory(read_only, page_size, memory_permission::read));
+        for (const ULONG count : {1u, 66u, 67u})
+        {
+            result.write(BOOLEAN{0xAA});
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION, syscalls::handle_NtPrivilegeCheck(this->context(), DUMMY_IMPERSONATION_TOKEN,
+                                                                                 set_with_readable_entries(read_only_end, count), result))
+                << count;
+            EXPECT_EQ(0xAA, this->privilege_check_result()) << count;
+        }
+    }
+
 }

@@ -107,6 +107,28 @@ namespace sogen
                 return groups;
             }
 
+            bool is_writable_range(memory_manager& memory, const uint64_t address, const uint64_t size)
+            {
+                const auto end = address + size;
+                if (address == 0 || end < address)
+                {
+                    return false;
+                }
+
+                for (auto current = address; current < end;)
+                {
+                    const auto region = memory.get_region_info(current);
+                    if (!region.is_committed || !is_writable(region.permissions.common))
+                    {
+                        return false;
+                    }
+
+                    current = region.start + region.length;
+                }
+
+                return true;
+            }
+
             NTSTATUS write_token_groups(const syscall_context& c, const uint64_t token_information, const ULONG token_information_length,
                                         const emulator_object<ULONG> return_length, const std::span<const token_group> groups)
             {
@@ -800,6 +822,72 @@ namespace sogen
             privilege_set_length.write(0);
             granted_access.write(granted);
             access_status.write(!denied && remaining == 0 ? STATUS_SUCCESS : STATUS_ACCESS_DENIED);
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtPrivilegeCheck(const syscall_context& c, const handle client_token, const emulator_pointer required_privileges,
+                                         const emulator_object<BOOLEAN> result)
+        {
+            struct privilege_set_header
+            {
+                ULONG privilege_count;
+                ULONG control;
+            };
+
+            constexpr ULONG privilege_set_all_necessary = 1;
+            constexpr ULONG se_privilege_used_for_access = 0x80000000;
+            constexpr ULONG max_privilege_count = 66;
+
+            // A real token handle is accepted as well as the pseudo handles that name a token. The effective token is
+            // not one of them: it is resolved only by the query calls, so Windows rejects it here.
+            if (!c.proc.tokens.get(client_token) && !is_modeled_token(client_token))
+            {
+                const auto object_handle = c.proc.resolve_object_pseudo_handle(client_token, c.vcpu.active_thread);
+                auto* store = c.proc.get_handle_store(object_handle);
+                return store && store->get_object(object_handle) ? STATUS_OBJECT_TYPE_MISMATCH : STATUS_INVALID_HANDLE;
+            }
+
+            const auto header = emulator_object<privilege_set_header>{c.emu, required_privileges}.try_read();
+            if (!header)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            // PRIVILEGE_SET declares one entry, so Windows probes that much even for an empty set.
+            const auto probed_entries = std::max<uint64_t>(header->privilege_count, 1);
+            const auto set_size = sizeof(privilege_set_header) + (probed_entries * sizeof(luid_and_attributes));
+            if (!is_writable_range(c.win_emu.memory, required_privileges, set_size) ||
+                !is_writable_range(c.win_emu.memory, result.value(), sizeof(BOOLEAN)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (header->privilege_count > max_privilege_count)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto* privileges = find_token_privileges(c, client_token);
+            const auto entries = required_privileges + sizeof(privilege_set_header);
+            ULONG held = 0;
+
+            for (ULONG index = 0; index < header->privilege_count; ++index)
+            {
+                const emulator_object<luid_and_attributes> entry{c.emu, entries + (index * sizeof(luid_and_attributes))};
+                auto requested = entry.read();
+                const auto enabled =
+                    privileges && requested.luid_high == 0 && std::ranges::any_of(*privileges, [&](const token_privilege& privilege) {
+                        return privilege.luid == requested.luid_low && (privilege.attributes & se_privilege_enabled) != 0;
+                    });
+
+                held += enabled ? 1 : 0;
+                requested.attributes = enabled ? (requested.attributes | se_privilege_used_for_access)
+                                               : (requested.attributes & ~se_privilege_used_for_access);
+                entry.write(requested);
+            }
+
+            const auto all_necessary = (header->control & privilege_set_all_necessary) != 0;
+            result.write(all_necessary ? held == header->privilege_count : held > 0);
             return STATUS_SUCCESS;
         }
 
