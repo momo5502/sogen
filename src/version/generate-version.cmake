@@ -5,7 +5,6 @@
 
 set(build_id "${BUILD_ID}")
 set(modified false)
-set(description "${BUILD_ID}")
 
 # Git looks for a repository in the parent directories too, which would give a source tree unpacked inside another
 # checkout the identity of that unrelated repository. .git is a file in worktrees and submodules.
@@ -33,20 +32,11 @@ if(NOT build_id AND EXISTS "${SOURCE_DIR}/.git")
     if(changes)
       set(modified true)
     endif()
-
-    execute_process(
-      COMMAND "${GIT_EXECUTABLE}" describe --always --dirty --tags
-      WORKING_DIRECTORY "${SOURCE_DIR}"
-      OUTPUT_VARIABLE description
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-      ERROR_QUIET)
   endif()
 endif()
 
-foreach(value build_id description)
-  string(REPLACE "\\" "\\\\" ${value} "${${value}}")
-  string(REPLACE "\"" "\\\"" ${value} "${${value}}")
-endforeach()
+string(REPLACE "\\" "\\\\" build_id "${build_id}")
+string(REPLACE "\"" "\\\"" build_id "${build_id}")
 
 set(content "#pragma once
 
@@ -59,8 +49,6 @@ namespace sogen::version
 
     // Whether the source had uncommitted changes, which the build ID does not reflect.
     inline constexpr bool modified = ${modified};
-
-    inline constexpr std::string_view description = \"${description}\";
 }
 ")
 

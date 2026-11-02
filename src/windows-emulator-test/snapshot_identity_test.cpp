@@ -2,6 +2,7 @@
 
 #include <emulator_utils.hpp>
 #include <snapshot.hpp>
+#include <sogen_version.hpp>
 
 #include <cstring>
 #include <fstream>
@@ -64,6 +65,11 @@ namespace sogen::test
 
     TEST_F(SnapshotIdentityTest, ASnapshotOfAnotherBuildIsRejectedFromItsHeader)
     {
+        if (version::build_id.empty())
+        {
+            GTEST_SKIP() << "the build has no identity to compare against";
+        }
+
         this->write(header_with_build_id("0123456789abcdef0123456789abcdef01234567"));
 
         const auto error = this->load_error();
