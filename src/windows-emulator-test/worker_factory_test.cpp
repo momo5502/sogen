@@ -1,10 +1,17 @@
 #include "emulation_test_utils.hpp"
+#include <io_completion_wait.hpp>
 #include <syscall_utils.hpp>
+#include <worker_factory_support.hpp>
 
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtSetInformationWorkerFactory(const syscall_context& c, handle worker_factory_handle, WORKERFACTORYINFOCLASS info_class,
                                                   uint64_t information, ULONG information_length);
+    NTSTATUS handle_NtReleaseWorkerFactoryWorker(const syscall_context& c, handle worker_factory_handle);
+    NTSTATUS handle_NtWorkerFactoryWorkerReady(const syscall_context& c, handle worker_factory_handle);
+    NTSTATUS handle_NtWaitForWorkViaWorkerFactory(const syscall_context& c, handle worker_factory_handle,
+                                                  emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> mini_packets,
+                                                  ULONG count, emulator_object<ULONG> packets_returned, emulator_pointer deferred_work);
 }
 
 namespace sogen::test
@@ -39,10 +46,136 @@ namespace sogen::test
                                                                       size);
             }
 
+            syscall_context context()
+            {
+                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            }
+
+            worker_factory& pool()
+            {
+                return *this->emu->process.worker_factories.get(this->factory_handle);
+            }
+
+            // Shaped like the factory ntdll's TpAllocPoolInternal creates: a completion port, TppWorkerThread as the start
+            // routine (never run here) and a 512-thread maximum.
+            void make_pool(const uint32_t thread_maximum = 512)
+            {
+                this->port = this->emu->process.io_completions.store(io_completion{});
+                auto& factory = this->pool();
+                factory.io_completion_handle = this->port;
+                factory.start_routine = 0x10000;
+                factory.thread_maximum = thread_maximum;
+            }
+
+            NTSTATUS release()
+            {
+                return syscalls::handle_NtReleaseWorkerFactoryWorker(this->context(), this->factory_handle);
+            }
+
+            NTSTATUS worker_ready()
+            {
+                return syscalls::handle_NtWorkerFactoryWorkerReady(this->context(), this->factory_handle);
+            }
+
+            // A worker takes the queued release, as NtWaitForWorkViaWorkerFactory does, and then runs its callback.
+            void take_release()
+            {
+                io_completion_message message{};
+                ASSERT_TRUE(io_completion_wait::dequeue_io_completion_message(*this->emu, this->port, message));
+                EXPECT_TRUE(message.worker_factory_release);
+            }
+
+            // One started worker that is now busy inside a callback.
+            void start_busy_worker()
+            {
+                ASSERT_EQ(STATUS_SUCCESS, this->release());
+                ASSERT_EQ(1u, this->pool().worker_threads.size());
+                ASSERT_EQ(STATUS_SUCCESS, this->worker_ready());
+                this->take_release();
+            }
+
             std::unique_ptr<windows_emulator> emu{};
             uint64_t storage{};
             handle factory_handle{};
+            handle port{};
         };
+    }
+
+    TEST_F(WorkerFactoryTest, ReleaseStartsAWorkerWhenEveryWorkerIsBusy)
+    {
+        this->make_pool();
+        this->start_busy_worker();
+
+        // Destiny 2's orbit hang: the only worker of the global pool never returns from its callback, so the work
+        // posted next needs a new worker (ExpWorkerFactoryCheckCreate).
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        EXPECT_EQ(2u, this->pool().worker_threads.size());
+        EXPECT_EQ(1u, this->pool().pending_worker_count);
+    }
+
+    TEST_F(WorkerFactoryTest, ReleaseLeavesTheWorkToAWaitingWorker)
+    {
+        this->make_pool();
+        this->start_busy_worker();
+
+        auto* worker = this->emu->process.threads.get(this->pool().worker_threads.front());
+        ASSERT_NE(nullptr, worker);
+        worker->await_io_completion =
+            pending_io_completion_wait{.io_completion_handle = this->port, .type = io_completion_wait_type::remove_multiple};
+
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, StartsOneWorkerAtATimeUntilItReportsReady)
+    {
+        this->make_pool();
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        this->take_release();
+
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+
+        EXPECT_EQ(STATUS_SUCCESS, this->worker_ready());
+        EXPECT_EQ(STATUS_UNSUCCESSFUL, this->worker_ready());
+    }
+
+    TEST_F(WorkerFactoryTest, ReleaseStaysWithinTheThreadMaximum)
+    {
+        this->make_pool(1);
+        this->start_busy_worker();
+
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, WorkerHandedAReleaseStartsAnotherForTheReleaseLeft)
+    {
+        this->make_pool();
+        this->start_busy_worker();
+
+        // The worker is back for more work and waits on the port.
+        auto* worker = this->emu->process.threads.get(this->pool().worker_threads.front());
+        ASSERT_NE(nullptr, worker);
+        this->emu->vcpu(0).active_thread = worker;
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtWaitForWorkViaWorkerFactory(this->context(), this->factory_handle,
+                                                                  {this->emu->memory, this->storage + 0x100}, 1,
+                                                                  {this->emu->memory, this->storage + 0x80}, 0);
+        }));
+        ASSERT_TRUE(worker->await_io_completion.has_value());
+
+        // Two releases are left when the release packet goes out again, as after another thread took one off the port: the
+        // packet goes straight to the waiting worker and the other release queues behind it, with no worker free for it.
+        auto& factory = this->pool();
+        factory.pending_release_count = 2;
+        factory.release_pending = true;
+        ASSERT_TRUE(
+            this->emu->synchronize([&] { return worker_factory_support::enqueue_release_completion(*this->emu, this->factory_handle); }));
+
+        EXPECT_FALSE(worker->await_io_completion.has_value());
+        EXPECT_EQ(1u, this->emu->process.io_completions.get(this->port)->queue.size());
+        EXPECT_EQ(2u, factory.worker_threads.size());
     }
 
     TEST_F(WorkerFactoryTest, UpdatesStackSizesIncludingZeroAndUnalignedSizes)
