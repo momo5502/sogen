@@ -8,6 +8,10 @@
 #include "platform/win_pefile.hpp"
 #include "../arch/windows_abi.hpp"
 
+#include <algorithm>
+#include <array>
+#include <span>
+
 namespace sogen
 {
 
@@ -191,7 +195,10 @@ namespace sogen
         windows_guest_architecture native_architecture_{};
 
         module_map modules_{};
-        mutable module_map::iterator last_module_cache_{modules_.end()};
+        // The modules lookups found last, newest first. Consecutive lookups often alternate between modules, such as a
+        // syscall's stub and its caller.
+        std::array<module_map::iterator, 4> recent_modules_{};
+        size_t recent_module_count_{};
 
         mapping_strategy_factory strategy_factory_;
         execution_mode current_execution_mode_ = execution_mode::unknown;
@@ -212,9 +219,14 @@ namespace sogen
 
         module_map::iterator get_module(const uint64_t address)
         {
-            if (last_module_cache_ != this->modules_.end() && last_module_cache_->second.contains(address))
+            const auto recent = std::span{this->recent_modules_}.first(this->recent_module_count_);
+            for (auto entry = recent.begin(); entry != recent.end(); ++entry)
             {
-                return last_module_cache_;
+                if ((*entry)->second.contains(address))
+                {
+                    std::rotate(recent.begin(), entry, entry + 1);
+                    return recent.front();
+                }
             }
 
             if (this->modules_.empty())
@@ -232,7 +244,10 @@ namespace sogen
 
             if (upper_bound->second.contains(address))
             {
-                last_module_cache_ = upper_bound;
+                this->recent_module_count_ = std::min(this->recent_module_count_ + 1, this->recent_modules_.size());
+                std::shift_right(this->recent_modules_.begin(),
+                                 this->recent_modules_.begin() + static_cast<ptrdiff_t>(this->recent_module_count_), 1);
+                this->recent_modules_.front() = upper_bound;
                 return upper_bound;
             }
 
