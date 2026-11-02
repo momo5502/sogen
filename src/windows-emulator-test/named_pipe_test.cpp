@@ -591,6 +591,7 @@ namespace sogen::test
         auto pair = utils::host_pipe::create_pair(false, 4096);
         const auto server = this->store_pipe(std::move(pair.first), FILE_READ_DATA);
         this->pipe(server).name = u"\\Device\\NamedPipe\\duplicate-listener";
+        this->pipe(server).server_end = true;
         this->pipe(server).unopened_peer = std::move(pair.second);
         const auto duplicate = this->duplicate(server);
         const syscall_context context{

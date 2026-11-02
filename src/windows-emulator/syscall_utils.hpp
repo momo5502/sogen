@@ -146,10 +146,14 @@ namespace sogen
         return name.starts_with("Nt") && name.size() > 3 && is_uppercase(name[2]);
     }
 
+    constexpr std::array<std::u16string_view, 2> dos_named_pipe_prefixes{u"\\??\\Pipe\\", u"\\DosDevices\\Pipe\\"};
+
     inline bool is_named_pipe_path(const std::u16string_view& filename)
     {
         return utils::string::starts_with_ignore_case(filename, {u"\\Device\\NamedPipe\\"}) ||
-               utils::string::starts_with_ignore_case(filename, {u"\\??\\Pipe\\"});
+               std::ranges::any_of(dos_named_pipe_prefixes, [&](const std::u16string_view prefix) {
+                   return utils::string::starts_with_ignore_case(filename, prefix);
+               });
     }
 
     inline std::optional<uint32_t> extract_syscall_id(const exported_symbol& symbol, std::span<const std::byte> data)
