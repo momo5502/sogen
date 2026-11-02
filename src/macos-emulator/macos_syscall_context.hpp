@@ -40,6 +40,7 @@ namespace sogen
         constexpr uint64_t MACOS_EROFS = 30;
         constexpr uint64_t MACOS_ERANGE = 34;
         constexpr uint64_t MACOS_ENAMETOOLONG = 63;
+        constexpr uint64_t MACOS_EBADMACHO = 88;
     }
 
     namespace macos_kern_return

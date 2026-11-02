@@ -119,15 +119,6 @@ namespace sogen
             throw std::runtime_error("Universal binary has no x86-64 slice");
         }
 
-        struct mapped_image
-        {
-            uint64_t header_address{};
-            uint64_t end_address{};
-            std::optional<uint64_t> unixthread_entry_point{};
-            std::optional<std::string> dylinker_path{};
-            std::array<uint8_t, 16> uuid{};
-        };
-
         uint64_t validate_segment_range(const macho::segment_command_64& segment, const uint64_t slide)
         {
             if (slide > MACOS_USER_ADDRESS_END || segment.vmaddr > MACOS_USER_ADDRESS_END - slide ||
@@ -146,19 +137,22 @@ namespace sogen
             return address + size;
         }
 
-        void map_segment(posix_memory_manager& memory, const std::span<const std::byte> image, const macho::segment_command_64& segment,
-                         const uint64_t slide)
+        bool is_mapped_segment(const macho::segment_command_64& segment)
         {
-            if (segment.vmsize == 0 || segment.initprot == 0)
-            {
-                return;
-            }
+            return segment.vmsize != 0 && segment.initprot != 0;
+        }
 
+        void validate_segment_contents(const std::span<const std::byte> image, const macho::segment_command_64& segment)
+        {
             if (segment.filesize > segment.vmsize || segment.fileoff > image.size() || image.size() - segment.fileoff < segment.filesize)
             {
                 throw std::runtime_error("Mach-O segment exceeds file bounds");
             }
+        }
 
+        void map_segment(posix_memory_manager& memory, const std::span<const std::byte> image, const macho::segment_command_64& segment,
+                         const uint64_t slide)
+        {
             const auto address = segment.vmaddr + slide;
             const auto size = page_align_up(segment.vmsize);
             if (!memory.allocate_memory(address, static_cast<size_t>(size), memory_permission::read_write))
@@ -203,8 +197,7 @@ namespace sogen
             return path;
         }
 
-        mapped_image map_image(posix_memory_manager& memory, const std::span<const std::byte> image, const uint32_t expected_file_type,
-                               const uint64_t slide)
+        macos_macho_image parse_image(const std::span<const std::byte> image, const uint32_t expected_file_type, const uint64_t slide)
         {
             const auto header = read_struct<macho::mach_header_64>(image, 0);
             if (header.magic != macho::MH_MAGIC_64 || header.cputype != macho::CPU_TYPE_X86_64)
@@ -224,7 +217,7 @@ namespace sogen
 
             const auto commands = image.subspan(sizeof(header), header.sizeofcmds);
 
-            mapped_image result{};
+            macos_macho_image result{.file = {image.begin(), image.end()}, .slide = slide};
             std::optional<uint64_t> header_address{};
             uint64_t offset = 0;
 
@@ -242,7 +235,11 @@ namespace sogen
                 case macho::LC_SEGMENT_64: {
                     const auto segment = read_struct<macho::segment_command_64>(command_data, 0);
                     const auto segment_end = validate_segment_range(segment, slide);
-                    map_segment(memory, image, segment, slide);
+                    if (is_mapped_segment(segment))
+                    {
+                        validate_segment_contents(image, segment);
+                        result.segments.push_back(segment);
+                    }
                     result.end_address = std::max(result.end_address, segment_end);
                     if (segment.fileoff == 0 && segment.filesize != 0)
                     {
@@ -273,6 +270,55 @@ namespace sogen
 
             result.header_address = *header_address;
             return result;
+        }
+
+        void map_image(posix_memory_manager& memory, const macos_macho_image& image)
+        {
+            for (const auto& segment : image.segments)
+            {
+                map_segment(memory, image.file, segment, image.slide);
+            }
+        }
+
+        struct address_range
+        {
+            uint64_t start{};
+            uint64_t end{};
+        };
+
+        void add_segment_ranges(std::vector<address_range>& ranges, const macos_macho_image& image)
+        {
+            for (const auto& segment : image.segments)
+            {
+                const auto start = segment.vmaddr + image.slide;
+                ranges.push_back({.start = start, .end = start + page_align_up(segment.vmsize)});
+            }
+        }
+
+        // XNU loads into a fresh map and fails exec with LOAD_NOSPACE when the image collides with what it maps
+        // itself, so everything placed at a fixed address must be disjoint before the old image is dropped.
+        void validate_process_layout(const macos_process_image& process_image)
+        {
+            std::vector<address_range> ranges{{.start = STACK_TOP - STACK_SIZE, .end = STACK_TOP}};
+            add_segment_ranges(ranges, process_image.executable);
+            if (process_image.dylinker)
+            {
+                add_segment_ranges(ranges, *process_image.dylinker);
+            }
+            if (process_image.shared_region)
+            {
+                const auto base = process_image.shared_region->base_address();
+                ranges.push_back({.start = base, .end = base + process_image.shared_region->size()});
+            }
+
+            std::ranges::sort(ranges, {}, &address_range::start);
+            for (size_t i = 1; i < ranges.size(); ++i)
+            {
+                if (ranges[i].start < ranges[i - 1].end)
+                {
+                    throw std::runtime_error("Mach-O image overlaps memory the loader maps");
+                }
+            }
         }
 
         std::string to_hex(const uint64_t value)
@@ -405,7 +451,7 @@ namespace sogen
           memory(*this->emu_, MACOS_MEMORY_LAYOUT),
           file_system(std::move(emulation_root))
     {
-        this->load_image(image, executable_path, argv, envp);
+        this->load_image(this->prepare_process_image(image), executable_path, argv, envp);
         this->setup_hooks();
     }
 
@@ -445,61 +491,79 @@ namespace sogen
         this->setup_hooks();
     }
 
-    void macos_emulator::load_image(const std::span<const std::byte> image, const std::string& executable_path,
-                                    const std::vector<std::string>& argv, const std::vector<std::string>& envp)
+    macos_process_image macos_emulator::prepare_process_image(const std::span<const std::byte> image)
     {
-        const auto executable_image = map_image(this->memory, select_x86_64_slice(image), macho::MH_EXECUTE, 0);
+        macos_process_image process_image{.executable = parse_image(select_x86_64_slice(image), macho::MH_EXECUTE, 0)};
+        const auto& executable = process_image.executable;
 
-        this->executable_uuid = executable_image.uuid;
-        this->process_name = std::filesystem::path{executable_path}.filename().string();
-
-        std::optional<uint64_t> entry_point = executable_image.unixthread_entry_point;
-        std::optional<uint64_t> main_header{};
-
-        if (executable_image.dylinker_path)
+        if (executable.dylinker_path)
         {
-            const auto dyld_file = read_binary_file(this->file_system.translate(*executable_image.dylinker_path));
-            const auto dyld_slide = page_align_up(executable_image.end_address);
-            const auto dyld_image = map_image(this->memory, select_x86_64_slice(dyld_file), macho::MH_DYLINKER, dyld_slide);
-
-            entry_point = dyld_image.unixthread_entry_point;
-            main_header = executable_image.header_address;
+            const auto dyld_file = read_binary_file(this->file_system.translate(*executable.dylinker_path));
+            const auto dyld_slide = page_align_up(executable.end_address);
+            process_image.dylinker = parse_image(select_x86_64_slice(dyld_file), macho::MH_DYLINKER, dyld_slide);
 
             const auto shared_cache_file = this->file_system.translate(SHARED_CACHE_PATH);
             if (std::filesystem::exists(shared_cache_file))
             {
-                this->shared_region = std::make_shared<macos_shared_region>(this->memory, shared_cache_file, std::string{SHARED_CACHE_PATH},
-                                                                            this->file_ids.id_for(std::string{SHARED_CACHE_PATH}));
+                process_image.shared_region = std::make_shared<macos_shared_region>(shared_cache_file, std::string{SHARED_CACHE_PATH},
+                                                                                    this->file_ids.id_for(std::string{SHARED_CACHE_PATH}));
             }
         }
 
-        if (!entry_point)
+        const auto& entry_image = process_image.dylinker ? *process_image.dylinker : executable;
+        if (!entry_image.unixthread_entry_point)
         {
             throw std::runtime_error("No LC_UNIXTHREAD entry point to start from");
+        }
+
+        process_image.entry_point = *entry_image.unixthread_entry_point;
+        validate_process_layout(process_image);
+        return process_image;
+    }
+
+    void macos_emulator::load_image(const macos_process_image& process_image, const std::string& executable_path,
+                                    const std::vector<std::string>& argv, const std::vector<std::string>& envp)
+    {
+        const auto& executable = process_image.executable;
+
+        map_image(this->memory, executable);
+        this->executable_uuid = executable.uuid;
+        this->process_name = std::filesystem::path{executable_path}.filename().string();
+
+        std::optional<uint64_t> main_header{};
+        if (process_image.dylinker)
+        {
+            map_image(this->memory, *process_image.dylinker);
+            main_header = executable.header_address;
+        }
+
+        this->shared_region = process_image.shared_region;
+        if (this->shared_region)
+        {
+            this->shared_region->map(this->memory);
         }
 
         map_macos_commpage(this->memory);
 
         const auto stack_pointer = setup_stack(this->memory, main_header, argv, envp, make_apple_strings(executable_path));
 
-        this->emu().reg(x86_register::rip, *entry_point);
+        this->emu().reg(x86_register::rip, process_image.entry_point);
         this->emu().reg(x86_register::rsp, stack_pointer);
         this->emu().reg(x86_register::rflags, INITIAL_RFLAGS);
     }
 
     // The process keeps its identity, working directory, signal mask and the descriptors not marked close-on-exec;
     // everything else belongs to the image being replaced.
-    void macos_emulator::exec_image(const std::span<const std::byte> image, const std::string& executable_path,
+    void macos_emulator::exec_image(const macos_process_image& process_image, const std::string& executable_path,
                                     const std::vector<std::string>& argv, const std::vector<std::string>& envp)
     {
         this->memory.unmap_all_memory();
-        this->shared_region.reset();
         this->mach_ports = this->mach_ports.for_new_task();
         this->signals.reset_on_exec();
         this->fds.close_descriptors_on_exec();
         reset_thread_state(this->emu());
 
-        this->load_image(image, executable_path, argv, envp);
+        this->load_image(process_image, executable_path, argv, envp);
     }
 
     // Processes never run concurrently: the child runs until it terminates before the parent resumes, so it is

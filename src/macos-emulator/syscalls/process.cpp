@@ -7,6 +7,8 @@
 #include <array>
 #include <cstring>
 #include <filesystem>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -157,11 +159,23 @@ namespace sogen
             return;
         }
 
+        std::optional<macos_process_image> process_image{};
+        try
+        {
+            process_image = c.emu_ref.prepare_process_image(image);
+        }
+        catch (const std::runtime_error& error)
+        {
+            c.emu_ref.log.log("execve(%s) -> %s\n", path->c_str(), error.what());
+            write_macos_syscall_error(c, macos_errno::MACOS_EBADMACHO);
+            return;
+        }
+
         c.emu_ref.log.log("execve(%s)\n", path->c_str());
 
         auto& emu = c.emu_ref;
-        emu.after_syscall([&emu, image = std::move(image), path = *path, argv = std::move(argv), envp = std::move(envp)] {
-            emu.exec_image(image, path, argv, envp);
+        emu.after_syscall([&emu, process_image = std::move(*process_image), path = *path, argv = std::move(argv), envp = std::move(envp)] {
+            emu.exec_image(process_image, path, argv, envp);
         });
     }
 

@@ -71,8 +71,8 @@ namespace sogen
         }
     }
 
-    macos_shared_region::macos_shared_region(posix_memory_manager& memory, const std::filesystem::path& main_cache_file,
-                                             const std::string& guest_cache_path, const macos_file_id& cache_file_id)
+    macos_shared_region::macos_shared_region(const std::filesystem::path& main_cache_file, const std::string& guest_cache_path,
+                                             const macos_file_id& cache_file_id)
     {
         this->load_cache_file(main_cache_file);
 
@@ -104,12 +104,29 @@ namespace sogen
             this->load_cache_file(subcache_file);
         }
 
+        if (dynamic_data_offset > this->size_ || dynamic_data_size > this->size_ - dynamic_data_offset)
+        {
+            throw std::runtime_error("The shared cache dynamic region lies outside the shared region");
+        }
+
+        this->dynamic_region_address_ = this->base_address_ + dynamic_data_offset;
+        this->dynamic_region_ = make_dynamic_region(dynamic_data_size, guest_cache_path, cache_file_id);
+    }
+
+    void macos_shared_region::map(posix_memory_manager& memory) const
+    {
         if (!memory.reserve_memory(this->base_address_, static_cast<size_t>(this->size_)))
         {
             throw std::runtime_error("Failed to reserve the shared region");
         }
 
-        map_dynamic_region(memory, this->base_address_ + dynamic_data_offset, dynamic_data_size, guest_cache_path, cache_file_id);
+        if (!memory.allocate_memory(this->dynamic_region_address_, this->dynamic_region_.size(), memory_permission::read_write))
+        {
+            throw std::runtime_error("Failed to map the shared cache dynamic region");
+        }
+
+        memory.write_memory(this->dynamic_region_address_, this->dynamic_region_.data(), this->dynamic_region_.size());
+        memory.protect_memory(this->dynamic_region_address_, this->dynamic_region_.size(), memory_permission::read);
     }
 
     void macos_shared_region::load_cache_file(const std::filesystem::path& path)
@@ -157,8 +174,8 @@ namespace sogen
 
     // dyld requires a non-zero FileIdTuple, resolves the cache path from it with fsgetpath, and, outside Rosetta,
     // restarts into its own copy inside the cache.
-    void macos_shared_region::map_dynamic_region(posix_memory_manager& memory, const uint64_t address, const uint64_t size,
-                                                 const std::string& guest_cache_path, const macos_file_id& cache_file_id)
+    std::vector<std::byte> macos_shared_region::make_dynamic_region(const uint64_t size, const std::string& guest_cache_path,
+                                                                    const macos_file_id& cache_file_id)
     {
         std::vector<std::byte> region(static_cast<size_t>(size));
         if (DYNAMIC_REGION_HEADER_SIZE + guest_cache_path.size() + 1 > region.size())
@@ -172,13 +189,7 @@ namespace sogen
                     sizeof(DYNAMIC_REGION_HEADER_SIZE));
         std::memcpy(region.data() + DYNAMIC_REGION_HEADER_SIZE, guest_cache_path.c_str(), guest_cache_path.size() + 1);
 
-        if (!memory.allocate_memory(address, region.size(), memory_permission::read_write))
-        {
-            throw std::runtime_error("Failed to map the shared cache dynamic region");
-        }
-
-        memory.write_memory(address, region.data(), region.size());
-        memory.protect_memory(address, region.size(), memory_permission::read);
+        return region;
     }
 
     // A fault reports where the access starts, which may be the last bytes of a page that is already present while the

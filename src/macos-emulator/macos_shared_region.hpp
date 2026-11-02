@@ -21,13 +21,20 @@ namespace sogen
     class macos_shared_region
     {
       public:
-        macos_shared_region(posix_memory_manager& memory, const std::filesystem::path& main_cache_file, const std::string& guest_cache_path,
+        macos_shared_region(const std::filesystem::path& main_cache_file, const std::string& guest_cache_path,
                             const macos_file_id& cache_file_id);
 
         uint64_t base_address() const
         {
             return this->base_address_;
         }
+
+        uint64_t size() const
+        {
+            return this->size_;
+        }
+
+        void map(posix_memory_manager& memory) const;
 
         bool handle_fault(posix_memory_manager& memory, uint64_t address, size_t size);
 
@@ -54,11 +61,13 @@ namespace sogen
         uint64_t size_{};
         std::vector<std::ifstream> files_{};
         std::vector<mapping> mappings_{};
+        uint64_t dynamic_region_address_{};
+        std::vector<std::byte> dynamic_region_{};
 
         bool map_page(posix_memory_manager& memory, uint64_t address);
         void load_cache_file(const std::filesystem::path& path);
-        static void map_dynamic_region(posix_memory_manager& memory, uint64_t address, uint64_t size, const std::string& guest_cache_path,
-                                       const macos_file_id& cache_file_id);
+        static std::vector<std::byte> make_dynamic_region(uint64_t size, const std::string& guest_cache_path,
+                                                          const macos_file_id& cache_file_id);
         static void rebase_page(const slide_info& slide, size_t page_index, std::span<std::byte> page);
     };
 }

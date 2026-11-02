@@ -8,6 +8,7 @@
 #include <posix_file_system.hpp>
 #include <posix_memory_manager.hpp>
 
+#include "macho.hpp"
 #include "macos_file_ids.hpp"
 #include "macos_mach_ports.hpp"
 #include "macos_shared_region.hpp"
@@ -31,6 +32,29 @@ namespace sogen
     using x86_64_emulator_factory = std::function<std::unique_ptr<x86_64_emulator>()>;
 
     bool is_macos_executable(std::span<const std::byte> image);
+
+    // A Mach-O image whose load commands have been checked, so mapping its segments cannot fail on its content.
+    struct macos_macho_image
+    {
+        std::vector<std::byte> file{};
+        std::vector<macho::segment_command_64> segments{};
+        uint64_t slide{};
+        uint64_t header_address{};
+        uint64_t end_address{};
+        std::optional<uint64_t> unixthread_entry_point{};
+        std::optional<std::string> dylinker_path{};
+        std::array<uint8_t, 16> uuid{};
+    };
+
+    // XNU loads a new image completely before switching the process over to it, so execve can still fail back to
+    // an unchanged caller. Everything the loader reads is therefore read and checked while the old image is intact.
+    struct macos_process_image
+    {
+        macos_macho_image executable{};
+        std::optional<macos_macho_image> dylinker{};
+        std::shared_ptr<macos_shared_region> shared_region{};
+        uint64_t entry_point{};
+    };
 
     struct macos_process_identity
     {
@@ -108,7 +132,8 @@ namespace sogen
         // Runs once the CPU has left the current syscall, for work that replaces or copies the running image.
         void after_syscall(std::function<void()> operation);
 
-        void exec_image(std::span<const std::byte> image, const std::string& executable_path, const std::vector<std::string>& argv,
+        macos_process_image prepare_process_image(std::span<const std::byte> image);
+        void exec_image(const macos_process_image& process_image, const std::string& executable_path, const std::vector<std::string>& argv,
                         const std::vector<std::string>& envp);
         uint32_t fork_process(const std::function<void(macos_emulator& child)>& prepare_child);
 
@@ -121,7 +146,7 @@ namespace sogen
 
         macos_emulator(forked_tag, macos_emulator& parent);
 
-        void load_image(std::span<const std::byte> image, const std::string& executable_path, const std::vector<std::string>& argv,
+        void load_image(const macos_process_image& process_image, const std::string& executable_path, const std::vector<std::string>& argv,
                         const std::vector<std::string>& envp);
         void setup_hooks();
     };
