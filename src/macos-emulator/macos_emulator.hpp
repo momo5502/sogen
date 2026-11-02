@@ -71,6 +71,7 @@ namespace sogen
         x86_64_emulator_factory create_backend{};
         uint32_t last_process_id{MACOS_PROCESS_ID};
         uint64_t last_unique_id{MACOS_PROCESS_UNIQUE_ID};
+        uint64_t entropy_state{0x5EED5EED5EED5EED};
     };
 
     class macos_emulator
@@ -141,7 +142,6 @@ namespace sogen
 
       private:
         bool should_stop_{false};
-        uint64_t entropy_state_{0x5EED5EED5EED5EED};
         std::function<void()> after_syscall_{};
 
         macos_emulator(forked_tag, macos_emulator& parent);

@@ -483,8 +483,7 @@ namespace sogen
           process_name(parent.process_name),
           working_directory(parent.working_directory),
           on_stdout(parent.on_stdout),
-          on_stderr(parent.on_stderr),
-          entropy_state_(parent.entropy_state_)
+          on_stderr(parent.on_stderr)
     {
         this->log.disable_output(parent.log.is_output_disabled());
         this->log.set_silent(parent.log.is_silent());
@@ -642,8 +641,8 @@ namespace sogen
     // SplitMix64: entropy stays reproducible so emulation is deterministic.
     uint64_t macos_emulator::next_entropy()
     {
-        this->entropy_state_ += 0x9E3779B97F4A7C15;
-        auto value = this->entropy_state_;
+        this->system_->entropy_state += 0x9E3779B97F4A7C15;
+        auto value = this->system_->entropy_state;
         value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9;
         value = (value ^ (value >> 27)) * 0x94D049BB133111EB;
         return value ^ (value >> 31);
