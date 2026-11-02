@@ -387,7 +387,7 @@ namespace sogen
                 throw std::runtime_error("fd snapshot references an invalid open file description");
             }
 
-            descriptor entry{.file = files[file_index]};
+            descriptor entry{.file = files[static_cast<size_t>(file_index)]};
             buffer.read(entry.close_on_exec);
             restored.emplace(fd_number, std::move(entry));
         }

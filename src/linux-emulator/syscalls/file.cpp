@@ -1868,7 +1868,7 @@ namespace sogen
 
         while (offset < entries.size())
         {
-            const auto& entry = entries.at(offset);
+            const auto& entry = entries.at(static_cast<size_t>(offset));
             const auto name_bytes = entry.name.size() + 1; // include trailing NUL
             const auto reclen = align_up_8(sizeof(linux_dirent64_header) + name_bytes);
 

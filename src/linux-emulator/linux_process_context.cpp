@@ -88,7 +88,7 @@ namespace sogen
                     throw std::runtime_error("Linux process snapshot references an invalid directory listing");
                 }
 
-                directory_entries.emplace(fd, listings[listing_index]);
+                directory_entries.emplace(fd, listings[static_cast<size_t>(listing_index)]);
             }
 
             return directory_entries;
