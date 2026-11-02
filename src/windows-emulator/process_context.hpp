@@ -474,6 +474,7 @@ namespace sogen
         // Per-DC stack of states pushed by NtGdiSaveDC and popped by NtGdiRestoreDC.
         std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
+        std::map<uint32_t, EMU_LOGFONTW> gdi_fonts{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         dxgk_state dxgk{};
@@ -641,6 +642,8 @@ namespace sogen
         uint32_t registry_display_height{default_display_height};
 
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
+        void set_mouse_capture(hwnd window);
+        void release_mouse_capture(hwnd window);
         handle_store<handle_types::event, event> events{};
         handle_store<handle_types::file, file> files{};
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
@@ -658,6 +661,9 @@ namespace sogen
         handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
         handle default_desktop{};
         handle_store<handle_types::desktop, desktop> desktops{};
+        handle_store<handle_types::window_station, window_station> window_stations{};
+        // WinSta0, the interactive window station every process starts in, is the fixed handle 1.
+        uint64_t process_window_station{1};
         user_handle_store<handle_types::window, window> windows{user_handles};
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};

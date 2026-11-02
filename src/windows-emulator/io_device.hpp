@@ -43,6 +43,16 @@ namespace sogen
 
         emulator_thread& thread() const;
 
+        // An OVERLAPPED whose hEvent has the low-order bit set tells the I/O manager not to queue a
+        // completion packet; the caller is notified through the event instead. libuv depends on this
+        // under UV_HANDLE_EMULATE_IOCP, where it pairs the tagged event with
+        // RegisterWaitForSingleObject. Queue the packet anyway and the loop sees one completion more
+        // than it armed, which trips "assert(handle->reqs_pending > 0)" in uv__process_pipe_read_req.
+        bool suppresses_completion_packet() const
+        {
+            return (this->event.bits & 1) != 0;
+        }
+
         io_device_context(memory_interface& emu)
             : io_status_block(emu),
               wow64_io_status_block(emu)

@@ -6,7 +6,7 @@ endif()
 
 sogen_assign_source_group(main.cpp)
 
-target_link_libraries(analyzer PRIVATE windows-analyzer linux-analyzer)
+target_link_libraries(analyzer PRIVATE windows-analyzer linux-analyzer macos-analyzer)
 
 set_property(GLOBAL PROPERTY VS_STARTUP_PROJECT analyzer)
 

@@ -358,6 +358,30 @@ namespace sogen::test
         EXPECT_FALSE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
     }
 
+    // An OVERLAPPED whose hEvent has the low-order bit set suppresses the completion packet; the caller
+    // is notified through the event instead. ntdll passes hEvent through verbatim, so the tag arrives
+    // here on the event handle.
+    TEST_F(NamedPipeTest, EventTaggedWithLowBitSuppressesCompletionPacket)
+    {
+        const auto completion = this->emu->process.io_completions.store(io_completion{});
+        ASSERT_EQ(this->emu->process.devices.get(this->reader)
+                      ->set_completion_association(this->emu->process, this->emu->vcpu(0).active_thread, completion, 0x1234),
+                  STATUS_SUCCESS);
+        const auto event = this->emu->process.events.store(sogen::event{});
+        ASSERT_EQ(this->write("hello pipe"), STATUS_SUCCESS);
+
+        auto context = this->request(this->reader, 16);
+        context.event = event;
+        context.event.bits |= 1;
+        context.apc_context = 0x5678;
+        ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, context, true), STATUS_SUCCESS);
+
+        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+
+        io_completion_message message{};
+        EXPECT_FALSE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
+    }
+
     TEST_F(NamedPipeTest, PartialReadsConsumeOnlyReturnedBytes)
     {
         ASSERT_EQ(this->write("abcdef"), STATUS_SUCCESS);

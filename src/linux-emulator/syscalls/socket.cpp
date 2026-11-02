@@ -109,7 +109,7 @@ namespace sogen
             return std::bit_cast<uint32_t>(bytes);
         }
 #endif
-        linux_socket_state* socket_state_for_fd(linux_fd* fd_entry)
+        posix_socket_state* socket_state_for_fd(posix_fd* fd_entry)
         {
             if (!fd_entry || fd_entry->type != fd_type::socket || !fd_entry->socket_state)
             {
@@ -119,7 +119,7 @@ namespace sogen
             return fd_entry->socket_state.get();
         }
 
-        const linux_socket_state* socket_state_for_fd(const linux_fd* fd_entry)
+        const posix_socket_state* socket_state_for_fd(const posix_fd* fd_entry)
         {
             if (!fd_entry || fd_entry->type != fd_type::socket || !fd_entry->socket_state)
             {
@@ -185,7 +185,7 @@ namespace sogen
 #endif
     }
 
-    void apply_host_socket_flags(linux_socket_state& state, const linux_fd& fd_entry)
+    void apply_host_socket_flags(posix_socket_state& state, const posix_fd& fd_entry)
     {
 #if !defined(_WIN32)
         if (state.host_socket < 0)
@@ -210,13 +210,13 @@ namespace sogen
 #endif
     }
 
-    bool linux_socket_has_host_socket(const linux_fd& fd_entry)
+    bool linux_socket_has_host_socket(const posix_fd& fd_entry)
     {
         const auto* state = socket_state_for_fd(&fd_entry);
         return state != nullptr && state->host_socket >= 0;
     }
 
-    void linux_socket_apply_fd_flags(const int fd, const linux_fd& fd_entry)
+    void linux_socket_apply_fd_flags(const int fd, const posix_fd& fd_entry)
     {
         (void)fd;
         if (fd_entry.type == fd_type::socket && fd_entry.socket_state)
@@ -397,11 +397,11 @@ namespace sogen
             return;
         }
 
-        linux_fd new_fd{};
+        posix_fd new_fd{};
         new_fd.type = fd_type::socket;
         new_fd.close_on_exec = cloexec;
         new_fd.flags = type_raw & ~LINUX_SOCK_TYPE_MASK;
-        new_fd.socket_state = std::make_shared<linux_socket_state>();
+        new_fd.socket_state = std::make_shared<posix_socket_state>();
         new_fd.socket_state->domain = domain;
         new_fd.socket_state->type = type;
         new_fd.socket_state->protocol = protocol;

@@ -156,6 +156,27 @@ namespace
         return DeviceIoControl(handle, code, const_cast<void*>(in), in_len, out, out_len, &returned, nullptr) != FALSE;
     }
 
+    VkResult check_bridge_protocol()
+    {
+        gb::version_response response{};
+        if (!bridge_call(gb::ioctl_get_version, nullptr, 0, &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (response.magic == gb::protocol_magic && response.version == gb::protocol_version)
+        {
+            return VK_SUCCESS;
+        }
+
+        std::array<char, 160> message{};
+        std::snprintf(message.data(), message.size(),
+                      "vulkan-shim: GPU bridge speaks protocol %08X version %u, this shim was built for %08X version %u\n", response.magic,
+                      response.version, gb::protocol_magic, gb::protocol_version);
+        shim_log(message.data());
+        return VK_ERROR_INCOMPATIBLE_DRIVER;
+    }
+
     // Vulkan handles come in two shapes: dispatchable handles (VkInstance, VkDevice, VkQueue,
     // VkCommandBuffer, VkPhysicalDevice) are pointers -- pointer-sized, so 64-bit on x64 and 32-bit on
     // x86/WOW64 -- while non-dispatchable handles (VkBuffer, VkImage, VkDeviceMemory, ...) are uint64_t on
@@ -460,6 +481,11 @@ extern "C"
             {
                 return fn(pCreateInfo, pAllocator, pInstance);
             }
+        }
+
+        if (const auto result = check_bridge_protocol(); result != VK_SUCCESS)
+        {
+            return result;
         }
 
         gb::create_instance_response response{};

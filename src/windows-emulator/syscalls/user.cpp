@@ -20,6 +20,7 @@ namespace sogen
 
     namespace
     {
+        constexpr ULONG k_thread_state_capture_window = 0x2;
         constexpr ULONG k_thread_state_win32_thread_info = 0xE;
         constexpr ULONG k_thread_state_dialog_state = 0xA;
         constexpr ULONG k_thread_state_message_time = 0x9;
@@ -34,6 +35,7 @@ namespace sogen
         constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
         constexpr uint32_t k_fn_hk_in_lp_cbt_create_struct_callback_id = 0x2A;
+        constexpr int k_wh_getmessage = 3;
         constexpr int k_wh_cbt = 5;
         constexpr int k_wh_keyboard_ll = 13;
         constexpr int k_wh_mouse_ll = 14;
@@ -178,6 +180,9 @@ namespace sogen
             pointer data{};
             pointer callback{};
         };
+
+        // The interactive station, which the process starts on and which is not held in the store.
+        constexpr uint64_t interactive_window_station = 1;
 
         void set_guest_last_error(const syscall_context& c, uint32_t last_error)
         {
@@ -1009,7 +1014,8 @@ namespace sogen
                                                                               .pixels = surface.pixels.data()});
         }
 
-        void dispatch_cbt_create_window(const syscall_context& c, window_create_state&& state, const window& win, const user_cbt_hook& hook)
+        void dispatch_cbt_create_window(const syscall_context& c, window_create_state&& state, const window& win,
+                                        const user_thread_hook& hook)
         {
             fn_hk_in_lp_cbt_create_struct_message args{};
             args.pwnd = win.guest.value();
@@ -1717,6 +1723,13 @@ namespace sogen
                 return c.vcpu.active_thread ? c.vcpu.active_thread->win32k_thread_state : 0;
             }
 
+            if (routine == k_thread_state_capture_window)
+            {
+                const auto* captured = c.proc.windows.get(c.proc.mouse_capture_window);
+                return captured && c.vcpu.active_thread && captured->thread_id == c.vcpu.active_thread->id ? c.proc.mouse_capture_window
+                                                                                                           : 0;
+            }
+
             if (routine != k_thread_state_win32_thread_info)
             {
                 return 0;
@@ -1862,6 +1875,7 @@ namespace sogen
                 {
                     desktop desk{};
                     desk.name = u"Default";
+                    desk.window_station = interactive_window_station;
                     c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
                 }
 
@@ -1974,14 +1988,14 @@ namespace sogen
             const auto previous = c.proc.mouse_capture_window;
             if (window == 0 || c.proc.windows.get(window))
             {
-                c.proc.mouse_capture_window = window;
+                c.proc.set_mouse_capture(window);
             }
             return previous;
         }
 
         BOOL handle_NtUserReleaseCapture(const syscall_context& c)
         {
-            c.proc.mouse_capture_window = 0;
+            c.proc.set_mouse_capture(0);
             return TRUE;
         }
 
@@ -2962,9 +2976,178 @@ namespace sogen
             return TRUE;
         }
 
-        uint64_t handle_NtUserGetProcessWindowStation()
+        uint64_t handle_NtUserGetProcessWindowStation(const syscall_context& c)
         {
-            return 1;
+            return c.proc.process_window_station;
+        }
+
+        bool is_window_station(const syscall_context& c, const handle station)
+        {
+            return station.bits == 1 || c.proc.window_stations.get(station) != nullptr;
+        }
+
+        // A window station or desktop name names a single object, so Windows refuses a backslash in it.
+        bool is_valid_user_object_name(const std::u16string_view name)
+        {
+            return !name.empty() && name.find(u'\\') == std::u16string_view::npos;
+        }
+
+        uint64_t find_window_station(const syscall_context& c, const std::u16string_view name)
+        {
+            if (utils::string::equals_ignore_case(name, std::u16string_view{u"WinSta0"}))
+            {
+                return interactive_window_station;
+            }
+
+            for (const auto& [index, station] : c.proc.window_stations)
+            {
+                if (utils::string::equals_ignore_case(std::u16string_view{station.name}, name))
+                {
+                    return c.proc.window_stations.make_handle(index).bits;
+                }
+            }
+
+            return 0;
+        }
+
+        uint64_t find_desktop(const syscall_context& c, const uint64_t window_station, const std::u16string_view name)
+        {
+            for (const auto& [index, desk] : c.proc.desktops)
+            {
+                if (desk.window_station == window_station && utils::string::equals_ignore_case(std::u16string_view{desk.name}, name))
+                {
+                    return c.proc.desktops.make_handle(index).bits;
+                }
+            }
+
+            return 0;
+        }
+
+        uint64_t handle_NtUserCreateWindowStation(const syscall_context& c,
+                                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                                  const ACCESS_MASK /*desired_access*/)
+        {
+            constexpr ULONG obj_openif = 0x80;
+            constexpr uint32_t error_invalid_parameter = 87;
+            constexpr uint32_t error_already_exists = 183;
+
+            std::u16string name{};
+            ULONG attribute_flags = 0;
+            if (object_attributes)
+            {
+                const auto attributes = object_attributes.read();
+                attribute_flags = attributes.Attributes;
+                if (attributes.ObjectName)
+                {
+                    name = read_unicode_string(c.emu, attributes.ObjectName);
+                }
+            }
+
+            // Windows names an unnamed window station after the logon session, so every unnamed create in a process
+            // names the same station. 0x3e7 is the SYSTEM logon session this emulator's process runs in.
+            if (name.empty())
+            {
+                name = u"Service-0x0-3e7$";
+            }
+
+            if (!is_valid_user_object_name(name))
+            {
+                set_guest_last_error(c, error_invalid_parameter);
+                return 0;
+            }
+
+            // user32 asks for open-if unless CWF_CREATE_ONLY was passed, so an existing name opens that station.
+            if (const auto existing = find_window_station(c, name); existing != 0)
+            {
+                if ((attribute_flags & obj_openif) == 0)
+                {
+                    set_guest_last_error(c, error_already_exists);
+                    return 0;
+                }
+
+                // Each open is its own reference, so closing one handle must not take the station away from the
+                // other. The interactive station is not in the store and cannot be closed.
+                if (existing != interactive_window_station)
+                {
+                    c.proc.window_stations.duplicate(make_handle(existing));
+                }
+
+                return existing;
+            }
+
+            window_station station{};
+            station.name = std::move(name);
+            return c.proc.window_stations.store(std::move(station)).bits;
+        }
+
+        BOOL handle_NtUserSetProcessWindowStation(const syscall_context& c, const handle station)
+        {
+            if (!is_window_station(c, station))
+            {
+                return FALSE;
+            }
+
+            c.proc.process_window_station = station.bits;
+            return TRUE;
+        }
+
+        BOOL handle_NtUserCloseWindowStation(const syscall_context& c, const handle station)
+        {
+            // The window station a process is assigned to cannot be closed.
+            if (station.bits == c.proc.process_window_station || station.bits == 1)
+            {
+                return FALSE;
+            }
+
+            return c.proc.window_stations.erase(station) ? TRUE : FALSE;
+        }
+
+        uint64_t handle_NtUserCreateDesktopEx(const syscall_context& c,
+                                              const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                              const emulator_pointer /*device*/, const emulator_pointer /*devmode*/, const DWORD /*flags*/,
+                                              const ACCESS_MASK /*desired_access*/, const ULONG /*heap_size*/)
+        {
+            if (!object_attributes)
+            {
+                return 0;
+            }
+
+            const auto attributes = object_attributes.read();
+            if (!attributes.ObjectName)
+            {
+                return 0;
+            }
+
+            auto name = read_unicode_string(c.emu, attributes.ObjectName);
+            if (!is_valid_user_object_name(name))
+            {
+                return 0;
+            }
+
+            // CommonCreateDesktop always asks for open-if, scoped to the process window station.
+            const auto station = c.proc.process_window_station;
+            if (const auto existing = find_desktop(c, station, name); existing != 0)
+            {
+                c.proc.desktops.duplicate(make_handle(existing));
+                return existing;
+            }
+
+            desktop desk{};
+            desk.name = std::move(name);
+            desk.window_station = station;
+
+            return c.proc.desktops.store(std::move(desk)).bits;
+        }
+
+        BOOL handle_NtUserCloseDesktop(const syscall_context& c, const handle desktop_handle)
+        {
+            // A desktop that threads are using cannot be closed.
+            if (desktop_handle == c.proc.default_desktop)
+            {
+                return FALSE;
+            }
+
+            return c.proc.desktops.erase(desktop_handle) ? TRUE : FALSE;
         }
 
         // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
@@ -3203,13 +3386,28 @@ namespace sogen
                 return handle;
             }
 
-            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || thread.cbt_hook)
+            if (instance != 0 || thread_id != thread.id)
+            {
+                return 0;
+            }
+
+            std::optional<user_thread_hook>* slot{};
+            if (hook_id == k_wh_cbt)
+            {
+                slot = &thread.cbt_hook;
+            }
+            else if (hook_id == k_wh_getmessage)
+            {
+                slot = &thread.get_message_hook;
+            }
+
+            if (!slot || *slot)
             {
                 return 0;
             }
 
             const auto handle = c.proc.next_hook_handle++;
-            thread.cbt_hook = user_cbt_hook{
+            *slot = user_thread_hook{
                 .handle = handle,
                 .proc = proc,
                 .ansi = ansi != FALSE,
@@ -3221,10 +3419,13 @@ namespace sogen
         {
             for (auto& thread : c.proc.threads | std::views::values)
             {
-                if (thread.cbt_hook && thread.cbt_hook->handle == hook)
+                for (auto* slot : {&thread.cbt_hook, &thread.get_message_hook})
                 {
-                    thread.cbt_hook.reset();
-                    return TRUE;
+                    if (*slot && (*slot)->handle == hook)
+                    {
+                        slot->reset();
+                        return TRUE;
+                    }
                 }
 
                 if (std::erase_if(thread.low_level_hooks, [&](const user_low_level_hook& entry) { return entry.handle == hook; }) != 0)
@@ -3658,6 +3859,7 @@ namespace sogen
                 {
                     release_window_create_allocations();
                     c.win_emu.ui().destroy_window(win->handle);
+                    c.proc.release_mouse_capture(win->handle);
                     c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win->handle));
                     (void)c.proc.windows.erase(s.handle);
                     return 0;
@@ -4351,6 +4553,10 @@ namespace sogen
                 message.write(*pending_msg);
                 t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
+                if (dispatch_get_message_hook(c, callback_id::NtUserGetMessage, *pending_msg, PM_REMOVE))
+                {
+                    return {};
+                }
                 return pending_msg->message != WM_QUIT ? TRUE : FALSE;
             }
 
@@ -4364,6 +4570,13 @@ namespace sogen
         BOOL completion_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                          const UINT msg_filter_min, const UINT msg_filter_max)
         {
+            if (c.current_completion_state)
+            {
+                const auto hooked = complete_get_message_hook(c);
+                message.write(hooked);
+                return hooked.message != WM_QUIT ? TRUE : FALSE;
+            }
+
             complete_low_level_hook(c);
             return handle_NtUserGetMessage(c, message, hwnd, msg_filter_min, msg_filter_max);
         }
@@ -4386,6 +4599,10 @@ namespace sogen
                 message.write(*pending_msg);
                 t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
+                if (dispatch_get_message_hook(c, callback_id::NtUserPeekMessage, *pending_msg, should_remove ? PM_REMOVE : PM_NOREMOVE))
+                {
+                    return {};
+                }
                 return TRUE;
             }
 
@@ -4395,6 +4612,12 @@ namespace sogen
         BOOL completion_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                           const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
         {
+            if (c.current_completion_state)
+            {
+                message.write(complete_get_message_hook(c));
+                return TRUE;
+            }
+
             complete_low_level_hook(c);
             return handle_NtUserPeekMessage(c, message, hwnd, msg_filter_min, msg_filter_max, remove_message);
         }
@@ -6600,7 +6823,7 @@ namespace sogen
                 set_guest_last_error(c, error);
                 return FALSE;
             };
-            const bool window_station = object.bits == 1;
+            const bool window_station = is_window_station(c, object);
             const auto* desktop_object = c.proc.desktops.get(object);
             if (!window_station && !desktop_object)
             {
@@ -6631,14 +6854,22 @@ namespace sogen
                     DWORD flags;
                 };
 
-                const user_object_flags flags{
-                    .inherit = desktop_object && desktop_object->inherit, .reserved = FALSE, .flags = window_station ? 1u : 0u};
+                // WSF_VISIBLE, which only the interactive station has. A process moved to a noninteractive station
+                // reads 0 here, which is how .NET's Environment.UserInteractive decides.
+                constexpr uint32_t wsf_visible = 1;
+                const user_object_flags flags{.inherit = desktop_object && desktop_object->inherit,
+                                              .reserved = FALSE,
+                                              .flags = (window_station && object.bits == interactive_window_station) ? wsf_visible : 0u};
                 return write(&flags, sizeof(flags));
             }
             case 2:
             case 3: {
                 std::u16string_view name = u"WinSta0";
-                if (!window_station)
+                if (const auto* station = c.proc.window_stations.get(object))
+                {
+                    name = station->name;
+                }
+                else if (!window_station)
                 {
                     name = desktop_object->name;
                 }

@@ -115,6 +115,8 @@ namespace sogen
 
         bool allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb);
         bool allocate_host_memory_at(uint64_t address, size_t size, void* host_pointer, nt_memory_permission permissions);
+        // Maps host memory in place of a placeholder of exactly this size; the placeholder stays if mapping fails.
+        bool replace_placeholder_with_host_memory(uint64_t address, size_t size, void* host_pointer, nt_memory_permission permissions);
         // Chooses a compatible guest address and aliases it onto caller-owned host memory (e.g. a host Vulkan
         // mapping). The region is treated like MMIO: not serialized, host_pointer not owned. Returns 0 on failure.
         uint64_t allocate_host_memory(size_t size, void* host_pointer, nt_memory_permission permissions,

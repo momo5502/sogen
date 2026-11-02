@@ -265,6 +265,10 @@ namespace sogen::py
         void write_register(x86_register reg, uint64_t value) const;
         uint64_t read_register(arm64_register reg) const;
         void write_register(arm64_register reg, uint64_t value) const;
+        nb::bytes read_register_bytes(x86_register reg, size_t size) const;
+        void write_register_bytes(x86_register reg, const nb::bytes& value) const;
+        nb::bytes read_register_bytes(arm64_register reg, size_t size) const;
+        void write_register_bytes(arm64_register reg, const nb::bytes& value) const;
 
         uint16_t get_host_port(uint16_t emulator_port) const;
         uint16_t get_emulator_port(uint16_t host_port) const;
@@ -492,7 +496,7 @@ namespace sogen::py
 
         sogen_linux_process_context process();
 
-        linux_memory_manager& memory() const;
+        posix_memory_manager& memory() const;
         nb::bytes read_memory(uint64_t address, size_t size) const;
         void write_memory(uint64_t address, const nb::bytes& buffer) const;
         uint64_t read_register(x86_register reg) const;

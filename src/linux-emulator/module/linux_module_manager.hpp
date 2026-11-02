@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../std_include.hpp"
-#include "../linux_memory_manager.hpp"
+#include <posix_memory_manager.hpp>
 #include "elf_mapping.hpp"
 
 #include <utils/io.hpp>
@@ -11,12 +11,12 @@
 namespace sogen
 {
 
-    class linux_file_system;
+    class posix_file_system;
 
     class linux_module_manager
     {
       public:
-        linux_module_manager(linux_memory_manager& memory)
+        linux_module_manager(posix_memory_manager& memory)
             : memory_(&memory)
         {
         }
@@ -38,7 +38,7 @@ namespace sogen
 
         // Load all DT_NEEDED dependencies of already-loaded modules recursively.
         // Uses DT_RPATH, DT_RUNPATH, configured library paths, and emulation root standard directories.
-        void load_dependencies(const linux_file_system& file_sys);
+        void load_dependencies(const posix_file_system& file_sys);
 
         // Add an additional library search directory
         void add_library_path(const std::filesystem::path& path);
@@ -47,7 +47,7 @@ namespace sogen
         // standard search order: DT_RPATH, LD_LIBRARY_PATH (configured paths), DT_RUNPATH,
         // then default paths under the emulation root.
         std::filesystem::path resolve_library(const std::string& name, const linux_mapped_module& requesting_module,
-                                              const linux_file_system& file_sys) const;
+                                              const posix_file_system& file_sys) const;
 
         linux_mapped_module* find_by_address(uint64_t address);
         linux_mapped_module* find_by_name(std::string_view name);
@@ -77,7 +77,7 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer);
 
       private:
-        linux_memory_manager* memory_{};
+        posix_memory_manager* memory_{};
         std::map<uint64_t, linux_mapped_module> modules_{};
         std::vector<std::filesystem::path> library_paths_{};
 

@@ -729,7 +729,14 @@ impl IcicleEmulator {
             value: 0x0,
         };
 
-        return self.get_mem().map_memory_len(address, length, mapping);
+        let mapped = self.get_mem().map_memory_len(address, length, mapping);
+
+        // Translations that ran into this range while it was unmapped cached the failure (a block straddling into
+        // a page that is now mapped keeps faulting otherwise), so newly executable memory invalidates the code cache.
+        if mapped && (native_permissions & icicle_vm::cpu::mem::perm::EXEC) != 0 {
+            self.vm.code.flush_code();
+        }
+        return mapped;
     }
 
     pub fn map_mmio(
@@ -756,6 +763,9 @@ impl IcicleEmulator {
         let res = self
             .get_mem()
             .update_perm(address, length, native_permissions);
+        if res.is_ok() && (native_permissions & icicle_vm::cpu::mem::perm::EXEC) != 0 {
+            self.vm.code.flush_code();
+        }
         return res.is_ok();
     }
 

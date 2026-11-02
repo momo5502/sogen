@@ -93,4 +93,35 @@ namespace sogen::test
             EXPECT_EQ(emu.memory.read_memory<uint32_t>(return_length), length_sentinel);
         }
     }
+
+    TEST(ProcessorTopologyTest, RelationshipsPastTheLastOneFailWithAZeroLength)
+    {
+        emulator_interfaces interfaces{};
+        interfaces.ui = std::make_unique<null_ui_backend>();
+        interfaces.audio = std::make_unique<null_audio_backend>();
+        interfaces.console = std::make_unique<null_console_backend>();
+        windows_emulator emu(create_x86_64_emulator_from_environment(),
+                             emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                             emulator_callbacks{}, std::move(interfaces));
+        const auto storage = emu.memory.allocate_memory(0x2000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        const auto query = [&](const uint32_t relationship, const uint32_t length) {
+            emu.memory.write_memory(storage, relationship);
+            emu.memory.write_memory(storage + 0x10, uint32_t{0xAAAAAAAA});
+            return syscalls::handle_NtQuerySystemInformationEx(context, SystemLogicalProcessorAndGroupInformation, storage,
+                                                               sizeof(LOGICAL_PROCESSOR_RELATIONSHIP), storage + 0x1000, length,
+                                                               {emu.memory, storage + 0x10});
+        };
+
+        for (const uint32_t relationship : {8u, 9u, 0xFEu, 0x100u, 0xFFFEu, 0x10000u, 0x80000000u, 0xFFFFFFFFu})
+        {
+            EXPECT_EQ(STATUS_UNSUCCESSFUL, query(relationship, 0)) << relationship;
+            EXPECT_EQ(0u, emu.memory.read_memory<uint32_t>(storage + 0x10)) << relationship;
+        }
+
+        EXPECT_EQ(STATUS_UNSUCCESSFUL, query(0xFE, 0x1000));
+        EXPECT_EQ(0u, emu.memory.read_memory<uint32_t>(storage + 0x10));
+
+        EXPECT_EQ(STATUS_INFO_LENGTH_MISMATCH, query(RelationAll, 0));
+    }
 }

@@ -373,7 +373,7 @@ namespace sogen
                 }
                 else
                 {
-                    process.mouse_capture_window = 0;
+                    process.set_mouse_capture(0);
                 }
 
                 return {.window = top_level, .x = x, .y = y};
@@ -576,10 +576,10 @@ namespace sogen
             const auto is_ready = thread.is_thread_ready(win_emu);
             const auto has_pending_status = thread.pending_status.has_value();
             const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
-            const auto can_run_low_level_hook =
-                !is_ready && thread.message_wait_return_register.has_value() && win_emu.has_low_level_hook_work(thread.id);
+            const auto can_run_message_hook = !is_ready && thread.message_wait_return_register.has_value() &&
+                                              (win_emu.has_low_level_hook_work(thread.id) || thread.has_hooked_message(win_emu));
 
-            if (!is_ready && !force && !can_dispatch_apcs && !can_run_low_level_hook)
+            if (!is_ready && !force && !can_dispatch_apcs && !can_run_message_hook)
             {
                 return false;
             }
@@ -605,7 +605,7 @@ namespace sogen
                 thread.mark_as_ready(STATUS_USER_APC);
                 dispatch_next_apc(win_emu, vcpu, thread);
             }
-            else if (can_run_low_level_hook)
+            else if (can_run_message_hook)
             {
                 // The message syscall runs the hook first when it executes again.
                 thread.restart_message_wait(emu, win_emu.abi());
@@ -885,6 +885,11 @@ namespace sogen
         for (const auto& mount : settings.mounts)
         {
             this->file_sys.map(mount.guest_path, mount.host_path, mount.mode);
+        }
+
+        for (auto& mount : interfaces.mounts)
+        {
+            this->file_sys.mount(mount.guest_path, std::move(mount.provider), mount.mode);
         }
 
         for (const auto& mapping : settings.port_mappings)
@@ -1390,14 +1395,16 @@ namespace sogen
                 // return address so the missing function's call site can be identified.
                 if (x64 && address < 0x1000)
                 {
-                    const auto sp = x64->reg<uint32_t>(x86_register::esp);
-                    uint32_t return_address = 0;
-                    if (x64->try_read_memory(sp, &return_address, sizeof(return_address)))
+                    const auto is_32bit = is_32bit_code_segment(*x64);
+                    const uint64_t sp = is_32bit ? x64->reg<uint32_t>(x86_register::esp) : x64->read_stack_pointer();
+                    uint64_t return_address = 0;
+                    if (x64->try_read_memory(sp, &return_address, is_32bit ? sizeof(uint32_t) : sizeof(uint64_t)))
                     {
                         const auto* mod = this->mod_manager.find_by_address(return_address);
-                        this->log.error("Null-pointer call to 0x%llx; caller return address 0x%x (%s+0x%llx)\n",
-                                        static_cast<unsigned long long>(address), return_address, mod ? mod->name.c_str() : "?",
-                                        mod ? static_cast<unsigned long long>(return_address - mod->image_base) : return_address);
+                        this->log.error("Null-pointer call to 0x%llx; caller return address 0x%llx (%s+0x%llx)\n",
+                                        static_cast<unsigned long long>(address), static_cast<unsigned long long>(return_address),
+                                        mod ? mod->name.c_str() : "?",
+                                        static_cast<unsigned long long>(mod ? return_address - mod->image_base : return_address));
                     }
                 }
 
@@ -2297,6 +2304,13 @@ namespace sogen
             return;
         }
 
+        if (event.message == WM_MOVE)
+        {
+            const auto [x, y] = event.host_position.value_or(std::pair{point_x(event.lParam), point_y(event.lParam)});
+            this->move_window_from_host(event.window, x, y);
+            return;
+        }
+
         const auto* win = this->process.windows.get(event.window);
         if (!win)
         {
@@ -2472,6 +2486,32 @@ namespace sogen
         {
             this->apply_cursor_capture();
         }
+    }
+
+    void windows_emulator::move_window_from_host(const hwnd window_handle, const int32_t x, const int32_t y)
+    {
+        auto* win = this->process.windows.get(window_handle);
+        if (!win || (win->x == x && win->y == y))
+        {
+            return;
+        }
+
+        auto* thread = get_thread_by_id(this->process, win->thread_id);
+        if (!thread)
+        {
+            return;
+        }
+
+        win->x = x;
+        win->y = y;
+        win->sync_guest_rects();
+
+        msg m{};
+        m.window = window_handle;
+        m.message = WM_MOVE;
+        m.lParam = pack_point(win->client_x(), win->client_y());
+        thread->post_message(*this, m, true);
+        this->wake_thread(*thread);
     }
 
     void windows_emulator::resize_window_from_host(const hwnd window_handle, const bool maximized, const int32_t client_width,

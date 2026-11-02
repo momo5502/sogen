@@ -116,7 +116,7 @@ namespace sogen
         std::filesystem::create_directories(broad_host);
         std::filesystem::create_directories(narrow_host);
 
-        linux_file_system fs{emulation_root};
+        posix_file_system fs{emulation_root};
         fs.add_path_mapping("/guest", broad_host, false);
         fs.add_path_mapping("/guest/sub", narrow_host, false);
 
@@ -127,7 +127,7 @@ namespace sogen
     TEST(LinuxFileSystemMappingTest, DetectsReadOnlyMappings)
     {
         temp_tree temp{};
-        linux_file_system fs{temp.path() / "root"};
+        posix_file_system fs{temp.path() / "root"};
         fs.add_path_mapping("/ro", temp.path() / "readonly", true);
         fs.add_path_mapping("/rw", temp.path() / "writable", false);
 
@@ -234,7 +234,7 @@ namespace sogen
     {
         temp_tree temp{};
         const auto host_root = temp.path() / "host";
-        linux_file_system fs{temp.path() / "root"};
+        posix_file_system fs{temp.path() / "root"};
         fs.add_path_mapping("/mnt", host_root, false);
 
         EXPECT_EQ(fs.translate_guest_relative_to("/mnt/work", "data.txt"), host_root / "work" / "data.txt");
@@ -244,9 +244,9 @@ namespace sogen
 
     TEST(LinuxFileSystemMappingTest, NormalizesGuestPathStringsWithLinuxSeparators)
     {
-        EXPECT_EQ(linux_file_system::normalize_guest_path_string("\\guest\\work\\..\\file.txt"), "/guest/file.txt");
-        EXPECT_EQ(linux_file_system::resolve_guest_path_string("\\guest\\work", "nested\\..\\file.txt"), "/guest/work/file.txt");
-        EXPECT_EQ(linux_file_system::resolve_guest_path_string("/guest/work", "\\proc\\self\\cwd"), "/proc/self/cwd");
+        EXPECT_EQ(posix_file_system::normalize_guest_path_string("\\guest\\work\\..\\file.txt"), "/guest/file.txt");
+        EXPECT_EQ(posix_file_system::resolve_guest_path_string("\\guest\\work", "nested\\..\\file.txt"), "/guest/work/file.txt");
+        EXPECT_EQ(posix_file_system::resolve_guest_path_string("/guest/work", "\\proc\\self\\cwd"), "/proc/self/cwd");
     }
 
     TEST(LinuxFileSystemMappingTest, DotDotCannotEscapeMappedHostRoot)
@@ -257,7 +257,7 @@ namespace sogen
         std::filesystem::create_directories(emulation_root);
         std::filesystem::create_directories(mapped_host);
 
-        linux_file_system fs{emulation_root};
+        posix_file_system fs{emulation_root};
         fs.add_path_mapping("/mapped", mapped_host, false);
 
         EXPECT_EQ(fs.translate("/mapped/../../outside.txt"), emulation_root / "outside.txt");

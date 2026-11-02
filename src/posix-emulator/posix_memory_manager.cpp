@@ -1,21 +1,21 @@
-#include "std_include.hpp"
-#include "linux_memory_manager.hpp"
+#include "posix_memory_manager.hpp"
 
 #include <algorithm>
 #include <iterator>
+#include <limits>
 
 namespace sogen
 {
 
     namespace utils
     {
-        static void serialize(buffer_serializer& buffer, const linux_memory_manager::mapped_region& region)
+        static void serialize(buffer_serializer& buffer, const posix_memory_manager::mapped_region& region)
         {
             buffer.write<uint64_t>(region.length);
             buffer.write(region.permissions);
         }
 
-        static void deserialize(buffer_deserializer& buffer, linux_memory_manager::mapped_region& region)
+        static void deserialize(buffer_deserializer& buffer, posix_memory_manager::mapped_region& region)
         {
             region.length = static_cast<size_t>(buffer.read<uint64_t>());
             region.permissions = buffer.read<memory_permission>();
@@ -24,19 +24,19 @@ namespace sogen
 
     namespace
     {
-        constexpr auto linux_private_allocation_kind = static_cast<memory_region_kind>(1);
+        constexpr auto private_allocation_kind = static_cast<memory_region_kind>(1);
     }
 
-    linux_memory_region_info::linux_memory_region_info()
-        : kind(linux_private_allocation_kind)
+    posix_memory_region_info::posix_memory_region_info()
+        : kind(private_allocation_kind)
     {
     }
 
     namespace
     {
-        linux_memory_region_info make_region_info(const uint64_t start, const linux_memory_manager::mapped_region& region)
+        posix_memory_region_info make_region_info(const uint64_t start, const posix_memory_manager::mapped_region& region)
         {
-            linux_memory_region_info info{};
+            posix_memory_region_info info{};
             info.start = start;
             info.length = region.length;
             info.permissions = region.permissions;
@@ -45,15 +45,16 @@ namespace sogen
             info.is_reserved = false;
             info.is_committed = true;
             info.initial_permissions = region.permissions;
-            info.kind = linux_private_allocation_kind;
+            info.kind = private_allocation_kind;
             return info;
         }
     }
 
-    void linux_memory_manager::serialize_memory_state(utils::buffer_serializer& buffer) const
+    void posix_memory_manager::serialize_memory_state(utils::buffer_serializer& buffer) const
     {
         buffer.write(this->mmap_base_);
         buffer.write_map(this->mapped_regions_);
+        buffer.write_map(this->reserved_ranges_);
 
         std::vector<uint8_t> data{};
 
@@ -65,10 +66,11 @@ namespace sogen
         }
     }
 
-    void linux_memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer)
+    void posix_memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer)
     {
         const auto new_mmap_base = buffer.read<uint64_t>();
         auto new_regions = buffer.read_map<mapped_region_map>();
+        auto new_reserved_ranges = buffer.read_map<reserved_range_map>();
 
         std::vector<std::vector<uint8_t>> region_data{};
         region_data.reserve(new_regions.size());
@@ -82,6 +84,7 @@ namespace sogen
         this->unmap_all_memory();
         this->mmap_base_ = new_mmap_base;
         this->mapped_regions_.clear();
+        this->reserved_ranges_ = std::move(new_reserved_ranges);
 
         auto data_it = region_data.begin();
         for (const auto& [base, region] : new_regions)
@@ -94,7 +97,7 @@ namespace sogen
         this->mapped_regions_ = std::move(new_regions);
     }
 
-    bool linux_memory_manager::allocate_memory(const uint64_t address, const size_t size, const memory_permission permissions)
+    bool posix_memory_manager::allocate_memory(const uint64_t address, const size_t size, const memory_permission permissions)
     {
         if (this->overlaps_mapped_region(address, size))
         {
@@ -108,7 +111,7 @@ namespace sogen
         return true;
     }
 
-    uint64_t linux_memory_manager::allocate_memory(const size_t size, const memory_permission permissions, const uint64_t start)
+    uint64_t posix_memory_manager::allocate_memory(const size_t size, const memory_permission permissions, const uint64_t start)
     {
         const auto base = this->find_free_allocation_base(size, start);
         if (!base || !this->allocate_memory(base, size, permissions))
@@ -119,7 +122,7 @@ namespace sogen
         return base;
     }
 
-    bool linux_memory_manager::protect_memory(const uint64_t address, const size_t size, const memory_permission permissions)
+    bool posix_memory_manager::protect_memory(const uint64_t address, const size_t size, const memory_permission permissions)
     {
         if (size == 0 || address > std::numeric_limits<uint64_t>::max() - size)
         {
@@ -223,7 +226,7 @@ namespace sogen
         return true;
     }
 
-    bool linux_memory_manager::release_memory(const uint64_t address, const size_t size)
+    bool posix_memory_manager::release_memory(const uint64_t address, const size_t size)
     {
         if (size == 0)
         {
@@ -300,9 +303,21 @@ namespace sogen
         return true;
     }
 
-    std::vector<linux_memory_region_info> linux_memory_manager::get_mapped_region_infos() const
+    bool posix_memory_manager::replace_memory(const uint64_t address, const size_t size, const memory_permission permissions)
     {
-        std::vector<linux_memory_region_info> regions{};
+        if (size == 0 || page_align_down(address) != address || page_align_up(size) != size ||
+            address > std::numeric_limits<uint64_t>::max() - size)
+        {
+            return false;
+        }
+
+        this->release_memory(address, size);
+        return this->allocate_memory(address, size, permissions);
+    }
+
+    std::vector<posix_memory_region_info> posix_memory_manager::get_mapped_region_infos() const
+    {
+        std::vector<posix_memory_region_info> regions{};
         regions.reserve(this->mapped_regions_.size());
 
         for (const auto& [start, region] : this->mapped_regions_)
@@ -313,7 +328,7 @@ namespace sogen
         return regions;
     }
 
-    std::optional<linux_memory_region_info> linux_memory_manager::get_region_info(const uint64_t address) const
+    std::optional<posix_memory_region_info> posix_memory_manager::get_region_info(const uint64_t address) const
     {
         const auto upper_bound = this->mapped_regions_.upper_bound(address);
         if (upper_bound == this->mapped_regions_.begin())
@@ -332,9 +347,9 @@ namespace sogen
         return make_region_info(start, region);
     }
 
-    linux_memory_stats linux_memory_manager::compute_memory_stats() const
+    posix_memory_stats posix_memory_manager::compute_memory_stats() const
     {
-        linux_memory_stats stats{};
+        posix_memory_stats stats{};
         stats.region_count = this->mapped_regions_.size();
 
         for (const auto& [_, region] : this->mapped_regions_)
@@ -349,28 +364,28 @@ namespace sogen
         return stats;
     }
 
-    uint64_t linux_memory_manager::add_memory_allocate_callback(memory_allocate_callback callback)
+    uint64_t posix_memory_manager::add_memory_allocate_callback(memory_allocate_callback callback)
     {
         const auto id = this->next_memory_callback_id_++;
         this->memory_allocate_callbacks_.emplace_back(id, std::move(callback));
         return id;
     }
 
-    uint64_t linux_memory_manager::add_memory_protect_callback(memory_protect_callback callback)
+    uint64_t posix_memory_manager::add_memory_protect_callback(memory_protect_callback callback)
     {
         const auto id = this->next_memory_callback_id_++;
         this->memory_protect_callbacks_.emplace_back(id, std::move(callback));
         return id;
     }
 
-    uint64_t linux_memory_manager::add_memory_release_callback(memory_release_callback callback)
+    uint64_t posix_memory_manager::add_memory_release_callback(memory_release_callback callback)
     {
         const auto id = this->next_memory_callback_id_++;
         this->memory_release_callbacks_.emplace_back(id, std::move(callback));
         return id;
     }
 
-    void linux_memory_manager::remove_memory_callback(const uint64_t id)
+    void posix_memory_manager::remove_memory_callback(const uint64_t id)
     {
         const auto remove_id = [id](const auto& entry) { return entry.first == id; };
         std::erase_if(this->memory_allocate_callbacks_, remove_id);
@@ -378,7 +393,7 @@ namespace sogen
         std::erase_if(this->memory_release_callbacks_, remove_id);
     }
 
-    void linux_memory_manager::notify_memory_allocate(const uint64_t address, const size_t size, const memory_permission permissions,
+    void posix_memory_manager::notify_memory_allocate(const uint64_t address, const size_t size, const memory_permission permissions,
                                                       const bool committed)
     {
         for (const auto& [_, callback] : this->memory_allocate_callbacks_)
@@ -387,7 +402,7 @@ namespace sogen
         }
     }
 
-    void linux_memory_manager::notify_memory_protect(const uint64_t address, const size_t size, const memory_permission permissions)
+    void posix_memory_manager::notify_memory_protect(const uint64_t address, const size_t size, const memory_permission permissions)
     {
         for (const auto& [_, callback] : this->memory_protect_callbacks_)
         {
@@ -395,7 +410,7 @@ namespace sogen
         }
     }
 
-    void linux_memory_manager::notify_memory_release(const uint64_t address, const size_t size)
+    void posix_memory_manager::notify_memory_release(const uint64_t address, const size_t size)
     {
         for (const auto& [_, callback] : this->memory_release_callbacks_)
         {
@@ -403,7 +418,7 @@ namespace sogen
         }
     }
 
-    void linux_memory_manager::unmap_all_memory()
+    void posix_memory_manager::unmap_all_memory()
     {
         for (const auto& region : this->mapped_regions_)
         {
@@ -413,60 +428,87 @@ namespace sogen
         this->mapped_regions_.clear();
     }
 
-    uint64_t linux_memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
+    uint64_t posix_memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
     {
-        uint64_t start_address = std::max(LINUX_MIN_MMAP_ADDRESS, start ? start : this->mmap_base_);
-        start_address = align_up(start_address, LINUX_ALLOCATION_GRANULARITY);
+        uint64_t start_address = std::max(this->layout_.min_mmap_address, start ? start : this->mmap_base_);
+        start_address = align_up(start_address, this->layout_.allocation_granularity);
 
-        while (start_address + size <= LINUX_MAX_MMAP_END_EXCL)
+        while (start_address + size <= this->layout_.max_mmap_end)
         {
-            bool conflict = false;
-
-            for (const auto& region : this->mapped_regions_)
-            {
-                if (region.first + region.second.length <= start_address)
-                {
-                    continue;
-                }
-
-                if (region.first >= start_address + size)
-                {
-                    break;
-                }
-
-                conflict = true;
-                start_address = align_up(region.first + region.second.length, LINUX_ALLOCATION_GRANULARITY);
-                break;
-            }
-
-            if (!conflict)
+            const auto overlap_end = this->find_overlap_end(start_address, size);
+            if (!overlap_end)
             {
                 return start_address;
             }
+
+            start_address = align_up(*overlap_end, this->layout_.allocation_granularity);
         }
 
         return 0;
     }
 
-    bool linux_memory_manager::overlaps_mapped_region(const uint64_t address, const size_t size) const
+    bool posix_memory_manager::overlaps_mapped_region(const uint64_t address, const size_t size) const
     {
-        for (const auto& region : this->mapped_regions_)
+        auto it = this->mapped_regions_.upper_bound(address);
+        if (it != this->mapped_regions_.begin())
         {
-            if (regions_with_length_intersect(address, size, region.first, region.second.length))
+            const auto previous = std::prev(it);
+            if (regions_with_length_intersect(address, size, previous->first, previous->second.length))
             {
                 return true;
             }
         }
 
-        return false;
+        return it != this->mapped_regions_.end() && regions_with_length_intersect(address, size, it->first, it->second.length);
     }
 
-    void linux_memory_manager::read_memory(const uint64_t address, void* data, const size_t size) const
+    bool posix_memory_manager::reserve_memory(const uint64_t address, const size_t size)
+    {
+        if (size == 0 || address > std::numeric_limits<uint64_t>::max() - size || this->find_overlap_end(address, size))
+        {
+            return false;
+        }
+
+        this->reserved_ranges_[address] = size;
+        return true;
+    }
+
+    std::optional<uint64_t> posix_memory_manager::find_overlap_end(const uint64_t address, const size_t size) const
+    {
+        std::optional<uint64_t> overlap_end{};
+        const auto consider = [&](const uint64_t base, const uint64_t length) {
+            if (regions_with_length_intersect(address, size, base, length) && (!overlap_end || base + length < *overlap_end))
+            {
+                overlap_end = base + length;
+            }
+        };
+
+        const auto consider_neighbours = [&](const auto& ranges, const auto& length_of) {
+            auto it = ranges.upper_bound(address);
+            if (it != ranges.begin())
+            {
+                const auto previous = std::prev(it);
+                consider(previous->first, length_of(previous->second));
+            }
+
+            for (; it != ranges.end() && it->first < address + size; ++it)
+            {
+                consider(it->first, length_of(it->second));
+            }
+        };
+
+        consider_neighbours(this->mapped_regions_, [](const mapped_region& region) { return static_cast<uint64_t>(region.length); });
+        consider_neighbours(this->reserved_ranges_, [](const uint64_t length) { return length; });
+
+        return overlap_end;
+    }
+
+    void posix_memory_manager::read_memory(const uint64_t address, void* data, const size_t size) const
     {
         this->memory_->read_memory(address, data, size);
     }
 
-    bool linux_memory_manager::try_read_memory(const uint64_t address, void* data, const size_t size) const
+    bool posix_memory_manager::try_read_memory(const uint64_t address, void* data, const size_t size) const
     {
         try
         {
@@ -478,12 +520,12 @@ namespace sogen
         }
     }
 
-    void linux_memory_manager::write_memory(const uint64_t address, const void* data, const size_t size)
+    void posix_memory_manager::write_memory(const uint64_t address, const void* data, const size_t size)
     {
         this->memory_->write_memory(address, data, size);
     }
 
-    bool linux_memory_manager::try_write_memory(const uint64_t address, const void* data, const size_t size)
+    bool posix_memory_manager::try_write_memory(const uint64_t address, const void* data, const size_t size)
     {
         try
         {
@@ -495,22 +537,22 @@ namespace sogen
         }
     }
 
-    void linux_memory_manager::map_memory(const uint64_t address, const size_t size, const memory_permission permissions)
+    void posix_memory_manager::map_memory(const uint64_t address, const size_t size, const memory_permission permissions)
     {
         this->memory_->map_memory(address, size, permissions);
     }
 
-    void linux_memory_manager::unmap_memory(const uint64_t address, const size_t size)
+    void posix_memory_manager::unmap_memory(const uint64_t address, const size_t size)
     {
         this->memory_->unmap_memory(address, size);
     }
 
-    void linux_memory_manager::apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions)
+    void posix_memory_manager::apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions)
     {
         this->memory_->apply_memory_protection(address, size, permissions);
     }
 
-    void linux_memory_manager::map_mmio(const uint64_t address, const size_t size, std::function<void(uint64_t, void*, size_t)> read_cb,
+    void posix_memory_manager::map_mmio(const uint64_t address, const size_t size, std::function<void(uint64_t, void*, size_t)> read_cb,
                                         std::function<void(uint64_t, const void*, size_t)> write_cb)
     {
         this->memory_->map_mmio(address, size, std::move(read_cb), std::move(write_cb));
