@@ -1,7 +1,8 @@
-#include "std_include.hpp"
-#include "linux_fd_table.hpp"
+#include "posix_fd_table.hpp"
 
 #include <cerrno>
+#include <stdexcept>
+#include <utility>
 #include <fcntl.h>
 #if defined(_WIN32)
 #include <io.h>
@@ -109,12 +110,21 @@ namespace sogen
 #endif
         }
 
-        bool seek_snapshot_host_file(FILE* handle, const int64_t offset)
+        bool seek_host_file(FILE* handle, const int64_t offset)
         {
 #if defined(_WIN32)
             return _fseeki64(handle, offset, SEEK_SET) == 0;
 #else
             return ::fseeko(handle, static_cast<off_t>(offset), SEEK_SET) == 0;
+#endif
+        }
+
+        int64_t tell_host_file(FILE* handle)
+        {
+#if defined(_WIN32)
+            return _ftelli64(handle);
+#else
+            return static_cast<int64_t>(::ftello(handle));
 #endif
         }
 
@@ -128,68 +138,78 @@ namespace sogen
             const auto position = std::ftell(handle);
             if (position < 0)
             {
-                throw std::runtime_error("Failed to serialize Linux fd position for '" + host_path + "'");
+                throw std::runtime_error("Failed to serialize fd position for '" + host_path + "'");
             }
 
             return static_cast<int64_t>(position);
         }
 
-        void close_if_owned(linux_fd& fd)
-        {
-            if (fd.handle && fd.handle != stdin && fd.handle != stdout && fd.handle != stderr)
-            {
-                std::fclose(fd.handle);
-                fd.handle = nullptr;
-            }
-        }
-
-        void close_restored(std::map<int, linux_fd>& fds)
-        {
-            for (auto& [_, fd] : fds)
-            {
-                close_if_owned(fd);
-            }
-        }
-
-        void validate_serializable_fd(const int fd_number, const linux_fd& fd)
+        void validate_serializable_fd(const int fd_number, const posix_fd& fd)
         {
             if (fd_number < 0)
             {
-                throw std::runtime_error("Linux fd snapshot found an invalid descriptor number " + std::to_string(fd_number));
+                throw std::runtime_error("fd snapshot found an invalid descriptor number " + std::to_string(fd_number));
             }
 
             switch (fd.type)
             {
             case fd_type::pipe_read:
             case fd_type::pipe_write:
-                throw std::runtime_error("Linux fd snapshot does not support live pipe descriptors");
+                throw std::runtime_error("fd snapshot does not support live pipe descriptors");
             case fd_type::file:
                 if (fd.host_path.empty())
                 {
-                    throw std::runtime_error("Linux fd snapshot cannot serialize unnamed host file descriptor " +
-                                             std::to_string(fd_number));
+                    throw std::runtime_error("fd snapshot cannot serialize unnamed host file descriptor " + std::to_string(fd_number));
                 }
                 break;
             case fd_type::memory_file:
                 if (!fd.memory_file)
                 {
-                    throw std::runtime_error("Linux fd snapshot found an invalid memory file descriptor " + std::to_string(fd_number));
+                    throw std::runtime_error("fd snapshot found an invalid memory file descriptor " + std::to_string(fd_number));
                 }
                 break;
             case fd_type::socket:
-                throw std::runtime_error("Linux fd snapshot does not support socket descriptor " + std::to_string(fd_number));
+                throw std::runtime_error("fd snapshot does not support socket descriptor " + std::to_string(fd_number));
             case fd_type::eventfd:
             case fd_type::directory:
             case fd_type::epoll:
                 break;
             default:
-                throw std::runtime_error("Linux fd snapshot found an invalid descriptor type for fd " + std::to_string(fd_number));
+                throw std::runtime_error("fd snapshot found an invalid descriptor type for fd " + std::to_string(fd_number));
             }
         }
 
     }
 
-    void linux_fd_table::serialize(utils::buffer_serializer& buffer) const
+    size_t posix_fd::read_at(const uint64_t position, const std::span<std::byte> buffer) const
+    {
+        if (!this->handle || !std::in_range<int64_t>(position))
+        {
+            return 0;
+        }
+
+        const auto saved_position = tell_host_file(this->handle);
+        if (saved_position < 0 || !seek_host_file(this->handle, static_cast<int64_t>(position)))
+        {
+            return 0;
+        }
+
+        const auto bytes_read = std::fread(buffer.data(), 1, buffer.size(), this->handle);
+        seek_host_file(this->handle, saved_position);
+        return bytes_read;
+    }
+
+    FILE* open_host_file(const std::filesystem::path& path, const std::string_view mode)
+    {
+#if defined(_WIN32)
+        const std::wstring wide_mode(mode.begin(), mode.end());
+        return _wfopen(path.c_str(), wide_mode.c_str());
+#else
+        return std::fopen(path.c_str(), std::string{mode}.c_str());
+#endif
+    }
+
+    void posix_fd_table::serialize(utils::buffer_serializer& buffer) const
     {
         for (const auto& [fd_number, fd] : this->fds_)
         {
@@ -220,83 +240,71 @@ namespace sogen
         }
     }
 
-    void linux_fd_table::deserialize(utils::buffer_deserializer& buffer)
+    void posix_fd_table::deserialize(utils::buffer_deserializer& buffer)
     {
-        std::map<int, linux_fd> restored{};
-        try
+        std::map<int, posix_fd> restored{};
+        const auto count = buffer.read<uint64_t>();
+        for (uint64_t i = 0; i < count; ++i)
         {
-            const auto count = buffer.read<uint64_t>();
-            for (uint64_t i = 0; i < count; ++i)
+            const auto fd_number = buffer.read<int>();
+            posix_fd fd{};
+            buffer.read(fd.type);
+            buffer.read(fd.host_path);
+            buffer.read(fd.guest_path);
+            buffer.read(fd.flags);
+            buffer.read(fd.close_on_exec);
+            buffer.read(fd.read_only_mapping);
+
+            if (fd.type == fd_type::memory_file)
             {
-                const auto fd_number = buffer.read<int>();
-                linux_fd fd{};
-                buffer.read(fd.type);
-                buffer.read(fd.host_path);
-                buffer.read(fd.guest_path);
-                buffer.read(fd.flags);
-                buffer.read(fd.close_on_exec);
-                buffer.read(fd.read_only_mapping);
-
-                if (fd.type == fd_type::memory_file)
+                fd.memory_file = std::make_shared<posix_memory_fd>();
+                buffer.read(fd.memory_file->content);
+                fd.memory_file->offset = static_cast<size_t>(buffer.read<uint64_t>());
+                if (fd.memory_file->offset > fd.memory_file->content.size())
                 {
-                    fd.memory_file = std::make_shared<linux_memory_fd>();
-                    buffer.read(fd.memory_file->content);
-                    fd.memory_file->offset = static_cast<size_t>(buffer.read<uint64_t>());
-                    if (fd.memory_file->offset > fd.memory_file->content.size())
-                    {
-                        throw std::runtime_error("Linux fd snapshot has an invalid memory file offset");
-                    }
+                    throw std::runtime_error("fd snapshot has an invalid memory file offset");
                 }
-                else
-                {
-                    const auto offset = buffer.read<int64_t>();
-                    if (fd.type == fd_type::file)
-                    {
-                        if (auto* stdio_handle = stdio_handle_for_path(fd.host_path))
-                        {
-                            fd.handle = stdio_handle;
-                        }
-                        else
-                        {
-                            const auto host_fd = open_snapshot_host_file(fd.host_path, fd.flags);
-                            if (host_fd < 0)
-                            {
-                                throw std::runtime_error("Failed to reopen Linux fd snapshot host file '" + fd.host_path + "'");
-                            }
-
-                            fd.handle = fdopen_snapshot_host_file(host_fd, fd.flags);
-                            if (!fd.handle)
-                            {
-                                const auto error = errno;
-                                close_snapshot_host_file(host_fd);
-                                errno = error;
-                            }
-                            if (!fd.handle)
-                            {
-                                throw std::runtime_error("Failed to reopen Linux fd snapshot host file '" + fd.host_path + "'");
-                            }
-                            setvbuf(fd.handle, nullptr, _IONBF, 0);
-                            if (offset != 0 && !seek_snapshot_host_file(fd.handle, offset))
-                            {
-                                throw std::runtime_error("Failed to restore Linux fd snapshot offset for '" + fd.host_path + "'");
-                            }
-                        }
-                    }
-                }
-
-                restored.emplace(fd_number, std::move(fd));
             }
-        }
-        catch (...)
-        {
-            close_restored(restored);
-            throw;
+            else
+            {
+                const auto offset = buffer.read<int64_t>();
+                if (fd.type == fd_type::file)
+                {
+                    if (auto* stdio_handle = stdio_handle_for_path(fd.host_path))
+                    {
+                        fd.handle = stdio_handle;
+                    }
+                    else
+                    {
+                        const auto host_fd = open_snapshot_host_file(fd.host_path, fd.flags);
+                        if (host_fd < 0)
+                        {
+                            throw std::runtime_error("Failed to reopen fd snapshot host file '" + fd.host_path + "'");
+                        }
+
+                        fd.handle = fdopen_snapshot_host_file(host_fd, fd.flags);
+                        if (!fd.handle)
+                        {
+                            const auto error = errno;
+                            close_snapshot_host_file(host_fd);
+                            errno = error;
+                        }
+                        if (!fd.handle)
+                        {
+                            throw std::runtime_error("Failed to reopen fd snapshot host file '" + fd.host_path + "'");
+                        }
+                        setvbuf(fd.handle, nullptr, _IONBF, 0);
+                        if (offset != 0 && !seek_host_file(fd.handle, offset))
+                        {
+                            throw std::runtime_error("Failed to restore fd snapshot offset for '" + fd.host_path + "'");
+                        }
+                    }
+                }
+            }
+
+            restored.emplace(fd_number, std::move(fd));
         }
 
-        for (auto& [_, fd] : this->fds_)
-        {
-            close_if_owned(fd);
-        }
         this->fds_ = std::move(restored);
     }
 } // namespace sogen

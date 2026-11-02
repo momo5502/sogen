@@ -3,10 +3,10 @@
 #include <arch_emulator.hpp>
 #include <hook_interface.hpp>
 #include <logger.hpp>
+#include <posix_fd_table.hpp>
 #include <posix_file_system.hpp>
 #include <posix_memory_manager.hpp>
 
-#include "macos_fd_table.hpp"
 #include "macos_file_ids.hpp"
 #include "macos_mach_ports.hpp"
 #include "macos_shared_region.hpp"
@@ -33,7 +33,7 @@ namespace sogen
         logger log{};
         posix_memory_manager memory;
         posix_file_system file_system;
-        macos_fd_table fds{};
+        posix_fd_table fds{};
         macos_file_ids file_ids{};
         macos_mach_ports mach_ports{};
         macos_syscall_dispatcher dispatcher{};
@@ -42,8 +42,14 @@ namespace sogen
         uint32_t signal_mask{};
         std::array<uint8_t, 16> executable_uuid{};
         std::string process_name{};
+        std::string working_directory{"/"};
 
         uint64_t next_entropy();
+
+        std::string resolve_guest_path(const std::string_view guest_path) const
+        {
+            return posix_file_system::resolve_guest_path_string(this->working_directory, guest_path);
+        }
 
         std::function<void(std::string_view data)> on_stdout{};
         std::function<void(std::string_view data)> on_stderr{};

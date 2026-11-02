@@ -146,6 +146,13 @@ namespace sogen
         bool spoof_gpu_features{false};
     };
 
+    struct provider_mount
+    {
+        windows_path guest_path{};
+        std::unique_ptr<mount_provider> provider{};
+        filesystem_mode mode{default_mount_mode};
+    };
+
     struct emulator_interfaces
     {
         std::unique_ptr<utils::clock> clock{};
@@ -156,6 +163,8 @@ namespace sogen
         std::unique_ptr<crypt_protect_backend> crypt_protect{};
         process_manager* processes{};
         std::unique_ptr<console_backend> console{};
+        // Mounted after emulator_settings::mounts, for sources that are not a host directory.
+        std::vector<provider_mount> mounts{};
     };
 
     // Per-vCPU scheduler state: the guest thread a virtual CPU is currently executing
@@ -688,6 +697,7 @@ namespace sogen
         void set_foreground_window(hwnd window);
         void deliver_ui_event(const ui_event& event);
         void resize_window_from_host(hwnd window_handle, bool maximized, int32_t client_width, int32_t client_height);
+        void move_window_from_host(hwnd window_handle, int32_t x, int32_t y);
         std::pair<int32_t, int32_t> cursor_after_pointer_event(const ui_event& event) const;
         std::pair<emulator_thread*, const user_low_level_hook*> find_low_level_hook(uint64_t handle);
         void wake_thread(emulator_thread& thread);

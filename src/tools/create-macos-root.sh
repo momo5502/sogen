@@ -23,7 +23,7 @@ if [[ ! -f "${CACHE_DIR}/dyld_shared_cache_x86_64" ]]; then
 	exit 1
 fi
 
-for binary in /usr/lib/dyld /bin/echo; do
+for binary in /usr/lib/dyld /bin/echo /bin/ls; do
 	if ! lipo -archs "${binary}" | grep -qw x86_64; then
 		echo "Error: ${binary} has no x86-64 slice." >&2
 		exit 1
@@ -36,6 +36,7 @@ mkdir -p "${ROOT}/bin" "${ROOT}/usr/lib" "${ROOT}/System/Library/dyld"
 # fails, while cp leaves file flags behind.
 cp -X /usr/lib/dyld "${ROOT}/usr/lib/dyld"
 cp -X /bin/echo "${ROOT}/bin/echo"
+cp -X /bin/ls "${ROOT}/bin/ls"
 
 for cache in "${CACHE_DIR}"/dyld_shared_cache_x86_64 "${CACHE_DIR}"/dyld_shared_cache_x86_64.[0-9][0-9]; do
 	cp -X "${cache}" "${ROOT}/System/Library/dyld/$(basename "${cache}")"
