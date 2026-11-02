@@ -1,4 +1,5 @@
 add_subdirectory(common)
+add_subdirectory(version)
 add_subdirectory(gpu-bridge-protocol)
 add_subdirectory(steam-bridge-protocol)
 
