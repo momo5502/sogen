@@ -18,6 +18,7 @@ namespace sogen
 #define EASTEUROPE_CHARSET 238
 
 #define DEFAULT_PITCH      0
+#define VARIABLE_PITCH     2
 #define FF_SWISS           0x20
 #define FW_NORMAL          400
 #define FW_BOLD            700
@@ -210,6 +211,10 @@ namespace sogen
     constexpr uint32_t gui_resources_gdiobjects_peak = 2;
     constexpr uint32_t gui_resources_userobjects_peak = 4;
     constexpr uint64_t gui_resources_global_process = static_cast<uint64_t>(-2);
+
+#ifndef CBM_INIT
+#define CBM_INIT 0x04
+#endif
 
     struct GDI_SHARED_MEMORY64
     {

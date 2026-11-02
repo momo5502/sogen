@@ -242,6 +242,7 @@ namespace sogen
 #define WS_EX_TOOLWINDOW            0x00000080L
 #define WS_EX_LAYERED               0x00080000L
 #define WS_EX_CLIENTEDGE            0x00000200L
+#define WS_EX_NOACTIVATE            0x08000000L
 
 #define SIZE_RESTORED               0
 #define SIZE_MAXIMIZED              2

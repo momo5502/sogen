@@ -193,6 +193,12 @@ namespace sogen::py
             .def("write_register", nb::overload_cast<x86_register, uint64_t>(&sogen_windows_emulator::write_register, nb::const_))
             .def("read_register", nb::overload_cast<arm64_register>(&sogen_windows_emulator::read_register, nb::const_))
             .def("write_register", nb::overload_cast<arm64_register, uint64_t>(&sogen_windows_emulator::write_register, nb::const_))
+            .def("read_register_bytes", nb::overload_cast<x86_register, size_t>(&sogen_windows_emulator::read_register_bytes, nb::const_))
+            .def("write_register_bytes",
+                 nb::overload_cast<x86_register, const nb::bytes&>(&sogen_windows_emulator::write_register_bytes, nb::const_))
+            .def("read_register_bytes", nb::overload_cast<arm64_register, size_t>(&sogen_windows_emulator::read_register_bytes, nb::const_))
+            .def("write_register_bytes",
+                 nb::overload_cast<arm64_register, const nb::bytes&>(&sogen_windows_emulator::write_register_bytes, nb::const_))
             .def("get_host_port", &sogen_windows_emulator::get_host_port)
             .def("get_emulator_port", &sogen_windows_emulator::get_emulator_port)
             .def("map_port", &sogen_windows_emulator::map_port);
