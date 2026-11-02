@@ -1151,6 +1151,11 @@ namespace sogen
         }
         incoming.registers_in_transit = true;
 
+        // Nothing changes the incoming thread's wait status while it is in transit, so it is written with its
+        // registers. A thread that is not set up yet gets it from setup_if_necessary, after its initial registers.
+        const std::optional<NTSTATUS> wait_status =
+            incoming.setup_done ? std::exchange(incoming.pending_status, std::nullopt) : std::nullopt;
+
         {
             this->kernel_lock_.unlock();
             const auto _ = utils::finally([&] {
@@ -1169,9 +1174,23 @@ namespace sogen
             }
 
             incoming.load_registers(vcpu.cpu);
+
+            // A WOW64 thread's refresh also writes this vCPU's GDT in guest memory, which needs the kernel lock.
+            if (!incoming.teb32.has_value())
+            {
+                incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
+            }
+
+            if (wait_status.has_value())
+            {
+                this->abi().return_value(vcpu.cpu, static_cast<uint64_t>(*wait_status));
+            }
         }
 
-        incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
+        if (incoming.teb32.has_value())
+        {
+            incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
+        }
     }
 
     bool windows_emulator::wait_for_thread_registers(vcpu_context& vcpu, emulator_thread& thread)
