@@ -499,6 +499,18 @@ namespace sogen::macos_test
             return run_binary(image.serialize(), argv, emulation_root);
         }
 
+        void expect_execve_fails_with_ebadmacho(const test_image& malformed)
+        {
+            const temporary_root root{};
+            root.add_file("/malformed", malformed.serialize());
+            std::filesystem::permissions(root.path() / "malformed", std::filesystem::perms::owner_exec, std::filesystem::perm_options::add);
+
+            const auto result = run_image(make_test_image(EXECVE_MALFORMED_CODE), {"test"}, root.path());
+
+            constexpr int ebadmacho = 88;
+            EXPECT_EQ(result.exit_status, (ebadmacho * 2) + 1);
+        }
+
         void expect_rejected(const std::span<const std::byte> data, const std::filesystem::path& emulation_root = {})
         {
             EXPECT_THROW(macos_emulator(create_backend, emulation_root, data, "/test", {"test"}, {}), std::runtime_error);
@@ -576,18 +588,20 @@ namespace sogen::macos_test
         EXPECT_EQ(result.exit_status, 7);
     }
 
-    TEST(MacosEmulationTest, FailsExecveOfMalformedImageBackToCaller)
+    TEST(MacosEmulationTest, FailsExecveOfSegmentExceedingFileBackToCaller)
     {
-        const temporary_root root{};
         auto malformed = make_test_image(HELLO_CODE);
         malformed.text.filesize = IMAGE_SIZE;
-        root.add_file("/malformed", malformed.serialize());
-        std::filesystem::permissions(root.path() / "malformed", std::filesystem::perms::owner_exec, std::filesystem::perm_options::add);
 
-        const auto result = run_image(make_test_image(EXECVE_MALFORMED_CODE), {"test"}, root.path());
+        expect_execve_fails_with_ebadmacho(malformed);
+    }
 
-        constexpr int ebadmacho = 88;
-        EXPECT_EQ(result.exit_status, (ebadmacho * 2) + 1);
+    TEST(MacosEmulationTest, FailsExecveOfUnalignedSegmentBackToCaller)
+    {
+        auto malformed = make_test_image(HELLO_CODE);
+        malformed.text.vmaddr += 0x800;
+
+        expect_execve_fails_with_ebadmacho(malformed);
     }
 
     TEST(MacosEmulationTest, PassesArgumentCountOnInitialStack)

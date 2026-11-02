@@ -121,6 +121,11 @@ namespace sogen
 
         uint64_t validate_segment_range(const macho::segment_command_64& segment, const uint64_t slide)
         {
+            if (page_align_down(segment.vmaddr) != segment.vmaddr)
+            {
+                throw std::runtime_error("Mach-O segment is not page-aligned");
+            }
+
             if (slide > MACOS_USER_ADDRESS_END || segment.vmaddr > MACOS_USER_ADDRESS_END - slide ||
                 segment.vmsize > MACOS_USER_ADDRESS_END)
             {
