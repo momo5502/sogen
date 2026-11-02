@@ -564,6 +564,9 @@ namespace sogen
         }
 
         void wake_idle_vcpu();
+        // Wakes an idle vCPU, or the next one to go idle, to look for threads that can run. For host threads that make a
+        // parked guest thread runnable, such as one ending a GPU wait.
+        void credit_idle_wakeup();
 
         uint64_t get_executed_instructions() const
         {
@@ -788,7 +791,6 @@ namespace sogen
         // Notified under the kernel lock whenever a thread's registers become saved or leave transit.
         std::condition_variable_any thread_registers_saved_{};
 
-        void credit_idle_wakeup();
         bool wait_for_idle_wakeup(std::chrono::milliseconds timeout);
 
         // The vCPU currently running a handler under the kernel lock; drives

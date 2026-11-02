@@ -13,6 +13,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
 #include <cstring>
 #include <deque>
@@ -283,6 +284,140 @@ namespace sogen
                 if (*this->references_)
                 {
                     (*this->references_)->insert(id);
+                }
+            }
+        };
+
+        // A vkWaitSemaphores resolved to the driver's handles, so it can run on any thread while they live.
+        struct native_semaphore_wait
+        {
+            PFN_vkWaitSemaphores wait_semaphores{};
+            VkDevice device{};
+            VkSemaphoreWaitFlags flags{};
+            std::vector<VkSemaphore> semaphores{};
+            std::vector<uint64_t> values{};
+
+            VkResult wait(const uint64_t timeout) const
+            {
+                VkSemaphoreWaitInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+                info.flags = this->flags;
+                info.semaphoreCount = static_cast<uint32_t>(this->semaphores.size());
+                info.pSemaphores = this->semaphores.data();
+                info.pValues = this->values.data();
+                return this->wait_semaphores(this->device, &info, timeout);
+            }
+        };
+
+        struct async_semaphore_wait
+        {
+            uint64_t device_id{};
+            std::vector<uint64_t> semaphore_ids{};
+            native_semaphore_wait native{};
+            std::function<void()> on_done{};
+            std::shared_ptr<std::atomic<int32_t>> result = std::make_shared<std::atomic<int32_t>>(VK_TIMEOUT);
+            std::atomic_bool ended{};
+        };
+
+        // Runs one async_semaphore_wait at a time on a thread of its own. It waits in the driver in bounded slices, so
+        // that ending a wait whose objects are being destroyed takes at most one.
+        class semaphore_waiter
+        {
+          public:
+            semaphore_waiter()
+                : thread_([this] { this->run(); })
+            {
+            }
+
+            semaphore_waiter(const semaphore_waiter&) = delete;
+            semaphore_waiter& operator=(const semaphore_waiter&) = delete;
+
+            ~semaphore_waiter()
+            {
+                {
+                    const std::scoped_lock lock{this->mutex_};
+                    this->exiting_ = true;
+                    if (this->job_)
+                    {
+                        this->job_->ended = true;
+                    }
+                }
+
+                this->changed_.notify_all();
+                this->thread_.join();
+            }
+
+            bool idle()
+            {
+                const std::scoped_lock lock{this->mutex_};
+                return !this->job_;
+            }
+
+            void start(std::unique_ptr<async_semaphore_wait> job)
+            {
+                {
+                    const std::scoped_lock lock{this->mutex_};
+                    this->job_ = std::move(job);
+                }
+
+                this->changed_.notify_all();
+            }
+
+            // Returns once the driver no longer waits for a matching wait in flight, which then reports
+            // VK_ERROR_INITIALIZATION_FAILED.
+            template <typename Predicate>
+            void end_if(const Predicate& matches)
+            {
+                std::unique_lock lock{this->mutex_};
+                if (this->job_ && matches(*this->job_))
+                {
+                    this->job_->ended = true;
+                    this->changed_.wait(lock, [this] { return !this->job_; });
+                }
+            }
+
+          private:
+            static constexpr uint64_t slice_ns = 10'000'000;
+
+            std::mutex mutex_{};
+            std::condition_variable changed_{};
+            std::unique_ptr<async_semaphore_wait> job_{};
+            bool exiting_{};
+            std::thread thread_{};
+
+            void run()
+            {
+                std::unique_lock lock{this->mutex_};
+                while (true)
+                {
+                    this->changed_.wait(lock, [this] { return this->job_ || this->exiting_; });
+                    if (!this->job_)
+                    {
+                        return;
+                    }
+
+                    auto& job = *this->job_;
+                    lock.unlock();
+
+                    VkResult result{};
+                    do
+                    {
+                        result = job.native.wait(slice_ns);
+                    } while (result == VK_TIMEOUT && !job.ended);
+
+                    job.result->store(result == VK_TIMEOUT ? VK_ERROR_INITIALIZATION_FAILED : result, std::memory_order_release);
+                    const auto on_done = std::move(job.on_done);
+
+                    lock.lock();
+                    this->job_.reset();
+                    this->changed_.notify_all();
+                    lock.unlock();
+
+                    if (on_done)
+                    {
+                        on_done();
+                    }
+                    lock.lock();
                 }
             }
         };
@@ -1978,6 +2113,57 @@ namespace sogen
         object_table<fence_data> fences{&this->recording_references};
         object_table<event_data> events{&this->recording_references};
         object_table<semaphore_data> semaphores{&this->recording_references};
+
+        // ponytail: one thread per wait in flight at once, kept for later waits; a pool cap if guests ever park many.
+        std::vector<std::unique_ptr<semaphore_waiter>> semaphore_waiters{};
+
+        std::optional<native_semaphore_wait> resolve_semaphore_wait(const uint64_t device, const uint32_t flags,
+                                                                    const gpu_bridge::wait_semaphore_entry* entries, const uint32_t count)
+        {
+            const auto dev = this->devices.find(device);
+            if (dev == this->devices.end() || !dev->second.wait_semaphores)
+            {
+                return std::nullopt;
+            }
+
+            native_semaphore_wait wait{.wait_semaphores = dev->second.wait_semaphores, .device = dev->second.handle, .flags = flags};
+            wait.semaphores.reserve(count);
+            wait.values.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto it = this->semaphores.find(entries[i].semaphore);
+                if (it == this->semaphores.end() || it->second.device_id != device)
+                {
+                    return std::nullopt;
+                }
+                wait.semaphores.push_back(it->second.handle);
+                wait.values.push_back(entries[i].value);
+            }
+            return wait;
+        }
+
+        semaphore_waiter& idle_semaphore_waiter()
+        {
+            for (const auto& waiter : this->semaphore_waiters)
+            {
+                if (waiter->idle())
+                {
+                    return *waiter;
+                }
+            }
+
+            return *this->semaphore_waiters.emplace_back(std::make_unique<semaphore_waiter>());
+        }
+
+        template <typename Predicate>
+        void end_semaphore_waits(const Predicate& matches)
+        {
+            for (const auto& waiter : this->semaphore_waiters)
+            {
+                waiter->end_if(matches);
+            }
+        }
+
         object_table<memory_data> memories{&this->recording_references};
         object_table<buffer_data> buffers{&this->recording_references};
         object_table<image_data> images{&this->recording_references};
@@ -3503,6 +3689,7 @@ namespace sogen
 
             const auto presents = it->second.presents;
             const std::unique_lock presents_done(*presents);
+            this->end_semaphore_waits([&](const async_semaphore_wait& wait) { return wait.device_id == device_id; });
 
             // Descriptor pools (which free their sets) before descriptor set layouts those sets used.
             for (auto& [id, pool] : this->descriptor_pools)
@@ -6006,35 +6193,34 @@ namespace sogen
 
     int32_t vulkan_host::wait_semaphores(uint64_t device, uint32_t flags, const void* entries, uint32_t count, uint64_t timeout)
     {
-        const auto dev = this->impl_->devices.find(device);
-        if (dev == this->impl_->devices.end() || !dev->second.wait_semaphores)
+        const auto wait =
+            this->impl_->resolve_semaphore_wait(device, flags, static_cast<const gpu_bridge::wait_semaphore_entry*>(entries), count);
+        return wait ? wait->wait(timeout) : VK_ERROR_INITIALIZATION_FAILED;
+    }
+
+    std::shared_ptr<const std::atomic<int32_t>> vulkan_host::wait_semaphores_async(uint64_t device, uint32_t flags, const void* entries,
+                                                                                   uint32_t count, std::function<void()> on_done)
+    {
+        const auto* records = static_cast<const gpu_bridge::wait_semaphore_entry*>(entries);
+        auto native = this->impl_->resolve_semaphore_wait(device, flags, records, count);
+        if (!native)
         {
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return std::make_shared<std::atomic<int32_t>>(VK_ERROR_INITIALIZATION_FAILED);
         }
 
-        const auto* records = static_cast<const gpu_bridge::wait_semaphore_entry*>(entries);
-        std::vector<VkSemaphore> handles;
-        std::vector<uint64_t> values;
-        handles.reserve(count);
-        values.reserve(count);
+        auto job = std::make_unique<async_semaphore_wait>();
+        job->device_id = device;
+        job->semaphore_ids.reserve(count);
         for (uint32_t i = 0; i < count; ++i)
         {
-            const auto it = this->impl_->semaphores.find(records[i].semaphore);
-            if (it == this->impl_->semaphores.end() || it->second.device_id != device)
-            {
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            handles.push_back(it->second.handle);
-            values.push_back(records[i].value);
+            job->semaphore_ids.push_back(records[i].semaphore);
         }
+        job->native = std::move(*native);
+        job->on_done = std::move(on_done);
 
-        VkSemaphoreWaitInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
-        info.flags = flags;
-        info.semaphoreCount = count;
-        info.pSemaphores = handles.data();
-        info.pValues = values.data();
-        return dev->second.wait_semaphores(dev->second.handle, &info, timeout);
+        auto result = job->result;
+        this->impl_->idle_semaphore_waiter().start(std::move(job));
+        return result;
     }
 
     uint64_t vulkan_host::get_buffer_device_address(uint64_t device, uint64_t buffer)
@@ -6060,6 +6246,9 @@ namespace sogen
         {
             return;
         }
+
+        this->impl_->end_semaphore_waits(
+            [&](const async_semaphore_wait& wait) { return std::ranges::find(wait.semaphore_ids, semaphore) != wait.semaphore_ids.end(); });
 
         if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_semaphore)
         {

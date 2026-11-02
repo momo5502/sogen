@@ -1484,7 +1484,7 @@ namespace sogen
 
         if (this->await_host_condition)
         {
-            // Cooperative host wait (e.g. a GPU-bridge semaphore poll): ready when the predicate signals,
+            // Cooperative host wait (e.g. a GPU-bridge semaphore wait): ready when the predicate signals,
             // otherwise stay parked.
             if (this->await_host_condition())
             {

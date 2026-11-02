@@ -387,19 +387,6 @@ namespace sogen
             return {.window = top_level, .x = x, .y = y};
         }
 
-        bool has_pending_host_wait(const process_context& process)
-        {
-            for (const auto& thread_entry : process.threads)
-            {
-                if (thread_entry.second.await_host_condition)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
         void perform_context_switch_work(windows_emulator& win_emu, vcpu_context& vcpu)
         {
             win_emu.apply_pending_guest_event_signals();
@@ -1048,8 +1035,6 @@ namespace sogen
                 }
             }
 
-            const auto host_wait_pending = has_pending_host_wait(this->process);
-
             ++this->idle_vcpus_;
 
             // Idle: nothing is ready. Release the kernel lock while pumping UI events
@@ -1066,11 +1051,6 @@ namespace sogen
             if (this->use_relative_time_)
             {
                 this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
-            }
-            else if (host_wait_pending)
-            {
-                // A host wait (e.g. a GPU semaphore) is parked - re-poll immediately to wake it promptly.
-                std::this_thread::yield();
             }
             else
             {
