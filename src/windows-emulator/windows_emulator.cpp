@@ -886,6 +886,11 @@ namespace sogen
             this->file_sys.map(mount.guest_path, mount.host_path, mount.mode);
         }
 
+        for (auto& mount : interfaces.mounts)
+        {
+            this->file_sys.mount(mount.guest_path, std::move(mount.provider), mount.mode);
+        }
+
         for (const auto& mapping : settings.port_mappings)
         {
             this->map_port(mapping.first, mapping.second);

@@ -146,6 +146,13 @@ namespace sogen
         bool spoof_gpu_features{false};
     };
 
+    struct provider_mount
+    {
+        windows_path guest_path{};
+        std::unique_ptr<mount_provider> provider{};
+        filesystem_mode mode{default_mount_mode};
+    };
+
     struct emulator_interfaces
     {
         std::unique_ptr<utils::clock> clock{};
@@ -156,6 +163,8 @@ namespace sogen
         std::unique_ptr<crypt_protect_backend> crypt_protect{};
         process_manager* processes{};
         std::unique_ptr<console_backend> console{};
+        // Mounted after emulator_settings::mounts, for sources that are not a host directory.
+        std::vector<provider_mount> mounts{};
     };
 
     // Per-vCPU scheduler state: the guest thread a virtual CPU is currently executing
