@@ -307,6 +307,17 @@ namespace sogen::test
         EXPECT_EQ(finish(*read).status, utils::pipe_io_status::broken);
     }
 
+    TEST_P(HostPipeTest, ClientSeesTheServerDisconnectOnBothTransports)
+    {
+        auto pair = utils::host_pipe::create_pair(false, 4);
+        const auto server = std::move(pair.first);
+        const auto client = this->endpoint(std::move(pair.second));
+        EXPECT_FALSE(client->is_disconnected());
+        server->disconnect();
+        EXPECT_TRUE(server->is_disconnected());
+        EXPECT_TRUE(client->is_disconnected());
+    }
+
     TEST_P(HostPipeTest, ZeroLengthReadReportsClosedPeer)
     {
         this->writer.reset();

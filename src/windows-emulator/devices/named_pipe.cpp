@@ -21,6 +21,8 @@ namespace sogen
                 return STATUS_PIPE_BROKEN;
             case utils::pipe_io_status::cancelled:
                 return STATUS_CANCELLED;
+            case utils::pipe_io_status::disconnected:
+                return STATUS_PIPE_DISCONNECTED;
             default:
                 return STATUS_UNSUCCESSFUL;
             }
@@ -144,6 +146,19 @@ namespace sogen
         }
     }
 
+    void named_pipe::create_endpoints()
+    {
+        auto endpoints =
+            utils::host_pipe::create_pair(this->pipe_type != 0, std::max<ULONG>({this->inbound_quota, this->outbound_quota, 4096}));
+        this->endpoint = std::move(endpoints.first);
+        this->unopened_peer = std::move(endpoints.second);
+    }
+
+    bool named_pipe::is_disconnected() const
+    {
+        return !this->endpoint || this->endpoint->is_disconnected();
+    }
+
     void named_pipe::complete(windows_emulator& win_emu, const pending_operation& operation, const operation_result result,
                               const bool was_pending)
     {
@@ -189,7 +204,11 @@ namespace sogen
 
     NTSTATUS named_pipe::start_io(windows_emulator& win_emu, io_device_context context, const bool reading)
     {
-        if (!this->endpoint || !context.io_status_block)
+        if (!this->endpoint)
+        {
+            return this->server_end ? STATUS_PIPE_DISCONNECTED : STATUS_INVALID_HANDLE;
+        }
+        if (!context.io_status_block)
         {
             return STATUS_INVALID_HANDLE;
         }
@@ -232,9 +251,14 @@ namespace sogen
 
     NTSTATUS named_pipe::start_listen(windows_emulator& win_emu, io_device_context context)
     {
-        if (!this->endpoint || !context.io_status_block)
+        if ((!this->endpoint && !this->server_end) || !context.io_status_block)
         {
             return STATUS_INVALID_HANDLE;
+        }
+        if (!this->endpoint)
+        {
+            this->create_endpoints();
+            complete_named_pipe_waits(win_emu, this->name, STATUS_SUCCESS);
         }
         if (!this->unopened_peer)
         {
@@ -299,6 +323,46 @@ namespace sogen
         }
         awaited = {.name = std::move(*awaited_name), .deadline = wait_deadline(win_emu, *header, instances.any->default_timeout)};
         return STATUS_PENDING;
+    }
+
+    NTSTATUS named_pipe::disconnect(windows_emulator& win_emu)
+    {
+        if (this->is_disconnected())
+        {
+            return STATUS_PIPE_DISCONNECTED;
+        }
+        if (!this->server_end)
+        {
+            return STATUS_ILLEGAL_FUNCTION;
+        }
+        this->endpoint->disconnect();
+        this->endpoint.reset();
+        this->unopened_peer.reset();
+        this->complete_pending_operations(win_emu, STATUS_PIPE_DISCONNECTED);
+        const windows_path instance_path{this->name};
+        for (auto& device : win_emu.process.devices | std::views::values)
+        {
+            if (auto* pipe = device.get_internal_device<named_pipe>(); pipe && pipe != this && windows_path(pipe->name) == instance_path)
+            {
+                pipe->work(win_emu);
+            }
+        }
+        return STATUS_SUCCESS;
+    }
+
+    void named_pipe::complete_pending_operations(windows_emulator& win_emu, const NTSTATUS status)
+    {
+        for (auto& operation : this->pending_)
+        {
+            if (operation.operation)
+            {
+                operation.operation->cancel();
+            }
+            const auto result = operation.kind == operation_kind::decided ? operation.decided_status : status;
+            this->complete(win_emu, operation, {.status = result}, true);
+            release_operation(win_emu.process, operation);
+        }
+        this->pending_.clear();
     }
 
     NTSTATUS named_pipe::enqueue_operation(windows_emulator& win_emu, io_device_context context,

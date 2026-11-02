@@ -18,6 +18,7 @@ namespace sogen::utils
         pending,
         broken,
         cancelled,
+        disconnected,
         failed,
     };
 
@@ -64,6 +65,8 @@ namespace sogen::utils
         std::unique_ptr<host_pipe_operation> read(uint32_t size);
         std::unique_ptr<host_pipe_operation> write(std::string_view data);
         pipe_io_result peek(std::string& data, uint32_t capacity, uint32_t& available) const;
+        void disconnect() const;
+        bool is_disconnected() const;
         void serialize(buffer_serializer& buffer) const;
         static std::shared_ptr<host_pipe> deserialize(buffer_deserializer& buffer);
 
