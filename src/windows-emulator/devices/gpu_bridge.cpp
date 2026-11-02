@@ -247,6 +247,8 @@ namespace sogen
                     return handle_update_descriptor_sets(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets_batch:
                     return handle_update_descriptor_sets_batch(win_emu, context);
+                case gpu_bridge::ioctl_allocate_descriptor_sets_with_updates:
+                    return handle_allocate_descriptor_sets_with_updates(win_emu, context);
                 case gpu_bridge::ioctl_create_sampler:
                     return handle_create_sampler(win_emu, context);
                 case gpu_bridge::ioctl_destroy_sampler:
@@ -3489,6 +3491,41 @@ namespace sogen
                 std::vector<std::byte> buffer(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, buffer.data(), buffer.size());
 
+                const int32_t result = this->apply_descriptor_update_batch(buffer);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            // The shim's pending descriptor updates and the allocation that would otherwise have flushed them in a round
+            // trip of its own: applies the updates, then allocates from the rest of the input as
+            // ioctl_allocate_descriptor_sets does. vkUpdateDescriptorSets reports nothing, so neither does a failed update.
+            NTSTATUS handle_allocate_descriptor_sets_with_updates(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::descriptor_updates_prefix prefix{};
+                if (!context.input_buffer || context.input_buffer_length < sizeof(prefix))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                win_emu.emu().read_memory(context.input_buffer, &prefix, sizeof(prefix));
+                if (prefix.updates_bytes > max_descriptor_update_input_bytes ||
+                    context.input_buffer_length - sizeof(prefix) < prefix.updates_bytes)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<std::byte> updates(prefix.updates_bytes);
+                win_emu.emu().read_memory(context.input_buffer + sizeof(prefix), updates.data(), updates.size());
+                this->apply_descriptor_update_batch(updates);
+
+                auto allocation = context;
+                allocation.input_buffer += sizeof(prefix) + prefix.updates_bytes;
+                allocation.input_buffer_length -= static_cast<ULONG>(sizeof(prefix) + prefix.updates_bytes);
+                return this->handle_allocate_descriptor_sets(win_emu, allocation);
+            }
+
+            // Applies a concatenation of update_descriptor_sets_request blobs and reports the first failure.
+            int32_t apply_descriptor_update_batch(const std::vector<std::byte>& buffer)
+            {
                 int32_t result = 0; // vk_success
                 size_t offset = 0;
                 while (offset + sizeof(gpu_bridge::update_descriptor_sets_request) <= buffer.size())
@@ -3504,7 +3541,7 @@ namespace sogen
                     }
                 }
 
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                return result;
             }
 
             NTSTATUS handle_create_sampler(windows_emulator& win_emu, const io_device_context& context)
