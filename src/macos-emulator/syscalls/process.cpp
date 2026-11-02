@@ -32,6 +32,11 @@ namespace sogen
         write_macos_syscall_success(c, MACOS_PROCESS_ID);
     }
 
+    void sys_getuid(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, USER_ID);
+    }
+
     // Two policy calls are answered. AMFI's dyld policy query takes { uint64_t input_flags; uint64_t* output_flags }
     // and dyld copies the output even when the call fails, so failing would hand it uninitialized (permissive)
     // flags; zero is the policy of a restricted platform binary. The sandbox check's arguments start with a

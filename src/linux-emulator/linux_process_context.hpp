@@ -1,7 +1,7 @@
 #pragma once
 
 #include "std_include.hpp"
-#include "linux_fd_table.hpp"
+#include <posix_fd_table.hpp>
 #include "linux_thread.hpp"
 #include <posix_memory_manager.hpp>
 #include "module/elf_mapping.hpp"
@@ -38,7 +38,7 @@ namespace sogen
 
     struct linux_process_context
     {
-        linux_fd_table fds{};
+        posix_fd_table fds{};
         std::map<int, std::vector<linux_cached_dir_entry>> directory_entries{};
         std::map<int, size_t> directory_offsets{};
         std::map<int, std::shared_ptr<linux_epoll_instance>> epoll_instances{};

@@ -269,6 +269,8 @@ namespace sogen
                 return u"Timer";
             case handle_types::desktop:
                 return u"Desktop";
+            case handle_types::window_station:
+                return u"WindowStation";
             case handle_types::io_completion:
                 return u"IoCompletion";
             case handle_types::wait_completion_packet:
@@ -368,6 +370,11 @@ namespace sogen
                     if (!registry)
                     {
                         return STATUS_INVALID_HANDLE;
+                    }
+
+                    if (!c.win_emu.registry.key_exists(*registry))
+                    {
+                        return STATUS_KEY_DELETED;
                     }
 
                     // Build the full registry path in device format

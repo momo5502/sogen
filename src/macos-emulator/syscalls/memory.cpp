@@ -15,7 +15,7 @@ namespace sogen
     {
         constexpr size_t FILE_COPY_CHUNK_SIZE = 0x10000;
 
-        void copy_file_to_memory(posix_memory_manager& memory, macos_file& file, const uint64_t offset, const uint64_t address,
+        void copy_file_to_memory(posix_memory_manager& memory, const posix_fd& file, const uint64_t offset, const uint64_t address,
                                  const size_t length)
         {
             std::vector<std::byte> chunk(std::min(length, FILE_COPY_CHUNK_SIZE));
@@ -54,10 +54,16 @@ namespace sogen
             return;
         }
 
-        auto* file = (flags & map_anonymous) ? nullptr : c.emu_ref.fds.get(fd);
+        const auto* file = (flags & map_anonymous) ? nullptr : c.emu_ref.fds.get(fd);
         if (!(flags & map_anonymous) && file == nullptr)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
+            return;
+        }
+
+        if (file != nullptr && (file->type != fd_type::file || file->is_standard_stream()))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENODEV);
             return;
         }
 
