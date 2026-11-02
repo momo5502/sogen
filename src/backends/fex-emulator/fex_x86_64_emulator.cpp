@@ -4268,11 +4268,33 @@ namespace sogen::fex
             return address >= this->fex_image_.start && address < this->fex_image_.end;
         }
 
+        // The call-ret stack's guard pages are arena memory, so sharing them would make them accessible in the VM and
+        // an overrun would reach the neighbouring arena memory instead of faulting. The JIT pushes through callret_sp
+        // without a bounds check, and the stack is shared by every guest thread.
+        bool in_callret_guard_page(const uint64_t address) const
+        {
+            constexpr size_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
+            if (this->callret_allocation_ == nullptr || this->callret_allocation_size_ < callret_stack_size)
+            {
+                return false;
+            }
+
+            const auto allocation = reinterpret_cast<uint64_t>(this->callret_allocation_);
+            if (address < allocation || address >= allocation + this->callret_allocation_size_)
+            {
+                return false;
+            }
+
+            const auto guard_size = (this->callret_allocation_size_ - callret_stack_size) / 2;
+            const auto stack = allocation + guard_size;
+            return address < stack || address >= stack + callret_stack_size;
+        }
+
         // FEX's own memory enters the VM the first time translated code touches it. Data is shared. Constants in
         // FEXCore's image share 16 KiB pages with executable code, which the VM must not map, so they are copied.
         bool map_fex_memory(const uint64_t address)
         {
-            if (!this->is_fex_memory(address) || this->vcpu_.in_interrupt_page(address))
+            if (!this->is_fex_memory(address) || this->vcpu_.in_interrupt_page(address) || this->in_callret_guard_page(address))
             {
                 return false;
             }
