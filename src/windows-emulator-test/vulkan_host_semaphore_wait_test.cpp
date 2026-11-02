@@ -12,9 +12,10 @@
 
 namespace sogen::test
 {
-    // An async semaphore wait ends when the GPU signals. Destroying the semaphore or its device first ends it as a
-    // failed wait, so that no host thread is left inside the driver with handles that are gone.
-    TEST(VulkanHostTest, AsyncSemaphoreWaitEndsWhenSignaledOrDestroyed)
+    // An async semaphore wait ends when the GPU signals, or with VK_TIMEOUT once its timeout passes, as vkWaitSemaphores
+    // does. Destroying the semaphore or its device first ends it as a failed wait, so that no host thread is left inside
+    // the driver with handles that are gone.
+    TEST(VulkanHostTest, AsyncSemaphoreWaitEndsWhenSignaledTimedOutOrDestroyed)
     {
         vulkan_host host{};
         host.load(nullptr);
@@ -64,21 +65,28 @@ namespace sogen::test
         const gpu_bridge::wait_semaphore_entry first{.semaphore = semaphore, .value = 1};
         std::promise<void> done;
         auto ended = done.get_future();
-        const auto signaled = host.wait_semaphores_async(device, 0, &first, 1, [&done] { done.set_value(); });
+        const auto signaled = host.wait_semaphores_async(device, 0, &first, 1, UINT64_MAX, [&done] { done.set_value(); });
         EXPECT_EQ(ended.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
-        EXPECT_EQ(signaled->load(), VK_TIMEOUT);
+        EXPECT_EQ(signaled->load(), vulkan_host::semaphore_wait_pending);
 
         ASSERT_EQ(host.signal_semaphore(device, semaphore, 1), 0);
         ASSERT_EQ(ended.wait_for(std::chrono::seconds(5)), std::future_status::ready);
         EXPECT_EQ(signaled->load(), VK_SUCCESS);
 
+        const gpu_bridge::wait_semaphore_entry unsignaled{.semaphore = other, .value = 1};
+        std::promise<void> timed_out;
+        auto timeout_ended = timed_out.get_future();
+        const auto finite = host.wait_semaphores_async(device, 0, &unsignaled, 1, 20'000'000, [&timed_out] { timed_out.set_value(); });
+        ASSERT_EQ(timeout_ended.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+        EXPECT_EQ(finite->load(), VK_TIMEOUT);
+
         const gpu_bridge::wait_semaphore_entry second{.semaphore = semaphore, .value = 2};
-        const auto semaphore_destroyed = host.wait_semaphores_async(device, 0, &second, 1, {});
+        const auto semaphore_destroyed = host.wait_semaphores_async(device, 0, &second, 1, UINT64_MAX, {});
         host.destroy_semaphore(device, semaphore);
         EXPECT_EQ(semaphore_destroyed->load(), VK_ERROR_INITIALIZATION_FAILED);
 
         const gpu_bridge::wait_semaphore_entry third{.semaphore = other, .value = 1};
-        const auto device_destroyed = host.wait_semaphores_async(device, 0, &third, 1, {});
+        const auto device_destroyed = host.wait_semaphores_async(device, 0, &third, 1, UINT64_MAX, {});
         host.destroy_device(device);
         EXPECT_EQ(device_destroyed->load(), VK_ERROR_INITIALIZATION_FAILED);
 

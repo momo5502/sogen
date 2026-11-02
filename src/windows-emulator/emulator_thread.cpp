@@ -937,6 +937,7 @@ namespace sogen
         this->await_debug_event = {};
         this->await_file_io = {};
         this->await_host_condition = {};
+        this->awaits_restored_host_condition = false;
 
         // TODO: Find out if this is correct
         if (this->waiting_for_alert)
@@ -1493,6 +1494,11 @@ namespace sogen
             }
 
             return complete_if_timed_out(STATUS_TIMEOUT);
+        }
+
+        if (this->awaits_restored_host_condition)
+        {
+            return false;
         }
 
         if (this->await_debug_event.has_value())
