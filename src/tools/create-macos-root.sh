@@ -23,7 +23,7 @@ if [[ ! -f "${CACHE_DIR}/dyld_shared_cache_x86_64" ]]; then
 	exit 1
 fi
 
-for binary in /usr/lib/dyld /bin/echo /bin/ls; do
+for binary in /usr/lib/dyld /bin/bash /bin/echo /bin/ls /bin/pwd; do
 	if ! lipo -archs "${binary}" | grep -qw x86_64; then
 		echo "Error: ${binary} has no x86-64 slice." >&2
 		exit 1
@@ -35,8 +35,10 @@ mkdir -p "${ROOT}/bin" "${ROOT}/usr/lib" "${ROOT}/System/Library/dyld"
 # System files carry the SIP "restricted" flag, which only the system may set; ditto tries to copy it and
 # fails, while cp leaves file flags behind.
 cp -X /usr/lib/dyld "${ROOT}/usr/lib/dyld"
+cp -X /bin/bash "${ROOT}/bin/bash"
 cp -X /bin/echo "${ROOT}/bin/echo"
 cp -X /bin/ls "${ROOT}/bin/ls"
+cp -X /bin/pwd "${ROOT}/bin/pwd"
 
 for cache in "${CACHE_DIR}"/dyld_shared_cache_x86_64 "${CACHE_DIR}"/dyld_shared_cache_x86_64.[0-9][0-9]; do
 	cp -X "${cache}" "${ROOT}/System/Library/dyld/$(basename "${cache}")"

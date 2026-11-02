@@ -9,7 +9,7 @@ namespace sogen
 
     namespace
     {
-        constexpr std::string_view LINUX_EMULATOR_STATE_VERSION = "linux-emulator-state-v2";
+        constexpr std::string_view LINUX_EMULATOR_STATE_VERSION = "linux-emulator-state-v3";
 
         // GDT constants — same as Windows emulator
         constexpr uint64_t GDT_ADDR = 0x35000;

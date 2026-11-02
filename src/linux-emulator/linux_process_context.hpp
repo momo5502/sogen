@@ -24,6 +24,8 @@ namespace sogen
         std::string name{};
     };
 
+    using linux_directory_listing = std::vector<linux_cached_dir_entry>;
+
     struct linux_epoll_entry
     {
         int fd{};
@@ -39,8 +41,7 @@ namespace sogen
     struct linux_process_context
     {
         posix_fd_table fds{};
-        std::map<int, std::vector<linux_cached_dir_entry>> directory_entries{};
-        std::map<int, size_t> directory_offsets{};
+        std::map<int, std::shared_ptr<const linux_directory_listing>> directory_entries{};
         std::map<int, std::shared_ptr<linux_epoll_instance>> epoll_instances{};
 
         uint64_t brk_base{};

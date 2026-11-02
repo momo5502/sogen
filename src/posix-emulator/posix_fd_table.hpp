@@ -84,7 +84,6 @@ namespace sogen
         std::shared_ptr<posix_memory_fd> memory_file{};
         int flags{};
         uint64_t directory_position{};
-        bool close_on_exec{};
         bool read_only_mapping{};
 
         std::shared_ptr<posix_socket_state> socket_state{};
@@ -95,6 +94,8 @@ namespace sogen
         }
 
         size_t read_at(uint64_t position, std::span<std::byte> buffer) const;
+        std::optional<size_t> read(std::span<std::byte> buffer) const;
+        std::optional<uint64_t> seek(int64_t offset, int origin) const;
 
         ~posix_fd()
         {
@@ -114,7 +115,6 @@ namespace sogen
               memory_file(std::move(other.memory_file)),
               flags(other.flags),
               directory_position(other.directory_position),
-              close_on_exec(other.close_on_exec),
               read_only_mapping(other.read_only_mapping),
               socket_state(std::move(other.socket_state))
         {
@@ -132,7 +132,6 @@ namespace sogen
                 memory_file = std::move(other.memory_file);
                 flags = other.flags;
                 directory_position = other.directory_position;
-                close_on_exec = other.close_on_exec;
                 read_only_mapping = other.read_only_mapping;
                 socket_state = std::move(other.socket_state);
             }
@@ -153,64 +152,42 @@ namespace sogen
 
     FILE* open_host_file(const std::filesystem::path& path, std::string_view mode);
 
+    // A descriptor refers to an open file description that dup shares, so the file position, directory position and
+    // status flags are shared between duplicates while close-on-exec stays per descriptor.
     class posix_fd_table
     {
       public:
         posix_fd_table()
         {
-            // Pre-populate stdin, stdout, stderr
-            posix_fd fd_stdin{};
-            fd_stdin.type = fd_type::file;
-            fd_stdin.host_path = "/dev/stdin";
-            fd_stdin.handle = stdin;
-            fd_stdin.flags = 0;
-            this->fds_.emplace(0, std::move(fd_stdin));
-
-            posix_fd fd_stdout{};
-            fd_stdout.type = fd_type::file;
-            fd_stdout.host_path = "/dev/stdout";
-            fd_stdout.handle = stdout;
-            fd_stdout.flags = 1;
-            this->fds_.emplace(1, std::move(fd_stdout));
-
-            posix_fd fd_stderr{};
-            fd_stderr.type = fd_type::file;
-            fd_stderr.host_path = "/dev/stderr";
-            fd_stderr.handle = stderr;
-            fd_stderr.flags = 1;
-            this->fds_.emplace(2, std::move(fd_stderr));
+            this->fds_.emplace(0, descriptor{.file = make_standard_stream("/dev/stdin", stdin, 0)});
+            this->fds_.emplace(1, descriptor{.file = make_standard_stream("/dev/stdout", stdout, 1)});
+            this->fds_.emplace(2, descriptor{.file = make_standard_stream("/dev/stderr", stderr, 1)});
         }
 
-        int allocate(posix_fd fd)
+        int allocate(posix_fd fd, const bool close_on_exec = false)
         {
             const int new_fd = this->find_lowest_available(0);
-            this->fds_.emplace(new_fd, std::move(fd));
+            this->fds_.emplace(new_fd, descriptor{.file = std::make_shared<posix_fd>(std::move(fd)), .close_on_exec = close_on_exec});
             return new_fd;
         }
 
-        int allocate_at(int target_fd, posix_fd fd)
+        int allocate_at(const int target_fd, posix_fd fd, const bool close_on_exec = false)
         {
-            // Close existing if present
-            this->close(target_fd);
-            this->fds_.emplace(target_fd, std::move(fd));
+            this->fds_.insert_or_assign(target_fd,
+                                        descriptor{.file = std::make_shared<posix_fd>(std::move(fd)), .close_on_exec = close_on_exec});
             return target_fd;
         }
 
         posix_fd* get(const int fd)
         {
-            auto it = this->fds_.find(fd);
-            if (it == this->fds_.end())
-            {
-                return nullptr;
-            }
-
-            return &it->second;
+            const auto it = this->fds_.find(fd);
+            return it == this->fds_.end() ? nullptr : it->second.file.get();
         }
 
         const posix_fd* get(const int fd) const
         {
             const auto it = this->fds_.find(fd);
-            return it == this->fds_.end() ? nullptr : &it->second;
+            return it == this->fds_.end() ? nullptr : it->second.file.get();
         }
 
         bool close(const int fd)
@@ -220,155 +197,68 @@ namespace sogen
 
         int dup_fd(const int oldfd, const int minimum_fd = 0)
         {
-            auto* existing = this->get(oldfd);
-            if (!existing)
-            {
-                return -1;
-            }
-
-            auto duplicate = duplicate_entry(*existing);
-            if (!duplicate.has_value())
+            const auto it = this->fds_.find(oldfd);
+            if (it == this->fds_.end())
             {
                 return -1;
             }
 
             const int new_fd = this->find_lowest_available(minimum_fd);
-            this->fds_.emplace(new_fd, std::move(*duplicate));
+            this->fds_.emplace(new_fd, descriptor{.file = it->second.file});
             return new_fd;
         }
 
         int dup2_fd(const int oldfd, const int newfd)
         {
-            if (oldfd == newfd)
-            {
-                return (this->get(oldfd) != nullptr) ? newfd : -1;
-            }
-
-            auto* existing = this->get(oldfd);
-            if (!existing)
+            const auto it = this->fds_.find(oldfd);
+            if (it == this->fds_.end())
             {
                 return -1;
             }
 
-            auto duplicate = duplicate_entry(*existing);
-            if (!duplicate.has_value())
+            if (oldfd != newfd)
             {
-                return -1;
+                this->fds_.insert_or_assign(newfd, descriptor{.file = it->second.file});
             }
 
-            // Close newfd if open
-            this->close(newfd);
-
-            this->fds_.emplace(newfd, std::move(*duplicate));
             return newfd;
+        }
+
+        bool is_close_on_exec(const int fd) const
+        {
+            const auto it = this->fds_.find(fd);
+            return it != this->fds_.end() && it->second.close_on_exec;
         }
 
         void set_close_on_exec(const int fd, const bool value)
         {
-            auto* entry = this->get(fd);
-            if (entry)
+            const auto it = this->fds_.find(fd);
+            if (it != this->fds_.end())
             {
-                entry->close_on_exec = value;
+                it->second.close_on_exec = value;
             }
-        }
-
-        const std::map<int, posix_fd>& get_fds() const
-        {
-            return this->fds_;
         }
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
 
       private:
-        std::map<int, posix_fd> fds_{};
-
-        static const char* get_stream_mode(const posix_fd& fd)
+        struct descriptor
         {
-            switch (fd.type)
-            {
-            case fd_type::pipe_write:
-                return "wb";
-            case fd_type::pipe_read:
-                return "rb";
-            default:
-                break;
-            }
+            std::shared_ptr<posix_fd> file{};
+            bool close_on_exec{};
+        };
 
-            if (fd.host_path == "/dev/stdout" || fd.host_path == "/dev/stderr")
-            {
-                return "wb";
-            }
+        std::map<int, descriptor> fds_{};
 
-            switch (fd.flags & 3)
-            {
-            case 1:
-                return "wb";
-            case 2:
-                return "r+b";
-            default:
-                return "rb";
-            }
-        }
-
-        static FILE* duplicate_handle(FILE* handle, const char* mode)
+        static std::shared_ptr<posix_fd> make_standard_stream(std::string host_path, FILE* handle, const int flags)
         {
-            if (!handle)
-            {
-                return nullptr;
-            }
-
-#if defined(_WIN32)
-            const auto duplicated_fd = _dup(_fileno(handle));
-            if (duplicated_fd < 0)
-            {
-                return nullptr;
-            }
-
-            auto* duplicated_handle = _fdopen(duplicated_fd, mode);
-#else
-            const auto duplicated_fd = dup(fileno(handle));
-            if (duplicated_fd < 0)
-            {
-                return nullptr;
-            }
-
-            auto* duplicated_handle = fdopen(duplicated_fd, mode);
-#endif
-            if (!duplicated_handle)
-            {
-#if defined(_WIN32)
-                _close(duplicated_fd);
-#else
-                ::close(duplicated_fd);
-#endif
-                return nullptr;
-            }
-
-            setvbuf(duplicated_handle, nullptr, _IONBF, 0);
-            return duplicated_handle;
-        }
-
-        static std::optional<posix_fd> duplicate_entry(const posix_fd& existing)
-        {
-            posix_fd new_entry{};
-            new_entry.type = existing.type;
-            new_entry.host_path = existing.host_path;
-            new_entry.guest_path = existing.guest_path;
-            new_entry.flags = existing.flags;
-            new_entry.directory_position = existing.directory_position;
-            new_entry.close_on_exec = false; // dup clears close-on-exec
-            new_entry.read_only_mapping = existing.read_only_mapping;
-
-            new_entry.handle = duplicate_handle(existing.handle, get_stream_mode(existing));
-            new_entry.memory_file = existing.memory_file;
-            new_entry.socket_state = existing.socket_state;
-            if (existing.handle && !new_entry.handle)
-            {
-                return std::nullopt;
-            }
-
-            return new_entry;
+            auto stream = std::make_shared<posix_fd>();
+            stream->type = fd_type::file;
+            stream->host_path = std::move(host_path);
+            stream->handle = handle;
+            stream->flags = flags;
+            return stream;
         }
 
         int find_lowest_available(const int start) const
