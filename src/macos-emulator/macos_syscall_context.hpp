@@ -18,14 +18,18 @@ namespace sogen
         constexpr uint64_t MACOS_EPERM = 1;
         constexpr uint64_t MACOS_ENOENT = 2;
         constexpr uint64_t MACOS_ESRCH = 3;
+        constexpr uint64_t MACOS_EIO = 5;
         constexpr uint64_t MACOS_EBADF = 9;
         constexpr uint64_t MACOS_ENOMEM = 12;
         constexpr uint64_t MACOS_EACCES = 13;
         constexpr uint64_t MACOS_EFAULT = 14;
         constexpr uint64_t MACOS_ENODEV = 19;
         constexpr uint64_t MACOS_ENOTDIR = 20;
+        constexpr uint64_t MACOS_EISDIR = 21;
         constexpr uint64_t MACOS_EINVAL = 22;
+        constexpr uint64_t MACOS_EMFILE = 24;
         constexpr uint64_t MACOS_ENOTTY = 25;
+        constexpr uint64_t MACOS_ESPIPE = 29;
         constexpr uint64_t MACOS_ENOTSOCK = 38;
         constexpr uint64_t MACOS_EAFNOSUPPORT = 47;
         constexpr uint64_t MACOS_ENOTCONN = 57;
@@ -54,6 +58,9 @@ namespace sogen
     // The identity of a standard first user account on macOS (staff group).
     constexpr uint32_t USER_ID = 501;
     constexpr uint32_t GROUP_ID = 20;
+
+    // RLIMIT_NOFILE's soft limit, which is also getdtablesize().
+    constexpr uint64_t MACOS_DESCRIPTOR_LIMIT = 256;
 
     // The wall-clock time the guest sees, fixed so runs are deterministic.
     constexpr int64_t MACOS_EPOCH_SECONDS = 1700000000;

@@ -103,6 +103,7 @@ namespace sogen
 
         std::vector<posix_memory_region_info> get_mapped_region_infos() const;
         std::optional<posix_memory_region_info> get_region_info(uint64_t address) const;
+        bool is_writable_range(uint64_t address, size_t size) const;
         posix_memory_stats compute_memory_stats() const;
 
         using memory_allocate_callback = std::function<void(uint64_t address, size_t size, memory_permission permissions, bool committed)>;

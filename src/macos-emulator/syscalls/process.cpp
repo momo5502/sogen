@@ -32,9 +32,87 @@ namespace sogen
         write_macos_syscall_success(c, MACOS_PROCESS_ID);
     }
 
+    void sys_getgroups(const macos_syscall_context& c)
+    {
+        constexpr std::array groups{GROUP_ID};
+
+        const auto size = static_cast<uint32_t>(get_macos_syscall_argument(c.emu, 0));
+        if (size == 0)
+        {
+            write_macos_syscall_success(c, groups.size());
+            return;
+        }
+
+        if (size < groups.size())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        if (!c.emu.try_write_memory(get_macos_syscall_argument(c.emu, 1), groups.data(), sizeof(groups)))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        write_macos_syscall_success(c, groups.size());
+    }
+
+    void sys_getpgrp(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, MACOS_PROCESS_ID);
+    }
+
+    // The process is alone in its group, and there are no children to move.
+    void sys_setpgid(const macos_syscall_context& c)
+    {
+        const auto pid = static_cast<int32_t>(get_macos_syscall_argument(c.emu, 0));
+        const auto group = static_cast<int32_t>(get_macos_syscall_argument(c.emu, 1));
+
+        if (group < 0)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        if (pid != 0 && pid != static_cast<int32_t>(MACOS_PROCESS_ID))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ESRCH);
+            return;
+        }
+
+        if (group != 0 && group != static_cast<int32_t>(MACOS_PROCESS_ID))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EPERM);
+            return;
+        }
+
+        write_macos_syscall_success(c, 0);
+    }
+
+    void sys_getppid(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, PARENT_PROCESS_ID);
+    }
+
     void sys_getuid(const macos_syscall_context& c)
     {
         write_macos_syscall_success(c, USER_ID);
+    }
+
+    void sys_geteuid(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, USER_ID);
+    }
+
+    void sys_getgid(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, GROUP_ID);
+    }
+
+    void sys_getegid(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, GROUP_ID);
     }
 
     // Two policy calls are answered. AMFI's dyld policy query takes { uint64_t input_flags; uint64_t* output_flags }
@@ -353,6 +431,46 @@ namespace sogen
         }
 
         if (!c.emu.try_write_memory(buffer, data.data(), data.size()))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        write_macos_syscall_success(c, 0);
+    }
+
+    // The limits of a process launched from a shell on an Intel Mac (ulimit -a, soft and hard).
+    void sys_getrlimit(const macos_syscall_context& c)
+    {
+        struct resource_limit
+        {
+            uint64_t current;
+            uint64_t maximum;
+        };
+
+        constexpr uint64_t posix_flag = 0x1000;
+        constexpr uint64_t unlimited = 0x7FFFFFFFFFFFFFFF;
+        constexpr std::array<resource_limit, 9> limits{{
+            {.current = unlimited, .maximum = unlimited},
+            {.current = unlimited, .maximum = unlimited},
+            {.current = unlimited, .maximum = unlimited},
+            {.current = 8 * 1024 * 1024, .maximum = 65532 * 1024},
+            {.current = 0, .maximum = unlimited},
+            {.current = unlimited, .maximum = unlimited},
+            {.current = unlimited, .maximum = unlimited},
+            {.current = 2666, .maximum = 2666},
+            {.current = MACOS_DESCRIPTOR_LIMIT, .maximum = unlimited},
+        }};
+
+        const auto resource = get_macos_syscall_argument(c.emu, 0) & ~posix_flag;
+        if (resource >= limits.size())
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        const auto& limit = limits.at(static_cast<size_t>(resource));
+        if (!c.emu.try_write_memory(get_macos_syscall_argument(c.emu, 1), &limit, sizeof(limit)))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
             return;

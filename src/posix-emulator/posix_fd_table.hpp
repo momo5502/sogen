@@ -95,6 +95,8 @@ namespace sogen
         }
 
         size_t read_at(uint64_t position, std::span<std::byte> buffer) const;
+        std::optional<size_t> read(std::span<std::byte> buffer) const;
+        std::optional<uint64_t> seek(int64_t offset, int origin) const;
 
         ~posix_fd()
         {
@@ -360,7 +362,10 @@ namespace sogen
             new_entry.close_on_exec = false; // dup clears close-on-exec
             new_entry.read_only_mapping = existing.read_only_mapping;
 
-            new_entry.handle = duplicate_handle(existing.handle, get_stream_mode(existing));
+            // The table never closes a standard stream, so a duplicate shares it and keeps writing to the same
+            // stream, as the entries of a restored snapshot do.
+            new_entry.handle =
+                existing.is_standard_stream() ? existing.handle : duplicate_handle(existing.handle, get_stream_mode(existing));
             new_entry.memory_file = existing.memory_file;
             new_entry.socket_state = existing.socket_state;
             if (existing.handle && !new_entry.handle)
