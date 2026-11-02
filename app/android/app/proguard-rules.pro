@@ -2,6 +2,7 @@
 -keep class dev.sogen.app.runtime.SogenNative { native <methods>; }
 -keep interface dev.sogen.app.runtime.NativeListener { *; }
 -keep class * implements dev.sogen.app.runtime.NativeListener { *; }
+-keep class dev.sogen.app.runtime.DocumentTree { <fields>; }
 
 # play-services-ads brings in WorkManager, whose database Room creates through the generated subclass's no-argument
 # constructor by reflection. The consumer rule of that Room version (2.2.5) keeps the subclass without its constructor,
