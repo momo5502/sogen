@@ -854,6 +854,7 @@ namespace sogen
 
         execution_context context{
             .thread_id = 0,
+            .vcpu = static_cast<uint32_t>(emu.index()),
             .rip = rip,
             .rip_module = rip_module ? rip_module : "<N/A>",
         };
