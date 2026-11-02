@@ -17,11 +17,13 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #define VK_NO_PROTOTYPES
@@ -375,6 +377,32 @@ namespace
         DWORD returned = 0;
         return DeviceIoControl(handle, with_updates, message.data(), static_cast<DWORD>(message.size()), out, out_len, &returned,
                                nullptr) != FALSE;
+    }
+
+    // The requirements the host reported with each image vkCreateImage made, which vkGetImageMemoryRequirements answers with.
+    std::unordered_map<gb::object_id, VkMemoryRequirements>& image_memory_requirements()
+    {
+        static std::unordered_map<gb::object_id, VkMemoryRequirements> requirements;
+        return requirements;
+    }
+
+    // Images vkBindImageMemory bound. They are destroyed on the host at once: the guest may free their memory right after,
+    // and the host must not keep an image on freed memory (a snapshot taken then could not be loaded).
+    std::unordered_set<gb::object_id>& bound_images()
+    {
+        static std::unordered_set<gb::object_id> images;
+        return images;
+    }
+
+    // The never-bound image the guest destroyed last, destroyed on the host by the next vkCreateImage in the same round
+    // trip. DXVK's allocator creates an image, queries it and destroys it again whenever it cannot place the image's memory.
+    std::optional<gb::destroy_image_request> g_pending_image_destroy;
+    std::mutex g_image_mutex;
+
+    std::optional<gb::destroy_image_request> take_pending_image_destroy()
+    {
+        std::lock_guard<std::mutex> lock(g_image_mutex);
+        return std::exchange(g_pending_image_destroy, std::nullopt);
     }
 
     void record_command(gb::object_id command_buffer, gb::command command, const void* payload, size_t size)
@@ -878,6 +906,11 @@ extern "C"
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkAllocationCallbacks*)
     {
+        if (const auto pending = take_pending_image_destroy())
+        {
+            bridge_call(gb::ioctl_destroy_image, &*pending, sizeof(*pending), nullptr, 0);
+        }
+
         gb::destroy_device_request request{};
         request.device = to_object_id(device);
         bridge_call(gb::ioctl_destroy_device, &request, sizeof(request), nullptr, 0);
@@ -2591,13 +2624,31 @@ extern "C"
         const auto request = image_create_request(device, *pCreateInfo);
 
         gb::create_image_response response{};
-        if (!bridge_call(gb::ioctl_create_image, &request, sizeof(request), &response, sizeof(response)))
+        bool sent = false;
+        if (const auto pending = take_pending_image_destroy())
+        {
+            const gb::create_image_after_destroy_request combined{.destroy = *pending, .create = request};
+            sent = bridge_call(gb::ioctl_create_image_after_destroy, &combined, sizeof(combined), &response, sizeof(response));
+        }
+        else
+        {
+            sent = bridge_call(gb::ioctl_create_image, &request, sizeof(request), &response, sizeof(response));
+        }
+
+        if (!sent)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         if (response.vk_result != VK_SUCCESS)
         {
             return static_cast<VkResult>(response.vk_result);
+        }
+
+        if (response.memory_type_bits != 0)
+        {
+            std::lock_guard<std::mutex> lock(g_image_mutex);
+            image_memory_requirements()[response.image] = {
+                .size = response.size, .alignment = response.alignment, .memoryTypeBits = response.memory_type_bits};
         }
 
         *pImage = to_handle<VkImage>(response.image);
@@ -2610,10 +2661,26 @@ extern "C"
         {
             return;
         }
-        gb::destroy_image_request request{};
-        request.device = to_object_id(device);
-        request.image = to_object_id(image);
-        bridge_call(gb::ioctl_destroy_image, &request, sizeof(request), nullptr, 0);
+
+        const gb::destroy_image_request request{.device = to_object_id(device), .image = to_object_id(image)};
+        std::optional<gb::destroy_image_request> destroy_now{};
+        {
+            std::lock_guard<std::mutex> lock(g_image_mutex);
+            image_memory_requirements().erase(request.image);
+            if (bound_images().erase(request.image) != 0)
+            {
+                destroy_now = request;
+            }
+            else
+            {
+                destroy_now = std::exchange(g_pending_image_destroy, request);
+            }
+        }
+
+        if (destroy_now)
+        {
+            bridge_call(gb::ioctl_destroy_image, &*destroy_now, sizeof(*destroy_now), nullptr, 0);
+        }
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetImageMemoryRequirements(VkDevice device, VkImage image,
@@ -2624,6 +2691,15 @@ extern "C"
             return;
         }
         *pMemoryRequirements = {};
+
+        {
+            std::lock_guard<std::mutex> lock(g_image_mutex);
+            if (const auto known = image_memory_requirements().find(to_object_id(image)); known != image_memory_requirements().end())
+            {
+                *pMemoryRequirements = known->second;
+                return;
+            }
+        }
 
         gb::get_image_memory_requirements_request request{};
         request.device = to_object_id(device);
@@ -2772,6 +2848,12 @@ extern "C"
         if (!bridge_call(gb::ioctl_bind_image_memory, &request, sizeof(request), &response, sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (response.vk_result == VK_SUCCESS)
+        {
+            std::lock_guard<std::mutex> lock(g_image_mutex);
+            bound_images().insert(request.image);
         }
         return static_cast<VkResult>(response.vk_result);
     }
