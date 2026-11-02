@@ -1,7 +1,11 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
+#include <span>
 
 namespace sogen
 {
@@ -13,6 +17,7 @@ namespace sogen
         thread,
         clock,
         semaphore,
+        voucher,
         // A port whose receive right nobody holds, such as the bootstrap port without launchd.
         dead,
     };
@@ -34,6 +39,7 @@ namespace sogen
         static constexpr uint32_t HOST_PORT_NAME = 0x107;
         static constexpr uint32_t THREAD_PORT_NAME = 0x103;
         static constexpr uint32_t BOOTSTRAP_PORT_NAME = 0x707;
+        static constexpr size_t REGISTERED_PORT_COUNT = 3;
 
         macos_mach_ports()
         {
@@ -79,11 +85,63 @@ namespace sogen
             return it == this->ports_.end() ? nullptr : &it->second;
         }
 
+        bool register_ports(const std::span<const uint32_t, REGISTERED_PORT_COUNT> names)
+        {
+            std::array<std::optional<registered_port>, REGISTERED_PORT_COUNT> registered{};
+            for (size_t i = 0; i < names.size(); ++i)
+            {
+                if (names[i] == 0)
+                {
+                    continue;
+                }
+
+                const auto* entry = this->find(names[i]);
+                if (entry == nullptr)
+                {
+                    return false;
+                }
+
+                registered.at(i) = registered_port{.object = entry->object, .object_id = entry->object_id};
+            }
+
+            this->registered_ = registered;
+            return true;
+        }
+
+        std::array<uint32_t, REGISTERED_PORT_COUNT> lookup_registered_ports()
+        {
+            std::array<uint32_t, REGISTERED_PORT_COUNT> names{};
+            for (size_t i = 0; i < names.size(); ++i)
+            {
+                if (const auto& port = this->registered_.at(i))
+                {
+                    names.at(i) = this->kernel_object_send_right(port->object, port->object_id);
+                }
+            }
+
+            return names;
+        }
+
+        // The IPC space of a task created by fork or exec: only the registered ports carry over.
+        macos_mach_ports for_new_task() const
+        {
+            macos_mach_ports ports{};
+            ports.registered_ = this->registered_;
+            return ports;
+        }
+
       private:
         // Port names encode a table index in the upper bits and a generation in the low byte.
         static constexpr uint32_t NAME_INDEX_STEP = 0x100;
 
+        struct registered_port
+        {
+            mach_port_object object{};
+            uint32_t object_id{};
+        };
+
         std::map<uint32_t, mach_port_entry> ports_{};
+        std::array<std::optional<registered_port>, REGISTERED_PORT_COUNT> registered_{};
         uint32_t next_name_{0x303};
         uint32_t next_object_id_{1};
     };

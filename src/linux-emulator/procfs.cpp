@@ -97,21 +97,19 @@ namespace sogen
             const auto fd_num = static_cast<int>(strtol(fd_string.c_str(), &end, 10));
             if (end && *end == '\0')
             {
-                const auto& fds = emu.process.fds.get_fds();
-                auto it = fds.find(fd_num);
-                if (it != fds.end())
+                if (const auto* fd_entry = emu.process.fds.get(fd_num))
                 {
-                    if (!it->second.guest_path.empty())
+                    if (!fd_entry->guest_path.empty())
                     {
-                        return posix_file_system::normalize_guest_path_string(it->second.guest_path);
+                        return posix_file_system::normalize_guest_path_string(fd_entry->guest_path);
                     }
-                    if (!it->second.host_path.empty())
+                    if (!fd_entry->host_path.empty())
                     {
-                        return it->second.host_path;
+                        return fd_entry->host_path;
                     }
 
                     // Return a synthetic name for special fds
-                    switch (it->second.type)
+                    switch (fd_entry->type)
                     {
                     case fd_type::pipe_read:
                     case fd_type::pipe_write:

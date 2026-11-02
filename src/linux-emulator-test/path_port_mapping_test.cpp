@@ -3,14 +3,17 @@
 #include <linux_emulator.hpp>
 #include <backend_selection.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <array>
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <optional>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #if defined(_WIN32) && !defined(__MINGW64__)
 #include <process.h>
@@ -52,6 +55,7 @@ namespace sogen
         constexpr uint64_t guest_memory_base = 0x100000;
         constexpr size_t guest_memory_size = 0x1000;
         constexpr int linux_o_RDONLY = 0;
+        constexpr int linux_o_DIRECTORY = 0200000;
         constexpr int64_t linux_eacces = 13;
         constexpr int linux_af_unix = 1;
         constexpr int linux_af_inet = 2;
@@ -97,6 +101,38 @@ namespace sogen
 
             entry->handler({.emu_ref = emu, .emu = emu.emu(), .proc = emu.process});
             return static_cast<int64_t>(emu.emu().reg(x86_register::rax));
+        }
+
+        std::string read_guest_file(linux_emulator& emu, const int64_t fd, const size_t count)
+        {
+            constexpr auto buffer_addr = guest_memory_base + 0x100;
+            const auto bytes_read = invoke_syscall(emu, linux_syscalls::LINUX_SYS_read, static_cast<uint64_t>(fd), buffer_addr, count);
+            if (bytes_read < 0)
+            {
+                ADD_FAILURE() << "read failed with " << bytes_read;
+                return {};
+            }
+
+            std::string data(static_cast<size_t>(bytes_read), '\0');
+            emu.memory.read_memory(buffer_addr, data.data(), data.size());
+            return data;
+        }
+
+        std::optional<std::string> read_guest_directory_entry(linux_emulator& emu, const int64_t fd)
+        {
+            constexpr auto buffer_addr = guest_memory_base + 0x100;
+            constexpr size_t single_entry_size = 24;
+            constexpr size_t name_offset = 19;
+            const auto bytes_read =
+                invoke_syscall(emu, linux_syscalls::LINUX_SYS_getdents64, static_cast<uint64_t>(fd), buffer_addr, single_entry_size);
+            if (bytes_read <= 0)
+            {
+                return std::nullopt;
+            }
+
+            std::array<char, single_entry_size - name_offset> name{};
+            emu.memory.read_memory(buffer_addr + name_offset, name.data(), name.size());
+            return std::string{name.data()};
         }
 
         std::string read_host_file(const std::filesystem::path& path)
@@ -262,6 +298,95 @@ namespace sogen
 
         EXPECT_EQ(fs.translate("/mapped/../../outside.txt"), emulation_root / "outside.txt");
         EXPECT_NE(fs.translate("/mapped/../../outside.txt"), mapped_host.parent_path() / "outside.txt");
+    }
+
+    TEST(LinuxFileDescriptorTest, DuplicateSharesFilePosition)
+    {
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        {
+            std::ofstream file(emulation_root / "file.txt", std::ios::binary);
+            file << "ABCDEF";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/file.txt");
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY);
+        ASSERT_GE(fd, 0);
+        const auto duplicate = invoke_syscall(emu, linux_syscalls::LINUX_SYS_dup, static_cast<uint64_t>(fd));
+        ASSERT_GE(duplicate, 0);
+
+        EXPECT_EQ(read_guest_file(emu, fd, 1), "A");
+        EXPECT_EQ(read_guest_file(emu, duplicate, 1), "B");
+        EXPECT_EQ(read_guest_file(emu, fd, 2), "CD");
+
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_close, static_cast<uint64_t>(fd)), 0);
+        EXPECT_EQ(read_guest_file(emu, duplicate, 8), "EF");
+    }
+
+    TEST(LinuxFileDescriptorTest, DuplicateSharesDirectoryPosition)
+    {
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root / "dir");
+        std::ofstream(emulation_root / "dir" / "a").close();
+        std::ofstream(emulation_root / "dir" / "b").close();
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/dir");
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY | linux_o_DIRECTORY);
+        ASSERT_GE(fd, 0);
+        const auto duplicate = invoke_syscall(emu, linux_syscalls::LINUX_SYS_dup, static_cast<uint64_t>(fd));
+        ASSERT_GE(duplicate, 0);
+
+        std::vector<std::string> names{};
+        for (auto reader = fd; auto name = read_guest_directory_entry(emu, reader); reader = reader == fd ? duplicate : fd)
+        {
+            names.push_back(std::move(*name));
+        }
+
+        std::ranges::sort(names);
+        EXPECT_EQ(names, (std::vector<std::string>{".", "..", "a", "b"}));
+    }
+
+    TEST(LinuxFileDescriptorTest, RestoredDuplicateSharesFilePosition)
+    {
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        {
+            std::ofstream file(emulation_root / "file.txt", std::ios::binary);
+            file << "ABCD";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/file.txt");
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY);
+        ASSERT_GE(fd, 0);
+        const auto duplicate = invoke_syscall(emu, linux_syscalls::LINUX_SYS_dup, static_cast<uint64_t>(fd));
+        ASSERT_GE(duplicate, 0);
+        EXPECT_EQ(read_guest_file(emu, fd, 1), "A");
+
+        utils::buffer_serializer serializer{};
+        emu.process.fds.serialize(serializer);
+        utils::buffer_deserializer deserializer{serializer.get_buffer()};
+        emu.process.fds.deserialize(deserializer);
+
+        EXPECT_EQ(read_guest_file(emu, duplicate, 1), "B");
+        EXPECT_EQ(read_guest_file(emu, fd, 1), "C");
     }
 
     TEST(LinuxSocketSyscallTest, SocketpairIsExplicitlyUnsupported)
