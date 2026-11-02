@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "../debug_object.hpp"
 #include "../emulator_utils.hpp"
 #include "../io_completion_wait.hpp"
 #include "../low_level_hooks.hpp"
@@ -75,6 +76,15 @@ namespace sogen
                 if (wait_packet && wait_packet->ref_count == 1)
                 {
                     io_completion_wait::cleanup_wait_packet_on_close(c.proc, h);
+                }
+            }
+
+            if (value.type == handle_types::debug_object)
+            {
+                auto* debug = c.proc.debug_objects.get(h);
+                if (debug && debug->ref_count == 1)
+                {
+                    release_debug_object(c.win_emu, *debug);
                 }
             }
 

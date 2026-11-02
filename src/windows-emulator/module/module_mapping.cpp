@@ -501,7 +501,10 @@ namespace sogen
             {
                 const auto section = sections.get(i);
                 const auto target_ptr = binary.image_base + section.VirtualAddress;
-                const auto size_of_section = page_align_up(section.Misc.VirtualSize, nt_headers.OptionalHeader.SectionAlignment);
+                // Like the kernel, only the pages a section uses are committed. With a section alignment above the page
+                // size (the 64KB-aligned SysWOW64 DLLs), the rest of its slot stays reserved, which debuggers rely on to
+                // tell sections apart in VirtualQuery results.
+                const auto size_of_section = page_align_up(section.Misc.VirtualSize);
                 const auto section_size = static_cast<size_t>(size_of_section);
 
                 if (section_size == 0)

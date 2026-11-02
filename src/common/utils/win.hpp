@@ -24,4 +24,9 @@
 #include <Windows.h>
 #endif
 
+// excpt.h, which windows.h pulls in, defines these as macros for the SEH keywords, which turns any identifier of the
+// same name into a compile error. The SEH forms are spelled with their leading underscore where they are used.
+#undef exception_code
+#undef exception_info
+
 #endif

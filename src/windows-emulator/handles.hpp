@@ -41,6 +41,7 @@ namespace sogen
             deferred_window_positions,
             thread_state_change,
             window_station,
+            debug_object,
         };
     };
 

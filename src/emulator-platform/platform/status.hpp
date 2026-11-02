@@ -7,6 +7,14 @@ namespace sogen
 
     using NTSTATUS = std::uint32_t;
 
+#ifndef STATUS_WX86_SINGLE_STEP
+#define STATUS_WX86_SINGLE_STEP ((NTSTATUS)0x4000001EL)
+#endif
+
+#ifndef STATUS_WX86_BREAKPOINT
+#define STATUS_WX86_BREAKPOINT ((NTSTATUS)0x4000001FL)
+#endif
+
 #ifndef OS_WINDOWS
 #define STATUS_WAIT_0                 ((NTSTATUS)0x00000000L)
 #define STATUS_ABANDONED_WAIT_0       ((NTSTATUS)0x00000080L)
