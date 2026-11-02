@@ -248,9 +248,9 @@ namespace sogen
             return 0;
         }
 
-        std::vector<linux_cached_dir_entry> build_cached_dir_entries(const std::filesystem::path& dir_path)
+        linux_directory_listing build_cached_dir_entries(const std::filesystem::path& dir_path)
         {
-            std::vector<linux_cached_dir_entry> entries{};
+            linux_directory_listing entries{};
 
             // Include "." and ".." first to match Linux behavior.
             entries.push_back(
@@ -287,10 +287,10 @@ namespace sogen
 
         void init_directory_fd_state(linux_process_context& proc, const int fd, const std::filesystem::path& dir_path)
         {
-            proc.directory_entries[fd] = build_cached_dir_entries(dir_path);
+            proc.directory_entries[fd] = std::make_shared<const linux_directory_listing>(build_cached_dir_entries(dir_path));
         }
 
-        void copy_directory_entries(linux_process_context& proc, const int oldfd, const int newfd)
+        void share_directory_entries(linux_process_context& proc, const int oldfd, const int newfd)
         {
             const auto entries = proc.directory_entries.find(oldfd);
             if (entries != proc.directory_entries.end())
@@ -341,7 +341,7 @@ namespace sogen
                 return result;
             }
 
-            copy_directory_entries(proc, oldfd, result);
+            share_directory_entries(proc, oldfd, result);
             if (duplicates_epoll)
             {
                 proc.epoll_instances[result] = epoll_instance;
@@ -373,7 +373,7 @@ namespace sogen
 
             if (oldfd != newfd)
             {
-                copy_directory_entries(proc, oldfd, newfd);
+                share_directory_entries(proc, oldfd, newfd);
             }
 
             if (duplicates_epoll)
@@ -1861,7 +1861,7 @@ namespace sogen
             return;
         }
 
-        auto& entries = entries_it->second;
+        const auto& entries = *entries_it->second;
         auto& offset = fd_entry->directory_position;
 
         size_t written = 0;
