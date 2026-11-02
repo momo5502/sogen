@@ -92,9 +92,11 @@ namespace sogen
                 auto* device = c.proc.devices.get(h);
                 if (device && device->ref_count == 1)
                 {
-                    if (device->is_last_file_reference() && device->get_internal_device<named_pipe>())
+                    const auto* pipe = device->is_last_file_reference() ? device->get_internal_device<named_pipe>() : nullptr;
+                    if (pipe)
                     {
                         device->cancel_io(c.win_emu, 0);
+                        pipe->complete_waits_if_last_server_end(c.win_emu);
                     }
                     device->release_references(c.proc);
                 }
@@ -259,6 +261,8 @@ namespace sogen
                 return u"Timer";
             case handle_types::desktop:
                 return u"Desktop";
+            case handle_types::window_station:
+                return u"WindowStation";
             case handle_types::io_completion:
                 return u"IoCompletion";
             case handle_types::wait_completion_packet:
@@ -358,6 +362,11 @@ namespace sogen
                     if (!registry)
                     {
                         return STATUS_INVALID_HANDLE;
+                    }
+
+                    if (!c.win_emu.registry.key_exists(*registry))
+                    {
+                        return STATUS_KEY_DELETED;
                     }
 
                     // Build the full registry path in device format

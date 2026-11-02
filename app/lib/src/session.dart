@@ -80,6 +80,8 @@ class GameSession extends ChangeNotifier {
   static const _maxOutputLines = 2000;
   static const _maxTerminalLines = 10000;
   static const _stdoutColor = -1;
+  // The emulator logger's red, which the output view shows as an error.
+  static const _errorColor = 1;
 
   late final StreamSubscription<dynamic> _subscription;
   final Map<int, GuestWindow> _windows = {};
@@ -144,13 +146,23 @@ class GameSession extends ChangeNotifier {
       return true;
     }
 
+    if (!game.hasFolderAccess) {
+      error = 'Sogen cannot read this game folder anymore. Edit the game and choose its folder again.';
+      _addOutput(error!, _errorColor);
+      state = SessionState.exited;
+      notifyListeners();
+      return true;
+    }
+
+    final layers = await layerDirectory(game);
     final started =
         await _methods.invokeMethod<bool>('start', {
           'emulationRoot': emulationRoot,
           'application': game.guestExecutable,
           'arguments': game.arguments,
           'environment': game.environment,
-          'pathMappings': {guestGameDirectory: game.directory},
+          'documentMounts': {guestGameDirectory: game.directory},
+          'layerDirectory': layers.path,
           'workingDirectory': game.guestWorkingDirectory,
           'backend': 'fex',
           'liveNetwork': game.liveNetwork,

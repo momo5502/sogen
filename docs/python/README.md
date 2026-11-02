@@ -106,6 +106,11 @@ print("exit status:", app.process.exit_status)
 `STATUS_ACCESS_DENIED`, and the host files do not change. `path_mappings={guest_path: host_path}` is the same as
 `mounts` with the default mode.
 
+Positional arguments after the application are joined into the process command line. An argument that is empty or
+contains a space, a tab or a quote is quoted, and its own quotes are escaped.
+`command_line="..."` sets the whole command line verbatim instead, program name included, as `CreateProcess` would
+receive it. When `command_line` is given, positional arguments are ignored.
+
 Linux applications also accept guest cwd, filesystem mapping, and TCP port mapping kwargs:
 
 ```python
@@ -552,6 +557,15 @@ emu.deserialize_state(state)
 assert emu.read_memory(base, 4) == b"ABCD"
 assert emu.read_register(sogen.Register.rax) == 0x1234
 ```
+
+`read_register` and `write_register` move 64-bit integers. The Windows emulator
+also provides `read_register_bytes(register, size)` and
+`write_register_bytes(register, data)`, which move raw little-endian bytes and so
+reach the 128-bit XMM registers on x86-64 and `sogen.arm64.Register.v0` to `v31`
+on ARM64. A value shorter than the register is zero-extended, bytes past the
+register's width read as zero, and both accept at most 64 bytes.
+`sogen.Register.fs_base` and `gs_base` name the segment bases; on 64-bit Windows,
+`gs_base` is the current thread's TEB.
 
 Linux serialized state uses version tag `linux-emulator-state-v1` and includes
 backend CPU state, executed instruction count, stop diagnostics, mapped memory

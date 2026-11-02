@@ -10,6 +10,17 @@
 
 namespace sogen
 {
+    // path::string() converts to the ANSI code page on Windows and loses characters outside it; UTF-8 round-trips.
+    inline std::string utf8_path_string(const std::filesystem::path& path)
+    {
+        const auto utf8 = path.u8string();
+        return {utf8.begin(), utf8.end()};
+    }
+
+    inline std::filesystem::path path_from_utf8(const std::string_view utf8)
+    {
+        return std::u8string{utf8.begin(), utf8.end()};
+    }
 
     class posix_file_system
     {

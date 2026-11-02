@@ -587,6 +587,7 @@ namespace sogen
         this->gdi_dc_states.clear();
         this->gdi_dc_save_states.clear();
         this->gdi_bitmap_surfaces.clear();
+        this->gdi_fonts.clear();
         this->gdi_window_surfaces.clear();
         this->dxgk = {};
         this->etw_notification_event.reset();
@@ -825,6 +826,7 @@ namespace sogen
         buffer.write_map(this->gdi_dc_states);
         buffer.write_map(this->gdi_dc_save_states);
         buffer.write_map(this->gdi_bitmap_surfaces);
+        buffer.write_map(this->gdi_fonts);
         buffer.write_map(this->gdi_window_surfaces);
         buffer.write(this->dxgk);
         buffer.write_optional(this->etw_notification_event);
@@ -876,6 +878,8 @@ namespace sogen
         buffer.write(this->mutants);
         buffer.write(this->default_desktop);
         buffer.write(this->desktops);
+        buffer.write(this->window_stations);
+        buffer.write(this->process_window_station);
         buffer.write(this->windows);
         buffer.write(this->menus);
         buffer.write(this->timers);
@@ -951,6 +955,7 @@ namespace sogen
         buffer.read_map(this->gdi_dc_states);
         buffer.read_map(this->gdi_dc_save_states);
         buffer.read_map(this->gdi_bitmap_surfaces);
+        buffer.read_map(this->gdi_fonts);
         buffer.read_map(this->gdi_window_surfaces);
         buffer.read(this->dxgk);
         buffer.read_optional(this->etw_notification_event);
@@ -1002,6 +1007,8 @@ namespace sogen
         buffer.read(this->mutants);
         buffer.read(this->default_desktop);
         buffer.read(this->desktops);
+        buffer.read(this->window_stations);
+        buffer.read(this->process_window_station);
         buffer.read(this->windows);
         buffer.read(this->menus);
         buffer.read(this->timers);
@@ -1221,6 +1228,8 @@ namespace sogen
             return &timers;
         case handle_types::desktop:
             return &desktops;
+        case handle_types::window_station:
+            return &window_stations;
         case handle_types::port:
             return &ports;
         case handle_types::section:

@@ -34,7 +34,9 @@ namespace sogen
         constexpr uint64_t MACOS_SYS_write = 4;
         constexpr uint64_t MACOS_SYS_open = 5;
         constexpr uint64_t MACOS_SYS_close = 6;
+        constexpr uint64_t MACOS_SYS_fchdir = 13;
         constexpr uint64_t MACOS_SYS_getpid = 20;
+        constexpr uint64_t MACOS_SYS_getuid = 24;
         constexpr uint64_t MACOS_SYS_access = 33;
         constexpr uint64_t MACOS_SYS_sigprocmask = 48;
         constexpr uint64_t MACOS_SYS_ioctl = 54;
@@ -50,6 +52,7 @@ namespace sogen
         constexpr uint64_t MACOS_SYS_mmap = 197;
         constexpr uint64_t MACOS_SYS_sysctl = 202;
         constexpr uint64_t MACOS_SYS_getattrlist = 220;
+        constexpr uint64_t MACOS_SYS_fgetattrlist = 228;
         constexpr uint64_t MACOS_SYS_shm_open = 266;
         constexpr uint64_t MACOS_SYS_shared_region_check_np = 294;
         constexpr uint64_t MACOS_SYS_issetugid = 327;
@@ -61,9 +64,12 @@ namespace sogen
         constexpr uint64_t MACOS_SYS_bsdthread_register = 366;
         constexpr uint64_t MACOS_SYS_write_nocancel = 397;
         constexpr uint64_t MACOS_SYS_open_nocancel = 398;
+        constexpr uint64_t MACOS_SYS_close_nocancel = 399;
         constexpr uint64_t MACOS_SYS_thread_selfid = 372;
         constexpr uint64_t MACOS_SYS_fsgetpath = 427;
         constexpr uint64_t MACOS_SYS_mac_syscall = 381;
+        constexpr uint64_t MACOS_SYS_getattrlistbulk = 461;
+        constexpr uint64_t MACOS_SYS_fstatat64 = 470;
         constexpr uint64_t MACOS_SYS_csrctl = 483;
         constexpr uint64_t MACOS_SYS_getentropy = 500;
         constexpr uint64_t MACOS_SYS_abort_with_payload = 521;
@@ -76,7 +82,9 @@ namespace sogen
         this->register_unix_handler(MACOS_SYS_write, sys_write, "write");
         this->register_unix_handler(MACOS_SYS_open, sys_open, "open");
         this->register_unix_handler(MACOS_SYS_close, sys_close, "close");
+        this->register_unix_handler(MACOS_SYS_fchdir, sys_fchdir, "fchdir");
         this->register_unix_handler(MACOS_SYS_getpid, sys_getpid, "getpid");
+        this->register_unix_handler(MACOS_SYS_getuid, sys_getuid, "getuid");
         this->register_unix_handler(MACOS_SYS_access, sys_access, "access");
         this->register_unix_handler(MACOS_SYS_sigprocmask, sys_sigprocmask, "sigprocmask");
         this->register_unix_handler(MACOS_SYS_ioctl, sys_ioctl, "ioctl");
@@ -92,6 +100,7 @@ namespace sogen
         this->register_unix_handler(MACOS_SYS_mmap, sys_mmap, "mmap");
         this->register_unix_handler(MACOS_SYS_sysctl, sys_sysctl, "sysctl");
         this->register_unix_handler(MACOS_SYS_getattrlist, sys_getattrlist, "getattrlist");
+        this->register_unix_handler(MACOS_SYS_fgetattrlist, sys_fgetattrlist, "fgetattrlist");
         this->register_unix_handler(MACOS_SYS_shm_open, sys_shm_open, "shm_open");
         this->register_unix_handler(MACOS_SYS_shared_region_check_np, sys_shared_region_check_np, "shared_region_check_np");
         this->register_unix_handler(MACOS_SYS_issetugid, sys_issetugid, "issetugid");
@@ -103,9 +112,12 @@ namespace sogen
         this->register_unix_handler(MACOS_SYS_bsdthread_register, sys_bsdthread_register, "bsdthread_register");
         this->register_unix_handler(MACOS_SYS_write_nocancel, sys_write, "write_nocancel");
         this->register_unix_handler(MACOS_SYS_open_nocancel, sys_open, "open_nocancel");
+        this->register_unix_handler(MACOS_SYS_close_nocancel, sys_close, "close_nocancel");
         this->register_unix_handler(MACOS_SYS_thread_selfid, sys_thread_selfid, "thread_selfid");
         this->register_unix_handler(MACOS_SYS_mac_syscall, sys_mac_syscall, "__mac_syscall");
         this->register_unix_handler(MACOS_SYS_fsgetpath, sys_fsgetpath, "fsgetpath");
+        this->register_unix_handler(MACOS_SYS_getattrlistbulk, sys_getattrlistbulk, "getattrlistbulk");
+        this->register_unix_handler(MACOS_SYS_fstatat64, sys_fstatat64, "fstatat64");
         this->register_unix_handler(MACOS_SYS_csrctl, sys_csrctl, "csrctl");
         this->register_unix_handler(MACOS_SYS_getentropy, sys_getentropy, "getentropy");
         this->register_unix_handler(MACOS_SYS_abort_with_payload, sys_abort_with_payload, "abort_with_payload");

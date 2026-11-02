@@ -46,6 +46,21 @@ namespace sogen
 
                 return name;
             }
+
+            NTSTATUS validate_key(const syscall_context& c, const registry_key* key)
+            {
+                if (!key)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                if (!c.win_emu.registry.key_exists(*key))
+                {
+                    return STATUS_KEY_DELETED;
+                }
+
+                return STATUS_SUCCESS;
+            }
         }
 
         NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<handle> key_handle, const ACCESS_MASK /*desired_access*/,
@@ -57,9 +72,9 @@ namespace sogen
             if (attributes.RootDirectory)
             {
                 const auto* parent_handle = c.proc.registry_keys.get(attributes.RootDirectory);
-                if (!parent_handle)
+                if (const auto status = validate_key(c, parent_handle); status != STATUS_SUCCESS)
                 {
-                    return STATUS_INVALID_HANDLE;
+                    return status;
                 }
 
                 const std::filesystem::path full_path = parent_handle->hive.get() / parent_handle->path.get() / key;
@@ -95,6 +110,12 @@ namespace sogen
             if (!key)
             {
                 return STATUS_INVALID_HANDLE;
+            }
+
+            // Handle tags belong to the handle, so Windows still reports them after the key is deleted.
+            if (key_information_class != KeyHandleTagsInformation && !c.win_emu.registry.key_exists(*key))
+            {
+                return STATUS_KEY_DELETED;
             }
 
             const auto get_maximum_lengths = [&] {
@@ -264,9 +285,9 @@ namespace sogen
                                         const ULONG length, const emulator_object<ULONG> result_length)
         {
             const auto* key = c.proc.registry_keys.get(key_handle);
-            if (!key)
+            if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
-                return STATUS_INVALID_HANDLE;
+                return status;
             }
 
             const auto query_name = read_unicode_string(c.emu, value_name);
@@ -387,9 +408,9 @@ namespace sogen
             }
 
             const auto* key = c.proc.registry_keys.get(key_handle);
-            if (!key)
+            if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
-                return STATUS_INVALID_HANDLE;
+                return status;
             }
 
             NTSTATUS status = STATUS_SUCCESS;
@@ -516,9 +537,9 @@ namespace sogen
                                       const ULONG type, const uint64_t data, const ULONG data_size)
         {
             const auto* key = c.proc.registry_keys.get(key_handle);
-            if (!key)
+            if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
-                return STATUS_INVALID_HANDLE;
+                return status;
             }
 
             std::vector<std::byte> data_buffer{};
@@ -544,17 +565,26 @@ namespace sogen
         }
 
         NTSTATUS handle_NtDeleteValueKey(const syscall_context& c, const handle key_handle,
-                                         const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*value_name*/)
+                                         const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name)
         {
             const auto* key = c.proc.registry_keys.get(key_handle);
-            if (!key)
+            if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
-                return STATUS_INVALID_HANDLE;
+                return status;
             }
 
-            // Deleting registry values is not supported; the backing hives are read-only and the
-            // overlay has no tombstone concept. Reject the deletion instead of silently succeeding.
-            return STATUS_ACCESS_DENIED;
+            if (!value_name.value())
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            const auto name = u16_to_u8(read_unicode_string(c.emu, value_name));
+            if (!c.win_emu.registry.delete_value(*key, name))
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtDeleteKey(const syscall_context& c, const handle key_handle)
@@ -565,7 +595,18 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            return STATUS_ACCESS_DENIED;
+            if (!c.win_emu.registry.key_exists(*key))
+            {
+                return STATUS_SUCCESS;
+            }
+
+            if (registry_manager::is_root_key(*key) || c.win_emu.registry.get_sub_key_count(*key) != 0)
+            {
+                return STATUS_CANNOT_DELETE;
+            }
+
+            c.win_emu.registry.delete_key(*key);
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtNotifyChangeKey()
@@ -623,9 +664,9 @@ namespace sogen
                                        const ULONG length, const emulator_object<ULONG> result_length)
         {
             const auto* key = c.proc.registry_keys.get(key_handle);
-            if (!key)
+            if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
-                return STATUS_INVALID_HANDLE;
+                return status;
             }
 
             const auto subkey_name = c.win_emu.registry.get_sub_key_name(*key, index);
@@ -704,9 +745,9 @@ namespace sogen
                                             const emulator_object<ULONG> result_length)
         {
             const auto* key = c.proc.registry_keys.get(key_handle);
-            if (!key)
+            if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
-                return STATUS_INVALID_HANDLE;
+                return status;
             }
 
             const auto value = c.win_emu.registry.get_value(*key, index);

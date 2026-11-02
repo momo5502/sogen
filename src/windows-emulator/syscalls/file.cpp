@@ -28,10 +28,12 @@ namespace sogen
 
             std::u16string normalize_named_pipe_path(const std::u16string_view filename)
             {
-                constexpr std::u16string_view dos_prefix = u"\\??\\Pipe\\";
-                if (utils::string::starts_with_ignore_case(filename, dos_prefix))
+                for (const auto prefix : dos_named_pipe_prefixes)
                 {
-                    return u"\\Device\\NamedPipe\\" + std::u16string(filename.substr(dos_prefix.size()));
+                    if (utils::string::starts_with_ignore_case(filename, prefix))
+                    {
+                        return u"\\Device\\NamedPipe\\" + std::u16string(filename.substr(prefix.size()));
+                    }
                 }
                 return std::u16string(filename);
             }
@@ -1314,9 +1316,11 @@ namespace sogen
             io_status_block.write(block);
         }
 
+        // Lock offsets are unsigned (LockFileEx takes them as two DWORDs), so a lock far past the end of the file, such as one at
+        // 0xFFFFFFFF00000000, is valid.
         std::optional<uint64_t> get_lock_range_end(const LARGE_INTEGER& byte_offset, const LARGE_INTEGER& length)
         {
-            if (byte_offset.QuadPart < 0 || length.QuadPart == 0)
+            if (length.QuadPart == 0)
             {
                 return std::nullopt;
             }
@@ -1924,11 +1928,15 @@ namespace sogen
 
         constexpr std::u16string map_mode(const ACCESS_MASK desired_access, const ULONG create_disposition)
         {
-            const auto wants_write = (desired_access & (GENERIC_WRITE | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA)) != 0;
+            const auto wants_write =
+                (desired_access & (GENERIC_WRITE | GENERIC_ALL | FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES | FILE_WRITE_EA)) != 0;
             const auto wants_read =
-                (desired_access & (GENERIC_READ | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE)) != 0;
+                (desired_access & (GENERIC_READ | GENERIC_ALL | FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_READ_EA | SYNCHRONIZE)) != 0;
 
-            if (desired_access & FILE_APPEND_DATA)
+            // A handle only appends when it may append but not write: FILE_GENERIC_WRITE grants both, and its writes go to the
+            // offset they name.
+            const auto may_write_anywhere = (desired_access & (GENERIC_WRITE | GENERIC_ALL | FILE_WRITE_DATA)) != 0;
+            if ((desired_access & FILE_APPEND_DATA) != 0 && !may_write_anywhere)
             {
                 return u"a+b";
             }
@@ -2019,22 +2027,16 @@ namespace sogen
                 container.granted_access = desired_access;
                 pipe_device->create_options = create_options;
                 container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-                for (const auto& [index, existing] : c.proc.devices)
+                if (windows_path(pipe_device->name) != windows_path(u"\\Device\\NamedPipe\\"))
                 {
-                    (void)index;
-                    auto* server = existing.get_internal_device<named_pipe>();
-                    if (server && server->unopened_peer && windows_path(server->name) == windows_path(pipe_device->name))
+                    const auto instances = find_named_pipe_instances(c.proc, pipe_device->name);
+                    if (!instances.listening)
                     {
-                        pipe_device->copy_configuration(*server);
-                        container.granted_access = desired_access;
-                        pipe_device->create_options = create_options;
-                        pipe_device->endpoint = std::move(server->unopened_peer);
-                        break;
+                        return instances.any ? STATUS_PIPE_NOT_AVAILABLE : STATUS_OBJECT_NAME_NOT_FOUND;
                     }
-                }
-                if (!pipe_device->endpoint && windows_path(pipe_device->name) != windows_path(u"\\Device\\NamedPipe\\"))
-                {
-                    return STATUS_OBJECT_NAME_NOT_FOUND;
+                    pipe_device->copy_configuration(*instances.listening);
+                    pipe_device->create_options = create_options;
+                    pipe_device->endpoint = std::move(instances.listening->unopened_peer);
                 }
             }
 
@@ -2151,6 +2153,10 @@ namespace sogen
                 };
 
                 io_device_container container{std::u16string(*io_device_name), c.win_emu, data};
+                if (auto* pipe_device = container.get_internal_device<named_pipe>())
+                {
+                    pipe_device->create_options = create_options;
+                }
 
                 const auto handle = c.proc.devices.store(std::move(container));
                 file_handle.write(handle);
@@ -2657,6 +2663,7 @@ namespace sogen
                 pipe_device->inbound_quota = inbound_quota;
                 pipe_device->outbound_quota = outbound_quota;
                 pipe_device->create_options = create_options;
+                pipe_device->server_end = true;
                 container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
                 pipe_device->default_timeout = default_timeout.read();
                 auto endpoints =
@@ -2671,6 +2678,7 @@ namespace sogen
 
             handle pipe_handle = c.proc.devices.store(std::move(container));
             file_handle.write(pipe_handle);
+            complete_named_pipe_waits(c.win_emu, normalize_named_pipe_path(pipe_name), STATUS_SUCCESS);
 
             IO_STATUS_BLOCK<EmulatorTraits<Emu64>> iosb{};
             iosb.Status = STATUS_SUCCESS;
@@ -2678,6 +2686,16 @@ namespace sogen
             io_status_block.write(iosb);
 
             return STATUS_SUCCESS;
+        }
+
+        NTSTATUS check_completion_event(const syscall_context& c, const handle event)
+        {
+            if (!event.bits || c.proc.events.get(event))
+            {
+                return STATUS_SUCCESS;
+            }
+            auto* store = c.proc.get_handle_store(event);
+            return store && store->get_object(event) ? STATUS_OBJECT_TYPE_MISMATCH : STATUS_INVALID_HANDLE;
         }
 
         NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle file_handle, const handle event,
@@ -2709,6 +2727,16 @@ namespace sogen
 
                 c.win_emu.log.warn("NtFsControlFile on non-device handle (control code 0x%X)\n", static_cast<uint32_t>(fs_control_code));
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (const auto block = io_status_block.try_read(); !block || !io_status_block.try_write(*block))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (const auto status = check_completion_event(c, event); status != STATUS_SUCCESS)
+            {
+                return status;
             }
 
             if (auto* e = c.proc.events.get(event))
