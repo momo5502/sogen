@@ -184,13 +184,6 @@ namespace sogen
         // The interactive station, which the process starts on and which is not held in the store.
         constexpr uint64_t interactive_window_station = 1;
 
-        void set_guest_last_error(const syscall_context& c, uint32_t last_error)
-        {
-            c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
-                teb.LastErrorValue = static_cast<ULONG>(last_error); //
-            });
-        }
-
         std::u16string make_atom_class_name(const uint16_t atom)
         {
             std::u16string name = u"#";
