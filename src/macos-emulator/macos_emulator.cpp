@@ -119,6 +119,17 @@ namespace sogen
             throw std::runtime_error("Universal binary has no x86-64 slice");
         }
 
+        std::vector<std::byte> take_x86_64_slice(std::vector<std::byte> file)
+        {
+            const auto slice = select_x86_64_slice(file);
+            if (slice.data() == file.data() && slice.size() == file.size())
+            {
+                return file;
+            }
+
+            return {slice.begin(), slice.end()};
+        }
+
         uint64_t validate_segment_range(const macho::segment_command_64& segment, const uint64_t slide)
         {
             if (page_align_down(segment.vmaddr) != segment.vmaddr)
@@ -202,8 +213,11 @@ namespace sogen
             return path;
         }
 
-        macos_macho_image parse_image(const std::span<const std::byte> image, const uint32_t expected_file_type, const uint64_t slide)
+        macos_macho_image parse_image(std::vector<std::byte> file, const uint32_t expected_file_type, const uint64_t slide)
         {
+            macos_macho_image result{.file = std::move(file), .slide = slide};
+            const std::span<const std::byte> image = result.file;
+
             const auto header = read_struct<macho::mach_header_64>(image, 0);
             if (header.magic != macho::MH_MAGIC_64 || header.cputype != macho::CPU_TYPE_X86_64)
             {
@@ -222,7 +236,6 @@ namespace sogen
 
             const auto commands = image.subspan(sizeof(header), header.sizeofcmds);
 
-            macos_macho_image result{.file = {image.begin(), image.end()}, .slide = slide};
             std::optional<uint64_t> header_address{};
             uint64_t offset = 0;
 
@@ -456,7 +469,7 @@ namespace sogen
           memory(*this->emu_, MACOS_MEMORY_LAYOUT),
           file_system(std::move(emulation_root))
     {
-        this->load_image(this->prepare_process_image(image), executable_path, argv, envp);
+        this->load_image(this->prepare_process_image({image.begin(), image.end()}), executable_path, argv, envp);
         this->setup_hooks();
     }
 
@@ -495,16 +508,16 @@ namespace sogen
         this->setup_hooks();
     }
 
-    macos_process_image macos_emulator::prepare_process_image(const std::span<const std::byte> image)
+    macos_process_image macos_emulator::prepare_process_image(std::vector<std::byte> image)
     {
-        macos_process_image process_image{.executable = parse_image(select_x86_64_slice(image), macho::MH_EXECUTE, 0)};
+        macos_process_image process_image{.executable = parse_image(take_x86_64_slice(std::move(image)), macho::MH_EXECUTE, 0)};
         const auto& executable = process_image.executable;
 
         if (executable.dylinker_path)
         {
-            const auto dyld_file = read_binary_file(this->file_system.translate(*executable.dylinker_path));
+            auto dyld_file = read_binary_file(this->file_system.translate(*executable.dylinker_path));
             const auto dyld_slide = page_align_up(executable.end_address);
-            process_image.dylinker = parse_image(select_x86_64_slice(dyld_file), macho::MH_DYLINKER, dyld_slide);
+            process_image.dylinker = parse_image(take_x86_64_slice(std::move(dyld_file)), macho::MH_DYLINKER, dyld_slide);
 
             const auto shared_cache_file = this->file_system.translate(SHARED_CACHE_PATH);
             if (std::filesystem::exists(shared_cache_file))

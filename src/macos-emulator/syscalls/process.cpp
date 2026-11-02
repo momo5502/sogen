@@ -162,7 +162,7 @@ namespace sogen
         std::optional<macos_process_image> process_image{};
         try
         {
-            process_image = c.emu_ref.prepare_process_image(image);
+            process_image = c.emu_ref.prepare_process_image(std::move(image));
         }
         catch (const std::runtime_error& error)
         {

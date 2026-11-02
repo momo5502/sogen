@@ -133,7 +133,7 @@ namespace sogen
         // Runs once the CPU has left the current syscall, for work that replaces or copies the running image.
         void after_syscall(std::function<void()> operation);
 
-        macos_process_image prepare_process_image(std::span<const std::byte> image);
+        macos_process_image prepare_process_image(std::vector<std::byte> image);
         void exec_image(const macos_process_image& process_image, const std::string& executable_path, const std::vector<std::string>& argv,
                         const std::vector<std::string>& envp);
         uint32_t fork_process(const std::function<void(macos_emulator& child)>& prepare_child);
