@@ -239,6 +239,17 @@ namespace sogen
             }
         }
 
+        void close_descriptors_on_exec()
+        {
+            std::erase_if(this->fds_, [](const auto& entry) { return entry.second.close_on_exec; });
+        }
+
+        // A forked child refers to the same open file descriptions as its parent, so copying shares them.
+        posix_fd_table fork() const
+        {
+            return *this;
+        }
+
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
 

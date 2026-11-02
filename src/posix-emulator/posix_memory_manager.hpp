@@ -84,7 +84,7 @@ namespace sogen
         // released; a backend that then fails to map throws with the range already unmapped.
         bool replace_memory(uint64_t address, size_t size, memory_permission permissions);
 
-        // Unmap everything
+        // Unmap everything and drop every reservation, as a fresh address space
         void unmap_all_memory();
 
         // Find a free region of the given size
@@ -124,6 +124,9 @@ namespace sogen
         {
             this->mmap_base_ = address;
         }
+
+        // Replaces this address space with a copy of another one, as fork does.
+        void copy_address_space(const posix_memory_manager& source);
 
         void serialize_memory_state(utils::buffer_serializer& buffer) const;
         void deserialize_memory_state(utils::buffer_deserializer& buffer);
