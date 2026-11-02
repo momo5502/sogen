@@ -1,18 +1,17 @@
 #include "logger.hpp"
+#include "queued_file_writer.hpp"
 
 #include <utils/finally.hpp>
 #include <utils/win.hpp>
 
 #include <algorithm>
 #include <array>
-#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
-#include <thread>
 
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #include <unistd.h>
@@ -87,78 +86,6 @@ namespace sogen
 #else
             return isatty(fileno(stdout)) != 0;
 #endif
-        }
-
-        constexpr auto flush_interval = std::chrono::milliseconds(50);
-
-        // A redirected line that is not flushed when it is written would wait in the stdio buffer for a later line, which
-        // never comes when the run hangs, crashes or is terminated, and those are the runs a log is read for. This host
-        // thread flushes such a line within an interval or two, whatever is logged after it.
-        class unflushed_output_flusher
-        {
-          public:
-            unflushed_output_flusher() = default;
-
-            ~unflushed_output_flusher()
-            {
-                {
-                    const std::scoped_lock lock(this->mutex_);
-                    this->running_ = false;
-                }
-                this->changed_.notify_one();
-                this->thread_.join();
-            }
-
-            unflushed_output_flusher(const unflushed_output_flusher&) = delete;
-            unflushed_output_flusher& operator=(const unflushed_output_flusher&) = delete;
-            unflushed_output_flusher(unflushed_output_flusher&&) = delete;
-            unflushed_output_flusher& operator=(unflushed_output_flusher&&) = delete;
-
-            void line_left_unflushed()
-            {
-                {
-                    const std::scoped_lock lock(this->mutex_);
-                    if (this->pending_)
-                    {
-                        return;
-                    }
-                    this->pending_ = true;
-                }
-                this->changed_.notify_one();
-            }
-
-          private:
-            void run()
-            {
-                std::unique_lock lock(this->mutex_);
-                while (true)
-                {
-                    this->changed_.wait(lock, [this] { return this->pending_ || !this->running_; });
-                    if (!this->running_)
-                    {
-                        return;
-                    }
-
-                    // Later lines in the interval share the flush.
-                    this->changed_.wait_for(lock, flush_interval, [this] { return !this->running_; });
-                    this->pending_ = false;
-                    lock.unlock();
-                    (void)fflush(stdout);
-                    lock.lock();
-                }
-            }
-
-            std::mutex mutex_{};
-            std::condition_variable changed_{};
-            bool pending_{false};
-            bool running_{true};
-            std::thread thread_{[this] { this->run(); }};
-        };
-
-        void flush_soon()
-        {
-            static unflushed_output_flusher flusher{};
-            flusher.line_left_unflushed();
         }
 
         void set_color(const color_type color)
@@ -236,12 +163,12 @@ namespace sogen
 #endif
     }
 
-#ifdef _WIN32
     logger::~logger()
     {
+#ifdef _WIN32
         SetConsoleOutputCP(old_cp);
-    }
 #endif
+    }
 
     void logger::print_message(const color c, const std::string_view message, const bool force) const
     {
@@ -263,17 +190,27 @@ namespace sogen
             return;
         }
 
-        (void)fwrite(message.data(), 1, message.size(), stdout);
-
-        const auto now = std::chrono::steady_clock::now();
-        if (force || c == color::red || now - this->last_flush_ >= flush_interval)
+        // The writer thread writes and flushes queued lines within 50 ms, so a line reaches the file even when the run
+        // hangs or crashes before the next one; errors and forced lines return once they are written.
+        if (!this->redirected_output_)
         {
-            (void)fflush(stdout);
-            this->last_flush_ = now;
+            this->redirected_output_ = std::make_unique<queued_file_writer>(stdout);
         }
-        else
+
+        this->redirected_output_->write(message, force || c == color::red);
+    }
+
+    void logger::flush() const
+    {
+        queued_file_writer* writer{};
         {
-            flush_soon();
+            const std::scoped_lock lock(this->print_mutex_);
+            writer = this->redirected_output_.get();
+        }
+
+        if (writer)
+        {
+            writer->flush();
         }
     }
 

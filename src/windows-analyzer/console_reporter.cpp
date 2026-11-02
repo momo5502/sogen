@@ -26,7 +26,7 @@ namespace sogen
             {
                 if (this->settings_.silent)
                 {
-                    report_silent(event);
+                    this->report_silent(event);
                 }
                 else
                 {
@@ -34,13 +34,16 @@ namespace sogen
                 }
             }
 
-            static void report_silent(const analysis_event& event)
+            // The guest's output goes to stdout directly, so the lines the logger queued before it are flushed first.
+            void report_silent(const analysis_event& event) const
             {
                 std::visit(make_overloaded(
                                [&](const run_finished_event&) {
+                                   this->log_.flush();
                                    fflush(stdout); //
                                },
                                [&](const stdout_chunk_event& e) {
+                                   this->log_.flush();
                                    (void)fwrite(e.data.data(), 1, e.data.size(), stdout); //
                                    fflush(stdout);
                                },
