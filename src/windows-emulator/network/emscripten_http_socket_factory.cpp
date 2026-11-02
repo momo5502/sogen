@@ -57,18 +57,23 @@ namespace sogen
 
                     const response = await fetch(requestUrl, init);
                     const payload = new Uint8Array(await response.arrayBuffer());
+                    const headRequest = requestMethod.toUpperCase() === "HEAD";
 
                     let head = "HTTP/1.1 " + response.status + " " + (response.statusText || "") + "\r\n";
                     response.headers.forEach(function (value, name) {
-                        // fetch() has already undone these, so echoing them would describe the body
-                        // incorrectly.
+                        // fetch() removes transfer framing and decodes response bodies.
                         const lower = name.toLowerCase();
-                        const controlled = ["transfer-encoding", "content-encoding", "content-length", "connection", "keep-alive"];
+                        const controlled = ["transfer-encoding", "connection", "keep-alive"];
+                        if (!headRequest) {
+                            controlled.push("content-encoding", "content-length");
+                        }
                         if (controlled.indexOf(lower) < 0) {
                             head += name + ": " + value + "\r\n";
                         }
                     });
-                    head += "Content-Length: " + payload.length + "\r\n";
+                    if (!headRequest) {
+                        head += "Content-Length: " + payload.length + "\r\n";
+                    }
                     head += "Connection: close\r\n\r\n";
 
                     const headBytes = new TextEncoder().encode(head);
@@ -246,10 +251,18 @@ namespace sogen
                     return this->last_error_ ? std::optional{this->last_error_} : std::nullopt;
                 }
 
-                bool is_ready(bool /*in_poll*/) override
+                bool is_ready(const bool in_poll) override
                 {
-                    // Writable from the moment it is connected, readable once the response is in.
-                    return this->connected_;
+                    return in_poll ? this->dispatched_ : this->connected_;
+                }
+
+                int16_t poll_events(const int16_t events) const
+                {
+                    constexpr auto read_mask = static_cast<int16_t>(POLLIN | POLLRDNORM | POLLRDBAND);
+                    constexpr auto write_mask = static_cast<int16_t>(POLLOUT | POLLWRNORM);
+                    const auto readable = this->dispatched_ ? events & read_mask : 0;
+                    const auto writable = this->connected_ ? events & write_mask : 0;
+                    return static_cast<int16_t>(readable | writable);
                 }
 
                 bool is_listening() override
@@ -416,10 +429,14 @@ namespace sogen
                     for (auto& entry : entries)
                     {
                         entry.revents = 0;
-                        if (entry.s && entry.s->is_ready(true))
+                        if (const auto* socket = dynamic_cast<http_bridge_socket*>(entry.s))
                         {
-                            entry.revents = entry.events;
-                            ++ready;
+                            entry.revents = socket->poll_events(entry.events);
+                            ready += entry.revents != 0;
+                        }
+                        else
+                        {
+                            ready += this->fallback_->poll_sockets(std::span{&entry, 1});
                         }
                     }
                     return ready;
