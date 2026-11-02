@@ -7,7 +7,9 @@ set(build_id "${BUILD_ID}")
 set(modified false)
 set(description "${BUILD_ID}")
 
-if(NOT build_id)
+# Git looks for a repository in the parent directories too, which would give a source tree unpacked inside another
+# checkout the identity of that unrelated repository. .git is a file in worktrees and submodules.
+if(NOT build_id AND EXISTS "${SOURCE_DIR}/.git")
   find_program(GIT_EXECUTABLE git)
   if(GIT_EXECUTABLE)
     execute_process(
@@ -40,6 +42,11 @@ if(NOT build_id)
       ERROR_QUIET)
   endif()
 endif()
+
+foreach(value build_id description)
+  string(REPLACE "\\" "\\\\" ${value} "${${value}}")
+  string(REPLACE "\"" "\\\"" ${value} "${${value}}")
+endforeach()
 
 set(content "#pragma once
 
