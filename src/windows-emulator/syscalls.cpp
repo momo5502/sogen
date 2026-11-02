@@ -783,6 +783,9 @@ namespace sogen
         BOOL handle_NtUserHideCaret();
         BOOL handle_NtUserGetObjectInformation(const syscall_context& c, handle object, int index, emulator_pointer information,
                                                DWORD length, emulator_object<DWORD> needed);
+        BOOL handle_NtUserGetWindowDisplayAffinity(const syscall_context& c, hwnd window, emulator_object<DWORD> affinity);
+        BOOL handle_NtUserShowOwnedPopups(const syscall_context& c, hwnd owner, BOOL show);
+        BOOL handle_NtUserGetCurrentInputMessageSource(const syscall_context& c, emulator_pointer source);
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, hwnd window_handle, uint32_t query_type);
         int handle_NtUserSetScrollInfo();
         BOOL handle_NtUserIsTouchWindow();
@@ -801,6 +804,7 @@ namespace sogen
         uint32_t handle_NtUserGetCaretBlinkTime();
         BOOL handle_NtUserFlashWindowEx();
         BOOL handle_NtUserModifyWindowTouchCapability();
+        BOOL handle_NtUserEnableMouseInPointer(const syscall_context&, BOOL enable);
         uint32_t handle_NtUserGetClipboardSequenceNumber();
         BOOL handle_NtUserOpenClipboard();
         BOOL handle_NtUserCloseClipboard();
@@ -2125,6 +2129,9 @@ namespace sogen
         add_handler(NtUserShowCaret);
         add_handler(NtUserHideCaret);
         add_handler(NtUserGetObjectInformation);
+        add_handler(NtUserGetWindowDisplayAffinity);
+        add_handler(NtUserShowOwnedPopups);
+        add_handler(NtUserGetCurrentInputMessageSource);
         add_handler(NtUserQueryWindow);
         add_handler(NtUserSetScrollInfo);
         add_handler(NtUserShowScrollBar);
@@ -2148,6 +2155,7 @@ namespace sogen
         add_handler(NtUserGetKeyboardState);
         add_handler(NtUserSetKeyboardState);
         add_handler(NtUserModifyWindowTouchCapability);
+        add_handler(NtUserEnableMouseInPointer);
         add_handler(NtUserGetClipboardSequenceNumber);
         add_handler(NtUserOpenClipboard);
         add_handler(NtUserCloseClipboard);

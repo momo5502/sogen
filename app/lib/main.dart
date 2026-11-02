@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -13,6 +15,10 @@ Future<void> main() async {
 
   final root = await EmulationRoot.open();
   final library = await GameLibrary.load();
+  // The app can die between granting a folder and storing the game that uses it.
+  unawaited(
+    library.releaseUnusedFolders().catchError((Object error) => debugPrint('Could not release unused folders: $error')),
+  );
   final settings = await AppSettings.load();
 
   runApp(SogenApp(root: root, library: library, settings: settings, ads: Ads(settings)));
