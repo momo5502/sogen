@@ -30,6 +30,7 @@ namespace sogen
         bool skip_generic_activity{false};
         bool reproducible{false};
         bool spoof_gpu_features{false};
+        bool elevated{false};
         bool log_first_section_execution{false};
 
         string_set modules{};
