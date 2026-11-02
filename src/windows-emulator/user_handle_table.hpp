@@ -169,6 +169,11 @@ namespace sogen
             handle_table_obj.access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, handle_index_to_ahe_slot(index));
         }
 
+        size_t used_handle_count() const
+        {
+            return static_cast<size_t>(std::ranges::count(used_indices_, true));
+        }
+
         void free_index(uint32_t index)
         {
             if (index >= used_indices_.size() || !used_indices_.at(index))
