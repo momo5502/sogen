@@ -365,7 +365,7 @@ namespace sogen
             duplicate_descriptor(c, fd, argument, command == MACOS_F_DUPFD_CLOEXEC);
             return;
         case MACOS_F_GETFD:
-            write_macos_syscall_success(c, file->close_on_exec ? MACOS_FD_CLOEXEC : 0);
+            write_macos_syscall_success(c, c.emu_ref.fds.is_close_on_exec(fd) ? MACOS_FD_CLOEXEC : 0);
             return;
         case MACOS_F_SETFD:
             c.emu_ref.fds.set_close_on_exec(fd, (argument & MACOS_FD_CLOEXEC) != 0);
