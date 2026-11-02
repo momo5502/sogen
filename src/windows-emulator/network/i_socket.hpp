@@ -21,6 +21,7 @@ namespace sogen
             virtual bool is_listening() = 0;
 
             virtual std::optional<address> get_local_address() = 0;
+            virtual std::optional<address> get_remote_address() = 0;
 
             virtual bool bind(const address& addr) = 0;
             virtual bool connect(const address& addr) = 0;
