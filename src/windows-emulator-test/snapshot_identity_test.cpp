@@ -65,14 +65,15 @@ namespace sogen::test
 
     TEST_F(SnapshotIdentityTest, ASnapshotOfAnotherBuildIsRejectedFromItsHeader)
     {
-        if (version::build_id.empty())
-        {
-            GTEST_SKIP() << "the build has no identity to compare against";
-        }
-
         this->write(header_with_build_id("0123456789abcdef0123456789abcdef01234567"));
 
         const auto error = this->load_error();
+        if (version::build_id.empty())
+        {
+            EXPECT_NE(error.find("build identity"), std::string::npos) << error;
+            return;
+        }
+
         EXPECT_NE(error.find("another Sogen build"), std::string::npos) << error;
         EXPECT_NE(error.find("0123456789ab"), std::string::npos) << error;
     }
