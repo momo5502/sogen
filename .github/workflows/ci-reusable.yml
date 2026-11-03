@@ -1211,6 +1211,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
+      # The emulator reserves its whole data partition on the host up front, which the runner's free space does not always cover.
+      - name: Remove Unused Android NDKs
+        run: sudo rm -rf "$ANDROID_SDK_ROOT/ndk" "$ANDROID_SDK_ROOT/ndk-bundle"
+
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v8
         with:
@@ -1221,7 +1225,7 @@ jobs:
         uses: pyTooling/download-artifact@v8
         with:
           name: Windows x86_64 Release Artifacts
-          path: build/${{matrix.preset}}/artifacts
+          path: build/windows-artifacts
 
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
@@ -1230,19 +1234,20 @@ jobs:
           path: build/${{matrix.preset}}/artifacts/root
 
       - name: Copy Test Sample
-        run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
+        run: |
+          cp build/windows-artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
+          rm -rf build/windows-artifacts
 
       - name: Run Test
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 29
           arch: ${{matrix.architecture}}
-          # The artifacts are pushed as a tar of about 3 GB and unpacked next to it, which overflows the default disk.
-          disk-size: 10G
+          # The unpacked artifacts take about 3 GB, more than the default disk holds.
+          disk-size: 6G
           script: |
-            tar -cf build/${{matrix.preset}}/artifacts.tar -C build/${{matrix.preset}}/artifacts .
-            adb push build/${{matrix.preset}}/artifacts.tar /data/local/tmp/
-            adb shell "cd /data/local/tmp && tar xf artifacts.tar --no-same-owner && rm artifacts.tar && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer --network live -e ./root --root-mode rw c:/test-sample.exe"
+            tar -cf - -C build/${{matrix.preset}}/artifacts . | adb shell -T "mkdir -p /data/local/tmp/sogen && tar -xf - -C /data/local/tmp/sogen --no-same-owner"
+            adb shell "cd /data/local/tmp/sogen && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer --network live -e ./root --root-mode rw c:/test-sample.exe"
 
   build-page:
     name: Build Page
