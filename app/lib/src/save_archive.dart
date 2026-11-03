@@ -550,6 +550,7 @@ _ValidatedArchive _validate(ZipDecoder decoder, Archive archive, SaveRevision? e
 Future<void> _checkCentralDirectory(File archive) async {
   const endRecordSize = 22;
   const headerSize = 46;
+  const zip64LocatorSize = 20;
   const tooLarge = SaveArchiveException('The save is larger than Sogen syncs');
   const unreadable = SaveArchiveException('The save cannot be read');
 
@@ -582,6 +583,15 @@ Future<void> _checkCentralDirectory(File archive) async {
     }
     if (entries > _maxEntries + 1 || directorySize > _maxCentralDirectoryBytes) {
       throw const SaveArchiveException('The save holds too many files');
+    }
+
+    // The zip package looks for a zip64 locator right before the end record on its own, and would then read a
+    // directory other than the one checked here.
+    if (length >= endRecordSize + zip64LocatorSize) {
+      await handle.setPosition(length - endRecordSize - zip64LocatorSize);
+      if (ByteData.sublistView(await handle.read(4)).getUint32(0, Endian.little) == 0x07064b50) {
+        throw unreadable;
+      }
     }
 
     await handle.setPosition(directoryOffset);

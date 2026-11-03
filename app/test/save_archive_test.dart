@@ -158,7 +158,9 @@ void main() {
   test('a Unix link is rejected before the zip is decoded', () async {
     final archive = Archive()
       ..add(ArchiveFile.string('manifest.json', '{}'))
-      ..add(ArchiveFile.string('root/c/upper/link', '../../../escaped'));
+      // The zip package decodes a link's target eagerly, and fails on one that is not UTF-8 unless the archive was
+      // rejected before.
+      ..add(ArchiveFile.bytes('root/c/upper/link', [0xff]));
     final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
 
     // The encoder records every entry as made on MS-DOS, so the link is marked the way a Unix zip tool marks one.
