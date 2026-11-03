@@ -683,6 +683,11 @@ namespace sogen
         int32_t allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
                                          std::span<const uint32_t> variable_descriptor_counts, std::span<uint64_t> out_sets,
                                          uint32_t& out_count);
+        // Allocates one set per layout id and keeps them under `ids`, which the guest already handed out: if the host
+        // pool refuses although the guest's own count allowed the sets, they come from extra host pools made like it,
+        // which are reset and destroyed with it.
+        int32_t allocate_descriptor_sets_as(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
+                                            std::span<const uint32_t> variable_descriptor_counts, std::span<const uint64_t> ids);
         int32_t free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets);
         int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes, std::span<const descriptor_copy> copies);
 

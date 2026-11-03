@@ -3630,7 +3630,7 @@ namespace sogen
                 std::vector<std::byte> buffer(context.input_buffer_length);
                 win_emu.emu().read_memory(context.input_buffer, buffer.data(), buffer.size());
 
-                const int32_t result = this->apply_descriptor_update_batch(buffer);
+                const int32_t result = this->apply_descriptor_update_batch(win_emu, buffer);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -3654,7 +3654,7 @@ namespace sogen
 
                 std::vector<std::byte> updates(prefix.updates_bytes);
                 win_emu.emu().read_memory(context.input_buffer + sizeof(prefix), updates.data(), updates.size());
-                this->apply_descriptor_update_batch(updates);
+                this->apply_descriptor_update_batch(win_emu, updates);
 
                 auto allocation = context;
                 allocation.input_buffer += sizeof(prefix) + prefix.updates_bytes;
@@ -3662,21 +3662,72 @@ namespace sogen
                 return this->handle_allocate_descriptor_sets(win_emu, allocation);
             }
 
-            // Applies a concatenation of update_descriptor_sets_request blobs and reports the first failure.
-            int32_t apply_descriptor_update_batch(const std::vector<std::byte>& buffer)
+            // Allocates the sets of one allocate_descriptor_sets_deferred record under the guest's ids and advances `offset`
+            // past it; false if the record is malformed. The guest has already been told the allocation succeeded, so the
+            // analyzer hears of it here, as of the vkAllocateDescriptorSets IOCTL it replaces.
+            bool apply_deferred_descriptor_allocation(windows_emulator& win_emu, const std::byte* data, size_t size, size_t& offset,
+                                                      int32_t& result)
             {
+                gpu_bridge::allocate_descriptor_sets_deferred record{};
+                if (size - offset < sizeof(record))
+                {
+                    return false;
+                }
+                std::memcpy(&record, data + offset, sizeof(record));
+                offset += sizeof(record);
+
+                if (record.set_count == 0 || record.set_count > (size - offset) / (2 * sizeof(gpu_bridge::object_id)))
+                {
+                    return false;
+                }
+                std::vector<uint64_t> layouts(record.set_count);
+                std::vector<uint64_t> ids(record.set_count);
+                const size_t array_bytes = layouts.size() * sizeof(gpu_bridge::object_id);
+                std::memcpy(layouts.data(), data + offset, array_bytes);
+                std::memcpy(ids.data(), data + offset + array_bytes, array_bytes);
+                offset += 2 * array_bytes;
+
+                result = this->vulkan_.allocate_descriptor_sets_as(record.device, record.descriptor_pool, layouts, {}, ids);
+                win_emu.callbacks.on_ioctrl(*this, u"SogenGpu", gpu_bridge::ioctl_allocate_descriptor_sets);
+                return true;
+            }
+
+            // Applies the shim's coalesced descriptor records in issue order and reports the first failure. A malformed record
+            // stops the batch, since nothing after it can be found.
+            int32_t apply_descriptor_update_batch(windows_emulator& win_emu, const std::vector<std::byte>& buffer)
+            {
+                constexpr int32_t vk_error_initialization_failed = -3;
                 int32_t result = 0; // vk_success
                 size_t offset = 0;
-                while (offset + sizeof(gpu_bridge::update_descriptor_sets_request) <= buffer.size())
+                while (buffer.size() - offset >= sizeof(gpu_bridge::descriptor_batch_record))
                 {
-                    const int32_t r = this->apply_update_descriptor_sets(buffer.data(), buffer.size(), offset);
+                    gpu_bridge::descriptor_batch_record record{};
+                    std::memcpy(&record, buffer.data() + offset, sizeof(record));
+                    offset += sizeof(record);
+
+                    int32_t r = 0;
+                    bool well_formed = true;
+                    switch (static_cast<gpu_bridge::descriptor_batch_record_kind>(record.kind))
+                    {
+                    case gpu_bridge::descriptor_batch_record_kind::update:
+                        r = this->apply_update_descriptor_sets(buffer.data(), buffer.size(), offset);
+                        well_formed = r != vk_error_initialization_failed;
+                        break;
+                    case gpu_bridge::descriptor_batch_record_kind::allocate:
+                        well_formed = this->apply_deferred_descriptor_allocation(win_emu, buffer.data(), buffer.size(), offset, r);
+                        break;
+                    default:
+                        well_formed = false;
+                        break;
+                    }
+
+                    if (!well_formed)
+                    {
+                        return result != 0 ? result : vk_error_initialization_failed;
+                    }
                     if (r != 0 && result == 0)
                     {
                         result = r; // report the first failure
-                    }
-                    if (r == -3) // malformed record: stop to avoid spinning on a bad offset
-                    {
-                        break;
                     }
                 }
 
