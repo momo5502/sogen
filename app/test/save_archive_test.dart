@@ -135,7 +135,11 @@ void main() {
 
   test('entries that would land on each other are rejected', () async {
     await expectRejected(craft({'root/c/upper/Save.dat': 'a', 'root/c/upper/save.dat': 'b'}));
-    await expectRejected(craft({'root/c/upper/save': 'a', 'root/c/upper/save/inner': 'b'}));
+    await expectRejected(craft({'root/c/upper/save': 'a', 'root/c/upper/save/': null, 'root/c/upper/save/inner': 'b'}));
+  });
+
+  test('a file whose directory is not listed is rejected', () async {
+    await expectRejected(craft({'root/c/upper/dir/save.dat': 'a'}));
   });
 
   test('an archive whose files differ from its description is rejected', () async {

@@ -268,13 +268,7 @@ Future<String> exportSave(
   required String executable,
 }) async {
   final entries = await _scan(layers);
-  final size = entries.fold(0, (total, local) => total + local.entry.size);
-  if (size > maxSaveBytes) {
-    throw SaveArchiveException(
-      'The save is ${size ~/ (1024 * 1024)} MiB, more than the ${maxSaveBytes ~/ (1024 * 1024)} MiB that can be synced',
-    );
-  }
-  _checkPaths(entries.map((local) => local.entry));
+  _checkEntries(entries.map((local) => local.entry).toList());
 
   final contentHash = contentHashOf(entries.map((local) => local.entry));
   final manifest = {
@@ -288,10 +282,14 @@ Future<String> exportSave(
     'contentHash': contentHash,
     'entries': entries.map((local) => local.entry.toJson()).toList(),
   };
+  final manifestBytes = utf8.encode(jsonEncode(manifest));
+  if (manifestBytes.length > _maxManifestBytes) {
+    throw const SaveArchiveException('The save holds too many files to sync');
+  }
 
   final encoder = ZipFileEncoder()..create(destination.path);
   try {
-    encoder.addArchiveFile(ArchiveFile.string(_manifestName, jsonEncode(manifest)));
+    encoder.addArchiveFile(ArchiveFile.bytes(_manifestName, manifestBytes));
     for (final local in entries) {
       if (local.entry.directory) {
         encoder.addArchiveFile(ArchiveFile.directory(local.entry.path));
@@ -334,8 +332,50 @@ bool _validEntryPath(String path, {required bool directory}) {
   return (rest.first == 'upper' && rest.length > 1) || (rest.first == 'journal' && rest.length == 1 && !directory);
 }
 
-/// Rejects entries that would land on each other: two paths differing only in case, or a path below a file.
-void _checkPaths(Iterable<SaveEntry> entries) {
+final _digestPattern = RegExp(r'^[0-9a-f]{64}$');
+
+/// The rules every archive follows, checked on export so that Sogen never makes a save it would reject on import.
+void _checkEntries(List<SaveEntry> entries) {
+  if (entries.length > _maxEntries) {
+    throw const SaveArchiveException('The save holds too many files to sync');
+  }
+
+  var size = 0;
+  for (final entry in entries) {
+    if (!_validEntryPath(entry.path, directory: entry.directory) ||
+        entry.size < 0 ||
+        (entry.directory && (entry.size != 0 || entry.sha256.isNotEmpty)) ||
+        (!entry.directory && !_digestPattern.hasMatch(entry.sha256))) {
+      throw SaveArchiveException('The save cannot hold ${entry.path}');
+    }
+    size += entry.size;
+  }
+  if (size > maxSaveBytes) {
+    throw SaveArchiveException(
+      'The save is ${size ~/ (1024 * 1024)} MiB, more than the ${maxSaveBytes ~/ (1024 * 1024)} MiB that can be synced',
+    );
+  }
+
+  _checkPaths(entries);
+}
+
+/// Rejects entries that would land on each other, two paths differing only in case or a path below a file, and
+/// entries whose directory is not listed itself, since extraction would create it without the save holding it.
+void _checkPaths(List<SaveEntry> entries) {
+  final directories = {for (final entry in entries.where((entry) => entry.directory)) entry.path};
+  for (final entry in entries) {
+    final segments = entry.path.split('/');
+    final upper = segments.indexOf('upper');
+    if (upper < 0) {
+      continue;
+    }
+    for (var i = upper + 2; i < segments.length; ++i) {
+      if (!directories.contains('${segments.take(i).join('/')}/')) {
+        throw SaveArchiveException('The save holds ${entry.path} without its directory');
+      }
+    }
+  }
+
   final seen = <String>{};
   final files = <String>{};
   for (final entry in entries) {
@@ -419,23 +459,13 @@ _ValidatedArchive _validate(ZipDecoder decoder, Archive archive, SaveRevision? e
   if (entries.length != files.length) {
     throw const SaveArchiveException('The save does not hold the files it lists');
   }
-  var size = 0;
+  _checkEntries(entries);
   for (final entry in entries) {
     final file = files[entry.path];
-    if (file == null ||
-        file.isFile == entry.directory ||
-        !_validEntryPath(entry.path, directory: entry.directory) ||
-        entry.size < 0 ||
-        (entry.directory && entry.size != 0) ||
-        (!entry.directory && (file.size != entry.size || !RegExp(r'^[0-9a-f]{64}$').hasMatch(entry.sha256)))) {
+    if (file == null || file.isFile == entry.directory || (file.isFile && file.size != entry.size)) {
       throw SaveArchiveException('The save does not hold ${entry.path} as it lists it');
     }
-    size += entry.size;
   }
-  if (size > maxSaveBytes) {
-    throw const SaveArchiveException('The save is larger than Sogen syncs');
-  }
-  _checkPaths(entries);
 
   final contentHash = contentHashOf(entries);
   if (manifest['contentHash'] != contentHash) {
@@ -470,12 +500,14 @@ Future<void> recoverInterruptedImport(SaveLayers layers) async {
 }
 
 /// Replaces the layers with the save in [archive], and records it as the save the layers were synced with. No game
-/// may run on the layers meanwhile, and a suspended game must be discarded, since it would not match the new save.
+/// may run on the layers meanwhile. [beforeSwap] runs once the save is fully extracted and checked, right before it
+/// replaces the layers.
 Future<SaveRevision> importSave(
   SaveLayers layers,
   File archive, {
   SaveRevision? expected,
   String? expectedContentHash,
+  Future<void> Function()? beforeSwap,
 }) async {
   await recoverInterruptedImport(layers);
 
@@ -523,6 +555,7 @@ Future<SaveRevision> importSave(
     );
     await File(p.join(incoming.path, 'cloud.json')).writeAsString(jsonEncode(base.toJson()), flush: true);
 
+    await beforeSwap?.call();
     await _swapIn(layers, incoming);
     return validated.revision;
   } finally {
@@ -555,7 +588,8 @@ Future<void> _swapIn(SaveLayers layers, Directory incoming) async {
   }
 }
 
-/// Imports a save for [game]. Its suspended state is discarded first, since it could not continue on another save.
+/// Imports a save for [game] and discards its suspended state, since that could not continue on another save. The
+/// state goes before the layers are replaced, so that a crash never leaves it on the new save.
 Future<SaveRevision> importGameSave(
   Game game,
   File archive, {
@@ -563,8 +597,15 @@ Future<SaveRevision> importGameSave(
   String? expectedContentHash,
 }) async {
   final snapshot = await savedStateFile(game);
-  if (snapshot.existsSync()) {
-    await snapshot.delete();
-  }
-  return importSave(await SaveLayers.of(game), archive, expected: expected, expectedContentHash: expectedContentHash);
+  return importSave(
+    await SaveLayers.of(game),
+    archive,
+    expected: expected,
+    expectedContentHash: expectedContentHash,
+    beforeSwap: () async {
+      if (snapshot.existsSync()) {
+        await snapshot.delete();
+      }
+    },
+  );
 }
