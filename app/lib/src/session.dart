@@ -296,7 +296,6 @@ class GameSession extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Ends a session that could not start with [message] as its error.
   bool _failStart(String message) {
     error = message;
     _addOutput(message, _errorColor);
