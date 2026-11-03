@@ -41,8 +41,10 @@ namespace sogen
             constexpr uint32_t k_gdi_font_attr_size = 0x40;
             constexpr uint32_t k_gdi_region_attr_size = 0x20;
 
-            constexpr uint32_t k_gdi_dc_attr_hbrush_offset = 0x10;
-            constexpr uint32_t k_gdi_dc_attr_hpen_offset = 0x18;
+            constexpr uint32_t k_gdi_dc_attr_hbrush_offset = 0xA0;
+            constexpr uint32_t k_gdi_dc_attr_hpen_offset = 0xA8;
+            constexpr uint32_t k_gdi_dc_attr_dc_brush_color_offset = 0xC4;   // SetDCBrushColor
+            constexpr uint32_t k_gdi_dc_attr_dc_pen_color_offset = 0xCC;     // SetDCPenColor
             constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0x20; // DC_ATTR.crBackgroundClr (SetBkColor)
             constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0x28;       // DC_ATTR.crForegroundClr (SetTextColor)
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
@@ -52,7 +54,14 @@ namespace sogen
             constexpr uint32_t k_error_invalid_handle = 6;
 
             constexpr uint32_t k_stock_white_brush_index = 0x00;
-            constexpr uint32_t k_stock_black_pen_index = 0x06;
+            constexpr uint32_t k_stock_ltgray_brush_index = 0x01;
+            constexpr uint32_t k_stock_gray_brush_index = 0x02;
+            constexpr uint32_t k_stock_dkgray_brush_index = 0x03;
+            constexpr uint32_t k_stock_black_brush_index = 0x04;
+            constexpr uint32_t k_stock_null_brush_index = 0x05;
+            constexpr uint32_t k_stock_white_pen_index = 0x06;
+            constexpr uint32_t k_stock_black_pen_index = 0x07;
+            constexpr uint32_t k_stock_null_pen_index = 0x08;
             constexpr uint32_t k_stock_system_font_index = 0x0D;
             constexpr uint32_t k_stock_default_gui_font_index = 0x11;
             constexpr uint32_t k_stock_dc_brush_index = 0x12;
@@ -424,6 +433,18 @@ namespace sogen
                 return base;
             }
 
+            // The handle table entry holds only the base type, which gdi32's SelectObject checks against the low five
+            // bits of the handle's type byte: pens and extended pens are brushes there. The full type stays in Unique.
+            uint8_t gdi_base_type(const uint8_t type)
+            {
+                return static_cast<uint8_t>(type & 0x1Fu);
+            }
+
+            uint8_t gdi_object_type(const GDI_HANDLE_ENTRY64& entry)
+            {
+                return static_cast<uint8_t>(entry.Unique & 0x7Fu);
+            }
+
             uint32_t allocate_gdi_handle(const syscall_context& c, const uint8_t type, const uint64_t user_ptr, const uint64_t object_ptr)
             {
                 const auto table = ensure_gdi_shared_table(c);
@@ -460,7 +481,7 @@ namespace sogen
                         writable.Object = object_ptr;
                         writable.Owner = c.proc.process_id;
                         writable.Unique = unique;
-                        writable.Type = type;
+                        writable.Type = gdi_base_type(type);
                         writable.Flags = 0;
                         writable.UserPointer = encoded_user_ptr;
                     });
@@ -495,7 +516,7 @@ namespace sogen
             {
                 GDI_HANDLE_ENTRY64 entry{};
                 uint64_t entry_addr = 0;
-                if (!read_gdi_entry_for_handle(c, handle_value, entry, entry_addr) || entry.Type != expected_type)
+                if (!read_gdi_entry_for_handle(c, handle_value, entry, entry_addr) || gdi_object_type(entry) != expected_type)
                 {
                     return false;
                 }
@@ -1109,6 +1130,13 @@ namespace sogen
                 return true;
             }
 
+            uint32_t read_dc_attr_colorref(const syscall_context& c, const uint64_t address)
+            {
+                uint32_t colorref = 0;
+                c.win_emu.memory.try_read_memory(address, &colorref, sizeof(colorref));
+                return colorref_to_bgra(colorref);
+            }
+
             uint32_t get_brush_color(const syscall_context& c, const uint32_t brush_handle)
             {
                 uint64_t brush_attr = 0;
@@ -1135,6 +1163,11 @@ namespace sogen
                 if (pen_handle == 0)
                 {
                     return 0xFF000000u;
+                }
+
+                if (pen_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_dc_pen_index)))
+                {
+                    return read_dc_attr_colorref(c, dc_attr + k_gdi_dc_attr_dc_pen_color_offset);
                 }
 
                 uint64_t pen_attr = 0;
@@ -1164,7 +1197,24 @@ namespace sogen
                 }
             }
 
-            uint32_t get_dc_brush_color(const syscall_context& c, const hdc dc)
+            std::optional<uint32_t> get_brush_color_in_dc(const syscall_context& c, const hdc dc, const uint32_t brush_handle)
+            {
+                if (brush_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_null_brush_index)))
+                {
+                    return std::nullopt;
+                }
+
+                uint64_t dc_attr = 0;
+                if (brush_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_dc_brush_index)) &&
+                    get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    return read_dc_attr_colorref(c, dc_attr + k_gdi_dc_attr_dc_brush_color_offset);
+                }
+
+                return get_brush_color(c, brush_handle);
+            }
+
+            std::optional<uint32_t> get_dc_brush_color(const syscall_context& c, const hdc dc)
             {
                 uint64_t dc_attr = 0;
                 if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
@@ -1179,7 +1229,7 @@ namespace sogen
                     return 0xFFFFFFFFu;
                 }
 
-                return get_brush_color(c, brush_handle);
+                return get_brush_color_in_dc(c, dc, brush_handle);
             }
 
             // Reads a COLORREF directly out of the DC_ATTR (the user-mode block gdi32 updates on
@@ -1353,6 +1403,19 @@ namespace sogen
                 return origin;
             }
 
+            bool is_stock_object_selected(const syscall_context& c, const hdc dc, const uint32_t attr_offset, const uint32_t stock_index)
+            {
+                uint64_t dc_attr = 0;
+                if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    return false;
+                }
+
+                uint32_t selected = 0;
+                c.win_emu.memory.try_read_memory(dc_attr + attr_offset, &selected, sizeof(selected));
+                return selected != 0 && selected == static_cast<uint32_t>(read_gdi_object_slot(c, stock_index));
+            }
+
             void fill_rect(gdi_bitmap_surface& surface, const int left, const int top, const int right, const int bottom,
                            const uint32_t color)
             {
@@ -1451,9 +1514,13 @@ namespace sogen
                             std::memcpy(&rect, bytes + rect_offset, sizeof(rect));
                             brush = rect.brush;
 
-                            const auto color = brush != 0 ? get_brush_color(c, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
-                            fill_rect(*surface, rect.x + origin_x, rect.y + origin_y, rect.x + rect.width + origin_x,
-                                      rect.y + rect.height + origin_y, color);
+                            const auto color =
+                                brush != 0 ? get_brush_color_in_dc(c, dc, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
+                            if (color)
+                            {
+                                fill_rect(*surface, rect.x + origin_x, rect.y + origin_y, rect.x + rect.width + origin_x,
+                                          rect.y + rect.height + origin_y, *color);
+                            }
                         }
                     }
 
@@ -1548,6 +1615,23 @@ namespace sogen
                 });
             }
 
+            uint32_t stock_brush_color(const uint32_t index)
+            {
+                switch (index)
+                {
+                case k_stock_ltgray_brush_index:
+                    return 0x00C0C0C0u;
+                case k_stock_gray_brush_index:
+                    return 0x00808080u;
+                case k_stock_dkgray_brush_index:
+                    return 0x00404040u;
+                case k_stock_black_brush_index:
+                    return 0x00000000u;
+                default:
+                    return 0x00FFFFFFu;
+                }
+            }
+
             void seed_gdi_stock_objects(const syscall_context& c)
             {
                 struct stock_seed
@@ -1558,7 +1642,7 @@ namespace sogen
                     bool mirror_to_default_gui_slot;
                 };
 
-                constexpr std::array<stock_seed, 6> seeds = {
+                constexpr std::array<stock_seed, 13> seeds = {
                     stock_seed{
                         .index = k_stock_white_brush_index,
                         .type = k_gdi_brush_type,
@@ -1566,7 +1650,49 @@ namespace sogen
                         .mirror_to_default_gui_slot = false,
                     },
                     stock_seed{
+                        .index = k_stock_ltgray_brush_index,
+                        .type = k_gdi_brush_type,
+                        .attr_size = k_gdi_brush_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_gray_brush_index,
+                        .type = k_gdi_brush_type,
+                        .attr_size = k_gdi_brush_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_dkgray_brush_index,
+                        .type = k_gdi_brush_type,
+                        .attr_size = k_gdi_brush_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_black_brush_index,
+                        .type = k_gdi_brush_type,
+                        .attr_size = k_gdi_brush_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_null_brush_index,
+                        .type = k_gdi_brush_type,
+                        .attr_size = k_gdi_brush_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_white_pen_index,
+                        .type = k_gdi_pen_type,
+                        .attr_size = k_gdi_pen_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
                         .index = k_stock_black_pen_index,
+                        .type = k_gdi_pen_type,
+                        .attr_size = k_gdi_pen_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
+                        .index = k_stock_null_pen_index,
                         .type = k_gdi_pen_type,
                         .attr_size = k_gdi_pen_attr_size,
                         .mirror_to_default_gui_slot = false,
@@ -1614,12 +1740,12 @@ namespace sogen
                     write_gdi_object_slot(c, seed.index, handle64);
                     if (seed.type == k_gdi_brush_type)
                     {
-                        const uint32_t color = seed.index == k_stock_white_brush_index ? 0x00FFFFFFu : k_default_system_colors[15];
-                        set_gdi_object_color(c, handle, k_gdi_brush_type, color);
+                        set_gdi_object_color(c, handle, k_gdi_brush_type, stock_brush_color(seed.index));
                     }
                     else if (seed.type == k_gdi_pen_type)
                     {
-                        set_gdi_object_color(c, handle, k_gdi_pen_type, 0x00000000u);
+                        const uint32_t color = seed.index == k_stock_white_pen_index ? 0x00FFFFFFu : 0x00000000u;
+                        set_gdi_object_color(c, handle, k_gdi_pen_type, color);
                     }
                     else if (seed.type == k_gdi_font_type)
                     {
@@ -1649,11 +1775,22 @@ namespace sogen
                 std::array<uint8_t, k_gdi_dc_attr_size> zeroed{};
                 c.emu.write_memory(dc_attr, zeroed.data(), zeroed.size());
 
-                const uint64_t system_font = read_gdi_object_slot(c, k_stock_system_font_index);
-                if (system_font != 0)
+                constexpr uint32_t white = 0x00FFFFFFu;
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_dc_brush_color_offset, &white, sizeof(white));
+
+                const std::array<std::pair<uint32_t, uint32_t>, 3> default_objects{{
+                    {k_stock_system_font_index, k_gdi_dc_attr_font_offset},
+                    {k_stock_white_brush_index, k_gdi_dc_attr_hbrush_offset},
+                    {k_stock_black_pen_index, k_gdi_dc_attr_hpen_offset},
+                }};
+                for (const auto& [stock_index, attr_offset] : default_objects)
                 {
-                    const auto handle_value = static_cast<uint32_t>(system_font);
-                    c.emu.write_memory(dc_attr + k_gdi_dc_attr_font_offset, &handle_value, sizeof(handle_value));
+                    const uint64_t stock_object = read_gdi_object_slot(c, stock_index);
+                    if (stock_object != 0)
+                    {
+                        const auto handle_value = static_cast<uint32_t>(stock_object);
+                        c.emu.write_memory(dc_attr + attr_offset, &handle_value, sizeof(handle_value));
+                    }
                 }
             }
 
@@ -1986,6 +2123,11 @@ namespace sogen
                 });
 
                 return status;
+            }
+
+            bool rop3_uses_pattern(const uint8_t rop3)
+            {
+                return ((rop3 >> 4) & 0x0Fu) != (rop3 & 0x0Fu);
             }
 
             bool rop3_uses_source(const uint8_t rop3)
@@ -3216,7 +3358,8 @@ namespace sogen
                 return 0;
             }
 
-            const uint32_t object_size = get_gdi_object_size(entry.Type);
+            const auto object_type = gdi_object_type(entry);
+            const uint32_t object_size = get_gdi_object_size(object_type);
             if (object_size == 0)
             {
                 return 0;
@@ -3234,7 +3377,7 @@ namespace sogen
 
             std::vector<uint8_t> object_data(object_size, 0);
 
-            if (entry.Type == k_gdi_bitmap_type)
+            if (object_type == k_gdi_bitmap_type)
             {
                 const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(handle_value);
                 if (bmp_it != c.proc.gdi_bitmap_surfaces.end())
@@ -3255,7 +3398,7 @@ namespace sogen
                     bitmap.as<uint32_t>(20).set(static_cast<uint32_t>(surface.guest_bits));
                 }
             }
-            else if (entry.Type == k_gdi_font_type)
+            else if (object_type == k_gdi_font_type)
             {
                 if (const auto font_it = c.proc.gdi_fonts.find(handle_value); font_it != c.proc.gdi_fonts.end())
                 {
@@ -4143,8 +4286,12 @@ namespace sogen
                 }
             }
 
-            const auto color = get_dc_pen_color(c, dc);
-            draw_line(*surface, dc_state->current_x + origin_x, dc_state->current_y + origin_y, x_end + origin_x, y_end + origin_y, color);
+            if (!is_stock_object_selected(c, dc, k_gdi_dc_attr_hpen_offset, k_stock_null_pen_index))
+            {
+                const auto color = get_dc_pen_color(c, dc);
+                draw_line(*surface, dc_state->current_x + origin_x, dc_state->current_y + origin_y, x_end + origin_x, y_end + origin_y,
+                          color);
+            }
 
             dc_state->current_x = x_end;
             dc_state->current_y = y_end;
@@ -4313,7 +4460,12 @@ namespace sogen
                 }
             }
 
-            const uint32_t pattern = get_dc_brush_color(c, dst_dc);
+            const auto pattern_color = get_dc_brush_color(c, dst_dc);
+            if (!pattern_color && !needs_source && rop3_uses_pattern(rop3))
+            {
+                return TRUE;
+            }
+            const uint32_t pattern = pattern_color.value_or(0xFFFFFFFFu);
 
             for (size_t row = 0; row < blt_height; ++row)
             {
@@ -4390,7 +4542,12 @@ namespace sogen
             const bool flip_src_x = src_width < 0;
             const bool flip_src_y = src_height < 0;
 
-            const uint32_t pattern = get_dc_brush_color(c, dst_dc);
+            const auto pattern_color = get_dc_brush_color(c, dst_dc);
+            if (!pattern_color && !needs_source && rop3_uses_pattern(rop3))
+            {
+                return TRUE;
+            }
+            const uint32_t pattern = pattern_color.value_or(0xFFFFFFFFu);
 
             for (int dy = 0; dy < dst_h; ++dy)
             {
@@ -4551,7 +4708,7 @@ namespace sogen
         }
 
         BOOL handle_NtGdiPatBlt(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const LONG width, const LONG height,
-                                const DWORD /*rop*/)
+                                const DWORD rop)
         {
             gdi_dc_state* dc_state = nullptr;
             gdi_bitmap_surface* surface = nullptr;
@@ -4562,12 +4719,24 @@ namespace sogen
                 return FALSE;
             }
 
+            const auto rop3 = static_cast<uint8_t>((rop >> 16) & 0xFFu);
             const auto color = get_dc_brush_color(c, dc);
+            if (!color && rop3_uses_pattern(rop3))
+            {
+                return TRUE;
+            }
+
+            const auto pattern = color.value_or(0);
             for (int yy = 0; yy < height; ++yy)
             {
                 for (int xx = 0; xx < width; ++xx)
                 {
-                    set_surface_pixel(*surface, x + xx + origin_x, y + yy + origin_y, color);
+                    const auto px = x + xx + origin_x;
+                    const auto py = y + yy + origin_y;
+                    if (const auto destination = get_surface_pixel(*surface, px, py))
+                    {
+                        set_surface_pixel(*surface, px, py, apply_rop3(rop3, 0, *destination, pattern) | 0xFF000000u);
+                    }
                 }
             }
             return TRUE;
@@ -4606,9 +4775,12 @@ namespace sogen
                     return FALSE;
                 }
 
-                const auto color = brush != 0 ? get_brush_color(c, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
-                fill_rect(*surface, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x, rect[1] + rect[3] + origin_y,
-                          color);
+                const auto color = brush != 0 ? get_brush_color_in_dc(c, dc, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
+                if (color)
+                {
+                    fill_rect(*surface, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x, rect[1] + rect[3] + origin_y,
+                              *color);
+                }
             }
             return TRUE;
         }
