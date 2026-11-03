@@ -458,7 +458,7 @@ namespace sogen
                     entry_obj.access([&](GDI_HANDLE_ENTRY64& writable) {
                         writable = {};
                         writable.Object = object_ptr;
-                        writable.Owner.ProcessId = static_cast<uint16_t>(c.proc.process_id);
+                        writable.Owner = c.proc.process_id;
                         writable.Unique = unique;
                         writable.Type = type;
                         writable.Flags = 0;
@@ -2412,8 +2412,7 @@ namespace sogen
             {
                 const auto& entry = entries[index];
                 const auto handle_value = (static_cast<uint32_t>(entry.Unique) << 16) | index;
-                if (entry.Type != 0 && entry.Owner.ProcessId == static_cast<uint16_t>(c.proc.process_id) &&
-                    !system_objects.contains(handle_value))
+                if (entry.Type != 0 && (entry.Owner & ~1u) == c.proc.process_id && !system_objects.contains(handle_value))
                 {
                     ++count;
                 }
@@ -2455,7 +2454,9 @@ namespace sogen
             const auto dc = allocate_gdi_dc(c, dc_attr);
             if (dc != 0)
             {
-                c.proc.gdi_dc_states[dc].target_window = window;
+                auto& state = c.proc.gdi_dc_states[dc];
+                state.target_window = window;
+                state.is_window_dc = true;
             }
             return dc;
         }
@@ -4799,7 +4800,7 @@ namespace sogen
             {
                 GDI_HANDLE_ENTRY32 entry32{};
                 entry32.Object = static_cast<uint32_t>(entry.Object & std::numeric_limits<uint32_t>::max());
-                entry32.OwnerValue = entry.Owner.Value;
+                entry32.OwnerValue = entry.Owner;
                 entry32.Unique = entry.Unique;
                 entry32.Type = entry.Type;
                 entry32.Flags = entry.Flags;
