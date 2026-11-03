@@ -3,6 +3,10 @@
 
 namespace sogen::syscalls
 {
+    NTSTATUS handle_NtGdiInit(const syscall_context& c);
+    uint64_t handle_NtGdiCreatePen(const syscall_context& c, uint32_t style, uint32_t width, uint32_t color);
+    uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
+    DWORD handle_NtUserGetGuiResources(const syscall_context& c, handle process, DWORD flags);
     BOOL handle_NtUserGetWindowDisplayAffinity(const syscall_context& c, hwnd window, emulator_object<DWORD> affinity);
     BOOL handle_NtUserShowOwnedPopups(const syscall_context& c, hwnd owner, BOOL show);
     BOOL handle_NtUserGetCurrentInputMessageSource(const syscall_context& c, emulator_pointer source);
@@ -56,6 +60,11 @@ namespace sogen::test
                 return this->create_window(this->emu.process.default_desktop_window_handle.bits, owner, style);
             }
 
+            DWORD gui_resources(const handle process, const DWORD flags)
+            {
+                return syscalls::handle_NtUserGetGuiResources(this->context(), process, flags);
+            }
+
             BOOL affinity(const hwnd window)
             {
                 this->emu.memory.write_memory(this->storage, untouched_value);
@@ -70,6 +79,96 @@ namespace sogen::test
             windows_emulator emu = create_sample_emulator();
             uint64_t storage{};
         };
+    }
+
+    TEST_F(UserQueryTest, GuiResourcesRejectUnknownFlagsAndNonProcessHandles)
+    {
+        for (const DWORD flags : {5u, 8u, 0x10u, 0xFFFFFFFFu})
+        {
+            this->set_last_error(untouched_error);
+            EXPECT_EQ(0u, this->gui_resources(CURRENT_PROCESS, flags));
+            EXPECT_EQ(87u, this->last_error());
+        }
+
+        const auto event_handle = this->emu.process.events.store(event{});
+        for (const auto process : {handle{}, make_handle(0x1234), event_handle})
+        {
+            this->set_last_error(untouched_error);
+            EXPECT_EQ(0u, this->gui_resources(process, gui_resources_gdiobjects));
+            EXPECT_EQ(87u, this->last_error());
+        }
+
+        for (const DWORD flags : {0u, 1u, 2u, 3u, 4u})
+        {
+            this->set_last_error(untouched_error);
+            EXPECT_EQ(0u, this->gui_resources(CURRENT_PROCESS, flags));
+            EXPECT_EQ(untouched_error, this->last_error());
+        }
+
+        for (const DWORD flags : {0u, 1u, 2u})
+        {
+            this->set_last_error(untouched_error);
+            this->gui_resources(make_handle(gui_resources_global_process), flags);
+            EXPECT_EQ(untouched_error, this->last_error());
+        }
+    }
+
+    TEST_F(UserQueryTest, GuiResourcesAcceptAnotherProcessWithoutError)
+    {
+        emulator_process child{};
+        child.process.value = 1;
+        const auto child_handle = this->emu.process.processes.store(std::move(child));
+
+        for (const auto other_process : {child_handle, handle{STEAM_PROCESS_HANDLE}})
+        {
+            for (const DWORD flags : {0u, 1u, 2u, 3u, 4u})
+            {
+                this->set_last_error(untouched_error);
+                this->gui_resources(other_process, flags);
+                EXPECT_EQ(untouched_error, this->last_error());
+            }
+        }
+
+        ASSERT_TRUE(this->emu.process.processes.erase(child_handle));
+        this->set_last_error(untouched_error);
+        EXPECT_EQ(0u, this->gui_resources(child_handle, gui_resources_gdiobjects));
+        EXPECT_EQ(87u, this->last_error());
+    }
+
+    TEST_F(UserQueryTest, GuiResourcesCountProcessObjectsAndKeepPeaks)
+    {
+        const auto counts = [&] {
+            return std::array{this->gui_resources(CURRENT_PROCESS, gui_resources_gdiobjects),
+                              this->gui_resources(CURRENT_PROCESS, gui_resources_userobjects),
+                              this->gui_resources(CURRENT_PROCESS, gui_resources_gdiobjects_peak),
+                              this->gui_resources(CURRENT_PROCESS, gui_resources_userobjects_peak)};
+        };
+
+        ASSERT_NE(STATUS_UNSUCCESSFUL, syscalls::handle_NtGdiInit(this->context()));
+        EXPECT_EQ((std::array<DWORD, 4>{0, 0, 0, 0}), counts());
+
+        std::array<uint32_t, 10> pens{};
+        for (auto& pen : pens)
+        {
+            pen = static_cast<uint32_t>(syscalls::handle_NtGdiCreatePen(this->context(), 0, 1, 0x030201));
+            ASSERT_NE(0u, pen);
+        }
+        EXPECT_EQ((std::array<DWORD, 4>{10, 0, 10, 0}), counts());
+
+        const auto first = this->create_top_level_window();
+        const auto second = this->create_top_level_window();
+        EXPECT_EQ((std::array<DWORD, 4>{10, 2, 10, 2}), counts());
+
+        for (const auto pen : pens)
+        {
+            EXPECT_EQ(1u, syscalls::handle_NtGdiDeleteObjectApp(this->context(), pen));
+        }
+        EXPECT_TRUE(this->emu.process.windows.erase(first));
+        EXPECT_TRUE(this->emu.process.windows.erase(second));
+
+        this->set_last_error(untouched_error);
+        EXPECT_EQ((std::array<DWORD, 4>{0, 0, 10, 2}), counts());
+        EXPECT_EQ(untouched_error, this->last_error());
     }
 
     TEST_F(UserQueryTest, DisplayAffinityIsNoneForTopLevelWindowsOnly)
