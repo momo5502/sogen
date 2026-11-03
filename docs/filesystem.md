@@ -11,9 +11,15 @@ root (Windows hosts only), Sogen mounts the host drives directly. The registry (
 (`<root>/dpapi`) are outside `filesys`, so the guest cannot open them. Sogen reads the DPAPI master key from the root,
 but never writes it.
 
-Add mounts with `--mount HOST:GUEST[:MODE]`. HOST can be a file or a directory. If you do not give MODE, the mount
-uses the default mode, which is `ro`. `-p GUEST HOST` is the same as `--mount HOST:GUEST`. In Python, use
-`root_mode="ro"` and `mounts=[(host, guest)]` or `mounts=[(host, guest, mode)]`.
+The sandbox can also mount the root drives copy-on-write, with `--root-mode cow --root-layer DIR`. This mode needs an
+emulation root and a layer directory, and it applies only to the root drives. Guest writes to drive `C:\` go to
+`DIR/c/upper`, and its deletions are recorded in `DIR/c/state`. The layer directories use the drive letter in lower
+case. The root itself does not change. Child processes get the same layer, and a later run with the same layer sees
+the earlier changes. The Android app uses this mode with one layer per game.
+
+Add mounts with `--mount HOST:GUEST[:MODE]`. HOST can be a file or a directory. MODE is `ro` or `rw`. If you do not
+give MODE, the mount uses the default mode, which is `ro`. `-p GUEST HOST` is the same as `--mount HOST:GUEST`. In
+Python, use `root_mode="ro"` and `mounts=[(host, guest)]` or `mounts=[(host, guest, mode)]`.
 
 A guest write to a `ro` mount fails with `STATUS_ACCESS_DENIED`, and the host files do not change. This applies to:
 
