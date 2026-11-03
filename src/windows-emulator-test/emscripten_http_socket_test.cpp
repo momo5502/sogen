@@ -76,7 +76,7 @@ namespace sogen::test
         }
     }
 
-    TEST(EmscriptenHttpSocketTest, LiveDnsReturnsAddressesAcceptedByTheBridge)
+    TEST(EmscriptenHttpSocketTest, LiveDnsReturnsNonLoopbackAddressesAcceptedByTheBridge)
     {
         const auto lookup = network::create_dns_lookup(network::network_mode::live);
         const auto factory = network::create_socket_factory(network::network_mode::live);
@@ -88,6 +88,17 @@ namespace sogen::test
             for (auto peer : addresses)
             {
                 EXPECT_EQ(peer.get_family(), family);
+                if (peer.is_ipv4())
+                {
+                    const auto ip = ntohl(peer.get_in_addr().sin_addr.s_addr);
+                    EXPECT_NE(ip >> 24, 127u);
+                    EXPECT_NE(ip, INADDR_ANY);
+                }
+                else
+                {
+                    EXPECT_FALSE(IN6_IS_ADDR_LOOPBACK(&peer.get_in6_addr().sin6_addr));
+                    EXPECT_FALSE(IN6_IS_ADDR_UNSPECIFIED(&peer.get_in6_addr().sin6_addr));
+                }
                 peer.set_port(80);
                 const auto socket = factory->create_socket(family, SOCK_STREAM, IPPROTO_TCP);
                 EXPECT_TRUE(socket->connect(peer));

@@ -23,13 +23,21 @@ namespace sogen
                     address resolved{};
                     if (family && *family == AF_INET6)
                     {
-                        in6_addr loopback{};
-                        loopback.s6_addr[15] = 1;
-                        resolved.set_ipv6(loopback);
+                        in6_addr placeholder{};
+                        if (inet_pton(AF_INET6, "2001:db8::1", &placeholder) != 1)
+                        {
+                            return {};
+                        }
+                        resolved.set_ipv6(placeholder);
                     }
                     else
                     {
-                        resolved.set_ipv4(htonl(INADDR_LOOPBACK));
+                        in_addr placeholder{};
+                        if (inet_pton(AF_INET, "198.18.0.1", &placeholder) != 1)
+                        {
+                            return {};
+                        }
+                        resolved.set_ipv4(placeholder);
                     }
 
                     return {resolved};
