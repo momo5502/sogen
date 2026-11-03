@@ -14,7 +14,7 @@ abstract final class SogenColors {
   static const neutral800 = Color(0xFF262626);
   static const neutral900 = Color(0xFF171717);
 
-  /// The feature icon colors, once around the color wheel, so that games taking them in turn wrap around smoothly.
+  /// The feature icon colors, which games take in turn, in color wheel order.
   static const accents = [
     Color(0xFFF4C04A),
     Color(0xFFCDD24A),
@@ -22,12 +22,9 @@ abstract final class SogenColors {
     Color(0xFF5ECB9A),
     Color(0xFF45C2CF),
     Color(0xFF5CB8F7),
-    Color(0xFF7785F2),
-    Color(0xFFA377F2),
-    Color(0xFFDC77F2),
-    Color(0xFFF277CE),
-    Color(0xFFF27794),
-    Color(0xFFF29477),
+    Color(0xFFB271F4),
+    Color(0xFFF471B3),
+    Color(0xFFF45757),
   ];
 
   static const error = Color(0xFFFF3131);
