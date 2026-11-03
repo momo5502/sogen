@@ -16,6 +16,11 @@ namespace sogen::macos_dyld_test
 {
     namespace
     {
+        std::unique_ptr<x86_64_emulator> create_backend()
+        {
+            return create_x86_64_emulator_from_environment();
+        }
+
         // Built by src/tools/create-macos-root.sh on the machine running the tests; it is never distributed.
         std::optional<std::filesystem::path> get_emulation_root()
         {
@@ -37,7 +42,7 @@ namespace sogen::macos_dyld_test
         run_result run_root_binary(const std::filesystem::path& root, const std::string_view guest_path,
                                    const std::vector<std::string>& argv, const std::function<void(macos_emulator&)>& prepare = {})
         {
-            macos_emulator emu{create_x86_64_emulator_from_environment(), root, root / guest_path.substr(1), argv, {}};
+            macos_emulator emu{create_backend, root, root / guest_path.substr(1), argv, {}};
             emu.log.disable_output(true);
 
             if (prepare)
@@ -91,6 +96,81 @@ namespace sogen::macos_dyld_test
         std::filesystem::remove_all(listed_directory);
 
         EXPECT_EQ(result.stdout_data, "alpha\nbeta\nsubdirectory\n");
+        EXPECT_EQ(result.exit_status, 0);
+    }
+
+    TEST(MacosDyldTest, RunsBashBuiltins)
+    {
+        const auto root = get_emulation_root();
+        if (!root)
+        {
+            GTEST_SKIP() << "MACOS_EMULATOR_ROOT is not set";
+        }
+
+        const auto listed_directory = std::filesystem::path{::testing::TempDir()} / "macos-dyld-test-bash";
+        std::filesystem::remove_all(listed_directory);
+        std::filesystem::create_directories(listed_directory / "subdirectory");
+        for (const auto* name : {"beta", "alpha"})
+        {
+            const std::ofstream file{listed_directory / name};
+        }
+
+        const auto result =
+            run_root_binary(*root, "/bin/bash", {"/bin/bash", "-c", "cd /listed/subdirectory/.. && pwd && echo *; exit 3"},
+                            [&](macos_emulator& emu) { emu.file_system.add_path_mapping("/listed", listed_directory, true); });
+        std::filesystem::remove_all(listed_directory);
+
+        EXPECT_EQ(result.stdout_data, "/listed\nalpha beta subdirectory\n");
+        EXPECT_EQ(result.exit_status, 3);
+    }
+
+    TEST(MacosDyldTest, ExecsProgramFromBash)
+    {
+        const auto root = get_emulation_root();
+        if (!root)
+        {
+            GTEST_SKIP() << "MACOS_EMULATOR_ROOT is not set";
+        }
+
+        const auto listed_directory = std::filesystem::path{::testing::TempDir()} / "macos-dyld-test-bash-exec";
+        std::filesystem::remove_all(listed_directory);
+        std::filesystem::create_directories(listed_directory / "subdirectory");
+        for (const auto* name : {"beta", "alpha"})
+        {
+            const std::ofstream file{listed_directory / name};
+        }
+
+        const auto result = run_root_binary(*root, "/bin/bash", {"/bin/bash", "-c", "ls /listed"}, [&](macos_emulator& emu) {
+            emu.file_system.add_path_mapping("/listed", listed_directory, true);
+        });
+        std::filesystem::remove_all(listed_directory);
+
+        EXPECT_EQ(result.stdout_data, "alpha\nbeta\nsubdirectory\n");
+        EXPECT_EQ(result.exit_status, 0);
+    }
+
+    TEST(MacosDyldTest, RunsBashScriptThatForksPrograms)
+    {
+        const auto root = get_emulation_root();
+        if (!root)
+        {
+            GTEST_SKIP() << "MACOS_EMULATOR_ROOT is not set";
+        }
+
+        const auto listed_directory = std::filesystem::path{::testing::TempDir()} / "macos-dyld-test-bash-fork";
+        std::filesystem::remove_all(listed_directory);
+        std::filesystem::create_directories(listed_directory / "subdirectory");
+        {
+            std::ofstream script{listed_directory / "script"};
+            script << "cd /listed\nls\nls missing\necho $?\npwd\n";
+        }
+
+        const auto result = run_root_binary(*root, "/bin/bash", {"/bin/bash", "/listed/script"}, [&](macos_emulator& emu) {
+            emu.file_system.add_path_mapping("/listed", listed_directory, true);
+        });
+        std::filesystem::remove_all(listed_directory);
+
+        EXPECT_EQ(result.stdout_data, "script\nsubdirectory\n1\n/listed\n");
         EXPECT_EQ(result.exit_status, 0);
     }
 }

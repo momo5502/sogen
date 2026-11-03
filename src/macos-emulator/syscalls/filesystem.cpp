@@ -259,6 +259,60 @@ namespace sogen
         get_attributes(c, file->guest_path);
     }
 
+    // The limits of APFS, the file system of the whole emulation root.
+    void sys_pathconf(const macos_syscall_context& c)
+    {
+        constexpr uint64_t pc_name_max = 4;
+        constexpr uint64_t pc_path_max = 5;
+
+        const auto path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
+        const auto name = get_macos_syscall_argument(c.emu, 1);
+        if (!path)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        if (path->empty() || !std::filesystem::exists(c.emu_ref.file_system.translate(c.emu_ref.resolve_guest_path(*path))))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+            return;
+        }
+
+        switch (name)
+        {
+        case pc_name_max:
+            write_macos_syscall_success(c, 255);
+            return;
+        case pc_path_max:
+            write_macos_syscall_success(c, 1024);
+            return;
+        default:
+            c.emu_ref.log.error("Unhandled pathconf(%s, %llu)\n", path->c_str(), static_cast<unsigned long long>(name));
+            c.emu_ref.stop();
+            return;
+        }
+    }
+
+    void sys_fstatfs64(const macos_syscall_context& c)
+    {
+        const auto* file = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
+        if (file == nullptr || !is_vnode(*file))
+        {
+            write_macos_syscall_error(c, file == nullptr ? macos_errno::MACOS_EBADF : macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        const auto info = root_filesystem();
+        if (!c.emu.try_write_memory(get_macos_syscall_argument(c.emu, 1), &info, sizeof(info)))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        write_macos_syscall_success(c, 0);
+    }
+
     void sys_getfsstat64(const macos_syscall_context& c)
     {
         const auto buffer = get_macos_syscall_argument(c.emu, 0);

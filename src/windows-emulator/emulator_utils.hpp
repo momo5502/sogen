@@ -10,6 +10,8 @@
 #include "segment_utils.hpp"
 
 #include <utils/time.hpp>
+#include <algorithm>
+#include <array>
 #include <type_traits>
 #include <vector>
 
@@ -387,6 +389,20 @@ namespace sogen
         }
 
         return result;
+    }
+
+    inline bool is_memory_readable(const memory_interface& memory, const uint64_t address, const uint64_t size)
+    {
+        std::array<std::byte, 0x1000> chunk{};
+        for (uint64_t offset = 0; offset < size; offset += chunk.size())
+        {
+            const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(chunk.size(), size - offset));
+            if (!memory.try_read_memory(address + offset, chunk.data(), chunk_size))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     inline std::u16string read_unicode_string(const memory_interface& emu, const UNICODE_STRING<EmulatorTraits<Emu64>> ucs)

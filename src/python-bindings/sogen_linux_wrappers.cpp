@@ -709,6 +709,10 @@ namespace sogen::py
 
     void linux_symbol_hook_registry::refresh_index()
     {
+        // Runs from the module load callback, which the emulator raises while start() holds the GIL released.
+        // Rebuilding the index destroys and creates hook_handle objects, and each one owns an nb::object.
+        nb::gil_scoped_acquire gil{};
+
         for (auto& [_, entry] : this->entries)
         {
             entry.hooks.clear();
@@ -1176,10 +1180,17 @@ namespace sogen::py
     hook_handle linux_hook_registry::memory_violation(nb::object callback)
     {
         auto* emulator = this->emu;
-        const auto observer_id = emulator->add_memory_violation_observer(
-            [cb = std::move(callback)](uint64_t address, size_t size, memory_operation operation, memory_violation_type type) {
+        auto callback_holder = std::shared_ptr<nb::object>{
+            new nb::object(std::move(callback)),
+            [](nb::object* cb) {
                 nb::gil_scoped_acquire gil{};
-                const auto result = cb(address, size, operation, type);
+                delete cb;
+            },
+        };
+        const auto observer_id = emulator->add_memory_violation_observer(
+            [cb = std::move(callback_holder)](uint64_t address, size_t size, memory_operation operation, memory_violation_type type) {
+                nb::gil_scoped_acquire gil{};
+                const auto result = (*cb)(address, size, operation, type);
                 return coerce_memory_violation_continuation(result);
             });
 

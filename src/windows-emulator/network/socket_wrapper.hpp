@@ -23,6 +23,7 @@ namespace sogen
             bool is_listening() override;
 
             std::optional<address> get_local_address() override;
+            std::optional<address> get_remote_address() override;
 
             bool bind(const address& addr) override;
             bool connect(const address& addr) override;

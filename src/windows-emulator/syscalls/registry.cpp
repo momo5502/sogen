@@ -520,6 +520,11 @@ namespace sogen
                 return STATUS_OBJECT_PATH_NOT_FOUND;
             }
 
+            if (registry_notification::has_watchers(c))
+            {
+                registry_notification::report_sub_key_change(c, *entry);
+            }
+
             entry->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
             const auto new_handle = c.proc.registry_keys.store(std::move(entry.value()));
             key_handle.write(new_handle);
@@ -559,7 +564,18 @@ namespace sogen
                 name = u16_to_u8(read_unicode_string(c.emu, value_name));
             }
 
+            auto reports_change = registry_notification::has_watchers(c);
+            if (reports_change)
+            {
+                const auto previous = c.win_emu.registry.get_value(*key, name);
+                reports_change = !previous || previous->type != type || !std::ranges::equal(previous->data, data_buffer);
+            }
+
             c.win_emu.registry.set_value(*key, std::move(name), type, std::span<const std::byte>{data_buffer});
+            if (reports_change)
+            {
+                registry_notification::report_value_change(c, *key);
+            }
 
             return STATUS_SUCCESS;
         }
@@ -584,6 +600,11 @@ namespace sogen
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
+            if (registry_notification::has_watchers(c))
+            {
+                registry_notification::report_value_change(c, *key);
+            }
+
             return STATUS_SUCCESS;
         }
 
@@ -606,12 +627,127 @@ namespace sogen
             }
 
             c.win_emu.registry.delete_key(*key);
+            if (registry_notification::has_watchers(c))
+            {
+                registry_notification::report_sub_key_change(c, *key);
+                registry_notification::end_deleted_key_requests(c);
+            }
+
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtNotifyChangeKey()
+        namespace
         {
-            return STATUS_SUCCESS;
+            NTSTATUS notify_change_keys(const syscall_context& c, const handle key_handle, const ULONG subordinate_count,
+                                        const uint64_t subordinate_objects, const handle event, const uint64_t apc_routine,
+                                        const uint64_t apc_context, const uint64_t io_status_block, const ULONG completion_filter,
+                                        const BOOLEAN watch_tree, const uint64_t buffer, const ULONG buffer_size,
+                                        const BOOLEAN asynchronous)
+            {
+                if (buffer_size != 0 && !buffer)
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                // Windows accepts a thread-agnostic request only when it is asynchronous and has an event but no APC, and
+                // never writes its status block. Every other request gets STATUS_PENDING in its status block before the
+                // remaining checks.
+                const auto thread_agnostic = (completion_filter & reg_notify_thread_agnostic) != 0;
+                if (thread_agnostic && (event.bits == 0 || apc_routine != 0 || !asynchronous))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!thread_agnostic && !registry_notification::write_pending_status(c, io_status_block))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                if ((completion_filter & ~reg_legal_change_filter) != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (const auto status = check_handle_type(key_handle, handle_types::registry); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                auto* key = c.proc.registry_keys.get(key_handle);
+                if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (event.bits != 0)
+                {
+                    if (const auto status = check_handle_type(event, handle_types::event); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+
+                    if (!c.proc.events.get(event))
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+                }
+
+                if (subordinate_count != 0)
+                {
+                    if (!subordinate_objects)
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    c.win_emu.log.error("NtNotifyChangeMultipleKeys with a subordinate key is not supported\n");
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                // A synchronous request neither resets nor signals its event and queues no APC.
+                const registry_notify_request request{
+                    .thread_id = c.thread().id,
+                    .thread_ended_waits = c.thread().ended_waits,
+                    .event = asynchronous ? event : handle{},
+                    .apc_routine = asynchronous ? apc_routine : 0,
+                    .apc_context = asynchronous ? apc_context : 0,
+                    .io_status_block = thread_agnostic ? 0 : io_status_block,
+                    .synchronous = !asynchronous,
+                    .thread_agnostic = thread_agnostic,
+                };
+
+                const auto status = registry_notification::watch(c, *key, request, completion_filter, watch_tree);
+                if (status == STATUS_PENDING && !asynchronous)
+                {
+                    c.thread().await_file_io = io_status_block;
+                    c.win_emu.yield_thread(c.vcpu, true);
+                }
+
+                return status;
+            }
+        }
+
+        NTSTATUS handle_NtNotifyChangeKey(const syscall_context& c, const handle key_handle, const handle event, const uint64_t apc_routine,
+                                          const uint64_t apc_context, const uint64_t io_status_block, const ULONG completion_filter,
+                                          const BOOLEAN watch_tree, const uint64_t buffer, const ULONG buffer_size,
+                                          const BOOLEAN asynchronous)
+        {
+            return notify_change_keys(c, key_handle, 0, 0, event, apc_routine, apc_context, io_status_block, completion_filter, watch_tree,
+                                      buffer, buffer_size, asynchronous);
+        }
+
+        NTSTATUS handle_NtNotifyChangeMultipleKeys(const syscall_context& c, const handle master_key_handle, const ULONG count,
+                                                   const uint64_t subordinate_objects, const handle event, const uint64_t apc_routine,
+                                                   const uint64_t apc_context, const uint64_t io_status_block,
+                                                   const ULONG completion_filter, const BOOLEAN watch_tree, const uint64_t buffer,
+                                                   const ULONG buffer_size, const BOOLEAN asynchronous)
+        {
+            if (count > 1)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            return notify_change_keys(c, master_key_handle, count, subordinate_objects, event, apc_routine, apc_context, io_status_block,
+                                      completion_filter, watch_tree, buffer, buffer_size, asynchronous);
         }
 
         NTSTATUS handle_NtCreateRegistryTransaction(const syscall_context&, const emulator_object<handle> /*transaction_handle*/,

@@ -121,6 +121,38 @@ namespace sogen
         return highest_address + 1 == lowest_allocation_end ? STATUS_CONFLICTING_ADDRESSES : STATUS_SUCCESS;
     }
 
+    inline bool is_accessible_range(memory_manager& memory, const uint64_t address, const uint64_t size, const memory_permission required)
+    {
+        const auto end = address + size;
+        if (address == 0 || end < address)
+        {
+            return false;
+        }
+
+        for (auto current = address; current < end;)
+        {
+            const auto region = memory.get_region_info(current);
+            if (!region.is_committed || region.permissions.is_guarded() || (region.permissions.common & required) != required)
+            {
+                return false;
+            }
+
+            current = region.start + region.length;
+        }
+
+        return true;
+    }
+
+    inline bool is_readable_range(memory_manager& memory, const uint64_t address, const uint64_t size)
+    {
+        return is_accessible_range(memory, address, size, memory_permission::read);
+    }
+
+    inline bool is_writable_range(memory_manager& memory, const uint64_t address, const uint64_t size)
+    {
+        return is_accessible_range(memory, address, size, memory_permission::write);
+    }
+
     inline NTSTATUS check_handle_type(const handle h, const handle_types::type expected_type)
     {
         if (h.value.type == expected_type)
@@ -134,6 +166,13 @@ namespace sogen
     inline uint64_t get_syscall_argument(const syscall_context& context, const size_t index)
     {
         return context.win_emu.abi().syscall_argument(context.emu, index);
+    }
+
+    inline void set_guest_last_error(const syscall_context& c, uint32_t last_error)
+    {
+        c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
+            teb.LastErrorValue = static_cast<ULONG>(last_error); //
+        });
     }
 
     inline bool is_uppercase(const char character)

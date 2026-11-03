@@ -7,6 +7,7 @@ namespace sogen
 {
     // FSCTL_PIPE_PEEK = CTL_CODE(FILE_DEVICE_NAMED_PIPE, 3, METHOD_BUFFERED, FILE_READ_DATA)
     constexpr ULONG FSCTL_PIPE_PEEK = 0x11400C;
+    constexpr ULONG FSCTL_PIPE_DISCONNECT = 0x110004;
     constexpr ULONG FSCTL_PIPE_LISTEN = 0x110008;
     constexpr ULONG FSCTL_PIPE_WAIT = 0x110018;
     constexpr ULONG FILE_PIPE_CONNECTED_STATE = 3;
@@ -57,6 +58,7 @@ namespace sogen
         void copy_configuration(const named_pipe& source);
         void complete_waits(windows_emulator& win_emu, const windows_path& pipe_path, NTSTATUS status);
         void complete_waits_if_last_server_end(windows_emulator& win_emu) const;
+        void create_endpoints();
 
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
         {
@@ -71,6 +73,10 @@ namespace sogen
             if (c.io_control_code == FSCTL_PIPE_WAIT)
             {
                 return this->start_wait(win_emu, c);
+            }
+            if (c.io_control_code == FSCTL_PIPE_DISCONNECT)
+            {
+                return this->disconnect(win_emu);
             }
 
             win_emu.log.warn("Unsupported named pipe FSCTL: 0x%X\n", static_cast<uint32_t>(c.io_control_code));
@@ -124,6 +130,9 @@ namespace sogen
         NTSTATUS prepare_wait(windows_emulator& win_emu, const io_device_context& context, awaited_pipe& awaited) const;
         bool is_directory() const;
         bool is_synchronous() const;
+        NTSTATUS disconnect(windows_emulator& win_emu);
+        bool is_disconnected() const;
+        void complete_pending_operations(windows_emulator& win_emu, NTSTATUS status);
         NTSTATUS enqueue_operation(windows_emulator& win_emu, io_device_context context,
                                    std::unique_ptr<utils::host_pipe_operation> operation, operation_kind kind, awaited_pipe awaited = {},
                                    NTSTATUS decided_status = STATUS_PENDING);
@@ -142,11 +151,15 @@ namespace sogen
 
             if (!this->endpoint)
             {
-                return STATUS_INVALID_HANDLE;
+                return this->server_end ? STATUS_INVALID_PIPE_STATE : STATUS_INVALID_HANDLE;
             }
             uint32_t available{};
             std::string data;
             const auto result = this->endpoint->peek(data, c.output_buffer_length - header_size, available);
+            if (result.status == utils::pipe_io_status::disconnected)
+            {
+                return STATUS_PIPE_DISCONNECTED;
+            }
             if (result.status != utils::pipe_io_status::success)
             {
                 return result.status == utils::pipe_io_status::broken ? STATUS_PIPE_BROKEN : STATUS_UNSUCCESSFUL;

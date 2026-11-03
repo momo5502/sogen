@@ -1,6 +1,8 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../cpu_context.hpp"
+#include "../exception_dispatch.hpp"
 
 namespace sogen
 {
@@ -48,18 +50,56 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        // A debugger sees the exception first; when it handles it, the thread continues from the raising context, as
+        // after NtContinue. A first chance it does not handle goes to the guest's handlers.
         NTSTATUS handle_NtRaiseException(const syscall_context& c,
                                          const emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> exception_record,
-                                         const emulator_object<CONTEXT64> /*thread_context*/, const BOOLEAN handle_exception)
+                                         const emulator_object<CONTEXT64> thread_context, const BOOLEAN first_chance)
         {
-            if (handle_exception)
+            const auto record = exception_record.read();
+
+            // The guest passes the context of its own architecture, so the read has to match it: an ARM64 context is
+            // smaller than a CONTEXT64 and reading the larger one can run off the end of its mapping.
+            auto* arm64 = dynamic_cast<arm64_cpu*>(&c.emu);
+            const auto arm64_raising_context = arm64 ? c.emu.read_memory<arm64_context>(thread_context.value()) : arm64_context{};
+            const auto context = arm64 ? CONTEXT64{} : thread_context.read();
+
+            // The raising context becomes the thread's state before the debugger is told, as it already is on the
+            // hardware exception path. Otherwise the debugger's GetThreadContext shows this syscall's stub registers,
+            // and a SetThreadContext it makes before DBG_CONTINUE is overwritten afterwards.
+            if (c.win_emu.debugger().is_attached())
             {
-                c.win_emu.log.error("Unhandled exceptions not supported yet!\n");
-                c.emu.stop();
-                return STATUS_NOT_SUPPORTED;
+                if (arm64)
+                {
+                    cpu_context::restore(*arm64, arm64_raising_context);
+                }
+                else
+                {
+                    cpu_context::restore(c.x64_cpu(), context);
+                }
             }
 
-            c.proc.exit_status = exception_record.read().ExceptionCode;
+            if (report_exception_to_debugger(c.win_emu, c.vcpu, record, first_chance != FALSE))
+            {
+                c.write_status = false;
+                return STATUS_SUCCESS;
+            }
+
+            if (first_chance)
+            {
+                c.write_status = false;
+                if (arm64)
+                {
+                    dispatch_exception_record(c.win_emu, c.vcpu, record, arm64_raising_context);
+                }
+                else
+                {
+                    dispatch_exception_record(c.win_emu, c.vcpu, record, context);
+                }
+                return STATUS_SUCCESS;
+            }
+
+            c.proc.exit_status = record.ExceptionCode;
             c.win_emu.callbacks.on_exception();
             c.emu.stop();
 

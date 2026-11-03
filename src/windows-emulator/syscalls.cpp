@@ -31,6 +31,18 @@ namespace sogen
         NTSTATUS handle_NtOpenEvent(const syscall_context& c, emulator_object<uint64_t> event_handle, ACCESS_MASK desired_access,
                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
 
+        // syscalls/debug.cpp
+        NTSTATUS handle_NtCreateDebugObject(const syscall_context& c, emulator_object<handle> debug_object_handle,
+                                            ACCESS_MASK desired_access,
+                                            emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG flags);
+        NTSTATUS handle_NtWaitForDebugEvent(const syscall_context& c, handle debug_handle, BOOLEAN alertable,
+                                            emulator_object<LARGE_INTEGER> timeout, emulator_pointer state_change);
+        NTSTATUS handle_NtDebugContinue(const syscall_context& c, handle debug_handle, emulator_object<CLIENT_ID64> client_id,
+                                        NTSTATUS continue_status);
+        NTSTATUS handle_NtSetInformationDebugObject(const syscall_context& c, handle debug_handle, ULONG information_class,
+                                                    emulator_pointer information, ULONG length, emulator_object<ULONG> return_length);
+        NTSTATUS handle_NtRemoveProcessDebug(const syscall_context& c, handle process_handle, handle debug_handle);
+
         // syscalls/exception.cpp
         NTSTATUS handle_NtRaiseHardError(const syscall_context& c, NTSTATUS error_status, ULONG number_of_parameters,
                                          emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string_parameter_mask,
@@ -349,7 +361,13 @@ namespace sogen
         NTSTATUS handle_NtDeleteValueKey(const syscall_context& c, handle key_handle,
                                          emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name);
         NTSTATUS handle_NtDeleteKey(const syscall_context& c, handle key_handle);
-        NTSTATUS handle_NtNotifyChangeKey();
+        NTSTATUS handle_NtNotifyChangeKey(const syscall_context& c, handle key_handle, handle event, uint64_t apc_routine,
+                                          uint64_t apc_context, uint64_t io_status_block, ULONG completion_filter, BOOLEAN watch_tree,
+                                          uint64_t buffer, ULONG buffer_size, BOOLEAN asynchronous);
+        NTSTATUS handle_NtNotifyChangeMultipleKeys(const syscall_context& c, handle master_key_handle, ULONG count,
+                                                   uint64_t subordinate_objects, handle event, uint64_t apc_routine, uint64_t apc_context,
+                                                   uint64_t io_status_block, ULONG completion_filter, BOOLEAN watch_tree, uint64_t buffer,
+                                                   ULONG buffer_size, BOOLEAN asynchronous);
         NTSTATUS handle_NtCreateRegistryTransaction(const syscall_context& c, emulator_object<handle> transaction_handle,
                                                     ACCESS_MASK desired_access,
                                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
@@ -835,6 +853,9 @@ namespace sogen
         int16_t handle_NtUserVkKeyScanEx();
         BOOL handle_NtUserSetLayeredWindowAttributes();
         BOOL handle_NtUserSetWindowFeedbackSetting();
+        BOOL handle_NtUserUpdateLayeredWindow(const syscall_context& c, hwnd window, hdc destination_dc, emulator_object<POINT> destination,
+                                              emulator_object<SIZE> size, hdc source_dc, emulator_object<POINT> source, COLORREF color_key,
+                                              emulator_pointer blend, DWORD flags, emulator_pointer dirty_rect);
         BOOL handle_NtUserUpdateClientRect(const syscall_context& c, hwnd window);
         int32_t handle_NtUserScrollWindowEx();
         BOOL handle_NtUserRedrawFrame(const syscall_context& c, hwnd window);
@@ -860,6 +881,7 @@ namespace sogen
         uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c);
         NTSTATUS handle_NtGdiDoPalette();
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
+        DWORD handle_NtUserGetGuiResources(const syscall_context& c, handle process, DWORD flags);
         int32_t handle_NtGdiSaveDC(const syscall_context& c, hdc dc);
         BOOL handle_NtGdiRestoreDC(const syscall_context& c, hdc dc, int32_t saved_dc);
         uint64_t handle_NtGdiAddFontMemResourceEx(const syscall_context& c, emulator_pointer buffer, uint32_t buffer_size,
@@ -926,6 +948,8 @@ namespace sogen
                                     handle color_transform);
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
         BOOL handle_NtGdiEqualRgn(const syscall_context& c, handle first_region, handle second_region);
+        int32_t handle_NtGdiCombineRgn(const syscall_context& c, handle destination, handle first_source, handle second_source,
+                                       int32_t mode);
         int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
         uint32_t handle_NtGdiGetRegionData(const syscall_context& c, handle hrgn, ULONG buffer_size, emulator_pointer region_data);
         int32_t handle_NtGdiGetAppClipBox(const syscall_context& c, hdc dc, emulator_object<RECT> rect);
@@ -1343,11 +1367,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtCreateDebugObject()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
         NTSTATUS handle_NtAddAtomEx(const syscall_context& c, const uint64_t atom_name, const ULONG length,
                                     const emulator_object<RTL_ATOM> atom, const ULONG /*flags*/)
         {
@@ -1447,16 +1466,6 @@ namespace sogen
         NTSTATUS handle_NtSetWnfProcessNotificationEvent()
         {
             return STATUS_SUCCESS;
-        }
-
-        NTSTATUS handle_NtSetInformationDebugObject()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        NTSTATUS handle_NtRemoveProcessDebug()
-        {
-            return STATUS_NOT_SUPPORTED;
         }
 
         NTSTATUS handle_NtNotifyChangeDirectoryFileEx()
@@ -1734,6 +1743,7 @@ namespace sogen
         add_handler(NtGdiGetGlyphIndicesW);
         add_handler(NtGdiCreateRectRgn);
         add_handler(NtGdiEqualRgn);
+        add_handler(NtGdiCombineRgn);
         add_handler(NtGdiGetRandomRgn);
         add_handler(NtGdiGetRegionData);
         add_handler(NtGdiGetAppClipBox);
@@ -1808,6 +1818,7 @@ namespace sogen
         add_handler(NtDeleteValueKey);
         add_handler(NtDeleteKey);
         add_handler(NtNotifyChangeKey);
+        add_handler(NtNotifyChangeMultipleKeys);
         add_handler(NtCreateRegistryTransaction);
         add_handler(NtOpenRegistryTransaction);
         add_handler(NtGetCurrentProcessorNumberEx);
@@ -2005,6 +2016,8 @@ namespace sogen
         add_handler(NtSetSecurityObject);
         add_handler(NtSetInformationDebugObject);
         add_handler(NtRemoveProcessDebug);
+        add_handler(NtWaitForDebugEvent);
+        add_handler(NtDebugContinue);
         add_handler(NtNotifyChangeDirectoryFileEx);
         add_handler(NtUserGetHDevName);
         add_handler(NtFlushInstructionCache);
@@ -2171,6 +2184,7 @@ namespace sogen
         add_handler(NtUserActivateKeyboardLayout);
         add_handler(NtUserLoadKeyboardLayoutEx);
         add_handler(NtUserGetGUIThreadInfo);
+        add_handler(NtUserGetGuiResources);
         add_handler(NtNotifyChangeDirectoryFile);
         add_handler(NtUserChangeWindowMessageFilter);
         add_handler(NtUserSetWinEventHook);
@@ -2183,6 +2197,7 @@ namespace sogen
         add_handler(NtUserVkKeyScanEx);
         add_handler(NtUserSetLayeredWindowAttributes);
         add_handler(NtUserSetWindowFeedbackSetting);
+        add_handler(NtUserUpdateLayeredWindow);
         add_handler(NtUserIsChildWindowDpiMessageEnabled);
 
 #undef add_handler

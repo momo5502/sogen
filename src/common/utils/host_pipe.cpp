@@ -130,6 +130,7 @@ namespace sogen::utils
         virtual pipe_io_result read(std::string& data, uint32_t size) = 0;
         virtual pipe_io_result write(std::string_view data) = 0;
         virtual pipe_io_result peek(std::string& data, uint32_t capacity, uint32_t& available) = 0;
+        virtual bool is_disconnected() = 0;
 
         virtual void begin_transfer()
         {
@@ -158,6 +159,7 @@ namespace sogen::utils
             std::array<bool, 2> open{true, true};
             uint32_t quota{};
             bool message_type{};
+            bool disconnected{};
             size_t transfers{};
 
             pipe_state() = default;
@@ -207,6 +209,10 @@ namespace sogen::utils
             pipe_io_result read(std::string& data, const uint32_t size) override
             {
                 const std::scoped_lock lock(this->state->mutex);
+                if (this->state->disconnected)
+                {
+                    return {.status = pipe_io_status::disconnected, .transferred = 0};
+                }
                 auto& buffer = this->state->buffers.at(this->side);
                 const auto count = std::min(static_cast<size_t>(size), buffer.size());
                 if (!size && !this->state->open.at(1 - this->side))
@@ -226,6 +232,10 @@ namespace sogen::utils
             pipe_io_result write(const std::string_view data) override
             {
                 const std::scoped_lock lock(this->state->mutex);
+                if (this->state->disconnected)
+                {
+                    return {.status = pipe_io_status::disconnected, .transferred = 0};
+                }
                 if (!this->state->open.at(1 - this->side))
                 {
                     return {.status = pipe_io_status::broken, .transferred = 0};
@@ -245,6 +255,10 @@ namespace sogen::utils
             pipe_io_result peek(std::string& data, const uint32_t capacity, uint32_t& available) override
             {
                 const std::scoped_lock lock(this->state->mutex);
+                if (this->state->disconnected)
+                {
+                    return {.status = pipe_io_status::disconnected, .transferred = 0};
+                }
                 const auto& buffer = this->state->buffers.at(this->side);
                 available = static_cast<uint32_t>(buffer.size());
                 const auto count = std::min(static_cast<size_t>(capacity), buffer.size());
@@ -252,6 +266,12 @@ namespace sogen::utils
                 return {.status =
                             buffer.empty() && !this->state->open.at(1 - this->side) ? pipe_io_status::broken : pipe_io_status::success,
                         .transferred = static_cast<uint32_t>(count)};
+            }
+
+            bool is_disconnected() override
+            {
+                const std::scoped_lock lock(this->state->mutex);
+                return this->state->disconnected;
             }
         };
 
@@ -390,6 +410,22 @@ namespace sogen::utils
                 data = std::move(result.data);
                 available = result.available;
                 return result.result;
+            }
+
+            bool is_disconnected() override
+            {
+                const std::scoped_lock lock(this->peek_mutex);
+                if (this->pending_peek.valid())
+                {
+                    (void)this->pending_peek.get();
+                }
+                const auto response = this->enqueue([this] {
+                                              pipe_response result;
+                                              result.result = this->request(pipe_request::peek, 0, {}, result.data, result.available);
+                                              return result;
+                                          })
+                                          .get();
+                return response.result.status == pipe_io_status::disconnected;
             }
 
             template <typename F>
@@ -612,6 +648,7 @@ namespace sogen::utils
             buffer.write_shared(local.state, [&](const pipe_state& state) {
                 buffer.write(state.quota);
                 buffer.write(state.message_type);
+                buffer.write(state.disconnected);
                 for (const auto open : state.open)
                 {
                     buffer.write(open);
@@ -637,6 +674,7 @@ namespace sogen::utils
             buffer.read_shared(local.state, [&](pipe_state& state) {
                 buffer.read(state.quota);
                 buffer.read(state.message_type);
+                buffer.read(state.disconnected);
                 for (auto& open : state.open)
                 {
                     buffer.read(open);
@@ -675,6 +713,26 @@ namespace sogen::utils
     pipe_io_result host_pipe::peek(std::string& data, const uint32_t capacity, uint32_t& available) const
     {
         return this->implementation_->peek(data, capacity, available);
+    }
+
+    bool host_pipe::is_disconnected() const
+    {
+        return this->implementation_->is_disconnected();
+    }
+
+    void host_pipe::disconnect() const
+    {
+        const auto endpoint = std::dynamic_pointer_cast<local_endpoint>(this->implementation_);
+        if (!endpoint)
+        {
+            throw std::runtime_error("Cannot disconnect a remote host pipe");
+        }
+        const std::scoped_lock lock(endpoint->state->mutex);
+        endpoint->state->disconnected = true;
+        for (auto& buffer : endpoint->state->buffers)
+        {
+            buffer.clear();
+        }
     }
 
     host_pipe_transfer::host_pipe_transfer(std::shared_ptr<host_pipe::implementation> endpoint)
@@ -764,7 +822,8 @@ namespace sogen::utils
         else
         {
             const auto part = response.result;
-            operation.result.transferred += part.transferred;
+            operation.result.transferred =
+                part.status == pipe_io_status::disconnected ? 0 : operation.result.transferred + part.transferred;
             operation.result.status = part.status;
             if (part.status == pipe_io_status::success && operation.result.transferred < operation.buffer.size())
             {
