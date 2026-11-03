@@ -86,10 +86,19 @@ root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requir
 - **`sync_host_page_apple`'s permission union can strip `PROT_EXEC` or over-grant write access near
   PE section boundaries.** Guest permissions are tracked per-4KB shadow slot but applied per-16KB
   Apple host page (four slots share one host page); when slots sharing a host page disagree, the
-  code unions them (documented in-code as a deliberate, temporary simplification pending a later
-  Mach-exception-handler phase that can resolve per-slot faults properly). A PE's `.text` (RX)
+  code unions them, so a read-only slot next to a writable one stays writable. A PE's `.text` (RX)
   immediately followed by `.data` (RW) landing in the same host page can lose exec permission on the
   tail of the code page — a real execution fault, not just an over-permissive read-only page.
+- **Only a few guard and no-access 4KB pages inside a mixed host page fault, and no reserved
+  ones.** On macOS a guard or `PAGE_NOACCESS` 4KB page that shares a 16KB host page with
+  accessible memory is caught with the debug registers of the host thread running the guest: as
+  many watchpoints as `hw.optional.watchpoint` reports, filled with the host pages nearest below
+  the guest stack pointer first. Every other such page, and every reserved page beside committed
+  memory, is accessible as before. `clflush`/`clwb` on a watched page do not fault, because Arm
+  cache maintenance does not trigger watchpoints. Watchpoints stay off when a startup probe does
+  not see a watched 4KB page fault, or when a debugger is attached at startup; a debugger
+  attached later receives the hits itself. While they are armed, each JIT write-protect toggle
+  costs about 15 ns more, which slows compile-heavy phases slightly.
 - **The MMIO fault path isn't fully async-signal-safe.** `handle_mmio_fault` calls the registered
   MMIO callback directly from inside the real signal handler, rather than through this file's own
   `pending_fault_dispatch_` mechanism (built for exactly this class of hazard, and already used for

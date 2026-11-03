@@ -994,6 +994,7 @@ namespace sogen
             });
 
             c.proc.terminate_thread(*thread, exit_status);
+            registry_notification::end_thread_requests(c, thread->id);
             c.win_emu.callbacks.on_thread_terminated(thread_handle, *thread);
             c.win_emu.wake_idle_vcpu();
 

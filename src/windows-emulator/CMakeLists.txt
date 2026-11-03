@@ -45,7 +45,7 @@ if(NOT SOGEN_ENABLE_CLANG_TIDY)
 endif()
 
 target_link_libraries(windows-emulator PUBLIC emulator minidump process-manager)
-target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol sogen_mbedtls)
+target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol sogen_mbedtls sogen-version)
 if(WIN32)
   target_link_libraries(windows-emulator PRIVATE crypt32)
 endif()

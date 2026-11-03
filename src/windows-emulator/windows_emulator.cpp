@@ -15,8 +15,6 @@
 #include "syscall_dispatcher.hpp"
 #include "syscall_utils.hpp"
 
-#include "memory_permission_ext.hpp"
-
 namespace sogen
 {
     namespace syscalls
@@ -1042,6 +1040,9 @@ namespace sogen
 
     void windows_emulator::vcpu_worker(vcpu_context& vcpu)
     {
+        vcpu.runner = std::this_thread::get_id();
+        const auto clear_runner = utils::finally([&vcpu] { vcpu.runner = std::thread::id{}; });
+
         std::unique_lock lock(this->kernel_lock_);
 
         while (!this->should_stop)
@@ -1418,12 +1419,11 @@ namespace sogen
                 }
             }
 
-            auto region = this->memory.get_region_info(address);
-            if (region.permissions.is_guarded())
+            if (const auto guarded_address = this->memory.find_guard_page_violation_address(address, size, operation))
             {
                 // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
-                this->memory.protect_memory(region.allocation_base, region.length, region.permissions & ~memory_permission_ext::guard);
-                dispatch_guard_page_violation(*this, vcpu, address, operation);
+                this->memory.release_guard_page(*guarded_address);
+                dispatch_guard_page_violation(*this, vcpu, *guarded_address, operation);
             }
             else
             {
@@ -1960,6 +1960,8 @@ namespace sogen
         }
 
         auto& vcpu = this->vcpu(0);
+        vcpu.runner = std::this_thread::get_id();
+        const auto clear_runner = utils::finally([&vcpu] { vcpu.runner = std::thread::id{}; });
 
         std::unique_lock lock(this->kernel_lock_);
 
@@ -2821,7 +2823,13 @@ namespace sogen
 
         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
         {
-            this->vcpu(i).cpu.stop();
+            // A backend whose stop is not thread-safe races with its own execution when stopped from another thread,
+            // such as a Python thread timing out a run. Its vCPU picks up should_stop at the next time-slice yield.
+            auto& vcpu = this->vcpu(i);
+            if (vcpu.cpu.is_stop_thread_safe() || vcpu.runner.load() == std::this_thread::get_id())
+            {
+                vcpu.cpu.stop();
+            }
         }
     }
 

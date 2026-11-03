@@ -2,6 +2,7 @@
 #include "../macos_emulator.hpp"
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -22,10 +23,27 @@ namespace sogen
             std::string value;
         };
 
+        std::string integer_value(const int32_t value)
+        {
+            std::string bytes(sizeof(value), '\0');
+            std::memcpy(bytes.data(), &value, sizeof(value));
+            return bytes;
+        }
+
         // Real XNU OIDs, so callers that hard-code them (CTL_KERN = 1, KERN_VERSION = 4, ...) see the same entries.
         const std::vector<named_sysctl>& named_sysctls()
         {
             static const std::vector<named_sysctl> sysctls{
+                {
+                    .name = "kern.hostname",
+                    .oid = {1, 10},
+                    .value = std::string{"localhost"} + '\0',
+                },
+                {
+                    .name = "kern.ngroups",
+                    .oid = {1, 18},
+                    .value = integer_value(16),
+                },
                 {
                     .name = "kern.osversion",
                     .oid = {1, 65},

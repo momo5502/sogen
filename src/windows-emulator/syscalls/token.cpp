@@ -107,28 +107,6 @@ namespace sogen
                 return groups;
             }
 
-            bool is_writable_range(memory_manager& memory, const uint64_t address, const uint64_t size)
-            {
-                const auto end = address + size;
-                if (address == 0 || end < address)
-                {
-                    return false;
-                }
-
-                for (auto current = address; current < end;)
-                {
-                    const auto region = memory.get_region_info(current);
-                    if (!region.is_committed || !is_writable(region.permissions.common))
-                    {
-                        return false;
-                    }
-
-                    current = region.start + region.length;
-                }
-
-                return true;
-            }
-
             NTSTATUS write_token_groups(const syscall_context& c, const uint64_t token_information, const ULONG token_information_length,
                                         const emulator_object<ULONG> return_length, const std::span<const token_group> groups)
             {

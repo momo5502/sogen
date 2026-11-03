@@ -49,6 +49,8 @@ namespace sogen
             constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
 
+            constexpr uint32_t k_error_invalid_handle = 6;
+
             constexpr uint32_t k_stock_white_brush_index = 0x00;
             constexpr uint32_t k_stock_black_pen_index = 0x06;
             constexpr uint32_t k_stock_system_font_index = 0x0D;
@@ -502,6 +504,263 @@ namespace sogen
                 return addr != 0;
             }
 
+            // RGNATTR. gdi32 answers simple and null regions from it in user mode and edits it in place
+            // (CreateRectRgn, SetRectRgn, OffsetRgn, simple CombineRgn cases), so it is the authority for
+            // those; only complex regions keep their rectangles in process state.
+            struct gdi_region_attr
+            {
+                ULONG attr_flags;
+                ULONG complexity;
+                RECT bounds;
+            };
+
+            static_assert(sizeof(gdi_region_attr) <= k_gdi_region_attr_size);
+
+            using gdi_region_span = std::pair<LONG, LONG>;
+
+            bool is_empty_rect(const RECT& rect)
+            {
+                return rect.left >= rect.right || rect.top >= rect.bottom;
+            }
+
+            std::vector<RECT> rect_region(const RECT& rect)
+            {
+                return is_empty_rect(rect) ? std::vector<RECT>{} : std::vector<RECT>{rect};
+            }
+
+            RECT region_bounds(const std::vector<RECT>& rects)
+            {
+                if (rects.empty())
+                {
+                    return {};
+                }
+
+                auto bounds = rects.front();
+                for (const auto& rect : rects)
+                {
+                    bounds.left = (std::min)(bounds.left, rect.left);
+                    bounds.top = (std::min)(bounds.top, rect.top);
+                    bounds.right = (std::max)(bounds.right, rect.right);
+                    bounds.bottom = (std::max)(bounds.bottom, rect.bottom);
+                }
+
+                return bounds;
+            }
+
+            ULONG region_complexity(const std::vector<RECT>& rects)
+            {
+                if (rects.empty())
+                {
+                    return NULLREGION;
+                }
+
+                return rects.size() == 1 ? SIMPLEREGION : COMPLEXREGION;
+            }
+
+            std::optional<std::vector<RECT>> read_gdi_region(const syscall_context& c, const uint32_t region)
+            {
+                uint64_t attr_address = 0;
+                if (!get_gdi_object_address(c, region, k_gdi_region_type, attr_address))
+                {
+                    return std::nullopt;
+                }
+
+                gdi_region_attr attr{};
+                if (!c.win_emu.memory.try_read_memory(attr_address, &attr, sizeof(attr)))
+                {
+                    return std::nullopt;
+                }
+
+                switch (attr.complexity)
+                {
+                case NULLREGION:
+                    return std::vector<RECT>{};
+                case SIMPLEREGION:
+                    return rect_region(attr.bounds);
+                case COMPLEXREGION:
+                    if (const auto it = c.proc.gdi_regions.find(region); it != c.proc.gdi_regions.end())
+                    {
+                        return it->second;
+                    }
+                    break;
+                default:
+                    break;
+                }
+
+                c.win_emu.log.error("Region 0x%X has unsupported complexity %u\n", region, static_cast<uint32_t>(attr.complexity));
+                return std::nullopt;
+            }
+
+            int32_t store_gdi_region(const syscall_context& c, const uint32_t region, std::vector<RECT> rects)
+            {
+                uint64_t attr_address = 0;
+                if (!get_gdi_object_address(c, region, k_gdi_region_type, attr_address))
+                {
+                    return RGN_ERROR;
+                }
+
+                gdi_region_attr attr{};
+                if (!c.win_emu.memory.try_read_memory(attr_address, &attr, sizeof(attr)))
+                {
+                    return RGN_ERROR;
+                }
+
+                attr.complexity = region_complexity(rects);
+                attr.bounds = region_bounds(rects);
+                if (!c.win_emu.memory.try_write_memory(attr_address, &attr, sizeof(attr)))
+                {
+                    return RGN_ERROR;
+                }
+
+                if (attr.complexity == COMPLEXREGION)
+                {
+                    c.proc.gdi_regions[region] = std::move(rects);
+                }
+                else
+                {
+                    c.proc.gdi_regions.erase(region);
+                }
+
+                return static_cast<int32_t>(attr.complexity);
+            }
+
+            bool region_mode_includes(const int32_t mode, const bool in_first, const bool in_second)
+            {
+                switch (mode)
+                {
+                case RGN_AND:
+                    return in_first && in_second;
+                case RGN_OR:
+                    return in_first || in_second;
+                case RGN_XOR:
+                    return in_first != in_second;
+                case RGN_DIFF:
+                    return in_first && !in_second;
+                case RGN_COPY:
+                    return in_first;
+                default:
+                    return false;
+                }
+            }
+
+            struct gdi_region_source_rect
+            {
+                RECT rect;
+                bool from_second;
+            };
+
+            struct gdi_region_edge
+            {
+                LONG x;
+                bool from_second;
+                int32_t depth_change;
+            };
+
+            std::vector<gdi_region_span> combine_region_band(const std::vector<gdi_region_source_rect>& band_rects, const int32_t mode)
+            {
+                std::vector<gdi_region_edge> edges{};
+                edges.reserve(band_rects.size() * 2);
+                for (const auto& [rect, from_second] : band_rects)
+                {
+                    edges.push_back({.x = rect.left, .from_second = from_second, .depth_change = 1});
+                    edges.push_back({.x = rect.right, .from_second = from_second, .depth_change = -1});
+                }
+
+                std::ranges::sort(edges, {}, &gdi_region_edge::x);
+
+                std::vector<gdi_region_span> spans{};
+                int32_t first_depth = 0;
+                int32_t second_depth = 0;
+                for (size_t i = 0; i < edges.size();)
+                {
+                    const auto left = edges[i].x;
+                    for (; i < edges.size() && edges[i].x == left; ++i)
+                    {
+                        (edges[i].from_second ? second_depth : first_depth) += edges[i].depth_change;
+                    }
+
+                    if (i == edges.size() || !region_mode_includes(mode, first_depth > 0, second_depth > 0))
+                    {
+                        continue;
+                    }
+
+                    const auto right = edges[i].x;
+                    if (!spans.empty() && spans.back().second == left)
+                    {
+                        spans.back().second = right;
+                    }
+                    else
+                    {
+                        spans.emplace_back(left, right);
+                    }
+                }
+
+                return spans;
+            }
+
+            // GetRegionData exposes the y-x banded form Windows keeps regions in.
+            std::vector<RECT> combine_regions(const std::vector<RECT>& first, const std::vector<RECT>& second, const int32_t mode)
+            {
+                std::vector<LONG> band_edges{};
+                std::vector<gdi_region_source_rect> pending{};
+                const auto add_source = [&](const std::vector<RECT>& rects, const bool from_second) {
+                    for (const auto& rect : rects)
+                    {
+                        band_edges.insert(band_edges.end(), {rect.top, rect.bottom});
+                        pending.push_back({.rect = rect, .from_second = from_second});
+                    }
+                };
+
+                add_source(first, false);
+                add_source(second, true);
+
+                std::ranges::sort(band_edges);
+                band_edges.erase(std::ranges::unique(band_edges).begin(), band_edges.end());
+                std::ranges::sort(pending, {}, [](const gdi_region_source_rect& source) { return source.rect.top; });
+
+                std::vector<RECT> result{};
+                std::vector<gdi_region_span> previous_spans{};
+                size_t previous_band_start = 0;
+                std::vector<gdi_region_source_rect> band_rects{};
+                size_t next_pending = 0;
+
+                for (size_t i = 0; i + 1 < band_edges.size(); ++i)
+                {
+                    const auto top = band_edges[i];
+                    const auto bottom = band_edges[i + 1];
+
+                    std::erase_if(band_rects, [&](const gdi_region_source_rect& source) { return source.rect.bottom <= top; });
+                    for (; next_pending < pending.size() && pending[next_pending].rect.top <= top; ++next_pending)
+                    {
+                        band_rects.push_back(pending[next_pending]);
+                    }
+
+                    auto spans = combine_region_band(band_rects, mode);
+                    if (spans.empty())
+                    {
+                        continue;
+                    }
+
+                    if (spans == previous_spans && result.back().bottom == top)
+                    {
+                        for (auto j = previous_band_start; j < result.size(); ++j)
+                        {
+                            result[j].bottom = bottom;
+                        }
+                        continue;
+                    }
+
+                    previous_band_start = result.size();
+                    for (const auto& [left, right] : spans)
+                    {
+                        result.push_back(RECT{.left = left, .top = top, .right = right, .bottom = bottom});
+                    }
+                    previous_spans = std::move(spans);
+                }
+
+                return result;
+            }
+
             void sync_surface_from_guest_dib(const syscall_context& c, gdi_bitmap_surface& surface)
             {
                 if (surface.guest_bits == 0 || surface.guest_stride == 0 || surface.width == 0 || surface.height == 0)
@@ -719,12 +978,7 @@ namespace sogen
                     return;
                 }
 
-                c.win_emu.ui().present_surface(present_handle,
-                                               ui_surface_desc{.width = static_cast<int>(surface->width),
-                                                               .height = static_cast<int>(surface->height),
-                                                               .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
-                                                               .format = ui_surface_format::bgra8,
-                                                               .pixels = surface->pixels.data()});
+                c.win_emu.ui().present_surface(present_handle, make_window_surface_desc(*surface, c.proc.windows.get(present_handle)));
             }
 
             void set_surface_pixel(gdi_bitmap_surface& surface, const int x, const int y, const uint32_t color)
@@ -1776,6 +2030,87 @@ namespace sogen
 
                 return out;
             }
+
+            // Windows fails a request whose output would exceed this many bytes before writing anything.
+            constexpr uint64_t max_char_metric_output_size = 0x2710000;
+
+            bool is_char_metric_request_valid(const syscall_context& c, const hdc dc, const UINT char_count, const size_t entry_size,
+                                              const emulator_pointer chars, const emulator_pointer buffer)
+            {
+                return dc != 0 && buffer != 0 && char_count != 0 &&
+                       static_cast<uint64_t>(char_count) * entry_size <= max_char_metric_output_size &&
+                       (chars == 0 || is_readable_range(c.win_emu.memory, chars, static_cast<uint64_t>(char_count) * sizeof(char16_t)));
+            }
+
+            bool write_guest_block(const syscall_context& c, const emulator_pointer address, const void* data, const size_t size)
+            {
+                return is_writable_range(c.win_emu.memory, address, size) && c.emu.try_write_memory(address, data, size);
+            }
+
+            bool write_guest_bytes_up_to_fault(const syscall_context& c, const emulator_pointer address, const void* data,
+                                               const size_t size)
+            {
+                const auto* bytes = static_cast<const std::byte*>(data);
+                for (size_t offset = 0; offset < size;)
+                {
+                    const auto current = address + offset;
+                    const auto piece = static_cast<size_t>(std::min<uint64_t>(size - offset, page_align_up(current + 1) - current));
+                    if (!write_guest_block(c, current, bytes + offset, piece))
+                    {
+                        return false;
+                    }
+
+                    offset += piece;
+                }
+
+                return true;
+            }
+
+            template <typename Entry>
+            bool write_repeated_entries(const syscall_context& c, const emulator_pointer buffer, const UINT count, const Entry& entry)
+            {
+                std::array<Entry, 0x100> chunk{};
+                chunk.fill(entry);
+                for (UINT written = 0; written < count;)
+                {
+                    const auto chunk_count = std::min<size_t>(chunk.size(), count - written);
+                    if (!write_guest_bytes_up_to_fault(c, buffer + (static_cast<uint64_t>(written) * sizeof(Entry)), chunk.data(),
+                                                       chunk_count * sizeof(Entry)))
+                    {
+                        return false;
+                    }
+
+                    written += static_cast<UINT>(chunk_count);
+                }
+
+                return true;
+            }
+
+            // Windows measures at most this many characters, with or without a fit count or partial extents.
+            constexpr uint64_t max_text_extent_chars = max_char_metric_output_size / (sizeof(char16_t) + sizeof(ULONG));
+
+            bool write_fixed_width_extents(const syscall_context& c, const emulator_pointer extents, const ULONG count)
+            {
+                std::array<ULONG, 0x100> chunk{};
+                for (ULONG written = 0; written < count;)
+                {
+                    const auto chunk_count = std::min<size_t>(chunk.size(), count - written);
+                    for (size_t i = 0; i < chunk_count; ++i)
+                    {
+                        chunk[i] = static_cast<ULONG>((written + i + 1) * k_default_font_width);
+                    }
+
+                    if (!write_guest_bytes_up_to_fault(c, extents + (static_cast<uint64_t>(written) * sizeof(ULONG)), chunk.data(),
+                                                       chunk_count * sizeof(ULONG)))
+                    {
+                        return false;
+                    }
+
+                    written += static_cast<ULONG>(chunk_count);
+                }
+
+                return true;
+            }
         }
 
         // Returns the surface a paint DC should be presented to, and (via present_handle) the host window handle it
@@ -2044,6 +2379,47 @@ namespace sogen
         NTSTATUS handle_NtGdiDoPalette()
         {
             return STATUS_SUCCESS;
+        }
+
+        uint32_t count_process_gdi_objects(const syscall_context& c)
+        {
+            uint64_t table = 0;
+            c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
+            if (table == 0)
+            {
+                return 0;
+            }
+
+            // Windows charges neither the stock objects, the memory DC default bitmap among them, nor the system color
+            // brushes to the process.
+            std::unordered_set<uint32_t> system_objects{c.proc.gdi_memory_dc_default_bitmap_handle};
+            for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::Objects)>; ++index)
+            {
+                system_objects.insert(static_cast<uint32_t>(read_gdi_object_slot(c, index)));
+            }
+            c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
+                for (const auto brush : server_info.ahbrSystem)
+                {
+                    system_objects.insert(static_cast<uint32_t>(brush));
+                }
+            });
+
+            std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
+            c.emu.read_memory(table, entries.data(), entries.size() * sizeof(GDI_HANDLE_ENTRY64));
+
+            uint32_t count = 0;
+            for (uint32_t index = 0; index < entries.size(); ++index)
+            {
+                const auto& entry = entries[index];
+                const auto handle_value = (static_cast<uint32_t>(entry.Unique) << 16) | index;
+                if (entry.Type != 0 && entry.Owner.ProcessId == static_cast<uint16_t>(c.proc.process_id) &&
+                    !system_objects.contains(handle_value))
+                {
+                    ++count;
+                }
+            }
+
+            return count;
         }
 
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, const hdc /*dc*/)
@@ -2730,6 +3106,7 @@ namespace sogen
             c.proc.gdi_dc_states.erase(handle_value);
             c.proc.gdi_bitmap_surfaces.erase(handle_value);
             c.proc.gdi_fonts.erase(handle_value);
+            c.proc.gdi_regions.erase(handle_value);
             return 1;
         }
 
@@ -3143,77 +3520,71 @@ namespace sogen
                                           const ULONG max_extent, const emulator_object<ULONG> fit, const emulator_pointer extents,
                                           const emulator_pointer size, const ULONG /*flags*/)
         {
-            if (dc == 0 || size == 0)
+            // Windows answers an empty string without looking at the DC or the text.
+            if (char_count == 0)
             {
-                return FALSE;
-            }
-
-            // The count sizes buffers the guest passed, so the text is checked before anything is derived from it.
-            // Windows reads the text first, so a count larger than that buffer fails there; the width here does not
-            // depend on the characters, but a bogus count must still fail rather than be believed.
-            if (char_count != 0)
-            {
-                char16_t last_character{};
-                const auto last = text + (static_cast<uint64_t>(char_count) - 1) * sizeof(char16_t);
-                if (text == 0 || !c.win_emu.memory.try_read_memory(last, &last_character, sizeof(last_character)))
+                constexpr SIZE empty_size{};
+                constexpr ULONG no_fit = 0;
+                if (size == 0 || !write_guest_block(c, size, &empty_size, sizeof(empty_size)))
                 {
                     return FALSE;
                 }
+
+                if (fit && !write_guest_block(c, fit.value(), &no_fit, sizeof(no_fit)))
+                {
+                    return FALSE;
+                }
+
+                return TRUE;
+            }
+
+            // Windows reads the whole text before writing anything, although the fixed-width measure does not need it.
+            if (dc == 0 || size == 0 || char_count > max_text_extent_chars ||
+                !is_readable_range(c.win_emu.memory, text, static_cast<uint64_t>(char_count) * sizeof(char16_t)))
+            {
+                return FALSE;
             }
 
             const SIZE text_size{
                 .cx = static_cast<LONG>(k_default_font_width * char_count),
                 .cy = static_cast<LONG>(k_default_font_height),
             };
-            c.emu.write_memory(size, &text_size, sizeof(text_size));
-
-            if (fit)
+            if (!write_guest_block(c, size, &text_size, sizeof(text_size)))
             {
-                fit.write(std::min<ULONG>(char_count, max_extent / k_default_font_width));
+                return FALSE;
             }
 
-            if (extents != 0 && char_count != 0)
+            const ULONG fitting = std::min<ULONG>(char_count, max_extent / k_default_font_width);
+            if (fit && !write_guest_block(c, fit.value(), &fitting, sizeof(fitting)))
             {
-                // Written in fixed chunks: nothing host-side is sized by the guest's count.
-                constexpr ULONG chunk_size = 256;
-                std::array<ULONG, chunk_size> partial_extents{};
+                return FALSE;
+            }
 
-                for (ULONG written = 0; written < char_count; written += chunk_size)
-                {
-                    const auto count = std::min(chunk_size, char_count - written);
-                    for (ULONG i = 0; i < count; ++i)
-                    {
-                        partial_extents[i] = static_cast<ULONG>(k_default_font_width * (written + i + 1));
-                    }
-
-                    const auto destination = extents + static_cast<uint64_t>(written) * sizeof(ULONG);
-                    if (!c.win_emu.memory.try_write_memory(destination, partial_extents.data(), count * sizeof(ULONG)))
-                    {
-                        return FALSE;
-                    }
-                }
+            const ULONG extent_count = fit ? fitting : char_count;
+            if (extents != 0 && !write_fixed_width_extents(c, extents, extent_count))
+            {
+                return FALSE;
             }
 
             return TRUE;
         }
 
         BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
-                                       const emulator_pointer /*chars*/, const UINT /*flags*/, const emulator_pointer buffer)
+                                       const emulator_pointer chars, const UINT /*flags*/, const emulator_pointer buffer)
         {
-            if (dc == 0 || buffer == 0)
+            if (!is_char_metric_request_valid(c, dc, char_count, sizeof(int32_t), chars, buffer))
             {
                 return FALSE;
             }
 
-            const std::vector<int32_t> widths(char_count, static_cast<int32_t>(k_default_font_width));
-            c.emu.write_memory(buffer, widths.data(), widths.size() * sizeof(int32_t));
-            return TRUE;
+            const auto width = static_cast<int32_t>(k_default_font_width);
+            return write_repeated_entries(c, buffer, char_count, width) ? TRUE : FALSE;
         }
 
         BOOL handle_NtGdiGetCharABCWidthsW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
-                                           const emulator_pointer /*chars*/, const UINT /*flags*/, const emulator_pointer buffer)
+                                           const emulator_pointer chars, const UINT /*flags*/, const emulator_pointer buffer)
         {
-            if (dc == 0 || buffer == 0)
+            if (!is_char_metric_request_valid(c, dc, char_count, sizeof(ABC), chars, buffer))
             {
                 return FALSE;
             }
@@ -3223,9 +3594,7 @@ namespace sogen
                 .abcB = k_default_font_width,
                 .abcC = 0,
             };
-            const std::vector<ABC> widths(char_count, metrics);
-            c.emu.write_memory(buffer, widths.data(), widths.size() * sizeof(ABC));
-            return TRUE;
+            return write_repeated_entries(c, buffer, char_count, metrics) ? TRUE : FALSE;
         }
 
         uint32_t handle_NtGdiGetGlyphOutline(const syscall_context& c, const hdc dc, const UINT character, const UINT format,
@@ -3525,62 +3894,60 @@ namespace sogen
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, const LONG x_left, const LONG y_top, const LONG x_right,
                                            const LONG y_bottom)
         {
-            const auto handle = allocate_gdi_object(c, k_gdi_region_type, k_gdi_region_attr_size);
-            uint64_t region_attr = 0;
-            if (handle != 0 && get_gdi_object_address(c, handle, k_gdi_region_type, region_attr))
-            {
-                const RECT rect{
-                    .left = x_left,
-                    .top = y_top,
-                    .right = x_right,
-                    .bottom = y_bottom,
-                };
-                c.emu.write_memory(region_attr, &rect, sizeof(rect));
-            }
-            return handle;
+            const auto region = allocate_gdi_object(c, k_gdi_region_type, k_gdi_region_attr_size);
+            const RECT rect{
+                .left = (std::min)(x_left, x_right),
+                .top = (std::min)(y_top, y_bottom),
+                .right = (std::max)(x_left, x_right),
+                .bottom = (std::max)(y_top, y_bottom),
+            };
+            (void)store_gdi_region(c, region, rect_region(rect));
+            return region;
         }
 
         bool set_gdi_region_rect(const syscall_context& c, const handle region, const RECT& rect)
         {
-            uint64_t region_attr = 0;
-            if (!get_gdi_object_address(c, static_cast<uint32_t>(region.bits), k_gdi_region_type, region_attr))
+            return store_gdi_region(c, static_cast<uint32_t>(region.bits), rect_region(rect)) != RGN_ERROR;
+        }
+
+        int32_t handle_NtGdiCombineRgn(const syscall_context& c, const handle destination, const handle first_source,
+                                       const handle second_source, const int32_t mode)
+        {
+            if (mode < RGN_AND || mode > RGN_COPY)
             {
-                return false;
+                c.win_emu.log.error("Unsupported region combine mode: %d\n", mode);
+                set_guest_last_error(c, k_error_invalid_parameter);
+                return RGN_ERROR;
             }
 
-            c.emu.write_memory(region_attr, &rect, sizeof(rect));
-            return true;
+            const auto first = read_gdi_region(c, static_cast<uint32_t>(first_source.bits));
+            const auto second =
+                mode == RGN_COPY ? std::optional{std::vector<RECT>{}} : read_gdi_region(c, static_cast<uint32_t>(second_source.bits));
+            if (!first || !second)
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+                return RGN_ERROR;
+            }
+
+            const auto result = store_gdi_region(c, static_cast<uint32_t>(destination.bits), combine_regions(*first, *second, mode));
+            if (result == RGN_ERROR)
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+            }
+
+            return result;
         }
 
         BOOL handle_NtGdiEqualRgn(const syscall_context& c, const handle first_region, const handle second_region)
         {
-            uint64_t first_attr = 0;
-            uint64_t second_attr = 0;
-            if (!get_gdi_object_address(c, static_cast<uint32_t>(first_region.bits), k_gdi_region_type, first_attr) ||
-                !get_gdi_object_address(c, static_cast<uint32_t>(second_region.bits), k_gdi_region_type, second_attr))
+            const auto first = read_gdi_region(c, static_cast<uint32_t>(first_region.bits));
+            const auto second = read_gdi_region(c, static_cast<uint32_t>(second_region.bits));
+            if (!first || !second)
             {
                 return FALSE;
             }
 
-            RECT first_rect{};
-            RECT second_rect{};
-            if (!c.win_emu.memory.try_read_memory(first_attr, &first_rect, sizeof(first_rect)) ||
-                !c.win_emu.memory.try_read_memory(second_attr, &second_rect, sizeof(second_rect)))
-            {
-                return FALSE;
-            }
-
-            const auto first_empty = first_rect.left >= first_rect.right || first_rect.top >= first_rect.bottom;
-            const auto second_empty = second_rect.left >= second_rect.right || second_rect.top >= second_rect.bottom;
-            if (first_empty || second_empty)
-            {
-                return first_empty == second_empty ? TRUE : FALSE;
-            }
-
-            return first_rect.left == second_rect.left && first_rect.top == second_rect.top && first_rect.right == second_rect.right &&
-                           first_rect.bottom == second_rect.bottom
-                       ? TRUE
-                       : FALSE;
+            return combine_regions(*first, *second, RGN_XOR).empty() ? TRUE : FALSE;
         }
 
         int32_t handle_NtGdiGetRandomRgn(const syscall_context&, const hdc dc, const uint64_t region, const LONG /*index*/)
@@ -3591,15 +3958,20 @@ namespace sogen
         uint32_t handle_NtGdiGetRegionData(const syscall_context& c, const handle hrgn, const ULONG buffer_size,
                                            const emulator_pointer region_data)
         {
-            uint64_t region_attr = 0;
-            if (!get_gdi_object_address(c, static_cast<uint32_t>(hrgn.bits), k_gdi_region_type, region_attr))
+            const auto rects = read_gdi_region(c, static_cast<uint32_t>(hrgn.bits));
+            if (!rects)
             {
                 return 0;
             }
 
-            (void)region_attr;
+            const auto rects_bytes = rects->size() * sizeof(RECT);
+            if (rects_bytes > std::numeric_limits<DWORD>::max() - sizeof(RGNDATAHEADER))
+            {
+                return 0;
+            }
 
-            constexpr DWORD required_size = sizeof(RGNDATAHEADER);
+            const auto rects_size = static_cast<DWORD>(rects_bytes);
+            const auto required_size = static_cast<DWORD>(sizeof(RGNDATAHEADER) + rects_bytes);
             if (region_data == 0)
             {
                 return required_size;
@@ -3607,16 +3979,22 @@ namespace sogen
 
             if (buffer_size < required_size)
             {
+                set_guest_last_error(c, k_error_invalid_parameter);
                 return 0;
             }
 
             RGNDATAHEADER header{};
             header.dwSize = sizeof(header);
             header.iType = RDH_RECTANGLES;
-            header.nCount = 0;
-            header.nRgnSize = 0;
-            header.rcBound = RECT{};
+            header.nCount = static_cast<DWORD>(rects->size());
+            header.nRgnSize = rects_size;
+            header.rcBound = region_bounds(*rects);
             c.emu.write_memory(region_data, &header, sizeof(header));
+            if (!rects->empty())
+            {
+                c.emu.write_memory(region_data + sizeof(header), rects->data(), rects_size);
+            }
+
             return required_size;
         }
 

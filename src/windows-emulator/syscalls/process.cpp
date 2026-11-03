@@ -1197,6 +1197,7 @@ namespace sogen
                     if (&thread != c.vcpu.active_thread)
                     {
                         c.proc.terminate_thread(thread, exit_status);
+                        registry_notification::end_thread_requests(c, thread.id);
                     }
                 }
 

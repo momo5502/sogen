@@ -399,14 +399,13 @@ namespace sogen
 
         posix_fd new_fd{};
         new_fd.type = fd_type::socket;
-        new_fd.close_on_exec = cloexec;
         new_fd.flags = type_raw & ~LINUX_SOCK_TYPE_MASK;
         new_fd.socket_state = std::make_shared<posix_socket_state>();
         new_fd.socket_state->domain = domain;
         new_fd.socket_state->type = type;
         new_fd.socket_state->protocol = protocol;
 
-        const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
+        const auto fd_num = c.proc.fds.allocate(std::move(new_fd), cloexec);
 
         write_linux_syscall_result(c, fd_num);
     }

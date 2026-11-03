@@ -802,6 +802,7 @@ namespace sogen
 
     void emulator_thread::mark_as_ready(const NTSTATUS status)
     {
+        ++this->ended_waits;
         this->pending_status = status;
         this->message_wait_return_register.reset();
         this->await_time = {};
@@ -1366,8 +1367,7 @@ namespace sogen
 
         if (this->await_file_io)
         {
-            const auto status =
-                emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>{*this->memory_ptr, *this->await_file_io}.read().Status;
+            const auto status = this->memory_ptr->read_memory<NTSTATUS>(*this->await_file_io);
             if (status == STATUS_PENDING)
             {
                 return false;

@@ -584,10 +584,13 @@ namespace sogen
         this->zw_callback_return = ntdll.find_export("ZwCallbackReturn");
         this->gdi_default_dc_handle = 0;
         this->gdi_memory_dc_default_bitmap_handle = 0;
+        this->gdi_objects_peak = 0;
+        this->user_objects_peak = 0;
         this->gdi_dc_states.clear();
         this->gdi_dc_save_states.clear();
         this->gdi_bitmap_surfaces.clear();
         this->gdi_fonts.clear();
+        this->gdi_regions.clear();
         this->gdi_window_surfaces.clear();
         this->dxgk = {};
         this->etw_notification_event.reset();
@@ -1070,11 +1073,14 @@ namespace sogen
         buffer.write(this->dispatch_client_message);
         buffer.write(this->gdi_default_dc_handle);
         buffer.write(this->gdi_memory_dc_default_bitmap_handle);
+        buffer.write(this->gdi_objects_peak);
+        buffer.write(this->user_objects_peak);
         buffer.write_map(this->pending_alpc_reply_views);
         buffer.write_map(this->gdi_dc_states);
         buffer.write_map(this->gdi_dc_save_states);
         buffer.write_map(this->gdi_bitmap_surfaces);
         buffer.write_map(this->gdi_fonts);
+        buffer.write_map(this->gdi_regions);
         buffer.write_map(this->gdi_window_surfaces);
         buffer.write(this->dxgk);
         buffer.write_optional(this->etw_notification_event);
@@ -1202,11 +1208,14 @@ namespace sogen
         buffer.read(this->dispatch_client_message);
         buffer.read(this->gdi_default_dc_handle);
         buffer.read(this->gdi_memory_dc_default_bitmap_handle);
+        buffer.read(this->gdi_objects_peak);
+        buffer.read(this->user_objects_peak);
         buffer.read_map(this->pending_alpc_reply_views);
         buffer.read_map(this->gdi_dc_states);
         buffer.read_map(this->gdi_dc_save_states);
         buffer.read_map(this->gdi_bitmap_surfaces);
         buffer.read_map(this->gdi_fonts);
+        buffer.read_map(this->gdi_regions);
         buffer.read_map(this->gdi_window_surfaces);
         buffer.read(this->dxgk);
         buffer.read_optional(this->etw_notification_event);
@@ -1440,14 +1449,7 @@ namespace sogen
                 continue;
             }
 
-            const auto& restored = surface->second;
-            win_emu.ui().present_surface(win.handle, ui_surface_desc{
-                                                         .width = static_cast<int>(restored.width),
-                                                         .height = static_cast<int>(restored.height),
-                                                         .stride = static_cast<int>(restored.width * sizeof(uint32_t)),
-                                                         .format = ui_surface_format::bgra8,
-                                                         .pixels = restored.pixels.data(),
-                                                     });
+            win_emu.ui().present_surface(win.handle, make_window_surface_desc(surface->second, &win));
         }
     }
 

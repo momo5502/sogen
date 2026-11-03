@@ -127,6 +127,22 @@ namespace sogen
         }
     };
 
+    // Every path that presents a window surface goes through this, so none of them can drop the layered-window
+    // alpha and have the compositor show a layered window opaque.
+    inline ui_surface_desc make_window_surface_desc(const gdi_bitmap_surface& surface, const window* win)
+    {
+        return ui_surface_desc{
+            .width = static_cast<int>(surface.width),
+            .height = static_cast<int>(surface.height),
+            .stride = static_cast<int>(surface.width * sizeof(uint32_t)),
+            .format = ui_surface_format::bgra8,
+            .pixels = surface.pixels.data(),
+            .layered = win && win->layered_blend,
+            .premultiplied_alpha = win && win->layered_premultiplied_alpha,
+            .constant_alpha = win ? win->layered_constant_alpha : uint8_t{255},
+        };
+    }
+
     struct gdi_dc_state
     {
         uint32_t selected_bitmap{};
@@ -474,11 +490,14 @@ namespace sogen
         uint64_t dispatch_client_message{};
         uint32_t gdi_default_dc_handle{};
         uint32_t gdi_memory_dc_default_bitmap_handle{};
+        uint32_t gdi_objects_peak{};
+        uint32_t user_objects_peak{};
         std::map<uint32_t, gdi_dc_state> gdi_dc_states{};
         // Per-DC stack of states pushed by NtGdiSaveDC and popped by NtGdiRestoreDC.
         std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         std::map<uint32_t, EMU_LOGFONTW> gdi_fonts{};
+        std::map<uint32_t, std::vector<RECT>> gdi_regions{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         dxgk_state dxgk{};
