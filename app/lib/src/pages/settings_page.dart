@@ -65,8 +65,15 @@ class _SettingsPageState extends State<SettingsPage> {
         ],
       ),
     );
-    if (signOut == true) {
+    if (signOut != true) {
+      return;
+    }
+    try {
       await widget.cloud.signOut();
+    } on Exception catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not sign out: $e')));
+      }
     }
   }
 
@@ -89,15 +96,19 @@ class _SettingsPageState extends State<SettingsPage> {
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Cloud saves'),
-                subtitle: Text(
-                  widget.cloud.isSignedIn
-                      ? 'Signed in as ${widget.cloud.email}'
-                      : 'Sign in with Google to keep saves in your Google Drive',
-                  style: subtitleStyle,
-                ),
-                trailing: TextButton(
-                  onPressed: widget.cloud.isSignedIn ? _signOut : _signIn,
-                  child: Text(widget.cloud.isSignedIn ? 'Sign out' : 'Sign in'),
+                subtitle: Text(switch (widget.cloud) {
+                  CloudAccount(isSignedIn: false) => 'Sign in with Google to keep saves in your Google Drive',
+                  CloudAccount(hasDriveAccess: false) =>
+                    'Signed in as ${widget.cloud.email}, but Sogen may not use your Google Drive',
+                  _ => 'Signed in as ${widget.cloud.email}',
+                }, style: subtitleStyle),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (!widget.cloud.isSignedIn || !widget.cloud.hasDriveAccess)
+                      TextButton(onPressed: _signIn, child: Text(widget.cloud.isSignedIn ? 'Allow' : 'Sign in')),
+                    if (widget.cloud.isSignedIn) TextButton(onPressed: _signOut, child: const Text('Sign out')),
+                  ],
                 ),
               ),
             SwitchListTile(

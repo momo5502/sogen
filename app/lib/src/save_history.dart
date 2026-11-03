@@ -58,13 +58,15 @@ class StoredRevision {
 
 final _contentHashPattern = RegExp(r'^[0-9a-f]{64}$');
 
+bool isValidContentHash(String hash) => _contentHashPattern.hasMatch(hash);
+
 /// The revisions a store holds for one save space. Revisions are never changed, only added and pruned, so the
 /// revisions no other revision builds on are the latest saves: one when the devices agree, several after two of
 /// them saved from the same revision.
 class SaveHistory {
   SaveHistory(this.saveSpaceId, Iterable<StoredRevision> revisions) {
     for (final stored in revisions) {
-      if (stored.revision.saveSpaceId != saveSpaceId || !_contentHashPattern.hasMatch(stored.contentHash)) {
+      if (stored.revision.saveSpaceId != saveSpaceId || !isValidContentHash(stored.contentHash)) {
         throw const SaveHistoryException('The store lists a save that does not belong to it');
       }
       if (_revisions.containsKey(stored.id)) {
@@ -108,28 +110,31 @@ class SaveHistory {
     return _revisions.values.where((stored) => !kept.contains(stored.id)).toList();
   }
 
+  /// Removes revisions that no remaining revision builds on until none are left; a cycle keeps its revisions.
   void _checkAcyclic() {
-    final finished = <String>{};
-    final visiting = <String>{};
-
-    void visit(String id) {
-      if (finished.contains(id)) {
-        return;
+    final children = {for (final id in _revisions.keys) id: 0};
+    for (final stored in _revisions.values) {
+      for (final parent in stored.revision.parentRevisionIds.where(_revisions.containsKey)) {
+        children[parent] = children[parent]! + 1;
       }
-      if (!visiting.add(id)) {
-        throw const SaveHistoryException('The stored saves are damaged: a save is its own ancestor');
-      }
-      for (final parent in _revisions[id]!.revision.parentRevisionIds) {
-        if (_revisions.containsKey(parent)) {
-          visit(parent);
-        }
-      }
-      visiting.remove(id);
-      finished.add(id);
     }
 
-    for (final id in _revisions.keys) {
-      visit(id);
+    final pending = Queue.of(children.entries.where((entry) => entry.value == 0).map((entry) => entry.key));
+    var removed = 0;
+    while (pending.isNotEmpty) {
+      ++removed;
+      for (final parent in _revisions[pending.removeFirst()]!.revision.parentRevisionIds.where(
+        _revisions.containsKey,
+      )) {
+        children[parent] = children[parent]! - 1;
+        if (children[parent] == 0) {
+          pending.add(parent);
+        }
+      }
+    }
+
+    if (removed != _revisions.length) {
+      throw const SaveHistoryException('The stored saves are damaged: a save is its own ancestor');
     }
   }
 }

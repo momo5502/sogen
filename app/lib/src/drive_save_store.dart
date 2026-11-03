@@ -29,7 +29,12 @@ class CloudAccount extends ChangeNotifier {
     final signIn = GoogleSignIn.instance;
     await signIn.initialize(serverClientId: _serverClientId);
     signIn.authenticationEvents.listen(account._onAuthentication, onError: (Object _) {});
-    unawaited(signIn.attemptLightweightAuthentication());
+    unawaited(
+      signIn.attemptLightweightAuthentication()?.catchError((Object error) {
+        debugPrint('Could not restore the Google sign-in: $error');
+        return null;
+      }),
+    );
     return account;
   }
 
@@ -37,23 +42,49 @@ class CloudAccount extends ChangeNotifier {
   static bool get isAvailable => _serverClientId.isNotEmpty;
 
   GoogleSignInAccount? _user;
+  bool _hasDriveAccess = false;
 
   String? get email => _user?.email;
 
   bool get isSignedIn => _user != null;
 
-  void _onAuthentication(GoogleSignInAuthenticationEvent event) {
+  /// Signing in and allowing access to Drive are separate steps, and the access can be refused or taken back later.
+  bool get hasDriveAccess => _hasDriveAccess;
+
+  Future<void> _onAuthentication(GoogleSignInAuthenticationEvent event) async {
     _user = switch (event) {
       GoogleSignInAuthenticationEventSignIn() => event.user,
       GoogleSignInAuthenticationEventSignOut() => null,
     };
+    _hasDriveAccess = false;
     notifyListeners();
+
+    final user = _user;
+    if (user == null) {
+      return;
+    }
+    try {
+      final authorization = await user.authorizationClient.authorizationForScopes(_scopes);
+      if (_user == user) {
+        _setDriveAccess(authorization != null);
+      }
+    } on GoogleSignInException catch (e) {
+      debugPrint('Could not check the access to Google Drive: $e');
+    }
   }
 
-  /// Signs in and asks for access to the app's Drive folder, which the user can refuse separately.
+  void _setDriveAccess(bool hasAccess) {
+    if (_hasDriveAccess != hasAccess) {
+      _hasDriveAccess = hasAccess;
+      notifyListeners();
+    }
+  }
+
+  /// Signs in if needed and asks for access to the app's Drive folder.
   Future<void> signIn() async {
-    final user = await GoogleSignIn.instance.authenticate(scopeHint: _scopes);
+    final user = _user ?? await GoogleSignIn.instance.authenticate(scopeHint: _scopes);
     await user.authorizationClient.authorizeScopes(_scopes);
+    _setDriveAccess(true);
   }
 
   Future<void> signOut() => GoogleSignIn.instance.disconnect();
@@ -68,6 +99,7 @@ class CloudAccount extends ChangeNotifier {
     final authorization =
         await user.authorizationClient.authorizationForScopes(_scopes) ??
         (interactive ? await user.authorizationClient.authorizeScopes(_scopes) : null);
+    _setDriveAccess(authorization != null);
     return authorization == null ? null : DriveSaveStore(drive.DriveApi(authorization.authClient(scopes: _scopes)));
   }
 }
@@ -91,7 +123,8 @@ class SaveStoreException implements Exception {
 }
 
 /// Keeps cloud saves in the app's Drive folder. Every revision is its own file that is never changed, since Drive
-/// has no way to replace a file only if nobody else did meanwhile.
+/// has no way to replace a file only if nobody else did meanwhile. Creating a space or a revision may succeed while
+/// its response is lost, so both are named by the caller beforehand and can be retried.
 class DriveSaveStore {
   DriveSaveStore(this._api);
 
@@ -99,8 +132,15 @@ class DriveSaveStore {
 
   static const _folder = 'appDataFolder';
   static const _spaceFormat = 1;
+  static const _maxFiles = 10000;
+  static const _tooLarge = SaveStoreException('The stored save is larger than Sogen syncs');
 
-  Future<List<drive.File>> _list(String query) async {
+  Future<List<drive.File>> _list(Map<String, String> properties) async {
+    final query = [
+      'trashed = false',
+      for (final MapEntry(:key, :value) in properties.entries) "appProperties has { key='$key' and value='$value' }",
+    ].join(' and ');
+
     final files = <drive.File>[];
     String? pageToken;
     do {
@@ -109,51 +149,72 @@ class DriveSaveStore {
         q: query,
         pageSize: 1000,
         pageToken: pageToken,
-        $fields: 'nextPageToken, files(id, appProperties, description, createdTime, size)',
+        $fields: 'nextPageToken, files(id, appProperties, description, createdTime)',
       );
       files.addAll(page.files ?? const []);
+      if (files.length > _maxFiles) {
+        throw const SaveStoreException('The Drive folder of Sogen holds more files than it can sync');
+      }
       pageToken = page.nextPageToken;
     } while (pageToken != null);
     return files;
   }
 
-  static String _property(String key, String value) => "appProperties has { key='$key' and value='$value' }";
-
   Future<List<SaveSpace>> spaces() async {
-    final spaces = <SaveSpace>[];
-    for (final file in await _list(_property('kind', 'space'))) {
-      final id = file.appProperties?['space'];
-      if (id == null || !isValidSaveId(id)) {
-        continue;
-      }
-      try {
-        final description = jsonDecode(file.description ?? '') as Map<String, dynamic>;
-        if (description['format'] == _spaceFormat) {
-          spaces.add(
-            SaveSpace(id: id, name: description['name'] as String, executable: description['executable'] as String),
-          );
-        }
-      } on FormatException {
-        continue;
-      } on TypeError {
-        continue;
+    final spaces = <String, SaveSpace>{};
+    for (final file in await _list({'kind': 'space'})) {
+      final space = _saveSpace(file);
+      if (space != null && spaces.putIfAbsent(space.id, () => space) != space) {
+        throw const SaveStoreException('The Drive folder of Sogen lists a save space twice');
       }
     }
-    return spaces;
+    return spaces.values.toList();
   }
 
-  Future<SaveSpace> createSpace({required String name, required String executable}) async {
-    final space = SaveSpace(id: newSaveId(), name: name, executable: executable);
+  /// Null for a space that another version of Sogen wrote and this one cannot read.
+  static SaveSpace? _saveSpace(drive.File file) {
+    final id = file.appProperties?['space'];
+    if (id == null || !isValidSaveId(id)) {
+      return null;
+    }
+    try {
+      final description = jsonDecode(file.description ?? '') as Map<String, dynamic>;
+      return description['format'] == _spaceFormat
+          ? SaveSpace(id: id, name: description['name'] as String, executable: description['executable'] as String)
+          : null;
+    } on FormatException {
+      return null;
+    } on TypeError {
+      return null;
+    }
+  }
+
+  /// Creates the space unless an earlier attempt already did.
+  Future<void> ensureSpace(SaveSpace space) async {
+    if (!isValidSaveId(space.id)) {
+      throw const SaveStoreException('The save space has an invalid id');
+    }
+
+    final existing = await _list({'kind': 'space', 'space': space.id});
+    if (existing.length > 1) {
+      throw const SaveStoreException('The Drive folder of Sogen lists a save space twice');
+    }
+    if (existing.isNotEmpty) {
+      if (_saveSpace(existing.single) == null) {
+        throw const SaveStoreException('The save space in Drive cannot be read');
+      }
+      return;
+    }
+
     await _api.files.create(
       drive.File(
         name: 'space-${space.id}.json',
         parents: [_folder],
         appProperties: {'kind': 'space', 'space': space.id},
-        description: jsonEncode({'format': _spaceFormat, 'name': name, 'executable': executable}),
+        description: jsonEncode({'format': _spaceFormat, 'name': space.name, 'executable': space.executable}),
       ),
       $fields: 'id',
     );
-    return space;
   }
 
   Future<SaveHistory> history(String saveSpaceId) async {
@@ -161,7 +222,7 @@ class DriveSaveStore {
       throw const SaveStoreException('The save space has an invalid id');
     }
 
-    final files = await _list('${_property('kind', 'revision')} and ${_property('space', saveSpaceId)}');
+    final files = await _list({'kind': 'revision', 'space': saveSpaceId});
     try {
       return SaveHistory(saveSpaceId, files.map((file) => _storedRevision(file, saveSpaceId)));
     } on SaveArchiveException catch (e) {
@@ -189,8 +250,25 @@ class DriveSaveStore {
     );
   }
 
+  /// Uploads the revision unless an earlier attempt already did.
   Future<void> upload(SaveRevision revision, String contentHash, File archive) async {
     final length = await archive.length();
+    if (length > maxSaveArchiveBytes) {
+      throw _tooLarge;
+    }
+    if (!isValidContentHash(contentHash)) {
+      throw const SaveStoreException('The save has an invalid content hash');
+    }
+
+    final existing = await _list({'kind': 'revision', 'space': revision.saveSpaceId, 'revision': revision.revisionId});
+    if (existing.isNotEmpty) {
+      final stored = _storedRevision(existing.single, revision.saveSpaceId);
+      if (existing.length > 1 || stored.contentHash != contentHash || !stored.revision.sameAs(revision)) {
+        throw const SaveStoreException('Drive holds a different save under the same revision');
+      }
+      return;
+    }
+
     await _api.files.create(
       drive.File(
         name: 'revision-${revision.revisionId}.zip',
@@ -209,25 +287,34 @@ class DriveSaveStore {
     );
   }
 
-  /// Stops at [maxSaveArchiveBytes], so that a damaged store cannot fill the device.
+  /// Stops at [maxSaveArchiveBytes], so that a damaged store cannot fill the device, and leaves nothing behind when
+  /// the download fails.
   Future<void> download(StoredRevision stored, File destination) async {
-    final media = await _api.files.get(stored.fileId, downloadOptions: drive.DownloadOptions.fullMedia) as drive.Media;
-    if ((media.length ?? 0) > maxSaveArchiveBytes) {
-      throw const SaveStoreException('The stored save is larger than Sogen syncs');
-    }
-
     final sink = destination.openWrite();
-    var received = 0;
     try {
-      await for (final chunk in media.stream) {
-        received += chunk.length;
-        if (received > maxSaveArchiveBytes) {
-          throw const SaveStoreException('The stored save is larger than Sogen syncs');
-        }
-        sink.add(chunk);
+      final media =
+          await _api.files.get(stored.fileId, downloadOptions: drive.DownloadOptions.fullMedia) as drive.Media;
+      if ((media.length ?? 0) > maxSaveArchiveBytes) {
+        throw _tooLarge;
       }
-    } finally {
+
+      var received = 0;
+      await sink.addStream(
+        media.stream.map((chunk) {
+          received += chunk.length;
+          if (received > maxSaveArchiveBytes) {
+            throw _tooLarge;
+          }
+          return chunk;
+        }),
+      );
       await sink.close();
+    } catch (_) {
+      await sink.close().catchError((Object _) {});
+      if (destination.existsSync()) {
+        await destination.delete();
+      }
+      rethrow;
     }
   }
 
