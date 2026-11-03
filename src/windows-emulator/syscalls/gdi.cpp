@@ -47,11 +47,13 @@ namespace sogen
             constexpr uint32_t k_gdi_dc_attr_dc_pen_color_offset = 0xCC;     // SetDCPenColor
             constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0x20; // DC_ATTR.crBackgroundClr (SetBkColor)
             constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0x28;       // DC_ATTR.crForegroundClr (SetTextColor)
+            constexpr uint32_t k_gdi_dc_attr_rop2_offset = 0xD4;             // DC_ATTR.jROP2 (SetROP2)
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
             constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
 
             constexpr uint32_t k_error_invalid_handle = 6;
+            constexpr uint8_t k_r2_copypen = 13;
 
             constexpr uint32_t k_stock_white_brush_index = 0x00;
             constexpr uint32_t k_stock_ltgray_brush_index = 0x01;
@@ -1475,6 +1477,82 @@ namespace sogen
                 }
             }
 
+            uint8_t get_dc_rop2(const syscall_context& c, const hdc dc)
+            {
+                uint8_t rop2 = k_r2_copypen;
+                uint64_t dc_attr = 0;
+                if (get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_rop2_offset, &rop2, sizeof(rop2));
+                }
+                return rop2;
+            }
+
+            // An R2_* code minus one is the operation's truth table, indexed by (pen bit << 1) | destination bit.
+            uint32_t apply_rop2(const uint8_t rop2, const uint32_t pen, const uint32_t destination)
+            {
+                const auto table = static_cast<uint32_t>(rop2 - 1);
+                uint32_t result = 0;
+                if ((table & 1) != 0)
+                {
+                    result |= ~pen & ~destination;
+                }
+                if ((table & 2) != 0)
+                {
+                    result |= ~pen & destination;
+                }
+                if ((table & 4) != 0)
+                {
+                    result |= pen & ~destination;
+                }
+                if ((table & 8) != 0)
+                {
+                    result |= pen & destination;
+                }
+                return 0xFF000000u | (result & 0x00FFFFFFu);
+            }
+
+            void fill_rect_rop2(gdi_bitmap_surface& surface, const int64_t left, const int64_t top, const int64_t right,
+                                const int64_t bottom, const uint32_t color, const uint8_t rop2)
+            {
+                const auto x_begin = static_cast<size_t>(std::clamp<int64_t>(left, 0, surface.width));
+                const auto x_end = static_cast<size_t>(std::clamp<int64_t>(right, 0, surface.width));
+                const auto y_begin = static_cast<size_t>(std::clamp<int64_t>(top, 0, surface.height));
+                const auto y_end = static_cast<size_t>(std::clamp<int64_t>(bottom, 0, surface.height));
+                for (auto y = y_begin; y < y_end; ++y)
+                {
+                    for (auto x = x_begin; x < x_end; ++x)
+                    {
+                        auto& pixel = surface.pixels[(y * surface.width) + x];
+                        pixel = apply_rop2(rop2, color, pixel);
+                    }
+                }
+            }
+
+            // The outline is the closed polyline through the corners (left, top) and (right - 1, bottom - 1), each
+            // segment drawn without its last pixel, so a 1x1 rectangle draws nothing and every pixel is hit once.
+            void draw_rectangle_outline(gdi_bitmap_surface& surface, const int64_t left, const int64_t top, const int64_t right,
+                                        const int64_t bottom, const uint32_t color, const uint8_t rop2)
+            {
+                const auto right_edge = right - 1;
+                const auto bottom_edge = bottom - 1;
+                if (right_edge < left || bottom_edge < top || (right_edge == left && bottom_edge == top))
+                {
+                    return;
+                }
+
+                fill_rect_rop2(surface, left, top, right, top + 1, color, rop2);
+                if (bottom_edge > top)
+                {
+                    fill_rect_rop2(surface, left, bottom_edge, right, bottom, color, rop2);
+                }
+                fill_rect_rop2(surface, left, top + 1, left + 1, bottom_edge, color, rop2);
+                if (right_edge > left)
+                {
+                    fill_rect_rop2(surface, right_edge, top + 1, right, bottom_edge, color, rop2);
+                }
+            }
+
             void delete_batched_object(const syscall_context& c, const uint32_t handle_value, const uint8_t base_type)
             {
                 GDI_HANDLE_ENTRY64 entry{};
@@ -1839,6 +1917,7 @@ namespace sogen
             {
                 std::array<uint8_t, k_gdi_dc_attr_size> zeroed{};
                 c.emu.write_memory(dc_attr, zeroed.data(), zeroed.size());
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_rop2_offset, &k_r2_copypen, sizeof(k_r2_copypen));
 
                 constexpr uint32_t white = 0x00FFFFFFu;
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_dc_brush_color_offset, &white, sizeof(white));
@@ -4366,21 +4445,45 @@ namespace sogen
         BOOL handle_NtGdiRectangle(const syscall_context& c, const hdc dc, const LONG left, const LONG top, const LONG right,
                                    const LONG bottom)
         {
-            set_dc_current_point(c, dc, left, top);
+            uint64_t dc_attr = 0;
+            if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+                return FALSE;
+            }
 
-            if (!handle_NtGdiLineTo(c, dc, right - 1, top))
+            (void)handle_NtGdiFlush(c);
+
+            gdi_dc_state* dc_state = nullptr;
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            uint32_t present_handle = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !surface)
             {
-                return FALSE;
+                return TRUE;
             }
-            if (!handle_NtGdiLineTo(c, dc, right - 1, bottom - 1))
+
+            const auto x0 = static_cast<int64_t>((std::min)(left, right)) + origin_x;
+            const auto y0 = static_cast<int64_t>((std::min)(top, bottom)) + origin_y;
+            const auto x1 = static_cast<int64_t>((std::max)(left, right)) + origin_x;
+            const auto y1 = static_cast<int64_t>((std::max)(top, bottom)) + origin_y;
+            const auto rop2 = get_dc_rop2(c, dc);
+            const auto has_outline = !is_stock_object_selected(c, dc, k_gdi_dc_attr_hpen_offset, k_stock_null_pen_index);
+
+            if (const auto brush_color = get_dc_brush_color(c, dc))
             {
-                return FALSE;
+                const auto inset = has_outline ? 1 : 0;
+                fill_rect_rop2(*surface, x0 + inset, y0 + inset, x1 - 1, y1 - 1, *brush_color, rop2);
             }
-            if (!handle_NtGdiLineTo(c, dc, left, bottom - 1))
+
+            if (has_outline)
             {
-                return FALSE;
+                draw_rectangle_outline(*surface, x0, y0, x1, y1, get_dc_pen_color(c, dc), rop2);
             }
-            return handle_NtGdiLineTo(c, dc, left, top);
+
+            present_win_surface(c, present_handle, surface);
+            return TRUE;
         }
 
         BOOL handle_NtGdiBitBlt(const syscall_context& c, const hdc dst_dc, const int x_dst, const int y_dst, const int width,
