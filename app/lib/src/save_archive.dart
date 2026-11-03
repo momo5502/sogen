@@ -55,6 +55,8 @@ class SaveLayers {
 
   File get _cloudState => File(p.join(directory.path, 'cloud.json'));
 
+  File get _changedMarker => File(p.join(directory.path, 'cloud-dirty'));
+
   /// Where an archive entry under `root/<drive>/` or `folder/` lives below [base].
   String _localPath(String base, List<String> segments) {
     final layer = segments[0] == 'root' ? p.join(base, 'root', segments[1]) : p.join(base, folderLayer);
@@ -115,12 +117,73 @@ class SaveBase {
   Map<String, dynamic> toJson() => {'saveSpaceId': saveSpaceId, 'revisionId': revisionId, 'contentHash': contentHash};
 }
 
+/// Null when the layers were never synced, or when the record cannot be read, which then syncs like a new save.
 Future<SaveBase?> readSaveBase(SaveLayers layers) async {
   final file = layers._cloudState;
   if (!file.existsSync()) {
     return null;
   }
-  return SaveBase.fromJson(jsonDecode(await file.readAsString()) as Map<String, dynamic>);
+  try {
+    final base = SaveBase.fromJson(jsonDecode(await file.readAsString()) as Map<String, dynamic>);
+    final valid =
+        isValidSaveId(base.saveSpaceId) &&
+        isValidSaveId(base.revisionId) &&
+        RegExp(r'^[0-9a-f]{64}$').hasMatch(base.contentHash);
+    return valid ? base : null;
+  } on FormatException {
+    return null;
+  } on TypeError {
+    return null;
+  }
+}
+
+Future<void> writeSaveBase(SaveLayers layers, SaveBase base) async {
+  await layers.directory.create(recursive: true);
+  final temporary = File('${layers._cloudState.path}.tmp');
+  await temporary.writeAsString(jsonEncode(base.toJson()), flush: true);
+  await temporary.rename(layers._cloudState.path);
+}
+
+/// Forgets which save the layers were synced with and whether they changed since, for a game that stops syncing.
+Future<void> forgetSaveBase(SaveLayers layers) async {
+  for (final file in [layers._cloudState, layers._changedMarker]) {
+    if (file.existsSync()) {
+      await file.delete();
+    }
+  }
+}
+
+/// Records that a game may change the layers, before it starts. Hashing every save before every launch would be
+/// slow, so only a marked save is compared with its base. An import replaces the marker along with the layers.
+Future<void> markSaveChanged(SaveLayers layers) async {
+  await layers._changedMarker.create(recursive: true);
+}
+
+bool hasUnsyncedChanges(SaveLayers layers) => layers._changedMarker.existsSync();
+
+Future<void> clearUnsyncedChanges(SaveLayers layers) async {
+  if (layers._changedMarker.existsSync()) {
+    await layers._changedMarker.delete();
+  }
+}
+
+/// The content hash of layers that hold nothing.
+final String emptySaveContentHash = contentHashOf(const []);
+
+/// How many bytes the layers' files hold, without reading them.
+Future<int> saveSize(SaveLayers layers) async {
+  var size = 0;
+  for (final layer in [layers._root, Directory(p.join(layers.directory.path, layers.folderLayer))]) {
+    if (!layer.existsSync()) {
+      continue;
+    }
+    await for (final item in layer.list(recursive: true, followLinks: false)) {
+      if (item is File && p.split(item.path).contains('upper')) {
+        size += await item.length();
+      }
+    }
+  }
+  return size;
 }
 
 class SaveEntry {

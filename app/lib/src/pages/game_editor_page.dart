@@ -162,6 +162,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
       liveNetwork: _liveNetwork,
       console: _console,
       settings: _settings,
+      cloudSaveSpaceId: widget.game?.cloudSaveSpaceId,
     );
 
     if (!await _keepOrDiscardSuspendedState(game) || !mounted) {

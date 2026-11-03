@@ -114,6 +114,7 @@ class MainActivity : FlutterActivity() {
         when (call.method) {
             "start" -> result.success(session.start(parseRunConfig(call)))
             "stop" -> session.stop().also { result.success(null) }
+            "isRunning" -> result.success(session.isRunning)
             "suspend" -> session.suspend(call.argument<String>("destination").orEmpty()).also { result.success(null) }
             "consoleInput" -> session.consoleInput(call.argument<ByteArray>("data") ?: ByteArray(0)).also { result.success(null) }
             "consoleResize" -> session.consoleResize(int("columns"), int("rows")).also { result.success(null) }

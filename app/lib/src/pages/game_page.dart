@@ -6,9 +6,12 @@ import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../ads.dart';
+import '../cloud_sync.dart';
 import '../game_library.dart';
+import '../save_archive.dart';
 import '../session.dart';
 import '../theme.dart';
+import '../widgets/cloud_save_dialogs.dart';
 import '../widgets/console_view.dart';
 import '../widgets/guest_window_view.dart';
 import '../widgets/performance_hud.dart';
@@ -35,6 +38,7 @@ class GamePage extends StatefulWidget {
     required this.game,
     required this.emulationRoot,
     required this.ads,
+    required this.cloudSync,
     required this.onSettingsChanged,
     this.session,
   });
@@ -42,6 +46,7 @@ class GamePage extends StatefulWidget {
   final Game game;
   final String emulationRoot;
   final Ads ads;
+  final CloudSync cloudSync;
 
   final Future<void> Function(GameSettings settings) onSettingsChanged;
 
@@ -107,9 +112,20 @@ class _GamePageState extends State<GamePage> {
       }
 
       resume = choice;
-      if (!resume) {
-        await saved.delete();
+    }
+
+    // A resumed game continues on the layers it was suspended with, so only a fresh start syncs them.
+    if (!resume && !await _syncBeforeLaunch()) {
+      if (mounted) {
+        Navigator.of(context).pop();
       }
+      return;
+    }
+    if (!resume && saved.existsSync()) {
+      await saved.delete();
+    }
+    if (widget.game.cloudSaveSpaceId != null) {
+      await markSaveChanged(await SaveLayers.of(widget.game));
     }
 
     if (!mounted) {
@@ -124,6 +140,35 @@ class _GamePageState extends State<GamePage> {
     if (!started && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Another game is still running')));
     }
+  }
+
+  /// Whether to start the game. A failed sync may still start it, keeping its changes on this device.
+  Future<bool> _syncBeforeLaunch() async {
+    if (widget.game.cloudSaveSpaceId == null) {
+      return true;
+    }
+    if (await GameSession.isAnyRunning()) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Another game is still running')));
+      }
+      return false;
+    }
+    if (!mounted) {
+      return false;
+    }
+
+    final status = await showSyncProgress(
+      context,
+      widget.cloudSync.sync(
+        widget.game,
+        interactive: true,
+        resolve: (heads) => chooseCloudSave(context, widget.game, heads),
+      ),
+    );
+    return switch (status.state) {
+      CloudSyncState.synced || CloudSyncState.conflict => true,
+      _ => mounted && await confirmPlayWithoutSync(context, status),
+    };
   }
 
   Future<void> _suspend() async {
@@ -195,6 +240,10 @@ class _GamePageState extends State<GamePage> {
     if (!_suspending) {
       if (_session.state case SessionState.starting || SessionState.running) {
         _session.stop();
+      } else if (_session.state == SessionState.exited && _session.exitCode != null && !_session.stopRequested) {
+        // Only a game that ended by itself finished writing its saves; a stopped or crashed one keeps them marked
+        // as changed, and its next start syncs them.
+        widget.cloudSync.sync(widget.game, interactive: false).ignore();
       }
       widget.ads.showAfterGame(_session);
       _session.dispose();

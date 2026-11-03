@@ -93,6 +93,9 @@ class GameSession extends ChangeNotifier {
 
   SessionState state = SessionState.idle;
 
+  /// Whether the player stopped the game, which may have cut off whatever it was writing.
+  bool get stopRequested => _stopRequested;
+
   /// Null when the emulator process died without reporting an exit code.
   int? exitCode;
 
@@ -182,6 +185,9 @@ class GameSession extends ChangeNotifier {
     notifyListeners();
     return started;
   }
+
+  /// Whether a game, possibly of a page that was left already, still runs or is shutting down.
+  static Future<bool> isAnyRunning() async => await _methods.invokeMethod<bool>('isRunning') ?? false;
 
   Future<void> stop() {
     _stopRequested = true;

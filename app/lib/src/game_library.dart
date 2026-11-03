@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'save_archive.dart';
 import 'touch_layout.dart';
 
 /// Where a game's folder appears inside the emulated file system.
@@ -143,6 +144,7 @@ class Game {
     this.liveNetwork = false,
     this.console = false,
     this.settings = const GameSettings(),
+    this.cloudSaveSpaceId,
   });
 
   factory Game.fromJson(Map<String, dynamic> json) => Game(
@@ -155,6 +157,7 @@ class Game {
     liveNetwork: json['liveNetwork'] as bool? ?? false,
     console: json['console'] as bool? ?? false,
     settings: GameSettings.fromJson(json['settings'] as Map<String, dynamic>? ?? const {}),
+    cloudSaveSpaceId: json['cloudSaveSpaceId'] as String?,
   );
 
   final String id;
@@ -175,6 +178,9 @@ class Game {
   final bool console;
 
   final GameSettings settings;
+
+  /// The cloud save space the game syncs its saves with, or null when its saves stay on the device.
+  final String? cloudSaveSpaceId;
 
   String get guestExecutable => _toGuestPath(executable);
 
@@ -208,6 +214,20 @@ class Game {
     liveNetwork: liveNetwork ?? this.liveNetwork,
     console: console ?? this.console,
     settings: settings ?? this.settings,
+    cloudSaveSpaceId: cloudSaveSpaceId,
+  );
+
+  Game withCloudSaveSpace(String? id) => Game(
+    id: this.id,
+    name: name,
+    directory: directory,
+    executable: executable,
+    arguments: arguments,
+    environment: environment,
+    liveNetwork: liveNetwork,
+    console: console,
+    settings: settings,
+    cloudSaveSpaceId: id,
   );
 
   Map<String, dynamic> toJson() => {
@@ -220,6 +240,7 @@ class Game {
     'liveNetwork': liveNetwork,
     'console': console,
     'settings': settings.toJson(),
+    'cloudSaveSpaceId': ?cloudSaveSpaceId,
   };
 }
 
@@ -311,7 +332,21 @@ class GameLibrary extends ChangeNotifier {
 
     if (previous.directory != game.directory) {
       await _deleteIfPresent(await layerDirectory(previous));
+      // The synced save described the old folder's layer.
+      await forgetSaveBase(await SaveLayers.of(game));
     }
+  }
+
+  /// Links the game to a cloud save space, or unlinks it with null.
+  Future<void> setCloudSaveSpace(Game game, String? saveSpaceId) async {
+    final index = _games.indexWhere((entry) => entry.id == game.id);
+    if (index < 0) {
+      return;
+    }
+
+    _games[index] = _games[index].withCloudSaveSpace(saveSpaceId);
+    await _save();
+    await forgetSaveBase(await SaveLayers.of(game));
   }
 
   Future<void> updateSettings(String id, GameSettings settings) async {

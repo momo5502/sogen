@@ -1,16 +1,20 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../ads.dart';
+import '../cloud_sync.dart';
 import '../drive_save_store.dart';
 import '../emulation_root.dart';
 import '../game_library.dart';
+import '../save_archive.dart';
 import '../session.dart';
 import '../settings.dart';
 import '../support.dart';
 import '../theme.dart';
+import '../widgets/cloud_save_dialogs.dart';
 import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
 import 'game_page.dart';
@@ -23,6 +27,7 @@ class HomePage extends StatefulWidget {
     required this.library,
     required this.settings,
     required this.cloud,
+    required this.cloudSync,
     required this.ads,
   });
 
@@ -30,6 +35,7 @@ class HomePage extends StatefulWidget {
   final GameLibrary library;
   final AppSettings settings;
   final CloudAccount cloud;
+  final CloudSync cloudSync;
   final Ads ads;
 
   @override
@@ -105,6 +111,7 @@ class _HomePageState extends State<HomePage> {
           game: game,
           emulationRoot: widget.root.path,
           ads: widget.ads,
+          cloudSync: widget.cloudSync,
           onSettingsChanged: (settings) => _storeSettings(game, settings),
           session: session,
         ),
@@ -158,6 +165,15 @@ class _HomePageState extends State<HomePage> {
                 _edit(game);
               },
             ),
+            if (CloudAccount.isAvailable)
+              ListTile(
+                leading: const Icon(LucideIcons.cloud),
+                title: Text(game.cloudSaveSpaceId == null ? 'Sync saves to the cloud' : 'Stop syncing saves'),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  _cloudSaves(game);
+                },
+              ),
             ListTile(
               leading: const Icon(LucideIcons.trash2),
               title: const Text('Remove'),
@@ -170,6 +186,114 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+  }
+
+  Future<void> _cloudSaves(Game game) async {
+    if (game.cloudSaveSpaceId != null) {
+      await _stopCloudSaves(game);
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final store = await widget.cloud.store(interactive: true);
+      if (store == null) {
+        messenger.showSnackBar(const SnackBar(content: Text('Sign in to Google in the settings first')));
+        return;
+      }
+
+      final spaces = await store.spaces();
+      if (!mounted) {
+        return;
+      }
+      final space = await showDialog<SaveSpace>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: Text('Sync the saves of ${game.name}'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () =>
+                  Navigator.of(context).pop(SaveSpace(id: newSaveId(), name: game.name, executable: game.executable)),
+              child: const Text('Start a new cloud save'),
+            ),
+            for (final space in spaces)
+              SimpleDialogOption(
+                onPressed: () => Navigator.of(context).pop(space),
+                child: Text('Continue ${space.name} (${space.executable})'),
+              ),
+          ],
+        ),
+      );
+      if (space == null || (!spaces.contains(space) && !await _confirmUploadSize(game))) {
+        return;
+      }
+
+      await widget.library.setCloudSaveSpace(game, space.id);
+      final linked = widget.library.games.firstWhere((entry) => entry.id == game.id);
+      // A suspended or still running game must not have its saves replaced; its next fresh start syncs them.
+      if ((await savedStateFile(linked)).existsSync() || await GameSession.isAnyRunning() || !mounted) {
+        return;
+      }
+      unawaited(
+        widget.cloudSync.sync(linked, interactive: true, resolve: (heads) => chooseCloudSave(context, linked, heads)),
+      );
+    } on Exception catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Could not set up cloud saves: $e')));
+    }
+  }
+
+  /// A new cloud save starts with an upload of everything the game changed, which may be a lot.
+  Future<bool> _confirmUploadSize(Game game) async {
+    const mebibyte = 1024 * 1024;
+    final size = await saveSize(await SaveLayers.of(game));
+    if (!mounted) {
+      return false;
+    }
+    if (size > maxSaveBytes) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'The saves of ${game.name} take ${size ~/ mebibyte} MiB, '
+            'more than the ${maxSaveBytes ~/ mebibyte} MiB that can be synced',
+          ),
+        ),
+      );
+      return false;
+    }
+    if (size <= 100 * mebibyte) {
+      return true;
+    }
+
+    final upload = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Upload a large save?'),
+        content: Text('The saves of ${game.name} take ${size ~/ mebibyte} MiB of your Google Drive.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Upload')),
+        ],
+      ),
+    );
+    return upload == true;
+  }
+
+  Future<void> _stopCloudSaves(Game game) async {
+    final stop = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Stop syncing ${game.name}?'),
+        content: const Text('Its saves stay on this device and in your Google Drive.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Stop syncing')),
+        ],
+      ),
+    );
+    if (stop == true) {
+      await widget.library.setCloudSaveSpace(game, null);
+      widget.cloudSync.forget(game);
+    }
   }
 
   Future<void> _confirmRemove(Game game) async {
@@ -188,6 +312,7 @@ class _HomePageState extends State<HomePage> {
     );
 
     if (remove == true) {
+      widget.cloudSync.forget(game);
       await widget.library.remove(game);
       await widget.library.releaseUnusedFolders();
     }
@@ -201,7 +326,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       body: SafeArea(
         child: ListenableBuilder(
-          listenable: Listenable.merge([widget.library, widget.settings]),
+          listenable: Listenable.merge([widget.library, widget.settings, widget.cloudSync]),
           builder: (context, _) {
             final games = widget.library.games;
 
@@ -285,6 +410,7 @@ class _HomePageState extends State<HomePage> {
                           accent: SogenColors.accents[index % SogenColors.accents.length],
                           enabled: !_installing,
                           saving: _saving.containsKey(games[index].id),
+                          cloudStatus: widget.cloudSync.status(games[index]),
                           onPlay: () => _play(games[index]),
                           onMenu: () => _showGameMenu(games[index]),
                         ),
@@ -432,6 +558,7 @@ class _GameCard extends StatelessWidget {
     required this.accent,
     required this.enabled,
     required this.saving,
+    required this.cloudStatus,
     required this.onPlay,
     required this.onMenu,
   });
@@ -440,6 +567,7 @@ class _GameCard extends StatelessWidget {
   final Color accent;
   final bool enabled;
   final bool saving;
+  final CloudSyncStatus? cloudStatus;
   final VoidCallback onPlay;
   final VoidCallback onMenu;
 
@@ -447,11 +575,21 @@ class _GameCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    final busy = saving || cloudStatus?.state == CloudSyncState.syncing;
+    final status = switch (cloudStatus?.state) {
+      _ when saving => 'Suspending…',
+      CloudSyncState.syncing => 'Syncing saves…',
+      CloudSyncState.conflict => 'Choose which save to keep when you play',
+      CloudSyncState.needsAccess => 'Allow Google Drive access in the settings',
+      CloudSyncState.failed => 'Could not sync saves',
+      _ => null,
+    };
+
     final card = Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: enabled && !saving ? onPlay : null,
-        onLongPress: saving ? null : onMenu,
+        onTap: enabled && !busy ? onPlay : null,
+        onLongPress: busy ? null : onMenu,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -465,14 +603,14 @@ class _GameCard extends StatelessWidget {
                     Text(game.name, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 4),
                     Text(
-                      saving ? 'Suspending…' : game.executable,
+                      status ?? game.executable,
                       overflow: TextOverflow.ellipsis,
                       style: monospace(fontSize: 12, color: SogenColors.neutral400),
                     ),
                   ],
                 ),
               ),
-              if (saving)
+              if (busy)
                 const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
               else
                 const Icon(LucideIcons.play, color: SogenColors.neutral300),
@@ -482,7 +620,7 @@ class _GameCard extends StatelessWidget {
       ),
     );
 
-    return saving ? Opacity(opacity: 0.6, child: card) : card;
+    return busy ? Opacity(opacity: 0.6, child: card) : card;
   }
 }
 
