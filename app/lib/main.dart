@@ -7,6 +7,7 @@ import 'src/ads.dart';
 import 'src/emulation_root.dart';
 import 'src/game_library.dart';
 import 'src/pages/home_page.dart';
+import 'src/save_archive.dart';
 import 'src/settings.dart';
 import 'src/theme.dart';
 
@@ -15,6 +16,10 @@ Future<void> main() async {
 
   final root = await EmulationRoot.open();
   final library = await GameLibrary.load();
+  // Before any game runs on layers that an interrupted import left half swapped.
+  for (final game in library.games) {
+    await recoverInterruptedImport(await SaveLayers.of(game));
+  }
   // The app can die between granting a folder and storing the game that uses it.
   unawaited(
     library.releaseUnusedFolders().catchError((Object error) => debugPrint('Could not release unused folders: $error')),

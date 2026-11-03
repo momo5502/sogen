@@ -240,17 +240,17 @@ String describeFolder(String directory) {
 /// Where the changes a game makes to its folder are kept, since the folder itself is only read. Choosing another
 /// folder for the game starts with no changes instead of applying the old folder's to it.
 Future<Directory> layerDirectory(Game game) async {
-  return Directory(p.join((await _gameLayers(game)).path, _fnv1a(game.directory).toRadixString(16)));
+  return Directory(p.join((await gameLayersDirectory(game)).path, _fnv1a(game.directory).toRadixString(16)));
 }
 
 /// Where the changes a game makes to the emulation root are kept, so that every game sees the root as it was
 /// downloaded. They outlive choosing another folder for the game.
 Future<Directory> rootLayerDirectory(Game game) async {
-  return Directory(p.join((await _gameLayers(game)).path, 'root'));
+  return Directory(p.join((await gameLayersDirectory(game)).path, 'root'));
 }
 
 /// Everything that is kept for the game besides its folder.
-Future<Directory> _gameLayers(Game game) async {
+Future<Directory> gameLayersDirectory(Game game) async {
   final support = await getApplicationSupportDirectory();
   return Directory(p.join(support.path, 'layers', game.id));
 }
@@ -326,7 +326,7 @@ class GameLibrary extends ChangeNotifier {
   Future<void> remove(Game game) async {
     _games.removeWhere((entry) => entry.id == game.id);
     await _save();
-    await _deleteIfPresent(await _gameLayers(game));
+    await _deleteIfPresent(await gameLayersDirectory(game));
   }
 
   /// Android limits how many folder grants an app may keep, so the ones no game uses are given back, e.g. folders
