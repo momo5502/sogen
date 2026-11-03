@@ -2085,6 +2085,32 @@ namespace sogen
 
                 return true;
             }
+
+            // Windows measures at most this many characters, with or without a fit count or partial extents.
+            constexpr uint64_t max_text_extent_chars = max_char_metric_output_size / (sizeof(char16_t) + sizeof(ULONG));
+
+            bool write_fixed_width_extents(const syscall_context& c, const emulator_pointer extents, const ULONG count)
+            {
+                std::array<ULONG, 0x100> chunk{};
+                for (ULONG written = 0; written < count;)
+                {
+                    const auto chunk_count = std::min<size_t>(chunk.size(), count - written);
+                    for (size_t i = 0; i < chunk_count; ++i)
+                    {
+                        chunk[i] = static_cast<ULONG>((written + i + 1) * k_default_font_width);
+                    }
+
+                    if (!write_guest_bytes_up_to_fault(c, extents + (static_cast<uint64_t>(written) * sizeof(ULONG)), chunk.data(),
+                                                       chunk_count * sizeof(ULONG)))
+                    {
+                        return false;
+                    }
+
+                    written += static_cast<ULONG>(chunk_count);
+                }
+
+                return true;
+            }
         }
 
         // Returns the surface a paint DC should be presented to, and (via present_handle) the host window handle it
@@ -3486,55 +3512,50 @@ namespace sogen
                                           const ULONG max_extent, const emulator_object<ULONG> fit, const emulator_pointer extents,
                                           const emulator_pointer size, const ULONG /*flags*/)
         {
-            if (dc == 0 || size == 0)
+            // Windows answers an empty string without looking at the DC or the text.
+            if (char_count == 0)
             {
-                return FALSE;
-            }
-
-            // The count sizes buffers the guest passed, so the text is checked before anything is derived from it.
-            // Windows reads the text first, so a count larger than that buffer fails there; the width here does not
-            // depend on the characters, but a bogus count must still fail rather than be believed.
-            if (char_count != 0)
-            {
-                char16_t last_character{};
-                const auto last = text + (static_cast<uint64_t>(char_count) - 1) * sizeof(char16_t);
-                if (text == 0 || !c.win_emu.memory.try_read_memory(last, &last_character, sizeof(last_character)))
+                constexpr SIZE empty_size{};
+                constexpr ULONG no_fit = 0;
+                if (size == 0 || !write_guest_block(c, size, &empty_size, sizeof(empty_size)))
                 {
                     return FALSE;
                 }
+
+                if (fit && !write_guest_block(c, fit.value(), &no_fit, sizeof(no_fit)))
+                {
+                    return FALSE;
+                }
+
+                return TRUE;
+            }
+
+            // Windows reads the whole text before writing anything, although the fixed-width measure does not need it.
+            if (dc == 0 || size == 0 || char_count > max_text_extent_chars ||
+                !is_readable_range(c.win_emu.memory, text, static_cast<uint64_t>(char_count) * sizeof(char16_t)))
+            {
+                return FALSE;
             }
 
             const SIZE text_size{
                 .cx = static_cast<LONG>(k_default_font_width * char_count),
                 .cy = static_cast<LONG>(k_default_font_height),
             };
-            c.emu.write_memory(size, &text_size, sizeof(text_size));
-
-            if (fit)
+            if (!write_guest_block(c, size, &text_size, sizeof(text_size)))
             {
-                fit.write(std::min<ULONG>(char_count, max_extent / k_default_font_width));
+                return FALSE;
             }
 
-            if (extents != 0 && char_count != 0)
+            const ULONG fitting = std::min<ULONG>(char_count, max_extent / k_default_font_width);
+            if (fit && !write_guest_block(c, fit.value(), &fitting, sizeof(fitting)))
             {
-                // Written in fixed chunks: nothing host-side is sized by the guest's count.
-                constexpr ULONG chunk_size = 256;
-                std::array<ULONG, chunk_size> partial_extents{};
+                return FALSE;
+            }
 
-                for (ULONG written = 0; written < char_count; written += chunk_size)
-                {
-                    const auto count = std::min(chunk_size, char_count - written);
-                    for (ULONG i = 0; i < count; ++i)
-                    {
-                        partial_extents[i] = static_cast<ULONG>(k_default_font_width * (written + i + 1));
-                    }
-
-                    const auto destination = extents + static_cast<uint64_t>(written) * sizeof(ULONG);
-                    if (!c.win_emu.memory.try_write_memory(destination, partial_extents.data(), count * sizeof(ULONG)))
-                    {
-                        return FALSE;
-                    }
-                }
+            const ULONG extent_count = fit ? fitting : char_count;
+            if (extents != 0 && !write_fixed_width_extents(c, extents, extent_count))
+            {
+                return FALSE;
             }
 
             return TRUE;
