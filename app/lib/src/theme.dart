@@ -22,13 +22,12 @@ abstract final class SogenColors {
     Color(0xFF5ECB9A),
     Color(0xFF45C2CF),
     Color(0xFF5CB8F7),
-    Color(0xFF7398F7),
-    Color(0xFF8F86F7),
-    Color(0xFFB47EF2),
-    Color(0xFFE07AE0),
-    Color(0xFFF27AAE),
-    Color(0xFFF47C7C),
-    Color(0xFFF79A5C),
+    Color(0xFF7785F2),
+    Color(0xFFA377F2),
+    Color(0xFFDC77F2),
+    Color(0xFFF277CE),
+    Color(0xFFF27794),
+    Color(0xFFF29477),
   ];
 
   static const error = Color(0xFFFF3131);
