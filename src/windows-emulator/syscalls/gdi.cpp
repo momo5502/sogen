@@ -340,13 +340,20 @@ namespace sogen
                     return 0;
                 }
 
+                if (c.proc.is_wow64_process && pointer > std::numeric_limits<uint32_t>::max())
+                {
+                    return 0;
+                }
+
+                // Windows 10 2004-22H2 stores UserPointer as it is: gdi32's GdiGetEntry copies the entry (x64 and WoW64)
+                // and gdi32full uses the pointer directly (SelectObjectImpl reads the DC_ATTR through it).
+                if (c.win_emu.version.is_build_within(19041, 19046))
+                {
+                    return pointer;
+                }
+
                 if (c.proc.is_wow64_process)
                 {
-                    if (pointer > std::numeric_limits<uint32_t>::max())
-                    {
-                        return 0;
-                    }
-
                     // wow64 gdi32full decodes low 32 bits: ror.d(encoded, 32 - (cookie & 0x1f)) ^ cookie
                     const auto pointer32 = static_cast<uint32_t>(pointer);
                     const auto cookie32 = static_cast<uint32_t>(cookie);
