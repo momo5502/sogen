@@ -367,7 +367,7 @@ class _ValidatedArchive {
 }
 
 /// Checks everything the archive claims before a single entry is written.
-_ValidatedArchive _validate(ZipDecoder decoder, Archive archive, SaveRevision? expected) {
+_ValidatedArchive _validate(ZipDecoder decoder, Archive archive, SaveRevision? expected, String? expectedContentHash) {
   final headers = decoder.directory.fileHeaders;
   if (headers.length > _maxEntries + 1) {
     throw const SaveArchiveException('The save holds too many files');
@@ -441,6 +441,9 @@ _ValidatedArchive _validate(ZipDecoder decoder, Archive archive, SaveRevision? e
   if (manifest['contentHash'] != contentHash) {
     throw const SaveArchiveException('The save does not match its description');
   }
+  if (expectedContentHash != null && contentHash != expectedContentHash) {
+    throw const SaveArchiveException('The save is not the revision it was stored as');
+  }
 
   return _ValidatedArchive(revision, contentHash, entries, files);
 }
@@ -468,7 +471,12 @@ Future<void> recoverInterruptedImport(SaveLayers layers) async {
 
 /// Replaces the layers with the save in [archive], and records it as the save the layers were synced with. No game
 /// may run on the layers meanwhile, and a suspended game must be discarded, since it would not match the new save.
-Future<SaveRevision> importSave(SaveLayers layers, File archive, {SaveRevision? expected}) async {
+Future<SaveRevision> importSave(
+  SaveLayers layers,
+  File archive, {
+  SaveRevision? expected,
+  String? expectedContentHash,
+}) async {
   await recoverInterruptedImport(layers);
 
   final input = InputFileStream(archive.path);
@@ -480,7 +488,7 @@ Future<SaveRevision> importSave(SaveLayers layers, File archive, {SaveRevision? 
     } on ArchiveException catch (e) {
       throw SaveArchiveException('The save cannot be read: ${e.message}');
     }
-    final validated = _validate(decoder, decoded, expected);
+    final validated = _validate(decoder, decoded, expected, expectedContentHash);
 
     final incoming = Directory(_incoming(layers));
     await incoming.create(recursive: true);
@@ -548,10 +556,15 @@ Future<void> _swapIn(SaveLayers layers, Directory incoming) async {
 }
 
 /// Imports a save for [game]. Its suspended state is discarded first, since it could not continue on another save.
-Future<SaveRevision> importGameSave(Game game, File archive, {SaveRevision? expected}) async {
+Future<SaveRevision> importGameSave(
+  Game game,
+  File archive, {
+  SaveRevision? expected,
+  String? expectedContentHash,
+}) async {
   final snapshot = await savedStateFile(game);
   if (snapshot.existsSync()) {
     await snapshot.delete();
   }
-  return importSave(await SaveLayers.of(game), archive, expected: expected);
+  return importSave(await SaveLayers.of(game), archive, expected: expected, expectedContentHash: expectedContentHash);
 }

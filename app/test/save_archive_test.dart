@@ -112,11 +112,14 @@ void main() {
     expect(await saveContentHash(layers), isNot(hash));
   });
 
-  Future<void> expectRejected(File archive, {SaveRevision? expected}) async {
+  Future<void> expectRejected(File archive, {SaveRevision? expected, String? expectedContentHash}) async {
     final target = layersAt('target');
     write(target, 'root/c/upper/save.dat', 'kept');
 
-    await expectLater(importSave(target, archive, expected: expected), throwsA(isA<SaveArchiveException>()));
+    await expectLater(
+      importSave(target, archive, expected: expected, expectedContentHash: expectedContentHash),
+      throwsA(isA<SaveArchiveException>()),
+    );
 
     expect(read(target, 'root/c/upper/save.dat'), 'kept');
     expect(Directory('${target.directory.path}.incoming').existsSync(), isFalse);
@@ -154,6 +157,7 @@ void main() {
       parentRevisionIds: revision.parentRevisionIds,
     );
     await expectRejected(craft({'root/c/upper/save.dat': 'a'}), expected: other);
+    await expectRejected(craft({'root/c/upper/save.dat': 'a'}), expected: revision, expectedContentHash: '0' * 64);
   });
 
   test('an interrupted import leaves either the old or the new save', () async {
