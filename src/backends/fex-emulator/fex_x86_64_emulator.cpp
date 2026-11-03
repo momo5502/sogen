@@ -69,6 +69,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -81,6 +82,8 @@
 
 #include <utils/object.hpp>
 #include <utils/io.hpp>
+#include <utils/finally.hpp>
+#include <utils/host_watchpoints.hpp>
 
 // FEXCore embedding headers. These are only available when building against a FEX checkout/install;
 // the CMake glue gates this whole target behind SOGEN_ENABLE_FEX so non-ARM builds never reach here.
@@ -443,6 +446,37 @@ namespace sogen::fex
         {
             return (value + host_page_size_apple - 1) & ~(host_page_size_apple - 1);
         }
+
+        void report_missing_watchpoints_once()
+        {
+            static std::once_flag reported;
+            std::call_once(reported, [] {
+                if (utils::host_watchpoints::capacity() == 0)
+                {
+                    fprintf(stderr, "[FEX backend] Hardware watchpoints are unavailable or owned by a debugger: a no-access 4KB "
+                                    "page sharing a 16KB host page with accessible memory will not fault\n");
+                }
+            });
+        }
+
+        constexpr size_t pages_per_host_page_apple = host_page_size_apple / page_size;
+        constexpr uint64_t no_generation_apple = ~uint64_t{0};
+
+        struct watchpoint_set
+        {
+            std::array<utils::host_watchpoints::range, 16> ranges{};
+            size_t count{};
+
+            std::span<const utils::host_watchpoints::range> span() const
+            {
+                return {this->ranges.data(), this->count};
+            }
+
+            bool operator==(const watchpoint_set& other) const
+            {
+                return std::ranges::equal(this->span(), other.span());
+            }
+        };
 #endif
 
         // Decodes only what an mmio_region fault needs: destination register, transfer size and
@@ -692,17 +726,30 @@ namespace sogen::fex
             return prot;
         }
 
-        // Arm ARM, ESR_EL1 ISS for data aborts: WnR is set for every cache maintenance fault (CM). x86 checks the
-        // CLFLUSH/CLFLUSHOPT/CLWB that FEX emits as DC CIVAC/CVAC like a byte load (Intel SDM vol. 2A, CLFLUSH).
-        std::optional<memory_operation> data_abort_operation(const uint64_t esr)
+        constexpr uint64_t data_abort_from_lower_el = 0x24;
+        constexpr uint64_t watchpoint_from_lower_el = 0x34;
+
+        uint64_t exception_class(const uint64_t esr)
         {
             constexpr uint64_t exception_class_shift = 26;
             constexpr uint64_t exception_class_mask = 0x3F;
-            constexpr uint64_t data_abort_from_lower_el = 0x24;
+            return (esr >> exception_class_shift) & exception_class_mask;
+        }
+
+        bool is_watchpoint_exception(const uint64_t esr)
+        {
+            return exception_class(esr) == watchpoint_from_lower_el;
+        }
+
+        // Arm ARM, ESR_EL1 ISS for data aborts and watchpoints: WnR is set for every cache maintenance fault (CM). x86
+        // checks the CLFLUSH/CLFLUSHOPT/CLWB that FEX emits as DC CIVAC/CVAC like a byte load (Intel SDM vol. 2A, CLFLUSH).
+        std::optional<memory_operation> memory_access_operation(const uint64_t esr)
+        {
             constexpr uint64_t cache_maintenance = 1ULL << 8;
             constexpr uint64_t write_not_read = 1ULL << 6;
 
-            if (((esr >> exception_class_shift) & exception_class_mask) != data_abort_from_lower_el)
+            const auto syndrome_class = exception_class(esr);
+            if (syndrome_class != data_abort_from_lower_el && syndrome_class != watchpoint_from_lower_el)
             {
                 return std::nullopt;
             }
@@ -1690,6 +1737,8 @@ namespace sogen::fex
 #endif
 #ifndef __APPLE__
             this->reserve_guest_arena();
+#else
+            report_missing_watchpoints_once();
 #endif
             this->initialize_context();
         }
@@ -1969,6 +2018,10 @@ namespace sogen::fex
                 this->set_temporary_access(address, size, memory_permission::read, true);
             }
 
+#ifdef __APPLE__
+            this->disarm_watchpoints_over_apple(address, size);
+#endif
+
             // memmove, not memcpy: callers (e.g. the PE loader's section copy) can hand this a source
             // buffer that overlaps the guest destination range - overlapping memcpy is undefined
             // behaviour. This is a generic guest memory-copy primitive with no non-overlap contract.
@@ -2012,6 +2065,10 @@ namespace sogen::fex
             {
                 this->set_temporary_access(address, size, memory_permission::write, true);
             }
+
+#ifdef __APPLE__
+            this->disarm_watchpoints_over_apple(address, size);
+#endif
 
             // memmove, not memcpy: see try_read_memory - the source may overlap the guest destination.
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
@@ -2481,6 +2538,10 @@ namespace sogen::fex
             }
 
             this->set_shadow_range_apple(address, size, permissions);
+            for (uint64_t host_page = claim_start; host_page < claim_start + claim_size; host_page += host_page_size_apple)
+            {
+                this->track_no_access_pages_apple(host_page);
+            }
 #else
             const uint64_t source_address = get_untagged_pointer_address(host_pointer);
             std::vector<std::pair<uint64_t, size_t>> aliased_spans{};
@@ -3388,14 +3449,15 @@ namespace sogen::fex
         }
 
         // Derives one 16KB host page's permission from its up to four 4KB shadow slots, taking their
-        // union when they disagree. The union also swallows the "some slot absent" case: a
-        // guard/reserved slot sharing a host page with mapped memory is folded in rather than made to
-        // fault, a deliberate relaxation until a Mach exception handler can resolve faults on a
-        // PROT_NONE page without breaking a legitimate access from a stricter neighbor.
+        // union when they disagree, so a legitimate access to a slot never faults on its stricter
+        // neighbor's account. A guard or no-access slot sharing a host page with mapped memory is caught by
+        // a hardware watchpoint instead (see arm_watchpoints_apple); a reserved slot stays accessible, and a
+        // read-only slot beside a writable one stays writable.
         void sync_host_page_apple(uint64_t host_page_addr)
         {
             const auto effective = this->shadow_permission_apple(host_page_addr);
             const bool currently_mapped = this->host_range_is_claimed(host_page_addr, host_page_size_apple);
+            this->track_no_access_pages_apple(host_page_addr);
 
             if (!effective)
             {
@@ -3484,6 +3546,7 @@ namespace sogen::fex
                     this->set_temporary_access(zero_start, zero_size, memory_permission::write, true);
                 }
 
+                this->disarm_watchpoints_over_apple(zero_start, zero_size);
                 std::memset(reinterpret_cast<void*>(this->to_host_address(zero_start)), 0, zero_size);
 
                 if (needs_temporary_write)
@@ -3491,6 +3554,215 @@ namespace sogen::fex
                     this->set_temporary_access(zero_start, zero_size, memory_permission::write, false);
                 }
             }
+        }
+
+        // Reserved pages are left out on purpose: every allocation smaller than a host page leaves some
+        // beside committed memory, and watching them would keep the debug registers armed all the time.
+        bool is_no_access_page_apple(const uint64_t page) const
+        {
+            const auto it = this->page_shadow_apple_.find(page);
+            return it != this->page_shadow_apple_.end() && it->second == memory_permission::none;
+        }
+
+        void track_no_access_pages_apple(const uint64_t host_page_addr)
+        {
+            uint8_t no_access_pages = 0;
+            if (this->shadow_permission_apple(host_page_addr).value_or(memory_permission::none) != memory_permission::none)
+            {
+                for (size_t index = 0; index < pages_per_host_page_apple; ++index)
+                {
+                    if (this->is_no_access_page_apple(host_page_addr + index * page_size))
+                    {
+                        no_access_pages |= static_cast<uint8_t>(1U << index);
+                    }
+                }
+            }
+
+            const auto previous = this->no_access_pages_apple_.find(host_page_addr);
+            const uint8_t previous_pages = previous == this->no_access_pages_apple_.end() ? 0 : previous->second;
+            if (previous_pages == no_access_pages)
+            {
+                return;
+            }
+
+            this->no_access_watchpoint_count_apple_ -= watchpoint_count_for(previous_pages);
+            this->no_access_watchpoint_count_apple_ += watchpoint_count_for(no_access_pages);
+            ++this->no_access_generation_apple_;
+
+            if (no_access_pages == 0)
+            {
+                this->no_access_pages_apple_.erase(previous);
+            }
+            else
+            {
+                this->no_access_pages_apple_[host_page_addr] = no_access_pages;
+            }
+        }
+
+        // A watched range is a naturally aligned power of two, so one run of no-access pages inside a host
+        // page becomes at most two watchpoints.
+        template <typename F>
+        static void for_each_watchpoint_of(const uint64_t host_page_addr, const uint8_t no_access_pages, F&& f)
+        {
+            size_t index = 0;
+            while (index < pages_per_host_page_apple)
+            {
+                if ((no_access_pages & (1U << index)) == 0)
+                {
+                    ++index;
+                    continue;
+                }
+
+                const bool covers_pair = index % 2 == 0 && (no_access_pages & (1U << (index + 1))) != 0;
+                const size_t pages = covers_pair ? 2 : 1;
+                f(host_page_addr + index * page_size, pages * page_size);
+                index += pages;
+            }
+        }
+
+        static size_t watchpoint_count_for(const uint8_t no_access_pages)
+        {
+            size_t count = 0;
+            for_each_watchpoint_of(0, no_access_pages, [&](uint64_t, size_t) { ++count; });
+            return count;
+        }
+
+        // There are only a few watchpoints, so the host pages nearest below the stack pointer come first:
+        // that is where the guard region of the running thread's stack is.
+        watchpoint_set select_watchpoints_apple() const
+        {
+            const size_t capacity = std::min(utils::host_watchpoints::capacity(), watchpoint_set{}.ranges.size());
+            watchpoint_set selected{};
+
+            const auto add = [&](const std::pair<const uint64_t, uint8_t>& entry) {
+                if (selected.count + watchpoint_count_for(entry.second) > capacity)
+                {
+                    return false;
+                }
+
+                for_each_watchpoint_of(entry.first, entry.second, [&](const uint64_t address, const size_t size) {
+                    selected.ranges.at(selected.count++) = {.address = this->to_host_address(address), .size = size};
+                });
+                return true;
+            };
+
+            const uint64_t stack_pointer = this->vcpu_.cpu_state().gregs[detail::greg_rsp];
+            const auto above_stack = this->no_access_pages_apple_.upper_bound(host_page_align_down_apple(stack_pointer));
+
+            for (auto it = std::make_reverse_iterator(above_stack); it != this->no_access_pages_apple_.rend(); ++it)
+            {
+                if (!add(*it))
+                {
+                    return selected;
+                }
+            }
+
+            for (auto it = above_stack; it != this->no_access_pages_apple_.end(); ++it)
+            {
+                if (!add(*it))
+                {
+                    return selected;
+                }
+            }
+
+            return selected;
+        }
+
+        void arm_watchpoints_apple() const
+        {
+            if (utils::host_watchpoints::capacity() == 0)
+            {
+                return;
+            }
+
+            const bool selection_is_fixed = this->no_access_watchpoint_count_apple_ <= utils::host_watchpoints::capacity();
+            if (selection_is_fixed && this->armed_generation_apple_ == this->no_access_generation_apple_)
+            {
+                return;
+            }
+
+            const auto selected = this->select_watchpoints_apple();
+            if (selected != this->armed_watchpoints_apple_)
+            {
+                this->armed_watchpoints_apple_ = utils::host_watchpoints::program(selected.span()) ? selected : watchpoint_set{};
+            }
+
+            this->armed_generation_apple_ = this->no_access_generation_apple_;
+        }
+
+        // Also runs inside the fault signal handler, so it must not allocate.
+        void clear_watchpoints_apple() const
+        {
+            utils::host_watchpoints::program({});
+            this->armed_watchpoints_apple_ = {};
+            this->armed_generation_apple_ = no_generation_apple;
+        }
+
+        void disarm_watchpoints_apple() const
+        {
+            if (this->armed_watchpoints_apple_.count != 0)
+            {
+                this->clear_watchpoints_apple();
+            }
+        }
+
+        void disarm_watchpoints_over_apple(const uint64_t address, const size_t size) const
+        {
+            bool overlaps = false;
+            this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
+                overlaps = overlaps || std::ranges::any_of(this->armed_watchpoints_apple_.span(), [&](const auto& watched) {
+                               return host_address < watched.address + watched.size && watched.address < host_address + span_size;
+                           });
+            });
+
+            if (overlaps)
+            {
+                this->disarm_watchpoints_apple();
+            }
+        }
+
+        // Arm ARM: for a watchpoint, FAR can be any address from the lowest byte the instruction accesses
+        // up to the highest watched byte it accesses, so an access that runs into a watched range can
+        // report an address below it (Linux: arch/arm64/kernel/hw_breakpoint.c,
+        // get_distance_from_watchpoint).
+        uint64_t watched_fault_address_apple(const uint64_t fault_addr) const
+        {
+            constexpr uint64_t largest_access_size = 64;
+            const auto armed = this->armed_watchpoints_apple_.span();
+
+            if (std::ranges::any_of(armed, [&](const auto& watched) {
+                    return fault_addr >= watched.address && fault_addr - watched.address < watched.size;
+                }))
+            {
+                return fault_addr;
+            }
+
+            const auto above = std::ranges::find_if(armed, [&](const auto& watched) {
+                return watched.address > fault_addr && watched.address - fault_addr < largest_access_size;
+            });
+            return above == armed.end() ? fault_addr : above->address;
+        }
+
+        // Host code reading or writing guest memory hits the watchpoints as well: FEXCore's frontend
+        // decoding guest code, or a host access this backend does not route through
+        // disarm_watchpoints_over_apple. Such an access proceeds unwatched, and the stop request makes
+        // the run loop re-arm at the next block entry. A hit while SIGTRAP is blocked never returns, so
+        // nothing may touch guest memory with SIGTRAP blocked.
+        bool handle_watchpoint_hit(ucontext_t* uctx)
+        {
+            const uint64_t fault_addr = this->watched_fault_address_apple(uctx->uc_mcontext->__es.__far);
+            const uint64_t pc = get_host_pc(uctx);
+            const bool from_guest_code = this->context_ && this->context_->IsAddressInCodeBuffer(this->vcpu_.thread_, pc);
+            const uint64_t page = this->to_guest_address(fault_addr) & ~(page_size - 1);
+
+            if (!from_guest_code || !this->is_no_access_page_apple(page))
+            {
+                this->clear_watchpoints_apple();
+                this->vcpu_.request_thread_stop();
+                return true;
+            }
+
+            return this->handle_general_memory_violation(uctx, fault_addr);
         }
 #endif
 
@@ -3930,9 +4202,9 @@ namespace sogen::fex
                 }
                 else
 #elif defined(__APPLE__)
-                if (const auto data_abort = data_abort_operation(uctx->uc_mcontext->__es.__esr))
+                if (const auto access = memory_access_operation(uctx->uc_mcontext->__es.__esr))
                 {
-                    operation = *data_abort;
+                    operation = *access;
                 }
                 else
 #endif
@@ -3993,6 +4265,13 @@ namespace sogen::fex
             }
 
             auto* uctx = static_cast<ucontext_t*>(raw_ucontext);
+
+#ifdef __APPLE__
+            if (sig == SIGTRAP && is_watchpoint_exception(uctx->uc_mcontext->__es.__esr))
+            {
+                return this->handle_watchpoint_hit(uctx);
+            }
+#endif
 
             if (sig == SIGSEGV || sig == SIGBUS)
             {
@@ -4310,8 +4589,14 @@ namespace sogen::fex
             // pending_fault_dispatch_) rather than genuinely stopping - dispatch it in normal call
             // context, where that is safe, then resume by calling ExecuteThread again; it always
             // restarts from CurrentFrame->State.rip, which the hook is free to have redirected.
+#ifdef __APPLE__
+            const auto disarm_watchpoints = utils::finally([this] { this->disarm_watchpoints_apple(); });
+#endif
             for (;;)
             {
+#ifdef __APPLE__
+                this->arm_watchpoints_apple();
+#endif
                 this->context_->ExecuteThread(vcpu.thread_);
 
                 const bool hook_dispatched = this->dispatch_pending_hook_if_any(vcpu);
@@ -4509,6 +4794,15 @@ namespace sogen::fex
         // directly followed by .data (RW) share a host page. page_shadow_apple_ is the per-4KB source of
         // truth (absent = never requested, which must still fault).
         std::map<uint64_t, memory_permission> page_shadow_apple_;
+
+        // Host pages that map memory next to no-access 4KB pages, with a bit per no-access page.
+        std::map<uint64_t, uint8_t> no_access_pages_apple_;
+        size_t no_access_watchpoint_count_apple_ = 0;
+        uint64_t no_access_generation_apple_ = 0;
+
+        // Debug registers of the host thread running run(); they are cleared when run() returns.
+        mutable watchpoint_set armed_watchpoints_apple_{};
+        mutable uint64_t armed_generation_apple_ = no_generation_apple;
 #endif
 
         hook_entry* syscall_hook_ = nullptr;
@@ -4805,6 +5099,12 @@ namespace sogen::fex
         {
             vcpu.request_thread_stop();
         }
+#ifdef __APPLE__
+        else
+        {
+            this->emulator_.arm_watchpoints_apple();
+        }
+#endif
 
         // FEX writes our return value into guest RAX; hand back whatever the hook already set so the
         // value is preserved.

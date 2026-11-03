@@ -46,7 +46,8 @@ namespace sogen::android
         std::string application{};
         std::vector<std::string> arguments{};
         std::vector<std::pair<std::string, std::string>> environment{};
-        std::vector<std::pair<std::string, std::filesystem::path>> path_mappings{};
+        // Where the game's changes to the emulation root are kept. The root itself is never written.
+        std::filesystem::path root_layer{};
         std::vector<document_tree> document_trees{};
         std::string working_directory{};
         std::string backend{};

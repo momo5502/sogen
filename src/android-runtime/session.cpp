@@ -75,38 +75,23 @@ namespace sogen::android
 
         emulator_settings create_emulator_settings(const run_config& config)
         {
-            // Games keep their saves and settings in the emulation root and in their own directory. Like the
-            // sandbox, they read the TSC and KUSER_SHARED_DATA natively instead of trapping every access.
-            emulator_settings settings{
+            // Like the sandbox, games read the TSC and KUSER_SHARED_DATA natively instead of trapping every access.
+            return emulator_settings{
                 .intercept_rdtsc = false,
                 .intercept_kusd = false,
                 .emulation_root = config.emulation_root,
-                .root_mode = filesystem_mode::read_write,
+                .root_mode = filesystem_mode::copy_on_write,
+                .root_layer = config.root_layer,
                 .network = config.live_network ? network::network_mode::live : network::network_mode::offline,
                 .spoof_gpu_features = true,
             };
-
-            for (const auto& [guest, host] : config.path_mappings)
-            {
-                settings.mounts.push_back(mount_spec{
-                    .host_path = host,
-                    .guest_path = windows_path(u8_to_u16(guest)),
-                    .mode = filesystem_mode::read_write,
-                });
-            }
-
-            return settings;
         }
 
         // What a saved process depends on outside of itself, which a resume has to find unchanged.
         std::string describe_configuration(const run_config& config)
         {
-            std::string configuration = "emulation-root=" + config.emulation_root.string() + "\nbackend=" + config.backend +
-                                        "\nnetwork=" + (config.live_network ? "live" : "offline") + "\n";
-            for (const auto& [guest, host] : config.path_mappings)
-            {
-                configuration += "mount=" + host.string() + ":" + guest + "\n";
-            }
+            std::string configuration = "emulation-root=" + config.emulation_root.string() + "\nroot-layer=" + config.root_layer.string() +
+                                        "\nbackend=" + config.backend + "\nnetwork=" + (config.live_network ? "live" : "offline") + "\n";
             for (const auto& tree : config.document_trees)
             {
                 configuration += "documents=" + tree.uri + ":" + tree.guest_path + ":" + tree.upper_directory.string() + "\n";
@@ -127,6 +112,8 @@ namespace sogen::android
                 settings.emulation_root.string(),
                 "--root-mode",
                 std::string{to_string(settings.root_mode)},
+                "--root-layer",
+                settings.root_layer.string(),
                 "--network",
                 std::string{network::to_string(settings.network)},
             };
@@ -134,12 +121,6 @@ namespace sogen::android
             if (settings.spoof_gpu_features)
             {
                 arguments.emplace_back("--spoof-gpu-features");
-            }
-
-            for (const auto& mount : settings.mounts)
-            {
-                arguments.emplace_back("--mount");
-                arguments.push_back(render_mount_spec(mount));
             }
 
             for (const auto& mount : document_mounts)

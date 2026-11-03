@@ -2085,6 +2085,32 @@ namespace sogen
 
                 return true;
             }
+
+            // Windows measures at most this many characters, with or without a fit count or partial extents.
+            constexpr uint64_t max_text_extent_chars = max_char_metric_output_size / (sizeof(char16_t) + sizeof(ULONG));
+
+            bool write_fixed_width_extents(const syscall_context& c, const emulator_pointer extents, const ULONG count)
+            {
+                std::array<ULONG, 0x100> chunk{};
+                for (ULONG written = 0; written < count;)
+                {
+                    const auto chunk_count = std::min<size_t>(chunk.size(), count - written);
+                    for (size_t i = 0; i < chunk_count; ++i)
+                    {
+                        chunk[i] = static_cast<ULONG>((written + i + 1) * k_default_font_width);
+                    }
+
+                    if (!write_guest_bytes_up_to_fault(c, extents + (static_cast<uint64_t>(written) * sizeof(ULONG)), chunk.data(),
+                                                       chunk_count * sizeof(ULONG)))
+                    {
+                        return false;
+                    }
+
+                    written += static_cast<ULONG>(chunk_count);
+                }
+
+                return true;
+            }
         }
 
         // Returns the surface a paint DC should be presented to, and (via present_handle) the host window handle it
@@ -2355,37 +2381,45 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
+        uint32_t count_process_gdi_objects(const syscall_context& c)
         {
-            if (process.bits != gui_resources_global_process && !c.proc.is_current_process_handle(process))
+            uint64_t table = 0;
+            c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
+            if (table == 0)
             {
                 return 0;
             }
 
-            // Peaks are not tracked, so they report the current count.
-            switch (flags)
+            // Windows charges neither the stock objects, the memory DC default bitmap among them, nor the system color
+            // brushes to the process.
+            std::unordered_set<uint32_t> system_objects{c.proc.gdi_memory_dc_default_bitmap_handle};
+            for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::Objects)>; ++index)
             {
-            case gui_resources_userobjects:
-            case gui_resources_userobjects_peak:
-                return static_cast<DWORD>(c.proc.user_handles.used_handle_count());
-            case gui_resources_gdiobjects:
-            case gui_resources_gdiobjects_peak: {
-                uint64_t table = 0;
-                c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
-                if (table == 0)
+                system_objects.insert(static_cast<uint32_t>(read_gdi_object_slot(c, index)));
+            }
+            c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
+                for (const auto brush : server_info.ahbrSystem)
                 {
-                    return 0;
+                    system_objects.insert(static_cast<uint32_t>(brush));
                 }
+            });
 
-                std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
-                c.emu.read_memory(table, entries.data(), entries.size() * sizeof(GDI_HANDLE_ENTRY64));
-                return static_cast<DWORD>(std::ranges::count_if(entries, [&](const GDI_HANDLE_ENTRY64& entry) {
-                    return entry.Type != 0 && entry.Owner.ProcessId == static_cast<uint16_t>(c.proc.process_id);
-                }));
+            std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
+            c.emu.read_memory(table, entries.data(), entries.size() * sizeof(GDI_HANDLE_ENTRY64));
+
+            uint32_t count = 0;
+            for (uint32_t index = 0; index < entries.size(); ++index)
+            {
+                const auto& entry = entries[index];
+                const auto handle_value = (static_cast<uint32_t>(entry.Unique) << 16) | index;
+                if (entry.Type != 0 && entry.Owner.ProcessId == static_cast<uint16_t>(c.proc.process_id) &&
+                    !system_objects.contains(handle_value))
+                {
+                    ++count;
+                }
             }
-            default:
-                return 0;
-            }
+
+            return count;
         }
 
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, const hdc /*dc*/)
@@ -3486,55 +3520,50 @@ namespace sogen
                                           const ULONG max_extent, const emulator_object<ULONG> fit, const emulator_pointer extents,
                                           const emulator_pointer size, const ULONG /*flags*/)
         {
-            if (dc == 0 || size == 0)
+            // Windows answers an empty string without looking at the DC or the text.
+            if (char_count == 0)
             {
-                return FALSE;
-            }
-
-            // The count sizes buffers the guest passed, so the text is checked before anything is derived from it.
-            // Windows reads the text first, so a count larger than that buffer fails there; the width here does not
-            // depend on the characters, but a bogus count must still fail rather than be believed.
-            if (char_count != 0)
-            {
-                char16_t last_character{};
-                const auto last = text + (static_cast<uint64_t>(char_count) - 1) * sizeof(char16_t);
-                if (text == 0 || !c.win_emu.memory.try_read_memory(last, &last_character, sizeof(last_character)))
+                constexpr SIZE empty_size{};
+                constexpr ULONG no_fit = 0;
+                if (size == 0 || !write_guest_block(c, size, &empty_size, sizeof(empty_size)))
                 {
                     return FALSE;
                 }
+
+                if (fit && !write_guest_block(c, fit.value(), &no_fit, sizeof(no_fit)))
+                {
+                    return FALSE;
+                }
+
+                return TRUE;
+            }
+
+            // Windows reads the whole text before writing anything, although the fixed-width measure does not need it.
+            if (dc == 0 || size == 0 || char_count > max_text_extent_chars ||
+                !is_readable_range(c.win_emu.memory, text, static_cast<uint64_t>(char_count) * sizeof(char16_t)))
+            {
+                return FALSE;
             }
 
             const SIZE text_size{
                 .cx = static_cast<LONG>(k_default_font_width * char_count),
                 .cy = static_cast<LONG>(k_default_font_height),
             };
-            c.emu.write_memory(size, &text_size, sizeof(text_size));
-
-            if (fit)
+            if (!write_guest_block(c, size, &text_size, sizeof(text_size)))
             {
-                fit.write(std::min<ULONG>(char_count, max_extent / k_default_font_width));
+                return FALSE;
             }
 
-            if (extents != 0 && char_count != 0)
+            const ULONG fitting = std::min<ULONG>(char_count, max_extent / k_default_font_width);
+            if (fit && !write_guest_block(c, fit.value(), &fitting, sizeof(fitting)))
             {
-                // Written in fixed chunks: nothing host-side is sized by the guest's count.
-                constexpr ULONG chunk_size = 256;
-                std::array<ULONG, chunk_size> partial_extents{};
+                return FALSE;
+            }
 
-                for (ULONG written = 0; written < char_count; written += chunk_size)
-                {
-                    const auto count = std::min(chunk_size, char_count - written);
-                    for (ULONG i = 0; i < count; ++i)
-                    {
-                        partial_extents[i] = static_cast<ULONG>(k_default_font_width * (written + i + 1));
-                    }
-
-                    const auto destination = extents + static_cast<uint64_t>(written) * sizeof(ULONG);
-                    if (!c.win_emu.memory.try_write_memory(destination, partial_extents.data(), count * sizeof(ULONG)))
-                    {
-                        return FALSE;
-                    }
-                }
+            const ULONG extent_count = fit ? fitting : char_count;
+            if (extents != 0 && !write_fixed_width_extents(c, extents, extent_count))
+            {
+                return FALSE;
             }
 
             return TRUE;

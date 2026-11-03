@@ -75,9 +75,6 @@ perfectly good change; a change that sprinkles comments over otherwise readable 
 
 - Run clang-format on changed files to ensure consistent formatting
 - Do not use shortcuts or workarounds. Always prefer clean and idiomatic solutions.
-- Any change to the serialized snapshot layout must bump the snapshot version in
-  `src/windows-emulator/snapshot.cpp`. Check it again after rebasing: another merged change may already have taken
-  the same number, and git will not flag it.
 - Never commit binary files (executables, DLLs, object files, archives, images, compiled samples). Git LFS
   pointers and generated artifacts are not a workaround.
 

@@ -136,6 +136,7 @@ namespace sogen
 
         std::unordered_map<uint16_t, uint16_t> port_mappings{};
         filesystem_mode root_mode{default_root_mode};
+        std::filesystem::path root_layer{};
         std::vector<mount_spec> mounts{};
 
         fake_environment_config fake_env{};
@@ -180,6 +181,7 @@ namespace sogen
         guest_cpu& cpu;
         emulator_thread* active_thread{};
         std::atomic_bool switch_thread{false};
+        std::atomic<std::thread::id> runner{};
         // Set while this vCPU waits in wait_for_thread_registers or runs a host call through run_without_kernel_lock.
         // Its active thread's registers are saved meanwhile, and it reloads them before it continues.
         bool active_thread_saved{false};

@@ -48,6 +48,7 @@ target_link_libraries(windows-emulator-test PRIVATE
   gpu-bridge-protocol
   vulkan-bridge-marshal
   debugger
+  sogen-version
 )
 
 if(EMSCRIPTEN)

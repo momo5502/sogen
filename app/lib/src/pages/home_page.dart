@@ -164,7 +164,7 @@ class _HomePageState extends State<HomePage> {
       builder: (context) => AlertDialog(
         title: Text('Remove ${game.name}?'),
         content: const Text(
-          'The game files stay where they are. Saves and settings the game kept in its folder are deleted.',
+          'The game files stay where they are. The saves and settings Sogen kept for the game are deleted.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),

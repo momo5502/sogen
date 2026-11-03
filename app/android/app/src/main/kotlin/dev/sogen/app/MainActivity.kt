@@ -147,7 +147,7 @@ class MainActivity : FlutterActivity() {
         application = call.argument<String>("application").orEmpty(),
         arguments = call.argument<List<String>>("arguments").orEmpty(),
         environment = call.argument<Map<String, String>>("environment").orEmpty(),
-        pathMappings = call.argument<Map<String, String>>("pathMappings").orEmpty(),
+        rootLayerDirectory = call.argument<String>("rootLayerDirectory").orEmpty(),
         documentMounts = call.argument<Map<String, String>>("documentMounts").orEmpty(),
         layerDirectory = call.argument<String>("layerDirectory").orEmpty(),
         workingDirectory = call.argument<String>("workingDirectory").orEmpty(),

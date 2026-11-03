@@ -584,6 +584,8 @@ namespace sogen
         this->zw_callback_return = ntdll.find_export("ZwCallbackReturn");
         this->gdi_default_dc_handle = 0;
         this->gdi_memory_dc_default_bitmap_handle = 0;
+        this->gdi_objects_peak = 0;
+        this->user_objects_peak = 0;
         this->gdi_dc_states.clear();
         this->gdi_dc_save_states.clear();
         this->gdi_bitmap_surfaces.clear();
@@ -823,6 +825,8 @@ namespace sogen
         buffer.write(this->dispatch_client_message);
         buffer.write(this->gdi_default_dc_handle);
         buffer.write(this->gdi_memory_dc_default_bitmap_handle);
+        buffer.write(this->gdi_objects_peak);
+        buffer.write(this->user_objects_peak);
         buffer.write_map(this->pending_alpc_reply_views);
         buffer.write_map(this->gdi_dc_states);
         buffer.write_map(this->gdi_dc_save_states);
@@ -954,6 +958,8 @@ namespace sogen
         buffer.read(this->dispatch_client_message);
         buffer.read(this->gdi_default_dc_handle);
         buffer.read(this->gdi_memory_dc_default_bitmap_handle);
+        buffer.read(this->gdi_objects_peak);
+        buffer.read(this->user_objects_peak);
         buffer.read_map(this->pending_alpc_reply_views);
         buffer.read_map(this->gdi_dc_states);
         buffer.read_map(this->gdi_dc_save_states);

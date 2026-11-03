@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "file_system.hpp"
 #include "filesystem/host_directory_provider.hpp"
+#include "filesystem/layered_provider.hpp"
 
 #include <sys/stat.h>
 
@@ -45,10 +46,43 @@ namespace sogen
 
             return destination.flush() ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;
         }
+
+        void validate_root_layer(const std::filesystem::path& root, const filesystem_mode root_mode,
+                                 const std::filesystem::path& root_layer)
+        {
+            if (root_mode != filesystem_mode::copy_on_write)
+            {
+                if (!root_layer.empty())
+                {
+                    throw std::runtime_error("A root layer is only used by a copy-on-write root");
+                }
+
+                return;
+            }
+
+            if (root.empty() || root_layer.empty())
+            {
+                throw std::runtime_error("A copy-on-write root needs an emulation root and a root layer");
+            }
+        }
+
+        std::unique_ptr<mount_provider> create_drive_provider(const std::filesystem::path& drive_root, const filesystem_mode root_mode,
+                                                              const std::filesystem::path& drive_layer)
+        {
+            auto provider = std::make_unique<host_directory_provider>(drive_root);
+            if (root_mode != filesystem_mode::copy_on_write)
+            {
+                return provider;
+            }
+
+            return std::make_unique<layered_provider>(std::move(provider), drive_layer / "upper", drive_layer / "state");
+        }
     }
 
-    file_system::file_system(const std::filesystem::path& root, const filesystem_mode root_mode)
+    file_system::file_system(const std::filesystem::path& root, const filesystem_mode root_mode, const std::filesystem::path& root_layer)
     {
+        validate_root_layer(root, root_mode, root_layer);
+
         if (root.empty())
         {
 #ifdef OS_WINDOWS
@@ -73,10 +107,19 @@ namespace sogen
         for (const auto& entry : std::filesystem::directory_iterator(canonical_root, ec))
         {
             const auto filename = entry.path().filename().string();
-            if (filename.size() == 1 && entry.is_directory(ec))
+            if (filename.size() != 1 || !entry.is_directory(ec))
             {
-                this->mount(windows_path{filename.front(), {}}, std::make_unique<host_directory_provider>(entry.path()), root_mode);
+                continue;
             }
+
+            const windows_path drive{filename.front(), {}};
+            if (this->mounts_.contains(drive))
+            {
+                throw std::runtime_error("The emulation root holds drive " + filename + " twice");
+            }
+
+            const auto drive_layer = root_layer / std::string(1, utils::string::char_to_lower(filename.front()));
+            this->mount(drive, create_drive_provider(entry.path(), root_mode, drive_layer), root_mode);
         }
     }
 

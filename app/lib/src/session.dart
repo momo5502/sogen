@@ -163,6 +163,7 @@ class GameSession extends ChangeNotifier {
           'environment': game.environment,
           'documentMounts': {guestGameDirectory: game.directory},
           'layerDirectory': layers.path,
+          'rootLayerDirectory': (await rootLayerDirectory(game)).path,
           'workingDirectory': game.guestWorkingDirectory,
           'backend': 'fex',
           'liveNetwork': game.liveNetwork,
