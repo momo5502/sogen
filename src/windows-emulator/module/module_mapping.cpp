@@ -490,6 +490,14 @@ namespace sogen
             }
         }
 
+        // Windows maps an image whose sections are aligned below the page size as a single EXECUTE_WRITECOPY
+        // region, ignoring the section characteristics.
+        template <typename T>
+        bool is_mapped_as_one_region(const PEOptionalHeader_t<T>& optional_header)
+        {
+            return optional_header.SectionAlignment < page_align_up(1);
+        }
+
         template <typename T>
         bool map_sections(memory_manager& memory, mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                           const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
@@ -504,7 +512,8 @@ namespace sogen
                 // Like the kernel, only the pages a section uses are committed. With a section alignment above the page
                 // size (the 64KB-aligned SysWOW64 DLLs), the rest of its slot stays reserved, which debuggers rely on to
                 // tell sections apart in VirtualQuery results.
-                const auto size_of_section = page_align_up(section.Misc.VirtualSize);
+                const auto virtual_size = section.Misc.VirtualSize ? section.Misc.VirtualSize : section.SizeOfRawData;
+                const auto size_of_section = page_align_up(virtual_size);
                 const auto section_size = static_cast<size_t>(size_of_section);
 
                 if (section_size == 0)
@@ -512,14 +521,23 @@ namespace sogen
                     continue;
                 }
 
-                if (!memory.commit_image_memory(target_ptr, section_size, memory_permission::read_write))
+                const auto mapped_as_one_region = is_mapped_as_one_region(nt_headers.OptionalHeader);
+                const auto size_of_data = static_cast<size_t>(std::min<uint64_t>(size_of_section, section.SizeOfRawData));
+                // A sub-page section's page-rounded size can legitimately run past SizeOfImage; nothing is committed or
+                // protected per section there, so only the data written must fit.
+                const auto size_in_image = mapped_as_one_region ? size_of_data : section_size;
+                if (section.VirtualAddress + size_in_image > binary.size_of_image)
+                {
+                    return false;
+                }
+
+                if (!mapped_as_one_region && !memory.commit_image_memory(target_ptr, section_size, memory_permission::read_write))
                 {
                     return false;
                 }
 
                 if (section.SizeOfRawData > 0)
                 {
-                    const auto size_of_data = static_cast<size_t>(std::min<uint64_t>(size_of_section, section.SizeOfRawData));
                     const auto* source_ptr = buffer.get_pointer_for_range(section.PointerToRawData, size_of_data);
                     memory.write_memory(target_ptr, source_ptr, size_of_data);
                 }
@@ -573,13 +591,20 @@ namespace sogen
             binary.address_names.clear();
 
             const auto image_size = static_cast<size_t>(binary.size_of_image);
+            if (optional_header.SizeOfHeaders > image_size)
+            {
+                return false;
+            }
+
             if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::all, true, memory_region_kind::section_image))
             {
                 return false;
             }
 
+            const auto mapped_as_one_region = is_mapped_as_one_region(optional_header);
             const auto headers_size = static_cast<size_t>(page_align_up(optional_header.SizeOfHeaders));
-            if (!memory.commit_image_memory(binary.image_base, headers_size, memory_permission::read_write))
+            const auto initial_commit_size = mapped_as_one_region ? image_size : headers_size;
+            if (!memory.commit_image_memory(binary.image_base, initial_commit_size, memory_permission::read_write))
             {
                 memory.release_memory(binary.image_base, 0);
                 return false;
@@ -607,7 +632,10 @@ namespace sogen
                 collect_imports(binary, memory, optional_header);
 
                 // TODO: Make sure to match kernel allocation patterns to attain correct initial permissions!
-                if (!protect_module_memory(memory, binary, headers_size))
+                const auto protected_ok = mapped_as_one_region
+                                              ? memory.protect_memory(binary.image_base, image_size, memory_permission::all)
+                                              : protect_module_memory(memory, binary, headers_size);
+                if (!protected_ok)
                 {
                     throw std::runtime_error("Failed to protect mapped module memory");
                 }
