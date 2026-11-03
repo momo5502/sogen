@@ -70,6 +70,7 @@
 #include <optional>
 #include <random>
 #include <set>
+#include <shared_mutex>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -1072,6 +1073,57 @@ namespace sogen::fex
         // thread is the one the fault belongs to.
         thread_local fex_vcpu* t_running_vcpu = nullptr;
 
+        enum class tables_access
+        {
+            none,
+            shared,
+            exclusive,
+        };
+
+        thread_local tables_access t_tables_access = tables_access::none;
+
+        // A fault can interrupt a thread that holds the tables lock, e.g. while it copies guest memory, and the handler
+        // must not lock it again: std::shared_mutex is not recursive. Nested acquisitions on one thread therefore reuse
+        // the outer one. Outside the fault handler, which never asks for more than the thread already holds, a nested
+        // acquisition must not be stronger than the outer one.
+        template <typename Lock, tables_access Access>
+        class tables_lock
+        {
+          public:
+            explicit tables_lock(std::shared_mutex& mutex)
+            {
+                if (t_tables_access == tables_access::none)
+                {
+                    this->lock_ = Lock(mutex);
+                    t_tables_access = Access;
+                }
+                else if (Access == tables_access::exclusive && t_tables_access != tables_access::exclusive)
+                {
+                    std::terminate();
+                }
+            }
+
+            ~tables_lock()
+            {
+                if (this->lock_.owns_lock())
+                {
+                    this->lock_.unlock();
+                    t_tables_access = tables_access::none;
+                }
+            }
+
+            tables_lock(const tables_lock&) = delete;
+            tables_lock& operator=(const tables_lock&) = delete;
+            tables_lock(tables_lock&&) = delete;
+            tables_lock& operator=(tables_lock&&) = delete;
+
+          private:
+            Lock lock_{};
+        };
+
+        using shared_tables_lock = tables_lock<std::shared_lock<std::shared_mutex>, tables_access::shared>;
+        using exclusive_tables_lock = tables_lock<std::unique_lock<std::shared_mutex>, tables_access::exclusive>;
+
         void fault_signal_handler(int sig, siginfo_t* info, void* raw_ucontext);
 
         // FEXCore's Break stubs use SIGILL for HLT/UDF and SIGTRAP for BRK, including x86 INT3, so both
@@ -1935,6 +1987,7 @@ namespace sogen::fex
 
         void ensure_restorable_in_new_process() const override
         {
+            const shared_tables_lock lock(this->tables_mutex_);
             const auto ensure_restorable = [this](const uint64_t address, const uint64_t size) {
                 const bool in_low_window = this->low_guest_window_ != 0 && address + size <= low_guest_window_size;
                 const bool in_arena =
@@ -1974,6 +2027,7 @@ namespace sogen::fex
 
         void deserialize_state(utils::buffer_deserializer& buffer, bool /*is_snapshot*/) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             const auto registers = buffer.read_vector<std::byte>();
             if (buffer.read<uint64_t>() != this->guest_arena_)
             {
@@ -2013,6 +2067,7 @@ namespace sogen::fex
         // Context also runs a WoW64 process's compatibility-mode code.
         void notify_process_bitness(bool is_wow64_process) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             if (is_wow64_process && this->low_guest_window_ == 0)
             {
                 this->enable_low_guest_window();
@@ -2036,6 +2091,7 @@ namespace sogen::fex
 
         bool try_read_memory(uint64_t address, void* data, size_t size) const override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             if (!this->is_range_mapped(address, size))
             {
                 return false;
@@ -2087,6 +2143,30 @@ namespace sogen::fex
 
         bool try_write_memory(uint64_t address, const void* data, size_t size) override
         {
+            {
+                const exclusive_tables_lock lock(this->tables_mutex_);
+                if (!this->range_may_hold_code(address, size))
+                {
+                    return this->write_guest_memory(address, data, size);
+                }
+            }
+
+            const auto invalidation = this->lock_code_invalidation();
+            const exclusive_tables_lock lock(this->tables_mutex_);
+            if (!this->write_guest_memory(address, data, size))
+            {
+                return false;
+            }
+
+            if (this->range_has_code(address, size))
+            {
+                this->invalidate_code_range(address, size);
+            }
+            return true;
+        }
+
+        bool write_guest_memory(uint64_t address, const void* data, size_t size)
+        {
             if (!this->is_range_mapped(address, size))
             {
                 return false;
@@ -2117,11 +2197,6 @@ namespace sogen::fex
             {
                 this->set_temporary_access(address, size, memory_permission::write, false);
             }
-
-            if (this->range_has_code(address, size))
-            {
-                this->invalidate_code_range(address, size);
-            }
             return true;
         }
 
@@ -2133,6 +2208,7 @@ namespace sogen::fex
 
         emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             this->memory_execution_hooks_[hook] = std::move(callback);
             return hook;
@@ -2140,6 +2216,7 @@ namespace sogen::fex
 
         emulator_hook* hook_memory_execution(uint64_t /*address*/, memory_execution_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             this->memory_execution_hooks_[hook] = std::move(callback);
             return hook;
@@ -2148,6 +2225,7 @@ namespace sogen::fex
         emulator_hook* hook_memory_range_execution(uint64_t /*address*/, uint64_t /*size*/,
                                                    memory_execution_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             this->memory_execution_hooks_[hook] = std::move(callback);
             return hook;
@@ -2155,6 +2233,7 @@ namespace sogen::fex
 
         emulator_hook* hook_memory_read(uint64_t /*address*/, uint64_t /*size*/, memory_access_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             this->memory_read_hooks_[hook] = std::move(callback);
             return hook;
@@ -2162,6 +2241,7 @@ namespace sogen::fex
 
         emulator_hook* hook_memory_write(uint64_t /*address*/, uint64_t /*size*/, memory_access_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             this->memory_write_hooks_[hook] = std::move(callback);
             return hook;
@@ -2169,6 +2249,7 @@ namespace sogen::fex
 
         emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             auto& entry = this->instruction_hooks_[hook];
             entry.type = static_cast<x86_hookable_instructions>(instruction_type);
@@ -2182,6 +2263,7 @@ namespace sogen::fex
 
         emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             this->interrupt_hooks_[hook] = std::move(callback);
             return hook;
@@ -2189,6 +2271,7 @@ namespace sogen::fex
 
         emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             this->memory_violation_hooks_[hook] = std::move(callback);
             return hook;
@@ -2196,6 +2279,7 @@ namespace sogen::fex
 
         emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto* hook = this->make_hook();
             this->basic_block_hooks_[hook] = std::move(callback);
             return hook;
@@ -2203,6 +2287,7 @@ namespace sogen::fex
 
         void delete_hook(emulator_hook* hook) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             if (this->syscall_hook_ != nullptr)
             {
                 const auto it = this->instruction_hooks_.find(hook);
@@ -2403,6 +2488,7 @@ namespace sogen::fex
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback /*write_cb*/) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             if (!is_page_aligned(address) || !is_page_aligned(size))
             {
                 throw std::runtime_error("FEX MMIO mappings must be page aligned");
@@ -2450,6 +2536,7 @@ namespace sogen::fex
 
         void refresh_mmio_backings() const
         {
+            const shared_tables_lock lock(this->tables_mutex_);
             for (const auto& region : this->mmio_regions_)
             {
                 if (region.is_backed())
@@ -2461,6 +2548,7 @@ namespace sogen::fex
 
         void map_memory(uint64_t address, size_t size, memory_permission permissions) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             if (!is_page_aligned(address) || !is_page_aligned(size))
             {
                 throw std::runtime_error("FEX memory mappings must be page aligned");
@@ -2495,6 +2583,7 @@ namespace sogen::fex
 
         void reserve_guest_address_range(uint64_t address, size_t size) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
 #ifdef __APPLE__
             const uint64_t start = host_page_align_down_apple(address);
             const uint64_t end = host_page_align_up_apple(address + size);
@@ -2526,6 +2615,7 @@ namespace sogen::fex
 
         void register_fixed_guest_range(const uint64_t address, const size_t size) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             if (std::ranges::find(this->fixed_guest_ranges_, std::pair{address, size}) == this->fixed_guest_ranges_.end())
             {
                 this->fixed_guest_ranges_.emplace_back(address, size);
@@ -2534,6 +2624,7 @@ namespace sogen::fex
 
         void release_guest_address_range(uint64_t address, uint64_t size) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             // The caller guarantees the range holds no reserved guest ranges (see memory_interface), so
             // every host page wholly inside it is a stale claim and can go back to the OS. Boundary
             // pages are kept: their outside part may belong to a neighboring, still-live reservation.
@@ -2576,6 +2667,7 @@ namespace sogen::fex
 
         bool map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             if (!is_page_aligned(address) || !is_page_aligned(size))
             {
                 throw std::runtime_error("FEX host memory mappings must be page aligned");
@@ -2707,6 +2799,7 @@ namespace sogen::fex
 #ifndef __APPLE__
         bool track_access(const uint64_t address, const size_t size) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             if (size == 0 || address % page_size != 0 || size % page_size != 0 || !this->is_range_mapped(address, size) ||
                 !this->range_has_permission(address, size, memory_permission::read_write))
             {
@@ -2729,6 +2822,7 @@ namespace sogen::fex
         void take_written_ranges(const uint64_t address, const size_t size,
                                  const std::function<void(uint64_t written_address, size_t written_size)>& f) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             chunk_run written_run{};
             chunk_run protect_run{};
             const auto protect = [&](const uint64_t run_address, const size_t run_size) {
@@ -2759,6 +2853,7 @@ namespace sogen::fex
 
         void invalidate_cache_on_access(const uint64_t address, const size_t size) override
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             chunk_run run{};
             const auto protect = [&](const uint64_t run_address, const size_t run_size) {
                 this->require_protection(run_address, run_size, tracked_access::none);
@@ -2780,6 +2875,8 @@ namespace sogen::fex
 
         void unmap_memory(uint64_t address, size_t size) override
         {
+            const auto invalidation = this->lock_code_invalidation();
+            const exclusive_tables_lock lock(this->tables_mutex_);
             // Unbacked MMIO regions (see mmio_region's doc comment) were never really mapped at the host level.
             if (const auto mmio = std::ranges::find(this->mmio_regions_, address, &mmio_region::address); mmio != this->mmio_regions_.end())
             {
@@ -2811,6 +2908,8 @@ namespace sogen::fex
 
         void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) override
         {
+            const auto invalidation = this->lock_code_invalidation();
+            const exclusive_tables_lock lock(this->tables_mutex_);
             // Tracked chunks take the new protection as it is, so writes to them go unnoticed until they are tracked again.
             this->for_each_tracked_chunk(address, size, [&](tracked_chunk& chunk, const uint64_t chunk_address, const size_t chunk_size) {
                 this->require_up_to_date(chunk, chunk_address, chunk_size);
@@ -3747,6 +3846,8 @@ namespace sogen::fex
                 return;
             }
 
+            const shared_tables_lock lock(this->tables_mutex_);
+
             const bool selection_is_fixed = this->no_access_watchpoint_count_apple_ <= utils::host_watchpoints::capacity();
             if (selection_is_fixed && this->armed_generation_apple_ == this->no_access_generation_apple_)
             {
@@ -3938,6 +4039,19 @@ namespace sogen::fex
             install_fault_signal_handlers(*this);
         }
 
+        template <typename Callback>
+        std::vector<Callback> copy_hooks(const std::unordered_map<emulator_hook*, Callback>& hooks) const
+        {
+            const shared_tables_lock lock(this->tables_mutex_);
+            std::vector<Callback> callbacks{};
+            callbacks.reserve(hooks.size());
+            for (const auto& [_, callback] : hooks)
+            {
+                callbacks.push_back(callback);
+            }
+            return callbacks;
+        }
+
         // Called only from run(), in normal call context, right after ExecuteThread returns. The
         // return value tells run()'s loop whether ExecuteThread came back because a hook was deferred
         // or because of a genuine stop.
@@ -3949,13 +4063,13 @@ namespace sogen::fex
             switch (dispatch.kind)
             {
             case pending_fault_kind::memory_violation:
-                for (auto& [_, hook] : this->memory_violation_hooks_)
+                for (const auto& hook : this->copy_hooks(this->memory_violation_hooks_))
                 {
                     hook(vcpu, dispatch.address, dispatch.size, dispatch.operation, dispatch.type);
                 }
                 return true;
             case pending_fault_kind::interrupt:
-                for (auto& [_, hook] : this->interrupt_hooks_)
+                for (const auto& hook : this->copy_hooks(this->interrupt_hooks_))
                 {
                     hook(vcpu, dispatch.vector);
                 }
@@ -4311,16 +4425,38 @@ namespace sogen::fex
 #ifndef __APPLE__
             // Host-side writes fault on tracked memory as well, from whichever thread makes them.
             if (sig == SIGSEGV && info->si_code == SEGV_ACCERR &&
-                this->handle_tracked_memory_fault(reinterpret_cast<uint64_t>(info->si_addr), is_write_fault(uctx)))
+                this->handle_tracked_memory_fault_signal(reinterpret_cast<uint64_t>(info->si_addr), is_write_fault(uctx)))
             {
                 return true;
             }
 #endif
 
-            return t_running_vcpu != nullptr && this->handle_vcpu_fault_signal(*t_running_vcpu, sig, info, uctx);
+            if (t_running_vcpu == nullptr)
+            {
+                return false;
+            }
+
+            const shared_tables_lock lock(this->tables_mutex_);
+            return this->handle_vcpu_fault_signal(*t_running_vcpu, sig, info, uctx);
         }
 
       private:
+#ifndef __APPLE__
+        // A nested fault from the shared per-vCPU path below, whose misaligned access emulation touches guest memory
+        // directly, keeps the shared lock: the tracked ranges only change under the exclusive lock, and a chunk's state
+        // is atomic, so the most it adds is a second thread updating the same chunk.
+        bool handle_tracked_memory_fault_signal(const uint64_t host_fault_address, const bool is_write)
+        {
+            if (t_tables_access != tables_access::none)
+            {
+                return this->handle_tracked_memory_fault(host_fault_address, is_write);
+            }
+
+            const exclusive_tables_lock lock(this->tables_mutex_);
+            return this->handle_tracked_memory_fault(host_fault_address, is_write);
+        }
+#endif
+
         bool handle_vcpu_fault_signal(fex_vcpu& vcpu, int sig, siginfo_t* info, ucontext_t* uctx)
         {
             if (vcpu.thread_ == nullptr)
@@ -4748,6 +4884,7 @@ namespace sogen::fex
 
         void attach_callret_stack(FEXCore::Core::InternalThreadState* thread)
         {
+            const exclusive_tables_lock lock(this->tables_mutex_);
             auto& state = thread->CurrentFrame->State;
             this->ensure_callret_buffer(thread, state);
             thread->CallRetStackBase = reinterpret_cast<void*>(state._pad1);
@@ -4770,12 +4907,6 @@ namespace sogen::fex
                 return;
             }
 
-            // InvalidateCodeBuffersCodeRange/InvalidateThreadCachedCodeRange both require the caller
-            // to already hold GetCodeInvalidationMutex() exclusively (see FEXCore's own
-            // ThreadManager::InvalidateGuestCodeRange, the canonical caller on Linux) - without it,
-            // CompileBlock's shared lock deadlocks permanently the first time this runs.
-            std::unique_lock lock(context->GetCodeInvalidationMutex());
-
 #ifdef __APPLE__
             // Invalidating a range can synchronously delink already-linked call sites (AddBlockLink's
             // delinker callbacks), writing into a MAP_JIT buffer - the same per-thread write-protect
@@ -4792,6 +4923,26 @@ namespace sogen::fex
 #endif
         }
 
+        // InvalidateCodeBuffersCodeRange/InvalidateThreadCachedCodeRange both require the caller to already hold
+        // GetCodeInvalidationMutex() exclusively (see FEXCore's own ThreadManager::InvalidateGuestCodeRange, the canonical
+        // caller on Linux) - without it, CompileBlock's shared lock deadlocks permanently the first time this runs. FEXCore
+        // calls QueryGuestExecutableRange and MarkGuestExecutableRange while it holds that mutex shared, so it is always
+        // taken before tables_mutex_.
+        std::unique_lock<FEXCore::Utils::WritePriorityMutex::Mutex> lock_code_invalidation() const
+        {
+            if (t_tables_access != tables_access::none)
+            {
+                std::terminate();
+            }
+
+            if (!this->context_)
+            {
+                return {};
+            }
+
+            return std::unique_lock(this->context_->GetCodeInvalidationMutex());
+        }
+
         void invalidate_code_range(uint64_t address, size_t size)
         {
             this->invalidate_code_range_in(this->context_.get(), this->vcpu_.thread_, address, size);
@@ -4803,6 +4954,18 @@ namespace sogen::fex
         {
             const auto page = this->code_pages_.lower_bound(address & ~(page_size - 1));
             return page != this->code_pages_.end() && *page < address + size;
+        }
+
+        // FEXCore only decodes memory QueryGuestExecutableRange reports executable, and reports a decoded page as translated
+        // only afterwards, all under the code invalidation mutex. Memory that is neither executable nor reported therefore
+        // cannot be mid-decode: apply_memory_protection takes that mutex exclusively before it makes memory executable.
+        bool range_may_hold_code(const uint64_t address, const size_t size) const
+        {
+            bool executable = false;
+            this->for_each_mapped_piece(address, size, [&](uint64_t, size_t, const memory_permission permissions) {
+                executable = executable || (permissions & memory_permission::exec) != memory_permission::none;
+            });
+            return executable || this->range_has_code(address, size);
         }
 
         emulator_hook* make_hook()
@@ -4821,6 +4984,13 @@ namespace sogen::fex
         std::unique_ptr<FEXCore::SignalDelegator> signal_delegator_{};
 
         uintptr_t next_hook_id_ = 1;
+
+        // Guards the machine-wide tables below (regions, host claims, MMIO and tracked ranges, code pages, the Apple page
+        // shadow, call-ret buffers and hooks), which every vCPU and host thread reaches. Acquired at public entry points,
+        // in the fault handler and in FEXCore's callbacks; interior helpers assume it is held. Hooks are copied and run
+        // without it. The MMIO read callback still runs under it, since the fault handler cannot allocate a copy, and so
+        // does the callback take_written_ranges reports to.
+        mutable std::shared_mutex tables_mutex_;
 
         std::map<uint64_t, mapped_region> regions_;
         // The pages FEX has translated code from since they were last invalidated, as it reports them. Only writes to
@@ -4865,6 +5035,7 @@ namespace sogen::fex
         mutable uint64_t armed_generation_apple_ = no_generation_apple;
 #endif
 
+        // Installed during setup, before any vCPU runs, so the syscall path reads it without tables_mutex_.
         hook_entry* syscall_hook_ = nullptr;
         std::unordered_map<emulator_hook*, hook_entry> instruction_hooks_;
         std::unordered_map<emulator_hook*, interrupt_hook_callback> interrupt_hooks_;
@@ -5176,6 +5347,7 @@ namespace sogen::fex
         // FEXCore checks this before compiling a guest address and synthesizes a #PF if it is not
         // reported executable here, so a blanket {} would make every guest instruction fetch look like
         // a DEP violation.
+        const shared_tables_lock lock(this->emulator_.tables_mutex_);
         auto& regions = this->emulator_.regions_;
         auto it = regions.upper_bound(address);
         if (it == regions.begin())
@@ -5205,6 +5377,7 @@ namespace sogen::fex
     void fex_syscall_handler::MarkGuestExecutableRange(FEXCore::Core::InternalThreadState* /*thread*/, const uint64_t start,
                                                        const uint64_t length)
     {
+        const exclusive_tables_lock lock(this->emulator_.tables_mutex_);
         for (uint64_t page = start & ~(page_size - 1); page < start + length; page += page_size)
         {
             this->emulator_.code_pages_.insert(page);
