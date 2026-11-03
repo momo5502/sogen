@@ -1,9 +1,9 @@
 # Guest file system
 
 Sogen gives the guest a file system that is a table of mounts. Each mount connects a guest path, such as `C:\` or
-`C:\out`, to a host file or directory, and has a mode: `ro` (read-only) or `rw` (read-write). To find the mount for a
-guest path, Sogen uses the deepest mount point that contains the path. Thus a `C:\out` mount overrides the `C:\`
-drive for all paths below `C:\out`.
+`C:\out`, to a host file or directory, and has a mode: `ro` (read-only), `rw` (read-write), or, for the root drives
+only, `cow` (copy-on-write, see below). To find the mount for a guest path, Sogen uses the deepest mount point that
+contains the path. Thus a `C:\out` mount overrides the `C:\` drive for all paths below `C:\out`.
 
 With an emulation root, each single-letter directory in `<root>/filesys` becomes a drive mount. For example,
 `<root>/filesys/c` becomes `C:\`. These drives use the mode from `--root-mode`, which is `ro` by default. Without a
@@ -25,7 +25,7 @@ A guest write to a `ro` mount fails with `STATUS_ACCESS_DENIED`, and the host fi
 
 - opening a file with write access,
 - creating a file or directory,
-- deleting or renaming, where both the source and the target must be `rw`,
+- deleting or renaming, where both the source and the target must be writable (`rw` or `cow`),
 - all `NtSetInformationFile` classes except `FilePositionInformation` (for example times, attributes, size and
   delete-on-close),
 - `NtSetSecurityObject` on a file handle.
