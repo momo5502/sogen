@@ -13,9 +13,12 @@ import 'game_library.dart';
 const int maxSaveBytes = 500 * 1024 * 1024;
 
 const int _format = 1;
-const int _maxEntries = 100000;
+// Zip needs zip64 for more entries, which the central directory check rejects.
+const int _maxEntries = 65000;
 const int _maxManifestBytes = 32 * 1024 * 1024;
 const int _maxParents = 16;
+const int _maxCentralDirectoryBytes = 64 * 1024 * 1024;
+const int _maxArchiveBytes = maxSaveBytes + _maxManifestBytes + _maxCentralDirectoryBytes;
 const String _manifestName = 'manifest.json';
 
 class SaveArchiveException implements Exception {
@@ -540,6 +543,94 @@ _ValidatedArchive _validate(ZipDecoder decoder, Archive archive, SaveRevision? e
   return _ValidatedArchive(revision, contentHash, entries, files);
 }
 
+/// Checks the zip's central directory before the zip package reads it, since that package keeps every header and
+/// reads the contents of Unix links while decoding, before anything else can be checked.
+Future<void> _checkCentralDirectory(File archive) async {
+  const endRecordSize = 22;
+  const headerSize = 46;
+  const tooLarge = SaveArchiveException('The save is larger than Sogen syncs');
+  const unreadable = SaveArchiveException('The save cannot be read');
+
+  final handle = await archive.open();
+  try {
+    final length = await handle.length();
+    if (length > _maxArchiveBytes) {
+      throw tooLarge;
+    }
+    if (length < endRecordSize) {
+      throw unreadable;
+    }
+
+    // Sogen writes no archive comment, so the end record closes the file. Zip64 is never needed below the limits.
+    await handle.setPosition(length - endRecordSize);
+    final end = ByteData.sublistView(await handle.read(endRecordSize));
+    final entries = end.getUint16(10, Endian.little);
+    final directorySize = end.getUint32(12, Endian.little);
+    final directoryOffset = end.getUint32(16, Endian.little);
+    if (end.getUint32(0, Endian.little) != 0x06054b50 ||
+        end.getUint16(20, Endian.little) != 0 ||
+        end.getUint16(8, Endian.little) != entries ||
+        entries == 0xffff ||
+        directorySize == 0xffffffff ||
+        directoryOffset == 0xffffffff ||
+        directoryOffset + directorySize != length - endRecordSize) {
+      throw unreadable;
+    }
+    if (entries > _maxEntries + 1 || directorySize > _maxCentralDirectoryBytes) {
+      throw const SaveArchiveException('The save holds too many files');
+    }
+
+    await handle.setPosition(directoryOffset);
+    final directory = ByteData.sublistView(await handle.read(directorySize));
+    var position = 0;
+    var size = 0;
+    for (var i = 0; i < entries; ++i) {
+      if (position + headerSize > directory.lengthInBytes ||
+          directory.getUint32(position, Endian.little) != 0x02014b50) {
+        throw unreadable;
+      }
+      final madeBy = directory.getUint16(position + 4, Endian.little);
+      final flags = directory.getUint16(position + 8, Endian.little);
+      final compression = directory.getUint16(position + 10, Endian.little);
+      final compressedSize = directory.getUint32(position + 20, Endian.little);
+      final uncompressedSize = directory.getUint32(position + 24, Endian.little);
+      final nameLength = directory.getUint16(position + 28, Endian.little);
+      final variableLength =
+          nameLength +
+          directory.getUint16(position + 30, Endian.little) +
+          directory.getUint16(position + 32, Endian.little);
+      final type = (directory.getUint32(position + 38, Endian.little) >> 16) & 0xf000;
+      final offset = directory.getUint32(position + 42, Endian.little);
+
+      if ((flags & 1) != 0 ||
+          (compression != 0 && compression != 8) ||
+          compressedSize == 0xffffffff ||
+          uncompressedSize == 0xffffffff ||
+          offset == 0xffffffff ||
+          (madeBy >> 8 == 3 && type != 0 && type != 0x8000 && type != 0x4000) ||
+          position + headerSize + variableLength > directory.lengthInBytes) {
+        throw unreadable;
+      }
+
+      final name = Uint8List.sublistView(directory, position + headerSize, position + headerSize + nameLength);
+      if (utf8.decode(name, allowMalformed: true) == _manifestName && uncompressedSize > _maxManifestBytes) {
+        throw const SaveArchiveException('The save has no readable description');
+      }
+      size += uncompressedSize;
+      if (size > maxSaveBytes + _maxManifestBytes) {
+        throw tooLarge;
+      }
+
+      position += headerSize + variableLength;
+    }
+    if (position != directory.lengthInBytes) {
+      throw unreadable;
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
 String _incoming(SaveLayers layers) => '${layers.directory.path}.incoming';
 
 String _previous(SaveLayers layers) => '${layers.directory.path}.previous';
@@ -573,6 +664,7 @@ Future<SaveRevision> importSave(
 }) async {
   await recoverInterruptedImport(layers);
 
+  await _checkCentralDirectory(archive);
   final input = InputFileStream(archive.path);
   try {
     final decoder = ZipDecoder();

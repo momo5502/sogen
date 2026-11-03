@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
@@ -152,6 +153,33 @@ void main() {
     await expectRejected(craft({'root/c/upper/save.dat': 'tampered'}, entries: [entry]));
     await expectRejected(craft({'root/c/upper/save.dat': 'a'}, contentHash: '0' * 64));
     await expectRejected(craft({'root/c/upper/save.dat': 'a', 'root/c/upper/unlisted.dat': 'b'}, entries: []));
+  });
+
+  test('a Unix link is rejected before the zip is decoded', () async {
+    final archive = Archive()
+      ..add(ArchiveFile.string('manifest.json', '{}'))
+      ..add(ArchiveFile.string('root/c/upper/link', '../../../escaped'));
+    final bytes = Uint8List.fromList(ZipEncoder().encode(archive));
+
+    // The encoder records every entry as made on MS-DOS, so the link is marked the way a Unix zip tool marks one.
+    final data = ByteData.sublistView(bytes);
+    var header = bytes.length - 22 - 1;
+    while (data.getUint32(header, Endian.little) != 0x02014b50 ||
+        utf8.decode(bytes.sublist(header + 46, header + 46 + data.getUint16(header + 28, Endian.little))) !=
+            'root/c/upper/link') {
+      --header;
+    }
+    data
+      ..setUint16(header + 4, 0x0314, Endian.little)
+      ..setUint32(header + 38, 0xa1ff0000, Endian.little);
+
+    await expectRejected(File(p.join(temporary.path, 'link.zip'))..writeAsBytesSync(bytes));
+  });
+
+  test('a truncated archive is rejected', () async {
+    final archive = craft({'root/c/upper/save.dat': 'a'});
+    final bytes = archive.readAsBytesSync();
+    await expectRejected(archive..writeAsBytesSync(bytes.sublist(0, bytes.length - 10)));
   });
 
   test('an archive of another revision is rejected', () async {
