@@ -192,7 +192,7 @@ extern "C"
 
     JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(
         JNIEnv* env, jobject /*self*/, const jlong handle, jstring root, jstring application, jobjectArray arguments,
-        jobjectArray environment, jobjectArray path_mappings, jobjectArray document_trees, jstring working_directory, jstring backend,
+        jobjectArray environment, jstring root_layer, jobjectArray document_trees, jstring working_directory, jstring backend,
         const jboolean live_network, jstring sandbox_executable, jstring vulkan_hook_directory, jstring vulkan_driver_directory,
         jstring vulkan_driver_name, jstring snapshot_directory, jstring resume_file)
     {
@@ -201,7 +201,7 @@ extern "C"
             .application = to_string(*env, application),
             .arguments = to_strings(*env, arguments),
             .environment = to_pairs<std::string>(*env, environment),
-            .path_mappings = to_pairs<std::filesystem::path>(*env, path_mappings),
+            .root_layer = to_string(*env, root_layer),
             .working_directory = to_string(*env, working_directory),
             .backend = to_string(*env, backend),
             .live_network = live_network == JNI_TRUE,

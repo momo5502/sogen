@@ -79,6 +79,7 @@ namespace sogen::sandbox
             std::string configuration{};
             configuration += "emulation-root=" + describe_path(settings.emulation_root) + "\n";
             configuration += "root-mode=" + std::string{to_string(settings.root_mode)} + "\n";
+            configuration += "root-layer=" + describe_path(settings.root_layer) + "\n";
             configuration += "registry=" + describe_path(settings.registry_directory) + "\n";
             configuration += "network=" + std::string{network::to_string(settings.network)} + "\n";
             configuration += std::string{"spoof-gpu-features="} + (settings.spoof_gpu_features ? "on" : "off") + "\n";
@@ -119,9 +120,10 @@ namespace sogen::sandbox
             return mounts;
         }
 
-        int run(const std::span<const std::string_view> args, const filesystem_mode root_mode, std::vector<mount_spec> mounts,
-                const std::vector<document_mount>& document_mounts, const std::filesystem::path& emulation_root,
-                const std::filesystem::path& registry_directory, const std::vector<std::filesystem::path>& registry_files,
+        int run(const std::span<const std::string_view> args, const filesystem_mode root_mode, const std::filesystem::path& root_layer,
+                std::vector<mount_spec> mounts, const std::vector<document_mount>& document_mounts,
+                const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
+                const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
                 const bool spoof_gpu_features, const bool elevated, const std::filesystem::path& snapshot_directory,
                 const std::filesystem::path& resume_file, managed_process_connection* managed_connection)
@@ -188,6 +190,7 @@ namespace sogen::sandbox
             }
 
             settings.root_mode = root_mode;
+            settings.root_layer = root_layer;
             settings.mounts = std::move(mounts);
 
             subprocess_process_manager process_manager{utils::get_current_executable_path(), [&](const auto port, const auto& token) {
@@ -214,6 +217,11 @@ namespace sogen::sandbox
                                                            }
                                                            arguments.emplace_back("--root-mode");
                                                            arguments.emplace_back(to_string(settings.root_mode));
+                                                           if (!settings.root_layer.empty())
+                                                           {
+                                                               arguments.emplace_back("--root-layer");
+                                                               arguments.push_back(settings.root_layer.string());
+                                                           }
                                                            for (const auto& mount : settings.mounts)
                                                            {
                                                                arguments.emplace_back("--mount");
@@ -385,7 +393,9 @@ namespace sogen::sandbox
             std::string root_mode{to_string(default_root_mode)};
             app.add_option("--root-mode", root_mode, "Access mode of the emulation root drives")
                 ->capture_default_str()
-                ->check(CLI::IsMember({"ro", "rw"}));
+                ->check(CLI::IsMember({"ro", "rw", "cow"}));
+            std::filesystem::path root_layer{};
+            app.add_option("--root-layer", root_layer, "Where a copy-on-write root keeps its changes")->type_name("DIR");
             std::filesystem::path emulation_root{};
             std::filesystem::path registry_directory{};
             std::vector<std::filesystem::path> registry_files{};
@@ -477,7 +487,7 @@ namespace sogen::sandbox
                 }
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
-                return run(views, parse_filesystem_mode(root_mode).value(), std::move(mounts), document_mounts, emulation_root,
+                return run(views, parse_root_mode(root_mode).value(), root_layer, std::move(mounts), document_mounts, emulation_root,
                            registry_directory, registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features,
                            elevated, snapshot_directory, resume_file, managed_process ? &*managed_process : nullptr);
             }

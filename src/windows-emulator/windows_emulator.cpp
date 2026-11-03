@@ -767,7 +767,7 @@ namespace sogen
         const auto& application = app_settings.application;
 
         const auto root = settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root);
-        file_system file_sys{root.empty() ? root : root / "filesys", settings.root_mode};
+        file_system file_sys{root.empty() ? root : root / "filesys", settings.root_mode, settings.root_layer};
         for (const auto& mount : settings.mounts)
         {
             file_sys.map(mount.guest_path, mount.host_path, mount.mode);
@@ -824,7 +824,7 @@ namespace sogen
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),
-          file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys", settings.root_mode),
+          file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys", settings.root_mode, settings.root_layer),
           memory(*this->emu_),
           registry(settings.load_registry
                        ? registry_manager{emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"}

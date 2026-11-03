@@ -7,8 +7,8 @@ data class RunConfig(
     val application: String,
     val arguments: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
-    /** Guest Windows path to host path, e.g. `C:\game` to the folder the executable lives in. */
-    val pathMappings: Map<String, String> = emptyMap(),
+    /** Where the changes to the emulation root are kept; the root itself is only read. */
+    val rootLayerDirectory: String = "",
     /** Guest Windows path to a Storage Access Framework tree URI, mounted copy-on-write. */
     val documentMounts: Map<String, String> = emptyMap(),
     /** Where the writes to [documentMounts] are kept, one subdirectory per mount. */
@@ -27,7 +27,7 @@ data class RunConfig(
         putString(KEY_APPLICATION, application)
         putStringArrayList(KEY_ARGUMENTS, ArrayList(arguments))
         putStringArrayList(KEY_ENVIRONMENT, ArrayList(environment.flatMap { listOf(it.key, it.value) }))
-        putStringArrayList(KEY_PATH_MAPPINGS, ArrayList(pathMappings.flatMap { listOf(it.key, it.value) }))
+        putString(KEY_ROOT_LAYER_DIRECTORY, rootLayerDirectory)
         putStringArrayList(KEY_DOCUMENT_MOUNTS, ArrayList(documentMounts.flatMap { listOf(it.key, it.value) }))
         putString(KEY_LAYER_DIRECTORY, layerDirectory)
         putString(KEY_WORKING_DIRECTORY, workingDirectory)
@@ -42,7 +42,7 @@ data class RunConfig(
         private const val KEY_APPLICATION = "application"
         private const val KEY_ARGUMENTS = "arguments"
         private const val KEY_ENVIRONMENT = "environment"
-        private const val KEY_PATH_MAPPINGS = "pathMappings"
+        private const val KEY_ROOT_LAYER_DIRECTORY = "rootLayerDirectory"
         private const val KEY_DOCUMENT_MOUNTS = "documentMounts"
         private const val KEY_LAYER_DIRECTORY = "layerDirectory"
         private const val KEY_WORKING_DIRECTORY = "workingDirectory"
@@ -56,7 +56,7 @@ data class RunConfig(
             application = bundle.getString(KEY_APPLICATION).orEmpty(),
             arguments = bundle.getStringArrayList(KEY_ARGUMENTS).orEmpty(),
             environment = pairs(bundle.getStringArrayList(KEY_ENVIRONMENT)),
-            pathMappings = pairs(bundle.getStringArrayList(KEY_PATH_MAPPINGS)),
+            rootLayerDirectory = bundle.getString(KEY_ROOT_LAYER_DIRECTORY).orEmpty(),
             documentMounts = pairs(bundle.getStringArrayList(KEY_DOCUMENT_MOUNTS)),
             layerDirectory = bundle.getString(KEY_LAYER_DIRECTORY).orEmpty(),
             workingDirectory = bundle.getString(KEY_WORKING_DIRECTORY).orEmpty(),
