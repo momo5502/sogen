@@ -184,13 +184,6 @@ namespace sogen
         // The interactive station, which the process starts on and which is not held in the store.
         constexpr uint64_t interactive_window_station = 1;
 
-        void set_guest_last_error(const syscall_context& c, uint32_t last_error)
-        {
-            c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
-                teb.LastErrorValue = static_cast<ULONG>(last_error); //
-            });
-        }
-
         std::u16string make_atom_class_name(const uint16_t atom)
         {
             std::u16string name = u"#";
@@ -1656,6 +1649,7 @@ namespace sogen
                                           emulator_pointer bits);
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
+        uint32_t count_process_gdi_objects(const syscall_context& c);
         bool set_gdi_region_rect(const syscall_context& c, handle region, const RECT& rect);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
@@ -6962,6 +6956,51 @@ namespace sogen
             }
 
             return TRUE;
+        }
+
+        DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
+        {
+            constexpr uint32_t error_invalid_parameter = 87;
+
+            const auto counts_this_process = process.bits == gui_resources_global_process || c.proc.is_current_process_handle(process);
+            const auto* other_process = counts_this_process ? nullptr : c.proc.processes.get(process);
+            const auto is_other_process =
+                !counts_this_process && (process == STEAM_PROCESS_HANDLE || (other_process != nullptr && other_process->process));
+
+            if (flags > gui_resources_userobjects_peak || (!counts_this_process && !is_other_process))
+            {
+                set_guest_last_error(c, error_invalid_parameter);
+                return 0;
+            }
+
+            // The GDI and USER objects of another process are not visible to this emulator instance, while Windows
+            // reports that process's counts.
+            if (is_other_process)
+            {
+                return 0;
+            }
+
+            switch (flags)
+            {
+            case gui_resources_gdiobjects:
+            case gui_resources_gdiobjects_peak: {
+                const auto gdi_objects = count_process_gdi_objects(c);
+                c.proc.gdi_objects_peak = std::max(c.proc.gdi_objects_peak, gdi_objects);
+                return flags == gui_resources_gdiobjects ? gdi_objects : c.proc.gdi_objects_peak;
+            }
+            case gui_resources_userobjects:
+            case gui_resources_userobjects_peak: {
+                const auto windows = std::ranges::count_if(c.proc.windows, [&](const auto& entry) {
+                    return entry.second.thread_id != 0 && entry.second.handle != c.proc.default_desktop_window_handle.bits;
+                });
+                const auto user_objects =
+                    static_cast<uint32_t>(static_cast<size_t>(windows) + c.proc.menus.size() + c.proc.accelerator_tables.size());
+                c.proc.user_objects_peak = std::max(c.proc.user_objects_peak, user_objects);
+                return flags == gui_resources_userobjects ? user_objects : c.proc.user_objects_peak;
+            }
+            default:
+                return 0;
+            }
         }
 
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, const hwnd window_handle, const uint32_t query_type)

@@ -4,6 +4,7 @@
 #include "cpu_context.hpp"
 #include "process_context.hpp"
 #include "io_completion_wait.hpp"
+#include "debug_object.hpp"
 #include "syscall_utils.hpp"
 
 namespace sogen
@@ -760,6 +761,7 @@ namespace sogen
 
     void emulator_thread::mark_as_ready(const NTSTATUS status)
     {
+        ++this->ended_waits;
         this->pending_status = status;
         this->message_wait_return_register.reset();
         this->await_time = {};
@@ -767,6 +769,7 @@ namespace sogen
         this->await_msg = {};
         this->await_msg_mask = {};
         this->await_io_completion = {};
+        this->await_debug_event = {};
         this->await_file_io = {};
         this->await_host_condition = {};
 
@@ -1300,8 +1303,7 @@ namespace sogen
 
         if (this->await_file_io)
         {
-            const auto status =
-                emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>{*this->memory_ptr, *this->await_file_io}.read().Status;
+            const auto status = this->memory_ptr->read_memory<NTSTATUS>(*this->await_file_io);
             if (status == STATUS_PENDING)
             {
                 return false;
@@ -1326,6 +1328,25 @@ namespace sogen
             }
 
             return complete_if_timed_out(STATUS_TIMEOUT);
+        }
+
+        if (this->await_debug_event.has_value())
+        {
+            const auto wait = *this->await_debug_event;
+            if (deliver_debug_event(win_emu, wait.debug_object, wait.state_change))
+            {
+                this->mark_as_ready(STATUS_SUCCESS);
+                return true;
+            }
+
+            constexpr auto infinite = std::chrono::steady_clock::time_point::min();
+            if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < clock.steady_now())
+            {
+                this->mark_as_ready(STATUS_TIMEOUT);
+                return true;
+            }
+
+            return false;
         }
 
         if (this->await_io_completion.has_value())

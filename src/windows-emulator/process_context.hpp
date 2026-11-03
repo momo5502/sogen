@@ -490,11 +490,14 @@ namespace sogen
         uint64_t dispatch_client_message{};
         uint32_t gdi_default_dc_handle{};
         uint32_t gdi_memory_dc_default_bitmap_handle{};
+        uint32_t gdi_objects_peak{};
+        uint32_t user_objects_peak{};
         std::map<uint32_t, gdi_dc_state> gdi_dc_states{};
         // Per-DC stack of states pushed by NtGdiSaveDC and popped by NtGdiRestoreDC.
         std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         std::map<uint32_t, EMU_LOGFONTW> gdi_fonts{};
+        std::map<uint32_t, std::vector<RECT>> gdi_regions{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         dxgk_state dxgk{};
@@ -692,6 +695,7 @@ namespace sogen
         handle_store<handle_types::registry, registry_key> registry_keys{};
         handle_store<handle_types::process, emulator_process> processes{};
         handle_store<handle_types::managed_thread, managed_process_thread> managed_threads{};
+        handle_store<handle_types::debug_object, debug_object> debug_objects{};
         std::map<uint32_t, handle> thread_handles_by_id{};
         std::map<uint16_t, atom_entry> atoms{};
         utils::insensitive_u16string_map<class_entry> classes{};

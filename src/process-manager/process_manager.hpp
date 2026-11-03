@@ -109,6 +109,7 @@ namespace sogen
         uint64_t standard_output{};
         uint64_t standard_error{};
         std::vector<process_inherited_pipe> inherited_pipes{};
+        bool debugged{};
     };
 
     struct process_create_result
@@ -139,6 +140,95 @@ namespace sogen
         }
     };
 
+    enum class process_debug_event_kind
+    {
+        create_process,
+        create_thread,
+        exit_thread,
+        exit_process,
+        exception,
+        load_dll,
+        unload_dll,
+    };
+
+    // What a debugged child reports to its debugger; the child stops until the debugger continues the event.
+    struct process_debug_event
+    {
+        process_debug_event_kind kind{process_debug_event_kind::create_process};
+        uint32_t thread_id{};
+        uint64_t base_address{};
+        uint64_t start_address{};
+        std::string path{};
+        uint32_t exit_status{};
+        uint32_t exception_code{};
+        uint32_t exception_flags{};
+        uint64_t exception_address{};
+        std::vector<uint64_t> exception_parameters{};
+        bool first_chance{};
+    };
+
+    struct process_debug_event_result
+    {
+        std::optional<process_debug_event> event{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
+    };
+
+    struct process_thread_context_result
+    {
+        std::vector<uint8_t> context{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
+    };
+
+    struct process_thread_information
+    {
+        uint64_t teb{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
+    };
+
+    struct process_suspend_result
+    {
+        uint32_t previous_count{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
+    };
+
+    struct process_memory_region
+    {
+        uint64_t base_address{};
+        uint64_t allocation_base{};
+        uint32_t allocation_protect{};
+        uint64_t region_size{};
+        uint32_t state{};
+        uint32_t protect{};
+        uint32_t type{};
+        std::string mapped_file{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
+    };
+
     struct managed_process_target
     {
         virtual ~managed_process_target() = default;
@@ -153,6 +243,15 @@ namespace sogen
         virtual process_memory_result protect_memory(uint64_t address, uint64_t size, memory_permission permission) = 0;
         virtual process_memory_read_result read_memory(uint64_t address, uint64_t size) const = 0;
         virtual process_memory_result write_memory(uint64_t address, std::span<const uint8_t> data) = 0;
+        virtual process_debug_event_result next_debug_event() = 0;
+        virtual process_error continue_debug_event(uint32_t thread_id, uint32_t status) = 0;
+        virtual process_error detach_debugger() = 0;
+        // wow64 selects the 32-bit WOW64_CONTEXT of a WOW64 thread instead of its native context.
+        virtual process_thread_context_result get_thread_context(uint32_t thread_id, bool wow64) = 0;
+        virtual process_error set_thread_context(uint32_t thread_id, std::span<const uint8_t> context, bool wow64) = 0;
+        virtual process_thread_information thread_information(uint32_t thread_id) = 0;
+        virtual process_suspend_result suspend_thread(uint32_t thread_id, bool resume) = 0;
+        virtual process_memory_region query_memory(uint64_t address) const = 0;
     };
 
     struct process_manager
@@ -170,5 +269,46 @@ namespace sogen
                                                      memory_permission permission) = 0;
         virtual process_memory_read_result read_memory(managed_process process, uint64_t address, uint64_t size) const = 0;
         virtual process_memory_result write_memory(managed_process process, uint64_t address, std::span<const uint8_t> data) = 0;
+
+        virtual process_debug_event_result next_debug_event(managed_process /*process*/)
+        {
+            return {.error = process_error::unavailable};
+        }
+
+        virtual process_error continue_debug_event(managed_process /*process*/, uint32_t /*thread_id*/, uint32_t /*status*/)
+        {
+            return process_error::unavailable;
+        }
+
+        virtual process_error detach_debugger(managed_process /*process*/)
+        {
+            return process_error::unavailable;
+        }
+
+        virtual process_thread_context_result get_thread_context(managed_process /*process*/, uint32_t /*thread_id*/, bool /*wow64*/)
+        {
+            return {.error = process_error::unavailable};
+        }
+
+        virtual process_error set_thread_context(managed_process /*process*/, uint32_t /*thread_id*/, std::span<const uint8_t> /*context*/,
+                                                 bool /*wow64*/)
+        {
+            return process_error::unavailable;
+        }
+
+        virtual process_thread_information thread_information(managed_process /*process*/, uint32_t /*thread_id*/)
+        {
+            return {.error = process_error::unavailable};
+        }
+
+        virtual process_suspend_result suspend_thread(managed_process /*process*/, uint32_t /*thread_id*/, bool /*resume*/)
+        {
+            return {.error = process_error::unavailable};
+        }
+
+        virtual process_memory_region query_memory(managed_process /*process*/, uint64_t /*address*/) const
+        {
+            return {.error = process_error::unavailable};
+        }
     };
 }

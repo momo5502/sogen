@@ -1472,6 +1472,12 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (const auto* container = c.proc.devices.get(file_handle); container && container->get_internal_device<named_pipe>())
+            {
+                return handle_pipe_io(c, file_handle, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, buffer,
+                                      length, true);
+            }
+
             std::string temp_buffer{};
             temp_buffer.resize(length);
 
@@ -1485,12 +1491,6 @@ namespace sogen
                 }
 
                 return STATUS_SUCCESS;
-            }
-
-            if (const auto* container = c.proc.devices.get(file_handle); container && container->get_internal_device<named_pipe>())
-            {
-                return handle_pipe_io(c, file_handle, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, buffer,
-                                      length, true);
             }
 
             const auto* f = c.proc.files.get(file_handle);
@@ -1660,6 +1660,12 @@ namespace sogen
         {
             const auto wow64_io_status_block = wow64_io_status_block_address(c, io_status_block);
 
+            if (const auto* container = c.proc.devices.get(file_handle); container && container->get_internal_device<named_pipe>())
+            {
+                return handle_pipe_io(c, file_handle, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, buffer,
+                                      length, false);
+            }
+
             std::string temp_buffer{};
             temp_buffer.resize(length);
             c.emu.read_memory(buffer, temp_buffer.data(), temp_buffer.size());
@@ -1688,12 +1694,6 @@ namespace sogen
                 }
 
                 return STATUS_SUCCESS;
-            }
-
-            if (const auto* container = c.proc.devices.get(file_handle); container && container->get_internal_device<named_pipe>())
-            {
-                return handle_pipe_io(c, file_handle, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, buffer,
-                                      length, false);
             }
 
             const auto* f = c.proc.files.get(file_handle);
@@ -2666,10 +2666,7 @@ namespace sogen
                 pipe_device->server_end = true;
                 container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
                 pipe_device->default_timeout = default_timeout.read();
-                auto endpoints =
-                    utils::host_pipe::create_pair(named_pipe_type != 0, std::max<ULONG>({inbound_quota, outbound_quota, 4096}));
-                pipe_device->endpoint = std::move(endpoints.first);
-                pipe_device->unopened_peer = std::move(endpoints.second);
+                pipe_device->create_endpoints();
             }
             else
             {
@@ -2696,6 +2693,19 @@ namespace sogen
             }
             auto* store = c.proc.get_handle_store(event);
             return store && store->get_object(event) ? STATUS_OBJECT_TYPE_MISMATCH : STATUS_INVALID_HANDLE;
+        }
+
+        namespace
+        {
+            // The I/O manager copies the input of every transfer method except METHOD_NEITHER into a system buffer before the
+            // driver runs, so an unreadable input fails there; a NULL input is not copied and reaches the driver.
+            bool is_control_input_readable(const syscall_context& c, const ULONG control_code, const emulator_pointer input_buffer,
+                                           const ULONG input_buffer_length)
+            {
+                constexpr ULONG method_neither = 3;
+                return (control_code & method_neither) == method_neither || !input_buffer ||
+                       is_memory_readable(c.emu, input_buffer, input_buffer_length);
+            }
         }
 
         NTSTATUS handle_NtFsControlFile(const syscall_context& c, const handle file_handle, const handle event,
@@ -2742,6 +2752,11 @@ namespace sogen
             if (auto* e = c.proc.events.get(event))
             {
                 e->signaled = false;
+            }
+
+            if (!is_control_input_readable(c, fs_control_code, input_buffer, input_buffer_length))
+            {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             io_device_context context{c.emu};

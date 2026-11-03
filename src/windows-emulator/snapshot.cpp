@@ -6,9 +6,12 @@
 #include <utils/finally.hpp>
 #include <utils/compression.hpp>
 
+#include <sogen_version.hpp>
+
 #include <algorithm>
 #include <array>
 #include <fstream>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <thread>
@@ -20,18 +23,56 @@ namespace sogen
     {
         namespace
         {
+            constexpr size_t short_build_id_length = 12;
+
+            // The serialized state has no layout version of its own: a snapshot only loads in the build that saved it.
             struct snapshot_header
             {
-                // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+                // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
                 char magic[4] = {'S', 'N', 'A', 'P'};
-                uint32_t version{20};
+                char build_id[64]{};
+                // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+                uint32_t modified{};
                 uint32_t machine{static_cast<uint32_t>(PEMachineType::AMD64)};
                 uint32_t reserved{};
                 // A streamed zstd frame does not record its decompressed size.
                 uint64_t state_size{};
             };
 
-            static_assert(sizeof(snapshot_header) == 24);
+            static_assert(sizeof(snapshot_header) == 88);
+            static_assert(version::build_id.size() < sizeof(snapshot_header::build_id));
+
+            std::string describe_build(const std::string_view build_id, const bool modified)
+            {
+                return std::string{build_id.substr(0, short_build_id_length)} + (modified ? " with uncommitted changes" : "");
+            }
+
+            void require_build_id()
+            {
+                if (version::build_id.empty())
+                {
+                    throw std::runtime_error("Snapshots need a build identity, which this build does not have: it was made without Git "
+                                             "history and without SOGEN_BUILD_ID");
+                }
+            }
+
+            // Snapshots from before the build identity hold a small version number here.
+            std::optional<std::string_view> read_build_id(const snapshot_header& header)
+            {
+                const std::string_view field{header.build_id, sizeof(header.build_id)};
+                const auto length = field.find('\0');
+                if (length == 0 || length == std::string_view::npos || field.find_first_not_of('\0', length) != std::string_view::npos)
+                {
+                    return std::nullopt;
+                }
+
+                const auto build_id = field.substr(0, length);
+                const auto valid = std::ranges::all_of(build_id, [](const char c) {
+                    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '+' ||
+                           c == '-';
+                });
+                return valid ? std::optional{build_id} : std::nullopt;
+            }
 
             snapshot_header read_header(const std::span<const std::byte> snapshot)
             {
@@ -50,10 +91,19 @@ namespace sogen
                     throw std::runtime_error("Invalid snapshot");
                 }
 
-                if (default_header.version != header.version)
+                const auto build_id = read_build_id(header);
+                if (!build_id)
                 {
-                    throw std::runtime_error("Unsupported snapshot version: " + std::to_string(header.version) +
-                                             "(needed: " + std::to_string(default_header.version) + ")");
+                    throw std::runtime_error(
+                        "The snapshot was saved by an older Sogen build and cannot be continued; start over to discard it");
+                }
+
+                require_build_id();
+                if (*build_id != version::build_id)
+                {
+                    throw std::runtime_error(
+                        "The snapshot was saved by another Sogen build (" + describe_build(*build_id, header.modified != 0) + ", this is " +
+                        describe_build(version::build_id, version::modified) + ") and cannot be continued; start over to discard it");
                 }
 
                 if (header.reserved != 0)
@@ -89,7 +139,11 @@ namespace sogen
 
             snapshot_header make_header(const windows_emulator& win_emu, const size_t state_size)
             {
+                require_build_id();
+
                 snapshot_header header{};
+                std::ranges::copy(version::build_id, std::begin(header.build_id));
+                header.modified = version::modified ? 1 : 0;
                 header.machine = static_cast<uint32_t>(
                     win_emu.process.native_architecture == windows_guest_architecture::arm64 ? PEMachineType::ARM64 : PEMachineType::AMD64);
                 header.state_size = state_size;

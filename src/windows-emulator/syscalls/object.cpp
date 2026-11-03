@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "../debug_object.hpp"
 #include "../emulator_utils.hpp"
 #include "../io_completion_wait.hpp"
 #include "../low_level_hooks.hpp"
@@ -78,6 +79,15 @@ namespace sogen
                 }
             }
 
+            if (value.type == handle_types::debug_object)
+            {
+                auto* debug = c.proc.debug_objects.get(h);
+                if (debug && debug->ref_count == 1)
+                {
+                    release_debug_object(c.win_emu, *debug);
+                }
+            }
+
             if (value.type == handle_types::worker_factory)
             {
                 auto* factory = c.proc.worker_factories.get(h);
@@ -139,6 +149,15 @@ namespace sogen
 
                         ++it;
                     }
+                }
+            }
+
+            if (value.type == handle_types::registry)
+            {
+                auto* key = c.proc.registry_keys.get(h);
+                if (key && key->ref_count == 1)
+                {
+                    registry_notification::close(c, *key);
                 }
             }
 

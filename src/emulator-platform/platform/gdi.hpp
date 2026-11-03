@@ -27,6 +27,15 @@ namespace sogen
 #define NTM_REGULAR        0x00000040
 #define TRUETYPE_FONTTYPE  0x00000004
 #define RDH_RECTANGLES     1
+#define RGN_ERROR          0
+#define NULLREGION         1
+#define SIMPLEREGION       2
+#define COMPLEXREGION      3
+#define RGN_AND            1
+#define RGN_OR             2
+#define RGN_XOR            3
+#define RGN_DIFF           4
+#define RGN_COPY           5
 
     struct ABC
     {

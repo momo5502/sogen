@@ -333,17 +333,15 @@ namespace sogen
         posix_fd read_end{};
         read_end.type = fd_type::pipe_read;
         read_end.handle = read_stream;
-        read_end.close_on_exec = cloexec;
         read_end.flags = flags & LINUX_O_NONBLOCK;
 
         posix_fd write_end{};
         write_end.type = fd_type::pipe_write;
         write_end.handle = write_stream;
-        write_end.close_on_exec = cloexec;
         write_end.flags = flags & LINUX_O_NONBLOCK;
 
-        const auto read_fd = c.proc.fds.allocate(std::move(read_end));
-        const auto write_fd = c.proc.fds.allocate(std::move(write_end));
+        const auto read_fd = c.proc.fds.allocate(std::move(read_end), cloexec);
+        const auto write_fd = c.proc.fds.allocate(std::move(write_end), cloexec);
 
         const std::array<int32_t, 2> fds{read_fd, write_fd};
         c.emu.write_memory(pipefd_addr, fds.data(), sizeof(int32_t) * fds.size());
@@ -374,9 +372,8 @@ namespace sogen
 
         posix_fd efd{};
         efd.type = fd_type::eventfd;
-        efd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
-        const auto fd_num = c.proc.fds.allocate(std::move(efd));
+        const auto fd_num = c.proc.fds.allocate(std::move(efd), (flags & LINUX_O_CLOEXEC) != 0);
         write_linux_syscall_result(c, fd_num);
     }
 
@@ -404,9 +401,8 @@ namespace sogen
 
         posix_fd efd{};
         efd.type = fd_type::epoll;
-        efd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
-        const auto fd_num = c.proc.fds.allocate(std::move(efd));
+        const auto fd_num = c.proc.fds.allocate(std::move(efd), (flags & LINUX_O_CLOEXEC) != 0);
         c.proc.epoll_instances[fd_num] = std::make_shared<linux_epoll_instance>();
 
         write_linux_syscall_result(c, fd_num);

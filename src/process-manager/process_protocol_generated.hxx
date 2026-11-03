@@ -79,6 +79,62 @@ struct ReadMemoryResponse;
 struct ReadMemoryResponseBuilder;
 struct ReadMemoryResponseT;
 
+struct DebugEvent;
+struct DebugEventBuilder;
+struct DebugEventT;
+
+struct DebugEventRequest;
+struct DebugEventRequestBuilder;
+struct DebugEventRequestT;
+
+struct DebugEventResponse;
+struct DebugEventResponseBuilder;
+struct DebugEventResponseT;
+
+struct DebugContinueRequest;
+struct DebugContinueRequestBuilder;
+struct DebugContinueRequestT;
+
+struct DebugDetachRequest;
+struct DebugDetachRequestBuilder;
+struct DebugDetachRequestT;
+
+struct ThreadContextRequest;
+struct ThreadContextRequestBuilder;
+struct ThreadContextRequestT;
+
+struct ThreadContextResponse;
+struct ThreadContextResponseBuilder;
+struct ThreadContextResponseT;
+
+struct SetThreadContextRequest;
+struct SetThreadContextRequestBuilder;
+struct SetThreadContextRequestT;
+
+struct ThreadInformationRequest;
+struct ThreadInformationRequestBuilder;
+struct ThreadInformationRequestT;
+
+struct ThreadInformationResponse;
+struct ThreadInformationResponseBuilder;
+struct ThreadInformationResponseT;
+
+struct SuspendThreadRequest;
+struct SuspendThreadRequestBuilder;
+struct SuspendThreadRequestT;
+
+struct SuspendThreadResponse;
+struct SuspendThreadResponseBuilder;
+struct SuspendThreadResponseT;
+
+struct QueryMemoryRequest;
+struct QueryMemoryRequestBuilder;
+struct QueryMemoryRequestT;
+
+struct QueryMemoryResponse;
+struct QueryMemoryResponseBuilder;
+struct QueryMemoryResponseT;
+
 struct Message;
 struct MessageBuilder;
 struct MessageT;
@@ -200,6 +256,51 @@ inline const char *EnumNameMemoryPermission(MemoryPermission e) {
   return EnumNamesMemoryPermission()[index];
 }
 
+enum DebugEventKind : uint8_t {
+  DebugEventKind_CreateProcess = 0,
+  DebugEventKind_CreateThread = 1,
+  DebugEventKind_ExitThread = 2,
+  DebugEventKind_ExitProcess = 3,
+  DebugEventKind_Exception = 4,
+  DebugEventKind_LoadDll = 5,
+  DebugEventKind_UnloadDll = 6,
+  DebugEventKind_MIN = DebugEventKind_CreateProcess,
+  DebugEventKind_MAX = DebugEventKind_UnloadDll
+};
+
+inline const DebugEventKind (&EnumValuesDebugEventKind())[7] {
+  static const DebugEventKind values[] = {
+    DebugEventKind_CreateProcess,
+    DebugEventKind_CreateThread,
+    DebugEventKind_ExitThread,
+    DebugEventKind_ExitProcess,
+    DebugEventKind_Exception,
+    DebugEventKind_LoadDll,
+    DebugEventKind_UnloadDll
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesDebugEventKind() {
+  static const char * const names[8] = {
+    "CreateProcess",
+    "CreateThread",
+    "ExitThread",
+    "ExitProcess",
+    "Exception",
+    "LoadDll",
+    "UnloadDll",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameDebugEventKind(DebugEventKind e) {
+  if (::flatbuffers::IsOutRange(e, DebugEventKind_CreateProcess, DebugEventKind_UnloadDll)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesDebugEventKind()[index];
+}
+
 enum MessagePayload : uint8_t {
   MessagePayload_NONE = 0,
   MessagePayload_Hello = 1,
@@ -216,11 +317,24 @@ enum MessagePayload : uint8_t {
   MessagePayload_ProcessMemoryResponse = 12,
   MessagePayload_ProcessErrorResponse = 13,
   MessagePayload_ReadMemoryResponse = 14,
+  MessagePayload_DebugEventRequest = 15,
+  MessagePayload_DebugEventResponse = 16,
+  MessagePayload_DebugContinueRequest = 17,
+  MessagePayload_ThreadContextRequest = 18,
+  MessagePayload_ThreadContextResponse = 19,
+  MessagePayload_SetThreadContextRequest = 20,
+  MessagePayload_SuspendThreadRequest = 21,
+  MessagePayload_SuspendThreadResponse = 22,
+  MessagePayload_QueryMemoryRequest = 23,
+  MessagePayload_QueryMemoryResponse = 24,
+  MessagePayload_ThreadInformationRequest = 25,
+  MessagePayload_ThreadInformationResponse = 26,
+  MessagePayload_DebugDetachRequest = 27,
   MessagePayload_MIN = MessagePayload_NONE,
-  MessagePayload_MAX = MessagePayload_ReadMemoryResponse
+  MessagePayload_MAX = MessagePayload_DebugDetachRequest
 };
 
-inline const MessagePayload (&EnumValuesMessagePayload())[15] {
+inline const MessagePayload (&EnumValuesMessagePayload())[28] {
   static const MessagePayload values[] = {
     MessagePayload_NONE,
     MessagePayload_Hello,
@@ -236,13 +350,26 @@ inline const MessagePayload (&EnumValuesMessagePayload())[15] {
     MessagePayload_WriteMemoryRequest,
     MessagePayload_ProcessMemoryResponse,
     MessagePayload_ProcessErrorResponse,
-    MessagePayload_ReadMemoryResponse
+    MessagePayload_ReadMemoryResponse,
+    MessagePayload_DebugEventRequest,
+    MessagePayload_DebugEventResponse,
+    MessagePayload_DebugContinueRequest,
+    MessagePayload_ThreadContextRequest,
+    MessagePayload_ThreadContextResponse,
+    MessagePayload_SetThreadContextRequest,
+    MessagePayload_SuspendThreadRequest,
+    MessagePayload_SuspendThreadResponse,
+    MessagePayload_QueryMemoryRequest,
+    MessagePayload_QueryMemoryResponse,
+    MessagePayload_ThreadInformationRequest,
+    MessagePayload_ThreadInformationResponse,
+    MessagePayload_DebugDetachRequest
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessagePayload() {
-  static const char * const names[16] = {
+  static const char * const names[29] = {
     "NONE",
     "Hello",
     "ProcessCreateRequest",
@@ -258,13 +385,26 @@ inline const char * const *EnumNamesMessagePayload() {
     "ProcessMemoryResponse",
     "ProcessErrorResponse",
     "ReadMemoryResponse",
+    "DebugEventRequest",
+    "DebugEventResponse",
+    "DebugContinueRequest",
+    "ThreadContextRequest",
+    "ThreadContextResponse",
+    "SetThreadContextRequest",
+    "SuspendThreadRequest",
+    "SuspendThreadResponse",
+    "QueryMemoryRequest",
+    "QueryMemoryResponse",
+    "ThreadInformationRequest",
+    "ThreadInformationResponse",
+    "DebugDetachRequest",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessagePayload(MessagePayload e) {
-  if (::flatbuffers::IsOutRange(e, MessagePayload_NONE, MessagePayload_ReadMemoryResponse)) return "";
+  if (::flatbuffers::IsOutRange(e, MessagePayload_NONE, MessagePayload_DebugDetachRequest)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessagePayload()[index];
 }
@@ -329,6 +469,58 @@ template<> struct MessagePayloadTraits<ProcessProtocol::ReadMemoryResponse> {
   static const MessagePayload enum_value = MessagePayload_ReadMemoryResponse;
 };
 
+template<> struct MessagePayloadTraits<ProcessProtocol::DebugEventRequest> {
+  static const MessagePayload enum_value = MessagePayload_DebugEventRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::DebugEventResponse> {
+  static const MessagePayload enum_value = MessagePayload_DebugEventResponse;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::DebugContinueRequest> {
+  static const MessagePayload enum_value = MessagePayload_DebugContinueRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::ThreadContextRequest> {
+  static const MessagePayload enum_value = MessagePayload_ThreadContextRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::ThreadContextResponse> {
+  static const MessagePayload enum_value = MessagePayload_ThreadContextResponse;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::SetThreadContextRequest> {
+  static const MessagePayload enum_value = MessagePayload_SetThreadContextRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::SuspendThreadRequest> {
+  static const MessagePayload enum_value = MessagePayload_SuspendThreadRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::SuspendThreadResponse> {
+  static const MessagePayload enum_value = MessagePayload_SuspendThreadResponse;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::QueryMemoryRequest> {
+  static const MessagePayload enum_value = MessagePayload_QueryMemoryRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::QueryMemoryResponse> {
+  static const MessagePayload enum_value = MessagePayload_QueryMemoryResponse;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::ThreadInformationRequest> {
+  static const MessagePayload enum_value = MessagePayload_ThreadInformationRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::ThreadInformationResponse> {
+  static const MessagePayload enum_value = MessagePayload_ThreadInformationResponse;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::DebugDetachRequest> {
+  static const MessagePayload enum_value = MessagePayload_DebugDetachRequest;
+};
+
 template<typename T> struct MessagePayloadUnionTraits {
   static const MessagePayload enum_value = MessagePayload_NONE;
 };
@@ -387,6 +579,58 @@ template<> struct MessagePayloadUnionTraits<ProcessProtocol::ProcessErrorRespons
 
 template<> struct MessagePayloadUnionTraits<ProcessProtocol::ReadMemoryResponseT> {
   static const MessagePayload enum_value = MessagePayload_ReadMemoryResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::DebugEventRequestT> {
+  static const MessagePayload enum_value = MessagePayload_DebugEventRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::DebugEventResponseT> {
+  static const MessagePayload enum_value = MessagePayload_DebugEventResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::DebugContinueRequestT> {
+  static const MessagePayload enum_value = MessagePayload_DebugContinueRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::ThreadContextRequestT> {
+  static const MessagePayload enum_value = MessagePayload_ThreadContextRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::ThreadContextResponseT> {
+  static const MessagePayload enum_value = MessagePayload_ThreadContextResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::SetThreadContextRequestT> {
+  static const MessagePayload enum_value = MessagePayload_SetThreadContextRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::SuspendThreadRequestT> {
+  static const MessagePayload enum_value = MessagePayload_SuspendThreadRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::SuspendThreadResponseT> {
+  static const MessagePayload enum_value = MessagePayload_SuspendThreadResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::QueryMemoryRequestT> {
+  static const MessagePayload enum_value = MessagePayload_QueryMemoryRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::QueryMemoryResponseT> {
+  static const MessagePayload enum_value = MessagePayload_QueryMemoryResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::ThreadInformationRequestT> {
+  static const MessagePayload enum_value = MessagePayload_ThreadInformationRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::ThreadInformationResponseT> {
+  static const MessagePayload enum_value = MessagePayload_ThreadInformationResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::DebugDetachRequestT> {
+  static const MessagePayload enum_value = MessagePayload_DebugDetachRequest;
 };
 
 struct MessagePayloadUnion {
@@ -530,6 +774,110 @@ struct MessagePayloadUnion {
   const ProcessProtocol::ReadMemoryResponseT *AsReadMemoryResponse() const {
     return type == MessagePayload_ReadMemoryResponse ?
       reinterpret_cast<const ProcessProtocol::ReadMemoryResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::DebugEventRequestT *AsDebugEventRequest() {
+    return type == MessagePayload_DebugEventRequest ?
+      reinterpret_cast<ProcessProtocol::DebugEventRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::DebugEventRequestT *AsDebugEventRequest() const {
+    return type == MessagePayload_DebugEventRequest ?
+      reinterpret_cast<const ProcessProtocol::DebugEventRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::DebugEventResponseT *AsDebugEventResponse() {
+    return type == MessagePayload_DebugEventResponse ?
+      reinterpret_cast<ProcessProtocol::DebugEventResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::DebugEventResponseT *AsDebugEventResponse() const {
+    return type == MessagePayload_DebugEventResponse ?
+      reinterpret_cast<const ProcessProtocol::DebugEventResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::DebugContinueRequestT *AsDebugContinueRequest() {
+    return type == MessagePayload_DebugContinueRequest ?
+      reinterpret_cast<ProcessProtocol::DebugContinueRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::DebugContinueRequestT *AsDebugContinueRequest() const {
+    return type == MessagePayload_DebugContinueRequest ?
+      reinterpret_cast<const ProcessProtocol::DebugContinueRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::ThreadContextRequestT *AsThreadContextRequest() {
+    return type == MessagePayload_ThreadContextRequest ?
+      reinterpret_cast<ProcessProtocol::ThreadContextRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::ThreadContextRequestT *AsThreadContextRequest() const {
+    return type == MessagePayload_ThreadContextRequest ?
+      reinterpret_cast<const ProcessProtocol::ThreadContextRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::ThreadContextResponseT *AsThreadContextResponse() {
+    return type == MessagePayload_ThreadContextResponse ?
+      reinterpret_cast<ProcessProtocol::ThreadContextResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::ThreadContextResponseT *AsThreadContextResponse() const {
+    return type == MessagePayload_ThreadContextResponse ?
+      reinterpret_cast<const ProcessProtocol::ThreadContextResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::SetThreadContextRequestT *AsSetThreadContextRequest() {
+    return type == MessagePayload_SetThreadContextRequest ?
+      reinterpret_cast<ProcessProtocol::SetThreadContextRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::SetThreadContextRequestT *AsSetThreadContextRequest() const {
+    return type == MessagePayload_SetThreadContextRequest ?
+      reinterpret_cast<const ProcessProtocol::SetThreadContextRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::SuspendThreadRequestT *AsSuspendThreadRequest() {
+    return type == MessagePayload_SuspendThreadRequest ?
+      reinterpret_cast<ProcessProtocol::SuspendThreadRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::SuspendThreadRequestT *AsSuspendThreadRequest() const {
+    return type == MessagePayload_SuspendThreadRequest ?
+      reinterpret_cast<const ProcessProtocol::SuspendThreadRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::SuspendThreadResponseT *AsSuspendThreadResponse() {
+    return type == MessagePayload_SuspendThreadResponse ?
+      reinterpret_cast<ProcessProtocol::SuspendThreadResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::SuspendThreadResponseT *AsSuspendThreadResponse() const {
+    return type == MessagePayload_SuspendThreadResponse ?
+      reinterpret_cast<const ProcessProtocol::SuspendThreadResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::QueryMemoryRequestT *AsQueryMemoryRequest() {
+    return type == MessagePayload_QueryMemoryRequest ?
+      reinterpret_cast<ProcessProtocol::QueryMemoryRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::QueryMemoryRequestT *AsQueryMemoryRequest() const {
+    return type == MessagePayload_QueryMemoryRequest ?
+      reinterpret_cast<const ProcessProtocol::QueryMemoryRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::QueryMemoryResponseT *AsQueryMemoryResponse() {
+    return type == MessagePayload_QueryMemoryResponse ?
+      reinterpret_cast<ProcessProtocol::QueryMemoryResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::QueryMemoryResponseT *AsQueryMemoryResponse() const {
+    return type == MessagePayload_QueryMemoryResponse ?
+      reinterpret_cast<const ProcessProtocol::QueryMemoryResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::ThreadInformationRequestT *AsThreadInformationRequest() {
+    return type == MessagePayload_ThreadInformationRequest ?
+      reinterpret_cast<ProcessProtocol::ThreadInformationRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::ThreadInformationRequestT *AsThreadInformationRequest() const {
+    return type == MessagePayload_ThreadInformationRequest ?
+      reinterpret_cast<const ProcessProtocol::ThreadInformationRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::ThreadInformationResponseT *AsThreadInformationResponse() {
+    return type == MessagePayload_ThreadInformationResponse ?
+      reinterpret_cast<ProcessProtocol::ThreadInformationResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::ThreadInformationResponseT *AsThreadInformationResponse() const {
+    return type == MessagePayload_ThreadInformationResponse ?
+      reinterpret_cast<const ProcessProtocol::ThreadInformationResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::DebugDetachRequestT *AsDebugDetachRequest() {
+    return type == MessagePayload_DebugDetachRequest ?
+      reinterpret_cast<ProcessProtocol::DebugDetachRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::DebugDetachRequestT *AsDebugDetachRequest() const {
+    return type == MessagePayload_DebugDetachRequest ?
+      reinterpret_cast<const ProcessProtocol::DebugDetachRequestT *>(value) : nullptr;
   }
 };
 
@@ -905,6 +1253,7 @@ struct ProcessCreateRequestT : public ::flatbuffers::NativeTable {
   uint64_t standard_error = 0;
   std::vector<std::unique_ptr<ProcessProtocol::InheritedPipeT>> inherited_pipes{};
   std::string command_line{};
+  bool debugged = false;
   ProcessCreateRequestT() = default;
   ProcessCreateRequestT(const ProcessCreateRequestT &o);
   ProcessCreateRequestT(ProcessCreateRequestT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -926,7 +1275,8 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
     VT_STANDARD_OUTPUT = 20,
     VT_STANDARD_ERROR = 22,
     VT_INHERITED_PIPES = 24,
-    VT_COMMAND_LINE = 26
+    VT_COMMAND_LINE = 26,
+    VT_DEBUGGED = 28
   };
   const ::flatbuffers::String *application() const {
     return GetPointer<const ::flatbuffers::String *>(VT_APPLICATION);
@@ -964,6 +1314,9 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   const ::flatbuffers::String *command_line() const {
     return GetPointer<const ::flatbuffers::String *>(VT_COMMAND_LINE);
   }
+  bool debugged() const {
+    return GetField<uint8_t>(VT_DEBUGGED, 0) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -989,6 +1342,7 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
            verifier.VerifyVectorOfTables(inherited_pipes()) &&
            VerifyOffsetRequired(verifier, VT_COMMAND_LINE) &&
            verifier.VerifyString(command_line()) &&
+           VerifyField<uint8_t>(verifier, VT_DEBUGGED, 1) &&
            verifier.EndTable();
   }
   ProcessCreateRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1036,6 +1390,9 @@ struct ProcessCreateRequestBuilder {
   void add_command_line(::flatbuffers::Offset<::flatbuffers::String> command_line) {
     fbb_.AddOffset(ProcessCreateRequest::VT_COMMAND_LINE, command_line);
   }
+  void add_debugged(bool debugged) {
+    fbb_.AddElement<uint8_t>(ProcessCreateRequest::VT_DEBUGGED, static_cast<uint8_t>(debugged), 0);
+  }
   explicit ProcessCreateRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1064,7 +1421,8 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(
     uint64_t standard_output = 0,
     uint64_t standard_error = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>>> inherited_pipes = 0,
-    ::flatbuffers::Offset<::flatbuffers::String> command_line = 0) {
+    ::flatbuffers::Offset<::flatbuffers::String> command_line = 0,
+    bool debugged = false) {
   ProcessCreateRequestBuilder builder_(_fbb);
   builder_.add_standard_error(standard_error);
   builder_.add_standard_output(standard_output);
@@ -1078,6 +1436,7 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(
   builder_.add_working_directory(working_directory);
   builder_.add_argument0(argument0);
   builder_.add_application(application);
+  builder_.add_debugged(debugged);
   return builder_.Finish();
 }
 
@@ -1094,7 +1453,8 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
     uint64_t standard_output = 0,
     uint64_t standard_error = 0,
     const std::vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> *inherited_pipes = nullptr,
-    const char *command_line = nullptr) {
+    const char *command_line = nullptr,
+    bool debugged = false) {
   auto application__ = application ? _fbb.CreateString(application) : 0;
   auto argument0__ = argument0 ? _fbb.CreateString(argument0) : 0;
   auto working_directory__ = working_directory ? _fbb.CreateString(working_directory) : 0;
@@ -1115,7 +1475,8 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
       standard_output,
       standard_error,
       inherited_pipes__,
-      command_line__);
+      command_line__,
+      debugged);
 }
 
 ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessCreateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -1954,6 +2315,1108 @@ inline ::flatbuffers::Offset<ReadMemoryResponse> CreateReadMemoryResponseDirect(
 
 ::flatbuffers::Offset<ReadMemoryResponse> CreateReadMemoryResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ReadMemoryResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct DebugEventT : public ::flatbuffers::NativeTable {
+  typedef DebugEvent TableType;
+  ProcessProtocol::DebugEventKind kind = ProcessProtocol::DebugEventKind_CreateProcess;
+  uint32_t thread_id = 0;
+  uint64_t base_address = 0;
+  uint64_t start_address = 0;
+  std::string path{};
+  uint32_t exit_status = 0;
+  uint32_t exception_code = 0;
+  uint32_t exception_flags = 0;
+  uint64_t exception_address = 0;
+  std::vector<uint64_t> exception_parameters{};
+  bool first_chance = false;
+};
+
+struct DebugEvent FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DebugEventT NativeTableType;
+  typedef DebugEventBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_KIND = 4,
+    VT_THREAD_ID = 6,
+    VT_BASE_ADDRESS = 8,
+    VT_START_ADDRESS = 10,
+    VT_PATH = 12,
+    VT_EXIT_STATUS = 14,
+    VT_EXCEPTION_CODE = 16,
+    VT_EXCEPTION_FLAGS = 18,
+    VT_EXCEPTION_ADDRESS = 20,
+    VT_EXCEPTION_PARAMETERS = 22,
+    VT_FIRST_CHANCE = 24
+  };
+  ProcessProtocol::DebugEventKind kind() const {
+    return static_cast<ProcessProtocol::DebugEventKind>(GetField<uint8_t>(VT_KIND, 0));
+  }
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
+  }
+  uint64_t base_address() const {
+    return GetField<uint64_t>(VT_BASE_ADDRESS, 0);
+  }
+  uint64_t start_address() const {
+    return GetField<uint64_t>(VT_START_ADDRESS, 0);
+  }
+  const ::flatbuffers::String *path() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_PATH);
+  }
+  uint32_t exit_status() const {
+    return GetField<uint32_t>(VT_EXIT_STATUS, 0);
+  }
+  uint32_t exception_code() const {
+    return GetField<uint32_t>(VT_EXCEPTION_CODE, 0);
+  }
+  uint32_t exception_flags() const {
+    return GetField<uint32_t>(VT_EXCEPTION_FLAGS, 0);
+  }
+  uint64_t exception_address() const {
+    return GetField<uint64_t>(VT_EXCEPTION_ADDRESS, 0);
+  }
+  const ::flatbuffers::Vector<uint64_t> *exception_parameters() const {
+    return GetPointer<const ::flatbuffers::Vector<uint64_t> *>(VT_EXCEPTION_PARAMETERS);
+  }
+  bool first_chance() const {
+    return GetField<uint8_t>(VT_FIRST_CHANCE, 0) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_KIND, 1) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           VerifyField<uint64_t>(verifier, VT_BASE_ADDRESS, 8) &&
+           VerifyField<uint64_t>(verifier, VT_START_ADDRESS, 8) &&
+           VerifyOffset(verifier, VT_PATH) &&
+           verifier.VerifyString(path()) &&
+           VerifyField<uint32_t>(verifier, VT_EXIT_STATUS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_EXCEPTION_CODE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_EXCEPTION_FLAGS, 4) &&
+           VerifyField<uint64_t>(verifier, VT_EXCEPTION_ADDRESS, 8) &&
+           VerifyOffset(verifier, VT_EXCEPTION_PARAMETERS) &&
+           verifier.VerifyVector(exception_parameters()) &&
+           VerifyField<uint8_t>(verifier, VT_FIRST_CHANCE, 1) &&
+           verifier.EndTable();
+  }
+  DebugEventT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DebugEventT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DebugEvent> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DebugEventBuilder {
+  typedef DebugEvent Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_kind(ProcessProtocol::DebugEventKind kind) {
+    fbb_.AddElement<uint8_t>(DebugEvent::VT_KIND, static_cast<uint8_t>(kind), 0);
+  }
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(DebugEvent::VT_THREAD_ID, thread_id, 0);
+  }
+  void add_base_address(uint64_t base_address) {
+    fbb_.AddElement<uint64_t>(DebugEvent::VT_BASE_ADDRESS, base_address, 0);
+  }
+  void add_start_address(uint64_t start_address) {
+    fbb_.AddElement<uint64_t>(DebugEvent::VT_START_ADDRESS, start_address, 0);
+  }
+  void add_path(::flatbuffers::Offset<::flatbuffers::String> path) {
+    fbb_.AddOffset(DebugEvent::VT_PATH, path);
+  }
+  void add_exit_status(uint32_t exit_status) {
+    fbb_.AddElement<uint32_t>(DebugEvent::VT_EXIT_STATUS, exit_status, 0);
+  }
+  void add_exception_code(uint32_t exception_code) {
+    fbb_.AddElement<uint32_t>(DebugEvent::VT_EXCEPTION_CODE, exception_code, 0);
+  }
+  void add_exception_flags(uint32_t exception_flags) {
+    fbb_.AddElement<uint32_t>(DebugEvent::VT_EXCEPTION_FLAGS, exception_flags, 0);
+  }
+  void add_exception_address(uint64_t exception_address) {
+    fbb_.AddElement<uint64_t>(DebugEvent::VT_EXCEPTION_ADDRESS, exception_address, 0);
+  }
+  void add_exception_parameters(::flatbuffers::Offset<::flatbuffers::Vector<uint64_t>> exception_parameters) {
+    fbb_.AddOffset(DebugEvent::VT_EXCEPTION_PARAMETERS, exception_parameters);
+  }
+  void add_first_chance(bool first_chance) {
+    fbb_.AddElement<uint8_t>(DebugEvent::VT_FIRST_CHANCE, static_cast<uint8_t>(first_chance), 0);
+  }
+  explicit DebugEventBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DebugEvent> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DebugEvent>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DebugEvent> CreateDebugEvent(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::DebugEventKind kind = ProcessProtocol::DebugEventKind_CreateProcess,
+    uint32_t thread_id = 0,
+    uint64_t base_address = 0,
+    uint64_t start_address = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> path = 0,
+    uint32_t exit_status = 0,
+    uint32_t exception_code = 0,
+    uint32_t exception_flags = 0,
+    uint64_t exception_address = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint64_t>> exception_parameters = 0,
+    bool first_chance = false) {
+  DebugEventBuilder builder_(_fbb);
+  builder_.add_exception_address(exception_address);
+  builder_.add_start_address(start_address);
+  builder_.add_base_address(base_address);
+  builder_.add_exception_parameters(exception_parameters);
+  builder_.add_exception_flags(exception_flags);
+  builder_.add_exception_code(exception_code);
+  builder_.add_exit_status(exit_status);
+  builder_.add_path(path);
+  builder_.add_thread_id(thread_id);
+  builder_.add_first_chance(first_chance);
+  builder_.add_kind(kind);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<DebugEvent> CreateDebugEventDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::DebugEventKind kind = ProcessProtocol::DebugEventKind_CreateProcess,
+    uint32_t thread_id = 0,
+    uint64_t base_address = 0,
+    uint64_t start_address = 0,
+    const char *path = nullptr,
+    uint32_t exit_status = 0,
+    uint32_t exception_code = 0,
+    uint32_t exception_flags = 0,
+    uint64_t exception_address = 0,
+    const std::vector<uint64_t> *exception_parameters = nullptr,
+    bool first_chance = false) {
+  auto path__ = path ? _fbb.CreateString(path) : 0;
+  auto exception_parameters__ = exception_parameters ? _fbb.CreateVector<uint64_t>(*exception_parameters) : 0;
+  return ProcessProtocol::CreateDebugEvent(
+      _fbb,
+      kind,
+      thread_id,
+      base_address,
+      start_address,
+      path__,
+      exit_status,
+      exception_code,
+      exception_flags,
+      exception_address,
+      exception_parameters__,
+      first_chance);
+}
+
+::flatbuffers::Offset<DebugEvent> CreateDebugEvent(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct DebugEventRequestT : public ::flatbuffers::NativeTable {
+  typedef DebugEventRequest TableType;
+};
+
+struct DebugEventRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DebugEventRequestT NativeTableType;
+  typedef DebugEventRequestBuilder Builder;
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           verifier.EndTable();
+  }
+  DebugEventRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DebugEventRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DebugEventRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DebugEventRequestBuilder {
+  typedef DebugEventRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  explicit DebugEventRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DebugEventRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DebugEventRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DebugEventRequest> CreateDebugEventRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb) {
+  DebugEventRequestBuilder builder_(_fbb);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<DebugEventRequest> CreateDebugEventRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct DebugEventResponseT : public ::flatbuffers::NativeTable {
+  typedef DebugEventResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  std::unique_ptr<ProcessProtocol::DebugEventT> event{};
+  DebugEventResponseT() = default;
+  DebugEventResponseT(const DebugEventResponseT &o);
+  DebugEventResponseT(DebugEventResponseT&&) FLATBUFFERS_NOEXCEPT = default;
+  DebugEventResponseT &operator=(DebugEventResponseT o) FLATBUFFERS_NOEXCEPT;
+};
+
+struct DebugEventResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DebugEventResponseT NativeTableType;
+  typedef DebugEventResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_EVENT = 6
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  const ProcessProtocol::DebugEvent *event() const {
+    return GetPointer<const ProcessProtocol::DebugEvent *>(VT_EVENT);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyOffset(verifier, VT_EVENT) &&
+           verifier.VerifyTable(event()) &&
+           verifier.EndTable();
+  }
+  DebugEventResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DebugEventResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DebugEventResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DebugEventResponseBuilder {
+  typedef DebugEventResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(DebugEventResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_event(::flatbuffers::Offset<ProcessProtocol::DebugEvent> event) {
+    fbb_.AddOffset(DebugEventResponse::VT_EVENT, event);
+  }
+  explicit DebugEventResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DebugEventResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DebugEventResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DebugEventResponse> CreateDebugEventResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    ::flatbuffers::Offset<ProcessProtocol::DebugEvent> event = 0) {
+  DebugEventResponseBuilder builder_(_fbb);
+  builder_.add_event(event);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<DebugEventResponse> CreateDebugEventResponse(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct DebugContinueRequestT : public ::flatbuffers::NativeTable {
+  typedef DebugContinueRequest TableType;
+  uint32_t thread_id = 0;
+  uint32_t status = 0;
+};
+
+struct DebugContinueRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DebugContinueRequestT NativeTableType;
+  typedef DebugContinueRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_THREAD_ID = 4,
+    VT_STATUS = 6
+  };
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
+  }
+  uint32_t status() const {
+    return GetField<uint32_t>(VT_STATUS, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           VerifyField<uint32_t>(verifier, VT_STATUS, 4) &&
+           verifier.EndTable();
+  }
+  DebugContinueRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DebugContinueRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DebugContinueRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugContinueRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DebugContinueRequestBuilder {
+  typedef DebugContinueRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(DebugContinueRequest::VT_THREAD_ID, thread_id, 0);
+  }
+  void add_status(uint32_t status) {
+    fbb_.AddElement<uint32_t>(DebugContinueRequest::VT_STATUS, status, 0);
+  }
+  explicit DebugContinueRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DebugContinueRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DebugContinueRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DebugContinueRequest> CreateDebugContinueRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0,
+    uint32_t status = 0) {
+  DebugContinueRequestBuilder builder_(_fbb);
+  builder_.add_status(status);
+  builder_.add_thread_id(thread_id);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<DebugContinueRequest> CreateDebugContinueRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugContinueRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct DebugDetachRequestT : public ::flatbuffers::NativeTable {
+  typedef DebugDetachRequest TableType;
+};
+
+struct DebugDetachRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef DebugDetachRequestT NativeTableType;
+  typedef DebugDetachRequestBuilder Builder;
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           verifier.EndTable();
+  }
+  DebugDetachRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(DebugDetachRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<DebugDetachRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugDetachRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct DebugDetachRequestBuilder {
+  typedef DebugDetachRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  explicit DebugDetachRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<DebugDetachRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<DebugDetachRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<DebugDetachRequest> CreateDebugDetachRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb) {
+  DebugDetachRequestBuilder builder_(_fbb);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<DebugDetachRequest> CreateDebugDetachRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugDetachRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ThreadContextRequestT : public ::flatbuffers::NativeTable {
+  typedef ThreadContextRequest TableType;
+  uint32_t thread_id = 0;
+  bool wow64 = false;
+};
+
+struct ThreadContextRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ThreadContextRequestT NativeTableType;
+  typedef ThreadContextRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_THREAD_ID = 4,
+    VT_WOW64 = 6
+  };
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
+  }
+  bool wow64() const {
+    return GetField<uint8_t>(VT_WOW64, 0) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           VerifyField<uint8_t>(verifier, VT_WOW64, 1) &&
+           verifier.EndTable();
+  }
+  ThreadContextRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ThreadContextRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ThreadContextRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadContextRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ThreadContextRequestBuilder {
+  typedef ThreadContextRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(ThreadContextRequest::VT_THREAD_ID, thread_id, 0);
+  }
+  void add_wow64(bool wow64) {
+    fbb_.AddElement<uint8_t>(ThreadContextRequest::VT_WOW64, static_cast<uint8_t>(wow64), 0);
+  }
+  explicit ThreadContextRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ThreadContextRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ThreadContextRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ThreadContextRequest> CreateThreadContextRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0,
+    bool wow64 = false) {
+  ThreadContextRequestBuilder builder_(_fbb);
+  builder_.add_thread_id(thread_id);
+  builder_.add_wow64(wow64);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ThreadContextRequest> CreateThreadContextRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadContextRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ThreadContextResponseT : public ::flatbuffers::NativeTable {
+  typedef ThreadContextResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  std::vector<uint8_t> context{};
+};
+
+struct ThreadContextResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ThreadContextResponseT NativeTableType;
+  typedef ThreadContextResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_CONTEXT = 6
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  const ::flatbuffers::Vector<uint8_t> *context() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CONTEXT);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyOffset(verifier, VT_CONTEXT) &&
+           verifier.VerifyVector(context()) &&
+           verifier.EndTable();
+  }
+  ThreadContextResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ThreadContextResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ThreadContextResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadContextResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ThreadContextResponseBuilder {
+  typedef ThreadContextResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(ThreadContextResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_context(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> context) {
+    fbb_.AddOffset(ThreadContextResponse::VT_CONTEXT, context);
+  }
+  explicit ThreadContextResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ThreadContextResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ThreadContextResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ThreadContextResponse> CreateThreadContextResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> context = 0) {
+  ThreadContextResponseBuilder builder_(_fbb);
+  builder_.add_context(context);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<ThreadContextResponse> CreateThreadContextResponseDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    const std::vector<uint8_t> *context = nullptr) {
+  auto context__ = context ? _fbb.CreateVector<uint8_t>(*context) : 0;
+  return ProcessProtocol::CreateThreadContextResponse(
+      _fbb,
+      error,
+      context__);
+}
+
+::flatbuffers::Offset<ThreadContextResponse> CreateThreadContextResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadContextResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct SetThreadContextRequestT : public ::flatbuffers::NativeTable {
+  typedef SetThreadContextRequest TableType;
+  uint32_t thread_id = 0;
+  std::vector<uint8_t> context{};
+  bool wow64 = false;
+};
+
+struct SetThreadContextRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef SetThreadContextRequestT NativeTableType;
+  typedef SetThreadContextRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_THREAD_ID = 4,
+    VT_CONTEXT = 6,
+    VT_WOW64 = 8
+  };
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
+  }
+  const ::flatbuffers::Vector<uint8_t> *context() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_CONTEXT);
+  }
+  bool wow64() const {
+    return GetField<uint8_t>(VT_WOW64, 0) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           VerifyOffset(verifier, VT_CONTEXT) &&
+           verifier.VerifyVector(context()) &&
+           VerifyField<uint8_t>(verifier, VT_WOW64, 1) &&
+           verifier.EndTable();
+  }
+  SetThreadContextRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(SetThreadContextRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<SetThreadContextRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadContextRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct SetThreadContextRequestBuilder {
+  typedef SetThreadContextRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(SetThreadContextRequest::VT_THREAD_ID, thread_id, 0);
+  }
+  void add_context(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> context) {
+    fbb_.AddOffset(SetThreadContextRequest::VT_CONTEXT, context);
+  }
+  void add_wow64(bool wow64) {
+    fbb_.AddElement<uint8_t>(SetThreadContextRequest::VT_WOW64, static_cast<uint8_t>(wow64), 0);
+  }
+  explicit SetThreadContextRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<SetThreadContextRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<SetThreadContextRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<SetThreadContextRequest> CreateSetThreadContextRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> context = 0,
+    bool wow64 = false) {
+  SetThreadContextRequestBuilder builder_(_fbb);
+  builder_.add_context(context);
+  builder_.add_thread_id(thread_id);
+  builder_.add_wow64(wow64);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<SetThreadContextRequest> CreateSetThreadContextRequestDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0,
+    const std::vector<uint8_t> *context = nullptr,
+    bool wow64 = false) {
+  auto context__ = context ? _fbb.CreateVector<uint8_t>(*context) : 0;
+  return ProcessProtocol::CreateSetThreadContextRequest(
+      _fbb,
+      thread_id,
+      context__,
+      wow64);
+}
+
+::flatbuffers::Offset<SetThreadContextRequest> CreateSetThreadContextRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadContextRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ThreadInformationRequestT : public ::flatbuffers::NativeTable {
+  typedef ThreadInformationRequest TableType;
+  uint32_t thread_id = 0;
+};
+
+struct ThreadInformationRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ThreadInformationRequestT NativeTableType;
+  typedef ThreadInformationRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_THREAD_ID = 4
+  };
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           verifier.EndTable();
+  }
+  ThreadInformationRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ThreadInformationRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ThreadInformationRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ThreadInformationRequestBuilder {
+  typedef ThreadInformationRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(ThreadInformationRequest::VT_THREAD_ID, thread_id, 0);
+  }
+  explicit ThreadInformationRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ThreadInformationRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ThreadInformationRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ThreadInformationRequest> CreateThreadInformationRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0) {
+  ThreadInformationRequestBuilder builder_(_fbb);
+  builder_.add_thread_id(thread_id);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ThreadInformationRequest> CreateThreadInformationRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ThreadInformationResponseT : public ::flatbuffers::NativeTable {
+  typedef ThreadInformationResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  uint64_t teb = 0;
+};
+
+struct ThreadInformationResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ThreadInformationResponseT NativeTableType;
+  typedef ThreadInformationResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_TEB = 6
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  uint64_t teb() const {
+    return GetField<uint64_t>(VT_TEB, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyField<uint64_t>(verifier, VT_TEB, 8) &&
+           verifier.EndTable();
+  }
+  ThreadInformationResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ThreadInformationResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ThreadInformationResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ThreadInformationResponseBuilder {
+  typedef ThreadInformationResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(ThreadInformationResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_teb(uint64_t teb) {
+    fbb_.AddElement<uint64_t>(ThreadInformationResponse::VT_TEB, teb, 0);
+  }
+  explicit ThreadInformationResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ThreadInformationResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ThreadInformationResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ThreadInformationResponse> CreateThreadInformationResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    uint64_t teb = 0) {
+  ThreadInformationResponseBuilder builder_(_fbb);
+  builder_.add_teb(teb);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ThreadInformationResponse> CreateThreadInformationResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct SuspendThreadRequestT : public ::flatbuffers::NativeTable {
+  typedef SuspendThreadRequest TableType;
+  uint32_t thread_id = 0;
+  bool resume = false;
+};
+
+struct SuspendThreadRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef SuspendThreadRequestT NativeTableType;
+  typedef SuspendThreadRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_THREAD_ID = 4,
+    VT_RESUME = 6
+  };
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
+  }
+  bool resume() const {
+    return GetField<uint8_t>(VT_RESUME, 0) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           VerifyField<uint8_t>(verifier, VT_RESUME, 1) &&
+           verifier.EndTable();
+  }
+  SuspendThreadRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(SuspendThreadRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<SuspendThreadRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SuspendThreadRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct SuspendThreadRequestBuilder {
+  typedef SuspendThreadRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(SuspendThreadRequest::VT_THREAD_ID, thread_id, 0);
+  }
+  void add_resume(bool resume) {
+    fbb_.AddElement<uint8_t>(SuspendThreadRequest::VT_RESUME, static_cast<uint8_t>(resume), 0);
+  }
+  explicit SuspendThreadRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<SuspendThreadRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<SuspendThreadRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<SuspendThreadRequest> CreateSuspendThreadRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0,
+    bool resume = false) {
+  SuspendThreadRequestBuilder builder_(_fbb);
+  builder_.add_thread_id(thread_id);
+  builder_.add_resume(resume);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<SuspendThreadRequest> CreateSuspendThreadRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SuspendThreadRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct SuspendThreadResponseT : public ::flatbuffers::NativeTable {
+  typedef SuspendThreadResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  uint32_t previous_count = 0;
+};
+
+struct SuspendThreadResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef SuspendThreadResponseT NativeTableType;
+  typedef SuspendThreadResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_PREVIOUS_COUNT = 6
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  uint32_t previous_count() const {
+    return GetField<uint32_t>(VT_PREVIOUS_COUNT, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyField<uint32_t>(verifier, VT_PREVIOUS_COUNT, 4) &&
+           verifier.EndTable();
+  }
+  SuspendThreadResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(SuspendThreadResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<SuspendThreadResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SuspendThreadResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct SuspendThreadResponseBuilder {
+  typedef SuspendThreadResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(SuspendThreadResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_previous_count(uint32_t previous_count) {
+    fbb_.AddElement<uint32_t>(SuspendThreadResponse::VT_PREVIOUS_COUNT, previous_count, 0);
+  }
+  explicit SuspendThreadResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<SuspendThreadResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<SuspendThreadResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<SuspendThreadResponse> CreateSuspendThreadResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    uint32_t previous_count = 0) {
+  SuspendThreadResponseBuilder builder_(_fbb);
+  builder_.add_previous_count(previous_count);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<SuspendThreadResponse> CreateSuspendThreadResponse(::flatbuffers::FlatBufferBuilder &_fbb, const SuspendThreadResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct QueryMemoryRequestT : public ::flatbuffers::NativeTable {
+  typedef QueryMemoryRequest TableType;
+  uint64_t address = 0;
+};
+
+struct QueryMemoryRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef QueryMemoryRequestT NativeTableType;
+  typedef QueryMemoryRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ADDRESS = 4
+  };
+  uint64_t address() const {
+    return GetField<uint64_t>(VT_ADDRESS, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_ADDRESS, 8) &&
+           verifier.EndTable();
+  }
+  QueryMemoryRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(QueryMemoryRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<QueryMemoryRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const QueryMemoryRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct QueryMemoryRequestBuilder {
+  typedef QueryMemoryRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_address(uint64_t address) {
+    fbb_.AddElement<uint64_t>(QueryMemoryRequest::VT_ADDRESS, address, 0);
+  }
+  explicit QueryMemoryRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<QueryMemoryRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<QueryMemoryRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<QueryMemoryRequest> CreateQueryMemoryRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t address = 0) {
+  QueryMemoryRequestBuilder builder_(_fbb);
+  builder_.add_address(address);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<QueryMemoryRequest> CreateQueryMemoryRequest(::flatbuffers::FlatBufferBuilder &_fbb, const QueryMemoryRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct QueryMemoryResponseT : public ::flatbuffers::NativeTable {
+  typedef QueryMemoryResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  uint64_t base_address = 0;
+  uint64_t allocation_base = 0;
+  uint32_t allocation_protect = 0;
+  uint64_t region_size = 0;
+  uint32_t state = 0;
+  uint32_t protect = 0;
+  uint32_t type = 0;
+  std::string mapped_file{};
+};
+
+struct QueryMemoryResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef QueryMemoryResponseT NativeTableType;
+  typedef QueryMemoryResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_BASE_ADDRESS = 6,
+    VT_ALLOCATION_BASE = 8,
+    VT_ALLOCATION_PROTECT = 10,
+    VT_REGION_SIZE = 12,
+    VT_STATE = 14,
+    VT_PROTECT = 16,
+    VT_TYPE = 18,
+    VT_MAPPED_FILE = 20
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  uint64_t base_address() const {
+    return GetField<uint64_t>(VT_BASE_ADDRESS, 0);
+  }
+  uint64_t allocation_base() const {
+    return GetField<uint64_t>(VT_ALLOCATION_BASE, 0);
+  }
+  uint32_t allocation_protect() const {
+    return GetField<uint32_t>(VT_ALLOCATION_PROTECT, 0);
+  }
+  uint64_t region_size() const {
+    return GetField<uint64_t>(VT_REGION_SIZE, 0);
+  }
+  uint32_t state() const {
+    return GetField<uint32_t>(VT_STATE, 0);
+  }
+  uint32_t protect() const {
+    return GetField<uint32_t>(VT_PROTECT, 0);
+  }
+  uint32_t type() const {
+    return GetField<uint32_t>(VT_TYPE, 0);
+  }
+  const ::flatbuffers::String *mapped_file() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_MAPPED_FILE);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyField<uint64_t>(verifier, VT_BASE_ADDRESS, 8) &&
+           VerifyField<uint64_t>(verifier, VT_ALLOCATION_BASE, 8) &&
+           VerifyField<uint32_t>(verifier, VT_ALLOCATION_PROTECT, 4) &&
+           VerifyField<uint64_t>(verifier, VT_REGION_SIZE, 8) &&
+           VerifyField<uint32_t>(verifier, VT_STATE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_PROTECT, 4) &&
+           VerifyField<uint32_t>(verifier, VT_TYPE, 4) &&
+           VerifyOffset(verifier, VT_MAPPED_FILE) &&
+           verifier.VerifyString(mapped_file()) &&
+           verifier.EndTable();
+  }
+  QueryMemoryResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(QueryMemoryResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<QueryMemoryResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const QueryMemoryResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct QueryMemoryResponseBuilder {
+  typedef QueryMemoryResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(QueryMemoryResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_base_address(uint64_t base_address) {
+    fbb_.AddElement<uint64_t>(QueryMemoryResponse::VT_BASE_ADDRESS, base_address, 0);
+  }
+  void add_allocation_base(uint64_t allocation_base) {
+    fbb_.AddElement<uint64_t>(QueryMemoryResponse::VT_ALLOCATION_BASE, allocation_base, 0);
+  }
+  void add_allocation_protect(uint32_t allocation_protect) {
+    fbb_.AddElement<uint32_t>(QueryMemoryResponse::VT_ALLOCATION_PROTECT, allocation_protect, 0);
+  }
+  void add_region_size(uint64_t region_size) {
+    fbb_.AddElement<uint64_t>(QueryMemoryResponse::VT_REGION_SIZE, region_size, 0);
+  }
+  void add_state(uint32_t state) {
+    fbb_.AddElement<uint32_t>(QueryMemoryResponse::VT_STATE, state, 0);
+  }
+  void add_protect(uint32_t protect) {
+    fbb_.AddElement<uint32_t>(QueryMemoryResponse::VT_PROTECT, protect, 0);
+  }
+  void add_type(uint32_t type) {
+    fbb_.AddElement<uint32_t>(QueryMemoryResponse::VT_TYPE, type, 0);
+  }
+  void add_mapped_file(::flatbuffers::Offset<::flatbuffers::String> mapped_file) {
+    fbb_.AddOffset(QueryMemoryResponse::VT_MAPPED_FILE, mapped_file);
+  }
+  explicit QueryMemoryResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<QueryMemoryResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<QueryMemoryResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<QueryMemoryResponse> CreateQueryMemoryResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    uint64_t base_address = 0,
+    uint64_t allocation_base = 0,
+    uint32_t allocation_protect = 0,
+    uint64_t region_size = 0,
+    uint32_t state = 0,
+    uint32_t protect = 0,
+    uint32_t type = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> mapped_file = 0) {
+  QueryMemoryResponseBuilder builder_(_fbb);
+  builder_.add_region_size(region_size);
+  builder_.add_allocation_base(allocation_base);
+  builder_.add_base_address(base_address);
+  builder_.add_mapped_file(mapped_file);
+  builder_.add_type(type);
+  builder_.add_protect(protect);
+  builder_.add_state(state);
+  builder_.add_allocation_protect(allocation_protect);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<QueryMemoryResponse> CreateQueryMemoryResponseDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    uint64_t base_address = 0,
+    uint64_t allocation_base = 0,
+    uint32_t allocation_protect = 0,
+    uint64_t region_size = 0,
+    uint32_t state = 0,
+    uint32_t protect = 0,
+    uint32_t type = 0,
+    const char *mapped_file = nullptr) {
+  auto mapped_file__ = mapped_file ? _fbb.CreateString(mapped_file) : 0;
+  return ProcessProtocol::CreateQueryMemoryResponse(
+      _fbb,
+      error,
+      base_address,
+      allocation_base,
+      allocation_protect,
+      region_size,
+      state,
+      protect,
+      type,
+      mapped_file__);
+}
+
+::flatbuffers::Offset<QueryMemoryResponse> CreateQueryMemoryResponse(::flatbuffers::FlatBufferBuilder &_fbb, const QueryMemoryResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct MessageT : public ::flatbuffers::NativeTable {
   typedef Message TableType;
   ProcessProtocol::MessagePayloadUnion payload{};
@@ -2014,6 +3477,45 @@ struct Message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   }
   const ProcessProtocol::ReadMemoryResponse *payload_as_ReadMemoryResponse() const {
     return payload_type() == ProcessProtocol::MessagePayload_ReadMemoryResponse ? static_cast<const ProcessProtocol::ReadMemoryResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::DebugEventRequest *payload_as_DebugEventRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_DebugEventRequest ? static_cast<const ProcessProtocol::DebugEventRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::DebugEventResponse *payload_as_DebugEventResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_DebugEventResponse ? static_cast<const ProcessProtocol::DebugEventResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::DebugContinueRequest *payload_as_DebugContinueRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_DebugContinueRequest ? static_cast<const ProcessProtocol::DebugContinueRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::ThreadContextRequest *payload_as_ThreadContextRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_ThreadContextRequest ? static_cast<const ProcessProtocol::ThreadContextRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::ThreadContextResponse *payload_as_ThreadContextResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_ThreadContextResponse ? static_cast<const ProcessProtocol::ThreadContextResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::SetThreadContextRequest *payload_as_SetThreadContextRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_SetThreadContextRequest ? static_cast<const ProcessProtocol::SetThreadContextRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::SuspendThreadRequest *payload_as_SuspendThreadRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_SuspendThreadRequest ? static_cast<const ProcessProtocol::SuspendThreadRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::SuspendThreadResponse *payload_as_SuspendThreadResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_SuspendThreadResponse ? static_cast<const ProcessProtocol::SuspendThreadResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::QueryMemoryRequest *payload_as_QueryMemoryRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_QueryMemoryRequest ? static_cast<const ProcessProtocol::QueryMemoryRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::QueryMemoryResponse *payload_as_QueryMemoryResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_QueryMemoryResponse ? static_cast<const ProcessProtocol::QueryMemoryResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::ThreadInformationRequest *payload_as_ThreadInformationRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_ThreadInformationRequest ? static_cast<const ProcessProtocol::ThreadInformationRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::ThreadInformationResponse *payload_as_ThreadInformationResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_ThreadInformationResponse ? static_cast<const ProcessProtocol::ThreadInformationResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::DebugDetachRequest *payload_as_DebugDetachRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_DebugDetachRequest ? static_cast<const ProcessProtocol::DebugDetachRequest *>(payload()) : nullptr;
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -2082,6 +3584,58 @@ template<> inline const ProcessProtocol::ProcessErrorResponse *Message::payload_
 
 template<> inline const ProcessProtocol::ReadMemoryResponse *Message::payload_as<ProcessProtocol::ReadMemoryResponse>() const {
   return payload_as_ReadMemoryResponse();
+}
+
+template<> inline const ProcessProtocol::DebugEventRequest *Message::payload_as<ProcessProtocol::DebugEventRequest>() const {
+  return payload_as_DebugEventRequest();
+}
+
+template<> inline const ProcessProtocol::DebugEventResponse *Message::payload_as<ProcessProtocol::DebugEventResponse>() const {
+  return payload_as_DebugEventResponse();
+}
+
+template<> inline const ProcessProtocol::DebugContinueRequest *Message::payload_as<ProcessProtocol::DebugContinueRequest>() const {
+  return payload_as_DebugContinueRequest();
+}
+
+template<> inline const ProcessProtocol::ThreadContextRequest *Message::payload_as<ProcessProtocol::ThreadContextRequest>() const {
+  return payload_as_ThreadContextRequest();
+}
+
+template<> inline const ProcessProtocol::ThreadContextResponse *Message::payload_as<ProcessProtocol::ThreadContextResponse>() const {
+  return payload_as_ThreadContextResponse();
+}
+
+template<> inline const ProcessProtocol::SetThreadContextRequest *Message::payload_as<ProcessProtocol::SetThreadContextRequest>() const {
+  return payload_as_SetThreadContextRequest();
+}
+
+template<> inline const ProcessProtocol::SuspendThreadRequest *Message::payload_as<ProcessProtocol::SuspendThreadRequest>() const {
+  return payload_as_SuspendThreadRequest();
+}
+
+template<> inline const ProcessProtocol::SuspendThreadResponse *Message::payload_as<ProcessProtocol::SuspendThreadResponse>() const {
+  return payload_as_SuspendThreadResponse();
+}
+
+template<> inline const ProcessProtocol::QueryMemoryRequest *Message::payload_as<ProcessProtocol::QueryMemoryRequest>() const {
+  return payload_as_QueryMemoryRequest();
+}
+
+template<> inline const ProcessProtocol::QueryMemoryResponse *Message::payload_as<ProcessProtocol::QueryMemoryResponse>() const {
+  return payload_as_QueryMemoryResponse();
+}
+
+template<> inline const ProcessProtocol::ThreadInformationRequest *Message::payload_as<ProcessProtocol::ThreadInformationRequest>() const {
+  return payload_as_ThreadInformationRequest();
+}
+
+template<> inline const ProcessProtocol::ThreadInformationResponse *Message::payload_as<ProcessProtocol::ThreadInformationResponse>() const {
+  return payload_as_ThreadInformationResponse();
+}
+
+template<> inline const ProcessProtocol::DebugDetachRequest *Message::payload_as<ProcessProtocol::DebugDetachRequest>() const {
+  return payload_as_DebugDetachRequest();
 }
 
 struct MessageBuilder {
@@ -2241,7 +3795,8 @@ inline ProcessCreateRequestT::ProcessCreateRequestT(const ProcessCreateRequestT 
         standard_input(o.standard_input),
         standard_output(o.standard_output),
         standard_error(o.standard_error),
-        command_line(o.command_line) {
+        command_line(o.command_line),
+        debugged(o.debugged) {
   environment.reserve(o.environment.size());
   for (const auto &environment_ : o.environment) { environment.emplace_back((environment_) ? new ProcessProtocol::EnvironmentVariableT(*environment_) : nullptr); }
   inherited_pipes.reserve(o.inherited_pipes.size());
@@ -2261,6 +3816,7 @@ inline ProcessCreateRequestT &ProcessCreateRequestT::operator=(ProcessCreateRequ
   std::swap(standard_error, o.standard_error);
   std::swap(inherited_pipes, o.inherited_pipes);
   std::swap(command_line, o.command_line);
+  std::swap(debugged, o.debugged);
   return *this;
 }
 
@@ -2285,6 +3841,7 @@ inline void ProcessCreateRequest::UnPackTo(ProcessCreateRequestT *_o, const ::fl
   { auto _e = standard_error(); _o->standard_error = _e; }
   { auto _e = inherited_pipes(); if (_e) { _o->inherited_pipes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inherited_pipes[_i]) { _e->Get(_i)->UnPackTo(_o->inherited_pipes[_i].get(), _resolver); } else { _o->inherited_pipes[_i] = std::unique_ptr<ProcessProtocol::InheritedPipeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inherited_pipes.resize(0); } }
   { auto _e = command_line(); if (_e) _o->command_line = _e->str(); }
+  { auto _e = debugged(); _o->debugged = _e; }
 }
 
 inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessCreateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -2307,6 +3864,7 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> ProcessCreateRequest::Pack(::
   auto _standard_error = _o->standard_error;
   auto _inherited_pipes = _o->inherited_pipes.size() ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> (_o->inherited_pipes.size(), [](size_t i, _VectorArgs *__va) { return ProcessProtocol::CreateInheritedPipe(*__va->__fbb, __va->__o->inherited_pipes[i].get(), __va->__rehasher); }, &_va ) : 0;
   auto _command_line = _fbb.CreateString(_o->command_line);
+  auto _debugged = _o->debugged;
   return ProcessProtocol::CreateProcessCreateRequest(
       _fbb,
       _application,
@@ -2320,7 +3878,8 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> ProcessCreateRequest::Pack(::
       _standard_output,
       _standard_error,
       _inherited_pipes,
-      _command_line);
+      _command_line,
+      _debugged);
 }
 
 inline ProcessStartedT *ProcessStarted::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -2683,6 +4242,456 @@ inline ::flatbuffers::Offset<ReadMemoryResponse> ReadMemoryResponse::Pack(::flat
       _data);
 }
 
+inline DebugEventT *DebugEvent::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<DebugEventT>(new DebugEventT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DebugEvent::UnPackTo(DebugEventT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = kind(); _o->kind = _e; }
+  { auto _e = thread_id(); _o->thread_id = _e; }
+  { auto _e = base_address(); _o->base_address = _e; }
+  { auto _e = start_address(); _o->start_address = _e; }
+  { auto _e = path(); if (_e) _o->path = _e->str(); }
+  { auto _e = exit_status(); _o->exit_status = _e; }
+  { auto _e = exception_code(); _o->exception_code = _e; }
+  { auto _e = exception_flags(); _o->exception_flags = _e; }
+  { auto _e = exception_address(); _o->exception_address = _e; }
+  { auto _e = exception_parameters(); if (_e) { _o->exception_parameters.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->exception_parameters[_i] = _e->Get(_i); } } else { _o->exception_parameters.resize(0); } }
+  { auto _e = first_chance(); _o->first_chance = _e; }
+}
+
+inline ::flatbuffers::Offset<DebugEvent> CreateDebugEvent(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DebugEvent::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DebugEvent> DebugEvent::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DebugEventT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _kind = _o->kind;
+  auto _thread_id = _o->thread_id;
+  auto _base_address = _o->base_address;
+  auto _start_address = _o->start_address;
+  auto _path = _o->path.empty() ? 0 : _fbb.CreateString(_o->path);
+  auto _exit_status = _o->exit_status;
+  auto _exception_code = _o->exception_code;
+  auto _exception_flags = _o->exception_flags;
+  auto _exception_address = _o->exception_address;
+  auto _exception_parameters = _o->exception_parameters.size() ? _fbb.CreateVector(_o->exception_parameters) : 0;
+  auto _first_chance = _o->first_chance;
+  return ProcessProtocol::CreateDebugEvent(
+      _fbb,
+      _kind,
+      _thread_id,
+      _base_address,
+      _start_address,
+      _path,
+      _exit_status,
+      _exception_code,
+      _exception_flags,
+      _exception_address,
+      _exception_parameters,
+      _first_chance);
+}
+
+inline DebugEventRequestT *DebugEventRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<DebugEventRequestT>(new DebugEventRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DebugEventRequest::UnPackTo(DebugEventRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+}
+
+inline ::flatbuffers::Offset<DebugEventRequest> CreateDebugEventRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DebugEventRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DebugEventRequest> DebugEventRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DebugEventRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  return ProcessProtocol::CreateDebugEventRequest(
+      _fbb);
+}
+
+inline DebugEventResponseT::DebugEventResponseT(const DebugEventResponseT &o)
+      : error(o.error),
+        event((o.event) ? new ProcessProtocol::DebugEventT(*o.event) : nullptr) {
+}
+
+inline DebugEventResponseT &DebugEventResponseT::operator=(DebugEventResponseT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(error, o.error);
+  std::swap(event, o.event);
+  return *this;
+}
+
+inline DebugEventResponseT *DebugEventResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<DebugEventResponseT>(new DebugEventResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DebugEventResponse::UnPackTo(DebugEventResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = event(); if (_e) { if(_o->event) { _e->UnPackTo(_o->event.get(), _resolver); } else { _o->event = std::unique_ptr<ProcessProtocol::DebugEventT>(_e->UnPack(_resolver)); } } else if (_o->event) { _o->event.reset(); } }
+}
+
+inline ::flatbuffers::Offset<DebugEventResponse> CreateDebugEventResponse(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DebugEventResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DebugEventResponse> DebugEventResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugEventResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DebugEventResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _event = _o->event ? ProcessProtocol::CreateDebugEvent(_fbb, _o->event.get(), _rehasher) : 0;
+  return ProcessProtocol::CreateDebugEventResponse(
+      _fbb,
+      _error,
+      _event);
+}
+
+inline DebugContinueRequestT *DebugContinueRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<DebugContinueRequestT>(new DebugContinueRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DebugContinueRequest::UnPackTo(DebugContinueRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = thread_id(); _o->thread_id = _e; }
+  { auto _e = status(); _o->status = _e; }
+}
+
+inline ::flatbuffers::Offset<DebugContinueRequest> CreateDebugContinueRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugContinueRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DebugContinueRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DebugContinueRequest> DebugContinueRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugContinueRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DebugContinueRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _thread_id = _o->thread_id;
+  auto _status = _o->status;
+  return ProcessProtocol::CreateDebugContinueRequest(
+      _fbb,
+      _thread_id,
+      _status);
+}
+
+inline DebugDetachRequestT *DebugDetachRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<DebugDetachRequestT>(new DebugDetachRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void DebugDetachRequest::UnPackTo(DebugDetachRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+}
+
+inline ::flatbuffers::Offset<DebugDetachRequest> CreateDebugDetachRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugDetachRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return DebugDetachRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<DebugDetachRequest> DebugDetachRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const DebugDetachRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const DebugDetachRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  return ProcessProtocol::CreateDebugDetachRequest(
+      _fbb);
+}
+
+inline ThreadContextRequestT *ThreadContextRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ThreadContextRequestT>(new ThreadContextRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ThreadContextRequest::UnPackTo(ThreadContextRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = thread_id(); _o->thread_id = _e; }
+  { auto _e = wow64(); _o->wow64 = _e; }
+}
+
+inline ::flatbuffers::Offset<ThreadContextRequest> CreateThreadContextRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadContextRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ThreadContextRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ThreadContextRequest> ThreadContextRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadContextRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ThreadContextRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _thread_id = _o->thread_id;
+  auto _wow64 = _o->wow64;
+  return ProcessProtocol::CreateThreadContextRequest(
+      _fbb,
+      _thread_id,
+      _wow64);
+}
+
+inline ThreadContextResponseT *ThreadContextResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ThreadContextResponseT>(new ThreadContextResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ThreadContextResponse::UnPackTo(ThreadContextResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = context(); if (_e) { _o->context.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->context.begin()); } }
+}
+
+inline ::flatbuffers::Offset<ThreadContextResponse> CreateThreadContextResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadContextResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ThreadContextResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ThreadContextResponse> ThreadContextResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadContextResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ThreadContextResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _context = _o->context.size() ? _fbb.CreateVector(_o->context) : 0;
+  return ProcessProtocol::CreateThreadContextResponse(
+      _fbb,
+      _error,
+      _context);
+}
+
+inline SetThreadContextRequestT *SetThreadContextRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<SetThreadContextRequestT>(new SetThreadContextRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void SetThreadContextRequest::UnPackTo(SetThreadContextRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = thread_id(); _o->thread_id = _e; }
+  { auto _e = context(); if (_e) { _o->context.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->context.begin()); } }
+  { auto _e = wow64(); _o->wow64 = _e; }
+}
+
+inline ::flatbuffers::Offset<SetThreadContextRequest> CreateSetThreadContextRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadContextRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return SetThreadContextRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<SetThreadContextRequest> SetThreadContextRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadContextRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const SetThreadContextRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _thread_id = _o->thread_id;
+  auto _context = _o->context.size() ? _fbb.CreateVector(_o->context) : 0;
+  auto _wow64 = _o->wow64;
+  return ProcessProtocol::CreateSetThreadContextRequest(
+      _fbb,
+      _thread_id,
+      _context,
+      _wow64);
+}
+
+inline ThreadInformationRequestT *ThreadInformationRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ThreadInformationRequestT>(new ThreadInformationRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ThreadInformationRequest::UnPackTo(ThreadInformationRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = thread_id(); _o->thread_id = _e; }
+}
+
+inline ::flatbuffers::Offset<ThreadInformationRequest> CreateThreadInformationRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ThreadInformationRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ThreadInformationRequest> ThreadInformationRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ThreadInformationRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _thread_id = _o->thread_id;
+  return ProcessProtocol::CreateThreadInformationRequest(
+      _fbb,
+      _thread_id);
+}
+
+inline ThreadInformationResponseT *ThreadInformationResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ThreadInformationResponseT>(new ThreadInformationResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ThreadInformationResponse::UnPackTo(ThreadInformationResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = teb(); _o->teb = _e; }
+}
+
+inline ::flatbuffers::Offset<ThreadInformationResponse> CreateThreadInformationResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ThreadInformationResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ThreadInformationResponse> ThreadInformationResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadInformationResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ThreadInformationResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _teb = _o->teb;
+  return ProcessProtocol::CreateThreadInformationResponse(
+      _fbb,
+      _error,
+      _teb);
+}
+
+inline SuspendThreadRequestT *SuspendThreadRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<SuspendThreadRequestT>(new SuspendThreadRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void SuspendThreadRequest::UnPackTo(SuspendThreadRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = thread_id(); _o->thread_id = _e; }
+  { auto _e = resume(); _o->resume = _e; }
+}
+
+inline ::flatbuffers::Offset<SuspendThreadRequest> CreateSuspendThreadRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SuspendThreadRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return SuspendThreadRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<SuspendThreadRequest> SuspendThreadRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SuspendThreadRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const SuspendThreadRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _thread_id = _o->thread_id;
+  auto _resume = _o->resume;
+  return ProcessProtocol::CreateSuspendThreadRequest(
+      _fbb,
+      _thread_id,
+      _resume);
+}
+
+inline SuspendThreadResponseT *SuspendThreadResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<SuspendThreadResponseT>(new SuspendThreadResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void SuspendThreadResponse::UnPackTo(SuspendThreadResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = previous_count(); _o->previous_count = _e; }
+}
+
+inline ::flatbuffers::Offset<SuspendThreadResponse> CreateSuspendThreadResponse(::flatbuffers::FlatBufferBuilder &_fbb, const SuspendThreadResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return SuspendThreadResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<SuspendThreadResponse> SuspendThreadResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SuspendThreadResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const SuspendThreadResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _previous_count = _o->previous_count;
+  return ProcessProtocol::CreateSuspendThreadResponse(
+      _fbb,
+      _error,
+      _previous_count);
+}
+
+inline QueryMemoryRequestT *QueryMemoryRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<QueryMemoryRequestT>(new QueryMemoryRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void QueryMemoryRequest::UnPackTo(QueryMemoryRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = address(); _o->address = _e; }
+}
+
+inline ::flatbuffers::Offset<QueryMemoryRequest> CreateQueryMemoryRequest(::flatbuffers::FlatBufferBuilder &_fbb, const QueryMemoryRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return QueryMemoryRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<QueryMemoryRequest> QueryMemoryRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const QueryMemoryRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const QueryMemoryRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _address = _o->address;
+  return ProcessProtocol::CreateQueryMemoryRequest(
+      _fbb,
+      _address);
+}
+
+inline QueryMemoryResponseT *QueryMemoryResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<QueryMemoryResponseT>(new QueryMemoryResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void QueryMemoryResponse::UnPackTo(QueryMemoryResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = base_address(); _o->base_address = _e; }
+  { auto _e = allocation_base(); _o->allocation_base = _e; }
+  { auto _e = allocation_protect(); _o->allocation_protect = _e; }
+  { auto _e = region_size(); _o->region_size = _e; }
+  { auto _e = state(); _o->state = _e; }
+  { auto _e = protect(); _o->protect = _e; }
+  { auto _e = type(); _o->type = _e; }
+  { auto _e = mapped_file(); if (_e) _o->mapped_file = _e->str(); }
+}
+
+inline ::flatbuffers::Offset<QueryMemoryResponse> CreateQueryMemoryResponse(::flatbuffers::FlatBufferBuilder &_fbb, const QueryMemoryResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return QueryMemoryResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<QueryMemoryResponse> QueryMemoryResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const QueryMemoryResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const QueryMemoryResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _base_address = _o->base_address;
+  auto _allocation_base = _o->allocation_base;
+  auto _allocation_protect = _o->allocation_protect;
+  auto _region_size = _o->region_size;
+  auto _state = _o->state;
+  auto _protect = _o->protect;
+  auto _type = _o->type;
+  auto _mapped_file = _o->mapped_file.empty() ? 0 : _fbb.CreateString(_o->mapped_file);
+  return ProcessProtocol::CreateQueryMemoryResponse(
+      _fbb,
+      _error,
+      _base_address,
+      _allocation_base,
+      _allocation_protect,
+      _region_size,
+      _state,
+      _protect,
+      _type,
+      _mapped_file);
+}
+
 inline MessageT *Message::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::unique_ptr<MessageT>(new MessageT());
   UnPackTo(_o.get(), _resolver);
@@ -2774,6 +4783,58 @@ inline bool VerifyMessagePayload(::flatbuffers::VerifierTemplate<B> &verifier, c
       auto ptr = reinterpret_cast<const ProcessProtocol::ReadMemoryResponse *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case MessagePayload_DebugEventRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugEventRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_DebugEventResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugEventResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_DebugContinueRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugContinueRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_ThreadContextRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadContextRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_ThreadContextResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadContextResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_SetThreadContextRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SetThreadContextRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_SuspendThreadRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SuspendThreadRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_SuspendThreadResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SuspendThreadResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_QueryMemoryRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::QueryMemoryRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_QueryMemoryResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::QueryMemoryResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_ThreadInformationRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadInformationRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_ThreadInformationResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadInformationResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_DebugDetachRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugDetachRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -2850,6 +4911,58 @@ inline void *MessagePayloadUnion::UnPack(const void *obj, MessagePayload type, c
       auto ptr = reinterpret_cast<const ProcessProtocol::ReadMemoryResponse *>(obj);
       return ptr->UnPack(resolver);
     }
+    case MessagePayload_DebugEventRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugEventRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_DebugEventResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugEventResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_DebugContinueRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugContinueRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_ThreadContextRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadContextRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_ThreadContextResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadContextResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_SetThreadContextRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SetThreadContextRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_SuspendThreadRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SuspendThreadRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_SuspendThreadResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SuspendThreadResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_QueryMemoryRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::QueryMemoryRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_QueryMemoryResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::QueryMemoryResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_ThreadInformationRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadInformationRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_ThreadInformationResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadInformationResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_DebugDetachRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugDetachRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -2913,6 +5026,58 @@ inline ::flatbuffers::Offset<void> MessagePayloadUnion::Pack(::flatbuffers::Flat
       auto ptr = reinterpret_cast<const ProcessProtocol::ReadMemoryResponseT *>(value);
       return CreateReadMemoryResponse(_fbb, ptr, _rehasher).Union();
     }
+    case MessagePayload_DebugEventRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugEventRequestT *>(value);
+      return CreateDebugEventRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_DebugEventResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugEventResponseT *>(value);
+      return CreateDebugEventResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_DebugContinueRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugContinueRequestT *>(value);
+      return CreateDebugContinueRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_ThreadContextRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadContextRequestT *>(value);
+      return CreateThreadContextRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_ThreadContextResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadContextResponseT *>(value);
+      return CreateThreadContextResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_SetThreadContextRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SetThreadContextRequestT *>(value);
+      return CreateSetThreadContextRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_SuspendThreadRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SuspendThreadRequestT *>(value);
+      return CreateSuspendThreadRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_SuspendThreadResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SuspendThreadResponseT *>(value);
+      return CreateSuspendThreadResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_QueryMemoryRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::QueryMemoryRequestT *>(value);
+      return CreateQueryMemoryRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_QueryMemoryResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::QueryMemoryResponseT *>(value);
+      return CreateQueryMemoryResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_ThreadInformationRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadInformationRequestT *>(value);
+      return CreateThreadInformationRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_ThreadInformationResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadInformationResponseT *>(value);
+      return CreateThreadInformationResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_DebugDetachRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::DebugDetachRequestT *>(value);
+      return CreateDebugDetachRequest(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -2973,6 +5138,58 @@ inline MessagePayloadUnion::MessagePayloadUnion(const MessagePayloadUnion &u) : 
     }
     case MessagePayload_ReadMemoryResponse: {
       value = new ProcessProtocol::ReadMemoryResponseT(*reinterpret_cast<ProcessProtocol::ReadMemoryResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_DebugEventRequest: {
+      value = new ProcessProtocol::DebugEventRequestT(*reinterpret_cast<ProcessProtocol::DebugEventRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_DebugEventResponse: {
+      value = new ProcessProtocol::DebugEventResponseT(*reinterpret_cast<ProcessProtocol::DebugEventResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_DebugContinueRequest: {
+      value = new ProcessProtocol::DebugContinueRequestT(*reinterpret_cast<ProcessProtocol::DebugContinueRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_ThreadContextRequest: {
+      value = new ProcessProtocol::ThreadContextRequestT(*reinterpret_cast<ProcessProtocol::ThreadContextRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_ThreadContextResponse: {
+      value = new ProcessProtocol::ThreadContextResponseT(*reinterpret_cast<ProcessProtocol::ThreadContextResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_SetThreadContextRequest: {
+      value = new ProcessProtocol::SetThreadContextRequestT(*reinterpret_cast<ProcessProtocol::SetThreadContextRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_SuspendThreadRequest: {
+      value = new ProcessProtocol::SuspendThreadRequestT(*reinterpret_cast<ProcessProtocol::SuspendThreadRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_SuspendThreadResponse: {
+      value = new ProcessProtocol::SuspendThreadResponseT(*reinterpret_cast<ProcessProtocol::SuspendThreadResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_QueryMemoryRequest: {
+      value = new ProcessProtocol::QueryMemoryRequestT(*reinterpret_cast<ProcessProtocol::QueryMemoryRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_QueryMemoryResponse: {
+      value = new ProcessProtocol::QueryMemoryResponseT(*reinterpret_cast<ProcessProtocol::QueryMemoryResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_ThreadInformationRequest: {
+      value = new ProcessProtocol::ThreadInformationRequestT(*reinterpret_cast<ProcessProtocol::ThreadInformationRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_ThreadInformationResponse: {
+      value = new ProcessProtocol::ThreadInformationResponseT(*reinterpret_cast<ProcessProtocol::ThreadInformationResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_DebugDetachRequest: {
+      value = new ProcessProtocol::DebugDetachRequestT(*reinterpret_cast<ProcessProtocol::DebugDetachRequestT *>(u.value));
       break;
     }
     default:
@@ -3049,6 +5266,71 @@ inline void MessagePayloadUnion::Reset() {
     }
     case MessagePayload_ReadMemoryResponse: {
       auto ptr = reinterpret_cast<ProcessProtocol::ReadMemoryResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_DebugEventRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::DebugEventRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_DebugEventResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::DebugEventResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_DebugContinueRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::DebugContinueRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_ThreadContextRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::ThreadContextRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_ThreadContextResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::ThreadContextResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_SetThreadContextRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::SetThreadContextRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_SuspendThreadRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::SuspendThreadRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_SuspendThreadResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::SuspendThreadResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_QueryMemoryRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::QueryMemoryRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_QueryMemoryResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::QueryMemoryResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_ThreadInformationRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::ThreadInformationRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_ThreadInformationResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::ThreadInformationResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_DebugDetachRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::DebugDetachRequestT *>(value);
       delete ptr;
       break;
     }

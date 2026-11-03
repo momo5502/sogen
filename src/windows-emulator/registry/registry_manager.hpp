@@ -2,6 +2,7 @@
 
 #include "../std_include.hpp"
 #include "hive_parser.hpp"
+#include "registry_notification.hpp"
 #include "serialization_helper.hpp"
 #include "../handles.hpp"
 
@@ -33,6 +34,7 @@ namespace sogen
         utils::path_key path{};
         uint64_t generation{};
         uint16_t tag{};
+        std::optional<registry_notify_block> notify_block{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -40,6 +42,7 @@ namespace sogen
             buffer.write(this->path);
             buffer.write(this->generation);
             buffer.write(this->tag);
+            buffer.write_optional(this->notify_block);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -48,6 +51,7 @@ namespace sogen
             buffer.read(this->path);
             buffer.read(this->generation);
             buffer.read(this->tag);
+            buffer.read_optional(this->notify_block);
         }
 
         std::u16string to_string() const

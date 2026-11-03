@@ -11191,8 +11191,6 @@ namespace sogen
 
     namespace
     {
-        constexpr uint32_t snapshot_version = 18;
-
         template <typename Map>
         void reject_live_objects(const Map& objects, const std::string_view type)
         {
@@ -12355,7 +12353,6 @@ namespace sogen
             return index < properties.memoryTypeCount ? properties.memoryTypes[index].propertyFlags : 0;
         };
 
-        buffer.write(snapshot_version);
         buffer.write(impl.next_id);
 
         buffer.write(static_cast<uint64_t>(impl.instances.size()));
@@ -12948,11 +12945,6 @@ namespace sogen
             }
             return *transfer;
         };
-
-        if (buffer.read<uint32_t>() != snapshot_version)
-        {
-            throw std::runtime_error("Unsupported Vulkan snapshot version");
-        }
 
         impl.next_id = buffer.read<uint64_t>();
 
