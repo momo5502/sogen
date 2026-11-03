@@ -6,7 +6,7 @@ namespace sogen
 {
 
     // A host directory mounted copy-on-write: the guest's changes land in the upper and state directories, and the
-    // directory itself is only read.
+    // directory itself is only read. Symlinks inside it are ignored, so that the guest cannot reach outside it.
     struct directory_mount
     {
         windows_path guest_path{};

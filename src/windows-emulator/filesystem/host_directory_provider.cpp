@@ -30,6 +30,12 @@ namespace sogen
 
     namespace
     {
+        // Windows junctions are reported as an implementation-defined file type rather than as symlinks.
+        bool is_link(const std::filesystem::file_status status)
+        {
+            return std::filesystem::is_symlink(status) || std::filesystem::is_other(status);
+        }
+
         bool is_subpath(const std::filesystem::path& root, const std::filesystem::path& target)
         {
             const auto relative_path = target.lexically_relative(root);
@@ -77,7 +83,16 @@ namespace sogen
             return std::filesystem::path{*match};
         }
 
-        std::filesystem::path recover_host_case(const std::filesystem::path& root, const std::filesystem::path& candidate)
+        bool host_entry_exists(const std::filesystem::path& path, const host_links links)
+        {
+            std::error_code ec{};
+            return links == host_links::follow ? std::filesystem::exists(path, ec)
+                                               : std::filesystem::exists(std::filesystem::symlink_status(path, ec));
+        }
+
+        // Each component is checked for a refused link before the next one is looked up through it.
+        std::optional<std::filesystem::path> recover_host_case(const std::filesystem::path& root, const std::filesystem::path& candidate,
+                                                               const host_links links)
         {
             const auto relative = candidate.lexically_relative(root);
             if (relative.empty())
@@ -95,30 +110,36 @@ namespace sogen
                     continue;
                 }
 
-                std::error_code ec{};
-                if (std::filesystem::exists(resolved / *component, ec))
-                {
-                    resolved /= *component;
-                    continue;
-                }
-
                 // The emulation root is created in lower case, so that is the spelling almost every mismatched
                 // component has on a case sensitive host. Trying it first keeps a failed probe deep in System32
                 // from scanning every directory on the way down.
                 const std::filesystem::path lowered{utils::string::to_lower(component->u16string())};
-                if (std::filesystem::exists(resolved / lowered, ec))
+                std::optional<std::filesystem::path> match{};
+                if (host_entry_exists(resolved / *component, links))
                 {
-                    resolved /= lowered;
-                    continue;
+                    match = *component;
+                }
+                else if (host_entry_exists(resolved / lowered, links))
+                {
+                    match = lowered;
+                }
+                else
+                {
+                    match = find_entry_ignoring_case(resolved, *component);
                 }
 
-                const auto match = find_entry_ignoring_case(resolved, *component);
                 if (!match)
                 {
                     break;
                 }
 
                 resolved /= *match;
+
+                std::error_code ec{};
+                if (links == host_links::refuse && is_link(std::filesystem::symlink_status(resolved, ec)))
+                {
+                    return std::nullopt;
+                }
             }
 
             // Everything from the first component that has no counterpart on the host is kept as asked, because
@@ -279,10 +300,37 @@ namespace sogen
         return file_stat;
     }
 
-    host_directory_provider::host_directory_provider(std::filesystem::path target)
+    host_directory_provider::host_directory_provider(std::filesystem::path target, const host_links links)
         : target_(std::move(target)),
+          links_(links),
           lookup_ignores_case_(host_lookup_ignores_case(this->target_))
     {
+    }
+
+    bool host_directory_provider::avoids_refused_links(const std::filesystem::path& root, const std::filesystem::path& host_path) const
+    {
+        if (this->links_ == host_links::follow)
+        {
+            return true;
+        }
+
+        auto current = root;
+        for (const auto& component : host_path.lexically_relative(root))
+        {
+            current /= component;
+            std::error_code ec{};
+            const auto status = std::filesystem::symlink_status(current, ec);
+            if (is_link(status))
+            {
+                return false;
+            }
+            if (!std::filesystem::exists(status))
+            {
+                return true;
+            }
+        }
+
+        return true;
     }
 
     std::optional<std::filesystem::path> host_directory_provider::get_host_path(const windows_path& path) const
@@ -294,15 +342,24 @@ namespace sogen
 
         auto candidate = (this->target_ / path.to_portable_path()).lexically_normal();
         const auto root = this->target_.lexically_normal();
-        // The containment check is lexical and does not follow symlinks. Host symlinks inside the mount may
-        // point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
+        // The containment check is lexical and does not follow symlinks. Unless they are refused, host symlinks
+        // inside the mount may point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
         if (!is_subpath(root, candidate))
         {
             return std::nullopt;
         }
 
         std::error_code ec{};
-        if (!this->lookup_ignores_case_)
+        if (!this->lookup_ignores_case_ && this->links_ == host_links::refuse)
+        {
+            auto recovered = recover_host_case(root, candidate, this->links_);
+            if (!recovered)
+            {
+                return std::nullopt;
+            }
+            candidate = std::move(*recovered);
+        }
+        else if (!this->lookup_ignores_case_)
         {
             // The emulation root is created in lower case, so that spelling is the hit for almost every guest path
             // and is tried first, in one stat. The guest's own spelling comes next, for entries the guest created,
@@ -316,8 +373,13 @@ namespace sogen
             }
             else if (!std::filesystem::exists(candidate, ec))
             {
-                candidate = recover_host_case(root, candidate);
+                candidate = *recover_host_case(root, candidate, this->links_);
             }
+        }
+
+        if (!this->avoids_refused_links(root, candidate))
+        {
+            return std::nullopt;
         }
 
         auto resolved = weakly_canonical(candidate, ec);
@@ -390,6 +452,11 @@ namespace sogen
         std::error_code ec{};
         for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
         {
+            if (this->links_ == host_links::refuse && is_link(file.symlink_status(ec)))
+            {
+                continue;
+            }
+
             directory_entry entry{
                 .name = file.path().filename().u16string(),
                 .is_directory = file.is_directory(ec),
