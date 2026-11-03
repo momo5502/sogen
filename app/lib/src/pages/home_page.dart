@@ -8,6 +8,7 @@ import '../emulation_root.dart';
 import '../game_library.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../support.dart';
 import '../theme.dart';
 import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
@@ -187,7 +188,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       body: SafeArea(
         child: ListenableBuilder(
-          listenable: widget.library,
+          listenable: Listenable.merge([widget.library, widget.settings]),
           builder: (context, _) {
             final games = widget.library.games;
 
@@ -210,6 +211,7 @@ class _HomePageState extends State<HomePage> {
                                 onTap: _installRoot,
                                 child: const Text('Re-download emulation root'),
                               ),
+                            PopupMenuItem(onTap: () => openDiscord(context), child: const Text('Help and support')),
                             PopupMenuItem(onTap: _openSettings, child: const Text('Settings')),
                           ],
                         ),
@@ -218,6 +220,16 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
                 const SliverToBoxAdapter(child: SizedBox(height: 24)),
+                if (widget.settings.showSupportNotice)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                    sliver: SliverToBoxAdapter(
+                      child: _SupportNotice(
+                        onJoin: () => openDiscord(context),
+                        onDismiss: widget.settings.hideSupportNotice,
+                      ),
+                    ),
+                  ),
                 if (!installed || _installing || _error != null)
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
@@ -342,6 +354,58 @@ class _RootCard extends StatelessWidget {
                 icon: LucideIcons.download,
                 onPressed: onInstall,
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SupportNotice extends StatelessWidget {
+  const _SupportNotice({required this.onJoin, required this.onDismiss});
+
+  final VoidCallback onJoin;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 16, 8, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconTile(icon: LucideIcons.flaskConical, color: SogenColors.accents[2]),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(LucideIcons.x, color: SogenColors.neutral400),
+                  tooltip: 'Dismiss',
+                  onPressed: onDismiss,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Early development', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Sogen is very early in development, and not every game works yet. '
+                    'For help and support, join our Discord.',
+                    style: theme.textTheme.bodyMedium?.copyWith(color: SogenColors.neutral300, height: 1.5),
+                  ),
+                  const SizedBox(height: 20),
+                  PrimaryButton(label: 'Join Discord', icon: LucideIcons.messageCircle, onPressed: onJoin),
+                ],
+              ),
+            ),
           ],
         ),
       ),

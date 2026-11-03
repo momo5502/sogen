@@ -1,6 +1,7 @@
 #include "socket_factory.hpp"
 #include "socket_wrapper.hpp"
 #include "static_socket_factory.hpp"
+#include "emscripten_http_socket_factory.hpp"
 
 namespace sogen
 {
@@ -59,12 +60,15 @@ namespace sogen
 
         std::unique_ptr<socket_factory> create_socket_factory(const network_mode mode)
         {
-#ifndef OS_EMSCRIPTEN
             if (mode == network_mode::live)
             {
+#ifdef OS_EMSCRIPTEN
+                // No TCP in a browser, so live networking is forwarded over fetch() instead.
+                return create_emscripten_http_socket_factory();
+#else
                 return std::make_unique<socket_factory>();
-            }
 #endif
+            }
 
             (void)mode;
             return create_static_socket_factory();
