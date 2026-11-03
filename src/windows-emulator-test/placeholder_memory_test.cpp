@@ -104,7 +104,7 @@ namespace sogen::test
 
     TEST_F(PlaceholderMemoryTest, ReserveSplitReplacePreserveAndCoalesce)
     {
-        constexpr uint64_t size = 0x200000000;
+        constexpr uint64_t size = sizeof(size_t) > 4 ? 0x200000000 : 0x20000000;
         constexpr uint64_t segment = 0x10000;
         uint64_t base{};
         ASSERT_EQ(this->allocate(base, size, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER), STATUS_SUCCESS);
