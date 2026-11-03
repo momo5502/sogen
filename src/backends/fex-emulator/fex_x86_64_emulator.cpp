@@ -25,6 +25,7 @@
 // signal handlers and MMIO fault emulation below support both. Linux currently requires a 4KB host
 // page; the 16KB/4KB page reconciliation and MAP_JIT handling are Darwin-only.
 
+#include <cinttypes>
 #include <cstdlib>
 #include <pthread.h>
 #include <signal.h>
@@ -84,6 +85,7 @@
 #include <utils/io.hpp>
 #include <utils/finally.hpp>
 #include <utils/host_watchpoints.hpp>
+#include <utils/shared_host_buffer.hpp>
 
 // FEXCore embedding headers. These are only available when building against a FEX checkout/install;
 // the CMake glue gates this whole target behind SOGEN_ENABLE_FEX so non-ARM builds never reach here.
@@ -945,16 +947,24 @@ namespace sogen::fex
         };
 
         // The guest runs natively with guest VA == host VA, so there is no per-instruction hook to
-        // intercept a specific address. The only MMIO consumer here is KUSER_SHARED_DATA at 0x7ffe0000,
-        // which falls inside Darwin's mandatory __PAGEZERO segment and cannot be backed by real memory
-        // (confirmed via both mmap(MAP_FIXED) and mach_vm_allocate), so the region is left unmapped and
-        // every access faults into handle_mmio_fault. Read-only, matching real Windows: a guest write is
-        // left to surface as a normal access violation. Not a general MMIO implementation.
+        // intercept a specific address. The only MMIO consumer here is KUSER_SHARED_DATA at 0x7ffe0000.
+        // Inside the low guest window it is backed by read-only host memory that is refreshed before every
+        // guest entry and after every syscall, as the KVM backend does, so a guest write surfaces as a normal
+        // access violation like on real Windows. Outside it, the region is left unmapped and every access
+        // faults into handle_mmio_fault: on Darwin the address then falls inside the mandatory __PAGEZERO
+        // segment and cannot be backed by real memory (confirmed via both mmap(MAP_FIXED) and mach_vm_allocate).
+        // Not a general MMIO implementation.
         struct mmio_region
         {
             uint64_t address = 0;
             size_t size = 0;
             mmio_read_callback read_cb;
+            utils::shared_host_buffer backing{};
+
+            bool is_backed() const
+            {
+                return this->backing.data() != nullptr;
+            }
         };
 
         struct hook_entry
@@ -2365,7 +2375,6 @@ namespace sogen::fex
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback /*write_cb*/) override
         {
-            // See mmio_region's doc comment - the region stays unmapped so accesses fault and emulate.
             if (!is_page_aligned(address) || !is_page_aligned(size))
             {
                 throw std::runtime_error("FEX MMIO mappings must be page aligned");
@@ -2389,7 +2398,37 @@ namespace sogen::fex
                 }
             }
 #endif
+            if (this->is_in_low_guest_window(this->to_host_address(address)))
+            {
+                this->map_backed_mmio(address, size, std::move(read_cb));
+                return;
+            }
+
             this->mmio_regions_.emplace_back(mmio_region{.address = address, .size = size, .read_cb = std::move(read_cb)});
+        }
+
+        void map_backed_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb)
+        {
+            mmio_region region{.address = address, .size = size, .read_cb = std::move(read_cb), .backing = utils::shared_host_buffer{size}};
+            region.read_cb(0, region.backing.data(), size);
+            if (!this->map_host_memory(address, size, region.backing.data(), memory_permission::read))
+            {
+                std::array<char, 128> message{};
+                snprintf(message.data(), message.size(), "Failed to back guest MMIO at 0x%" PRIx64 " with host memory", address);
+                throw std::runtime_error(message.data());
+            }
+            this->mmio_regions_.push_back(std::move(region));
+        }
+
+        void refresh_mmio_backings() const
+        {
+            for (const auto& region : this->mmio_regions_)
+            {
+                if (region.is_backed())
+                {
+                    region.read_cb(0, region.backing.data(), region.size);
+                }
+            }
         }
 
         void map_memory(uint64_t address, size_t size, memory_permission permissions) override
@@ -2713,10 +2752,15 @@ namespace sogen::fex
 
         void unmap_memory(uint64_t address, size_t size) override
         {
-            // MMIO regions (see mmio_region's doc comment) were never really mapped at the host level.
-            if (std::erase_if(this->mmio_regions_, [address](const mmio_region& region) { return region.address == address; }))
+            // Unbacked MMIO regions (see mmio_region's doc comment) were never really mapped at the host level.
+            if (const auto mmio = std::ranges::find(this->mmio_regions_, address, &mmio_region::address); mmio != this->mmio_regions_.end())
             {
-                return;
+                const bool backed = mmio->is_backed();
+                this->mmio_regions_.erase(mmio);
+                if (!backed)
+                {
+                    return;
+                }
             }
 
             this->stop_access_tracking(address, size);
@@ -4380,7 +4424,7 @@ namespace sogen::fex
                     const auto guest_fault_addr = this->to_guest_address(fault_addr);
                     for (const auto& region : this->mmio_regions_)
                     {
-                        if (guest_fault_addr >= region.address && guest_fault_addr < region.address + region.size)
+                        if (!region.is_backed() && guest_fault_addr >= region.address && guest_fault_addr < region.address + region.size)
                         {
                             return this->handle_mmio_fault(uctx, region, guest_fault_addr);
                         }
@@ -4597,6 +4641,7 @@ namespace sogen::fex
 #ifdef __APPLE__
                 this->arm_watchpoints_apple();
 #endif
+                this->refresh_mmio_backings();
                 this->context_->ExecuteThread(vcpu.thread_);
 
                 const bool hook_dispatched = this->dispatch_pending_hook_if_any(vcpu);
@@ -5093,6 +5138,7 @@ namespace sogen::fex
             hook->callback(vcpu, 0);
         }
 
+        this->emulator_.refresh_mmio_backings();
         vcpu.cpu_state().rip += 2;
 
         if (vcpu.stop_requested_)
