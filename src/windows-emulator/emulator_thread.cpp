@@ -55,6 +55,169 @@ namespace sogen
             emu.reg(x86_register::rsp, sp);
         }
 
+        constexpr uint64_t stack_page_size = 0x1000;
+
+        // Windows 11 keeps a guard region of three pages below the committed part of a native thread stack and of
+        // two pages below the 32-bit stack of a WoW64 thread.
+        constexpr uint64_t native_stack_guard_size = 3 * stack_page_size;
+        constexpr uint64_t wow64_stack_guard_size = 2 * stack_page_size;
+
+        constexpr nt_memory_permission stack_guard_permission{memory_permission::read_write, memory_permission_ext::guard};
+
+        struct thread_stack
+        {
+            uint64_t deallocation{};
+            uint64_t base{};
+            uint64_t guard_size{};
+            uint64_t limit_address{};
+            bool is_32bit{};
+
+            bool contains(const uint64_t address) const
+            {
+                return address >= this->deallocation && address < this->base;
+            }
+
+            bool guard_reaches_first_page(const uint64_t page) const
+            {
+                return page - this->deallocation <= this->guard_size;
+            }
+        };
+
+        template <typename Teb>
+        thread_stack read_thread_stack(memory_manager& memory, const uint64_t teb, const uint64_t default_guard_size, const bool is_32bit)
+        {
+            using tib = decltype(Teb::NtTib);
+            const auto tib_address = teb + offsetof(Teb, NtTib);
+            const auto guaranteed = memory.read_memory<decltype(Teb::GuaranteedStackBytes)>(teb + offsetof(Teb, GuaranteedStackBytes));
+
+            return {
+                .deallocation = memory.read_memory<decltype(Teb::DeallocationStack)>(teb + offsetof(Teb, DeallocationStack)),
+                .base = memory.read_memory<decltype(tib::StackBase)>(tib_address + offsetof(tib, StackBase)),
+                .guard_size = std::max(default_guard_size, page_align_up(static_cast<uint64_t>(guaranteed)) + stack_page_size),
+                .limit_address = tib_address + offsetof(tib, StackLimit),
+                .is_32bit = is_32bit,
+            };
+        }
+
+        std::optional<thread_stack> find_thread_stack(const emulator_thread& thread, const uint64_t address)
+        {
+            auto& memory = *thread.memory_ptr;
+            if (thread.teb64)
+            {
+                const auto stack = read_thread_stack<TEB64>(memory, thread.teb64->value(), native_stack_guard_size, false);
+                if (stack.contains(address))
+                {
+                    return stack;
+                }
+            }
+
+            if (thread.teb32)
+            {
+                const auto stack = read_thread_stack<TEB32>(memory, thread.teb32->value(), wow64_stack_guard_size, true);
+                if (stack.contains(address))
+                {
+                    return stack;
+                }
+            }
+
+            return std::nullopt;
+        }
+
+        void set_stack_limit(memory_manager& memory, const thread_stack& stack, const uint64_t limit)
+        {
+            if (stack.is_32bit)
+            {
+                memory.write_memory(stack.limit_address, static_cast<uint32_t>(limit));
+            }
+            else
+            {
+                memory.write_memory(stack.limit_address, limit);
+            }
+        }
+
+        uint64_t read_stack_limit(const memory_manager& memory, const thread_stack& stack)
+        {
+            if (stack.is_32bit)
+            {
+                return memory.read_memory<uint32_t>(stack.limit_address);
+            }
+
+            return memory.read_memory<uint64_t>(stack.limit_address);
+        }
+
+        void commit_stack_in_full(memory_manager& memory, const thread_stack& stack)
+        {
+            const auto limit = read_stack_limit(memory, stack);
+            if (limit <= stack.deallocation || limit > stack.base)
+            {
+                return;
+            }
+
+            memory.commit_memory(stack.deallocation, static_cast<size_t>(limit - stack.deallocation), memory_permission::read_write);
+            set_stack_limit(memory, stack, stack.deallocation);
+        }
+
+        void commit_reserved_and_guard_pages(memory_manager& memory, const uint64_t begin, const uint64_t end)
+        {
+            for (auto page = begin; page < end; page += stack_page_size)
+            {
+                const auto region = memory.get_region_info(page);
+                if (!region.is_committed || region.permissions.is_guarded())
+                {
+                    memory.commit_memory(page, stack_page_size, memory_permission::read_write);
+                }
+            }
+        }
+
+        void move_stack_guard_below(memory_manager& memory, const thread_stack& stack, const uint64_t page)
+        {
+            memory.commit_memory(page - stack.guard_size, static_cast<size_t>(stack.guard_size), stack_guard_permission);
+            set_stack_limit(memory, stack, page);
+        }
+
+        void commit_overflowed_stack(memory_manager& memory, const thread_stack& stack, const uint64_t page)
+        {
+            const auto limit = stack.deallocation + stack_page_size;
+            if (page > limit)
+            {
+                memory.commit_memory(limit, static_cast<size_t>(page - limit), memory_permission::read_write);
+            }
+
+            set_stack_limit(memory, stack, limit);
+        }
+
+        struct allocated_stack
+        {
+            uint64_t base{};
+            uint64_t limit{};
+        };
+
+        allocated_stack allocate_thread_stack(memory_manager& memory, const uint64_t reserve_size, const uint64_t commit_size,
+                                              const uint64_t guard_size)
+        {
+            // A guard page that never faults would let the stack run into reserved memory, so such a backend gets the
+            // stack committed in full.
+            if (!memory.supports_page_granular_protection())
+            {
+                const auto base = memory.allocate_memory(static_cast<size_t>(reserve_size), memory_permission::read_write);
+                return {.base = base, .limit = base};
+            }
+
+            const auto base = memory.allocate_memory(static_cast<size_t>(reserve_size), memory_permission::read_write, true);
+            if (base == 0)
+            {
+                return {};
+            }
+
+            const auto committed =
+                std::min(page_align_up(std::max(commit_size, stack_page_size)), reserve_size - guard_size - stack_page_size);
+            const auto limit = base + reserve_size - committed;
+            memory.commit_memory(limit, static_cast<size_t>(committed), memory_permission::read_write);
+            memory.commit_memory(limit - guard_size, static_cast<size_t>(guard_size), stack_guard_permission);
+
+            return {.base = base, .limit = limit};
+        }
+
         void setup_stack(x86_64_cpu& emu, const process_context& context, const uint64_t stack_base, const size_t stack_size)
         {
             if (!context.is_wow64_process)
@@ -445,7 +608,7 @@ namespace sogen
 
     emulator_thread::emulator_thread(memory_manager& memory, const process_context& context, const uint64_t start_address,
                                      const uint64_t argument, const uint64_t stack_size, const uint32_t create_flags, const uint32_t id,
-                                     const bool initial_thread)
+                                     const bool initial_thread, const uint64_t stack_commit_size)
         : memory_ptr(&memory),
           // stack_size(page_align_up(std::max(stack_size, static_cast<uint64_t>(STACK_SIZE)))),
           start_address(start_address),
@@ -464,7 +627,8 @@ namespace sogen
         if (!context.is_wow64_process)
         {
             this->stack_size = page_align_up(std::max(stack_size, static_cast<uint64_t>(STACK_SIZE)));
-            this->stack_base = memory.allocate_memory(static_cast<size_t>(this->stack_size), memory_permission::read_write);
+            const auto stack = allocate_thread_stack(memory, this->stack_size, stack_commit_size, native_stack_guard_size);
+            this->stack_base = stack.base;
 
             this->gs_segment = emulator_allocator{
                 memory,
@@ -478,7 +642,7 @@ namespace sogen
                 teb_obj.ClientId.UniqueProcess = context.process_id;
                 teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
                 teb_obj.DeallocationStack = this->stack_base;
-                teb_obj.NtTib.StackLimit = this->stack_base;
+                teb_obj.NtTib.StackLimit = stack.limit;
                 teb_obj.NtTib.StackBase = this->stack_base + this->stack_size;
                 teb_obj.NtTib.Self = this->teb64->value();
                 teb_obj.CurrentLocale = 0x409;
@@ -599,7 +763,8 @@ namespace sogen
         });
 
         // Allocate dynamic 32-bit stack for WOW64 thread
-        this->wow64_stack_base = memory.allocate_memory(static_cast<size_t>(this->wow64_stack_size.value()), memory_permission::read_write);
+        const auto wow64_stack = allocate_thread_stack(memory, this->wow64_stack_size.value(), stack_commit_size, wow64_stack_guard_size);
+        this->wow64_stack_base = wow64_stack.base;
 
         // Create and initialize 32-bit TEB for WOW64
         // According to WinDbg: 32-bit TEB = 64-bit TEB + WowTebOffset (0x2000)
@@ -607,7 +772,7 @@ namespace sogen
         const uint64_t teb32_addr = teb64_addr + wow_teb_offset;
         uint64_t teb32_peb = 0;
         uint64_t nttib32_stack_base = this->wow64_stack_base.value() + this->wow64_stack_size.value();
-        uint64_t nttib32_stack_limit = this->wow64_stack_base.value();
+        uint64_t nttib32_stack_limit = wow64_stack.limit;
 
         // Create 32-bit TEB at the calculated offset within GS segment
         // We need to create it as an emulator_object at a specific address
@@ -616,7 +781,7 @@ namespace sogen
         // Initialize 32-bit TEB
         this->teb32->access([&](TEB32& teb32_obj) {
             // Set NT_TIB32 fields
-            teb32_obj.DeallocationStack = static_cast<uint32_t>(nttib32_stack_limit);
+            teb32_obj.DeallocationStack = static_cast<uint32_t>(this->wow64_stack_base.value());
             teb32_obj.NtTib.Self = static_cast<uint32_t>(teb32_addr);                // Self pointer to 32-bit TEB
             teb32_obj.NtTib.StackBase = static_cast<uint32_t>(nttib32_stack_base);   // Top of 32-bit stack (High address)
             teb32_obj.NtTib.StackLimit = static_cast<uint32_t>(nttib32_stack_limit); // Bottom of 32-bit stack (Low address)
@@ -1574,6 +1739,80 @@ namespace sogen
         emu.reg(x86_register::rcx, ctx_obj.value());
         emu.reg(x86_register::rdx, context.ntdll_image_base);
         emu.reg(x86_register::rip, context.ldr_initialize_thunk);
+    }
+
+    stack_guard_fault emulator_thread::handle_stack_guard_fault(const uint64_t address) const
+    {
+        const auto stack = find_thread_stack(*this, address);
+        if (!stack)
+        {
+            return stack_guard_fault::outside_stack;
+        }
+
+        const auto page = page_align_down(address);
+        if (stack->guard_reaches_first_page(page))
+        {
+            commit_overflowed_stack(*this->memory_ptr, *stack, page);
+            return stack_guard_fault::overflow;
+        }
+
+        move_stack_guard_below(*this->memory_ptr, *stack, page);
+        return stack_guard_fault::grown;
+    }
+
+    // Frames written by the emulator grow the stack as a guest access would, except that a guard page whose growth
+    // would overflow keeps its guard: STATUS_STACK_OVERFLOW is raised by the guest's next access to it.
+    void emulator_thread::grow_stack_for_frame(const uint64_t address, const uint64_t end) const
+    {
+        auto& memory = *this->memory_ptr;
+        const auto stack = find_thread_stack(*this, address);
+        if (!stack || address >= end)
+        {
+            return;
+        }
+
+        const auto first_page = page_align_down(address);
+        for (auto page = page_align_down(std::min(end, stack->base) - 1); page >= first_page; page -= stack_page_size)
+        {
+            if (!memory.is_guard_page(page))
+            {
+                continue;
+            }
+
+            if (stack->guard_reaches_first_page(page))
+            {
+                return;
+            }
+
+            memory.release_guard_page(page);
+            move_stack_guard_below(memory, *stack, page);
+        }
+    }
+
+    void emulator_thread::commit_stacks_in_full() const
+    {
+        auto& memory = *this->memory_ptr;
+        if (this->teb64)
+        {
+            commit_stack_in_full(memory, read_thread_stack<TEB64>(memory, this->teb64->value(), native_stack_guard_size, false));
+        }
+
+        if (this->teb32)
+        {
+            commit_stack_in_full(memory, read_thread_stack<TEB32>(memory, this->teb32->value(), wow64_stack_guard_size, true));
+        }
+
+        // While the thread runs on a fiber, its TEB names the fiber's stack and SwitchToFiber keeps the thread's own
+        // stack fields elsewhere, so the thread's own stacks are converted through their allocations.
+        if (this->stack_base)
+        {
+            commit_reserved_and_guard_pages(memory, this->stack_base, this->stack_base + this->stack_size);
+        }
+
+        if (this->wow64_stack_base && this->wow64_stack_size)
+        {
+            commit_reserved_and_guard_pages(memory, *this->wow64_stack_base, *this->wow64_stack_base + *this->wow64_stack_size);
+        }
     }
 
     void emulator_thread::refresh_execution_context(cpu_interface& cpu, const uint64_t gdt_base) const

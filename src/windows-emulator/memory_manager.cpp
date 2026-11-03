@@ -501,6 +501,18 @@ namespace sogen
         return this->memory_->host_memory_can_stay_in_place();
     }
 
+    // Sticky, because the layout of stacks created while it held stays as it is: a backend whose watchpoints come
+    // back after a debugger detaches must not get new stacks with guard pages that could be lost again.
+    bool memory_manager::supports_page_granular_protection() const
+    {
+        if (!this->page_granular_protection_lost_ && !this->memory_->supports_page_granular_protection())
+        {
+            this->page_granular_protection_lost_ = true;
+        }
+
+        return !this->page_granular_protection_lost_;
+    }
+
     bool memory_manager::can_alias_host_memory_anywhere() const
     {
         return this->memory_->supports_host_memory_mapping() && !this->memory_->host_memory_mapping_requires_identity();

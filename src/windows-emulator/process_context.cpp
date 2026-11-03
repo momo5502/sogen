@@ -1353,11 +1353,23 @@ namespace sogen
         return std::count_if(threads.begin(), threads.end(), [](auto& item) { return !item.second.is_terminated(); });
     }
 
+    void process_context::commit_thread_stacks_in_full() const
+    {
+        for (const auto& thread : this->threads | std::views::values)
+        {
+            if (!thread.is_terminated())
+            {
+                thread.commit_stacks_in_full();
+            }
+        }
+    }
+
     handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
-                                          const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
+                                          const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread,
+                                          const uint64_t stack_commit_size)
     {
         const uint32_t thread_id = this->initial_thread_id + this->spawned_thread_count++ * 4;
-        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
+        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread, stack_commit_size};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
 

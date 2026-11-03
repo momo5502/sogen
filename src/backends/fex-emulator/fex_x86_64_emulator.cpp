@@ -2645,6 +2645,14 @@ namespace sogen::fex
         }
 #endif
 
+#ifdef __APPLE__
+        // A 4 KiB page that shares a 16 KiB host page with accessible memory only faults through the watchpoints.
+        bool supports_page_granular_protection() const override
+        {
+            return utils::host_watchpoints::available();
+        }
+#endif
+
         void flush_host_memory_cache(const void* host_pointer, size_t size) override
         {
             flush_cache_lines(host_pointer, size);

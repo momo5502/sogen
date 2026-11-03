@@ -134,6 +134,11 @@ namespace sogen::utils::host_watchpoints
         return count;
     }
 
+    bool available()
+    {
+        return capacity() != 0 && !is_being_debugged();
+    }
+
     bool program(const std::span<const range> ranges)
     {
         return ranges.size() <= capacity() && set_thread_watchpoints(ranges);
@@ -142,6 +147,11 @@ namespace sogen::utils::host_watchpoints
     size_t capacity()
     {
         return 0;
+    }
+
+    bool available()
+    {
+        return false;
     }
 
     bool program(const std::span<const range> ranges)

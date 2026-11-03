@@ -498,7 +498,9 @@ namespace sogen
                 arm64_layout.context.ContextFlags = arm64_context_all;
                 cpu_context::save(*arm64, arm64_layout.context);
 
-                const auto new_sp = align_down(arm64->read_stack_pointer() - sizeof(arm64_layout), 0x10);
+                const auto initial_sp = arm64->read_stack_pointer();
+                const auto new_sp = align_down(initial_sp - sizeof(arm64_layout), 0x10);
+                thread.grow_stack_for_frame(new_sp, initial_sp);
                 arm64->write_memory(new_sp, arm64_layout);
                 arm64->reg(arm64_register::sp, new_sp);
                 arm64->reg(arm64_register::pc, win_emu.process.ki_user_apc_dispatcher);
@@ -530,6 +532,7 @@ namespace sogen
             const auto initial_sp = emu.reg(x86_register::rsp);
             const auto new_sp = align_down(initial_sp - sizeof(stack_layout), 0x100);
 
+            thread.grow_stack_for_frame(new_sp, initial_sp);
             emu.write_memory(new_sp, stack_layout);
 
             emu.reg(x86_register::rsp, new_sp);
@@ -938,7 +941,8 @@ namespace sogen
 
         const auto initial_argument = this->process.is_wow64_process ? this->process.peb32->value() : this->process.peb64.value();
         const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, initial_argument,
-                                                          this->mod_manager.executable->size_of_stack_reserve, 0, true);
+                                                          this->mod_manager.executable->size_of_stack_reserve, 0, true,
+                                                          this->mod_manager.executable->size_of_stack_commit);
 
         const std::scoped_lock lock(this->kernel_lock_);
         switch_to_thread(*this, this->vcpu(0), main_thread_id);
@@ -959,9 +963,28 @@ namespace sogen
         return this->perform_thread_switch(vcpu, lock);
     }
 
+    // Stacks created while the backend could fault on single pages keep their guard pages; once it no longer can (a
+    // debugger took the watchpoints), those guard pages would never fault and the stacks would run into reserved
+    // memory, so they are committed in full like the stacks created afterwards.
+    void windows_emulator::commit_thread_stacks_if_page_protection_was_lost()
+    {
+        if (this->thread_stacks_committed_in_full_ || this->memory.supports_page_granular_protection())
+        {
+            return;
+        }
+
+        this->thread_stacks_committed_in_full_ = true;
+        this->process.commit_thread_stacks_in_full();
+    }
+
     bool windows_emulator::perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock)
     {
         this->kernel_lock_.assert_held();
+
+        if (this->page_protection_check_due_.exchange(false))
+        {
+            this->commit_thread_stacks_if_page_protection_was_lost();
+        }
 
         const auto needed_switch = vcpu.switch_thread.exchange(false);
         bool woken_by_signal = false;
@@ -1411,9 +1434,18 @@ namespace sogen
 
             if (const auto guarded_address = this->memory.find_guard_page_violation_address(address, size, operation))
             {
-                // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
                 this->memory.release_guard_page(*guarded_address);
-                dispatch_guard_page_violation(*this, vcpu, *guarded_address, operation);
+                switch (vcpu.thread().handle_stack_guard_fault(*guarded_address))
+                {
+                case stack_guard_fault::grown:
+                    return memory_violation_continuation::restart;
+                case stack_guard_fault::overflow:
+                    dispatch_stack_overflow(*this, vcpu, *guarded_address, operation);
+                    break;
+                case stack_guard_fault::outside_stack:
+                    dispatch_guard_page_violation(*this, vcpu, *guarded_address, operation);
+                    break;
+                }
             }
             else
             {
@@ -1878,6 +1910,8 @@ namespace sogen
                     {
                         break;
                     }
+
+                    this->page_protection_check_due_ = true;
 
                     if (refresh_kusd)
                     {
