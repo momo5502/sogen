@@ -1246,7 +1246,7 @@ jobs:
           # The unpacked artifacts take about 3 GB, more than the default disk holds.
           disk-size: 6G
           script: |
-            tar -cf - -C build/${{matrix.preset}}/artifacts . | adb exec-in "mkdir -p /data/local/tmp/sogen && tar -xf - -C /data/local/tmp/sogen --no-same-owner"
+            tar -cf - -C build/${{matrix.preset}}/artifacts . | adb shell -T "mkdir -p /data/local/tmp/sogen && tar -xf - -C /data/local/tmp/sogen --no-same-owner"
             adb shell "cd /data/local/tmp/sogen && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer --network live -e ./root --root-mode rw c:/test-sample.exe"
 
   build-page:
