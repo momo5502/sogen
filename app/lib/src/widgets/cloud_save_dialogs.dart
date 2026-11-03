@@ -20,7 +20,9 @@ Future<ConflictChoice> chooseCloudSave(BuildContext context, Game game, List<Sto
       children: [
         const Padding(
           padding: EdgeInsets.fromLTRB(24, 0, 24, 8),
-          child: Text('This device and the cloud saved the game separately. The save you do not choose is replaced.'),
+          child: Text(
+            'This device and the cloud saved the game separately. The save you choose becomes the current one.',
+          ),
         ),
         SimpleDialogOption(
           onPressed: () => Navigator.of(context).pop(const KeepLocal()),

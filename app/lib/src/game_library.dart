@@ -327,13 +327,17 @@ class GameLibrary extends ChangeNotifier {
     }
 
     final previous = _games[index];
+    // The synced save described the old folder's layer. It is forgotten before the new folder is stored, so that a
+    // crash in between never leaves the new folder trusting the old save.
+    if (previous.directory != game.directory) {
+      await forgetSaveBase(await SaveLayers.of(previous));
+    }
+
     _games[index] = game;
     await _save();
 
     if (previous.directory != game.directory) {
       await _deleteIfPresent(await layerDirectory(previous));
-      // The synced save described the old folder's layer.
-      await forgetSaveBase(await SaveLayers.of(game));
     }
   }
 
@@ -344,9 +348,9 @@ class GameLibrary extends ChangeNotifier {
       return;
     }
 
+    await forgetSaveBase(await SaveLayers.of(game));
     _games[index] = _games[index].withCloudSaveSpace(saveSpaceId);
     await _save();
-    await forgetSaveBase(await SaveLayers.of(game));
   }
 
   Future<void> updateSettings(String id, GameSettings settings) async {

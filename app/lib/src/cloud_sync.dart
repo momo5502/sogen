@@ -114,6 +114,7 @@ class CloudSync extends ChangeNotifier {
 
   final CloudAccount _account;
   final Map<String, CloudSyncStatus> _status = {};
+  final Map<String, Future<CloudSyncStatus>> _running = {};
 
   // Another device can add a revision while this one resolves a conflict, so the history is listed again after
   // every change, and a history that keeps changing is given up on rather than chased.
@@ -135,7 +136,8 @@ class CloudSync extends ChangeNotifier {
   }
 
   /// [resolve] is asked which save to keep when the devices disagree; without it the conflict waits for the next
-  /// launch.
+  /// launch. A sync waits for the one already running for the game; an interactive one then syncs again, since the
+  /// one it waited for could not ask the player.
   Future<CloudSyncStatus> sync(
     Game game, {
     required bool interactive,
@@ -145,10 +147,29 @@ class CloudSync extends ChangeNotifier {
     if (saveSpaceId == null) {
       return const CloudSyncStatus(CloudSyncState.synced);
     }
-    if (isSyncing(game)) {
-      return const CloudSyncStatus(CloudSyncState.syncing);
+
+    for (var running = _running[game.id]; running != null; running = _running[game.id]) {
+      final result = await running;
+      if (!interactive) {
+        return result;
+      }
     }
 
+    final running = _syncNow(game, saveSpaceId, interactive: interactive, resolve: resolve);
+    _running[game.id] = running;
+    try {
+      return await running;
+    } finally {
+      _running.remove(game.id);
+    }
+  }
+
+  Future<CloudSyncStatus> _syncNow(
+    Game game,
+    String saveSpaceId, {
+    required bool interactive,
+    required Future<ConflictChoice> Function(List<StoredRevision> heads)? resolve,
+  }) async {
     _set(game, const CloudSyncStatus(CloudSyncState.syncing));
     CloudSyncStatus result;
     try {
@@ -217,8 +238,15 @@ class CloudSync extends ChangeNotifier {
     return LocalSave(base: base, contentHash: contentHash);
   }
 
-  static Future<File> _temporaryArchive(String revisionId) async =>
-      File(p.join((await getTemporaryDirectory()).path, 'save-$revisionId.zip'));
+  /// Each operation gets its own directory, since two games may sync the same save at once.
+  static Future<T> _withTemporaryArchive<T>(Future<T> Function(File archive) action) async {
+    final directory = await (await getTemporaryDirectory()).createTemp('save-');
+    try {
+      return await action(File(p.join(directory.path, 'save.zip')));
+    } finally {
+      await directory.delete(recursive: true);
+    }
+  }
 
   static Future<void> _upload(
     DriveSaveStore store,
@@ -231,8 +259,7 @@ class CloudSync extends ChangeNotifier {
       revisionId: newSaveId(),
       parentRevisionIds: parentRevisionIds,
     );
-    final archive = await _temporaryArchive(revision.revisionId);
-    try {
+    await _withTemporaryArchive((archive) async {
       final exported = await exportSave(layers, archive, revision, gameName: game.name, executable: game.executable);
       await store.upload(exported);
       await writeSaveBase(
@@ -240,11 +267,7 @@ class CloudSync extends ChangeNotifier {
         SaveBase(saveSpaceId: revision.saveSpaceId, revisionId: revision.revisionId, contentHash: exported.contentHash),
       );
       await clearUnsyncedChanges(layers);
-    } finally {
-      if (archive.existsSync()) {
-        await archive.delete();
-      }
-    }
+    });
   }
 
   static Future<void> _adopt(SaveLayers layers, StoredRevision stored) async {
@@ -256,15 +279,10 @@ class CloudSync extends ChangeNotifier {
   }
 
   static Future<void> _download(DriveSaveStore store, Game game, StoredRevision stored) async {
-    final archive = await _temporaryArchive(stored.id);
-    try {
+    await _withTemporaryArchive((archive) async {
       await store.download(stored, archive);
       await importGameSave(game, archive, expected: stored.revision, expectedContentHash: stored.contentHash);
-    } finally {
-      if (archive.existsSync()) {
-        await archive.delete();
-      }
-    }
+    });
   }
 
   /// Old revisions are only a safety net, so failing to delete them does not fail the sync.

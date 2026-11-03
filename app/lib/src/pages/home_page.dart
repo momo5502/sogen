@@ -140,7 +140,22 @@ class _HomePageState extends State<HomePage> {
     onChanged();
   }
 
+  /// A game that was just left may still be shutting down and writing to its layers.
+  Future<bool> _noGameRunning() async {
+    if (!await GameSession.isAnyRunning()) {
+      return true;
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Wait a moment, the last game is still shutting down')));
+    }
+    return false;
+  }
+
   Future<void> _edit(Game game) async {
+    if (!await _noGameRunning() || !mounted) {
+      return;
+    }
     final edited = await Navigator.of(context)
         .push<Game>(MaterialPageRoute(builder: (_) => GameEditorPage(game: game)));
     if (edited != null) {
@@ -165,7 +180,8 @@ class _HomePageState extends State<HomePage> {
                 _edit(game);
               },
             ),
-            if (CloudAccount.isAvailable)
+            // A build without cloud saves still lets a game that syncs stop syncing.
+            if (CloudAccount.isAvailable || game.cloudSaveSpaceId != null)
               ListTile(
                 leading: const Icon(LucideIcons.cloud),
                 title: Text(game.cloudSaveSpaceId == null ? 'Sync saves to the cloud' : 'Stop syncing saves'),
@@ -189,6 +205,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _cloudSaves(Game game) async {
+    if (!await _noGameRunning() || !mounted) {
+      return;
+    }
     if (game.cloudSaveSpaceId != null) {
       await _stopCloudSaves(game);
       return;
@@ -311,7 +330,7 @@ class _HomePageState extends State<HomePage> {
       ),
     );
 
-    if (remove == true) {
+    if (remove == true && await _noGameRunning()) {
       widget.cloudSync.forget(game);
       await widget.library.remove(game);
       await widget.library.releaseUnusedFolders();
