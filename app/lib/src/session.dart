@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:xterm/xterm.dart';
 
 import 'game_library.dart';
@@ -155,13 +156,19 @@ class GameSession extends ChangeNotifier {
     }
 
     final layers = await layerDirectory(game);
+    final installId = installIdOf(game.directory);
+    final mount = {
+      guestGameDirectory: installId == null
+          ? game.directory
+          : p.join((await installedGamesDirectory()).path, installId),
+    };
     final started =
         await _methods.invokeMethod<bool>('start', {
           'emulationRoot': emulationRoot,
           'application': game.guestExecutable,
           'arguments': game.arguments,
           'environment': game.environment,
-          'documentMounts': {guestGameDirectory: game.directory},
+          if (installId == null) 'documentMounts': mount else 'directoryMounts': mount,
           'layerDirectory': layers.path,
           'rootLayerDirectory': (await rootLayerDirectory(game)).path,
           'workingDirectory': game.guestWorkingDirectory,

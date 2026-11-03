@@ -3,6 +3,7 @@
 #include <emulator_process_target.hpp>
 #include <inherited_pipes.hpp>
 #include <registry/registry_file.hpp>
+#include <filesystem/directory_mount.hpp>
 #include <filesystem/document_mount.hpp>
 #include <snapshot.hpp>
 #include <utils/finally.hpp>
@@ -74,7 +75,8 @@ namespace sogen::sandbox
             return path.empty() ? std::string{} : std::filesystem::absolute(path).string();
         }
 
-        std::string describe_configuration(const emulator_settings& settings, const std::vector<std::filesystem::path>& registry_files)
+        std::string describe_configuration(const emulator_settings& settings, const std::vector<directory_mount>& directory_mounts,
+                                           const std::vector<std::filesystem::path>& registry_files)
         {
             std::string configuration{};
             configuration += "emulation-root=" + describe_path(settings.emulation_root) + "\n";
@@ -92,6 +94,12 @@ namespace sogen::sandbox
                 configuration += "mount=" + render_mount_spec(mount) + "\n";
             }
 
+            for (const auto& mount : directory_mounts)
+            {
+                configuration += "directory-mount=" + mount.guest_path.string() + ":" + describe_path(mount.host_directory) + ":" +
+                                 describe_path(mount.upper_directory) + "\n";
+            }
+
             for (const auto& file : registry_files)
             {
                 configuration += "reg-file=" + describe_path(file) + "\n";
@@ -100,10 +108,20 @@ namespace sogen::sandbox
             return configuration;
         }
 
-        std::vector<provider_mount> connect_document_mounts(const std::vector<document_mount>& document_mounts)
+        std::vector<provider_mount> create_provider_mounts(const std::vector<directory_mount>& directory_mounts,
+                                                           const std::vector<document_mount>& document_mounts)
         {
             std::vector<provider_mount> mounts{};
-            mounts.reserve(document_mounts.size());
+            mounts.reserve(directory_mounts.size() + document_mounts.size());
+            for (const auto& mount : directory_mounts)
+            {
+                mounts.push_back(provider_mount{
+                    .guest_path = mount.guest_path,
+                    .provider = create_directory_mount(mount),
+                    .mode = filesystem_mode::copy_on_write,
+                });
+            }
+
             for (const auto& mount : document_mounts)
             {
 #if defined(__linux__)
@@ -121,9 +139,9 @@ namespace sogen::sandbox
         }
 
         int run(const std::span<const std::string_view> args, const filesystem_mode root_mode, const std::filesystem::path& root_layer,
-                std::vector<mount_spec> mounts, const std::vector<document_mount>& document_mounts,
-                const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
-                const std::vector<std::filesystem::path>& registry_files,
+                std::vector<mount_spec> mounts, const std::vector<directory_mount>& directory_mounts,
+                const std::vector<document_mount>& document_mounts, const std::filesystem::path& emulation_root,
+                const std::filesystem::path& registry_directory, const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
                 const bool spoof_gpu_features, const bool elevated, const std::filesystem::path& snapshot_directory,
                 const std::filesystem::path& resume_file, managed_process_connection* managed_connection)
@@ -227,6 +245,11 @@ namespace sogen::sandbox
                                                                arguments.emplace_back("--mount");
                                                                arguments.push_back(render_mount_spec(mount));
                                                            }
+                                                           for (const auto& mount : directory_mounts)
+                                                           {
+                                                               arguments.emplace_back("--directory-mount");
+                                                               std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
+                                                           }
                                                            for (const auto& mount : document_mounts)
                                                            {
                                                                arguments.emplace_back("--document-mount");
@@ -256,7 +279,8 @@ namespace sogen::sandbox
             auto emulator = kvm::create_x86_64_emulator();
 #endif
 
-            emulator_interfaces interfaces{.processes = &process_manager, .mounts = connect_document_mounts(document_mounts)};
+            emulator_interfaces interfaces{.processes = &process_manager,
+                                           .mounts = create_provider_mounts(directory_mounts, document_mounts)};
             auto win_emu_ptr =
                 resume_file.empty()
                     ? std::make_unique<windows_emulator>(std::move(emulator), std::move(app_settings), settings, std::move(callbacks),
@@ -265,7 +289,7 @@ namespace sogen::sandbox
             auto& win_emu = *win_emu_ptr;
             win_emu.log.disable_output(true);
 
-            const auto configuration = describe_configuration(settings, registry_files);
+            const auto configuration = describe_configuration(settings, directory_mounts, registry_files);
             if (resume_file.empty())
             {
                 for (const auto& file : registry_files)
@@ -385,6 +409,11 @@ namespace sogen::sandbox
             app.add_option("--mount", mount_specs, "Mount a host path into the guest file system (MODE is ro or rw)")
                 ->type_name("HOST:GUEST[:MODE]")
                 ->allow_extra_args(false);
+            std::vector<std::string> directory_mount_values{};
+            app.add_option("--directory-mount", directory_mount_values, "Mount a host directory copy-on-write")
+                ->expected(static_cast<int>(directory_mount::argument_count))
+                ->allow_extra_args(false)
+                ->group("");
             std::vector<std::string> document_mount_values{};
             app.add_option("--document-mount", document_mount_values, "Mount a document tree served by the parent process")
                 ->expected(static_cast<int>(document_mount::argument_count))
@@ -479,6 +508,14 @@ namespace sogen::sandbox
                     mounts.push_back(std::move(spec));
                 }
 
+                std::vector<directory_mount> directory_mounts{};
+                for (size_t i = 0; i + directory_mount::argument_count <= directory_mount_values.size();
+                     i += directory_mount::argument_count)
+                {
+                    directory_mounts.push_back(
+                        directory_mount::from_arguments(std::span(directory_mount_values).subspan(i, directory_mount::argument_count)));
+                }
+
                 std::vector<document_mount> document_mounts{};
                 for (size_t i = 0; i + document_mount::argument_count <= document_mount_values.size(); i += document_mount::argument_count)
                 {
@@ -487,9 +524,9 @@ namespace sogen::sandbox
                 }
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
-                return run(views, parse_root_mode(root_mode).value(), root_layer, std::move(mounts), document_mounts, emulation_root,
-                           registry_directory, registry_files, environment, network::parse_network_mode(network_name), spoof_gpu_features,
-                           elevated, snapshot_directory, resume_file, managed_process ? &*managed_process : nullptr);
+                return run(views, parse_root_mode(root_mode).value(), root_layer, std::move(mounts), directory_mounts, document_mounts,
+                           emulation_root, registry_directory, registry_files, environment, network::parse_network_mode(network_name),
+                           spoof_gpu_features, elevated, snapshot_directory, resume_file, managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {

@@ -178,7 +178,7 @@ class Game {
 
   String get guestExecutable => _toGuestPath(executable);
 
-  bool get hasFolderAccess => isFolderUri(directory);
+  bool get hasFolderAccess => isFolderUri(directory) || installIdOf(directory) != null;
 
   String get guestWorkingDirectory => _toGuestPath(p.posix.dirname(executable));
 
@@ -225,8 +225,37 @@ class Game {
 
 bool isFolderUri(String directory) => directory.startsWith('content://');
 
+const _installedFolderScheme = 'installed:';
+final _installId = RegExp(r'^[0-9a-f]{32}$');
+
+/// The folder of a game Sogen installed itself, named by its install id rather than by its path, so that the game
+/// list can never point the emulator at any other folder.
+String installedFolder(String installId) {
+  if (!_installId.hasMatch(installId)) {
+    throw ArgumentError.value(installId, 'installId', 'Not an install id');
+  }
+  return '$_installedFolderScheme$installId';
+}
+
+String? installIdOf(String directory) {
+  if (!directory.startsWith(_installedFolderScheme)) {
+    return null;
+  }
+  final installId = directory.substring(_installedFolderScheme.length);
+  return _installId.hasMatch(installId) ? installId : null;
+}
+
+/// Where Sogen installs games, one folder per install id. GAMES_DIRECTORY in SogenService.kt only mounts folders in it.
+Future<Directory> installedGamesDirectory() async {
+  final support = await getApplicationSupportDirectory();
+  return Directory(p.join(support.path, 'games'));
+}
+
 /// A readable form of a folder URI, e.g. `Games/Skyrim` for the tree of `primary:Games/Skyrim`.
 String describeFolder(String directory) {
+  if (installIdOf(directory) != null) {
+    return 'Installed by Sogen';
+  }
   if (!isFolderUri(directory)) {
     return directory;
   }
