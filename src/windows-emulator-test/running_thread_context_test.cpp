@@ -872,6 +872,29 @@ namespace sogen::test
         EXPECT_EQ(nullptr, this->emu->synchronize([&] { return vcpu.active_thread; }));
     }
 
+    TEST_F(RunningThreadContextTest, ExitedThreadKeptByItsHandleThroughAPassIsDeletedOnceClosedAndUnloaded)
+    {
+        this->emu->dispatch_on_cpu(this->emu->vcpu(0).cpu,
+                                   [&] { syscalls::handle_NtTerminateThread(this->context(0), this->second, STATUS_SUCCESS); });
+        auto first_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(this->emu->vcpu(0)); });
+        ASSERT_EQ(std::future_status::ready, first_vcpu.wait_for(std::chrono::seconds(10)));
+        ASSERT_TRUE(first_vcpu.get());
+        ASSERT_TRUE(this->thread_exists(this->second));
+
+        const auto exists_after_close = this->emu->dispatch_on_cpu(this->emu->vcpu(0).cpu, [&] {
+            syscalls::handle_NtClose(this->context(0), this->second);
+            return this->emu->process.threads.get(this->second) != nullptr;
+        });
+        ASSERT_TRUE(exists_after_close);
+
+        auto& vcpu = this->emu->vcpu(1);
+        auto second_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
+        const auto _ = utils::finally([&] { this->emu->stop(); });
+
+        EXPECT_TRUE(this->wait_for_deletion(this->second));
+        EXPECT_EQ(nullptr, this->emu->synchronize([&] { return vcpu.active_thread; }));
+    }
+
     TEST_F(RunningThreadContextTest, CallerTerminatedAndClosedDuringItsAccessIsDeletedOnlyAfterIt)
     {
         const auto buffer = this->context_buffer(0, CONTEXT64_ALL);

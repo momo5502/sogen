@@ -404,22 +404,30 @@ namespace sogen
             win_emu.apply_pending_guest_event_signals();
 
             auto& threads = win_emu.process.threads;
+            auto& terminated = win_emu.process.terminated_thread_count;
 
-            for (auto it = threads.begin(); it != threads.end();)
+            if (terminated != 0)
             {
-                auto& thread = it->second;
-                if (!thread.can_be_deleted(&vcpu))
+                size_t kept = 0;
+                for (auto it = threads.begin(); it != threads.end();)
                 {
-                    ++it;
-                    continue;
+                    auto& thread = it->second;
+                    if (!thread.can_be_deleted(&vcpu))
+                    {
+                        kept += thread.is_terminated() ? 1 : 0;
+                        ++it;
+                        continue;
+                    }
+
+                    if (vcpu.active_thread == &thread)
+                    {
+                        vcpu.active_thread = nullptr;
+                    }
+
+                    it = threads.erase(it).first;
                 }
 
-                if (vcpu.active_thread == &thread)
-                {
-                    vcpu.active_thread = nullptr;
-                }
-
-                it = threads.erase(it).first;
+                terminated = kept;
             }
 
             auto& devices = win_emu.process.devices;
