@@ -98,6 +98,30 @@ namespace sogen::test
         EXPECT_TRUE(offline_lookup->resolve_host("example.test", AF_INET).empty());
     }
 
+    TEST(EmscriptenHttpSocketTest, LiveDnsHandlesManyDistinctHostnames)
+    {
+        const auto lookup = network::create_dns_lookup(network::network_mode::live);
+        const auto factory = network::create_socket_factory(network::network_mode::live);
+        for (size_t i = 0; i < 512; ++i)
+        {
+            const auto hostname = "host-" + std::to_string(i) + ".example.test";
+            SCOPED_TRACE(hostname);
+            for (const auto family : {AF_INET, AF_INET6})
+            {
+                SCOPED_TRACE(family);
+                const auto addresses = lookup->resolve_host(hostname, family);
+                ASSERT_FALSE(addresses.empty());
+                for (auto peer : addresses)
+                {
+                    EXPECT_EQ(peer.get_family(), family);
+                    peer.set_port(80);
+                    const auto socket = factory->create_socket(family, SOCK_STREAM, IPPROTO_TCP);
+                    EXPECT_TRUE(socket->connect(peer));
+                }
+            }
+        }
+    }
+
     TEST(EmscriptenHttpSocketTest, ReadabilityStartsWithTheResponseAndContinuesAtEndOfStream)
     {
         install_http_response(false);

@@ -2,13 +2,6 @@
 
 #include <utils/finally.hpp>
 
-#ifdef OS_EMSCRIPTEN
-#include <emscripten.h>
-
-#include <array>
-#include <cstring>
-#endif
-
 namespace sogen
 {
 
@@ -17,15 +10,6 @@ namespace sogen
         namespace
         {
 #ifdef OS_EMSCRIPTEN
-            EM_JS_DEPS(sogen_http_dns, "$DNS");
-
-            // clang-format off
-            EM_JS(int, sogen_http_lookup_host, (const char* hostname, char* destination, int length), {
-                const resolved = DNS.lookup_name(UTF8ToString(Number(hostname)));
-                return stringToUTF8(resolved, Number(destination), length);
-            });
-            // clang-format on
-
             struct http_dns_lookup final : dns_lookup
             {
                 std::vector<address> resolve_host(const std::string_view hostname, const std::optional<int> family) override
@@ -36,38 +20,16 @@ namespace sogen
                     }
 
                     // fetch() resolves the Host authority; the guest only needs a synthetic address to connect.
-                    const std::string name{hostname};
-                    std::array<char, INET6_ADDRSTRLEN> text{};
-                    if (!sogen_http_lookup_host(name.c_str(), text.data(), static_cast<int>(text.size())))
-                    {
-                        return {};
-                    }
-
                     address resolved{};
-                    in_addr ipv4{};
-                    in6_addr ipv6{};
-                    if (inet_pton(AF_INET, text.data(), &ipv4) == 1)
+                    if (family && *family == AF_INET6)
                     {
-                        if (family && *family == AF_INET6)
-                        {
-                            ipv6.s6_addr[10] = 0xFF;
-                            ipv6.s6_addr[11] = 0xFF;
-                            std::memcpy(ipv6.s6_addr + 12, &ipv4, sizeof(ipv4));
-                            resolved.set_ipv6(ipv6);
-                        }
-                        else
-                        {
-                            resolved.set_ipv4(ipv4);
-                        }
+                        in6_addr loopback{};
+                        loopback.s6_addr[15] = 1;
+                        resolved.set_ipv6(loopback);
                     }
                     else
                     {
-                        if ((family && *family == AF_INET) || inet_pton(AF_INET6, text.data(), &ipv6) != 1)
-                        {
-                            return {};
-                        }
-
-                        resolved.set_ipv6(ipv6);
+                        resolved.set_ipv4(htonl(INADDR_LOOPBACK));
                     }
 
                     return {resolved};
