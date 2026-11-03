@@ -201,6 +201,9 @@ namespace sogen::test
 
     TEST_F(AudioServiceTest, CreatesServer2022RenderControlData)
     {
+#if defined(OS_EMSCRIPTEN) && !defined(__EMSCRIPTEN_PTHREADS__)
+        GTEST_SKIP() << "Requires host threads";
+#endif
         const auto header = this->create_render_buffer(audio_client_interface_20348);
         ASSERT_NE(0u, header);
 
@@ -220,6 +223,9 @@ namespace sogen::test
 
     TEST_F(AudioServiceTest, KeepsServer2025RenderControlData)
     {
+#if defined(OS_EMSCRIPTEN) && !defined(__EMSCRIPTEN_PTHREADS__)
+        GTEST_SKIP() << "Requires host threads";
+#endif
         const auto header = this->create_render_buffer(audio_client_interface_26100);
         ASSERT_NE(0u, header);
 
