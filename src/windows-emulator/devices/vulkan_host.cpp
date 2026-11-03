@@ -2422,7 +2422,81 @@ namespace sogen
             VkDescriptorPool handle{};
             uint64_t device_id{};
             descriptor_pool_params create{};
+            // Host pools made like this one for sets the guest allocated by its own count after this one refused them
+            // (allocate_descriptor_sets_as); reset and destroyed with it.
+            std::vector<VkDescriptorPool> overflow{};
+            // How many of them are in use since the last reset: allocations go to the last one, or to this pool while none
+            // is, so a pool that refused is not asked again.
+            size_t overflow_in_use{};
         };
+
+        // An overflow pool made like the guest's that holds at least these sets: each descriptor type and maxSets raised to
+        // what they take, so a fresh one has room for them.
+        static descriptor_pool_params overflow_pool_params(const descriptor_pool_params& guest,
+                                                           std::span<const set_layout_params* const> layouts)
+        {
+            auto params = guest;
+            params.max_sets = std::max(params.max_sets, static_cast<uint32_t>(layouts.size()));
+
+            std::map<uint32_t, uint32_t> needed{};
+            uint32_t inline_uniform_blocks = 0;
+            for (const auto* layout : layouts)
+            {
+                if (!layout)
+                {
+                    continue;
+                }
+
+                for (const vulkan_host::descriptor_binding& binding : layout->bindings)
+                {
+                    needed[binding.descriptor_type] += binding.descriptor_count;
+                    inline_uniform_blocks += binding.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK ? 1 : 0;
+                }
+            }
+
+            for (const auto& [type, count] : needed)
+            {
+                const auto size = std::ranges::find(params.sizes, type, &vulkan_host::descriptor_pool_size::descriptor_type);
+                if (size != params.sizes.end())
+                {
+                    size->descriptor_count = std::max(size->descriptor_count, count);
+                }
+                else if (count != 0)
+                {
+                    params.sizes.push_back({.descriptor_type = type, .descriptor_count = count});
+                }
+            }
+
+            params.max_inline_uniform_block_bindings = std::max(params.max_inline_uniform_block_bindings, inline_uniform_blocks);
+            return params;
+        }
+
+        static VkResult create_host_descriptor_pool(const device_data& device, const descriptor_pool_params& create, VkDescriptorPool& pool)
+        {
+            std::vector<VkDescriptorPoolSize> vk_sizes;
+            vk_sizes.reserve(create.sizes.size());
+            for (const descriptor_pool_size& s : create.sizes)
+            {
+                vk_sizes.push_back({.type = static_cast<VkDescriptorType>(s.descriptor_type), .descriptorCount = s.descriptor_count});
+            }
+
+            VkDescriptorPoolCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            info.flags = create.flags;
+            info.maxSets = create.max_sets;
+            info.poolSizeCount = static_cast<uint32_t>(vk_sizes.size());
+            info.pPoolSizes = vk_sizes.empty() ? nullptr : vk_sizes.data();
+
+            VkDescriptorPoolInlineUniformBlockCreateInfo inline_uniform_blocks{};
+            if (create.max_inline_uniform_block_bindings != 0)
+            {
+                inline_uniform_blocks.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_INLINE_UNIFORM_BLOCK_CREATE_INFO;
+                inline_uniform_blocks.maxInlineUniformBlockBindings = create.max_inline_uniform_block_bindings;
+                info.pNext = &inline_uniform_blocks;
+            }
+
+            return device.create_descriptor_pool(device.handle, &info, nullptr, &pool);
+        }
 
         struct descriptor_set_data
         {
@@ -2565,6 +2639,103 @@ namespace sogen
             }
 
             return this->next_id++;
+        }
+
+        // vkAllocateDescriptorSets with one set per layout id. With `overflow`, sets the host pool refuses come from extra
+        // host pools made like it: the guest has already handed those sets out by its own count of the pool.
+        int32_t allocate_host_descriptor_sets(const uint64_t device, const uint64_t pool, std::span<const uint64_t> set_layouts,
+                                              std::span<const uint32_t> variable_descriptor_counts, const bool overflow,
+                                              std::vector<VkDescriptorSet>& sets)
+        {
+            const auto dev = this->devices.find(device);
+            const auto pool_it = this->descriptor_pools.find(pool);
+            if (dev == this->devices.end() || pool_it == this->descriptor_pools.end() || pool_it->second.device_id != device ||
+                !dev->second.allocate_descriptor_sets ||
+                (!variable_descriptor_counts.empty() && variable_descriptor_counts.size() != set_layouts.size()))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+
+            std::vector<VkDescriptorSetLayout> vk_layouts;
+            std::vector<const set_layout_params*> layout_params;
+            vk_layouts.reserve(set_layouts.size());
+            layout_params.reserve(set_layouts.size());
+            for (const uint64_t id : set_layouts)
+            {
+                const auto sl = this->descriptor_set_layouts.find(id);
+                if (sl == this->descriptor_set_layouts.end() || sl->second.device_id != device)
+                {
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+                vk_layouts.push_back(sl->second.handle);
+                layout_params.push_back(sl->second.create.get());
+            }
+
+            VkDescriptorSetAllocateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            info.descriptorPool = pool_it->second.handle;
+            info.descriptorSetCount = static_cast<uint32_t>(vk_layouts.size());
+            info.pSetLayouts = vk_layouts.empty() ? nullptr : vk_layouts.data();
+
+            VkDescriptorSetVariableDescriptorCountAllocateInfo variable_counts{};
+            if (!variable_descriptor_counts.empty())
+            {
+                variable_counts.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+                variable_counts.descriptorSetCount = static_cast<uint32_t>(variable_descriptor_counts.size());
+                variable_counts.pDescriptorCounts = variable_descriptor_counts.data();
+                info.pNext = &variable_counts;
+            }
+
+            auto& data = pool_it->second;
+            if (overflow && data.overflow_in_use != 0)
+            {
+                info.descriptorPool = data.overflow[data.overflow_in_use - 1];
+            }
+
+            sets.assign(vk_layouts.size(), VK_NULL_HANDLE);
+            VkResult result = dev->second.allocate_descriptor_sets(dev->second.handle, &info, sets.data());
+
+            // What the pool in use refuses goes to the next overflow pool, and a new one is made with room for these sets.
+            while (overflow && (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL))
+            {
+                const bool fresh = data.overflow_in_use == data.overflow.size();
+                if (fresh)
+                {
+                    VkDescriptorPool extra{};
+                    if (create_host_descriptor_pool(dev->second, overflow_pool_params(data.create, layout_params), extra) != VK_SUCCESS)
+                    {
+                        break;
+                    }
+                    data.overflow.push_back(extra);
+                }
+
+                info.descriptorPool = data.overflow[data.overflow_in_use++];
+                result = dev->second.allocate_descriptor_sets(dev->second.handle, &info, sets.data());
+                if (fresh)
+                {
+                    break; // a pool made with room for these sets that still refuses them would refuse any other
+                }
+            }
+
+            return result;
+        }
+
+        // Keeps freshly allocated sets under the ids the guest knows them by.
+        void keep_descriptor_sets(const uint64_t device, const uint64_t pool, std::span<const uint64_t> set_layouts,
+                                  std::span<const uint32_t> variable_descriptor_counts, std::span<const VkDescriptorSet> sets,
+                                  std::span<const uint64_t> ids)
+        {
+            for (size_t i = 0; i < sets.size(); ++i)
+            {
+                descriptor_set_data data{.handle = sets[i], .device_id = device, .pool_id = pool};
+                data.layout_id = set_layouts[i];
+                data.layout_create = this->descriptor_set_layouts.at(set_layouts[i]).create;
+                if (!variable_descriptor_counts.empty())
+                {
+                    data.variable_descriptor_count = variable_descriptor_counts[i];
+                }
+                this->descriptor_sets.emplace(ids[i], std::move(data));
+            }
         }
 
         guest_memory_types get_guest_memory_types(const instance_data& instance, const VkPhysicalDevice physical_device) const
@@ -3779,6 +3950,10 @@ namespace sogen
                 if (pool.device_id == device_id && pool.handle && it->second.destroy_descriptor_pool)
                 {
                     it->second.destroy_descriptor_pool(it->second.handle, pool.handle, nullptr);
+                    for (const VkDescriptorPool extra : pool.overflow)
+                    {
+                        it->second.destroy_descriptor_pool(it->second.handle, extra, nullptr);
+                    }
                 }
             }
             for (auto& [id, layout] : this->descriptor_set_layouts)
@@ -10237,43 +10412,20 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        std::vector<VkDescriptorPoolSize> vk_sizes;
-        vk_sizes.reserve(sizes.size());
-        for (const descriptor_pool_size& s : sizes)
-        {
-            vk_sizes.push_back({.type = static_cast<VkDescriptorType>(s.descriptor_type), .descriptorCount = s.descriptor_count});
-        }
-
-        VkDescriptorPoolCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        info.flags = flags;
-        info.maxSets = max_sets;
-        info.poolSizeCount = static_cast<uint32_t>(vk_sizes.size());
-        info.pPoolSizes = vk_sizes.empty() ? nullptr : vk_sizes.data();
-
-        VkDescriptorPoolInlineUniformBlockCreateInfo inline_uniform_blocks{};
-        if (max_inline_uniform_block_bindings != 0)
-        {
-            inline_uniform_blocks.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_INLINE_UNIFORM_BLOCK_CREATE_INFO;
-            inline_uniform_blocks.maxInlineUniformBlockBindings = max_inline_uniform_block_bindings;
-            info.pNext = &inline_uniform_blocks;
-        }
-
+        impl::descriptor_pool_params create{.max_sets = max_sets,
+                                            .flags = flags,
+                                            .max_inline_uniform_block_bindings = max_inline_uniform_block_bindings,
+                                            .sizes = {sizes.begin(), sizes.end()}};
         VkDescriptorPool pool{};
-        const VkResult result = dev->second.create_descriptor_pool(dev->second.handle, &info, nullptr, &pool);
+        const VkResult result = impl::create_host_descriptor_pool(dev->second, create, pool);
         if (result != VK_SUCCESS)
         {
             return result;
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->descriptor_pools.emplace(
-            id, impl::descriptor_pool_data{.handle = pool,
-                                           .device_id = device,
-                                           .create = {.max_sets = max_sets,
-                                                      .flags = flags,
-                                                      .max_inline_uniform_block_bindings = max_inline_uniform_block_bindings,
-                                                      .sizes = {sizes.begin(), sizes.end()}}});
+        this->impl_->descriptor_pools.emplace(id,
+                                              impl::descriptor_pool_data{.handle = pool, .device_id = device, .create = std::move(create)});
         out_pool = id;
         return VK_SUCCESS;
     }
@@ -10288,12 +10440,20 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const int32_t result =
+        int32_t result =
             dev->second.reset_descriptor_pool(dev->second.handle, it->second.handle, static_cast<VkDescriptorPoolResetFlags>(flags));
+        for (const VkDescriptorPool extra : it->second.overflow)
+        {
+            if (result == VK_SUCCESS)
+            {
+                result = dev->second.reset_descriptor_pool(dev->second.handle, extra, static_cast<VkDescriptorPoolResetFlags>(flags));
+            }
+        }
         if (result == VK_SUCCESS)
         {
             // The reset implicitly frees every set allocated from this pool; drop their ids.
             this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
+            it->second.overflow_in_use = 0;
         }
         return result;
     }
@@ -10309,6 +10469,10 @@ namespace sogen
         if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_descriptor_pool)
         {
             dev->second.destroy_descriptor_pool(dev->second.handle, it->second.handle, nullptr);
+            for (const VkDescriptorPool extra : it->second.overflow)
+            {
+                dev->second.destroy_descriptor_pool(dev->second.handle, extra, nullptr);
+            }
         }
         // Sets allocated from this pool are freed implicitly; drop their ids.
         this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
@@ -10320,67 +10484,47 @@ namespace sogen
                                                   uint32_t& out_count)
     {
         out_count = 0;
-        const auto dev = this->impl_->devices.find(device);
-        const auto pool_it = this->impl_->descriptor_pools.find(pool);
-        if (dev == this->impl_->devices.end() || pool_it == this->impl_->descriptor_pools.end() || pool_it->second.device_id != device ||
-            !dev->second.allocate_descriptor_sets ||
-            (!variable_descriptor_counts.empty() && variable_descriptor_counts.size() != set_layouts.size()))
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        std::vector<VkDescriptorSetLayout> vk_layouts;
-        vk_layouts.reserve(set_layouts.size());
-        for (const uint64_t id : set_layouts)
-        {
-            const auto sl = this->impl_->descriptor_set_layouts.find(id);
-            if (sl == this->impl_->descriptor_set_layouts.end() || sl->second.device_id != device)
-            {
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            vk_layouts.push_back(sl->second.handle);
-        }
-
-        VkDescriptorSetAllocateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        info.descriptorPool = pool_it->second.handle;
-        info.descriptorSetCount = static_cast<uint32_t>(vk_layouts.size());
-        info.pSetLayouts = vk_layouts.empty() ? nullptr : vk_layouts.data();
-
-        VkDescriptorSetVariableDescriptorCountAllocateInfo variable_counts{};
-        if (!variable_descriptor_counts.empty())
-        {
-            variable_counts.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
-            variable_counts.descriptorSetCount = static_cast<uint32_t>(variable_descriptor_counts.size());
-            variable_counts.pDescriptorCounts = variable_descriptor_counts.data();
-            info.pNext = &variable_counts;
-        }
-
-        std::vector<VkDescriptorSet> sets(vk_layouts.size());
-        const VkResult result = dev->second.allocate_descriptor_sets(dev->second.handle, &info, sets.data());
+        std::vector<VkDescriptorSet> sets;
+        const int32_t result =
+            this->impl_->allocate_host_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, false, sets);
         if (result != VK_SUCCESS)
         {
             return result;
         }
 
-        out_count = static_cast<uint32_t>(sets.size());
-        for (size_t i = 0; i < sets.size(); ++i)
+        std::vector<uint64_t> ids(sets.size());
+        for (size_t i = 0; i < ids.size(); ++i)
         {
-            const uint64_t id = this->impl_->allocate_id();
-            impl::descriptor_set_data data{.handle = sets[i], .device_id = device, .pool_id = pool};
-            data.layout_id = set_layouts[i];
-            data.layout_create = this->impl_->descriptor_set_layouts.at(set_layouts[i]).create;
-            if (!variable_descriptor_counts.empty())
-            {
-                data.variable_descriptor_count = variable_descriptor_counts[i];
-            }
-            this->impl_->descriptor_sets.emplace(id, std::move(data));
+            ids[i] = this->impl_->allocate_id();
             if (i < out_sets.size())
             {
-                out_sets[i] = id;
+                out_sets[i] = ids[i];
             }
         }
+
+        this->impl_->keep_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, sets, ids);
+        out_count = static_cast<uint32_t>(sets.size());
         return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::allocate_descriptor_sets_as(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
+                                                     std::span<const uint32_t> variable_descriptor_counts, std::span<const uint64_t> ids)
+    {
+        if (ids.size() != set_layouts.size() || std::ranges::any_of(ids, [&](const uint64_t id) {
+                return id == 0 || this->impl_->descriptor_sets.find(id) != this->impl_->descriptor_sets.end();
+            }))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkDescriptorSet> sets;
+        const int32_t result =
+            this->impl_->allocate_host_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, true, sets);
+        if (result == VK_SUCCESS)
+        {
+            this->impl_->keep_descriptor_sets(device, pool, set_layouts, variable_descriptor_counts, sets, ids);
+        }
+        return result;
     }
 
     int32_t vulkan_host::free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets)
@@ -14844,13 +14988,10 @@ namespace sogen
 
             const std::array layouts{ensure_set_layout(device, layout_id, layout_create)};
             const std::array counts{variable_count};
-            std::array<uint64_t, 1> sets{};
-            uint32_t allocated = 0;
-            impl.forced_ids = {id};
-            const auto result = this->allocate_descriptor_sets(
-                device, pool, layouts, has_variable_count ? std::span<const uint32_t>{counts} : std::span<const uint32_t>{}, sets,
-                allocated);
-            expect_restored(result, allocated == 1 ? sets[0] : 0, id, "descriptor set");
+            const std::array ids{id};
+            const auto result = this->allocate_descriptor_sets_as(
+                device, pool, layouts, has_variable_count ? std::span<const uint32_t>{counts} : std::span<const uint32_t>{}, ids);
+            expect_restored(result, result == VK_SUCCESS ? id : 0, id, "descriptor set");
 
             auto& restored = impl.descriptor_sets.at(id);
             restored.layout_id = layout_id;

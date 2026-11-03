@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 44;
+    inline constexpr uint32_t protocol_version = 45;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -168,8 +168,8 @@ namespace sogen::gpu_bridge
         invalidate_mapped_memory_direct = 0x883,
         cmd_copy_image = 0x884,
         get_physical_device_memory_budget = 0x885,
-        // Coalesced vkUpdateDescriptorSets: payload is a concatenation of update_descriptor_sets_request blobs
-        // (each a header + its descriptor_write[] + inline-uniform data), applied in issue order.
+        // The shim's coalesced descriptor work: a sequence of descriptor_batch_record-led records (vkUpdateDescriptorSets
+        // blobs and the vkAllocateDescriptorSets calls the shim answered itself), applied in issue order.
         update_descriptor_sets_batch = 0x886,
         cmd_blit_image = 0x887,
         reset_descriptor_pool = 0x888,
@@ -207,9 +207,10 @@ namespace sogen::gpu_bridge
         cmd_push_descriptor_set = 0x8A8,
         get_render_area_granularity = 0x8A9,
         cmd_dispatch_base = 0x8AA,
-        // The pending coalesced vkUpdateDescriptorSets records, then a vkAllocateDescriptorSets request, applied in that
-        // order in one round trip: descriptor_updates_prefix, updates_bytes of update_descriptor_sets_request blobs, then
-        // the allocate_descriptor_sets_request with its arrays. Answers as allocate_descriptor_sets does.
+        // The pending coalesced descriptor records, then a vkAllocateDescriptorSets request, applied in that order in one
+        // round trip: descriptor_updates_prefix, updates_bytes of descriptor_batch_record-led records (as in
+        // update_descriptor_sets_batch), then the allocate_descriptor_sets_request with its arrays. Answers as
+        // allocate_descriptor_sets does.
         allocate_descriptor_sets_with_updates = 0x8AB,
         // vkGetDeviceImageMemoryRequirements: what get_image_memory_requirements would answer for the image a
         // create_image_request makes, without making it. Takes a create_image_request, answers a memory_requirements_response.
@@ -2467,6 +2468,40 @@ namespace sogen::gpu_bridge
         object_id image_view;  // image types: the sampled image view (else null_object)
         uint32_t image_layout; // image types: VkImageLayout
         uint32_t inline_uniform_data_size;
+    };
+
+    // What follows a descriptor_batch_record in a coalesced descriptor batch.
+    enum class descriptor_batch_record_kind : uint32_t
+    {
+        update = 1,   // an update_descriptor_sets_request blob (header, writes, copies, inline-uniform data)
+        allocate = 2, // an allocate_descriptor_sets_deferred record with its set layouts and set ids
+    };
+
+    // Leads every record of a coalesced descriptor batch.
+    struct descriptor_batch_record
+    {
+        uint32_t kind; // descriptor_batch_record_kind
+        uint32_t reserved;
+    };
+
+    static_assert(sizeof(descriptor_batch_record) == 8);
+
+    // Ids a guest picks itself for objects the host creates later. The host's own ids count up from 1 and never reach
+    // this bit.
+    inline constexpr object_id guest_chosen_object_id = object_id{1} << 63;
+
+    // A vkAllocateDescriptorSets the shim answered itself: the pool cannot free single sets and had room by its maxSets,
+    // so the call succeeded with ids the shim chose (guest_chosen_object_id set). The host allocates the sets when it
+    // applies the batch, before any later command can use them, and keeps them under those ids. Followed by
+    // `set_count` object_id set layouts, then `set_count` object_id set ids.
+    struct allocate_descriptor_sets_deferred
+    {
+        object_id device;
+        object_id descriptor_pool;
+        uint32_t set_count;
+        uint32_t thread_id; // the guest thread that allocated
+        // object_id set_layouts[set_count];
+        // object_id sets[set_count];
     };
 
     // Leads an allocate_descriptor_sets_with_updates request: the size of the update records that follow it.

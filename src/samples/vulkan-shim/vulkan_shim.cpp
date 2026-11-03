@@ -326,6 +326,42 @@ namespace
     std::vector<uint8_t> g_pending_descriptor_updates;
     std::mutex g_pending_descriptor_updates_mutex;
 
+    // What vkAllocateDescriptorSets needs to answer a pool by itself (see there), kept under g_pending_descriptor_updates_mutex
+    // because the allocations it answers join the pending batch.
+    struct descriptor_pool_state
+    {
+        uint32_t max_sets{};
+        uint32_t allocated{};
+        bool frees_sets{}; // VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
+    };
+
+    std::unordered_map<gb::object_id, descriptor_pool_state>& descriptor_pools()
+    {
+        static std::unordered_map<gb::object_id, descriptor_pool_state> pools;
+        return pools;
+    }
+
+    // Set layouts whose sets are allocated by the host's answer: those with a variable-count or an inline uniform block binding.
+    std::unordered_set<gb::object_id>& host_allocated_layouts()
+    {
+        static std::unordered_set<gb::object_id> layouts;
+        return layouts;
+    }
+
+    gb::object_id g_last_guest_descriptor_set = gb::guest_chosen_object_id;
+
+    void append_pending(const void* data, const size_t size)
+    {
+        const auto* bytes = static_cast<const uint8_t*>(data);
+        g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), bytes, bytes + size);
+    }
+
+    void append_pending_record(const gb::descriptor_batch_record_kind kind)
+    {
+        const gb::descriptor_batch_record record{.kind = static_cast<uint32_t>(kind), .reserved = 0};
+        append_pending(&record, sizeof(record));
+    }
+
     void flush_descriptor_updates()
     {
         // Hold the lock across the IOCTL so concurrent flushes stay ordered: releasing it after the swap lets a
@@ -5170,6 +5206,19 @@ extern "C"
             return static_cast<VkResult>(response.vk_result);
         }
         *pSetLayout = to_handle<VkDescriptorSetLayout>(response.object);
+
+        const bool host_allocated =
+            std::any_of(
+                pCreateInfo->pBindings, pCreateInfo->pBindings + pCreateInfo->bindingCount,
+                [](const VkDescriptorSetLayoutBinding& b) { return b.descriptorType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK; }) ||
+            (binding_flags &&
+             std::any_of(binding_flags->pBindingFlags, binding_flags->pBindingFlags + binding_flags->bindingCount,
+                         [](const VkDescriptorBindingFlags f) { return (f & VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT) != 0; }));
+        if (host_allocated)
+        {
+            std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+            host_allocated_layouts().insert(response.object);
+        }
         return VK_SUCCESS;
     }
 
@@ -5178,6 +5227,8 @@ extern "C"
                                                                                   const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_descriptor_set_layout, device, descriptorSetLayout);
+        std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+        host_allocated_layouts().erase(to_object_id(descriptorSetLayout));
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateDescriptorPool(VkDevice device,
@@ -5220,6 +5271,13 @@ extern "C"
             return static_cast<VkResult>(response.vk_result);
         }
         *pDescriptorPool = to_handle<VkDescriptorPool>(response.object);
+
+        std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+        descriptor_pools()[response.object] = {
+            .max_sets = pCreateInfo->maxSets,
+            .allocated = 0,
+            .frees_sets = (pCreateInfo->flags & VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT) != 0,
+        };
         return VK_SUCCESS;
     }
 
@@ -5227,6 +5285,8 @@ extern "C"
                                                                              const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_descriptor_pool, device, descriptorPool);
+        std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+        descriptor_pools().erase(to_object_id(descriptorPool));
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetDescriptorPool(VkDevice device, VkDescriptorPool descriptorPool,
@@ -5242,6 +5302,12 @@ extern "C"
             response.vk_result != VK_SUCCESS)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+        if (const auto pool = descriptor_pools().find(request.descriptor_pool); pool != descriptor_pools().end())
+        {
+            pool->second.allocated = 0;
         }
         return VK_SUCCESS;
     }
@@ -5265,6 +5331,46 @@ extern "C"
             (variable_descriptor_count_count != count || !variable_descriptor_counts->pDescriptorCounts))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        // A pool that cannot free single sets (DXVK's) is answered here, without a round trip: the call fails when the pool's
+        // maxSets would be exceeded, which Vulkan allows a pool to do, and otherwise succeeds with ids the shim picks. The
+        // host allocates the sets when it applies the pending batch, which every later bridge call sends first, so a set
+        // exists on the host before any command can use it. Only maxSets is counted: DXVK relies on drivers accepting
+        // descriptor types its pools did not list, and the host makes extra pools for sets its own pool refuses.
+        if (variable_descriptor_count_count == 0 && count != 0)
+        {
+            std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+            const auto pool = descriptor_pools().find(to_object_id(pAllocateInfo->descriptorPool));
+            const bool answered_here =
+                pool != descriptor_pools().end() && !pool->second.frees_sets &&
+                std::none_of(pAllocateInfo->pSetLayouts, pAllocateInfo->pSetLayouts + count,
+                             [](const VkDescriptorSetLayout layout) { return host_allocated_layouts().contains(to_object_id(layout)); });
+            if (answered_here)
+            {
+                if (count > pool->second.max_sets - pool->second.allocated)
+                {
+                    return VK_ERROR_OUT_OF_POOL_MEMORY;
+                }
+                pool->second.allocated += count;
+
+                const gb::allocate_descriptor_sets_deferred record{
+                    .device = to_object_id(device), .descriptor_pool = pool->first, .set_count = count, .thread_id = GetCurrentThreadId()};
+                append_pending_record(gb::descriptor_batch_record_kind::allocate);
+                append_pending(&record, sizeof(record));
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    const gb::object_id layout = to_object_id(pAllocateInfo->pSetLayouts[i]);
+                    append_pending(&layout, sizeof(layout));
+                }
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    const gb::object_id set = ++g_last_guest_descriptor_set;
+                    append_pending(&set, sizeof(set));
+                    pDescriptorSets[i] = to_handle<VkDescriptorSet>(set);
+                }
+                return VK_SUCCESS;
+            }
         }
 
         gb::allocate_descriptor_sets_request header{};
@@ -5428,22 +5534,12 @@ extern "C"
         header.inline_uniform_data_size = static_cast<uint32_t>(inline_uniform_data.size());
 
         // Append to the pending batch instead of issuing an IOCTL now (drained before the next bridge call).
-        const auto* header_bytes = reinterpret_cast<const uint8_t*>(&header);
-        const auto* write_bytes = reinterpret_cast<const uint8_t*>(writes.data());
         std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
-        g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), header_bytes, header_bytes + sizeof(header));
-        if (!writes.empty())
-        {
-            g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), write_bytes,
-                                                write_bytes + writes.size() * sizeof(gb::descriptor_write));
-        }
-        const auto* copy_bytes = reinterpret_cast<const uint8_t*>(copies.data());
-        if (!copies.empty())
-        {
-            g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), copy_bytes,
-                                                copy_bytes + copies.size() * sizeof(gb::descriptor_copy));
-        }
-        g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), inline_uniform_data.begin(), inline_uniform_data.end());
+        append_pending_record(gb::descriptor_batch_record_kind::update);
+        append_pending(&header, sizeof(header));
+        append_pending(writes.data(), writes.size() * sizeof(gb::descriptor_write));
+        append_pending(copies.data(), copies.size() * sizeof(gb::descriptor_copy));
+        append_pending(inline_uniform_data.data(), inline_uniform_data.size());
     }
 
     // Descriptor update templates are lowered entirely inside the shim: the template definition is kept
