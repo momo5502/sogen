@@ -18,7 +18,8 @@ const int _maxEntries = 65000;
 const int _maxManifestBytes = 32 * 1024 * 1024;
 const int _maxParents = 16;
 const int _maxCentralDirectoryBytes = 64 * 1024 * 1024;
-const int _maxArchiveBytes = maxSaveBytes + _maxManifestBytes + _maxCentralDirectoryBytes;
+// Local headers take about as much as the central directory, and deflate grows data it cannot compress slightly.
+const int _maxArchiveBytes = maxSaveBytes + maxSaveBytes ~/ 64 + _maxManifestBytes + 2 * _maxCentralDirectoryBytes;
 const String _manifestName = 'manifest.json';
 
 class SaveArchiveException implements Exception {
@@ -368,6 +369,7 @@ Future<String> exportSave(
     await encoder.close();
   }
 
+  await _checkCentralDirectory(destination);
   return contentHash;
 }
 
@@ -569,6 +571,8 @@ Future<void> _checkCentralDirectory(File archive) async {
     final directoryOffset = end.getUint32(16, Endian.little);
     if (end.getUint32(0, Endian.little) != 0x06054b50 ||
         end.getUint16(20, Endian.little) != 0 ||
+        end.getUint16(4, Endian.little) != 0 ||
+        end.getUint16(6, Endian.little) != 0 ||
         end.getUint16(8, Endian.little) != entries ||
         entries == 0xffff ||
         directorySize == 0xffffffff ||
@@ -607,6 +611,7 @@ Future<void> _checkCentralDirectory(File archive) async {
           compressedSize == 0xffffffff ||
           uncompressedSize == 0xffffffff ||
           offset == 0xffffffff ||
+          directory.getUint16(position + 34, Endian.little) != 0 ||
           (madeBy >> 8 == 3 && type != 0 && type != 0x8000 && type != 0x4000) ||
           position + headerSize + variableLength > directory.lengthInBytes) {
         throw unreadable;
