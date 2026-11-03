@@ -30,6 +30,17 @@ namespace sogen
         return std::nullopt;
     }
 
+    // Only the root can be copy-on-write by name; a mounted host path cannot.
+    inline std::optional<filesystem_mode> parse_root_mode(const std::string_view name)
+    {
+        if (name == "cow")
+        {
+            return filesystem_mode::copy_on_write;
+        }
+
+        return parse_filesystem_mode(name);
+    }
+
     constexpr bool allows_writes(const filesystem_mode mode)
     {
         return mode != filesystem_mode::read_only;

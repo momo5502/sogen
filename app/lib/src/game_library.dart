@@ -243,6 +243,12 @@ Future<Directory> layerDirectory(Game game) async {
   return Directory(p.join((await _gameLayers(game)).path, _fnv1a(game.directory).toRadixString(16)));
 }
 
+/// Where the changes a game makes to the emulation root are kept, so that every game sees the root as it was
+/// downloaded. They outlive choosing another folder for the game.
+Future<Directory> rootLayerDirectory(Game game) async {
+  return Directory(p.join((await _gameLayers(game)).path, 'root'));
+}
+
 /// Everything that is kept for the game besides its folder.
 Future<Directory> _gameLayers(Game game) async {
   final support = await getApplicationSupportDirectory();
