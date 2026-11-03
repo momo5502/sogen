@@ -188,10 +188,31 @@ class _LocalEntry {
   final Uint8List? data;
 }
 
+/// Counts what a scan found, so that a save over the limits is refused before the rest of it is read.
+class _ScanBudget {
+  int _entries = 0;
+  int _bytes = 0;
+
+  int get remainingBytes => maxSaveBytes - _bytes;
+
+  void add(int size) {
+    if (++_entries > _maxEntries) {
+      throw const SaveArchiveException('The save holds too many files to sync');
+    }
+    _bytes += size;
+    if (_bytes > maxSaveBytes) {
+      throw const SaveArchiveException(
+        'The save is larger than the ${maxSaveBytes ~/ (1024 * 1024)} MiB that can be synced',
+      );
+    }
+  }
+}
+
 /// Lists what the layers hold. Journals keep only their hidden and opaque records, since the generation records
 /// only matter to handles that a running game holds open.
 Future<List<_LocalEntry>> _scan(SaveLayers layers) async {
   final entries = <_LocalEntry>[];
+  final budget = _ScanBudget();
 
   final roots = layers._root.existsSync()
       ? layers._root.listSync().whereType<Directory>().map((drive) => p.basename(drive.path)).toList()
@@ -210,12 +231,15 @@ Future<List<_LocalEntry>> _scan(SaveLayers layers) async {
         final path = '$prefix/upper/${p.split(p.relative(item.path, from: upper.path)).join('/')}';
         switch (item) {
           case Directory():
+            budget.add(0);
             entries.add(_LocalEntry(SaveEntry(path: '$path/', directory: true, size: 0, sha256: '')));
           case File():
+            final size = await item.length();
+            budget.add(size);
             final digest = await sha256.bind(item.openRead()).first;
             entries.add(
               _LocalEntry(
-                SaveEntry(path: path, directory: false, size: await item.length(), sha256: digest.toString()),
+                SaveEntry(path: path, directory: false, size: size, sha256: digest.toString()),
                 file: item,
               ),
             );
@@ -227,8 +251,9 @@ Future<List<_LocalEntry>> _scan(SaveLayers layers) async {
 
     final journal = File(p.join(layer, 'state', 'journal'));
     if (journal.existsSync()) {
-      final records = _normalizeJournal(await journal.readAsBytes());
+      final records = await _normalizeJournal(journal, budget.remainingBytes);
       if (records.isNotEmpty) {
+        budget.add(records.length);
         entries.add(
           _LocalEntry(
             SaveEntry(
@@ -247,12 +272,49 @@ Future<List<_LocalEntry>> _scan(SaveLayers layers) async {
   return entries;
 }
 
-Uint8List _normalizeJournal(Uint8List journal) {
-  final complete = utf8.decode(journal, allowMalformed: true);
-  final lines = complete.substring(0, complete.lastIndexOf('\n') + 1).split('\n');
-  final records = lines.where((line) => line.length > 2 && line[1] == '\t' && 'HO'.contains(line[0])).toSet().toList()
-    ..sort();
-  return utf8.encode(records.map((record) => '$record\n').join());
+/// Reads the journal line by line, since discarded generation records can make it far larger than what is kept. A
+/// last line without its newline was cut off while it was appended, so it is not a record yet.
+Future<Uint8List> _normalizeJournal(File journal, int maxBytes) async {
+  final records = <String>{};
+  var size = 0;
+  void add(String line) {
+    if (line.length > 2 && line[1] == '\t' && 'HO'.contains(line[0]) && records.add(line)) {
+      size += utf8.encode(line).length + 1;
+      if (size > maxBytes) {
+        throw const SaveArchiveException(
+          'The save is larger than the ${maxSaveBytes ~/ (1024 * 1024)} MiB that can be synced',
+        );
+      }
+    }
+  }
+
+  String? last;
+  final lines = journal.openRead().transform(const Utf8Decoder(allowMalformed: true)).transform(const LineSplitter());
+  await for (final line in lines) {
+    if (last != null) {
+      add(last);
+    }
+    last = line;
+  }
+  if (last != null && await _endsWithNewline(journal)) {
+    add(last);
+  }
+
+  return utf8.encode((records.toList()..sort()).map((record) => '$record\n').join());
+}
+
+Future<bool> _endsWithNewline(File file) async {
+  final handle = await file.open();
+  try {
+    final length = await handle.length();
+    if (length == 0) {
+      return false;
+    }
+    await handle.setPosition(length - 1);
+    return await handle.readByte() == 0x0a;
+  } finally {
+    await handle.close();
+  }
 }
 
 /// Hashes the layers the way an archive of them would be hashed. No game may run on the layers meanwhile.
