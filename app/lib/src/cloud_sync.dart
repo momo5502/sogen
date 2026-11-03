@@ -238,9 +238,26 @@ class CloudSync extends ChangeNotifier {
     return LocalSave(base: base, contentHash: contentHash);
   }
 
+  static Future<Directory> _temporaryArchives() async =>
+      Directory(p.join((await getTemporaryDirectory()).path, 'cloud-saves'));
+
+  /// Removes the archives of syncs that the app died in. Runs before any sync, since it takes all of them.
+  static Future<void> deleteAbandonedArchives() async {
+    final directory = await _temporaryArchives();
+    try {
+      if (directory.existsSync()) {
+        await directory.delete(recursive: true);
+      }
+    } on FileSystemException catch (e) {
+      debugPrint('Could not delete abandoned cloud save archives: $e');
+    }
+  }
+
   /// Each operation gets its own directory, since two games may sync the same save at once.
   static Future<T> _withTemporaryArchive<T>(Future<T> Function(File archive) action) async {
-    final directory = await (await getTemporaryDirectory()).createTemp('save-');
+    final archives = await _temporaryArchives();
+    await archives.create(recursive: true);
+    final directory = await archives.createTemp('save-');
     try {
       return await action(File(p.join(directory.path, 'save.zip')));
     } finally {

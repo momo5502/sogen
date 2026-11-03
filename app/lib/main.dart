@@ -27,6 +27,7 @@ Future<void> main() async {
     library.releaseUnusedFolders().catchError((Object error) => debugPrint('Could not release unused folders: $error')),
   );
   final settings = await AppSettings.load();
+  await CloudSync.deleteAbandonedArchives();
   final cloud = await CloudAccount.load();
 
   runApp(
