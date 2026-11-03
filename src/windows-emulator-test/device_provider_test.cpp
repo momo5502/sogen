@@ -99,6 +99,59 @@ namespace sogen::test
             return std::make_unique<tracked_device>();
         }
 
+        struct device_pass_record
+        {
+            handle victim{};
+            bool victim_destroyed{};
+            bool victim_worked_after_destruction{};
+        };
+
+        device_pass_record pass_record{};
+
+        struct closing_device : echo_device
+        {
+            bool does_work() const override
+            {
+                return true;
+            }
+
+            void work(windows_emulator& emu) override
+            {
+                if (const auto victim = std::exchange(pass_record.victim, {}); victim.bits != 0)
+                {
+                    emu.process.devices.erase(victim);
+                }
+            }
+        };
+
+        struct victim_device : echo_device
+        {
+            ~victim_device() override
+            {
+                pass_record.victim_destroyed = true;
+            }
+
+            bool does_work() const override
+            {
+                return true;
+            }
+
+            void work(windows_emulator&) override
+            {
+                pass_record.victim_worked_after_destruction |= pass_record.victim_destroyed;
+            }
+        };
+
+        std::unique_ptr<io_device> create_closing(const device_creation_context&)
+        {
+            return std::make_unique<closing_device>();
+        }
+
+        std::unique_ptr<io_device> create_victim(const device_creation_context&)
+        {
+            return std::make_unique<victim_device>();
+        }
+
         std::unique_ptr<io_device> create_nothing(const device_creation_context&)
         {
             return {};
@@ -286,6 +339,22 @@ namespace sogen::test
         EXPECT_TRUE(destruction_order.empty());
         escaped.reset();
         EXPECT_EQ((std::vector<int>{1, 2}), destruction_order);
+    }
+
+    TEST(DeviceProviderTest, SchedulerPassSkipsADeviceThatAnotherDeviceClosed)
+    {
+        pass_record = {};
+        auto emu = make_provider_emulator({{.name = u"Closing", .factory = create_closing}, {.name = u"Victim", .factory = create_victim}});
+        const auto thread = emu.process.threads.store(emulator_thread{emu.memory, emu.process, 0, 0, 0x100000, 0, 8, true});
+        emu.vcpu(0).active_thread = emu.process.threads.get(thread);
+        ASSERT_EQ(STATUS_SUCCESS, open(emu, u"\\Device\\Closing").status);
+        const auto victim = open(emu, u"\\Device\\Victim");
+        ASSERT_EQ(STATUS_SUCCESS, victim.status);
+        pass_record.victim = victim.file;
+
+        EXPECT_TRUE(emu.perform_thread_switch(emu.vcpu(0)));
+        EXPECT_TRUE(pass_record.victim_destroyed);
+        EXPECT_FALSE(pass_record.victim_worked_after_destruction);
     }
 
     TEST(DeviceProviderTest, ExternalDevicesCannotWriteSnapshotStateEvenWhenStateless)

@@ -362,6 +362,11 @@ namespace sogen
                 }
             }
 
+            bool does_work() const override
+            {
+                return true;
+            }
+
             void work(windows_emulator& win_emu) override
             {
                 for (auto it = pending_reads_.begin(); it != pending_reads_.end();)

@@ -181,6 +181,8 @@ namespace sogen
         {
             throw std::runtime_error("Device factory returned no device");
         }
+
+        this->does_work = this->device->does_work();
     }
 
     io_device_container::io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data)
@@ -405,12 +407,6 @@ namespace sogen
         }
         this->file_->device->release_references(process);
         release_completion_association(process, this->file_->completion_association);
-    }
-
-    void io_device_container::work(windows_emulator& win_emu)
-    {
-        this->assert_validity();
-        this->file_->device->work(win_emu);
     }
 
     void io_device_container::prepare_for_state_restore(windows_emulator& win_emu)

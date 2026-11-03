@@ -37,7 +37,11 @@ callback that can outlive a device needs its own ownership and cancellation poli
 This owner does not implement runtime loading or unloading.
 
 The ordinary `io_device` interface still handles creation, work, IOCTLs, cancellation
-and completion. Device implementations validate their own guest buffers and copied
+and completion. A device that overrides `work()` must also return true from
+`does_work()`, since the scheduler calls `work()` only on devices that do. The
+container reads `does_work()` once, when it creates the device or restores it from a
+snapshot, so it is a fixed property of the device, not whether work is pending now.
+Device implementations validate their own guest buffers and copied
 payloads. They must not retain borrowed emulator state beyond its lifetime. An
 external device always rejects snapshots while its handle remains open, even if its
 own `supports_serialization` method returns true. Close all external handles before

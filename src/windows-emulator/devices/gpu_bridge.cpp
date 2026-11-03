@@ -351,6 +351,11 @@ namespace sogen
                 return this->vulkan_.has_swapchains();
             }
 
+            bool does_work() const override
+            {
+                return true;
+            }
+
             // Every scheduler pass, under the kernel lock: hands the analyzer what the bridge thread ran, and wakes the bridge
             // thread when the guest queued records since it last looked.
             void work(windows_emulator& win_emu) override

@@ -333,6 +333,69 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, context.io_status_block.read().Status);
     }
 
+    TEST_F(NamedPipeTest, SchedulerPassCompletesPendingListen)
+    {
+        auto& server = this->pipe(this->reader);
+        server.unopened_peer = this->pipe(this->writer).endpoint;
+        auto context = this->request(this->reader, 0);
+        context.io_control_code = FSCTL_PIPE_LISTEN;
+        ASSERT_EQ(STATUS_PENDING, server.io_control(*this->emu, context));
+        auto client = std::move(server.unopened_peer);
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_EQ(STATUS_SUCCESS, context.io_status_block.read().Status);
+    }
+
+    TEST_F(NamedPipeTest, SchedulerPassCompletesPendingListenAfterRestore)
+    {
+        this->pipe(this->reader).unopened_peer = this->pipe(this->writer).endpoint;
+        auto context = this->request(this->reader, 0);
+        context.io_control_code = FSCTL_PIPE_LISTEN;
+        ASSERT_EQ(STATUS_PENDING, this->pipe(this->reader).io_control(*this->emu, context));
+        utils::buffer_serializer snapshot;
+        this->emu->process.devices.get(this->reader)->serialize(snapshot);
+        utils::buffer_deserializer input{snapshot};
+        input.register_factory<guest_machine_wrapper>([&] { return guest_machine_wrapper{this->emu->emu()}; });
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
+        this->emu->process.devices.get(this->reader)->deserialize(input);
+        auto client = std::move(this->pipe(this->reader).unopened_peer);
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_EQ(STATUS_SUCCESS, context.io_status_block.read().Status);
+    }
+
+    TEST_F(NamedPipeTest, SchedulerPassCompletesPendingListenOfAPipeOpenedAfterAPass)
+    {
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        auto endpoints = utils::host_pipe::create_pair(false, 4096);
+        const auto server_handle = this->store_pipe(std::move(endpoints.first), FILE_READ_DATA);
+        auto& server = this->pipe(server_handle);
+        server.unopened_peer = std::move(endpoints.second);
+        auto context = this->request(server_handle, 0);
+        context.io_control_code = FSCTL_PIPE_LISTEN;
+        ASSERT_EQ(STATUS_PENDING, server.io_control(*this->emu, context));
+        auto client = std::move(server.unopened_peer);
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_EQ(STATUS_SUCCESS, context.io_status_block.read().Status);
+    }
+
+    TEST_F(NamedPipeTest, SchedulerPassCompletesPendingListenOfAPipeOpenedBeforeAnotherIsClosed)
+    {
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        const auto devices = this->emu->process.devices.size();
+        // Stored before the other pipe closes, so that it can't take the closed one's place at the same address.
+        auto endpoints = utils::host_pipe::create_pair(false, 4096);
+        const auto server_handle = this->store_pipe(std::move(endpoints.first), FILE_READ_DATA);
+        EXPECT_EQ(STATUS_SUCCESS, this->close(this->writer));
+        ASSERT_EQ(devices, this->emu->process.devices.size());
+        auto& server = this->pipe(server_handle);
+        server.unopened_peer = std::move(endpoints.second);
+        auto context = this->request(server_handle, 0);
+        context.io_control_code = FSCTL_PIPE_LISTEN;
+        ASSERT_EQ(STATUS_PENDING, server.io_control(*this->emu, context));
+        auto client = std::move(server.unopened_peer);
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_EQ(STATUS_SUCCESS, context.io_status_block.read().Status);
+    }
+
     TEST_F(NamedPipeTest, PendingReadCompletesWithEventAndCompletionPort)
     {
         const auto completion = this->emu->process.io_completions.store(io_completion{});

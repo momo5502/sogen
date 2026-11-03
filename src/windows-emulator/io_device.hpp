@@ -231,6 +231,13 @@ namespace sogen
             return false;
         }
 
+        // A device that overrides work() has to return true: the scheduler calls work() only on those. It is read once,
+        // when the device is created or restored, so it can't follow whether work is pending.
+        virtual bool does_work() const
+        {
+            return false;
+        }
+
         virtual void work(windows_emulator& win_emu)
         {
             (void)win_emu;
@@ -338,7 +345,18 @@ namespace sogen
             return this->file_.use_count() == 1;
         }
 
-        void work(windows_emulator& win_emu) override;
+        bool does_work() const final
+        {
+            this->assert_validity();
+            return this->file_->does_work;
+        }
+
+        void work(windows_emulator& win_emu) final
+        {
+            this->assert_validity();
+            this->file_->device->work(win_emu);
+        }
+
         void prepare_for_state_restore(windows_emulator& win_emu) override;
         void restore_after_state_restore(windows_emulator& win_emu) override;
         bool supports_serialization() const override;
@@ -388,6 +406,7 @@ namespace sogen
             std::shared_ptr<void> provider{};
             std::unique_ptr<io_device> device{};
             bool external{};
+            bool does_work{};
             std::optional<device_completion_association> completion_association{};
             ULONG completion_notification_flags{};
 
