@@ -298,6 +298,13 @@ namespace sogen
             return this->store_.size();
         }
 
+        // Advances whenever an object of this store is destroyed or the store is rebuilt. Map entries never move, so a
+        // pointer to one of its objects stays valid while the generation is unchanged.
+        uint64_t generation() const
+        {
+            return this->generation_;
+        }
+
         std::optional<handle> duplicate(const handle h) override
         {
             auto* entry = this->get(h);
@@ -331,6 +338,7 @@ namespace sogen
             }
 
             auto new_iter = this->store_.erase(entry);
+            ++this->generation_;
             return {new_iter, true};
         }
 
@@ -369,6 +377,7 @@ namespace sogen
         {
             buffer.read(this->block_mutation_);
             buffer.read_map(this->store_);
+            ++this->generation_;
         }
 
         value_map::iterator find(const T& value)
@@ -467,6 +476,7 @@ namespace sogen
 
         bool block_mutation_{false};
         value_map store_{};
+        uint64_t generation_{};
     };
 
     template <handle_types::type Type, typename T>

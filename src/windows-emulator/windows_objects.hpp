@@ -1214,6 +1214,10 @@ namespace sogen
         std::u16string name{};
         handle io_completion_handle{};
         handle target_object_handle{};
+        // The target's object as last looked up, valid while its store's generation is still target_generation. Not
+        // serialized; a restored packet looks it up again.
+        ref_counted_object* target_object{};
+        uint64_t target_generation{};
         uint64_t key_context{};
         uint64_t apc_context{};
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> io_status_block{};

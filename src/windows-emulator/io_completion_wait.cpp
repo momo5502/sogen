@@ -123,10 +123,69 @@ namespace sogen
                 }
             }
 
+            // Every scheduler pass checks the armed packets, so a packet keeps its target's object and looks it up in the store
+            // again only once the store's generation has moved.
+            template <handle_types::type Type, typename T>
+            T* wait_packet_target(handle_store<Type, T>& store, wait_completion_packet& wait_packet)
+            {
+                if (!wait_packet.target_object || wait_packet.target_generation != store.generation())
+                {
+                    wait_packet.target_object = store.get(wait_packet.target_object_handle);
+                    wait_packet.target_generation = store.generation();
+                }
+
+                // The object came from this store, so it is a T (a dynamic_cast would cost more than the lookup this saves).
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+                return static_cast<T*>(wait_packet.target_object);
+            }
+
+            bool is_wait_packet_target_signaled(windows_emulator& win_emu, wait_completion_packet& wait_packet)
+            {
+                auto& process = win_emu.process;
+                switch (wait_packet.target_object_handle.value.type)
+                {
+                case handle_types::event:
+                    if (const auto* target = wait_packet_target(process.events, wait_packet))
+                    {
+                        return target->signaled;
+                    }
+                    break;
+                case handle_types::semaphore:
+                    if (const auto* target = wait_packet_target(process.semaphores, wait_packet))
+                    {
+                        return target->current_count > 0;
+                    }
+                    break;
+                case handle_types::mutant:
+                    if (const auto* target = wait_packet_target(process.mutants, wait_packet))
+                    {
+                        return target->locked_count == 0;
+                    }
+                    break;
+                case handle_types::timer:
+                    if (auto* target = wait_packet_target(process.timers, wait_packet))
+                    {
+                        return target->is_signaled(win_emu.clock());
+                    }
+                    break;
+                case handle_types::thread:
+                    if (const auto* target = wait_packet_target(process.threads, wait_packet))
+                    {
+                        return target->is_terminated();
+                    }
+                    break;
+                default:
+                    break;
+                }
+
+                return is_wait_completion_target_signaled(win_emu, wait_packet.target_object_handle);
+            }
+
             void release_wait_packet_association(process_context& process, wait_completion_packet& wait_packet)
             {
                 release_handle_reference(process, wait_packet.io_completion_handle);
                 release_handle_reference(process, wait_packet.target_object_handle);
+                wait_packet.target_object = nullptr;
                 wait_packet.associated = false;
             }
 
@@ -175,7 +234,7 @@ namespace sogen
                         continue;
                     }
 
-                    if (!is_wait_completion_target_signaled(win_emu, wait_packet.target_object_handle))
+                    if (!is_wait_packet_target_signaled(win_emu, wait_packet))
                     {
                         continue;
                     }
