@@ -96,11 +96,16 @@ class CloudAccount extends ChangeNotifier {
       return null;
     }
 
-    final authorization =
-        await user.authorizationClient.authorizationForScopes(_scopes) ??
-        (interactive ? await user.authorizationClient.authorizeScopes(_scopes) : null);
-    _setDriveAccess(authorization != null);
-    return authorization == null ? null : DriveSaveStore(drive.DriveApi(authorization.authClient(scopes: _scopes)));
+    var authorization = await user.authorizationClient.authorizationForScopes(_scopes);
+    if (authorization == null) {
+      _setDriveAccess(false);
+      if (!interactive) {
+        return null;
+      }
+      authorization = await user.authorizationClient.authorizeScopes(_scopes);
+    }
+    _setDriveAccess(true);
+    return DriveSaveStore(drive.DriveApi(authorization.authClient(scopes: _scopes)));
   }
 }
 
@@ -250,20 +255,21 @@ class DriveSaveStore {
     );
   }
 
-  /// Uploads the revision unless an earlier attempt already did.
-  Future<void> upload(SaveRevision revision, String contentHash, File archive) async {
+  /// Uploads the save unless an earlier attempt already did.
+  Future<void> upload(ExportedSave save) async {
+    final ExportedSave(:revision, :contentHash, file: archive) = save;
     final length = await archive.length();
     if (length > maxSaveArchiveBytes) {
       throw _tooLarge;
     }
-    if (!isValidContentHash(contentHash)) {
-      throw const SaveStoreException('The save has an invalid content hash');
-    }
 
     final existing = await _list({'kind': 'revision', 'space': revision.saveSpaceId, 'revision': revision.revisionId});
+    if (existing.length > 1) {
+      throw const SaveStoreException('Drive holds a save revision twice');
+    }
     if (existing.isNotEmpty) {
       final stored = _storedRevision(existing.single, revision.saveSpaceId);
-      if (existing.length > 1 || stored.contentHash != contentHash || !stored.revision.sameAs(revision)) {
+      if (stored.contentHash != contentHash || !stored.revision.sameAs(revision)) {
         throw const SaveStoreException('Drive holds a different save under the same revision');
       }
       return;
@@ -308,6 +314,9 @@ class DriveSaveStore {
           return chunk;
         }),
       );
+      if (media.length != null && received != media.length) {
+        throw const SaveStoreException('The download of the stored save was cut off');
+      }
       await sink.close();
     } catch (_) {
       await sink.close().catchError((Object _) {});

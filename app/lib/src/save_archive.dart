@@ -325,8 +325,17 @@ Future<bool> _endsWithNewline(File file) async {
 Future<String> saveContentHash(SaveLayers layers) async =>
     contentHashOf((await _scan(layers)).map((local) => local.entry));
 
-/// Archives the layers to [destination] and returns their content hash. No game may run on the layers meanwhile.
-Future<String> exportSave(
+/// An archive as [exportSave] made it, so that what is stored about it always matches what it holds.
+class ExportedSave {
+  const ExportedSave._(this.file, this.revision, this.contentHash);
+
+  final File file;
+  final SaveRevision revision;
+  final String contentHash;
+}
+
+/// Archives the layers to [destination]. No game may run on the layers meanwhile.
+Future<ExportedSave> exportSave(
   SaveLayers layers,
   File destination,
   SaveRevision revision, {
@@ -370,7 +379,7 @@ Future<String> exportSave(
   }
 
   await _checkCentralDirectory(destination);
-  return contentHash;
+  return ExportedSave._(destination, revision, contentHash);
 }
 
 bool _validLayerPrefix(List<String> segments) =>
