@@ -5,15 +5,8 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'session.dart';
 import 'settings.dart';
 
-// Default to Google's sample units; release builds pass the real ones with --dart-define.
-const _appOpenAdUnit = String.fromEnvironment(
-  'ADMOB_APP_OPEN_AD_UNIT',
-  defaultValue: 'ca-app-pub-3940256099942544/9257395921',
-);
-const _interstitialAdUnit = String.fromEnvironment(
-  'ADMOB_INTERSTITIAL_AD_UNIT',
-  defaultValue: 'ca-app-pub-3940256099942544/1033173712',
-);
+const _appOpenAdUnit = 'ca-app-pub-6021244053292554/4771902296';
+const _interstitialAdUnit = 'ca-app-pub-6021244053292554/9145040381';
 
 /// An app open ad while the app starts, and an interstitial when the user leaves a game.
 class Ads {
