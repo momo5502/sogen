@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../ads.dart';
+import '../drive_save_store.dart';
 import '../emulation_root.dart';
 import '../game_library.dart';
 import '../session.dart';
@@ -16,11 +17,19 @@ import 'game_page.dart';
 import 'settings_page.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.root, required this.library, required this.settings, required this.ads});
+  const HomePage({
+    super.key,
+    required this.root,
+    required this.library,
+    required this.settings,
+    required this.cloud,
+    required this.ads,
+  });
 
   final EmulationRoot root;
   final GameLibrary library;
   final AppSettings settings;
+  final CloudAccount cloud;
   final Ads ads;
 
   @override
@@ -69,7 +78,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openSettings() {
-    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SettingsPage(settings: widget.settings)));
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsPage(settings: widget.settings, cloud: widget.cloud),
+      ),
+    );
   }
 
   /// The library outlives the game page, so it reports failed writes even after the page is gone.

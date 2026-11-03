@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'src/ads.dart';
+import 'src/drive_save_store.dart';
 import 'src/emulation_root.dart';
 import 'src/game_library.dart';
 import 'src/pages/home_page.dart';
@@ -25,16 +26,25 @@ Future<void> main() async {
     library.releaseUnusedFolders().catchError((Object error) => debugPrint('Could not release unused folders: $error')),
   );
   final settings = await AppSettings.load();
+  final cloud = await CloudAccount.load();
 
-  runApp(SogenApp(root: root, library: library, settings: settings, ads: Ads(settings)));
+  runApp(SogenApp(root: root, library: library, settings: settings, cloud: cloud, ads: Ads(settings)));
 }
 
 class SogenApp extends StatelessWidget {
-  const SogenApp({super.key, required this.root, required this.library, required this.settings, required this.ads});
+  const SogenApp({
+    super.key,
+    required this.root,
+    required this.library,
+    required this.settings,
+    required this.cloud,
+    required this.ads,
+  });
 
   final EmulationRoot root;
   final GameLibrary library;
   final AppSettings settings;
+  final CloudAccount cloud;
   final Ads ads;
 
   @override
@@ -45,7 +55,7 @@ class SogenApp extends StatelessWidget {
       theme: buildSogenTheme(),
       home: _StartupScreen(
         ads: ads,
-        child: HomePage(root: root, library: library, settings: settings, ads: ads),
+        child: HomePage(root: root, library: library, settings: settings, cloud: cloud, ads: ads),
       ),
     );
   }

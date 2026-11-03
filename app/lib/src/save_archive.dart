@@ -19,7 +19,7 @@ const int _maxManifestBytes = 32 * 1024 * 1024;
 const int _maxParents = 16;
 const int _maxCentralDirectoryBytes = 64 * 1024 * 1024;
 // Local headers take about as much as the central directory, and deflate grows data it cannot compress slightly.
-const int _maxArchiveBytes = maxSaveBytes + maxSaveBytes ~/ 64 + _maxManifestBytes + 2 * _maxCentralDirectoryBytes;
+const int maxSaveArchiveBytes = maxSaveBytes + maxSaveBytes ~/ 64 + _maxManifestBytes + 2 * _maxCentralDirectoryBytes;
 const String _manifestName = 'manifest.json';
 
 class SaveArchiveException implements Exception {
@@ -557,7 +557,7 @@ Future<void> _checkCentralDirectory(File archive) async {
   final handle = await archive.open();
   try {
     final length = await handle.length();
-    if (length > _maxArchiveBytes) {
+    if (length > maxSaveArchiveBytes) {
       throw tooLarge;
     }
     if (length < endRecordSize) {

@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../ads.dart';
+import '../drive_save_store.dart';
 import '../settings.dart';
 import '../theme.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, required this.settings});
+  const SettingsPage({super.key, required this.settings, required this.cloud});
 
   final AppSettings settings;
+  final CloudAccount cloud;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -41,6 +43,33 @@ class _SettingsPageState extends State<SettingsPage> {
     return turnOff == true;
   }
 
+  Future<void> _signIn() async {
+    try {
+      await widget.cloud.signIn();
+    } on Exception catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not sign in: $e')));
+      }
+    }
+  }
+
+  Future<void> _signOut() async {
+    final signOut = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign out of Google?'),
+        content: const Text('Games stop syncing their saves. The saves stay in your Google Drive and on this device.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sign out')),
+        ],
+      ),
+    );
+    if (signOut == true) {
+      await widget.cloud.signOut();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -52,10 +81,25 @@ class _SettingsPageState extends State<SettingsPage> {
         title: Text('Settings', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
       ),
       body: ListenableBuilder(
-        listenable: widget.settings,
+        listenable: Listenable.merge([widget.settings, widget.cloud]),
         builder: (context, _) => ListView(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
           children: [
+            if (CloudAccount.isAvailable)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Cloud saves'),
+                subtitle: Text(
+                  widget.cloud.isSignedIn
+                      ? 'Signed in as ${widget.cloud.email}'
+                      : 'Sign in with Google to keep saves in your Google Drive',
+                  style: subtitleStyle,
+                ),
+                trailing: TextButton(
+                  onPressed: widget.cloud.isSignedIn ? _signOut : _signIn,
+                  child: Text(widget.cloud.isSignedIn ? 'Sign out' : 'Sign in'),
+                ),
+              ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Show ads'),
