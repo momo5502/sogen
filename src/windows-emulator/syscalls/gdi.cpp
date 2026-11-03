@@ -2355,37 +2355,45 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        DWORD handle_NtUserGetGuiResources(const syscall_context& c, const handle process, const DWORD flags)
+        uint32_t count_process_gdi_objects(const syscall_context& c)
         {
-            if (process.bits != gui_resources_global_process && !c.proc.is_current_process_handle(process))
+            uint64_t table = 0;
+            c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
+            if (table == 0)
             {
                 return 0;
             }
 
-            // Peaks are not tracked, so they report the current count.
-            switch (flags)
+            // Windows charges neither the stock objects, the memory DC default bitmap among them, nor the system color
+            // brushes to the process.
+            std::unordered_set<uint32_t> system_objects{c.proc.gdi_memory_dc_default_bitmap_handle};
+            for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::Objects)>; ++index)
             {
-            case gui_resources_userobjects:
-            case gui_resources_userobjects_peak:
-                return static_cast<DWORD>(c.proc.user_handles.used_handle_count());
-            case gui_resources_gdiobjects:
-            case gui_resources_gdiobjects_peak: {
-                uint64_t table = 0;
-                c.proc.peb64.access([&](const PEB64& peb) { table = peb.GdiSharedHandleTable; });
-                if (table == 0)
+                system_objects.insert(static_cast<uint32_t>(read_gdi_object_slot(c, index)));
+            }
+            c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
+                for (const auto brush : server_info.ahbrSystem)
                 {
-                    return 0;
+                    system_objects.insert(static_cast<uint32_t>(brush));
                 }
+            });
 
-                std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
-                c.emu.read_memory(table, entries.data(), entries.size() * sizeof(GDI_HANDLE_ENTRY64));
-                return static_cast<DWORD>(std::ranges::count_if(entries, [&](const GDI_HANDLE_ENTRY64& entry) {
-                    return entry.Type != 0 && entry.Owner.ProcessId == static_cast<uint16_t>(c.proc.process_id);
-                }));
+            std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
+            c.emu.read_memory(table, entries.data(), entries.size() * sizeof(GDI_HANDLE_ENTRY64));
+
+            uint32_t count = 0;
+            for (uint32_t index = 0; index < entries.size(); ++index)
+            {
+                const auto& entry = entries[index];
+                const auto handle_value = (static_cast<uint32_t>(entry.Unique) << 16) | index;
+                if (entry.Type != 0 && entry.Owner.ProcessId == static_cast<uint16_t>(c.proc.process_id) &&
+                    !system_objects.contains(handle_value))
+                {
+                    ++count;
+                }
             }
-            default:
-                return 0;
-            }
+
+            return count;
         }
 
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, const hdc /*dc*/)
