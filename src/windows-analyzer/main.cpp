@@ -131,6 +131,10 @@ namespace sogen
             {
                 arguments.emplace_back("--elevated");
             }
+            if (options.reproducible)
+            {
+                arguments.emplace_back("--reproducible");
+            }
             if (options.instruction_precision)
             {
                 arguments.emplace_back(*options.instruction_precision ? "--inst-precision" : "--no-inst-precision");
