@@ -322,7 +322,7 @@ class GameLibrary extends ChangeNotifier {
     }
   }
 
-  /// Also deletes the changes the game made to its folder.
+  /// Also deletes the changes the game made to its folder and to the emulation root.
   Future<void> remove(Game game) async {
     _games.removeWhere((entry) => entry.id == game.id);
     await _save();
