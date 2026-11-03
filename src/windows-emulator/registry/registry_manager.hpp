@@ -140,6 +140,8 @@ namespace sogen
         size_t get_sub_key_count(const registry_key& key);
 
         std::optional<exposed_hive_key> get_hive_key(const registry_key& key);
+        std::vector<std::byte> get_class_name(const registry_key& key);
+        uint32_t get_max_sub_key_class_length(const registry_key& key);
 
         std::optional<std::u16string> read_u16string(const registry_key& key, size_t index);
         void serialize_runtime_state(utils::buffer_serializer& buffer) const;
@@ -196,6 +198,7 @@ namespace sogen
         static utils::path_key get_full_key_path(const registry_key& key);
         uint64_t get_generation(const utils::path_key& full_path) const;
         bool is_deleted_hive_key(const utils::path_key& full_path) const;
+        std::optional<exposed_hive_key> get_original_hive_key(const registry_key& key);
         void add_path_mapping(const utils::path_key& key, const utils::path_key& value);
 
         hive_map::iterator find_hive(const utils::path_key& key);
