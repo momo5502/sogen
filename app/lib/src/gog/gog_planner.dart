@@ -40,6 +40,8 @@ class GogPlanner {
   /// Dependencies whose files Sogen installs into the game folder, known to need nothing but their files.
   static final _bundledDependencies = RegExp(r'^(ScummVM|DOSBox\w*)$');
 
+  static bool _isDosBox(String dependency) => dependency.startsWith('DOSBox');
+
   /// Installers of runtimes the emulation root already has, so games that list them need nothing more.
   static final _rootRuntimes = RegExp(r'^(DirectX|MSVC\d{4}(_x64)?|dotNet\w*)$');
 
@@ -69,7 +71,7 @@ class GogPlanner {
       throw const GogException('This game is not available in that language.');
     }
 
-    final files = _PlanBuilder();
+    final files = _PlanBuilder(runsInDosBox: manifest.dependencies.any(_isDosBox));
     final depots = manifest.depots.where(
       (depot) =>
           depot.productId == manifest.baseProductId && (depot.isLanguageNeutral || depot.languages.contains(language)),
@@ -122,7 +124,7 @@ class GogPlanner {
   /// the screen shows a small picture framed in black. Switching to the game's own resolution makes the window the
   /// picture, which Sogen then scales to fill the screen.
   static List<ScriptAction> _dosBoxDisplaySteps(TransferPlan plan) {
-    if (!plan.dependencies.any((dependency) => dependency.startsWith('DOSBox'))) {
+    if (!plan.dependencies.any(_isDosBox)) {
       return const [];
     }
 
@@ -173,6 +175,11 @@ class _FoundFile {
 }
 
 class _PlanBuilder {
+  _PlanBuilder({required this.runsInDosBox});
+
+  /// Whether the game runs in GOG's DOSBox, whose configurations overlay `cloud_saves` onto the game's drive.
+  final bool runsInDosBox;
+
   final _files = <String, (DepotFile, ChunkSource, int?)>{};
   final _directories = <String, String>{};
   final _containers = <PlannedContainer>[];
@@ -197,9 +204,9 @@ class _PlanBuilder {
     }
   }
 
-  /// GOG Galaxy copies the support files below `app` into the game folder, where scripts and play tasks expect them,
-  /// and keeps those below `save` as the game's first saves.
-  static DepotFile _relocated(DepotFile file) {
+  /// GOG Galaxy copies the support files below `app` into the game folder, where scripts and play tasks expect them.
+  /// Those below `save` are the first saves of DOSBox games, which go where their configuration looks for saves.
+  DepotFile _relocated(DepotFile file) {
     if (!file.support) {
       return file;
     }
@@ -207,8 +214,7 @@ class _PlanBuilder {
     final below = file.path.withoutFirstFolder;
     final inGame = switch (file.path.segments.first.toLowerCase()) {
       'app' => below,
-      // The starting saves of GOG's DOSBox games; their configurations overlay cloud_saves onto the game's drive.
-      'save' when below != null => DepotPath.parse('cloud_saves') / below,
+      'save' when below != null && runsInDosBox => DepotPath.parse('cloud_saves') / below,
       _ => null,
     };
     if (inGame == null) {

@@ -165,10 +165,6 @@ class _FakeContent implements GogContent {
             ..._file(r'app\beneath.ini', 10),
             'flags': ['support'],
           },
-          {
-            ..._file(r'save\SAVEGAME\START.SAV', 4),
-            'flags': ['support'],
-          },
           ...extraNeutralItems,
         ],
         'b' || 'c' => [_smallFile('goggame-42.info', info), _smallFile('goggame-42.script', script)],
@@ -407,7 +403,6 @@ void main() {
         'goggame-42.script',
         'scummvm/scummvm.exe',
         'scummvm/SDL2.dll',
-        'cloud_saves/SAVEGAME/START.SAV',
       });
       expect(files['scummvm/scummvm.exe']!.source, ChunkSource.dependency);
       expect(planned.plan.buildId, '2');
@@ -459,6 +454,32 @@ void main() {
         ]);
       },
     );
+
+    test('the first saves of DOSBox games go where their configurations overlay saves', () async {
+      final content = _FakeContent(
+        declared: ['DOSBox074'],
+        extraNeutralItems: [
+          {
+            ..._FakeContent._file(r'save\SAVEGAME\START.SAV', 4),
+            'flags': ['support'],
+          },
+        ],
+      );
+      final files = (await plan(content)).plan.files.map((file) => file.path);
+      expect(files, contains('cloud_saves/SAVEGAME/START.SAV'));
+    });
+
+    test('first saves of other games make the game unavailable', () async {
+      final content = _FakeContent(
+        extraNeutralItems: [
+          {
+            ..._FakeContent._file(r'save\SAVEGAME\START.SAV', 4),
+            'flags': ['support'],
+          },
+        ],
+      );
+      await expectLater(plan(content), throwsA(isA<GogException>()));
+    });
 
     test('games without DOSBox keep their configurations as they are', () async {
       final steps = (await plan(_FakeContent())).script.actions
