@@ -117,7 +117,8 @@ class StoreInstaller extends ChangeNotifier {
   static const _channel = MethodChannel('dev.sogen.app/downloads');
   static const _events = EventChannel('dev.sogen.app/downloads/events');
 
-  static const _maxIconBytes = 1024 * 1024;
+  /// Store covers stand in for icons where a store has none, and those are large JPEGs.
+  static const _maxIconBytes = 8 * 1024 * 1024;
 
   final GameLibrary _library;
   final Map<String, InstallSource> _sources;
@@ -237,7 +238,7 @@ class StoreInstaller extends ChangeNotifier {
 
       await _writeAtomically(File(p.join(staging.path, 'plan.json')), jsonEncode(planned.plan.toJson()));
       await _writeAtomically(File(p.join(staging.path, 'install.json')), jsonEncode(pending.toJson()));
-      await _storeIcon(staging, pending);
+      await _storeIcon(staging, pending, cover: game.imageUrl);
       await _start(pending, allowMetered: allowMetered);
     } catch (_) {
       await staging.delete(recursive: true);
@@ -420,11 +421,12 @@ class StoreInstaller extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The store's square icon, kept with the game so the library never loads it from the network.
-  Future<void> _storeIcon(Directory staging, _PendingInstall pending) async {
+  /// The store's square icon, or its [cover] where it has none, kept with the game so the library never loads it from
+  /// the network. The library crops it to its square tile.
+  Future<void> _storeIcon(Directory staging, _PendingInstall pending, {Uri? cover}) async {
     try {
       final source = _sourceOf(pending);
-      final url = await source.icon(pending.game.source!.productId);
+      final url = await source.icon(pending.game.source!.productId) ?? cover;
       if (url == null) {
         return;
       }
@@ -438,7 +440,8 @@ class StoreInstaller extends ChangeNotifier {
       }
       final (status, bytes) = response;
       final png = bytes.length > 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47;
-      if (status == 200 && png) {
+      final jpeg = bytes.length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
+      if (status == 200 && (png || jpeg)) {
         await _writeAtomically(File(p.join(staging.path, 'icon.png')), bytes);
       }
     } on StoreException {
