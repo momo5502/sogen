@@ -13,12 +13,16 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
     private var events: EventChannel.EventSink? = null
     private lateinit var session: SessionController
     private var folderPick: MethodChannel.Result? = null
+    private var gogSignIn: MethodChannel.Result? = null
+    private val secrets by lazy { SecretStore(this) }
+    private val secretChanges = Executors.newSingleThreadExecutor()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -81,6 +85,22 @@ class MainActivity : FlutterActivity() {
                 "persistedFolders" -> result.success(contentResolver.persistedUriPermissions.map { it.uri.toString() })
                 "releaseFolder" -> {
                     releaseFolder(call.argument<String>("uri").orEmpty())
+                    result.success(null)
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, "dev.sogen.app/secrets").setMethodCallHandler { call, result ->
+            handleSecretCall(call, result)
+        }
+
+        MethodChannel(messenger, "dev.sogen.app/gog").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "signIn" -> signInToGog(call.argument<String>("url").orEmpty(), result)
+                "forgetLogin" -> {
+                    GogSignInActivity.forgetLogin()
                     result.success(null)
                 }
 
@@ -165,8 +185,51 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_FOLDER_REQUEST)
     }
 
+    /** Keystore operations can block, so they run off the UI thread, one at a time and in the order requested. */
+    private fun handleSecretCall(call: MethodCall, result: MethodChannel.Result) {
+        val name = call.argument<String>("name").orEmpty()
+        secretChanges.execute {
+            try {
+                val value = when (call.method) {
+                    "read" -> secrets.read(name)
+                    "write" -> secrets.write(name, call.argument<String>("value").orEmpty())
+                    "delete" -> secrets.delete(name)
+                    else -> {
+                        runOnUiThread { result.notImplemented() }
+                        return@execute
+                    }
+                }
+                runOnUiThread { result.success(value as? String) }
+            } catch (e: Exception) {
+                runOnUiThread { result.error("secrets", e.javaClass.simpleName, null) }
+            }
+        }
+    }
+
+    /** Completes with the URL GOG redirected to after signing in, or null when the user went back. */
+    private fun signInToGog(url: String, result: MethodChannel.Result) {
+        if (gogSignIn != null) {
+            result.error("busy", "A GOG sign-in is already open", null)
+            return
+        }
+
+        gogSignIn = result
+        @Suppress("DEPRECATION")
+        startActivityForResult(
+            Intent(this, GogSignInActivity::class.java).putExtra(GogSignInActivity.EXTRA_URL, url),
+            GOG_SIGN_IN_REQUEST,
+        )
+    }
+
     @Deprecated("FlutterActivity is not a ComponentActivity, so it has no activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == GOG_SIGN_IN_REQUEST) {
+            val result = gogSignIn ?: return
+            gogSignIn = null
+            result.success(data?.getStringExtra(GogSignInActivity.EXTRA_REDIRECT)?.takeIf { resultCode == RESULT_OK })
+            return
+        }
+
         if (requestCode != PICK_FOLDER_REQUEST) {
             @Suppress("DEPRECATION")
             super.onActivityResult(requestCode, resultCode, data)
@@ -230,6 +293,7 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val TAG = "MainActivity"
         const val PICK_FOLDER_REQUEST = 1
+        const val GOG_SIGN_IN_REQUEST = 2
 
         val systemKeys = setOf(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)
 

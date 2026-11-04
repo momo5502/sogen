@@ -2,13 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../ads.dart';
+import '../gog/gog_account.dart';
 import '../settings.dart';
+import '../support.dart';
 import '../theme.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key, required this.settings});
+  const SettingsPage({super.key, required this.settings, required this.gog, this.onRedownloadRoot});
 
   final AppSettings settings;
+  final GogAccount gog;
+
+  /// Downloads the emulation root again; null while it is not installed or an install is running.
+  final VoidCallback? onRedownloadRoot;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -23,6 +29,29 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     await widget.settings.setShowAds(show);
+  }
+
+  /// The download reports its progress on the home page, so Settings closes before it starts.
+  void _redownloadRoot() {
+    Navigator.of(context).pop();
+    widget.onRedownloadRoot!();
+  }
+
+  Future<void> _signOutOfGog() async {
+    final signOut = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sign out of GOG?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sign out')),
+        ],
+      ),
+    );
+
+    if (signOut == true) {
+      await widget.gog.signOut();
+    }
   }
 
   Future<bool> _confirmTurnOffAds() async {
@@ -52,7 +81,7 @@ class _SettingsPageState extends State<SettingsPage> {
         title: Text('Settings', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
       ),
       body: ListenableBuilder(
-        listenable: widget.settings,
+        listenable: Listenable.merge([widget.settings, widget.gog]),
         builder: (context, _) => ListView(
           padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
           children: [
@@ -74,6 +103,26 @@ class _SettingsPageState extends State<SettingsPage> {
                     )
                   : const SizedBox.shrink(),
             ),
+            if (widget.onRedownloadRoot != null)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Re-download emulation root'),
+                subtitle: Text('Replace the Windows files Sogen runs against', style: subtitleStyle),
+                onTap: _redownloadRoot,
+              ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Help and support'),
+              subtitle: Text('Join the Sogen Discord', style: subtitleStyle),
+              onTap: () => openDiscord(context),
+            ),
+            if (widget.gog.isSignedIn)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Sign out of GOG'),
+                subtitle: Text('Sogen forgets your GOG account', style: subtitleStyle),
+                onTap: _signOutOfGog,
+              ),
           ],
         ),
       ),
