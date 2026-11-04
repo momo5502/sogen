@@ -1,12 +1,19 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'session.dart';
 import 'settings.dart';
 
-const _appOpenAdUnit = 'ca-app-pub-6021244053292554/4771902296';
-const _interstitialAdUnit = 'ca-app-pub-6021244053292554/9145040381';
+// AdMob can flag the account for invalid activity when developers load live ads, so only release builds request them
+// and the others use Google's sample units.
+const _appOpenAdUnit = kReleaseMode
+    ? 'ca-app-pub-6021244053292554/4771902296'
+    : 'ca-app-pub-3940256099942544/9257395921';
+const _interstitialAdUnit = kReleaseMode
+    ? 'ca-app-pub-6021244053292554/9145040381'
+    : 'ca-app-pub-3940256099942544/1033173712';
 
 /// An app open ad while the app starts, and an interstitial when the user leaves a game.
 class Ads {
