@@ -46,7 +46,17 @@ class SteamClient {
     if (connection != null && !connection.isClosed) {
       return connection;
     }
-    return _connecting ??= _logOn().whenComplete(() => _connecting = null);
+    final pending = _connecting;
+    if (pending != null) {
+      return pending;
+    }
+    late final Future<SteamConnection> logOn;
+    logOn = _logOn().whenComplete(() {
+      if (identical(_connecting, logOn)) {
+        _connecting = null;
+      }
+    });
+    return _connecting = logOn;
   }
 
   Future<void> _reset() async {

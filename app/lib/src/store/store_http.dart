@@ -151,7 +151,9 @@ Uint8List decodeBounded(
       sink.add(encoded.sublist(offset, end));
     }
     sink.close();
-  } on FormatException {
+  } on StoreException {
+    rethrow;
+  } on Exception {
     throw service.error('${service.name} sent data Sogen does not understand.');
   }
   return decoded.bytes.takeBytes();
