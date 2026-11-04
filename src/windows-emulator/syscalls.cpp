@@ -809,6 +809,7 @@ namespace sogen
         BOOL handle_NtUserIsTouchWindow();
         uint64_t handle_NtUserGetTopLevelWindow(const syscall_context& c, hwnd window);
         BOOL handle_NtUserGetWindowPlacement(const syscall_context& c, hwnd window_handle, emulator_pointer placement_address);
+        BOOL handle_NtUserGetTitleBarInfo(const syscall_context& c, hwnd window_handle, emulator_pointer info_address);
         BOOL handle_NtUserTrackMouseEvent();
         BOOL handle_NtUserSetWindowRgn();
         BOOL handle_NtUserAlterWindowStyle();
@@ -2135,6 +2136,7 @@ namespace sogen
         add_handler(NtUserCheckMenuItem);
         add_handler(NtUserSetWindowCompositionAttribute);
         add_handler(NtUserGetWindowPlacement);
+        add_handler(NtUserGetTitleBarInfo);
         add_handler(NtUserSetWindowPlacement);
         add_handler(NtUserCreateCaret);
         add_handler(NtUserDestroyCaret);

@@ -213,6 +213,13 @@ namespace sogen
         RECT rcNormalPosition;
     };
 
+    struct EMU_TITLEBARINFO
+    {
+        DWORD cbSize;
+        RECT rcTitleBar;
+        DWORD rgstate[6];
+    };
+
 #define EMU_HWND_MESSAGE ((hwnd) - 3)
 
 #define SWP_NOCLIENTSIZE 0x0800
@@ -240,6 +247,7 @@ namespace sogen
 #define WS_EX_NOPARENTNOTIFY        0x00000004L
 #define WS_EX_TRANSPARENT           0x00000020L
 #define WS_EX_TOOLWINDOW            0x00000080L
+#define WS_EX_CONTEXTHELP           0x00000400L
 #define WS_EX_LAYERED               0x00080000L
 #define WS_EX_CLIENTEDGE            0x00000200L
 #define WS_EX_NOACTIVATE            0x08000000L

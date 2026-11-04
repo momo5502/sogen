@@ -10,6 +10,7 @@ namespace sogen::syscalls
     BOOL handle_NtUserGetWindowDisplayAffinity(const syscall_context& c, hwnd window, emulator_object<DWORD> affinity);
     BOOL handle_NtUserShowOwnedPopups(const syscall_context& c, hwnd owner, BOOL show);
     BOOL handle_NtUserGetCurrentInputMessageSource(const syscall_context& c, emulator_pointer source);
+    BOOL handle_NtUserGetTitleBarInfo(const syscall_context& c, hwnd window_handle, emulator_pointer info_address);
 }
 
 namespace sogen::test
@@ -18,6 +19,7 @@ namespace sogen::test
     {
         constexpr DWORD untouched_error = 0xDEAD;
         constexpr DWORD untouched_value = 0xAAAAAAAA;
+        constexpr uint32_t k_overlapped_window = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 
         class UserQueryTest : public testing::Test
         {
@@ -74,6 +76,19 @@ namespace sogen::test
             DWORD affinity_value()
             {
                 return this->emu.memory.read_memory<DWORD>(this->storage);
+            }
+
+            BOOL title_bar_info(const hwnd window, const DWORD size)
+            {
+                EMU_TITLEBARINFO info{};
+                info.cbSize = size;
+                this->emu.memory.write_memory(this->storage, info);
+                return syscalls::handle_NtUserGetTitleBarInfo(this->context(), window, this->storage);
+            }
+
+            EMU_TITLEBARINFO read_title_bar_info()
+            {
+                return this->emu.memory.read_memory<EMU_TITLEBARINFO>(this->storage);
             }
 
             windows_emulator emu = create_sample_emulator();
@@ -240,5 +255,64 @@ namespace sogen::test
 
         EXPECT_EQ(FALSE, syscalls::handle_NtUserGetCurrentInputMessageSource(this->context(), 0x1234));
         EXPECT_EQ(998u, this->last_error());
+    }
+
+    TEST_F(UserQueryTest, TitleBarInfoRejectsAWrongSizeAndAnInvalidWindow)
+    {
+        const auto window = this->create_top_level_window(0, k_overlapped_window);
+
+        EXPECT_EQ(FALSE, this->title_bar_info(window, sizeof(EMU_TITLEBARINFO) + 4));
+        EXPECT_EQ(87u, this->last_error());
+
+        this->set_last_error(untouched_error);
+        EXPECT_EQ(FALSE, this->title_bar_info(0x12345, sizeof(EMU_TITLEBARINFO)));
+        EXPECT_EQ(1400u, this->last_error());
+    }
+
+    // The states were measured on Windows 11 for windows with the same styles.
+    TEST_F(UserQueryTest, TitleBarStatesFollowTheWindowStyle)
+    {
+        struct style_case
+        {
+            uint32_t style;
+            uint32_t ex_style;
+            std::array<DWORD, 6> states;
+        };
+
+        const std::array cases{
+            style_case{k_overlapped_window, 0, {0x100000, 0x8000, 0, 0, 0x8000, 0}},
+            style_case{WS_CAPTION | WS_SYSMENU, 0, {0x100000, 0x8000, 0x8000, 0x8000, 0x8000, 0}},
+            style_case{WS_CAPTION, 0, {0x100000, 0x8000, 0x8000, 0x8000, 0x8000, 0x8000}},
+            style_case{WS_POPUP, 0, {0x108000, 0, 0, 0, 0, 0}},
+            style_case{k_overlapped_window, WS_EX_TOOLWINDOW, {0x100000, 0x8000, 0, 0, 0x8000, 0}},
+            style_case{WS_CAPTION | WS_SYSMENU, WS_EX_CONTEXTHELP, {0x100000, 0x8000, 0x8000, 0x8000, 0, 0}},
+        };
+
+        for (const auto& [style, ex_style, states] : cases)
+        {
+            const auto window = this->create_top_level_window(0, style);
+            this->emu.process.windows.get(window)->ex_style = ex_style;
+
+            ASSERT_EQ(TRUE, this->title_bar_info(window, sizeof(EMU_TITLEBARINFO))) << std::hex << style;
+            const auto info = this->read_title_bar_info();
+            EXPECT_EQ(states, std::to_array(info.rgstate)) << std::hex << style << " " << ex_style;
+        }
+    }
+
+    TEST_F(UserQueryTest, TitleBarOfAWindowWithoutCaptionIsEmpty)
+    {
+        const auto window = this->create_top_level_window(0, WS_POPUP);
+        auto* win = this->emu.process.windows.get(window);
+        win->x = 100;
+        win->y = 100;
+        win->width = 400;
+        win->height = 300;
+
+        ASSERT_EQ(TRUE, this->title_bar_info(window, sizeof(EMU_TITLEBARINFO)));
+        const auto rect = this->read_title_bar_info().rcTitleBar;
+        EXPECT_EQ(0, rect.left);
+        EXPECT_EQ(0, rect.top);
+        EXPECT_EQ(0, rect.right);
+        EXPECT_EQ(0, rect.bottom);
     }
 }
