@@ -183,3 +183,9 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // Android's org.json only exists on devices; unit tests on the JVM need the real implementation.
+    testImplementation("org.json:json:20240303")
+}
