@@ -18,7 +18,7 @@ import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
 import 'game_page.dart';
 import 'gog_tab.dart';
-import 'settings_page.dart';
+import 'settings_tab.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -45,7 +45,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 4, vsync: this)..addListener(_onTabChanged);
+  late final TabController _tabs = TabController(length: 5, vsync: this)..addListener(_onTabChanged);
   bool _installing = false;
   double? _progress;
   String? _error;
@@ -89,16 +89,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     await widget.library.releaseUnusedFolders();
   }
 
-  void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => SettingsPage(
-          settings: widget.settings,
-          gog: widget.gog,
-          onRedownloadRoot: widget.root.isInstalled && !_installing ? _installRoot : null,
-        ),
-      ),
-    );
+  /// The download shows its progress on the Installed tab.
+  void _redownloadRoot() {
+    _tabs.animateTo(0);
+    _installRoot();
   }
 
   /// The library outlives the game page, so it reports failed writes even after the page is gone.
@@ -214,7 +208,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     final installed = widget.root.isInstalled;
-    final theme = Theme.of(context);
 
     return Scaffold(
       floatingActionButton: _tabs.index == 0 && installed
@@ -229,20 +222,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       body: SafeArea(
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 12, 0),
-              child: Row(
-                children: [
-                  Text('Sogen', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(LucideIcons.settings, color: SogenColors.neutral400),
-                    tooltip: 'Settings',
-                    onPressed: _openSettings,
-                  ),
-                ],
-              ),
-            ),
             TabBar(
               controller: _tabs,
               isScrollable: true,
@@ -254,6 +233,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 Tab(text: 'GOG'),
                 Tab(text: 'Steam'),
                 Tab(text: 'Epic'),
+                Tab(text: 'Settings'),
               ],
             ),
             Expanded(
@@ -270,6 +250,11 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                   ),
                   const CenteredMessage(icon: LucideIcons.hourglass, text: 'Steam support is coming soon.'),
                   const CenteredMessage(icon: LucideIcons.hourglass, text: 'Epic Games support is coming soon.'),
+                  SettingsTab(
+                    settings: widget.settings,
+                    gog: widget.gog,
+                    onRedownloadRoot: installed && !_installing ? _redownloadRoot : null,
+                  ),
                 ],
               ),
             ),
