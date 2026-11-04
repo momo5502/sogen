@@ -1,12 +1,17 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:simple_icons/simple_icons.dart';
 
 import '../ads.dart';
 import '../emulation_root.dart';
 import '../game_library.dart';
 import '../gog/gog_account.dart';
+import '../gog/gog_cdn.dart';
+import '../gog/gog_installer.dart';
+import '../gog/gog_library.dart';
 import '../session.dart';
 import '../settings.dart';
 import '../support.dart';
@@ -15,7 +20,7 @@ import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
 import 'game_page.dart';
 import 'gog_tab.dart';
-import 'settings_page.dart';
+import 'settings_tab.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -25,6 +30,8 @@ class HomePage extends StatefulWidget {
     required this.settings,
     required this.ads,
     required this.gog,
+    required this.gogContent,
+    required this.installer,
   });
 
   final EmulationRoot root;
@@ -32,13 +39,15 @@ class HomePage extends StatefulWidget {
   final AppSettings settings;
   final Ads ads;
   final GogAccount gog;
+  final GogContent gogContent;
+  final GogInstaller installer;
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
 class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 4, vsync: this)..addListener(_onTabChanged);
+  late final TabController _tabs = TabController(length: 5, vsync: this)..addListener(_onTabChanged);
   bool _installing = false;
   double? _progress;
   String? _error;
@@ -82,16 +91,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     await widget.library.releaseUnusedFolders();
   }
 
-  void _openSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => SettingsPage(
-          settings: widget.settings,
-          gog: widget.gog,
-          onRedownloadRoot: widget.root.isInstalled && !_installing ? _installRoot : null,
-        ),
-      ),
-    );
+  /// The download shows its progress on the Installed tab.
+  void _redownloadRoot() {
+    _tabs.animateTo(0);
+    _installRoot();
   }
 
   /// The library outlives the game page, so it reports failed writes even after the page is gone.
@@ -186,8 +189,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Remove ${game.name}?'),
-        content: const Text(
-          'The game files stay where they are. The saves and settings Sogen kept for the game are deleted.',
+        content: Text(
+          installIdOf(game.directory) != null
+              ? 'The game files Sogen downloaded are deleted, together with its saves and settings.'
+              : 'The game files stay where they are. The saves and settings Sogen kept for the game are deleted.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
@@ -205,7 +210,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     final installed = widget.root.isInstalled;
-    final theme = Theme.of(context);
 
     return Scaffold(
       floatingActionButton: _tabs.index == 0 && installed
@@ -217,44 +221,49 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               child: const Icon(LucideIcons.plus),
             )
           : null,
+      bottomNavigationBar: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: SogenColors.background,
+          border: Border(top: BorderSide(color: SogenColors.neutral800)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: TabBar(
+            controller: _tabs,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            dividerHeight: 0,
+            indicator: const _TopLineIndicator(),
+            indicatorSize: TabBarIndicatorSize.tab,
+            tabs: [
+              for (final (index, tab) in _tabIcons.indexed)
+                _IconTab(label: tab.label, position: _tabs.animation!, index: index, icon: tab.icon),
+            ],
+          ),
+        ),
+      ),
       body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 16, 12, 0),
-              child: Row(
-                children: [
-                  Text('Sogen', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(LucideIcons.settings, color: SogenColors.neutral400),
-                    tooltip: 'Settings',
-                    onPressed: _openSettings,
-                  ),
-                ],
-              ),
-            ),
-            TabBar(
-              controller: _tabs,
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              dividerColor: SogenColors.neutral800,
-              tabs: const [
-                Tab(text: 'Installed'),
-                Tab(text: 'GOG'),
-                Tab(text: 'Steam'),
-                Tab(text: 'Epic'),
-              ],
-            ),
             Expanded(
               child: TabBarView(
                 controller: _tabs,
                 children: [
                   _buildInstalled(installed),
-                  GogTab(account: widget.gog),
+                  GogTab(
+                    account: widget.gog,
+                    content: widget.gogContent,
+                    installer: widget.installer,
+                    library: widget.library,
+                    canInstall: installed && !_installing,
+                  ),
                   const CenteredMessage(icon: LucideIcons.hourglass, text: 'Steam support is coming soon.'),
                   const CenteredMessage(icon: LucideIcons.hourglass, text: 'Epic Games support is coming soon.'),
+                  SettingsTab(
+                    settings: widget.settings,
+                    gog: widget.gog,
+                    onRedownloadRoot: installed && !_installing ? _redownloadRoot : null,
+                  ),
                 ],
               ),
             ),
@@ -310,6 +319,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     separatorBuilder: (_, _) => const SizedBox(height: 12),
                     itemBuilder: (context, index) => _GameCard(
                       game: games[index],
+                      icon: widget.library.iconOf(games[index]),
                       accent: SogenColors.accents[index % SogenColors.accents.length],
                       enabled: !_installing,
                       saving: _saving.containsKey(games[index].id),
@@ -445,6 +455,7 @@ class _SupportNotice extends StatelessWidget {
 class _GameCard extends StatelessWidget {
   const _GameCard({
     required this.game,
+    required this.icon,
     required this.accent,
     required this.enabled,
     required this.saving,
@@ -453,6 +464,7 @@ class _GameCard extends StatelessWidget {
   });
 
   final Game game;
+  final File? icon;
   final Color accent;
   final bool enabled;
   final bool saving;
@@ -472,7 +484,19 @@ class _GameCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              IconTile(icon: LucideIcons.gamepad2, color: accent),
+              if (icon case final icon?)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    icon,
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => IconTile(icon: LucideIcons.gamepad2, color: accent),
+                  ),
+                )
+              else
+                IconTile(icon: LucideIcons.gamepad2, color: accent),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
@@ -480,11 +504,16 @@ class _GameCard extends StatelessWidget {
                   children: [
                     Text(game.name, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 4),
-                    Text(
-                      saving ? 'Suspending…' : game.executable,
-                      overflow: TextOverflow.ellipsis,
-                      style: monospace(fontSize: 12, color: SogenColors.neutral400),
-                    ),
+                    if (saving)
+                      Text('Suspending…', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
+                    else if (game.source?.store == GogLibrary.store)
+                      Text('GOG', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
+                    else
+                      Text(
+                        game.executable,
+                        overflow: TextOverflow.ellipsis,
+                        style: monospace(fontSize: 12, color: SogenColors.neutral400),
+                      ),
                   ],
                 ),
               ),
@@ -527,6 +556,100 @@ class _EmptyLibrary extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// How each tab's icon looks once its tab is active. Steam's and Epic's brand colors are black, which would vanish on
+/// the dark tab bar, so they use the light blue of Steam's client and white.
+const _tabIcons = [
+  (label: 'Installed', icon: _TabIcon.sogen()),
+  (label: 'GOG', icon: _TabIcon(SimpleIcons.gogdotcom, Color(0xFFB65FD0))),
+  (label: 'Steam', icon: _TabIcon(SimpleIcons.steam, Color(0xFF66C0F4))),
+  (label: 'Epic', icon: _TabIcon(SimpleIcons.epicgames, Colors.white)),
+  (label: 'Settings', icon: _TabIcon(LucideIcons.settings, SogenColors.neutral100)),
+];
+
+/// A tab shown by its icon alone, named by a tooltip and for screen readers, so that all tabs fit side by side. The
+/// icon follows the tab bar's position, so it takes its color gradually while the user swipes towards its tab.
+class _IconTab extends StatelessWidget {
+  const _IconTab({required this.icon, required this.label, required this.position, required this.index});
+
+  final _TabIcon icon;
+  final String label;
+  final Animation<double> position;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        child: Tab(
+          child: SizedBox.square(
+            dimension: 22,
+            child: AnimatedBuilder(
+              animation: position,
+              builder: (context, _) => icon.build((1 - (position.value - index).abs()).clamp(0.0, 1.0)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// An icon that is neutral while its tab is inactive and colored while it is active, blending in between.
+class _TabIcon {
+  const _TabIcon(IconData this.icon, Color this.activeColor);
+
+  /// The Sogen logo has several colors, so its colored and neutral versions are cross-faded instead.
+  const _TabIcon.sogen() : icon = null, activeColor = null;
+
+  static const _inactive = SogenColors.neutral400;
+
+  final IconData? icon;
+  final Color? activeColor;
+
+  Widget build(double active) {
+    final icon = this.icon;
+    if (icon != null) {
+      return Icon(icon, size: 22, color: Color.lerp(_inactive, activeColor, active));
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Opacity(
+          opacity: 1 - active,
+          child: SvgPicture.asset(
+            'assets/sogen_mark.svg',
+            colorFilter: const ColorFilter.mode(_inactive, BlendMode.srcIn),
+          ),
+        ),
+        Opacity(opacity: active, child: SvgPicture.asset('assets/sogen_mark.svg')),
+      ],
+    );
+  }
+}
+
+/// The selected tab's line, drawn along the top edge since the tab bar sits at the bottom of the screen.
+class _TopLineIndicator extends Decoration {
+  const _TopLineIndicator();
+
+  @override
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) => _TopLinePainter();
+}
+
+class _TopLinePainter extends BoxPainter {
+  @override
+  void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
+    final size = configuration.size!;
+    final line = Rect.fromLTWH(offset.dx + size.width * 0.3, offset.dy, size.width * 0.4, 3);
+    canvas.drawRRect(
+      RRect.fromRectAndCorners(line, bottomLeft: const Radius.circular(3), bottomRight: const Radius.circular(3)),
+      Paint()..color = SogenColors.neutral100,
     );
   }
 }

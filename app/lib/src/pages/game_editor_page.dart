@@ -151,7 +151,11 @@ class _GameEditorPageState extends State<GameEditorPage> {
     }
   }
 
+  /// What Sogen knows about a game it installed stays with it while it keeps its folder; GOG's working directory only
+  /// applies to the executable GOG starts.
   Future<void> _store(String directory, String executable) async {
+    final previous = widget.game;
+    final sameFolder = previous != null && previous.directory == directory;
     final game = Game(
       id: widget.game?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       name: _name.text.trim().isEmpty ? p.basenameWithoutExtension(executable) : _name.text.trim(),
@@ -162,6 +166,9 @@ class _GameEditorPageState extends State<GameEditorPage> {
       liveNetwork: _liveNetwork,
       console: _console,
       settings: _settings,
+      workingDirectory: sameFolder && previous.executable == executable ? previous.workingDirectory : null,
+      source: sameFolder ? previous.source : null,
+      icon: sameFolder ? previous.icon : null,
     );
 
     if (!await _keepOrDiscardSuspendedState(game) || !mounted) {
