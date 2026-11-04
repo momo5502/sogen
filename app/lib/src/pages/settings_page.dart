@@ -3,7 +3,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../ads.dart';
 import '../gog/gog_account.dart';
-import '../gog/gog_http.dart';
 import '../settings.dart';
 import '../theme.dart';
 
@@ -28,29 +27,11 @@ class _SettingsPageState extends State<SettingsPage> {
     await widget.settings.setShowAds(show);
   }
 
-  bool _signingIn = false;
-
-  Future<void> _signInToGog() async {
-    setState(() => _signingIn = true);
-    try {
-      await widget.gog.signIn();
-    } on GogException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _signingIn = false);
-      }
-    }
-  }
-
   Future<void> _signOutOfGog() async {
     final signOut = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Sign out of GOG?'),
-        content: const Text('Games you installed from GOG stay installed.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sign out')),
@@ -118,14 +99,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 title: const Text('Sign out of GOG'),
                 subtitle: Text('Sogen forgets your GOG account', style: subtitleStyle),
                 onTap: _signOutOfGog,
-              )
-            else
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                enabled: !_signingIn,
-                title: const Text('Sign in to GOG'),
-                subtitle: Text('Browse the Windows games you own on GOG', style: subtitleStyle),
-                onTap: _signInToGog,
               ),
           ],
         ),
