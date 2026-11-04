@@ -303,10 +303,20 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       art: GameArt(source: icon == null ? null : LocalArt(icon), color: placeholderColor(index)),
       title: game.name,
       subtitle: switch (_storeNames[game.source?.store]) {
-        _ when saving => Text('Suspending…', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400)),
-        final store? => Text(store, style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400)),
+        _ when saving => Text(
+          'Suspending…',
+          maxLines: 1,
+          style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+        ),
+        final store? => Text(
+          store,
+          maxLines: 1,
+          style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+        ),
         null => Text(
           game.executable,
+          maxLines: 1,
+          softWrap: false,
           overflow: TextOverflow.ellipsis,
           style: monospace(fontSize: 12, color: SogenColors.neutral400),
         ),
