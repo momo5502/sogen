@@ -82,7 +82,8 @@ class SteamPlanner {
     }
 
     final buildId = info['depots']?['branches']?[branch]?.value('buildid') ?? '';
-    return (planManifests('$appId', buildId, info, manifests), language);
+    final depotApps = {for (final depot in chosen) depot.id: depot.appId};
+    return (planManifests('$appId', buildId, info, manifests, depotApps: depotApps), language);
   }
 
   Future<Uint8List> _manifest(List<String> hosts, SteamDepot depot, int code) async {
@@ -152,15 +153,22 @@ class SteamPlanner {
     ];
   }
 
-  static PlannedInstall planManifests(String appId, String buildId, KeyValues info, List<SteamManifest> manifests) {
+  /// Plans the files of [manifests], given in the order the app info lists their depots. Steam installs every depot
+  /// into the game folder, so a path a later depot provides too, like a language depot's version of a base file, is
+  /// taken from the later depot. [depotApps] names the app each depot belongs to where it is not [appId].
+  static PlannedInstall planManifests(
+    String appId,
+    String buildId,
+    KeyValues info,
+    List<SteamManifest> manifests, {
+    Map<int, int> depotApps = const {},
+  }) {
     final folders = FolderSpellings(steamService);
-    final sharedChunks = <SharedChunk>[];
-    final chunkIndices = <String, int>{};
-    final files = <PlannedFile>[];
-    final fileKeys = <String, String>{};
+    final chosen = <String, (SteamManifest, SteamFile, DepotPath)>{};
     final directories = <String>{};
 
     for (final manifest in manifests) {
+      final inDepot = <String>{};
       for (final file in manifest.files) {
         if (file.isSymlink) {
           throw const SteamException('This game contains links between files, which Sogen cannot install yet.');
@@ -170,21 +178,29 @@ class SteamPlanner {
           directories.add(path.relative);
           continue;
         }
-        if (fileKeys.containsKey(path.collisionKey)) {
+        if (!inDepot.add(path.collisionKey)) {
           throw SteamException('Two files of this game have the same name ($path), which Sogen cannot install.');
         }
-        fileKeys[path.collisionKey] = path.relative;
-
-        files.add(
-          PlannedFile(
-            path: path.relative,
-            size: file.size,
-            source: ChunkSource.steam,
-            parts: _parts(manifest.depotId, file, sharedChunks, chunkIndices),
-            sha1: file.size == 0 || file.sha1.replaceAll('0', '').isEmpty ? null : file.sha1,
-          ),
-        );
+        chosen[path.collisionKey] = (manifest, file, path);
       }
+    }
+
+    final sharedChunks = <SharedChunk>[];
+    final chunkIndices = <String, int>{};
+    final files = <PlannedFile>[];
+    final fileKeys = <String, String>{};
+    for (final MapEntry(:key, value: (manifest, file, path)) in chosen.entries) {
+      fileKeys[key] = path.relative;
+      final app = depotApps[manifest.depotId] ?? int.parse(appId);
+      files.add(
+        PlannedFile(
+          path: path.relative,
+          size: file.size,
+          source: ChunkSource.steam,
+          parts: _parts(manifest.depotId, app, file, sharedChunks, chunkIndices),
+          sha1: file.size == 0 || file.sha1.replaceAll('0', '').isEmpty ? null : file.sha1,
+        ),
+      );
     }
 
     for (final key in fileKeys.keys) {
@@ -214,7 +230,13 @@ class SteamPlanner {
 
   /// A file's chunks in order of their offset, with the gaps no chunk covers filled with zeros, as Steam leaves runs of
   /// zeros out of its depots.
-  static List<ChunkPart> _parts(int depotId, SteamFile file, List<SharedChunk> sharedChunks, Map<String, int> indices) {
+  static List<ChunkPart> _parts(
+    int depotId,
+    int appId,
+    SteamFile file,
+    List<SharedChunk> sharedChunks,
+    Map<String, int> indices,
+  ) {
     final chunks = [...file.chunks]..sort((a, b) => a.offset.compareTo(b.offset));
     final parts = <ChunkPart>[];
     var position = 0;
@@ -234,6 +256,7 @@ class SteamPlanner {
             size: chunk.size,
             compressedSize: chunk.compressedSize,
             depot: depotId,
+            app: appId,
           ),
         );
         return sharedChunks.length - 1;

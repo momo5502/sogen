@@ -15,6 +15,7 @@ class SharedChunk {
     required this.size,
     required this.compressedSize,
     this.depot,
+    this.app,
   });
 
   final ChunkSource source;
@@ -26,6 +27,9 @@ class SharedChunk {
   /// The Steam depot the chunk belongs to, whose key decrypts it.
   final int? depot;
 
+  /// The Steam app that owns [depot], which Steam hands out the depot's key for.
+  final int? app;
+
   Map<String, Object> toJson() => {
     'source': source.name,
     'path': path,
@@ -33,6 +37,7 @@ class SharedChunk {
     'size': size,
     'compressedSize': compressedSize,
     'depot': ?depot,
+    'app': ?app,
   };
 }
 

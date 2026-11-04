@@ -23,8 +23,8 @@ abstract interface class InstallSource {
   StoreService get service;
 
   /// The CDN endpoints by the name of the [ChunkSource] they serve, and what else the native downloader needs to fetch
-  /// them, like Steam's depot keys.
-  Future<Map<String, Object>> links(String productId);
+  /// the chunks of [plan], the stored transfer plan, like Steam's depot keys.
+  Future<Map<String, Object>> links(String productId, Map<String, Object?> plan);
 
   /// A square PNG icon of the game, if the store has one.
   Future<Uri?> icon(String productId);
@@ -307,7 +307,11 @@ class StoreInstaller extends ChangeNotifier {
     }
 
     final staging = Directory(p.join((await _downloadsDirectory()).path, pending.installId));
-    final links = await _sourceOf(pending).links(pending.game.source!.productId);
+    final plan = jsonDecode(await File(p.join(staging.path, 'plan.json')).readAsString());
+    if (plan is! Map<String, Object?>) {
+      throw const StoreException('Sogen cannot continue this download. Please cancel it and download the game again.');
+    }
+    final links = await _sourceOf(pending).links(pending.game.source!.productId, plan);
     if (_cancelledStarts.contains(pending.installId)) {
       throw const _StartCancelled();
     }

@@ -13,7 +13,7 @@ class GogInstallSource implements InstallSource {
   StoreService get service => gogService;
 
   @override
-  Future<Map<String, Object>> links(String productId) async => {
+  Future<Map<String, Object>> links(String productId, Map<String, Object?> plan) async => {
     'game': [for (final endpoint in await _content.gameEndpoints(productId)) endpoint.toJson()],
     'dependency': [for (final endpoint in await _content.dependencyEndpoints()) endpoint.toJson()],
   };

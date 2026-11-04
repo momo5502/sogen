@@ -40,13 +40,13 @@ ProtoWriter _chunk(String sha, int offset, int size) => ProtoWriter()
   ..varint(5, size ~/ 2);
 
 /// A depot manifest as the CDN serves it: a zip holding the payload, metadata, signature and end sections.
-Uint8List _manifestZip(List<ProtoWriter> mappings, {bool encrypted = true}) {
+Uint8List _manifestZip(List<ProtoWriter> mappings, {bool encrypted = true, int depot = 481}) {
   final payload = ProtoWriter();
   for (final mapping in mappings) {
     payload.message(1, mapping);
   }
   final metadata = ProtoWriter()
-    ..varint(1, 481)
+    ..varint(1, depot)
     ..varint(2, 123456789)
     ..boolean(4, encrypted);
 
@@ -233,6 +233,51 @@ void main() {
 
       expect(depots.map((depot) => depot.id), [2]);
       expect(formatUint64(depots.single.manifestId), '18446744073709551615');
+    });
+
+    test('a file a later depot provides too is taken from the later depot', () {
+      final base = SteamManifest.parse(
+        _manifestZip([
+          _file(r'bin\Game.exe', 10, chunks: [_chunk('aa' * 20, 0, 10)]),
+          _file('english.txt', 10, chunks: [_chunk('bb' * 20, 0, 10)]),
+        ]),
+        _key,
+      );
+      final german = SteamManifest.parse(
+        _manifestZip([
+          _file('English.txt', 10, chunks: [_chunk('cc' * 20, 0, 10)]),
+        ], depot: 484),
+        _key,
+      );
+
+      final plan = SteamPlanner.planManifests(
+        '480',
+        '42',
+        KeyValues.parseText(_info),
+        [base, german],
+        depotApps: {484: 1007},
+      ).plan;
+
+      expect(plan.files.map((file) => file.path), ['bin/Game.exe', 'English.txt']);
+      expect(plan.sharedChunks.map((chunk) => (chunk.depot, chunk.app, chunk.path.split('/').last)), [
+        (481, 480, 'aa' * 20),
+        (484, 1007, 'cc' * 20),
+      ]);
+    });
+
+    test('two files of the same name in one depot are refused', () {
+      final manifest = SteamManifest.parse(
+        _manifestZip([
+          _file(r'bin\Game.exe', 10, chunks: [_chunk('aa' * 20, 0, 10)]),
+          _file(r'BIN\game.exe', 10, chunks: [_chunk('bb' * 20, 0, 10)]),
+        ]),
+        _key,
+      );
+
+      expect(
+        () => SteamPlanner.planManifests('480', '42', KeyValues.parseText(_info), [manifest]),
+        throwsA(isA<SteamException>()),
+      );
     });
 
     test('gaps between chunks are filled with zeros and the Windows launch option is used', () {

@@ -78,6 +78,7 @@ void main() {
     File(p.join(support.path, 'downloads', installId, 'install.json'))
       ..createSync(recursive: true)
       ..writeAsStringSync(jsonEncode({'format': 1, 'installId': installId, 'game': game.toJson(), 'script': []}));
+    File(p.join(support.path, 'downloads', installId, 'plan.json')).writeAsStringSync(jsonEncode({'format': 1}));
 
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(downloads, (call) async {
