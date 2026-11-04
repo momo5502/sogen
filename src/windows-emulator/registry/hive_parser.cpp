@@ -39,9 +39,13 @@ namespace sogen
             uint8_t dummyc[4];
             int32_t value_count;
             int32_t offsets;
-            uint8_t dummyd[28];
+            uint8_t dummyd[4];
+            int32_t class_offset;
+            uint8_t dummye[4];
+            uint32_t max_class_length;
+            uint8_t dummyf[12];
             int16_t len;
-            int16_t du;
+            uint16_t class_length;
             char name[255];
         };
 
@@ -59,6 +63,16 @@ namespace sogen
         };
 
         // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
+        hive_key make_hive_key(const key_block_t& block)
+        {
+            return {block.subkeys, block.value_count, block.offsets,
+                    hive_key_class{
+                        .offset = block.class_offset,
+                        .length = block.class_length,
+                        .max_sub_key_class_length = block.max_class_length,
+                    }};
+        }
 
         bool read_file_data_safe(std::ifstream& file, const uint64_t offset, void* buffer, const size_t size)
         {
@@ -190,13 +204,23 @@ namespace sogen
 
                 const auto key_block = read_file_object<key_block_t>(file, MAIN_KEY_BLOCK_OFFSET);
 
-                return {key_block.subkeys, key_block.value_count, key_block.offsets};
+                return make_hive_key(key_block);
             }
             catch (const std::exception& e)
             {
                 throw std::runtime_error("Bad hive file '" + file_path.string() + "': " + e.what());
             }
         }
+    }
+
+    std::vector<std::byte> hive_key::get_class_name(std::ifstream& file) const
+    {
+        if (this->class_.offset < 0 || this->class_.length == 0)
+        {
+            return {};
+        }
+
+        return read_file_data(file, MAIN_ROOT_OFFSET + static_cast<uint64_t>(this->class_.offset) + 4, this->class_.length);
     }
 
     const hive_value* hive_key::get_value(std::ifstream& file, const std::string_view name)
@@ -254,8 +278,7 @@ namespace sogen
                 const auto subkey_name_len = subkey.len < 0 ? size_t{0} : std::min(static_cast<size_t>(subkey.len), sizeof(subkey.name));
                 std::string subkey_name(subkey.name, subkey_name_len);
 
-                const auto [it, inserted] =
-                    this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
+                const auto [it, inserted] = this->sub_keys_.emplace(std::move(subkey_name), make_hive_key(subkey));
                 if (inserted)
                 {
                     this->sub_keys_by_index_.emplace_back(it->first);

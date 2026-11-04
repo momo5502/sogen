@@ -389,6 +389,9 @@ namespace sogen::test
           protected:
             void SetUp() override
             {
+#if defined(OS_EMSCRIPTEN) && !defined(__EMSCRIPTEN_PTHREADS__)
+                GTEST_SKIP() << "Requires host threads";
+#endif
                 auto cpu = std::make_unique<two_vcpu_machine>();
                 this->machine = cpu.get();
                 emulator_interfaces interfaces{};

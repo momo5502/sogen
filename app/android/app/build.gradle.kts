@@ -119,10 +119,6 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        // Release builds pass the real AdMob app ID with -PadmobAppId=...; the default is Google's sample app.
-        manifestPlaceholders["admobAppId"] =
-            providers.gradleProperty("admobAppId").getOrElse("ca-app-pub-3940256099942544~3347511713")
-
         ndk {
             // Games run on FEX, which only exists for ARM64 hosts.
             abiFilters += listOf("arm64-v8a")
@@ -186,4 +182,10 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+    // Android's org.json only exists on devices; unit tests on the JVM need the real implementation.
+    testImplementation("org.json:json:20240303")
 }

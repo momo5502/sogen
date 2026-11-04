@@ -260,7 +260,9 @@ Key points:
 - **Capability query:** the emulator interface exposes
   `bool supports_multiple_vcpus() const`. WHP returns `true`; unicorn and icicle return
   `false`; KVM returns `false` for now (the hypervisor supports it, but multi-vCPU KVM
-  is deferred to Phase 5 and reports unsupported until implemented).
+  is deferred to Phase 5 and reports unsupported until implemented). FEX returns `false`
+  as well: its per-vCPU state is in place, but it reports `true` only once the cross-vCPU
+  gaps listed in `docs/fex-backend.md` are closed.
 - **Creation:** `create_x86_64_emulator(backend_type, emulator_creation_settings{ .vcpu_count })`
   (`backend_selection.hpp:10-19`). `vcpu_count` defaults to `1`. Requesting more than one
   vCPU on a backend where `supports_multiple_vcpus()` is `false` is a hard error at

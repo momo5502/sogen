@@ -693,6 +693,28 @@ namespace sogen
         };
     }
 
+    std::optional<exposed_hive_key> registry_manager::get_original_hive_key(const registry_key& key)
+    {
+        if (this->get_generation(registry_manager::get_full_key_path(key)) != 0)
+        {
+            return std::nullopt;
+        }
+
+        return this->get_hive_key(key);
+    }
+
+    std::vector<std::byte> registry_manager::get_class_name(const registry_key& key)
+    {
+        const auto backing_key = this->get_original_hive_key(key);
+        return backing_key ? backing_key->key.get_class_name(backing_key->file) : std::vector<std::byte>{};
+    }
+
+    uint32_t registry_manager::get_max_sub_key_class_length(const registry_key& key)
+    {
+        const auto backing_key = this->get_original_hive_key(key);
+        return backing_key ? backing_key->key.get_max_sub_key_class_length() : 0;
+    }
+
     std::optional<std::string_view> registry_manager::get_sub_key_name(const registry_key& key, const size_t index)
     {
         const auto overlay_entry = this->overlay_values_.find(registry_manager::get_full_key_path(key));

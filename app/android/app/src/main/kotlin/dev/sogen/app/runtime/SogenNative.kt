@@ -39,13 +39,20 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
     private val handle: Long = nativeCreate(listener)
 
     /** Child processes run in [sandboxExecutable]; an empty path leaves the guest unable to create them. */
-    fun run(config: RunConfig, documentTrees: List<DocumentTree>, sandboxExecutable: String, vulkan: VulkanDriver): Int = nativeRun(
+    fun run(
+        config: RunConfig,
+        directoryMounts: List<DirectoryMount>,
+        documentTrees: List<DocumentTree>,
+        sandboxExecutable: String,
+        vulkan: VulkanDriver,
+    ): Int = nativeRun(
         handle,
         config.emulationRoot,
         config.application,
         config.arguments.toTypedArray(),
         config.environment.flatMap { listOf(it.key, it.value) }.toTypedArray(),
-        config.pathMappings.flatMap { listOf(it.key, it.value) }.toTypedArray(),
+        config.rootLayerDirectory,
+        directoryMounts.flatMap { it.toArguments() }.toTypedArray(),
         documentTrees.toTypedArray(),
         config.workingDirectory,
         config.backend,
@@ -90,7 +97,8 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         application: String,
         arguments: Array<String>,
         environment: Array<String>,
-        pathMappings: Array<String>,
+        rootLayerDirectory: String,
+        directoryMounts: Array<String>,
         documentTrees: Array<DocumentTree>,
         workingDirectory: String,
         backend: String,

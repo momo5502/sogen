@@ -1417,6 +1417,12 @@ jobs:
         working-directory: app
         run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }}
 
+      # Building the APK generates the Gradle wrapper the native unit tests run with. The Android Gradle Plugin only
+      # creates unit test tasks for the debug build type.
+      - name: Test Native App Code
+        working-directory: app/android
+        run: ./gradlew :app:testDebugUnitTest
+
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:

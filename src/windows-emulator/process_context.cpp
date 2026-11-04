@@ -704,6 +704,8 @@ namespace sogen
             display_info.pPrimaryMonitor = monitor_obj.value();
         });
 
+        this->cursor_x = static_cast<int32_t>(this->display_width / 2);
+        this->cursor_y = static_cast<int32_t>(this->display_height / 2);
         this->set_display_mode(win_emu, this->display_width, this->display_height);
     }
 

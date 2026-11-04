@@ -245,6 +245,40 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, fs.remove(writable));
     }
 
+    TEST_F(FileSystemTest, CopyOnWriteRootKeepsChangesInItsLayerAcrossInstances)
+    {
+        const auto layer = this->root / "layer";
+        write_host_file(this->root / "c" / "deleted.txt", "deleted");
+
+        const windows_path modified{'c', {u"x.txt"}};
+        const windows_path deleted{'c', {u"deleted.txt"}};
+        constexpr std::string_view contents = "changed";
+
+        {
+            file_system fs{this->root, filesystem_mode::copy_on_write, layer};
+            guest_file file{fs, modified, u"wb", fs.open(modified, u"wb").file};
+            ASSERT_TRUE(file);
+            ASSERT_EQ(contents.size(), file.write(std::as_bytes(std::span(contents))));
+            ASSERT_TRUE(file.flush());
+            ASSERT_EQ(STATUS_SUCCESS, fs.remove(deleted));
+        }
+
+        file_system fs{this->root, filesystem_mode::copy_on_write, layer};
+        EXPECT_EQ(contents, read_guest_file(guest_file{fs, modified, u"rb", fs.open_read(modified).file}, 16));
+        EXPECT_FALSE(fs.stat(deleted));
+
+        EXPECT_EQ("root", read_host_file(this->root / "c" / "x.txt"));
+        EXPECT_EQ("deleted", read_host_file(this->root / "c" / "deleted.txt"));
+        EXPECT_EQ(contents, read_host_file(layer / "c" / "upper" / "x.txt"));
+    }
+
+    TEST_F(FileSystemTest, RootLayerRequiresCopyOnWriteRoot)
+    {
+        EXPECT_THROW(file_system(this->root, filesystem_mode::copy_on_write), std::runtime_error);
+        EXPECT_THROW(file_system({}, filesystem_mode::copy_on_write, this->root / "layer"), std::runtime_error);
+        EXPECT_THROW(file_system(this->root, filesystem_mode::read_write, this->root / "layer"), std::runtime_error);
+    }
+
     TEST_F(FileSystemTest, CreatedEntriesKeepTheGuestSpelling)
     {
         file_system fs{this->root, filesystem_mode::read_only};

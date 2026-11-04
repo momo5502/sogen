@@ -1,11 +1,20 @@
 package dev.sogen.app
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
 import android.view.KeyEvent
+import dev.sogen.app.download.DownloadService
+import dev.sogen.app.download.DownloadState
+import dev.sogen.app.download.Downloads
 import dev.sogen.app.runtime.RunConfig
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,12 +22,17 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
     private var events: EventChannel.EventSink? = null
     private lateinit var session: SessionController
     private var folderPick: MethodChannel.Result? = null
+    private var gogSignIn: MethodChannel.Result? = null
+    private val secrets by lazy { SecretStore(this) }
+    private val secretChanges = Executors.newSingleThreadExecutor()
+    private var downloadListener: ((DownloadState) -> Unit)? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -87,6 +101,41 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(messenger, "dev.sogen.app/secrets").setMethodCallHandler { call, result ->
+            handleSecretCall(call, result)
+        }
+
+        EventChannel(messenger, "dev.sogen.app/downloads/events").setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
+                val main = Handler(Looper.getMainLooper())
+                val listener: (DownloadState) -> Unit = { state -> main.post { sink.success(state.toMap()) } }
+                downloadListener?.let(Downloads::unlisten)
+                downloadListener = listener
+                Downloads.listen(listener)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                downloadListener?.let(Downloads::unlisten)
+                downloadListener = null
+            }
+        })
+
+        MethodChannel(messenger, "dev.sogen.app/downloads").setMethodCallHandler { call, result ->
+            handleDownloadCall(call, result)
+        }
+
+        MethodChannel(messenger, "dev.sogen.app/gog").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "signIn" -> signInToGog(call.argument<String>("url").orEmpty(), result)
+                "forgetLogin" -> {
+                    GogSignInActivity.forgetLogin()
+                    result.success(null)
+                }
+
+                else -> result.notImplemented()
+            }
+        }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -147,8 +196,9 @@ class MainActivity : FlutterActivity() {
         application = call.argument<String>("application").orEmpty(),
         arguments = call.argument<List<String>>("arguments").orEmpty(),
         environment = call.argument<Map<String, String>>("environment").orEmpty(),
-        pathMappings = call.argument<Map<String, String>>("pathMappings").orEmpty(),
+        rootLayerDirectory = call.argument<String>("rootLayerDirectory").orEmpty(),
         documentMounts = call.argument<Map<String, String>>("documentMounts").orEmpty(),
+        directoryMounts = call.argument<Map<String, String>>("directoryMounts").orEmpty(),
         layerDirectory = call.argument<String>("layerDirectory").orEmpty(),
         workingDirectory = call.argument<String>("workingDirectory").orEmpty(),
         backend = call.argument<String>("backend").orEmpty(),
@@ -164,8 +214,123 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_FOLDER_REQUEST)
     }
 
+    override fun onDestroy() {
+        downloadListener?.let(Downloads::unlisten)
+        downloadListener = null
+        super.onDestroy()
+    }
+
+    private fun handleDownloadCall(call: MethodCall, result: MethodChannel.Result) {
+        val installId = call.argument<String>("installId").orEmpty()
+        when (call.method) {
+            "status" -> result.success(Downloads.current?.toMap())
+            "isMetered" -> result.success(getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered)
+            "start" -> {
+                if (!Downloads.reserve(installId)) {
+                    result.error("busy", "Another download is running", null)
+                    return
+                }
+
+                requestNotificationPermission()
+                try {
+                    startForegroundService(
+                        Intent(this, DownloadService::class.java)
+                            .setAction(DownloadService.ACTION_START)
+                            .putExtra(DownloadService.EXTRA_INSTALL_ID, installId)
+                            .putExtra(DownloadService.EXTRA_ALLOW_METERED, call.argument<Boolean>("allowMetered") == true),
+                    )
+                } catch (e: RuntimeException) {
+                    // Android 12 and later refuse to start a foreground service while the app is in the background.
+                    Downloads.release(installId)
+                    result.error("start_failed", e.javaClass.simpleName, null)
+                    return
+                }
+                result.success(null)
+            }
+
+            "pause" -> {
+                if (Downloads.isRunning) {
+                    startService(Intent(this, DownloadService::class.java).setAction(DownloadService.ACTION_PAUSE))
+                }
+                result.success(null)
+            }
+
+            "cancel" -> {
+                if (Downloads.holds(installId)) {
+                    startService(Intent(this, DownloadService::class.java).setAction(DownloadService.ACTION_CANCEL))
+                    result.success(null)
+                } else {
+                    val staging = try {
+                        Downloads.stagingOf(this, installId)
+                    } catch (e: IllegalArgumentException) {
+                        result.error("invalid", "Not an install id", null)
+                        return
+                    }
+                    thread(name = "discard-download") {
+                        Downloads.notify(Downloads.discard(installId, staging))
+                        runOnUiThread { result.success(null) }
+                    }
+                }
+            }
+
+            else -> result.notImplemented()
+        }
+    }
+
+    /** The download notification shows progress and its controls, but the download runs without it. */
+    private fun requestNotificationPermission() {
+        val missing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (missing) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+        }
+    }
+
+    /** Keystore operations can block, so they run off the UI thread, one at a time and in the order requested. */
+    private fun handleSecretCall(call: MethodCall, result: MethodChannel.Result) {
+        val name = call.argument<String>("name").orEmpty()
+        secretChanges.execute {
+            try {
+                val value = when (call.method) {
+                    "read" -> secrets.read(name)
+                    "write" -> secrets.write(name, call.argument<String>("value").orEmpty())
+                    "delete" -> secrets.delete(name)
+                    else -> {
+                        runOnUiThread { result.notImplemented() }
+                        return@execute
+                    }
+                }
+                runOnUiThread { result.success(value as? String) }
+            } catch (e: Exception) {
+                runOnUiThread { result.error("secrets", e.javaClass.simpleName, null) }
+            }
+        }
+    }
+
+    /** Completes with the URL GOG redirected to after signing in, or null when the user went back. */
+    private fun signInToGog(url: String, result: MethodChannel.Result) {
+        if (gogSignIn != null) {
+            result.error("busy", "A GOG sign-in is already open", null)
+            return
+        }
+
+        gogSignIn = result
+        @Suppress("DEPRECATION")
+        startActivityForResult(
+            Intent(this, GogSignInActivity::class.java).putExtra(GogSignInActivity.EXTRA_URL, url),
+            GOG_SIGN_IN_REQUEST,
+        )
+    }
+
     @Deprecated("FlutterActivity is not a ComponentActivity, so it has no activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == GOG_SIGN_IN_REQUEST) {
+            val result = gogSignIn ?: return
+            gogSignIn = null
+            result.success(data?.getStringExtra(GogSignInActivity.EXTRA_REDIRECT)?.takeIf { resultCode == RESULT_OK })
+            return
+        }
+
         if (requestCode != PICK_FOLDER_REQUEST) {
             @Suppress("DEPRECATION")
             super.onActivityResult(requestCode, resultCode, data)
@@ -229,6 +394,8 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val TAG = "MainActivity"
         const val PICK_FOLDER_REQUEST = 1
+        const val GOG_SIGN_IN_REQUEST = 2
+        const val NOTIFICATION_PERMISSION_REQUEST = 3
 
         val systemKeys = setOf(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)
 

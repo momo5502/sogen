@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 40;
+    inline constexpr uint32_t protocol_version = 41;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -228,6 +228,7 @@ namespace sogen::gpu_bridge
         alpha_to_coverage_enable = 12,
         rasterization_samples = 13,
         line_rasterization_mode = 14,
+        attachment_feedback_loop_enable = 15,
     };
 
     // Discriminator for cmd_set_stencil: which of the three single-value stencil dynamic states to set.

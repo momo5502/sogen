@@ -12,7 +12,9 @@ namespace sogen
     class file_system
     {
       public:
-        explicit file_system(const std::filesystem::path& root, filesystem_mode root_mode = default_root_mode);
+        // A copy-on-write root keeps each drive's writes in its own layer below root_layer, named after the lowercase drive letter.
+        explicit file_system(const std::filesystem::path& root, filesystem_mode root_mode = default_root_mode,
+                             const std::filesystem::path& root_layer = {});
 
         void mount(const windows_path& guest_path, std::unique_ptr<mount_provider> provider, filesystem_mode mode = default_mount_mode);
         void map(const windows_path& guest_path, std::filesystem::path host_path, filesystem_mode mode = default_mount_mode);

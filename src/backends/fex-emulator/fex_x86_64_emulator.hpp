@@ -15,7 +15,7 @@ namespace sogen::fex
 #if !SOGEN_BUILD_STATIC
     FEX_EMULATOR_DLL_STORAGE
 #endif
-    std::unique_ptr<x86_64_emulator> create_x86_64_emulator();
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator(size_t vcpu_count = 1);
 
     // FEX compiles on the host while its dispatcher and translated code run inside a Hypervisor.framework VM
     // (docs/hvf-backend.md). Only built where the ARM64 Hypervisor.framework backend is.
