@@ -221,23 +221,30 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               child: const Icon(LucideIcons.plus),
             )
           : null,
+      bottomNavigationBar: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: SogenColors.background,
+          border: Border(top: BorderSide(color: SogenColors.neutral800)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: TabBar(
+            controller: _tabs,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            dividerHeight: 0,
+            indicator: const _TopLineIndicator(),
+            indicatorSize: TabBarIndicatorSize.tab,
+            tabs: [
+              for (final (index, tab) in _tabIcons.indexed)
+                _IconTab(label: tab.label, position: _tabs.animation!, index: index, icon: tab.icon),
+            ],
+          ),
+        ),
+      ),
       body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
-            TabBar(
-              controller: _tabs,
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              dividerColor: SogenColors.neutral800,
-              tabs: [
-                const _LabelledTab(icon: _SogenMark(), label: 'Installed'),
-                const _LabelledTab(icon: Icon(SimpleIcons.gogdotcom), label: 'GOG'),
-                const _LabelledTab(icon: Icon(SimpleIcons.steam), label: 'Steam'),
-                const _LabelledTab(icon: Icon(SimpleIcons.epicgames), label: 'Epic'),
-                const _LabelledTab(icon: Icon(LucideIcons.settings), label: 'Settings'),
-              ],
-            ),
             Expanded(
               child: TabBarView(
                 controller: _tabs,
@@ -554,40 +561,96 @@ class _EmptyLibrary extends StatelessWidget {
 }
 
 /// A tab showing its icon next to its label rather than above it, so the tab bar keeps the height of a text tab.
-class _LabelledTab extends StatelessWidget {
-  const _LabelledTab({required this.icon, required this.label});
+/// How each tab's icon looks once its tab is active. Steam's and Epic's brand colors are black, which would vanish on
+/// the dark tab bar, so they use the light blue of Steam's client and white.
+const _tabIcons = [
+  (label: 'Installed', icon: _TabIcon.sogen()),
+  (label: 'GOG', icon: _TabIcon(SimpleIcons.gogdotcom, Color(0xFFB65FD0))),
+  (label: 'Steam', icon: _TabIcon(SimpleIcons.steam, Color(0xFF66C0F4))),
+  (label: 'Epic', icon: _TabIcon(SimpleIcons.epicgames, Colors.white)),
+  (label: 'Settings', icon: _TabIcon(LucideIcons.settings, SogenColors.neutral100)),
+];
 
-  final Widget icon;
+/// A tab shown by its icon alone, named by a tooltip and for screen readers, so that all tabs fit side by side. The
+/// icon follows the tab bar's position, so it takes its color gradually while the user swipes towards its tab.
+class _IconTab extends StatelessWidget {
+  const _IconTab({required this.icon, required this.label, required this.position, required this.index});
+
+  final _TabIcon icon;
   final String label;
+  final Animation<double> position;
+  final int index;
 
   @override
   Widget build(BuildContext context) {
-    return Tab(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconTheme.merge(
-            data: const IconThemeData(size: 18),
-            child: SizedBox.square(dimension: 18, child: icon),
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        child: Tab(
+          child: SizedBox.square(
+            dimension: 22,
+            child: AnimatedBuilder(
+              animation: position,
+              builder: (context, _) => icon.build((1 - (position.value - index).abs()).clamp(0.0, 1.0)),
+            ),
           ),
-          const SizedBox(width: 8),
-          Text(label),
-        ],
+        ),
       ),
     );
   }
 }
 
-/// The Sogen logo without its dark disc, drawn in the tab's color like the other tab icons.
-class _SogenMark extends StatelessWidget {
-  const _SogenMark();
+/// An icon that is neutral while its tab is inactive and colored while it is active, blending in between.
+class _TabIcon {
+  const _TabIcon(IconData this.icon, Color this.activeColor);
+
+  /// The Sogen logo has several colors, so its colored and neutral versions are cross-faded instead.
+  const _TabIcon.sogen() : icon = null, activeColor = null;
+
+  static const _inactive = SogenColors.neutral400;
+
+  final IconData? icon;
+  final Color? activeColor;
+
+  Widget build(double active) {
+    final icon = this.icon;
+    if (icon != null) {
+      return Icon(icon, size: 22, color: Color.lerp(_inactive, activeColor, active));
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Opacity(
+          opacity: 1 - active,
+          child: SvgPicture.asset(
+            'assets/sogen_mark.svg',
+            colorFilter: const ColorFilter.mode(_inactive, BlendMode.srcIn),
+          ),
+        ),
+        Opacity(opacity: active, child: SvgPicture.asset('assets/sogen_mark.svg')),
+      ],
+    );
+  }
+}
+
+/// The selected tab's line, drawn along the top edge since the tab bar sits at the bottom of the screen.
+class _TopLineIndicator extends Decoration {
+  const _TopLineIndicator();
 
   @override
-  Widget build(BuildContext context) {
-    final color = IconTheme.of(context).color ?? DefaultTextStyle.of(context).style.color;
-    return SvgPicture.asset(
-      'assets/sogen_mark.svg',
-      colorFilter: color == null ? null : ColorFilter.mode(color, BlendMode.srcIn),
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) => _TopLinePainter();
+}
+
+class _TopLinePainter extends BoxPainter {
+  @override
+  void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
+    final size = configuration.size!;
+    final line = Rect.fromLTWH(offset.dx + size.width * 0.3, offset.dy, size.width * 0.4, 3);
+    canvas.drawRRect(
+      RRect.fromRectAndCorners(line, bottomLeft: const Radius.circular(3), bottomRight: const Radius.circular(3)),
+      Paint()..color = SogenColors.neutral100,
     );
   }
 }
