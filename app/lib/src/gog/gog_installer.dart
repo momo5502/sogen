@@ -95,7 +95,9 @@ class _PendingInstall {
 
 /// Installs GOG games through the native downloader, one at a time, and adds them to the library once complete.
 class GogInstaller extends ChangeNotifier {
-  GogInstaller(this._library, this._content);
+  GogInstaller(this._library, this._content, {this._supportDirectory = getApplicationSupportDirectory});
+
+  final Future<Directory> Function() _supportDirectory;
 
   static const _channel = MethodChannel('dev.sogen.app/downloads');
   static const _events = EventChannel('dev.sogen.app/downloads/events');
@@ -116,10 +118,13 @@ class GogInstaller extends ChangeNotifier {
   /// Downloads by product id, including paused ones left from earlier runs.
   Map<String, GameDownload> get downloads => Map.unmodifiable(_downloads);
 
-  bool get isBusy => _downloads.values.any((download) => download.status == DownloadStatus.running);
+  /// Set from the moment a start is accepted until the native side runs it, which takes fetching fresh links.
+  String? _starting;
 
-  static Future<Directory> _downloadsDirectory() async =>
-      Directory(p.join((await getApplicationSupportDirectory()).path, 'downloads'));
+  bool get isBusy =>
+      _starting != null || _downloads.values.any((download) => download.status == DownloadStatus.running);
+
+  Future<Directory> _downloadsDirectory() async => Directory(p.join((await _supportDirectory()).path, 'downloads'));
 
   /// Finishes installs a crash interrupted and lists the downloads that can be resumed.
   Future<void> restore() async {
@@ -147,7 +152,7 @@ class GogInstaller extends ChangeNotifier {
       return;
     }
 
-    final installed = Directory(p.join((await installedGamesDirectory()).path, pending.installId));
+    final installed = Directory(p.join(p.join((await _supportDirectory()).path, 'games'), pending.installId));
     if (_library.games.any((game) => game.directory == pending.game.directory)) {
       await staging.delete(recursive: true);
     } else if (installed.existsSync()) {
@@ -239,6 +244,19 @@ class GogInstaller extends ChangeNotifier {
   /// The native downloader checks [allowMetered] before every chunk, so moving onto a metered network pauses a
   /// download the user only agreed to on Wi-Fi.
   Future<void> _start(_PendingInstall pending, {required bool allowMetered}) async {
+    if (_starting != null) {
+      throw const GogException('Another game is downloading.');
+    }
+    _starting = pending.installId;
+    try {
+      await _startReserved(pending, allowMetered: allowMetered);
+    } finally {
+      _starting = null;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _startReserved(_PendingInstall pending, {required bool allowMetered}) async {
     if (allowMetered) {
       _approvedMetered.add(pending.installId);
     } else {
@@ -252,9 +270,17 @@ class GogInstaller extends ChangeNotifier {
     };
     await _writeAtomically(File(p.join(staging.path, 'links.json')), jsonEncode(links));
 
-    _track(pending, DownloadStatus.running);
+    _pending[pending.installId] = pending;
+    try {
+      await _channel.invokeMethod<void>('start', {'installId': pending.installId, 'allowMetered': allowMetered});
+    } on PlatformException {
+      throw const GogException('Another game is downloading.');
+    }
+    // The native side reports the state from here on; a download it already reported on keeps that state.
+    if (_downloads[pending.game.source!.productId]?.installId != pending.installId) {
+      _track(pending, DownloadStatus.running);
+    }
     notifyListeners();
-    await _channel.invokeMethod<void>('start', {'installId': pending.installId, 'allowMetered': allowMetered});
   }
 
   void _onState(Object? event) {
@@ -285,7 +311,9 @@ class GogInstaller extends ChangeNotifier {
       _pending.remove(installId);
       _approvedMetered.remove(installId);
     } else {
-      _downloads[productId] = _downloads[productId]!.copyWith(
+      final download =
+          _downloads[productId] ?? GameDownload(installId: pending.installId, productId: productId, status: status);
+      _downloads[productId] = download.copyWith(
         status: status,
         written: (event['written'] as num?)?.toInt(),
         total: (event['total'] as num?)?.toInt(),
@@ -329,10 +357,10 @@ class GogInstaller extends ChangeNotifier {
   }
 
   Future<void> _commit(_PendingInstall pending) async {
-    final support = await getApplicationSupportDirectory();
+    final support = await _supportDirectory();
     await commitInstall(
       staging: Directory(p.join((await _downloadsDirectory()).path, pending.installId)),
-      installed: Directory(p.join((await installedGamesDirectory()).path, pending.installId)),
+      installed: Directory(p.join(p.join((await _supportDirectory()).path, 'games'), pending.installId)),
       icons: Directory(p.join(support.path, 'icons')),
       game: pending.game,
       script: pending.script,

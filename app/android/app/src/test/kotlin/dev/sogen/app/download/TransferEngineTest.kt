@@ -194,6 +194,34 @@ class TransferEngineTest {
     }
 
     @Test
+    fun aCutOffJournalLineDoesNotSwallowTheEntriesWrittenAfterIt() {
+        val plan = plan()
+        TransferEngine(staging(), plan, cdn).run()
+        val journal = File(staging(), "journal.jsonl")
+        val lines = journal.readLines()
+        journal.writeText(lines.dropLast(1).joinToString("") { it + "\n" } + lines.last().take(10))
+
+        TransferEngine(staging(), plan, cdn).run()
+        cdn.requests.clear()
+        TransferEngine(staging(), plan, cdn).run()
+
+        assertTrue(cdn.requests.isEmpty())
+    }
+
+    @Test
+    fun anUnfinishedFileLeftByAPauseDoesNotCountAgainstTheFreeSpace() {
+        val plan = plan()
+        val part = File(output("dir/b.bin").path + ".part")
+        part.parentFile.mkdirs()
+        part.writeBytes(ByteArray(1024))
+
+        TransferEngine(staging(), plan, cdn).run()
+
+        assertFalse(part.exists())
+        assertArrayEquals(second, output("dir/b.bin").readBytes())
+    }
+
+    @Test
     fun aJournalDamagedBeforeItsLastLineIsRefused() {
         val plan = plan()
         TransferEngine(staging(), plan, cdn).run()

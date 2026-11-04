@@ -73,10 +73,37 @@ object Downloads {
 
     val isRunning get() = current?.status == DownloadState.Status.RUNNING
 
-    /** Deletes a download's files; it only counts as cancelled once they are really gone. */
+    /**
+     * Deletes the files of a download that is not running; it only counts as cancelled once they are really gone.
+     */
     fun discard(installId: String, staging: File): DownloadState {
         val deleted = staging.deleteRecursively() && !staging.exists()
         return DownloadState(installId, if (deleted) DownloadState.Status.CANCELLED else DownloadState.Status.FAILED)
+    }
+
+    /** Tells listeners about a download that is not running, without replacing the state of the one that is. */
+    @Synchronized
+    fun notify(state: DownloadState) {
+        listeners.toList().forEach { it(state) }
+    }
+
+    private var reserved: String? = null
+
+    /** Claims the one download that can run, before the service has started it. */
+    @Synchronized
+    fun reserve(installId: String): Boolean {
+        if (reserved != null || isRunning) {
+            return false
+        }
+        reserved = installId
+        return true
+    }
+
+    @Synchronized
+    fun release(installId: String) {
+        if (reserved == installId) {
+            reserved = null
+        }
     }
 
     const val DOWNLOADS_DIRECTORY = "downloads"
@@ -124,9 +151,15 @@ class DownloadService : Service() {
         return START_NOT_STICKY
     }
 
+    /**
+     * Android 15 gives a `dataSync` service a few seconds to stop once its daily time is used up. The journal keeps
+     * everything written so far, so the service leaves the foreground at once and the worker stops on its own.
+     */
     override fun onTimeout(startId: Int, fgsType: Int) {
         synchronized(lock) {
             job?.stopRequested = true
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }
     }
 
@@ -138,6 +171,7 @@ class DownloadService : Service() {
         val staging = try {
             Downloads.stagingOf(this, installId)
         } catch (e: IllegalArgumentException) {
+            Downloads.release(installId)
             return
         }
 
@@ -179,6 +213,7 @@ class DownloadService : Service() {
                 stopSelf()
             }
             Downloads.publish(outcome)
+            Downloads.release(installId)
         }
     }
 

@@ -351,6 +351,9 @@ class GameLibrary extends ChangeNotifier {
 
   GameLibrary._(this._file, this._games);
 
+  @visibleForTesting
+  GameLibrary.at(this._file, this._games);
+
   final File _file;
   final List<Game> _games;
   Future<void> _writes = Future.value();

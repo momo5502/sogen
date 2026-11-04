@@ -109,7 +109,7 @@ class GogPlanner {
     return PlannedInstall(
       plan: plan,
       playTask: files.resolve(PlayTask.fromInfo(info)),
-      script: script == null ? const InstallScript([]) : InstallScript.parse(script, language),
+      script: script == null ? const InstallScript([]) : files.resolveScript(InstallScript.parse(script, language)),
     );
   }
 
@@ -197,6 +197,39 @@ class _PlanBuilder {
       arguments: task.arguments,
       workingDirectory: workingDirectory == null ? null : _directoryNamed(workingDirectory),
     );
+  }
+
+  /// The script's targets spelled as the planned files and folders are: the game folder on the device tells case
+  /// apart, so a target spelled otherwise would become a second file the game never reads.
+  InstallScript resolveScript(InstallScript script) => InstallScript([
+    for (final action in script.actions)
+      switch (action) {
+        SetIni() => SetIni(
+          file: _spelled(action.file),
+          section: action.section,
+          key: action.key,
+          value: action.value,
+          utf8: action.utf8,
+        ),
+        CreateFolder() => CreateFolder(_spelled(action.path)),
+      },
+  ]);
+
+  DepotPath _spelled(DepotPath path) {
+    final file = find(path);
+    if (file != null) {
+      return file.file.path;
+    }
+
+    final folders = _folderSpellings();
+    final segments = [...path.segments];
+    for (var end = segments.length; end > 0; end--) {
+      final spelling = folders[segments.sublist(0, end).join('/').toLowerCase()];
+      if (spelling != null) {
+        return DepotPath.parse([spelling, ...segments.sublist(end)].join('/'));
+      }
+    }
+    return path;
   }
 
   DepotPath _directoryNamed(DepotPath path) {

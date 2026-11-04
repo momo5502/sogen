@@ -54,7 +54,7 @@ class _FakeContent implements GogContent {
         'install': {
           'action': 'setIni',
           'arguments': {
-            'filename': r'{app}\beneath.ini',
+            'filename': r'{app}\BENEATH.INI',
             'keyName': 'path',
             'keyType': 'string',
             'keyValue': '{app}',
@@ -354,6 +354,11 @@ void main() {
       expect(planned.playTask.workingDirectory?.relative, 'scummvm');
       expect(planned.playTask.arguments, ['-c', r'..\beneath.ini', 'beneath']);
       expect(planned.script.actions, hasLength(1));
+    });
+
+    test('script targets take the spelling of the installed files', () async {
+      final planned = await plan(_FakeContent());
+      expect((planned.script.actions.single as SetIni).file.relative, 'beneath.ini');
     });
 
     test('the other language brings its own script steps', () async {

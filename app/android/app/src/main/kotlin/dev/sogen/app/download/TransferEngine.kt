@@ -47,6 +47,7 @@ class TransferEngine(
 
     fun run() {
         filesRoot.mkdirs()
+        deleteUnfinishedFiles()
         val completed = journal.read().filterTo(HashMap()) { (key, sha256) -> isIntact(key, sha256) }
 
         val remaining = plan.requiredBytes - completed.keys.sumOf(::sizeOf)
@@ -74,6 +75,13 @@ class TransferEngine(
         }
 
         containersRoot.deleteRecursively()
+    }
+
+    /** A file stopped halfway is written again from the start, so its part only takes space the check needs. */
+    private fun deleteUnfinishedFiles() {
+        for (root in listOf(filesRoot, containersRoot)) {
+            root.walkBottomUp().filter { it.isFile && it.name.endsWith(PART_SUFFIX) }.forEach { it.delete() }
+        }
     }
 
     private fun writeContainer(index: Int): String {
@@ -236,25 +244,41 @@ class TransferEngine(
                 return emptyMap()
             }
 
+            dropCutOffLine()
             val text = file.readText()
             val lines = text.split('\n')
             val entries = LinkedHashMap<String, String>()
-            for ((index, line) in lines.withIndex()) {
+            for (line in lines) {
                 if (line.isEmpty()) {
                     continue
                 }
 
-                val last = index == lines.lastIndex
                 try {
                     val json = JSONObject(line)
                     entries[json.getString("key")] = json.getString("sha256")
                 } catch (e: JSONException) {
-                    if (!last) {
-                        throw IOException("The download journal is damaged")
-                    }
+                    throw IOException("The download journal is damaged")
                 }
             }
             return entries
+        }
+
+        /** Removes a line a crash cut off, so the next entry starts on a line of its own. */
+        private fun dropCutOffLine() {
+            RandomAccessFile(file, "rw").use { journal ->
+                var end = journal.length()
+                while (end > 0) {
+                    journal.seek(end - 1)
+                    if (journal.read() == '\n'.code) {
+                        break
+                    }
+                    end--
+                }
+                if (end != journal.length()) {
+                    journal.setLength(end)
+                    journal.fd.sync()
+                }
+            }
         }
 
         fun append(key: String, sha256: String) {

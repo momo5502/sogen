@@ -226,7 +226,7 @@ class MainActivity : FlutterActivity() {
             "status" -> result.success(Downloads.current?.toMap())
             "isMetered" -> result.success(getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered)
             "start" -> {
-                if (Downloads.isRunning) {
+                if (!Downloads.reserve(installId)) {
                     result.error("busy", "Another download is running", null)
                     return
                 }
@@ -260,8 +260,7 @@ class MainActivity : FlutterActivity() {
                         return
                     }
                     thread(name = "discard-download") {
-                        val outcome = Downloads.discard(installId, staging)
-                        Downloads.publish(outcome)
+                        Downloads.notify(Downloads.discard(installId, staging))
                         runOnUiThread { result.success(null) }
                     }
                 }
