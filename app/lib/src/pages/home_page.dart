@@ -560,7 +560,6 @@ class _EmptyLibrary extends StatelessWidget {
   }
 }
 
-/// A tab showing its icon next to its label rather than above it, so the tab bar keeps the height of a text tab.
 /// How each tab's icon looks once its tab is active. Steam's and Epic's brand colors are black, which would vanish on
 /// the dark tab bar, so they use the light blue of Steam's client and white.
 const _tabIcons = [
