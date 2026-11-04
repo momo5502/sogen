@@ -13,6 +13,7 @@ import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 
 class MainActivity : FlutterActivity() {
@@ -21,6 +22,7 @@ class MainActivity : FlutterActivity() {
     private var folderPick: MethodChannel.Result? = null
     private var gogSignIn: MethodChannel.Result? = null
     private val secrets by lazy { SecretStore(this) }
+    private val secretChanges = Executors.newSingleThreadExecutor()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -183,10 +185,10 @@ class MainActivity : FlutterActivity() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_FOLDER_REQUEST)
     }
 
-    /** Keystore operations can block, so they run off the UI thread. */
+    /** Keystore operations can block, so they run off the UI thread, one at a time and in the order requested. */
     private fun handleSecretCall(call: MethodCall, result: MethodChannel.Result) {
         val name = call.argument<String>("name").orEmpty()
-        thread(name = "secrets") {
+        secretChanges.execute {
             try {
                 val value = when (call.method) {
                     "read" -> secrets.read(name)
@@ -194,7 +196,7 @@ class MainActivity : FlutterActivity() {
                     "delete" -> secrets.delete(name)
                     else -> {
                         runOnUiThread { result.notImplemented() }
-                        return@thread
+                        return@execute
                     }
                 }
                 runOnUiThread { result.success(value as? String) }
@@ -206,7 +208,11 @@ class MainActivity : FlutterActivity() {
 
     /** Completes with the URL GOG redirected to after signing in, or null when the user went back. */
     private fun signInToGog(url: String, result: MethodChannel.Result) {
-        gogSignIn?.success(null)
+        if (gogSignIn != null) {
+            result.error("busy", "A GOG sign-in is already open", null)
+            return
+        }
+
         gogSignIn = result
         @Suppress("DEPRECATION")
         startActivityForResult(

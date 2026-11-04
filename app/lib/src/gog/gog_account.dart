@@ -36,7 +36,12 @@ typedef GogLoginPage = Future<Uri?> Function(Uri authorizationUrl);
 const _gogChannel = MethodChannel('dev.sogen.app/gog');
 
 Future<Uri?> showGogLoginPage(Uri authorizationUrl) async {
-  final redirect = await _gogChannel.invokeMethod<String>('signIn', {'url': authorizationUrl.toString()});
+  final String? redirect;
+  try {
+    redirect = await _gogChannel.invokeMethod<String>('signIn', {'url': authorizationUrl.toString()});
+  } on PlatformException {
+    throw const GogException('The GOG sign-in is already open.');
+  }
   return redirect == null ? null : Uri.parse(redirect);
 }
 
@@ -87,6 +92,7 @@ class GogAccount extends ChangeNotifier {
   DateTime? _accessTokenExpiry;
   Future<String>? _refreshing;
   int _session = 0;
+  Future<void> _secretChanges = Future.value();
 
   bool get isSignedIn => _refreshToken != null;
 
@@ -152,8 +158,24 @@ class GogAccount extends ChangeNotifier {
     _accessToken = null;
     _accessTokenExpiry = null;
     notifyListeners();
-    await _secrets.delete(_secretName);
+    await _changeSecret(() => _secrets.delete(_secretName));
     await _forgetLoginPage();
+  }
+
+  /// Runs secret changes in the order they were requested, so that a sign-out always deletes after a write that
+  /// started before it.
+  Future<void> _changeSecret(Future<void> Function() change) {
+    final done = _secretChanges.then((_) => change());
+    _secretChanges = done.catchError((Object _) {});
+    return done;
+  }
+
+  /// Drops [token] after GOG rejected it, so that the next caller gets a fresh one.
+  void rejectAccessToken(String token) {
+    if (_accessToken == token) {
+      _accessToken = null;
+      _accessTokenExpiry = null;
+    }
   }
 
   /// A valid access token, refreshed when it is about to expire. Concurrent callers share one refresh, because GOG
@@ -174,7 +196,15 @@ class GogAccount extends ChangeNotifier {
       throw const GogSignedOutException();
     }
 
-    return _redeem({'grant_type': 'refresh_token', 'refresh_token': refreshToken}, signOutIfRejected: true);
+    final session = _session;
+    try {
+      return await _redeem({'grant_type': 'refresh_token', 'refresh_token': refreshToken}, signOutIfRejected: true);
+    } on GogSignedOutException {
+      if (session == _session) {
+        await signOut();
+      }
+      rethrow;
+    }
   }
 
   Future<String> _redeem(Map<String, String> grant, {bool signOutIfRejected = false}) async {
@@ -207,7 +237,11 @@ class GogAccount extends ChangeNotifier {
       throw const GogException('GOG sent an answer Sogen does not understand.');
     }
 
-    await _secrets.write(_secretName, jsonEncode({'refreshToken': refreshToken}));
+    await _changeSecret(() => _secrets.write(_secretName, jsonEncode({'refreshToken': refreshToken})));
+    if (session != _session) {
+      throw const GogSignedOutException();
+    }
+
     _refreshToken = refreshToken;
     _accessToken = accessToken;
     _accessTokenExpiry = _now().add(Duration(seconds: expiresIn));
@@ -218,7 +252,6 @@ class GogAccount extends ChangeNotifier {
   /// Only a rejected refresh token ends the session; other failures keep it for the next try.
   GogException _tokenError(int status, Map<String, Object?>? body, {required bool signOutIfRejected}) {
     if (signOutIfRejected && body?['error'] == 'invalid_grant') {
-      unawaited(signOut());
       return const GogSignedOutException();
     }
 

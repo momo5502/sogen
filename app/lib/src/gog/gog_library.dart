@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:http/http.dart' as http;
 
 import 'gog_account.dart';
@@ -28,13 +30,13 @@ class GogLibrary {
 
   Future<List<StoreGame>> games() async {
     final games = <String, StoreGame>{};
-    var totalPages = 1;
-    for (var page = 1; page <= totalPages; page++) {
+    int? totalPages;
+    for (var page = 1; page <= (totalPages ?? 1); page++) {
       final body = await _page(page);
       final pages = body['totalPages'];
       final products = body['products'];
-      if (pages is! int || pages < 0 || products is! List<Object?>) {
-        throw const GogException('GOG sent a library Sogen does not understand.');
+      if (pages is! int || pages < 0 || products is! List<Object?> || (totalPages != null && pages != totalPages)) {
+        throw const _MalformedLibrary();
       }
       if (pages > maxPages) {
         throw const GogException('Your GOG library is larger than Sogen can show.');
@@ -52,31 +54,52 @@ class GogLibrary {
     return games.values.toList()..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
+  /// An access token can be revoked before it expires, so a rejected one is replaced once.
   Future<Map<String, Object?>> _page(int page) async {
+    final token = await _account.accessToken();
+    try {
+      return await _request(page, token);
+    } on _Unauthorized {
+      _account.rejectAccessToken(token);
+    }
+
+    try {
+      return await _request(page, await _account.accessToken());
+    } on _Unauthorized {
+      throw const GogException('GOG did not accept your sign-in. Please sign out and sign in again.');
+    }
+  }
+
+  Future<Map<String, Object?>> _request(int page, String token) {
     final request = http.Request(
       'GET',
       Uri.https('embed.gog.com', '/account/getFilteredProducts', {'mediaType': '1', 'page': '$page'}),
-    )..headers['Authorization'] = 'Bearer ${await _account.accessToken()}';
+    )..headers['Authorization'] = 'Bearer $token';
 
     return sendJson(
       _client,
       request,
-      onError: (status, _) => GogException('Could not load your GOG library (status $status).'),
+      onError: (status, _) => status == HttpStatus.unauthorized
+          ? const _Unauthorized()
+          : GogException('Could not load your GOG library (status $status).'),
     );
   }
 
+  /// Games that do not run on Windows are left out; a product that cannot be read fails the whole library, so that
+  /// no owned game goes missing unnoticed.
   static StoreGame? _windowsGame(Object? product) {
     if (product is! Map<String, Object?>) {
-      return null;
+      throw const _MalformedLibrary();
     }
 
     final id = product['id'];
     final title = product['title'];
     final worksOn = product['worksOn'];
-    if (id is! int || id <= 0 || title is! String || title.isEmpty || worksOn is! Map<String, Object?>) {
-      return null;
+    final windows = worksOn is Map<String, Object?> ? worksOn['Windows'] : null;
+    if (id is! int || id <= 0 || title is! String || title.isEmpty || windows is! bool) {
+      throw const _MalformedLibrary();
     }
-    if (worksOn['Windows'] != true) {
+    if (!windows) {
       return null;
     }
 
@@ -95,4 +118,12 @@ class GogLibrary {
   }
 
   void close() => _client.close();
+}
+
+class _Unauthorized extends GogException {
+  const _Unauthorized() : super('GOG did not accept the sign-in.');
+}
+
+class _MalformedLibrary extends GogException {
+  const _MalformedLibrary() : super('GOG sent a library Sogen does not understand.');
 }

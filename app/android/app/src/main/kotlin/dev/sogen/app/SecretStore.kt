@@ -54,7 +54,10 @@ class SecretStore(context: Context) {
     }
 
     fun delete(name: String) {
-        fileOf(name).delete()
+        val file = fileOf(name)
+        if (!file.delete() && file.exists()) {
+            throw IOException("Could not delete the secret $name")
+        }
     }
 
     private fun fileOf(name: String): File {
