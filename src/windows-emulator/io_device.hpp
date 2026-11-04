@@ -258,6 +258,12 @@ namespace sogen
         uint64_t key{};
     };
 
+    NTSTATUS associate_completion_port(process_context& process, const emulator_thread* active_thread,
+                                       std::optional<device_completion_association>& association, handle completion_port, uint64_t key);
+    NTSTATUS replace_completion_port(process_context& process, const emulator_thread* active_thread,
+                                     std::optional<device_completion_association>& association, handle completion_port, uint64_t key);
+    void release_completion_association(process_context& process, std::optional<device_completion_association>& association);
+
     class io_device_container : public io_device
     {
       public:
@@ -291,6 +297,8 @@ namespace sogen
         bool has_pending_io(uint32_t issuing_thread_id) const override;
         NTSTATUS set_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
                                             uint64_t key);
+        NTSTATUS replace_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
+                                                uint64_t key);
         void set_completion_notification_flags(ULONG flags);
         void release_references(process_context& process) override;
 
