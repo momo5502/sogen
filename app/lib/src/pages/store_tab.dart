@@ -249,7 +249,13 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
       listenable: widget.account,
       builder: (context, _) {
         if (!widget.account.isSignedIn) {
-          return _SignedOut(name: widget.catalog.name, color: widget.color, signingIn: _signingIn, onSignIn: _signIn);
+          return _SignedOut(
+            name: widget.catalog.name,
+            description: widget.catalog.signInDescription,
+            color: widget.color,
+            signingIn: _signingIn,
+            onSignIn: _signIn,
+          );
         }
 
         return FutureBuilder(
@@ -290,9 +296,16 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
 }
 
 class _SignedOut extends StatelessWidget {
-  const _SignedOut({required this.name, required this.color, required this.signingIn, required this.onSignIn});
+  const _SignedOut({
+    required this.name,
+    required this.description,
+    required this.color,
+    required this.signingIn,
+    required this.onSignIn,
+  });
 
   final String name;
+  final String description;
   final Color color;
   final bool signingIn;
   final VoidCallback onSignIn;
@@ -315,8 +328,7 @@ class _SignedOut extends StatelessWidget {
                 Text(name, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 Text(
-                  'Sign in to see the Windows games you own on $name. You sign in on $name\'s own page, so Sogen '
-                  'never sees your password.',
+                  description,
                   style: theme.textTheme.bodyMedium?.copyWith(color: SogenColors.neutral300, height: 1.5),
                 ),
                 const SizedBox(height: 20),

@@ -15,6 +15,10 @@ class EpicCatalog implements StoreCatalog {
   String get name => 'Epic';
 
   @override
+  String get signInDescription =>
+      "Sign in to see the Windows games you own on Epic. You sign in on Epic's own page, so Sogen never sees your password.";
+
+  @override
   Future<List<StoreGame>> games() => _library.games();
 
   @override
