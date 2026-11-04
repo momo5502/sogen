@@ -7,9 +7,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogen_app/src/game_library.dart';
 import 'package:sogen_app/src/gog/gog_cdn.dart';
-import 'package:sogen_app/src/gog/gog_http.dart';
-import 'package:sogen_app/src/gog/gog_installer.dart';
+import 'package:sogen_app/src/gog/gog_install_source.dart';
 import 'package:sogen_app/src/gog/gog_manifest.dart';
+import 'package:sogen_app/src/store/store_http.dart';
+import 'package:sogen_app/src/store/store_installer.dart';
 
 /// Holds every request for links until [release], like a slow connection while a download is being started.
 class _SlowLinks implements GogContent {
@@ -99,17 +100,15 @@ void main() {
 
   test('a second start while the first one fetches its links is refused', () async {
     final links = _SlowLinks();
-    final installer = GogInstaller(
-      GameLibrary.at(File(p.join(support.path, 'games.json')), []),
-      links,
-      supportDirectory: () async => support,
-    );
+    final installer = StoreInstaller(GameLibrary.at(File(p.join(support.path, 'games.json')), []), {
+      'gog': GogInstallSource(links),
+    }, supportDirectory: () async => support);
     await installer.restore();
-    expect(installer.downloads['42']?.status, DownloadStatus.paused);
+    expect(installer.download('gog', '42')?.status, DownloadStatus.paused);
 
-    final first = installer.resume('42', allowMetered: false);
+    final first = installer.resume('gog', '42', allowMetered: false);
     expect(installer.isBusy, isTrue);
-    await expectLater(installer.resume('42', allowMetered: false), throwsA(isA<GogException>()));
+    await expectLater(installer.resume('gog', '42', allowMetered: false), throwsA(isA<StoreException>()));
 
     links.release();
     await first;
@@ -118,15 +117,13 @@ void main() {
 
   test('cancelling while a start fetches its links calls the start off before it reaches the downloader', () async {
     final links = _SlowLinks();
-    final installer = GogInstaller(
-      GameLibrary.at(File(p.join(support.path, 'games.json')), []),
-      links,
-      supportDirectory: () async => support,
-    );
+    final installer = StoreInstaller(GameLibrary.at(File(p.join(support.path, 'games.json')), []), {
+      'gog': GogInstallSource(links),
+    }, supportDirectory: () async => support);
     await installer.restore();
 
-    final resume = installer.resume('42', allowMetered: false);
-    final cancel = installer.cancel('42');
+    final resume = installer.resume('gog', '42', allowMetered: false);
+    final cancel = installer.cancel('gog', '42');
     links.release();
 
     await resume;

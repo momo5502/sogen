@@ -1,3 +1,4 @@
+import '../store/store_http.dart';
 import 'gog_http.dart';
 
 /// A path from a GOG manifest, checked to stay inside the game folder on Windows: the guest sees the folder as a
@@ -6,10 +7,10 @@ class DepotPath {
   DepotPath._(this.segments);
 
   /// Accepts `/` and `\` as separators, as GOG's own manifests use both.
-  factory DepotPath.parse(String raw) {
+  factory DepotPath.parse(String raw, {StoreService service = gogService}) {
     final segments = raw.split(RegExp(r'[\\/]'));
     if (raw.isEmpty || raw.length > _maxLength || segments.length > _maxDepth || !segments.every(_isPlainName)) {
-      throw GogException('GOG listed a file Sogen cannot install safely: ${_printable(raw)}');
+      throw service.error('${service.name} listed a file Sogen cannot install safely: ${_printable(raw)}');
     }
 
     return DepotPath._(List.unmodifiable(segments));

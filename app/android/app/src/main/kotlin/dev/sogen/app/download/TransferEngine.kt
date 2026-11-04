@@ -12,9 +12,9 @@ import java.security.MessageDigest
 import java.util.zip.DataFormatException
 import java.util.zip.Inflater
 
-/** Downloads one chunk as stored on GOG's CDN, still compressed. */
+/** Downloads one chunk as its CDN stores it, at [path] below the CDN endpoint of [source]. */
 fun interface ChunkFetcher {
-    fun fetch(source: ChunkSource, compressedMd5: String, compressedSize: Long): ByteArray
+    fun fetch(source: ChunkSource, path: String, size: Long): ByteArray
 }
 
 /** The signed CDN links expired; a fresh set lets the transfer continue where it stopped. */
@@ -46,6 +46,12 @@ class TransferEngine(
     private val containersRoot = File(staging, "containers")
     private val journal = Journal(File(staging, "journal.jsonl"))
     private var written = 0L
+
+    /** Files take neighbouring parts of the same chunks, so recently decoded chunks are kept for the next files. */
+    private val decodedChunks = object : LinkedHashMap<Int, ByteArray>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, ByteArray>) =
+            values.sumOf { it.size.toLong() } > DECODED_CHUNK_CACHE_BYTES
+    }
 
     fun run() {
         filesRoot.mkdirs()
@@ -88,7 +94,7 @@ class TransferEngine(
 
     private fun writeContainer(index: Int): String {
         val output = File(containersRoot, "$index.bin")
-        val sha256 = writeChecked(output, plan.containers[index].size, md5 = null, sha256 = null, countProgress = false) { sink ->
+        val sha256 = writeChecked(output, plan.containers[index].size, Expected(), countProgress = false) { sink ->
             for (chunk in plan.containers[index].chunks) {
                 sink(inflate(plan.containers[index].source, chunk))
             }
@@ -98,9 +104,15 @@ class TransferEngine(
     }
 
     private fun writeFile(file: PlannedFile): String {
-        val sha256 = writeChecked(target(file.path), file.size, file.md5, file.sha256, countProgress = true) { sink ->
+        val expected = Expected(md5 = file.md5, sha1 = file.sha1, sha256 = file.sha256)
+        val sha256 = writeChecked(target(file.path), file.size, expected, countProgress = true) { sink ->
             val container = file.container
-            if (container == null) {
+            if (file.parts.isNotEmpty()) {
+                for (part in file.parts) {
+                    val chunk = sharedChunk(part.chunk)
+                    sink(chunk.copyOfRange(part.offset.toInt(), (part.offset + part.size).toInt()))
+                }
+            } else if (container == null) {
                 for (chunk in file.chunks) {
                     sink(inflate(file.source, chunk))
                 }
@@ -121,18 +133,20 @@ class TransferEngine(
         return sha256
     }
 
+    private class Expected(val md5: String? = null, val sha1: String? = null, val sha256: String? = null)
+
     /** Writes [output] through a `.part` file, checking its size and hashes before it takes the final name. */
     private fun writeChecked(
         output: File,
         size: Long,
-        md5: String?,
-        sha256: String?,
+        expected: Expected,
         countProgress: Boolean,
         produce: ((ByteArray) -> Unit) -> Unit,
     ): String {
         output.parentFile?.mkdirs()
         val part = File(output.path + PART_SUFFIX)
         val md5Digest = MessageDigest.getInstance("MD5")
+        val sha1Digest = MessageDigest.getInstance("SHA-1")
         val sha256Digest = MessageDigest.getInstance("SHA-256")
         var length = 0L
 
@@ -148,6 +162,7 @@ class TransferEngine(
                 }
                 stream.write(bytes)
                 md5Digest.update(bytes)
+                sha1Digest.update(bytes)
                 sha256Digest.update(bytes)
                 if (countProgress) {
                     written += bytes.size
@@ -158,8 +173,9 @@ class TransferEngine(
         }
 
         val actualSha256 = sha256Digest.digest().toHex()
-        val damaged = length != size || md5 != null && md5Digest.digest().toHex() != md5 ||
-            sha256 != null && actualSha256 != sha256
+        val damaged = length != size || expected.md5 != null && md5Digest.digest().toHex() != expected.md5 ||
+            expected.sha1 != null && sha1Digest.digest().toHex() != expected.sha1 ||
+            expected.sha256 != null && actualSha256 != expected.sha256
         if (damaged) {
             part.delete()
             throw DamagedDownloadException("A downloaded file does not match what GOG said")
@@ -170,15 +186,31 @@ class TransferEngine(
         return actualSha256
     }
 
-    private fun inflate(source: ChunkSource, chunk: Chunk): ByteArray {
+    private fun sharedChunk(index: Int): ByteArray = decodedChunks.getOrPut(index) {
+        val chunk = plan.sharedChunks[index]
+        val data = when (chunk.source) {
+            ChunkSource.EPIC -> EpicChunk.decode(download(chunk.source, chunk.path, chunk.compressedSize), chunk.size)
+            else -> throw InvalidPlanException("Unknown chunk format")
+        }
+        if (sha1(data) != chunk.sha1) {
+            throw DamagedDownloadException("A download from Epic was damaged")
+        }
+        data
+    }
+
+    private fun download(source: ChunkSource, path: String, size: Long): ByteArray {
         if (isStopped()) {
             throw TransferStoppedException()
         }
         if (!mayUseNetwork()) {
             throw MeteredNetworkException()
         }
+        return fetcher.fetch(source, path, size)
+    }
 
-        val compressed = fetcher.fetch(source, chunk.compressedMd5, chunk.compressedSize)
+    private fun inflate(source: ChunkSource, chunk: Chunk): ByteArray {
+        val md5 = chunk.compressedMd5
+        val compressed = download(source, "/${md5.substring(0, 2)}/${md5.substring(2, 4)}/$md5", chunk.compressedSize)
         if (compressed.size.toLong() != chunk.compressedSize || md5(compressed) != chunk.compressedMd5) {
             throw DamagedDownloadException("A download from GOG was damaged")
         }
@@ -293,6 +325,7 @@ class TransferEngine(
     companion object {
         const val FILES_DIRECTORY = "files"
         private const val COPY_BUFFER_SIZE = 1024 * 1024
+        private const val DECODED_CHUNK_CACHE_BYTES = 64L * 1024 * 1024
         private const val PART_SUFFIX = ".part"
         private const val FILE_PREFIX = "file:"
         private const val CONTAINER_PREFIX = "container:"
@@ -301,6 +334,7 @@ class TransferEngine(
         private fun containerKey(index: Int) = CONTAINER_PREFIX + index
 
         private fun md5(bytes: ByteArray) = MessageDigest.getInstance("MD5").digest(bytes).toHex()
+        private fun sha1(bytes: ByteArray) = MessageDigest.getInstance("SHA-1").digest(bytes).toHex()
 
         private fun hashFile(file: File): String {
             val digest = MessageDigest.getInstance("SHA-256")
