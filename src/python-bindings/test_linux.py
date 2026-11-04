@@ -8,6 +8,7 @@ import sys
 import threading
 import tempfile
 import textwrap
+import weakref
 from pathlib import Path
 
 sys.path.insert(0, os.getcwd())
@@ -1043,6 +1044,8 @@ with tempfile.TemporaryDirectory() as tmpdir:
     )
     thread_app.callbacks.on_thread_create = record_thread_callback("create")
     thread_app.callbacks.on_thread_terminated = record_thread_callback("terminated")
+    thread_create_callback_ref = weakref.ref(thread_app.callbacks.on_thread_create)
+    thread_terminated_callback_ref = weakref.ref(thread_app.callbacks.on_thread_terminated)
     thread_app.start()
     assert thread_app.process.exit_status == 0
     created_tids = [tid for kind, tid, _ in thread_callback_events if kind == "create"]
@@ -1575,9 +1578,12 @@ for _name in (
     "region",
     "stats",
     "hook_handles",
+    "handle",
     "bb_handle",
     "int_handle",
+    "int_handle_box",
     "memory_violation_hook",
+    "write_fault_hook",
     "modules",
     "main_modules",
     "main_module",
@@ -1587,7 +1593,9 @@ for _name in (
     "cwd_app",
     "path_app",
     "readonly_app",
+    "symlink_app",
     "connect_app",
+    "writeonly_app",
     "symbol_app",
     "self_removing_handle",
     "restart_cpuid_handle",
@@ -1596,7 +1604,14 @@ for _name in (
     "mprotect_app",
     "fatal_signal_app",
     "fatal_exception_app",
+    "handled_signal_app",
+    "handled_trap_app",
+    "thread_callback_thread_refs",
+    "retained_thread",
+    "retained_terminated_thread",
     "snapshot_symbol_app",
 ):
     globals()[_name] = None
 gc.collect()
+assert thread_create_callback_ref() is None
+assert thread_terminated_callback_ref() is None
