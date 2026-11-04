@@ -235,7 +235,8 @@ class MainActivity : FlutterActivity() {
                 startForegroundService(
                     Intent(this, DownloadService::class.java)
                         .setAction(DownloadService.ACTION_START)
-                        .putExtra(DownloadService.EXTRA_INSTALL_ID, installId),
+                        .putExtra(DownloadService.EXTRA_INSTALL_ID, installId)
+                        .putExtra(DownloadService.EXTRA_ALLOW_METERED, call.argument<Boolean>("allowMetered") == true),
                 )
                 result.success(null)
             }
@@ -250,16 +251,20 @@ class MainActivity : FlutterActivity() {
             "cancel" -> {
                 if (Downloads.isRunning && Downloads.current?.installId == installId) {
                     startService(Intent(this, DownloadService::class.java).setAction(DownloadService.ACTION_CANCEL))
+                    result.success(null)
                 } else {
-                    try {
-                        Downloads.stagingOf(this, installId).deleteRecursively()
+                    val staging = try {
+                        Downloads.stagingOf(this, installId)
                     } catch (e: IllegalArgumentException) {
                         result.error("invalid", "Not an install id", null)
                         return
                     }
-                    Downloads.publish(DownloadState(installId, DownloadState.Status.CANCELLED))
+                    thread(name = "discard-download") {
+                        val outcome = Downloads.discard(installId, staging)
+                        Downloads.publish(outcome)
+                        runOnUiThread { result.success(null) }
+                    }
                 }
-                result.success(null)
             }
 
             else -> result.notImplemented()

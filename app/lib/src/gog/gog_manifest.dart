@@ -292,7 +292,7 @@ class GogBuild {
       if (item is! Map<String, Object?>) {
         _malformed();
       }
-      if (item['generation'] != 2 || item['branch'] != null || item['public'] == false) {
+      if (item['generation'] != 2 || item['branch'] != null || item['public'] != true) {
         continue;
       }
 

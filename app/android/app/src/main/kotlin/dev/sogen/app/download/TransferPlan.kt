@@ -22,7 +22,7 @@ data class PlannedFile(
 )
 
 data class PlannedContainer(val source: ChunkSource, val chunks: List<Chunk>) {
-    val size: Long get() = chunks.sumOf { it.size }
+    val size: Long get() = chunks.fold(0L) { total, chunk -> Math.addExact(total, chunk.size) }
 }
 
 /**
@@ -36,8 +36,8 @@ data class TransferPlan(
     val containers: List<PlannedContainer>,
     val directories: List<String>,
 ) {
-    val installedBytes: Long get() = files.sumOf { it.size }
-    val requiredBytes: Long get() = installedBytes + containers.sumOf { it.size }
+    val installedBytes: Long get() = files.fold(0L) { total, file -> Math.addExact(total, file.size) }
+    val requiredBytes: Long get() = containers.fold(installedBytes) { total, container -> Math.addExact(total, container.size) }
 
     companion object {
         const val FORMAT = 1
@@ -52,6 +52,8 @@ data class TransferPlan(
             fromJson(JSONObject(text))
         } catch (e: JSONException) {
             throw InvalidPlanException("Unreadable plan")
+        } catch (e: ArithmeticException) {
+            throw InvalidPlanException("Plan too large")
         }
 
         private fun fromJson(json: JSONObject): TransferPlan {
@@ -63,13 +65,39 @@ data class TransferPlan(
             val files = json.getJSONArray("files").objects().map { file(it, containers) }
             val directories = json.getJSONArray("directories").strings().map { DepotPaths.validate(it) }
 
-            val filePaths = HashSet<String>()
-            check(files.all { filePaths.add(it.path.lowercase()) }, "Duplicate file")
-            check(directories.none { it.lowercase() in filePaths }, "File and folder share a path")
+            checkTree(files.map { it.path }, directories)
 
             val plan = TransferPlan(json.getString("productId"), json.getString("buildId"), files, containers, directories)
             check(plan.requiredBytes in 0..MAX_INSTALL_SIZE, "Plan too large")
             return plan
+        }
+
+        /**
+         * Windows compares names without case, so no two files, and no file and folder, may share a path that way,
+         * and a folder may only be spelled one way: two spellings would be two folders on the device but one in the
+         * guest.
+         */
+        private fun checkTree(files: List<String>, directories: List<String>) {
+            val folders = HashMap<String, String>()
+            fun addFolders(path: String, includingSelf: Boolean) {
+                val segments = path.split('/')
+                val depth = if (includingSelf) segments.size else segments.size - 1
+                for (end in 1..depth) {
+                    val folder = segments.subList(0, end).joinToString("/")
+                    val spelling = folders.putIfAbsent(folder.lowercase(), folder)
+                    check(spelling == null || spelling == folder, "Folder spelled two ways")
+                }
+            }
+
+            directories.forEach { addFolders(it, includingSelf = true) }
+            files.forEach { addFolders(it, includingSelf = false) }
+
+            val filePaths = HashSet<String>()
+            for (file in files) {
+                val key = file.lowercase()
+                check(filePaths.add(key), "Duplicate file")
+                check(key !in folders, "File and folder share a path")
+            }
         }
 
         private fun file(json: JSONObject, containers: List<PlannedContainer>): PlannedFile {
@@ -80,7 +108,7 @@ data class TransferPlan(
             val offset = if (json.has("offset")) json.getLong("offset") else null
             val chunks = if (container == null) chunks(json.getJSONArray("chunks")) else emptyList()
             if (container == null) {
-                check(offset == null && chunks.sumOf { it.size } == size, "Chunks do not add up")
+                check(offset == null && chunks.fold(0L) { total, chunk -> Math.addExact(total, chunk.size) } == size, "Chunks do not add up")
             } else {
                 val start = offset ?: throw InvalidPlanException("Bad container")
                 check(container in containers.indices && start >= 0, "Bad container")

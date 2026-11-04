@@ -115,12 +115,28 @@ class GogContent {
     return uri != null && uri.scheme == 'https' && trusted ? uri : null;
   }
 
+  /// An access token can be revoked before it expires, so a rejected one is replaced once.
   Future<List<CdnEndpoint>> gameEndpoints(String productId) async {
+    final uri = Uri.https(_contentSystem, '/products/$productId/secure_link', {
+      'generation': '2',
+      '_version': '2',
+      'path': '/',
+    });
+
     final token = await _account.accessToken();
-    return _endpoints(
-      Uri.https(_contentSystem, '/products/$productId/secure_link', {'generation': '2', '_version': '2', 'path': '/'}),
-      headers: {'Authorization': 'Bearer $token'},
-    );
+    try {
+      return await _endpoints(uri, headers: {'Authorization': 'Bearer $token'});
+    } on _Unauthorized {
+      _account.rejectAccessToken(token);
+    }
+
+    final fresh = await _account.accessToken();
+    try {
+      return await _endpoints(uri, headers: {'Authorization': 'Bearer $fresh'});
+    } on _Unauthorized {
+      _account.rejectAccessToken(fresh);
+      throw const GogException('GOG did not accept your sign-in. Please sign out and sign in again.');
+    }
   }
 
   Future<List<CdnEndpoint>> dependencyEndpoints() => _endpoints(
@@ -169,7 +185,8 @@ class GogContent {
   Future<Map<String, Object?>> _json(Uri uri, {Map<String, String> headers = const {}}) => sendJson(
     _client,
     http.Request('GET', uri)..headers.addAll(headers),
-    onError: (status, _) => GogException('GOG could not list the game files (status $status).'),
+    onError: (status, _) =>
+        status == 401 ? const _Unauthorized() : GogException('GOG could not list the game files (status $status).'),
   );
 
   /// Manifests are zlib-compressed JSON, though some small ones come uncompressed.
@@ -191,4 +208,8 @@ class GogContent {
   static String _galaxyPath(String hash) => '${hash.substring(0, 2)}/${hash.substring(2, 4)}/$hash';
 
   void close() => _client.close();
+}
+
+class _Unauthorized extends GogException {
+  const _Unauthorized() : super('GOG did not accept the sign-in.');
 }

@@ -98,11 +98,12 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
       }
 
       final planned = await _planner.plan(release, language);
-      if (await widget.installer.isMetered() && !await _confirmMeteredDownload(game, planned.plan.downloadBytes)) {
+      final metered = await widget.installer.isMetered();
+      if (metered && !await _confirmMeteredDownload(game, planned.plan.downloadBytes)) {
         return;
       }
 
-      await widget.installer.install(game, release, planned, language: language);
+      await widget.installer.install(game, release, planned, language: language, allowMetered: metered);
     } catch (error) {
       _showError(error);
     } finally {
@@ -132,6 +133,19 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
       context: context,
       builder: (context) => _LanguageDialog(title: game.title, languages: languages, initial: preselected),
     );
+  }
+
+  Future<void> _resume(StoreGame game, GameDownload download) async {
+    try {
+      final metered = await widget.installer.isMetered();
+      final remaining = download.total > download.written ? download.total - download.written : 0;
+      if (metered && !await _confirmMeteredDownload(game, remaining)) {
+        return;
+      }
+      await widget.installer.resume(game.productId, allowMetered: metered);
+    } catch (error) {
+      _showError(error);
+    }
   }
 
   Future<bool> _confirmMeteredDownload(StoreGame game, int bytes) async {
@@ -195,11 +209,10 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
               IconButton(
                 icon: const Icon(LucideIcons.play),
                 tooltip: 'Resume',
-                onPressed: widget.installer.isBusy || !widget.canInstall
-                    ? null
-                    : () => widget.installer.resume(game.productId).catchError(_showError),
+                onPressed: widget.installer.isBusy || !widget.canInstall ? null : () => _resume(game, download),
               ),
-            IconButton(icon: const Icon(LucideIcons.x), tooltip: 'Cancel', onPressed: () => _confirmCancel(game)),
+            if (download.status != DownloadStatus.complete)
+              IconButton(icon: const Icon(LucideIcons.x), tooltip: 'Cancel', onPressed: () => _confirmCancel(game)),
           ],
         ),
       );
@@ -444,6 +457,7 @@ class _DownloadStatusLine extends StatelessWidget {
         '${formatBytes(download.written)} of ${formatBytes(download.total)}',
       DownloadStatus.running => 'Starting…',
       DownloadStatus.paused || DownloadStatus.linksExpired => 'Paused',
+      DownloadStatus.metered => 'Paused on mobile data',
       DownloadStatus.noSpace => 'Needs ${formatBytes(download.required)} of free space',
       DownloadStatus.failed => 'The download failed',
       DownloadStatus.cancelled => 'Cancelled',

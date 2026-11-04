@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -27,7 +28,7 @@ data class DownloadState(
     val total: Long = 0,
     val required: Long = 0,
 ) {
-    enum class Status { RUNNING, PAUSED, LINKS_EXPIRED, NO_SPACE, FAILED, CANCELLED, COMPLETE }
+    enum class Status { RUNNING, PAUSED, METERED, LINKS_EXPIRED, NO_SPACE, FAILED, CANCELLED, COMPLETE }
 
     fun toMap(): Map<String, Any> = mapOf(
         "installId" to installId,
@@ -72,6 +73,12 @@ object Downloads {
 
     val isRunning get() = current?.status == DownloadState.Status.RUNNING
 
+    /** Deletes a download's files; it only counts as cancelled once they are really gone. */
+    fun discard(installId: String, staging: File): DownloadState {
+        val deleted = staging.deleteRecursively() && !staging.exists()
+        return DownloadState(installId, if (deleted) DownloadState.Status.CANCELLED else DownloadState.Status.FAILED)
+    }
+
     const val DOWNLOADS_DIRECTORY = "downloads"
     private val installIdFormat = Regex("[0-9a-f]{32}")
 }
@@ -81,39 +88,50 @@ object Downloads {
  * everything written so far, so the download resumes from there; only cancelling deletes it.
  */
 class DownloadService : Service() {
-    @Volatile
-    private var stopRequested = false
+    private val lock = Any()
 
-    @Volatile
-    private var cancelRequested = false
+    /** The job that is running; flags belong to it, so a new job never inherits a stop meant for an old one. */
+    private class Job(val installId: String, val allowMetered: Boolean) {
+        @Volatile
+        var stopRequested = false
 
-    @Volatile
-    private var worker: Thread? = null
+        @Volatile
+        var cancelRequested = false
+    }
+
+    private var job: Job? = null
     private var lastNotified = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START -> start(intent.getStringExtra(EXTRA_INSTALL_ID).orEmpty())
-            ACTION_PAUSE -> stopRequested = true
-            ACTION_CANCEL -> {
-                cancelRequested = true
-                stopRequested = true
+        synchronized(lock) {
+            when (intent?.action) {
+                ACTION_START -> start(
+                    intent.getStringExtra(EXTRA_INSTALL_ID).orEmpty(),
+                    intent.getBooleanExtra(EXTRA_ALLOW_METERED, false),
+                )
+                ACTION_PAUSE -> job?.stopRequested = true
+                ACTION_CANCEL -> job?.apply {
+                    cancelRequested = true
+                    stopRequested = true
+                }
             }
-        }
-        if (worker == null) {
-            stopSelf()
+            if (job == null) {
+                stopSelf()
+            }
         }
         return START_NOT_STICKY
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        stopRequested = true
+        synchronized(lock) {
+            job?.stopRequested = true
+        }
     }
 
-    private fun start(installId: String) {
-        if (worker != null) {
+    private fun start(installId: String, allowMetered: Boolean) {
+        if (job != null) {
             return
         }
 
@@ -123,41 +141,61 @@ class DownloadService : Service() {
             return
         }
 
+        val current = Job(installId, allowMetered)
+        job = current
+
         createChannel()
         val initial = DownloadState(installId, DownloadState.Status.RUNNING)
         Downloads.publish(initial)
-        startForeground(NOTIFICATION_ID, notification(initial), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification(initial), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(NOTIFICATION_ID, notification(initial))
+        }
 
         val wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "sogen:download")
         wakeLock.acquire(WAKE_LOCK_LIMIT)
 
-        worker = thread(name = "download") {
+        thread(name = "download") {
             val finished = try {
-                transfer(installId, staging)
+                transfer(current, staging)
             } finally {
-                wakeLock.release()
+                if (wakeLock.isHeld) {
+                    wakeLock.release()
+                }
             }
 
-            if (cancelRequested) {
-                staging.deleteRecursively()
-                Downloads.publish(DownloadState(installId, DownloadState.Status.CANCELLED))
+            val outcome = if (current.cancelRequested) {
+                Downloads.discard(installId, staging)
             } else {
-                Downloads.publish(finished)
+                finished
             }
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            worker = null
-            stopSelf()
+
+            // The job ends before its outcome is published, so a resume prompted by the outcome is never ignored.
+            synchronized(lock) {
+                job = null
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+            Downloads.publish(outcome)
         }
     }
 
-    private fun transfer(installId: String, staging: File): DownloadState {
-        var state = DownloadState(installId, DownloadState.Status.RUNNING)
+    private fun transfer(job: Job, staging: File): DownloadState {
+        var state = DownloadState(job.installId, DownloadState.Status.RUNNING)
+        val connectivity = getSystemService(ConnectivityManager::class.java)
         return try {
             val plan = TransferPlan.parse(File(staging, PLAN_FILE).readText())
             state = state.copy(total = plan.installedBytes, required = plan.requiredBytes)
             val fetcher = HttpChunkFetcher(CdnEndpoint.readLinks(File(staging, LINKS_FILE)))
-            TransferEngine(staging, plan, fetcher, isStopped = { stopRequested }) { written, total ->
+            TransferEngine(
+                staging,
+                plan,
+                fetcher,
+                isStopped = { job.stopRequested },
+                mayUseNetwork = { job.allowMetered || !connectivity.isActiveNetworkMetered },
+            ) { written, total ->
                 state = state.copy(written = written, total = total)
                 Downloads.publish(state)
                 notifyProgress(state)
@@ -167,6 +205,8 @@ class DownloadService : Service() {
             state.copy(status = DownloadState.Status.COMPLETE, written = state.total)
         } catch (e: TransferStoppedException) {
             state.copy(status = DownloadState.Status.PAUSED)
+        } catch (e: MeteredNetworkException) {
+            state.copy(status = DownloadState.Status.METERED)
         } catch (e: LinkExpiredException) {
             state.copy(status = DownloadState.Status.LINKS_EXPIRED)
         } catch (e: NotEnoughSpaceException) {
@@ -244,5 +284,6 @@ class DownloadService : Service() {
         const val ACTION_PAUSE = "dev.sogen.app.download.PAUSE"
         const val ACTION_CANCEL = "dev.sogen.app.download.CANCEL"
         const val EXTRA_INSTALL_ID = "installId"
+        const val EXTRA_ALLOW_METERED = "allowMetered"
     }
 }

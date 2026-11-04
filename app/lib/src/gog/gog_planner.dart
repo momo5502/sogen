@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'gog_cdn.dart';
 import 'gog_http.dart';
 import 'gog_manifest.dart';
@@ -33,6 +35,13 @@ class GogPlanner {
 
   /// Dependencies whose files Sogen installs into the game folder, known to need nothing but their files.
   static final _bundledDependencies = RegExp(r'^(ScummVM|DOSBox\w*)$');
+
+  /// Installers of runtimes the emulation root already has, so games that list them need nothing more.
+  static final _rootRuntimes = RegExp(r'^(DirectX|MSVC\d{4}(_x64)?|dotNet\w*)$');
+
+  /// The info and script files are a few kilobytes; anything far larger is not one.
+  static const _maxDescriptorBytes = 1024 * 1024;
+  static const _maxContainerReadBytes = 64 * 1024 * 1024;
 
   final GogContent _content;
 
@@ -70,8 +79,7 @@ class GogPlanner {
       final available = await _content.dependencies();
       for (final id in manifest.dependencies) {
         final dependency = available[id];
-        // Installers like DirectX or the Visual C++ runtimes are left out: the emulation root already has them.
-        if (dependency != null && !dependency.bundled) {
+        if (dependency != null && !dependency.bundled && _rootRuntimes.hasMatch(id)) {
           continue;
         }
         if (dependency == null || !_bundledDependencies.hasMatch(id)) {
@@ -114,15 +122,18 @@ class GogPlanner {
     }
 
     final slice = found.slice;
-    if (slice == null) {
-      return [for (final chunk in found.file.chunks) ...await _content.chunk(endpoints, chunk)];
+    final chunks = slice == null ? found.file.chunks : found.container!;
+    final size = chunks.fold(0, (total, chunk) => total + chunk.size);
+    if ((slice?.size ?? size) > _maxDescriptorBytes || size > _maxContainerReadBytes) {
+      throw const GogException('GOG sent a game description that is too large.');
     }
 
-    final container = <int>[];
-    for (final chunk in found.container!) {
-      container.addAll(await _content.chunk(endpoints, chunk));
+    final bytes = BytesBuilder(copy: false);
+    for (final chunk in chunks) {
+      bytes.add(await _content.chunk(endpoints, chunk));
     }
-    return container.sublist(slice.offset, slice.offset + slice.size);
+    final data = bytes.takeBytes();
+    return slice == null ? data : Uint8List.sublistView(data, slice.offset, slice.offset + slice.size);
   }
 }
 
@@ -189,15 +200,41 @@ class _PlanBuilder {
   }
 
   DepotPath _directoryNamed(DepotPath path) {
-    for (final (file, _, _) in _files.values) {
-      final segments = file.path.segments;
-      if (segments.length > path.segments.length &&
-          segments.sublist(0, path.segments.length).join('/').toLowerCase() == path.collisionKey) {
-        return DepotPath.parse(segments.sublist(0, path.segments.length).join('/'));
+    final spelling = _folderSpellings()[path.collisionKey];
+    if (spelling == null) {
+      throw const GogException('Sogen cannot tell how to start this game yet.');
+    }
+    return DepotPath.parse(spelling);
+  }
+
+  /// Every folder the plan creates, by its key, with the one spelling it may have. Windows compares names without
+  /// case, so two spellings would be two folders on the device but one in the guest, and a file may not share a
+  /// path with a folder.
+  Map<String, String> _folderSpellings() {
+    final folders = <String, String>{};
+    void addFolders(List<String> segments, int depth) {
+      for (var end = 1; end <= depth; end++) {
+        final folder = segments.sublist(0, end).join('/');
+        final spelling = folders.putIfAbsent(folder.toLowerCase(), () => folder);
+        if (spelling != folder) {
+          throw GogException('This game spells the folder $folder in two ways, which Sogen cannot install.');
+        }
       }
     }
-    final declared = _directories[path.collisionKey];
-    return declared == null ? path : DepotPath.parse(declared);
+
+    for (final directory in _directories.values) {
+      final segments = directory.split('/');
+      addFolders(segments, segments.length);
+    }
+    for (final (file, _, _) in _files.values) {
+      addFolders(file.path.segments, file.path.segments.length - 1);
+    }
+    for (final key in _files.keys) {
+      if (folders.containsKey(key)) {
+        throw GogException('This game uses ${folders[key]} as both a file and a folder, which Sogen cannot install.');
+      }
+    }
+    return folders;
   }
 
   _FoundFile? find(DepotPath path) {
@@ -216,24 +253,9 @@ class _PlanBuilder {
     required String language,
     required List<String> dependencies,
   }) {
-    for (final directory in _directories.keys) {
-      if (_files.containsKey(directory)) {
-        throw GogException('This game uses $directory as both a file and a folder, which Sogen cannot install.');
-      }
-    }
-
-    final directories = {..._directories.values};
+    final directories = _folderSpellings().values.toList()..sort();
     final files = <PlannedFile>[];
     for (final (file, source, container) in _files.values) {
-      final parents = file.path.segments;
-      for (var depth = 1; depth < parents.length; depth++) {
-        final parent = parents.sublist(0, depth).join('/');
-        if (_files.containsKey(parent.toLowerCase())) {
-          throw GogException('This game uses $parent as both a file and a folder, which Sogen cannot install.');
-        }
-        directories.add(parent);
-      }
-
       files.add(
         PlannedFile(
           path: file.path.relative,
@@ -255,7 +277,7 @@ class _PlanBuilder {
       dependencies: dependencies,
       files: files,
       containers: _containers,
-      directories: directories.toList()..sort(),
+      directories: directories,
     );
     if (plan.requiredBytes > maxInstallSize) {
       throw const GogException('This game is larger than Sogen can install.');

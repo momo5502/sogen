@@ -2,7 +2,6 @@ package dev.sogen.app.download
 
 import org.json.JSONException
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -84,21 +83,21 @@ class HttpChunkFetcher(private val endpoints: Map<ChunkSource, List<CdnEndpoint>
                 else -> throw IOException("The download server answered ${connection.responseCode}")
             }
 
-            val body = ByteArrayOutputStream(size.toInt())
+            val body = ByteArray(size.toInt())
+            var length = 0
             connection.inputStream.use { stream ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val read = stream.read(buffer)
+                while (length < body.size) {
+                    val read = stream.read(body, length, body.size - length)
                     if (read < 0) {
-                        break
+                        throw DamagedDownloadException("A download from GOG was cut short")
                     }
-                    if (body.size() + read > size) {
-                        throw DamagedDownloadException("A download from GOG was damaged")
-                    }
-                    body.write(buffer, 0, read)
+                    length += read
+                }
+                if (stream.read() >= 0) {
+                    throw DamagedDownloadException("A download from GOG was damaged")
                 }
             }
-            return body.toByteArray()
+            return body
         } finally {
             connection.disconnect()
         }

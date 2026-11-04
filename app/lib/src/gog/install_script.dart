@@ -12,7 +12,9 @@ import 'gog_http.dart';
 sealed class ScriptAction {
   const ScriptAction();
 
-  factory ScriptAction.fromJson(Map<String, Object?> install) {
+  /// Null for steps that are skipped: `savePath` only tells GOG Galaxy where saves are kept for its cloud saves, and
+  /// registry values are not written yet (#1805); the games seen so far run without them.
+  static ScriptAction? fromJson(Map<String, Object?> install) {
     final action = install['action'];
     final arguments = install['arguments'];
     if (arguments is! Map<String, Object?>) {
@@ -20,6 +22,8 @@ sealed class ScriptAction {
     }
 
     switch (action) {
+      case 'savePath' || 'setRegistry':
+        return null;
       case 'supportData' when arguments['type'] == 'folder':
         return CreateFolder(_gamePath(arguments['target']));
       case 'setIni':
@@ -36,6 +40,8 @@ sealed class ScriptAction {
           value: value.replaceAll('{app}', guestGameDirectory),
           utf8: arguments['utf8'] == true,
         );
+      case final String name when RegExp(r'^\w{1,40}$').hasMatch(name):
+        throw GogException('This game needs install steps Sogen cannot run yet ($name).');
       default:
         throw InstallScript._unsupported;
     }
@@ -84,6 +90,8 @@ class CreateFolder extends ScriptAction {
 }
 
 class SetIni extends ScriptAction {
+  static const _maxIniBytes = 1024 * 1024;
+
   const SetIni({required this.file, required this.section, required this.key, required this.value, required this.utf8});
 
   final DepotPath file;
@@ -95,6 +103,9 @@ class SetIni extends ScriptAction {
   @override
   void applyTo(Directory game) {
     final target = File(p.joinAll([game.path, ...file.segments]));
+    if (target.existsSync() && target.lengthSync() > _maxIniBytes) {
+      throw const GogException('This game has a settings file too large for Sogen to change.');
+    }
     final encoding = utf8 ? const Utf8Codec() : const Latin1Codec(allowInvalid: true);
     final text = target.existsSync() ? encoding.decode(target.readAsBytesSync()) : '';
     target.parent.createSync(recursive: true);
@@ -168,7 +179,7 @@ class InstallScript {
     }
 
     final actions = json is Map<String, Object?> ? json['actions'] : null;
-    if (actions is! List<Object?>) {
+    if (actions is! List<Object?> || actions.length > _maxActions) {
       throw _unsupported;
     }
 
@@ -176,7 +187,7 @@ class InstallScript {
       for (final action in actions)
         if (action is Map<String, Object?> && _appliesTo(action, language))
           if (action['install'] case final Map<String, Object?> install)
-            ScriptAction.fromJson(install)
+            ?ScriptAction.fromJson(install)
           else if (action.containsKey('install'))
             throw _unsupported,
     ]);
@@ -188,6 +199,7 @@ class InstallScript {
   }
 
   static const _unsupported = GogException('This game needs install steps Sogen cannot run yet.');
+  static const _maxActions = 1000;
 
   final List<ScriptAction> actions;
 }

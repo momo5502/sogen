@@ -154,6 +154,35 @@ class TransferEngineTest {
     }
 
     @Test
+    fun aMeteredNetworkTheUserDidNotAllowPausesTheTransfer() {
+        val plan = plan()
+
+        assertThrows(MeteredNetworkException::class.java) {
+            TransferEngine(staging(), plan, cdn, mayUseNetwork = { false }).run()
+        }
+        assertTrue(cdn.requests.isEmpty())
+    }
+
+    @Test
+    fun aSliceLargerThanTheCopyBufferIsCutWhole() {
+        val large = ByteArray(3 * 1024 * 1024 + 17) { (it * 7).toByte() }
+        val container = cdn.add(Stored(ByteArray(5) + large))
+        val plan = TransferPlan.parse(
+            JSONObject()
+                .put("format", TransferPlan.FORMAT)
+                .put("productId", "1")
+                .put("buildId", "2")
+                .put("files", JSONArray().put(file("large.bin", large.size, md5(large)).put("container", 0).put("offset", 5)))
+                .put("containers", JSONArray().put(JSONObject().put("source", "game").put("chunks", JSONArray().put(container.chunk))))
+                .put("directories", JSONArray())
+                .toString(),
+        )
+
+        TransferEngine(staging(), plan, cdn).run()
+        assertArrayEquals(large, output("large.bin").readBytes())
+    }
+
+    @Test
     fun aJournalCutOffByACrashIsReadUpToTheCut() {
         val plan = plan()
         TransferEngine(staging(), plan, cdn).run()

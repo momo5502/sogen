@@ -373,7 +373,33 @@ class GameLibrary extends ChangeNotifier {
       games = decoded.map((entry) => Game.fromJson(entry as Map<String, dynamic>)).toList();
     }
 
-    return GameLibrary._(file, games);
+    final library = GameLibrary._(file, games);
+    await library._recoverRemovals();
+    return library;
+  }
+
+  /// Folders of installed games move here while their removal is stored, so a failed or interrupted removal can be
+  /// undone.
+  Directory get _removing => Directory(p.join(_file.parent.path, 'removing'));
+
+  /// Puts back folders whose game is still listed, and deletes those whose removal was stored.
+  Future<void> _recoverRemovals() async {
+    final removing = _removing;
+    if (!removing.existsSync()) {
+      return;
+    }
+
+    final installed = Directory(p.join(_file.parent.path, 'games'));
+    for (final folder in removing.listSync().whereType<Directory>()) {
+      final installId = p.basename(folder.path);
+      final listed = _games.any((game) => installIdOf(game.directory) == installId);
+      final target = Directory(p.join(installed.path, installId));
+      if (listed && !target.existsSync()) {
+        await folder.rename(target.path);
+      } else {
+        await folder.delete(recursive: true);
+      }
+    }
   }
 
   /// Leaves the library as it was when the game cannot be stored.
@@ -415,13 +441,34 @@ class GameLibrary extends ChangeNotifier {
   /// Also deletes the changes the game made to its folder and to the emulation root, and the folder itself when Sogen
   /// installed it. Folders the user picked are kept.
   Future<void> remove(Game game) async {
-    _games.removeWhere((entry) => entry.id == game.id);
-    await _save();
-    await _deleteIfPresent(await _gameLayers(game));
+    final index = _games.indexWhere((entry) => entry.id == game.id);
+    if (index < 0) {
+      return;
+    }
 
     final installId = installIdOf(game.directory);
-    if (installId != null) {
-      await _deleteIfPresent(Directory(p.join((await installedGamesDirectory()).path, installId)));
+    final folder = installId == null ? null : Directory(p.join(_file.parent.path, 'games', installId));
+    final removed = installId == null ? null : Directory(p.join(_removing.path, installId));
+    if (folder != null && folder.existsSync()) {
+      await _removing.create(recursive: true);
+      await folder.rename(removed!.path);
+    }
+
+    _games.removeAt(index);
+    try {
+      await _save();
+    } catch (_) {
+      _games.insert(index, game);
+      notifyListeners();
+      if (removed != null && removed.existsSync()) {
+        await removed.rename(folder!.path);
+      }
+      rethrow;
+    }
+
+    await _deleteIfPresent(await _gameLayers(game));
+    if (removed != null) {
+      await _deleteIfPresent(removed);
     }
     final icon = game.icon;
     if (icon != null) {

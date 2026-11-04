@@ -14,9 +14,10 @@ import 'gog_cdn.dart';
 import 'gog_http.dart';
 import 'gog_library.dart';
 import 'gog_planner.dart';
+import 'install_commit.dart';
 import 'install_script.dart';
 
-enum DownloadStatus { running, paused, linksExpired, noSpace, failed, cancelled, complete }
+enum DownloadStatus { running, paused, metered, linksExpired, noSpace, failed, cancelled, complete }
 
 /// A download as the GOG tab shows it.
 @immutable
@@ -106,6 +107,10 @@ class GogInstaller extends ChangeNotifier {
   final _pending = <String, _PendingInstall>{};
   final _downloads = <String, GameDownload>{};
   final _refreshedLinks = <String>{};
+  final _finishing = <String>{};
+
+  /// Downloads the user agreed to continue over a metered network, until they finish or the app restarts.
+  final _approvedMetered = <String>{};
   StreamSubscription<Object?>? _subscription;
 
   /// Downloads by product id, including paused ones left from earlier runs.
@@ -161,7 +166,13 @@ class GogInstaller extends ChangeNotifier {
     );
   }
 
-  Future<void> install(StoreGame game, GogRelease release, PlannedInstall planned, {required String language}) async {
+  Future<void> install(
+    StoreGame game,
+    GogRelease release,
+    PlannedInstall planned, {
+    required String language,
+    required bool allowMetered,
+  }) async {
     if (isBusy) {
       throw const GogException('Another game is downloading.');
     }
@@ -194,7 +205,7 @@ class GogInstaller extends ChangeNotifier {
       await _writeAtomically(File(p.join(staging.path, 'plan.json')), jsonEncode(planned.plan.toJson()));
       await _writeAtomically(File(p.join(staging.path, 'install.json')), jsonEncode(pending.toJson()));
       await _storeIcon(staging, release.productId);
-      await _start(pending);
+      await _start(pending, allowMetered: allowMetered);
     } catch (_) {
       await staging.delete(recursive: true);
       rethrow;
@@ -202,7 +213,7 @@ class GogInstaller extends ChangeNotifier {
   }
 
   /// Signed links expire, so every start asks GOG for fresh ones.
-  Future<void> resume(String productId) async {
+  Future<void> resume(String productId, {required bool allowMetered}) async {
     final download = _downloads[productId];
     final pending = download == null ? null : _pending[download.installId];
     if (pending == null) {
@@ -211,7 +222,7 @@ class GogInstaller extends ChangeNotifier {
     if (isBusy) {
       throw const GogException('Another game is downloading.');
     }
-    await _start(pending);
+    await _start(pending, allowMetered: allowMetered);
   }
 
   Future<void> pause() => _channel.invokeMethod<void>('pause');
@@ -225,7 +236,15 @@ class GogInstaller extends ChangeNotifier {
 
   Future<bool> isMetered() async => await _channel.invokeMethod<bool>('isMetered') ?? true;
 
-  Future<void> _start(_PendingInstall pending) async {
+  /// The native downloader checks [allowMetered] before every chunk, so moving onto a metered network pauses a
+  /// download the user only agreed to on Wi-Fi.
+  Future<void> _start(_PendingInstall pending, {required bool allowMetered}) async {
+    if (allowMetered) {
+      _approvedMetered.add(pending.installId);
+    } else {
+      _approvedMetered.remove(pending.installId);
+    }
+
     final staging = Directory(p.join((await _downloadsDirectory()).path, pending.installId));
     final links = {
       'game': [for (final endpoint in await _content.gameEndpoints(pending.game.source!.productId)) endpoint.toJson()],
@@ -235,7 +254,7 @@ class GogInstaller extends ChangeNotifier {
 
     _track(pending, DownloadStatus.running);
     notifyListeners();
-    await _channel.invokeMethod<void>('start', {'installId': pending.installId});
+    await _channel.invokeMethod<void>('start', {'installId': pending.installId, 'allowMetered': allowMetered});
   }
 
   void _onState(Object? event) {
@@ -252,6 +271,7 @@ class GogInstaller extends ChangeNotifier {
     final productId = pending.game.source!.productId;
     final status = switch (event['status']) {
       'running' => DownloadStatus.running,
+      'metered' => DownloadStatus.metered,
       'links_expired' => DownloadStatus.linksExpired,
       'no_space' => DownloadStatus.noSpace,
       'failed' => DownloadStatus.failed,
@@ -263,6 +283,7 @@ class GogInstaller extends ChangeNotifier {
     if (status == DownloadStatus.cancelled) {
       _downloads.remove(productId);
       _pending.remove(installId);
+      _approvedMetered.remove(installId);
     } else {
       _downloads[productId] = _downloads[productId]!.copyWith(
         status: status,
@@ -276,17 +297,25 @@ class GogInstaller extends ChangeNotifier {
     if (status == DownloadStatus.complete) {
       unawaited(_finish(pending));
     } else if (status == DownloadStatus.linksExpired && _refreshedLinks.add(installId as String)) {
-      unawaited(_start(pending).catchError((Object error) => _fail(productId, error)));
+      final allowMetered = _approvedMetered.contains(installId);
+      unawaited(_start(pending, allowMetered: allowMetered).catchError((Object error) => _fail(productId, error)));
     } else if (status == DownloadStatus.running && (event['written'] as num? ?? 0) > 0) {
       _refreshedLinks.remove(installId);
     }
   }
 
+  /// The native side can report completion more than once, e.g. again after Flutter reattaches.
   Future<void> _finish(_PendingInstall pending) async {
+    if (!_finishing.add(pending.installId)) {
+      return;
+    }
+
     try {
       await _commit(pending);
     } catch (error) {
       _fail(pending.game.source!.productId, error);
+    } finally {
+      _finishing.remove(pending.installId);
     }
   }
 
@@ -299,41 +328,20 @@ class GogInstaller extends ChangeNotifier {
     }
   }
 
-  /// Moves the files into place, then adds the game. When adding fails, the files move back, so the download stays
-  /// resumable and no folder is left without its entry.
   Future<void> _commit(_PendingInstall pending) async {
-    final staging = Directory(p.join((await _downloadsDirectory()).path, pending.installId));
-    final files = Directory(p.join(staging.path, 'files'));
-    final installed = Directory(p.join((await installedGamesDirectory()).path, pending.installId));
+    final support = await getApplicationSupportDirectory();
+    await commitInstall(
+      staging: Directory(p.join((await _downloadsDirectory()).path, pending.installId)),
+      installed: Directory(p.join((await installedGamesDirectory()).path, pending.installId)),
+      icons: Directory(p.join(support.path, 'icons')),
+      game: pending.game,
+      script: pending.script,
+      add: _library.add,
+    );
 
-    if (!installed.existsSync()) {
-      for (final action in pending.script) {
-        action.applyTo(files);
-      }
-      await installed.parent.create(recursive: true);
-      await files.rename(installed.path);
-    }
-
-    var game = pending.game;
-    final stagedIcon = File(p.join(staging.path, 'icon.png'));
-    if (stagedIcon.existsSync()) {
-      final icon = p.join('icons', '${game.id}.png');
-      final target = File(p.join((await getApplicationSupportDirectory()).path, icon));
-      await target.parent.create(recursive: true);
-      await stagedIcon.rename(target.path);
-      game = Game.fromJson({...game.toJson(), 'icon': icon});
-    }
-
-    try {
-      await _library.add(game);
-    } catch (_) {
-      await installed.rename(files.path);
-      rethrow;
-    }
-
-    await staging.delete(recursive: true);
     _pending.remove(pending.installId);
     _downloads.remove(pending.game.source!.productId);
+    _approvedMetered.remove(pending.installId);
     notifyListeners();
   }
 

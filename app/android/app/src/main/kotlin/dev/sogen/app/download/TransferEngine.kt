@@ -20,6 +20,9 @@ class LinkExpiredException : IOException("The download links expired")
 
 class TransferStoppedException : Exception("The transfer was stopped")
 
+/** The device moved to a metered network the user did not agree to download over. */
+class MeteredNetworkException : Exception("The network is metered")
+
 class DamagedDownloadException(message: String) : IOException(message)
 
 class NotEnoughSpaceException(val required: Long, val available: Long) : IOException("Not enough space")
@@ -34,6 +37,7 @@ class TransferEngine(
     private val plan: TransferPlan,
     private val fetcher: ChunkFetcher,
     private val isStopped: () -> Boolean = { false },
+    private val mayUseNetwork: () -> Boolean = { true },
     private val onProgress: (written: Long, total: Long) -> Unit = { _, _ -> },
 ) {
     private val filesRoot = File(staging, FILES_DIRECTORY)
@@ -92,10 +96,14 @@ class TransferEngine(
                 }
             } else {
                 RandomAccessFile(File(containersRoot, "$container.bin"), "r").use { source ->
-                    val buffer = ByteArray(file.size.toInt())
                     source.seek(file.offset!!)
-                    source.readFully(buffer)
-                    sink(buffer)
+                    var remaining = file.size
+                    while (remaining > 0) {
+                        val buffer = ByteArray(minOf(remaining, COPY_BUFFER_SIZE.toLong()).toInt())
+                        source.readFully(buffer)
+                        sink(buffer)
+                        remaining -= buffer.size
+                    }
                 }
             }
         }
@@ -154,6 +162,13 @@ class TransferEngine(
     }
 
     private fun inflate(source: ChunkSource, chunk: Chunk): ByteArray {
+        if (isStopped()) {
+            throw TransferStoppedException()
+        }
+        if (!mayUseNetwork()) {
+            throw MeteredNetworkException()
+        }
+
         val compressed = fetcher.fetch(source, chunk.compressedMd5, chunk.compressedSize)
         if (compressed.size.toLong() != chunk.compressedSize || md5(compressed) != chunk.compressedMd5) {
             throw DamagedDownloadException("A download from GOG was damaged")
@@ -252,6 +267,7 @@ class TransferEngine(
 
     companion object {
         const val FILES_DIRECTORY = "files"
+        private const val COPY_BUFFER_SIZE = 1024 * 1024
         private const val PART_SUFFIX = ".part"
         private const val FILE_PREFIX = "file:"
         private const val CONTAINER_PREFIX = "container:"

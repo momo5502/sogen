@@ -51,6 +51,20 @@ class TransferPlanTest {
     }
 
     @Test
+    fun refusesAFolderSpelledTwoWays() {
+        assertThrows(InvalidPlanException::class.java) {
+            TransferPlan.parse(plan(JSONArray().put(file("Data/a.dat")).put(file("data/b.dat"))))
+        }
+    }
+
+    @Test
+    fun refusesAFileThatIsAlsoTheParentOfAFolder() {
+        assertThrows(InvalidPlanException::class.java) {
+            TransferPlan.parse(plan(JSONArray().put(file("saves")), directories = JSONArray().put("saves/slot1")))
+        }
+    }
+
+    @Test
     fun refusesSlicesOutsideTheirContainer() {
         val container = JSONObject().put("source", "game").put("chunks", JSONArray().put(chunk))
         val slice = JSONObject().put("path", "small").put("size", 4).put("source", "game").put("container", 0).put("offset", 1)

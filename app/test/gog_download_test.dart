@@ -1,13 +1,17 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
+import 'package:sogen_app/src/game_library.dart';
 import 'package:sogen_app/src/gog/depot_path.dart';
 import 'package:sogen_app/src/gog/gog_cdn.dart';
 import 'package:sogen_app/src/gog/gog_http.dart';
 import 'package:sogen_app/src/gog/gog_manifest.dart';
 import 'package:sogen_app/src/gog/gog_planner.dart';
+import 'package:sogen_app/src/gog/install_commit.dart';
 import 'package:sogen_app/src/gog/install_script.dart';
 import 'package:sogen_app/src/gog/play_task.dart';
 import 'package:sogen_app/src/gog/transfer_plan.dart';
@@ -18,13 +22,19 @@ String _md5(List<int> bytes) => md5.convert(bytes).toString();
 /// language with the info and script files, support files below `app`, ScummVM as a bundled dependency and the
 /// Visual C++ runtime as an installer.
 class _FakeContent implements GogContent {
-  _FakeContent({this.declared = const ['ScummVM', 'MSVC2015'], this.extraNeutralItems = const []});
+  _FakeContent({
+    this.declared = const ['ScummVM', 'MSVC2015'],
+    this.extraNeutralItems = const [],
+    this.info = defaultInfo,
+  });
+
+  final Map<String, Object?> info;
 
   final List<String> declared;
   final List<Map<String, Object?>> extraNeutralItems;
   final _smallFiles = <String, Uint8List>{};
 
-  static const info = {
+  static const defaultInfo = {
     'playTasks': [
       {
         'category': 'game',
@@ -96,6 +106,7 @@ class _FakeContent implements GogContent {
         'build_id': '1',
         'generation': 1,
         'branch': null,
+        'public': true,
         'date_published': '2016-03-25T14:40:06+0000',
         'link': 'https://cdn/old',
       },
@@ -103,6 +114,7 @@ class _FakeContent implements GogContent {
         'build_id': '2',
         'generation': 2,
         'branch': null,
+        'public': true,
         'date_published': '2018-04-24T14:47:17+0000',
         'link': 'https://cdn/build',
       },
@@ -174,6 +186,7 @@ class _FakeContent implements GogContent {
     'ScummVM': Dependency(id: 'ScummVM', manifest: 'e' * 32, size: 70, bundled: true),
     'MSVC2015': Dependency(id: 'MSVC2015', manifest: 'f' * 32, size: 1, bundled: false),
     'nGlide': Dependency(id: 'nGlide', manifest: '1' * 32, size: 1, bundled: true),
+    'PhysX': Dependency(id: 'PhysX', manifest: '2' * 32, size: 1, bundled: false),
   };
 
   @override
@@ -291,10 +304,11 @@ void main() {
   });
 
   test('the newest public second-generation build is chosen regardless of order', () {
-    Map<String, Object?> build(String id, int generation, String date, {String? branch}) => {
+    Map<String, Object?> build(String id, int generation, String date, {String? branch, bool? public = true}) => {
       'build_id': id,
       'generation': generation,
       'branch': branch,
+      'public': public,
       'date_published': date,
       'link': 'https://cdn/$id',
     };
@@ -302,6 +316,8 @@ void main() {
     final chosen = GogBuild.newestPublic({
       'items': [
         build('a', 2, '2019-01-01T00:00:00+0000'),
+        build('f', 2, '2023-01-01T00:00:00+0000', public: null),
+        build('g', 2, '2023-01-01T00:00:00+0000', public: false),
         build('b', 2, '2021-01-01T00:00:00+0000', branch: 'beta'),
         build('c', 1, '2022-01-01T00:00:00+0000'),
         build('e', 2, '2020-01-01T00:00:00+0000'),
@@ -362,6 +378,107 @@ void main() {
         ],
       );
       await expectLater(plan(content), throwsA(isA<GogException>()));
+    });
+
+    test('an installer the emulation root does not provide makes the game unavailable', () async {
+      await expectLater(plan(_FakeContent(declared: ['ScummVM', 'PhysX'])), throwsA(isA<GogException>()));
+    });
+
+    test('a folder spelled two ways fails, since the guest would see one folder', () async {
+      final content = _FakeContent(
+        extraNeutralItems: [_FakeContent._file('Data/a.dat', 1), _FakeContent._file('data/b.dat', 1)],
+      );
+      await expectLater(plan(content), throwsA(isA<GogException>()));
+    });
+
+    test('a file that is also the parent of a declared folder fails', () async {
+      final content = _FakeContent(
+        extraNeutralItems: [
+          _FakeContent._file('saves', 1),
+          {'type': 'DepotDirectory', 'path': r'saves\slot1'},
+        ],
+      );
+      await expectLater(plan(content), throwsA(isA<GogException>()));
+    });
+
+    test('a play task whose working directory is not installed makes the game unavailable', () async {
+      final info = {
+        'playTasks': [
+          {'isPrimary': true, 'type': 'FileTask', 'path': r'ScummVM\scummvm.exe', 'workingDir': 'Missing'},
+        ],
+      };
+      await expectLater(plan(_FakeContent(info: info)), throwsA(isA<GogException>()));
+    });
+  });
+
+  group('commitInstall', () {
+    late Directory root;
+    late Directory staging;
+    late Directory installed;
+    late Directory icons;
+
+    const game = Game(
+      id: '7',
+      name: 'Game',
+      directory: 'installed:0123456789abcdef0123456789abcdef',
+      executable: 'a.exe',
+    );
+
+    setUp(() {
+      root = Directory.systemTemp.createTempSync('sogen-commit-');
+      staging = Directory(p.join(root.path, 'downloads', 'id'))..createSync(recursive: true);
+      installed = Directory(p.join(root.path, 'games', 'id'));
+      icons = Directory(p.join(root.path, 'icons'));
+      File(p.join(staging.path, 'files', 'a.exe'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('game');
+      File(p.join(staging.path, 'icon.png')).writeAsBytesSync([1, 2, 3]);
+    });
+
+    tearDown(() => root.deleteSync(recursive: true));
+
+    Future<Game> commit(Future<void> Function(Game game) add) => commitInstall(
+      staging: staging,
+      installed: installed,
+      icons: icons,
+      game: game,
+      script: [SetIni(file: DepotPath.parse('game.ini'), section: 's', key: 'k', value: 'v', utf8: false)],
+      add: add,
+    );
+
+    test('moves the files into place, applies the script, keeps the icon and deletes the download', () async {
+      final added = <Game>[];
+      final entry = await commit((game) async => added.add(game));
+
+      expect(added.single.icon, p.join('icons', '7.png'));
+      expect(entry.icon, added.single.icon);
+      expect(File(p.join(installed.path, 'a.exe')).readAsStringSync(), 'game');
+      expect(File(p.join(installed.path, 'game.ini')).readAsStringSync(), '[s]\nk=v\n');
+      expect(File(p.join(icons.path, '7.png')).readAsBytesSync(), [1, 2, 3]);
+      expect(staging.existsSync(), isFalse);
+    });
+
+    test('a library that cannot store the game leaves the download as it was', () async {
+      await expectLater(
+        commit((_) async => throw const FileSystemException('full')),
+        throwsA(isA<FileSystemException>()),
+      );
+
+      expect(installed.existsSync(), isFalse);
+      expect(File(p.join(staging.path, 'files', 'a.exe')).existsSync(), isTrue);
+      expect(File(p.join(staging.path, 'icon.png')).existsSync(), isTrue);
+      expect(File(p.join(icons.path, '7.png')).existsSync(), isFalse);
+    });
+
+    test('an install interrupted after moving the files is finished without moving them again', () async {
+      Directory(p.join(staging.path, 'files')).renameSync(installed.path);
+
+      final added = <Game>[];
+      await commit((game) async => added.add(game));
+
+      expect(added, hasLength(1));
+      expect(File(p.join(installed.path, 'a.exe')).existsSync(), isTrue);
+      expect(staging.existsSync(), isFalse);
     });
   });
 }
