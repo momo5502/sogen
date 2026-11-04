@@ -237,7 +237,7 @@ void main() {
   test('splits command lines like the Microsoft C runtime', () {
     expect(splitWindowsCommandLine(r'-c "..\beneath.ini" beneath'), ['-c', r'..\beneath.ini', 'beneath']);
     expect(splitWindowsCommandLine(r'"a b"  c""d "e""f"'), ['a b', 'cd', 'e"f']);
-    expect(splitWindowsCommandLine(r'a\\\"b c\\"d e" f'), [r'a\"b', r'c\d e f']);
+    expect(splitWindowsCommandLine(r'a\\\"b c\\"d e" f'), [r'a\"b', r'c\d e', 'f']);
     expect(splitWindowsCommandLine(r'C:\Games\x.exe'), [r'C:\Games\x.exe']);
     expect(splitWindowsCommandLine(''), isEmpty);
   });
@@ -264,7 +264,7 @@ void main() {
     test('keeps the steps of the chosen language and maps {app} to the game folder', () {
       final script = InstallScript.parse(utf8.encode(jsonEncode(_FakeContent.script)), 'en-US');
       final step = script.actions.single as SetIni;
-      expect(step.file.relative, 'beneath.ini');
+      expect(step.file.relative, 'BENEATH.INI');
       expect(step.value, r'C:\game');
     });
 
@@ -476,6 +476,7 @@ void main() {
     });
 
     test('an install interrupted after moving the files is finished without moving them again', () async {
+      installed.parent.createSync(recursive: true);
       Directory(p.join(staging.path, 'files')).renameSync(installed.path);
 
       final added = <Game>[];
