@@ -188,15 +188,12 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     }
   }
 
-  Widget _art(StoreGame game) {
+  Widget _art(StoreGame game, int index) {
     final image = game.imageUrl;
-    return GameArt(
-      source: image == null ? null : StoreArt(image, widget.covers),
-      seed: '${game.store}/${game.productId}',
-    );
+    return GameArt(source: image == null ? null : StoreArt(image, widget.covers), color: placeholderColor(index));
   }
 
-  Widget _row(StoreGame game) {
+  Widget _row(StoreGame game, int index) {
     final installed = widget.library.games
         .where((entry) => entry.source?.store == game.store && entry.source?.productId == game.productId)
         .firstOrNull;
@@ -204,7 +201,7 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
 
     if (installed != null) {
       return GameRow(
-        art: _art(game),
+        art: _art(game, index),
         title: game.title,
         onTap: widget.commands.tap(installed),
         dimmed: widget.commands.isBusy(installed),
@@ -213,7 +210,7 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     }
     if (download != null) {
       return GameRow(
-        art: _art(game),
+        art: _art(game, index),
         title: game.title,
         status: _DownloadStatusLine(download: download),
         trailing: Row(
@@ -240,7 +237,7 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
 
     final preparing = _preparing.contains(game.productId);
     return GameRow(
-      art: _art(game),
+      art: _art(game, index),
       title: game.title,
       trailing: preparing
           ? const Padding(
@@ -382,7 +379,7 @@ class _OwnedGames extends StatelessWidget {
   final String name;
   final List<StoreGame> games;
   final Listenable listenable;
-  final Widget Function(StoreGame game) rowBuilder;
+  final Widget Function(StoreGame game, int index) rowBuilder;
   final String search;
   final ValueChanged<String> onSearch;
   final RefreshCallback onRefresh;
@@ -427,7 +424,7 @@ class _OwnedGames extends StatelessWidget {
               itemCount: matches.length,
               separatorBuilder: (_, _) => const SizedBox(height: 12),
               itemBuilder: (context, index) =>
-                  ListenableBuilder(listenable: listenable, builder: (context, _) => rowBuilder(matches[index])),
+                  ListenableBuilder(listenable: listenable, builder: (context, _) => rowBuilder(matches[index], index)),
             ),
           ),
         ],

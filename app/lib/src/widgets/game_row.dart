@@ -7,6 +7,9 @@ import '../game_library.dart';
 import '../store/cover_cache.dart';
 import '../theme.dart';
 
+/// The gamepad color of the game at [index] in a list, cycling through the accents in their order.
+Color placeholderColor(int index) => SogenColors.accents[index % SogenColors.accents.length];
+
 /// What can be done with an installed game, the same from every list that shows it.
 class GameCommands {
   const GameCommands({
@@ -55,17 +58,17 @@ class StoreArt extends GameArtSource {
   final CoverCache covers;
 }
 
-/// A game's wide art, or a gamepad in a color of its own when it has none.
+/// A game's wide art, or a colored gamepad when it has none.
 class GameArt extends StatefulWidget {
-  const GameArt({super.key, required this.source, required this.seed});
+  const GameArt({super.key, required this.source, required this.color});
 
   static const width = 96.0;
   static const height = 54.0;
 
   final GameArtSource? source;
 
-  /// Picks the placeholder's color, so that a game keeps its color.
-  final String seed;
+  /// The gamepad's color when the game has no art.
+  final Color color;
 
   @override
   State<GameArt> createState() => _GameArtState();
@@ -103,15 +106,6 @@ class _GameArtState extends State<GameArt> {
     };
   }
 
-  /// FNV-1a, since String.hashCode may differ between runs and the color should not.
-  Color get _placeholderColor {
-    var hash = 0x811C9DC5;
-    for (final unit in widget.seed.codeUnits) {
-      hash = ((hash ^ unit) * 0x01000193) & 0xFFFFFFFF;
-    }
-    return SogenColors.accents[hash % SogenColors.accents.length];
-  }
-
   @override
   Widget build(BuildContext context) {
     final placeholder = Container(
@@ -120,7 +114,7 @@ class _GameArtState extends State<GameArt> {
         border: Border.all(color: SogenColors.neutral700.withValues(alpha: 0.5)),
         borderRadius: BorderRadius.circular(6),
       ),
-      child: Icon(LucideIcons.gamepad2, color: _placeholderColor, size: GameArt.height / 2),
+      child: Icon(LucideIcons.gamepad2, color: widget.color, size: GameArt.height / 2),
     );
 
     final file = _file;

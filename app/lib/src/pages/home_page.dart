@@ -295,12 +295,12 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   /// Installed games say where they come from: their store, or their executable when they were added by hand.
-  Widget _installedRow(Game game) {
+  Widget _installedRow(Game game, int index) {
     final theme = Theme.of(context);
     final icon = widget.library.iconOf(game);
     final saving = _saving.containsKey(game.id);
     return GameRow(
-      art: GameArt(source: icon == null ? null : LocalArt(icon), seed: game.id),
+      art: GameArt(source: icon == null ? null : LocalArt(icon), color: placeholderColor(index)),
       title: game.name,
       subtitle: switch (_storeNames[game.source?.store]) {
         _ when saving => Text('Suspending…', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400)),
@@ -361,7 +361,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                   sliver: SliverList.separated(
                     itemCount: games.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) => _installedRow(games[index]),
+                    itemBuilder: (context, index) => _installedRow(games[index], index),
                   ),
                 ),
             ],
