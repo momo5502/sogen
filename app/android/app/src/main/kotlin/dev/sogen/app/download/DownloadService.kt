@@ -223,14 +223,16 @@ class DownloadService : Service() {
         return try {
             val plan = TransferPlan.parse(File(staging, PLAN_FILE).readText())
             state = state.copy(total = plan.installedBytes, required = plan.requiredBytes)
-            val fetcher = HttpChunkFetcher(CdnEndpoint.readLinks(File(staging, LINKS_FILE)))
-            TransferEngine(
-                staging,
-                plan,
-                fetcher,
-                isStopped = { job.stopRequested },
-                mayUseNetwork = { job.allowMetered || !connectivity.isActiveNetworkMetered },
-            ) { written, total ->
+            val mayUseNetwork = { job.allowMetered || !connectivity.isActiveNetworkMetered }
+            val fetcher = HttpChunkFetcher(CdnEndpoint.readLinks(File(staging, LINKS_FILE)), beforeAttempt = {
+                if (job.stopRequested) {
+                    throw TransferStoppedException()
+                }
+                if (!mayUseNetwork()) {
+                    throw MeteredNetworkException()
+                }
+            })
+            TransferEngine(staging, plan, fetcher, isStopped = { job.stopRequested }, mayUseNetwork = mayUseNetwork) { written, total ->
                 state = state.copy(written = written, total = total)
                 Downloads.publish(state)
                 notifyProgress(state)

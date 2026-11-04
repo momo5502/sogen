@@ -47,8 +47,16 @@ data class CdnEndpoint(val urlFormat: String, val parameters: Map<String, String
     }
 }
 
-/** Fetches chunks over HTTPS, trying the next endpoint when one fails and giving up once the links have expired. */
-class HttpChunkFetcher(private val endpoints: Map<ChunkSource, List<CdnEndpoint>>) : ChunkFetcher {
+/**
+ * Fetches chunks over HTTPS, trying the next endpoint when one fails and giving up once the links have expired.
+ * [beforeAttempt] runs before every attempt, so a retry never goes out after a pause or onto a network the user did
+ * not allow.
+ */
+class HttpChunkFetcher(
+    private val endpoints: Map<ChunkSource, List<CdnEndpoint>>,
+    private val beforeAttempt: () -> Unit = {},
+    private val transport: (URL, Long) -> ByteArray = ::download,
+) : ChunkFetcher {
     override fun fetch(source: ChunkSource, compressedMd5: String, compressedSize: Long): ByteArray {
         val candidates = endpoints[source].orEmpty()
         if (candidates.isEmpty()) {
@@ -59,8 +67,9 @@ class HttpChunkFetcher(private val endpoints: Map<ChunkSource, List<CdnEndpoint>
         var expired = 0
         for (attempt in 0 until ATTEMPTS) {
             val endpoint = candidates[attempt % candidates.size]
+            beforeAttempt()
             try {
-                return download(endpoint.chunkUrl(compressedMd5), compressedSize)
+                return transport(endpoint.chunkUrl(compressedMd5), compressedSize)
             } catch (e: LinkExpiredException) {
                 if (++expired >= candidates.size) {
                     throw e
@@ -71,41 +80,39 @@ class HttpChunkFetcher(private val endpoints: Map<ChunkSource, List<CdnEndpoint>
         }
         throw failure ?: LinkExpiredException()
     }
+}
 
-    private fun download(url: URL, size: Long): ByteArray {
-        val connection = url.openConnection() as HttpURLConnection
-        connection.connectTimeout = TIMEOUT_MILLISECONDS
-        connection.readTimeout = TIMEOUT_MILLISECONDS
-        try {
-            when (connection.responseCode) {
-                HttpURLConnection.HTTP_OK -> {}
-                HttpURLConnection.HTTP_UNAUTHORIZED, HttpURLConnection.HTTP_FORBIDDEN, HTTP_GONE -> throw LinkExpiredException()
-                else -> throw IOException("The download server answered ${connection.responseCode}")
-            }
-
-            val body = ByteArray(size.toInt())
-            var length = 0
-            connection.inputStream.use { stream ->
-                while (length < body.size) {
-                    val read = stream.read(body, length, body.size - length)
-                    if (read < 0) {
-                        throw DamagedDownloadException("A download from GOG was cut short")
-                    }
-                    length += read
-                }
-                if (stream.read() >= 0) {
-                    throw DamagedDownloadException("A download from GOG was damaged")
-                }
-            }
-            return body
-        } finally {
-            connection.disconnect()
+private fun download(url: URL, size: Long): ByteArray {
+    val connection = url.openConnection() as HttpURLConnection
+    connection.connectTimeout = TIMEOUT_MILLISECONDS
+    connection.readTimeout = TIMEOUT_MILLISECONDS
+    try {
+        when (connection.responseCode) {
+            HttpURLConnection.HTTP_OK -> {}
+            HttpURLConnection.HTTP_UNAUTHORIZED, HttpURLConnection.HTTP_FORBIDDEN, HTTP_GONE -> throw LinkExpiredException()
+            else -> throw IOException("The download server answered ${connection.responseCode}")
         }
-    }
 
-    private companion object {
-        const val ATTEMPTS = 4
-        const val TIMEOUT_MILLISECONDS = 30_000
-        const val HTTP_GONE = 410
+        val body = ByteArray(size.toInt())
+        var length = 0
+        connection.inputStream.use { stream ->
+            while (length < body.size) {
+                val read = stream.read(body, length, body.size - length)
+                if (read < 0) {
+                    throw DamagedDownloadException("A download from GOG was cut short")
+                }
+                length += read
+            }
+            if (stream.read() >= 0) {
+                throw DamagedDownloadException("A download from GOG was damaged")
+            }
+        }
+        return body
+    } finally {
+        connection.disconnect()
     }
 }
+
+private const val ATTEMPTS = 4
+private const val TIMEOUT_MILLISECONDS = 30_000
+private const val HTTP_GONE = 410
