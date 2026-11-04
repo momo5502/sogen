@@ -322,6 +322,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         ),
       },
       onTap: _commands.tap(game),
+      onLongPress: _commands.menu(game),
       dimmed: saving,
       trailing: _commands.actions(game),
     );

@@ -30,14 +30,42 @@ class GameCommands {
   /// Whether games can start at all, which they cannot while the emulation root installs.
   final bool canPlay;
 
-  Widget actions(Game game) => InstalledGameActions(
-    busy: isBusy(game),
-    onPlay: canPlay ? () => play(game) : null,
-    onEdit: () => edit(game),
-    onRemove: () => remove(game),
-  );
+  Widget actions(Game game) => InstalledGameActions(busy: isBusy(game), onPlay: canPlay ? () => play(game) : null);
 
   VoidCallback? tap(Game game) => canPlay && !isBusy(game) ? () => play(game) : null;
+
+  /// Edit and remove, from a long press on the game.
+  void Function(BuildContext context)? menu(Game game) => isBusy(game) ? null : (context) => _showMenu(context, game);
+
+  void _showMenu(BuildContext context, Game game) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: SogenColors.card,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(LucideIcons.pencil),
+              title: const Text('Edit'),
+              onTap: () {
+                Navigator.of(context).pop();
+                edit(game);
+              },
+            ),
+            ListTile(
+              leading: const Icon(LucideIcons.trash2),
+              title: const Text('Remove'),
+              onTap: () {
+                Navigator.of(context).pop();
+                remove(game);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Where a game's art comes from: a file kept with the installed game, or a store cover kept in the cover cache.
@@ -158,6 +186,7 @@ class GameRow extends StatelessWidget {
     this.status,
     this.trailing,
     this.onTap,
+    this.onLongPress,
     this.dimmed = false,
   });
 
@@ -169,6 +198,7 @@ class GameRow extends StatelessWidget {
   final Widget? status;
   final Widget? trailing;
   final VoidCallback? onTap;
+  final void Function(BuildContext context)? onLongPress;
   final bool dimmed;
 
   @override
@@ -179,6 +209,7 @@ class GameRow extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
+        onLongPress: onLongPress == null ? null : () => onLongPress!(context),
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
@@ -212,19 +243,11 @@ class GameRow extends StatelessWidget {
 
 /// What an installed game offers wherever it is listed.
 class InstalledGameActions extends StatelessWidget {
-  const InstalledGameActions({
-    super.key,
-    required this.busy,
-    required this.onPlay,
-    required this.onEdit,
-    required this.onRemove,
-  });
+  const InstalledGameActions({super.key, required this.busy, required this.onPlay});
 
   /// While the game is being suspended, it can neither start nor change.
   final bool busy;
   final VoidCallback? onPlay;
-  final VoidCallback onEdit;
-  final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
@@ -235,35 +258,6 @@ class InstalledGameActions extends StatelessWidget {
       );
     }
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(icon: const Icon(LucideIcons.play), tooltip: 'Play', onPressed: onPlay),
-        PopupMenuButton<VoidCallback>(
-          icon: const Icon(LucideIcons.ellipsisVertical),
-          tooltip: 'More',
-          color: SogenColors.card,
-          onSelected: (action) => action(),
-          itemBuilder: (context) => [
-            PopupMenuItem(
-              value: onEdit,
-              child: const ListTile(
-                leading: Icon(LucideIcons.pencil),
-                title: Text('Edit'),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-            PopupMenuItem(
-              value: onRemove,
-              child: const ListTile(
-                leading: Icon(LucideIcons.trash2),
-                title: Text('Remove'),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
+    return IconButton(icon: const Icon(LucideIcons.play), tooltip: 'Play', onPressed: onPlay);
   }
 }

@@ -204,6 +204,7 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
         art: _art(game, index),
         title: game.title,
         onTap: widget.commands.tap(installed),
+        onLongPress: widget.commands.menu(installed),
         dimmed: widget.commands.isBusy(installed),
         trailing: widget.commands.actions(installed),
       );
