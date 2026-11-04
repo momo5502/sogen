@@ -85,7 +85,11 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   void _openSettings() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => SettingsPage(settings: widget.settings, gog: widget.gog),
+        builder: (_) => SettingsPage(
+          settings: widget.settings,
+          gog: widget.gog,
+          onRedownloadRoot: widget.root.isInstalled && !_installing ? _installRoot : null,
+        ),
       ),
     );
   }
@@ -222,19 +226,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 children: [
                   Text('Sogen', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
                   const Spacer(),
-                  PopupMenuButton<void>(
-                    icon: const Icon(LucideIcons.ellipsisVertical, color: SogenColors.neutral400),
-                    color: SogenColors.card,
-                    itemBuilder: (context) => [
-                      if (installed)
-                        PopupMenuItem(
-                          enabled: !_installing,
-                          onTap: _installRoot,
-                          child: const Text('Re-download emulation root'),
-                        ),
-                      PopupMenuItem(onTap: () => openDiscord(context), child: const Text('Help and support')),
-                      PopupMenuItem(onTap: _openSettings, child: const Text('Settings')),
-                    ],
+                  IconButton(
+                    icon: const Icon(LucideIcons.settings, color: SogenColors.neutral400),
+                    tooltip: 'Settings',
+                    onPressed: _openSettings,
                   ),
                 ],
               ),
