@@ -46,9 +46,6 @@ class _SlowLinks implements GogContent {
   Future<Uint8List> chunk(List<CdnEndpoint> endpoints, GogChunk chunk) => throw UnimplementedError();
 
   @override
-  Future<Uri?> squareIcon(String productId) async => null;
-
-  @override
   void close() {}
 }
 

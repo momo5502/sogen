@@ -126,8 +126,10 @@ private fun download(url: URL, size: Long): ByteArray {
             }
         }
         return body
-    } finally {
+    } catch (e: IOException) {
+        // A failed exchange may leave the connection unusable, so it is not offered for reuse.
         connection.disconnect()
+        throw e
     }
 }
 

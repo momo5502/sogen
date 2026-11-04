@@ -9,6 +9,10 @@ import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.zip.DataFormatException
 import java.util.zip.Inflater
 
@@ -52,7 +56,25 @@ class TransferEngine(
     private val decodedChunks = LinkedHashMap<Int, ByteArray>(16, 0.75f, true)
     private var decodedChunkBytes = 0L
 
+    /**
+     * Shared chunks are small, so fetching them one after another leaves the connection idle for a round trip each;
+     * they are fetched and decoded ahead, in the order the files need them, while the files are written in order.
+     */
+    private var prefetch: ExecutorService? = null
+    private val prefetched = HashMap<Int, Future<ByteArray>>()
+    private var prefetchOrder: List<Int> = emptyList()
+    private var prefetchNext = 0
+    private var prefetchedBytes = 0L
+
     fun run() {
+        try {
+            transfer()
+        } finally {
+            prefetch?.shutdownNow()
+        }
+    }
+
+    private fun transfer() {
         filesRoot.mkdirs()
         deleteUnfinishedFiles()
         val completed = journal.read().filterTo(HashMap()) { (key, sha256) -> isIntact(key, sha256) }
@@ -68,6 +90,13 @@ class TransferEngine(
 
         written = plan.files.filter { fileKey(it.path) in completed }.sumOf { it.size }
         onProgress(written, plan.installedBytes)
+
+        prefetchOrder = plan.files.filter { fileKey(it.path) !in completed }
+            .flatMap { file -> file.parts.mapNotNull { it.chunk } }
+            .distinct()
+        if (prefetchOrder.isNotEmpty()) {
+            prefetch = Executors.newFixedThreadPool(PARALLEL_DOWNLOADS)
+        }
 
         for (file in plan.files) {
             if (fileKey(file.path) in completed) {
@@ -208,6 +237,52 @@ class TransferEngine(
     private fun sharedChunk(index: Int): ByteArray {
         decodedChunks[index]?.let { return it }
 
+        fillPrefetch()
+        val pending = prefetched.remove(index) ?: submit(index)
+        val data = try {
+            pending.get()
+        } catch (e: ExecutionException) {
+            throw e.cause ?: e
+        } finally {
+            prefetchedBytes -= plan.sharedChunks[index].size
+        }
+
+        decodedChunks[index] = data
+        decodedChunkBytes += data.size
+        val entries = decodedChunks.entries.iterator()
+        while (decodedChunkBytes > DECODED_CHUNK_CACHE_BYTES && decodedChunks.size > 1) {
+            decodedChunkBytes -= entries.next().value.size
+            entries.remove()
+        }
+        return data
+    }
+
+    /** Keeps the next chunks the files need on their way, as many as fit in the prefetch limit. */
+    private fun fillPrefetch() {
+        while (prefetchNext < prefetchOrder.size && prefetched.size < PARALLEL_DOWNLOADS) {
+            val index = prefetchOrder[prefetchNext]
+            if (index in prefetched || index in decodedChunks) {
+                prefetchNext++
+                continue
+            }
+            // A chunk is only added while it fits; the first one always is, so a large chunk cannot stall the transfer.
+            val size = plan.sharedChunks[index].size
+            if (prefetched.isNotEmpty() && prefetchedBytes + size > PREFETCH_BYTES) {
+                break
+            }
+            prefetched[index] = submit(index)
+            prefetchNext++
+        }
+    }
+
+    private fun submit(index: Int): Future<ByteArray> {
+        prefetchedBytes += plan.sharedChunks[index].size
+        val pool = prefetch ?: Executors.newSingleThreadExecutor().also { prefetch = it }
+        return pool.submit<ByteArray> { decodeSharedChunk(index) }
+    }
+
+    /** Runs on the prefetch threads, so it only reads the plan and what the engine was given. */
+    private fun decodeSharedChunk(index: Int): ByteArray {
         val chunk = plan.sharedChunks[index]
         val data = when (chunk.source) {
             ChunkSource.EPIC -> EpicChunk.decode(download(chunk.source, chunk.path, chunk.compressedSize), chunk.size)
@@ -220,14 +295,6 @@ class TransferEngine(
         }
         if (sha1(data) != chunk.sha1) {
             throw DamagedDownloadException("A download was damaged")
-        }
-
-        decodedChunks[index] = data
-        decodedChunkBytes += data.size
-        val entries = decodedChunks.entries.iterator()
-        while (decodedChunkBytes > DECODED_CHUNK_CACHE_BYTES && decodedChunks.size > 1) {
-            decodedChunkBytes -= entries.next().value.size
-            entries.remove()
         }
         return data
     }
@@ -360,6 +427,8 @@ class TransferEngine(
         const val FILES_DIRECTORY = "files"
         private const val COPY_BUFFER_SIZE = 1024 * 1024
         private const val DECODED_CHUNK_CACHE_BYTES = 64L * 1024 * 1024
+        private const val PARALLEL_DOWNLOADS = 8
+        private const val PREFETCH_BYTES = 64L * 1024 * 1024
         private val ZEROS = ByteArray(COPY_BUFFER_SIZE)
         private const val PART_SUFFIX = ".part"
         private const val FILE_PREFIX = "file:"

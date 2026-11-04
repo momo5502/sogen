@@ -18,16 +18,13 @@ import 'store_http.dart';
 
 enum DownloadStatus { running, paused, metered, linksExpired, noSpace, failed, cancelled, complete }
 
-/// What a store provides to download a game it planned: fresh CDN links, since signed ones expire, and its icon.
+/// What a store provides to download a game it planned: fresh CDN links, since signed ones expire.
 abstract interface class InstallSource {
   StoreService get service;
 
   /// The CDN endpoints by the name of the [ChunkSource] they serve, and what else the native downloader needs to fetch
   /// the chunks of [plan], the stored transfer plan, like Steam's depot keys.
   Future<Map<String, Object>> links(String productId, Map<String, Object?> plan);
-
-  /// A square PNG icon of the game, if the store has one.
-  Future<Uri?> icon(String productId);
 }
 
 /// A download as a store tab shows it.
@@ -117,8 +114,8 @@ class StoreInstaller extends ChangeNotifier {
   static const _channel = MethodChannel('dev.sogen.app/downloads');
   static const _events = EventChannel('dev.sogen.app/downloads/events');
 
-  /// Store covers stand in for icons where a store has none, and those are large JPEGs.
-  static const _maxIconBytes = 8 * 1024 * 1024;
+  /// Store covers are JPEGs of up to a few megabytes.
+  static const _maxCoverBytes = 8 * 1024 * 1024;
 
   final GameLibrary _library;
   final Map<String, InstallSource> _sources;
@@ -238,7 +235,7 @@ class StoreInstaller extends ChangeNotifier {
 
       await _writeAtomically(File(p.join(staging.path, 'plan.json')), jsonEncode(planned.plan.toJson()));
       await _writeAtomically(File(p.join(staging.path, 'install.json')), jsonEncode(pending.toJson()));
-      await _storeIcon(staging, pending, cover: game.imageUrl);
+      await _storeCover(staging, pending, game.imageUrl);
       await _start(pending, allowMetered: allowMetered);
     } catch (_) {
       await staging.delete(recursive: true);
@@ -425,12 +422,10 @@ class StoreInstaller extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The store's square icon, or its [cover] where it has none, kept with the game so the library never loads it from
-  /// the network. The library crops it to its square tile.
-  Future<void> _storeIcon(Directory staging, _PendingInstall pending, {Uri? cover}) async {
+  /// The wide cover the store tab shows, kept with the game so the library never loads it from the network.
+  Future<void> _storeCover(Directory staging, _PendingInstall pending, Uri? url) async {
     try {
       final source = _sourceOf(pending);
-      final url = await source.icon(pending.game.source!.productId) ?? cover;
       if (url == null) {
         return;
       }
@@ -438,7 +433,7 @@ class StoreInstaller extends ChangeNotifier {
       final client = http.Client();
       final (int, List<int>) response;
       try {
-        response = await sendBounded(source.service, client, http.Request('GET', url), maxBytes: _maxIconBytes);
+        response = await sendBounded(source.service, client, http.Request('GET', url), maxBytes: _maxCoverBytes);
       } finally {
         client.close();
       }
@@ -449,7 +444,7 @@ class StoreInstaller extends ChangeNotifier {
         await _writeAtomically(File(p.join(staging.path, 'icon.png')), bytes);
       }
     } on StoreException {
-      // Without an icon, the game shows the default one.
+      // Without a cover, the game shows the placeholder.
     }
   }
 

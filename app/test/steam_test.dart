@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -336,6 +337,77 @@ void main() {
     expect(rotated.clientId, 99);
     expect(rotated.challengeUrl, 'https://s.team/q/1/99');
     expect(rotated.requestId, [1, 2, 3]);
+  });
+
+  group('password sign-in', () {
+    final pair =
+        (RSAKeyGenerator()..init(
+              ParametersWithRandom(
+                RSAKeyGeneratorParameters(BigInt.from(65537), 1024, 64),
+                FortunaRandom()..seed(KeyParameter(Uint8List(32))),
+              ),
+            ))
+            .generateKeyPair();
+    final public = pair.publicKey;
+    ProtoWriter key() => ProtoWriter()
+      ..string(1, public.modulus!.toRadixString(16))
+      ..string(2, public.exponent!.toRadixString(16))
+      ..varint(3, 1234);
+
+    test('the password is encrypted with PKCS#1 v1.5 for the key Steam hands out', () {
+      final encrypted = SteamAuth.encryptPassword('hunter2', public.modulus!, public.exponent!, Random(1));
+      final decryption = PKCS1Encoding(RSAEngine())..init(false, PrivateKeyParameter<RSAPrivateKey>(pair.privateKey));
+
+      expect(utf8.decode(decryption.process(base64.decode(encrypted))), 'hunter2');
+    });
+
+    http.Response answer(ProtoWriter body, {int eresult = 1}) =>
+        http.Response.bytes(body.toBytes(), 200, headers: {'x-eresult': '$eresult'});
+
+    test('a password sign-in lists how Steam Guard wants it confirmed', () async {
+      final requests = <http.Request>[];
+      final auth = SteamAuth(
+        client: MockClient((request) async {
+          requests.add(request);
+          if (request.url.path.contains('GetPasswordRSAPublicKey')) {
+            return answer(key());
+          }
+          return answer(
+            ProtoWriter()
+              ..varint(1, 77)
+              ..bytes(2, [9, 9])
+              ..message(4, ProtoWriter()..varint(1, 3))
+              ..message(4, ProtoWriter()..varint(1, 4))
+              ..varint(5, 76561197960287930),
+          );
+        }),
+      );
+
+      final session = await auth.beginCredentialsSession('Sogen', 'gaben', 'pw');
+
+      expect(session.guards, [SteamGuard.deviceCode, SteamGuard.deviceConfirmation]);
+      expect(session.clientId, 77);
+      expect(session.steamId, 76561197960287930);
+      expect(requests.first.method, 'GET');
+      final begin = ProtoMessage.parse(base64.decode(requests.last.bodyFields['input_protobuf_encoded']!));
+      expect(begin.string(2), 'gaben');
+      expect(begin.integer(4), 1234);
+      expect(begin.integer(6), 1);
+    });
+
+    test('a wrong password is told apart from other failures', () async {
+      final auth = SteamAuth(
+        client: MockClient(
+          (request) async =>
+              request.url.path.contains('GetPasswordRSAPublicKey') ? answer(key()) : answer(ProtoWriter(), eresult: 5),
+        ),
+      );
+
+      await expectLater(
+        auth.beginCredentialsSession('Sogen', 'gaben', 'wrong'),
+        throwsA(isA<SteamWrongPasswordException>()),
+      );
+    });
   });
 
   group('SteamAccount', () {
