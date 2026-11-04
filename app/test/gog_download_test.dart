@@ -268,6 +268,37 @@ void main() {
       expect(step.value, r'C:\game');
     });
 
+    test('accepts the copy of the support files into the game folder, which the plan already does', () {
+      final script = {
+        'actions': [
+          {
+            'install': {
+              'action': 'supportData',
+              'arguments': {'overwrite': true, 'source': '{supportDir}/app', 'target': '{app}', 'type': 'folder'},
+            },
+          },
+        ],
+      };
+      expect(InstallScript.parse(utf8.encode(jsonEncode(script)), 'en-US').actions, isEmpty);
+    });
+
+    test('refuses support data copied from anywhere else, naming the step', () {
+      final script = {
+        'actions': [
+          {
+            'install': {
+              'action': 'supportData',
+              'arguments': {'source': '{supportDir}/save', 'target': '{app}', 'type': 'folder'},
+            },
+          },
+        ],
+      };
+      expect(
+        () => InstallScript.parse(utf8.encode(jsonEncode(script)), 'en-US'),
+        throwsA(isA<GogException>().having((e) => e.message, 'message', contains('(supportData)'))),
+      );
+    });
+
     test('refuses steps it cannot carry out', () {
       final script = {
         'actions': [

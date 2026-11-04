@@ -17,46 +17,54 @@ sealed class ScriptAction {
   static ScriptAction? fromJson(Map<String, Object?> install) {
     final action = install['action'];
     final arguments = install['arguments'];
+    final unsupported = InstallScript._unsupportedStep(action);
     if (arguments is! Map<String, Object?>) {
-      throw InstallScript._unsupported;
+      throw unsupported;
     }
 
     switch (action) {
       case 'savePath' || 'setRegistry':
         return null;
-      case 'supportData' when arguments['type'] == 'folder':
-        return CreateFolder(_gamePath(arguments['target']));
+      case 'supportData' when arguments['type'] == 'folder' && _isSupportAppCopy(arguments):
+        return null;
+      case 'supportData' when arguments['type'] == 'folder' && !arguments.containsKey('source'):
+        return CreateFolder(_gamePath(arguments['target'], unsupported));
       case 'setIni':
         final section = arguments['section'];
         final key = arguments['keyName'];
         final value = arguments['keyValue'];
         if (section is! String || key is! String || value is! String || arguments['keyType'] != 'string') {
-          throw InstallScript._unsupported;
+          throw unsupported;
         }
         return SetIni(
-          file: _gamePath(arguments['filename']),
+          file: _gamePath(arguments['filename'], unsupported),
           section: section,
           key: key,
           value: value.replaceAll('{app}', guestGameDirectory),
           utf8: arguments['utf8'] == true,
         );
-      case final String name when RegExp(r'^\w{1,40}$').hasMatch(name):
-        throw GogException('This game needs install steps Sogen cannot run yet ($name).');
       default:
-        throw InstallScript._unsupported;
+        throw unsupported;
     }
   }
 
+  /// GOG Galaxy copies the support files below `app` into the game folder; Sogen already installs them there.
+  static bool _isSupportAppCopy(Map<String, Object?> arguments) {
+    String? normalized(Object? path) =>
+        path is String ? path.replaceAll(r'\', '/').replaceFirst(RegExp(r'/+$'), '') : null;
+    return normalized(arguments['source']) == '{supportDir}/app' && normalized(arguments['target']) == '{app}';
+  }
+
   /// `{app}` is the game folder; scripts that touch anything outside of it are not supported.
-  static DepotPath _gamePath(Object? path) {
+  static DepotPath _gamePath(Object? path, GogException unsupported) {
     if (path is! String || !path.startsWith('{app}')) {
-      throw InstallScript._unsupported;
+      throw unsupported;
     }
     final relative = path.substring('{app}'.length).replaceFirst(RegExp(r'^[\\/]'), '');
     try {
       return DepotPath.parse(relative);
     } on GogException {
-      throw InstallScript._unsupported;
+      throw unsupported;
     }
   }
 
@@ -199,6 +207,11 @@ class InstallScript {
   }
 
   static const _unsupported = GogException('This game needs install steps Sogen cannot run yet.');
+
+  /// Names the step, so that a report of an unsupported game says what it needs.
+  static GogException _unsupportedStep(Object? action) => action is String && RegExp(r'^\w{1,40}$').hasMatch(action)
+      ? GogException('This game needs install steps Sogen cannot run yet ($action).')
+      : _unsupported;
   static const _maxActions = 1000;
 
   final List<ScriptAction> actions;
