@@ -6,7 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pointycastle/export.dart';
 import 'package:sogen_app/src/steam/key_values.dart';
 import 'package:sogen_app/src/steam/protobuf.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:sogen_app/src/steam/steam_account.dart';
+import 'package:sogen_app/src/steam/steam_auth.dart';
 import 'package:sogen_app/src/steam/steam_http.dart';
 import 'package:sogen_app/src/steam/steam_manifest.dart';
 import 'package:sogen_app/src/steam/steam_planner.dart';
@@ -263,6 +266,31 @@ void main() {
       expect(planned.playTask.arguments, ['-windowed', 'a b']);
       expect(planned.playTask.workingDirectory?.relative, 'bin');
     });
+  });
+
+  test('a poll answer that rotated the code carries the client id later polls must use', () async {
+    final answer = ProtoWriter()
+      ..varint(1, 99)
+      ..string(2, 'https://s.team/q/1/99')
+      ..boolean(5, true);
+    final auth = SteamAuth(
+      client: MockClient((_) async => http.Response.bytes(answer.toBytes(), 200, headers: {'x-eresult': '1'})),
+    );
+    final challenge = SteamQrChallenge(
+      clientId: 7,
+      requestId: Uint8List.fromList([1, 2, 3]),
+      challengeUrl: 'https://s.team/q/1/7',
+      interval: const Duration(seconds: 5),
+    );
+
+    final poll = await auth.poll(challenge);
+    final rotated = challenge.rotated(clientId: poll.newClientId, challengeUrl: poll.newChallengeUrl);
+
+    expect(poll.approved, isFalse);
+    expect(poll.scanned, isTrue);
+    expect(rotated.clientId, 99);
+    expect(rotated.challengeUrl, 'https://s.team/q/1/99');
+    expect(rotated.requestId, [1, 2, 3]);
   });
 
   group('SteamAccount', () {

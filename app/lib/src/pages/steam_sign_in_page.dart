@@ -24,6 +24,9 @@ class SteamSignInPage extends StatefulWidget {
 class _SteamSignInPageState extends State<SteamSignInPage> {
   SteamQrChallenge? _challenge;
   String? _error;
+
+  /// Set once the code was scanned; the code then stays as it is so a rotation cannot race the approval.
+  bool _scanned = false;
   Timer? _poll;
   bool _polling = false;
 
@@ -44,6 +47,7 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
     setState(() {
       _challenge = null;
       _error = null;
+      _scanned = false;
     });
     try {
       final challenge = await widget.auth.beginQrSession('Sogen');
@@ -73,8 +77,11 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
       if (poll.approved) {
         _poll?.cancel();
         Navigator.of(context).pop(poll);
-      } else if (poll.newChallengeUrl case final url?) {
-        setState(() => _challenge = challenge.withChallengeUrl(url));
+      } else {
+        setState(() {
+          _scanned = _scanned || poll.scanned;
+          _challenge = challenge.rotated(clientId: poll.newClientId, challengeUrl: poll.newChallengeUrl);
+        });
       }
     } on SteamAuthExpiredException {
       if (mounted) {
@@ -118,6 +125,11 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
                     icon: LucideIcons.cloudOff,
                     text: error,
                     action: PrimaryButton(label: 'Try again', icon: LucideIcons.refreshCw, onPressed: _begin),
+                  )
+                : _scanned
+                ? const CenteredMessage(
+                    icon: LucideIcons.smartphone,
+                    text: 'Approve the sign-in in the Steam app. Sogen continues once you did.',
                   )
                 : Column(
                     mainAxisSize: MainAxisSize.min,

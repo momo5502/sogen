@@ -22,15 +22,32 @@ class SteamQrChallenge {
   final String challengeUrl;
   final Duration interval;
 
-  SteamQrChallenge withChallengeUrl(String url) =>
-      SteamQrChallenge(clientId: clientId, requestId: requestId, challengeUrl: url, interval: interval);
+  /// The challenge after Steam rotated the code: polls must continue with the new client id, or an approval of the
+  /// new code is never seen.
+  SteamQrChallenge rotated({int? clientId, String? challengeUrl}) => SteamQrChallenge(
+    clientId: clientId ?? this.clientId,
+    requestId: requestId,
+    challengeUrl: challengeUrl ?? this.challengeUrl,
+    interval: interval,
+  );
 }
 
-/// The outcome of polling a sign-in: still waiting, possibly with a new challenge to show, or approved.
+/// The outcome of polling a sign-in: still waiting, possibly with a rotated challenge or after the user scanned the
+/// code, or approved.
 class SteamAuthPoll {
-  const SteamAuthPoll({this.newChallengeUrl, this.refreshToken, this.accountName});
+  const SteamAuthPoll({
+    this.newClientId,
+    this.newChallengeUrl,
+    this.scanned = false,
+    this.refreshToken,
+    this.accountName,
+  });
 
+  final int? newClientId;
   final String? newChallengeUrl;
+
+  /// Whether the user scanned the code and the Steam app now waits for them to approve.
+  final bool scanned;
   final String? refreshToken;
   final String? accountName;
 
@@ -82,8 +99,11 @@ class SteamAuth {
     final response = await _call('PollAuthSessionStatus', request);
 
     final refreshToken = response.string(3);
+    final newClientId = response.integer(1);
     return SteamAuthPoll(
+      newClientId: newClientId == null || newClientId == 0 ? null : newClientId,
       newChallengeUrl: response.string(2),
+      scanned: response.boolean(5),
       refreshToken: refreshToken == null || refreshToken.isEmpty ? null : refreshToken,
       accountName: response.string(6),
     );
