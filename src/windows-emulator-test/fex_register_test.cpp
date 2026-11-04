@@ -9,6 +9,10 @@
 #endif
 
 #ifdef __APPLE__
+#ifdef SOGEN_ENABLE_FEX
+#include <fex_x86_64_emulator.hpp>
+#endif
+
 #include <cstring>
 #include <string>
 #include <vector>
@@ -227,6 +231,48 @@ namespace sogen::test
 
         ::munmap(host_buffer, host_page_size);
     }
+
+#ifdef SOGEN_ENABLE_FEX
+    TEST(FexMultiVcpuTest, CodeRewrittenAfterASecondVcpuRanItRunsAsTheNewBytes)
+    {
+        const auto emu = fex::create_x86_64_emulator(2);
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+        constexpr size_t page_size = 0x1000;
+        const uint64_t code = memory.allocate_memory(page_size, memory_permission::read_write);
+        const uint64_t gdt = memory.allocate_memory(page_size, memory_permission::read_write);
+        ASSERT_NE(code, 0u);
+        ASSERT_NE(gdt, 0u);
+
+        constexpr uint16_t long_mode_code_selector = 0x08;
+        constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+        emu->write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+
+        auto& second = emu->get_cpu(1);
+        second.load_gdt(gdt, page_size);
+        second.reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+        emu->hook_interrupt([](cpu_interface& cpu, int) { cpu.stop(); });
+
+        // mov eax, imm32; hlt
+        constexpr std::array<uint8_t, 6> guest_code = {0xB8, 0x01, 0x00, 0x00, 0x00, 0xF4};
+        memory.write_memory(code, guest_code.data(), guest_code.size());
+        ASSERT_TRUE(memory.protect_memory(code, page_size, memory_permission::read_exec));
+
+        const auto run_second = [&] {
+            second.reg(x86_register::rip, code);
+            second.start(0);
+            return second.reg<uint32_t>(x86_register::eax);
+        };
+
+        EXPECT_EQ(run_second(), 1u);
+
+        constexpr uint32_t rewritten_immediate = 2;
+        memory.write_memory(code + 1, &rewritten_immediate, sizeof(rewritten_immediate));
+
+        EXPECT_EQ(run_second(), rewritten_immediate);
+    }
+#endif
 
     namespace
     {
