@@ -36,7 +36,8 @@ class TransferEngineTest {
             return stored
         }
 
-        override fun fetch(source: ChunkSource, compressedMd5: String, compressedSize: Long): ByteArray {
+        override fun fetch(source: ChunkSource, path: String, size: Long): ByteArray {
+            val compressedMd5 = path.substringAfterLast('/')
             requests.add(compressedMd5)
             return chunks[compressedMd5] ?: throw IOException("Missing chunk")
         }
@@ -140,7 +141,7 @@ class TransferEngineTest {
     fun stoppingKeepsWhatWasWrittenForTheNextRun() {
         val plan = plan()
         var chunks = 0
-        val stopping = ChunkFetcher { source, md5, size -> cdn.fetch(source, md5, size).also { chunks++ } }
+        val stopping = ChunkFetcher { source, path, size -> cdn.fetch(source, path, size).also { chunks++ } }
 
         assertThrows(TransferStoppedException::class.java) {
             TransferEngine(staging(), plan, stopping, isStopped = { chunks >= 2 }).run()

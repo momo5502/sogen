@@ -7,20 +7,25 @@ import 'package:simple_icons/simple_icons.dart';
 
 import '../ads.dart';
 import '../emulation_root.dart';
+import '../epic/epic_account.dart';
+import '../epic/epic_library.dart';
 import '../game_library.dart';
 import '../gog/gog_account.dart';
-import '../gog/gog_cdn.dart';
-import '../gog/gog_installer.dart';
 import '../gog/gog_library.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../steam/steam_account.dart';
+import '../steam/steam_catalog.dart';
+import '../store/cover_cache.dart';
+import '../store/store_catalog.dart';
+import '../store/store_installer.dart';
 import '../support.dart';
 import '../theme.dart';
 import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
 import 'game_page.dart';
-import 'gog_tab.dart';
 import 'settings_tab.dart';
+import 'store_tab.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -30,8 +35,13 @@ class HomePage extends StatefulWidget {
     required this.settings,
     required this.ads,
     required this.gog,
-    required this.gogContent,
+    required this.gogCatalog,
+    required this.epic,
+    required this.epicCatalog,
+    required this.steam,
+    required this.steamCatalog,
     required this.installer,
+    required this.covers,
   });
 
   final EmulationRoot root;
@@ -39,8 +49,13 @@ class HomePage extends StatefulWidget {
   final AppSettings settings;
   final Ads ads;
   final GogAccount gog;
-  final GogContent gogContent;
-  final GogInstaller installer;
+  final StoreCatalog gogCatalog;
+  final EpicAccount epic;
+  final StoreCatalog epicCatalog;
+  final SteamAccount steam;
+  final StoreCatalog steamCatalog;
+  final StoreInstaller installer;
+  final CoverCache covers;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -256,18 +271,36 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 controller: _tabs,
                 children: [
                   _buildInstalled(installed),
-                  GogTab(
+                  StoreTab(
                     account: widget.gog,
-                    content: widget.gogContent,
+                    catalog: widget.gogCatalog,
                     installer: widget.installer,
                     library: widget.library,
                     canInstall: installed && !_installing,
+                    color: SogenColors.accents[6],
+                    covers: widget.covers,
                   ),
-                  const CenteredMessage(icon: LucideIcons.hourglass, text: 'Steam support is coming soon.'),
-                  const CenteredMessage(icon: LucideIcons.hourglass, text: 'Epic Games support is coming soon.'),
+                  StoreTab(
+                    account: widget.steam,
+                    catalog: widget.steamCatalog,
+                    installer: widget.installer,
+                    library: widget.library,
+                    canInstall: installed && !_installing,
+                    color: const Color(0xFF66C0F4),
+                    covers: widget.covers,
+                  ),
+                  StoreTab(
+                    account: widget.epic,
+                    catalog: widget.epicCatalog,
+                    installer: widget.installer,
+                    library: widget.library,
+                    canInstall: installed && !_installing,
+                    color: SogenColors.neutral100,
+                    covers: widget.covers,
+                  ),
                   SettingsTab(
                     settings: widget.settings,
-                    gog: widget.gog,
+                    accounts: [widget.gog, widget.steam, widget.epic],
                     onRedownloadRoot: installed && !_installing ? _redownloadRoot : null,
                   ),
                 ],
@@ -497,6 +530,8 @@ class _GameCard extends StatelessWidget {
                     icon,
                     width: 48,
                     height: 48,
+                    // Icons may be wide store covers, which fill the square tile by their height.
+                    cacheHeight: (48 * MediaQuery.devicePixelRatioOf(context)).round(),
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) => IconTile(icon: LucideIcons.gamepad2, color: accent),
                   ),
@@ -512,8 +547,8 @@ class _GameCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     if (saving)
                       Text('Suspending…', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
-                    else if (game.source?.store == GogLibrary.store)
-                      Text('GOG', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
+                    else if (_storeNames[game.source?.store] case final store?)
+                      Text(store, style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
                     else
                       Text(
                         game.executable,
@@ -565,6 +600,9 @@ class _EmptyLibrary extends StatelessWidget {
     );
   }
 }
+
+/// The stores a library game can come from, by the names the user knows them by.
+const _storeNames = {GogLibrary.store: 'GOG', SteamCatalog.store: 'Steam', EpicLibrary.store: 'Epic'};
 
 /// How each tab's icon looks once its tab is active. Steam's and Epic's brand colors are black, which would vanish on
 /// the dark tab bar, so they use the light blue of Steam's client and white.

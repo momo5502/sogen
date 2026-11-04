@@ -22,17 +22,6 @@ class GogRelease {
   List<String> get languages => manifest.languages;
 }
 
-/// A plan together with how to start what it installs.
-class PlannedInstall {
-  const PlannedInstall({required this.plan, required this.playTask, required this.script});
-
-  final TransferPlan plan;
-  final PlayTask playTask;
-
-  /// Steps to apply to the downloaded files before they are installed.
-  final InstallScript script;
-}
-
 /// Turns a game's manifests into a transfer plan, refusing anything Sogen could not install completely.
 class GogPlanner {
   GogPlanner(this._content);

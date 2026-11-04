@@ -7,10 +7,10 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-/** A signed CDN address that chunk names are appended to. Its token makes it a credential, so it is never logged. */
+/** A signed CDN address that chunk paths are appended to. Its token makes it a credential, so it is never logged. */
 data class CdnEndpoint(val urlFormat: String, val parameters: Map<String, String>) {
-    fun chunkUrl(compressedMd5: String): URL {
-        val path = "${parameters["path"].orEmpty()}/${compressedMd5.substring(0, 2)}/${compressedMd5.substring(2, 4)}/$compressedMd5"
+    fun chunkUrl(chunkPath: String): URL {
+        val path = "${parameters["path"].orEmpty()}$chunkPath"
         val format = if ("{path}" in urlFormat) urlFormat else "$urlFormat{path}"
         val url = urlParameter.replace(format) { match ->
             val name = match.groupValues[1]
@@ -44,6 +44,24 @@ data class CdnEndpoint(val urlFormat: String, val parameters: Map<String, String
         } catch (e: JSONException) {
             throw InvalidPlanException("Unreadable download links")
         }
+
+        /** The keys of the Steam depots a download decrypts its chunks with, which come with the links. */
+        fun readDepotKeys(file: File): Map<Int, ByteArray> = try {
+            val keys = JSONObject(file.readText()).optJSONObject("steamDepotKeys") ?: JSONObject()
+            keys.keys().asSequence().associate { depot ->
+                val hex = keys.getString(depot)
+                if (!depotKey.matches(hex)) {
+                    throw InvalidPlanException("Bad depot key")
+                }
+                depot.toInt() to ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+            }
+        } catch (e: JSONException) {
+            throw InvalidPlanException("Unreadable download links")
+        } catch (e: NumberFormatException) {
+            throw InvalidPlanException("Unreadable download links")
+        }
+
+        private val depotKey = Regex("[0-9a-f]{64}")
     }
 }
 
@@ -57,7 +75,7 @@ class HttpChunkFetcher(
     private val beforeAttempt: () -> Unit = {},
     private val transport: (URL, Long) -> ByteArray = ::download,
 ) : ChunkFetcher {
-    override fun fetch(source: ChunkSource, compressedMd5: String, compressedSize: Long): ByteArray {
+    override fun fetch(source: ChunkSource, path: String, size: Long): ByteArray {
         val candidates = endpoints[source].orEmpty()
         if (candidates.isEmpty()) {
             throw LinkExpiredException()
@@ -69,7 +87,7 @@ class HttpChunkFetcher(
             val endpoint = candidates[attempt % candidates.size]
             beforeAttempt()
             try {
-                return transport(endpoint.chunkUrl(compressedMd5), compressedSize)
+                return transport(endpoint.chunkUrl(path), size)
             } catch (e: LinkExpiredException) {
                 if (++expired >= candidates.size) {
                     throw e
@@ -99,12 +117,12 @@ private fun download(url: URL, size: Long): ByteArray {
             while (length < body.size) {
                 val read = stream.read(body, length, body.size - length)
                 if (read < 0) {
-                    throw DamagedDownloadException("A download from GOG was cut short")
+                    throw DamagedDownloadException("A download was cut short")
                 }
                 length += read
             }
             if (stream.read() >= 0) {
-                throw DamagedDownloadException("A download from GOG was damaged")
+                throw DamagedDownloadException("A download was damaged")
             }
         }
         return body

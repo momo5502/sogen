@@ -5,12 +5,28 @@ import 'package:flutter/services.dart';
 
 import 'src/ads.dart';
 import 'src/emulation_root.dart';
+import 'src/epic/epic_account.dart';
+import 'src/epic/epic_catalog.dart';
+import 'src/epic/epic_install_source.dart';
+import 'src/epic/epic_library.dart';
+import 'src/epic/epic_planner.dart';
 import 'src/game_library.dart';
 import 'src/gog/gog_account.dart';
+import 'src/gog/gog_catalog.dart';
 import 'src/gog/gog_cdn.dart';
-import 'src/gog/gog_installer.dart';
+import 'src/gog/gog_install_source.dart';
+import 'src/gog/gog_library.dart';
 import 'src/pages/home_page.dart';
+import 'src/pages/steam_sign_in_page.dart';
 import 'src/settings.dart';
+import 'src/steam/steam_account.dart';
+import 'src/steam/steam_auth.dart';
+import 'src/steam/steam_catalog.dart';
+import 'src/steam/steam_client.dart';
+import 'src/steam/steam_install_source.dart';
+import 'src/store/cover_cache.dart';
+import 'src/store/store_catalog.dart';
+import 'src/store/store_installer.dart';
 import 'src/theme.dart';
 
 Future<void> main() async {
@@ -25,8 +41,23 @@ Future<void> main() async {
   final settings = await AppSettings.load();
   final gog = await GogAccount.load();
   final gogContent = GogContent(gog);
-  final installer = GogInstaller(library, gogContent);
+  final epic = await EpicAccount.load();
+  final epicApi = EpicApi(epic);
+  final epicContent = EpicContent(epicApi);
+  final navigator = GlobalKey<NavigatorState>();
+  final steam = await SteamAccount.load(
+    (auth) => navigator.currentState!.push<SteamAuthPoll>(
+      MaterialPageRoute(builder: (context) => SteamSignInPage(auth: auth)),
+    ),
+  );
+  final steamClient = SteamClient(steam);
+  final installer = StoreInstaller(library, {
+    GogLibrary.store: GogInstallSource(gogContent),
+    EpicLibrary.store: EpicInstallSource(epicContent),
+    SteamCatalog.store: SteamInstallSource(steamClient),
+  });
   await installer.restore().catchError((Object error) => debugPrint('Could not restore downloads: $error'));
+  final covers = await CoverCache.open();
 
   runApp(
     SogenApp(
@@ -35,8 +66,14 @@ Future<void> main() async {
       settings: settings,
       ads: Ads(settings),
       gog: gog,
-      gogContent: gogContent,
+      gogCatalog: GogCatalog(gog, gogContent),
+      epic: epic,
+      epicCatalog: EpicCatalog(epicApi, epicContent),
+      steam: steam,
+      steamCatalog: SteamCatalog(steamClient),
       installer: installer,
+      covers: covers,
+      navigator: navigator,
     ),
   );
 }
@@ -49,8 +86,14 @@ class SogenApp extends StatelessWidget {
     required this.settings,
     required this.ads,
     required this.gog,
-    required this.gogContent,
+    required this.gogCatalog,
+    required this.epic,
+    required this.epicCatalog,
+    required this.steam,
+    required this.steamCatalog,
     required this.installer,
+    required this.covers,
+    required this.navigator,
   });
 
   final EmulationRoot root;
@@ -58,12 +101,21 @@ class SogenApp extends StatelessWidget {
   final AppSettings settings;
   final Ads ads;
   final GogAccount gog;
-  final GogContent gogContent;
-  final GogInstaller installer;
+  final StoreCatalog gogCatalog;
+  final EpicAccount epic;
+  final StoreCatalog epicCatalog;
+  final SteamAccount steam;
+  final StoreCatalog steamCatalog;
+  final StoreInstaller installer;
+  final CoverCache covers;
+
+  /// Lets the Steam account show its sign-in page, which it opens outside of any widget.
+  final GlobalKey<NavigatorState> navigator;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigator,
       title: 'Sogen',
       debugShowCheckedModeBanner: false,
       theme: buildSogenTheme(),
@@ -75,8 +127,13 @@ class SogenApp extends StatelessWidget {
           settings: settings,
           ads: ads,
           gog: gog,
-          gogContent: gogContent,
+          gogCatalog: gogCatalog,
+          epic: epic,
+          epicCatalog: epicCatalog,
+          steam: steam,
+          steamCatalog: steamCatalog,
           installer: installer,
+          covers: covers,
         ),
       ),
     );

@@ -10,20 +10,32 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../game_library.dart';
-import 'gog_cdn.dart';
-import 'gog_http.dart';
-import 'gog_library.dart';
-import 'gog_planner.dart';
-import 'install_commit.dart';
-import 'install_script.dart';
+import '../gog/install_commit.dart';
+import '../gog/install_script.dart';
+import '../gog/transfer_plan.dart';
+import 'store_game.dart';
+import 'store_http.dart';
 
 enum DownloadStatus { running, paused, metered, linksExpired, noSpace, failed, cancelled, complete }
 
-/// A download as the GOG tab shows it.
+/// What a store provides to download a game it planned: fresh CDN links, since signed ones expire, and its icon.
+abstract interface class InstallSource {
+  StoreService get service;
+
+  /// The CDN endpoints by the name of the [ChunkSource] they serve, and what else the native downloader needs to fetch
+  /// the chunks of [plan], the stored transfer plan, like Steam's depot keys.
+  Future<Map<String, Object>> links(String productId, Map<String, Object?> plan);
+
+  /// A square PNG icon of the game, if the store has one.
+  Future<Uri?> icon(String productId);
+}
+
+/// A download as a store tab shows it.
 @immutable
 class GameDownload {
   const GameDownload({
     required this.installId,
+    required this.store,
     required this.productId,
     required this.status,
     this.written = 0,
@@ -32,6 +44,7 @@ class GameDownload {
   });
 
   final String installId;
+  final String store;
   final String productId;
   final DownloadStatus status;
   final int written;
@@ -42,6 +55,7 @@ class GameDownload {
 
   GameDownload copyWith({DownloadStatus? status, int? written, int? total, int? required}) => GameDownload(
     installId: installId,
+    store: store,
     productId: productId,
     status: status ?? this.status,
     written: written ?? this.written,
@@ -93,19 +107,21 @@ class _PendingInstall {
   };
 }
 
-/// Installs GOG games through the native downloader, one at a time, and adds them to the library once complete.
-class GogInstaller extends ChangeNotifier {
-  GogInstaller(this._library, this._content, {this._supportDirectory = getApplicationSupportDirectory});
+/// Installs games of every store through the native downloader, one at a time, and adds them to the library once
+/// complete.
+class StoreInstaller extends ChangeNotifier {
+  StoreInstaller(this._library, this._sources, {this._supportDirectory = getApplicationSupportDirectory});
 
   final Future<Directory> Function() _supportDirectory;
 
   static const _channel = MethodChannel('dev.sogen.app/downloads');
   static const _events = EventChannel('dev.sogen.app/downloads/events');
 
-  static const _maxIconBytes = 1024 * 1024;
+  /// Store covers stand in for icons where a store has none, and those are large JPEGs.
+  static const _maxIconBytes = 8 * 1024 * 1024;
 
   final GameLibrary _library;
-  final GogContent _content;
+  final Map<String, InstallSource> _sources;
   final _pending = <String, _PendingInstall>{};
   final _downloads = <String, GameDownload>{};
   final _refreshedLinks = <String>{};
@@ -115,8 +131,10 @@ class GogInstaller extends ChangeNotifier {
   final _approvedMetered = <String>{};
   StreamSubscription<Object?>? _subscription;
 
-  /// Downloads by product id, including paused ones left from earlier runs.
-  Map<String, GameDownload> get downloads => Map.unmodifiable(_downloads);
+  /// The download of a game, including a paused one left from an earlier run.
+  GameDownload? download(String store, String productId) => _downloads[_key(store, productId)];
+
+  static String _key(String store, String productId) => '$store/$productId';
 
   /// Set from the moment a start is accepted until the native side runs it, which takes fetching fresh links.
   String? _starting;
@@ -165,23 +183,32 @@ class GogInstaller extends ChangeNotifier {
   }
 
   void _track(_PendingInstall pending, DownloadStatus status) {
+    final source = pending.game.source!;
     _pending[pending.installId] = pending;
-    _downloads[pending.game.source!.productId] = GameDownload(
+    _downloads[_key(source.store, source.productId)] = GameDownload(
       installId: pending.installId,
-      productId: pending.game.source!.productId,
+      store: source.store,
+      productId: source.productId,
       status: status,
     );
   }
 
+  InstallSource _sourceOf(_PendingInstall pending) {
+    final source = _sources[pending.game.source!.store];
+    if (source == null) {
+      throw const StoreException('Sogen cannot download games from this store.');
+    }
+    return source;
+  }
+
   Future<void> install(
     StoreGame game,
-    GogRelease release,
     PlannedInstall planned, {
     required String language,
     required bool allowMetered,
   }) async {
     if (isBusy) {
-      throw const GogException('Another game is downloading.');
+      throw const StoreException('Another game is downloading.');
     }
 
     final installId = _newInstallId();
@@ -200,8 +227,8 @@ class GogInstaller extends ChangeNotifier {
           arguments: task.arguments,
           workingDirectory: task.workingDirectory?.relative,
           source: GameSource(
-            store: GogLibrary.store,
-            productId: release.productId,
+            store: game.store,
+            productId: game.productId,
             buildId: planned.plan.buildId,
             language: language,
           ),
@@ -211,7 +238,7 @@ class GogInstaller extends ChangeNotifier {
 
       await _writeAtomically(File(p.join(staging.path, 'plan.json')), jsonEncode(planned.plan.toJson()));
       await _writeAtomically(File(p.join(staging.path, 'install.json')), jsonEncode(pending.toJson()));
-      await _storeIcon(staging, release.productId);
+      await _storeIcon(staging, pending, cover: game.imageUrl);
       await _start(pending, allowMetered: allowMetered);
     } catch (_) {
       await staging.delete(recursive: true);
@@ -219,15 +246,15 @@ class GogInstaller extends ChangeNotifier {
     }
   }
 
-  /// Signed links expire, so every start asks GOG for fresh ones.
-  Future<void> resume(String productId, {required bool allowMetered}) async {
-    final download = _downloads[productId];
+  /// Signed links expire, so every start asks the store for fresh ones.
+  Future<void> resume(String store, String productId, {required bool allowMetered}) async {
+    final download = _downloads[_key(store, productId)];
     final pending = download == null ? null : _pending[download.installId];
     if (pending == null) {
       return;
     }
     if (isBusy) {
-      throw const GogException('Another game is downloading.');
+      throw const StoreException('Another game is downloading.');
     }
     await _start(pending, allowMetered: allowMetered);
   }
@@ -235,8 +262,8 @@ class GogInstaller extends ChangeNotifier {
   Future<void> pause() => _channel.invokeMethod<void>('pause');
 
   /// A start that is still fetching links is called off first, so it never starts a download whose files are gone.
-  Future<void> cancel(String productId) async {
-    final download = _downloads[productId];
+  Future<void> cancel(String store, String productId) async {
+    final download = _downloads[_key(store, productId)];
     if (download == null) {
       return;
     }
@@ -255,7 +282,7 @@ class GogInstaller extends ChangeNotifier {
   /// download the user only agreed to on Wi-Fi.
   Future<void> _start(_PendingInstall pending, {required bool allowMetered}) async {
     if (_starting != null) {
-      throw const GogException('Another game is downloading.');
+      throw const StoreException('Another game is downloading.');
     }
     _starting = pending.installId;
     final start = _startReserved(pending, allowMetered: allowMetered);
@@ -280,10 +307,11 @@ class GogInstaller extends ChangeNotifier {
     }
 
     final staging = Directory(p.join((await _downloadsDirectory()).path, pending.installId));
-    final links = {
-      'game': [for (final endpoint in await _content.gameEndpoints(pending.game.source!.productId)) endpoint.toJson()],
-      'dependency': [for (final endpoint in await _content.dependencyEndpoints()) endpoint.toJson()],
-    };
+    final plan = jsonDecode(await File(p.join(staging.path, 'plan.json')).readAsString());
+    if (plan is! Map<String, Object?>) {
+      throw const StoreException('Sogen cannot continue this download. Please cancel it and download the game again.');
+    }
+    final links = await _sourceOf(pending).links(pending.game.source!.productId, plan);
     if (_cancelledStarts.contains(pending.installId)) {
       throw const _StartCancelled();
     }
@@ -294,11 +322,12 @@ class GogInstaller extends ChangeNotifier {
       await _channel.invokeMethod<void>('start', {'installId': pending.installId, 'allowMetered': allowMetered});
     } on PlatformException catch (e) {
       throw e.code == 'busy'
-          ? const GogException('Another game is downloading.')
-          : const GogException('Sogen could not start the download. Open Sogen and try again.');
+          ? const StoreException('Another game is downloading.')
+          : const StoreException('Sogen could not start the download. Open Sogen and try again.');
     }
+    final source = pending.game.source!;
     // The native side reports the state from here on; a download it already reported on keeps that state.
-    if (_downloads[pending.game.source!.productId]?.installId != pending.installId) {
+    if (_downloads[_key(source.store, source.productId)]?.installId != pending.installId) {
       _track(pending, DownloadStatus.running);
     }
     notifyListeners();
@@ -315,7 +344,8 @@ class GogInstaller extends ChangeNotifier {
       return;
     }
 
-    final productId = pending.game.source!.productId;
+    final source = pending.game.source!;
+    final key = _key(source.store, source.productId);
     final status = switch (event['status']) {
       'running' => DownloadStatus.running,
       'metered' => DownloadStatus.metered,
@@ -328,13 +358,14 @@ class GogInstaller extends ChangeNotifier {
     };
 
     if (status == DownloadStatus.cancelled) {
-      _downloads.remove(productId);
+      _downloads.remove(key);
       _pending.remove(installId);
       _approvedMetered.remove(installId);
     } else {
       final download =
-          _downloads[productId] ?? GameDownload(installId: pending.installId, productId: productId, status: status);
-      _downloads[productId] = download.copyWith(
+          _downloads[key] ??
+          GameDownload(installId: pending.installId, store: source.store, productId: source.productId, status: status);
+      _downloads[key] = download.copyWith(
         status: status,
         written: (event['written'] as num?)?.toInt(),
         total: (event['total'] as num?)?.toInt(),
@@ -347,7 +378,7 @@ class GogInstaller extends ChangeNotifier {
       unawaited(_finish(pending));
     } else if (status == DownloadStatus.linksExpired && _refreshedLinks.add(installId as String)) {
       final allowMetered = _approvedMetered.contains(installId);
-      unawaited(_start(pending, allowMetered: allowMetered).catchError((Object error) => _fail(productId, error)));
+      unawaited(_start(pending, allowMetered: allowMetered).catchError((Object error) => _fail(key, error)));
     } else if (status == DownloadStatus.running && (event['written'] as num? ?? 0) > 0) {
       _refreshedLinks.remove(installId);
     }
@@ -362,17 +393,17 @@ class GogInstaller extends ChangeNotifier {
     try {
       await _commit(pending);
     } catch (error) {
-      _fail(pending.game.source!.productId, error);
+      _fail(_key(pending.game.source!.store, pending.game.source!.productId), error);
     } finally {
       _finishing.remove(pending.installId);
     }
   }
 
-  void _fail(String productId, Object error) {
-    debugPrint('Could not finish the GOG install: ${error is GogException ? error.message : error.runtimeType}');
-    final download = _downloads[productId];
+  void _fail(String key, Object error) {
+    debugPrint('Could not finish the install: ${error is StoreException ? error.message : error.runtimeType}');
+    final download = _downloads[key];
     if (download != null) {
-      _downloads[productId] = download.copyWith(status: DownloadStatus.failed);
+      _downloads[key] = download.copyWith(status: DownloadStatus.failed);
       notifyListeners();
     }
   }
@@ -389,15 +420,17 @@ class GogInstaller extends ChangeNotifier {
     );
 
     _pending.remove(pending.installId);
-    _downloads.remove(pending.game.source!.productId);
+    _downloads.remove(_key(pending.game.source!.store, pending.game.source!.productId));
     _approvedMetered.remove(pending.installId);
     notifyListeners();
   }
 
-  /// GOG's square icon, kept with the game so the library never loads it from the network.
-  Future<void> _storeIcon(Directory staging, String productId) async {
+  /// The store's square icon, or its [cover] where it has none, kept with the game so the library never loads it from
+  /// the network. The library crops it to its square tile.
+  Future<void> _storeIcon(Directory staging, _PendingInstall pending, {Uri? cover}) async {
     try {
-      final url = await _content.squareIcon(productId);
+      final source = _sourceOf(pending);
+      final url = await source.icon(pending.game.source!.productId) ?? cover;
       if (url == null) {
         return;
       }
@@ -405,16 +438,17 @@ class GogInstaller extends ChangeNotifier {
       final client = http.Client();
       final (int, List<int>) response;
       try {
-        response = await sendBounded(client, http.Request('GET', url), maxBytes: _maxIconBytes);
+        response = await sendBounded(source.service, client, http.Request('GET', url), maxBytes: _maxIconBytes);
       } finally {
         client.close();
       }
       final (status, bytes) = response;
       final png = bytes.length > 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4e && bytes[3] == 0x47;
-      if (status == 200 && png) {
+      final jpeg = bytes.length > 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF;
+      if (status == 200 && (png || jpeg)) {
         await _writeAtomically(File(p.join(staging.path, 'icon.png')), bytes);
       }
-    } on GogException {
+    } on StoreException {
       // Without an icon, the game shows the default one.
     }
   }
