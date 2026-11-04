@@ -458,16 +458,26 @@ namespace sogen
         std::error_code ec{};
         for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
         {
-            std::error_code status_error{};
-            const auto status = this->links_ == host_links::refuse ? file.symlink_status(status_error) : file.status(status_error);
-            if (this->links_ == host_links::refuse && (status_error || !std::filesystem::exists(status) || is_link(status)))
+            bool is_directory{};
+            if (this->links_ == host_links::refuse)
             {
-                continue;
+                std::error_code status_error{};
+                const auto status = file.symlink_status(status_error);
+                if (status_error || !std::filesystem::exists(status) || is_link(status))
+                {
+                    continue;
+                }
+
+                is_directory = std::filesystem::is_directory(status);
+            }
+            else
+            {
+                is_directory = file.is_directory(ec);
             }
 
             directory_entry entry{
                 .name = file.path().filename().u16string(),
-                .is_directory = std::filesystem::is_directory(status),
+                .is_directory = is_directory,
             };
 
 #ifdef OS_WINDOWS
