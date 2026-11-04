@@ -22,4 +22,7 @@ abstract final class EResult {
   static const expired = 27;
   static const serviceUnavailable = 20;
   static const tryAnotherCm = 48;
+  static const invalidLoginAuthCode = 65;
+  static const rateLimitExceeded = 84;
+  static const twoFactorCodeMismatch = 88;
 }
