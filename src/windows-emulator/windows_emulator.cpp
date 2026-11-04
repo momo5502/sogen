@@ -847,6 +847,8 @@ namespace sogen
             throw std::invalid_argument("At least one vCPU is required");
         }
 
+        this->memory.set_execute_implies_read(guest_architecture_of(*this->emu_) == windows_guest_architecture::x86_64);
+
         if (this->vcpu_count_ > 1 && !this->emu_->supports_multiple_vcpus())
         {
             throw std::invalid_argument("The " + this->emu_->get_name() + " backend does not support multiple vCPUs");

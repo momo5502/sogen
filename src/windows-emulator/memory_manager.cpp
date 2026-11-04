@@ -140,6 +140,13 @@ namespace sogen
             effective |= memory_permission::exec;
         }
 
+        // x86 paging cannot express execute-only pages: Windows reports PAGE_EXECUTE for them, but the code stays
+        // readable, and some images have sections without IMAGE_SCN_MEM_READ.
+        if (this->execute_implies_read_ && (effective & memory_permission::exec) != memory_permission::none)
+        {
+            effective |= memory_permission::read;
+        }
+
         return effective;
     }
 
@@ -151,6 +158,22 @@ namespace sogen
         }
 
         this->dep_enabled_ = enabled;
+        this->reapply_memory_protections();
+    }
+
+    void memory_manager::set_execute_implies_read(const bool enabled)
+    {
+        if (this->execute_implies_read_ == enabled)
+        {
+            return;
+        }
+
+        this->execute_implies_read_ = enabled;
+        this->reapply_memory_protections();
+    }
+
+    void memory_manager::reapply_memory_protections()
+    {
         for (const auto& reserved : this->reserved_regions_ | std::views::values)
         {
             if (reserved.kind == memory_region_kind::mmio)
