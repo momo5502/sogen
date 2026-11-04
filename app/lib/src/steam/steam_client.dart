@@ -35,7 +35,13 @@ class SteamClient {
   List<SteamLicense> _licenses = const [];
   Set<int>? _ownedApps;
 
+  /// The account session the connection and what it learned belong to; a sign-out or another sign-in ends them.
+  int _session = -1;
+
   Future<SteamConnection> _connect() async {
+    if (_session != _account.session) {
+      await _reset();
+    }
     final connection = _connection;
     if (connection != null && !connection.isClosed) {
       return connection;
@@ -43,23 +49,43 @@ class SteamClient {
     return _connecting ??= _logOn().whenComplete(() => _connecting = null);
   }
 
+  Future<void> _reset() async {
+    final connection = _connection;
+    _connection = null;
+    _connecting = null;
+    _licenses = const [];
+    _ownedApps = null;
+    _session = _account.session;
+    await connection?.close();
+  }
+
   Future<SteamConnection> _logOn() async {
+    final session = _account.session;
     final credentials = _account.credentials;
     final connection = await SteamConnection.connect(client: _client);
+    final List<SteamLicense> licenses;
     try {
-      final licenses = await connection.logOn(refreshToken: credentials.refreshToken, steamId: credentials.steamId);
-      _licenses = [
-        for (final license in licenses.messages(2)) SteamLicense(license.integerOr(1, 0), license.integerOr(17, 0)),
+      final list = await connection.logOn(refreshToken: credentials.refreshToken, steamId: credentials.steamId);
+      licenses = [
+        for (final license in list.messages(2)) SteamLicense(license.integerOr(1, 0), license.integerOr(17, 0)),
       ];
-      _ownedApps = null;
     } on SteamSignedOutException {
       await connection.close();
-      await _account.signOut();
+      if (session == _account.session) {
+        await _account.signOut();
+      }
       rethrow;
     } catch (_) {
       await connection.close();
       rethrow;
     }
+
+    if (session != _account.session || session != _session) {
+      await connection.close();
+      throw const SteamSignedOutException();
+    }
+    _licenses = licenses;
+    _ownedApps = null;
     return _connection = connection;
   }
 
@@ -84,8 +110,13 @@ class SteamClient {
       return known;
     }
 
+    final session = _session;
     final packages = await _packageInfo(_licenses);
-    return _ownedApps = {for (final package in packages.values) ..._ids(package['appids'])};
+    final apps = {for (final package in packages.values) ..._ids(package['appids'])};
+    if (session != _session) {
+      throw const SteamSignedOutException();
+    }
+    return _ownedApps = apps;
   }
 
   static Iterable<int> _ids(KeyValues? list) => [
@@ -170,7 +201,10 @@ class SteamClient {
     if (status != HttpStatus.ok) {
       throw SteamException('Steam answered with status $status.');
     }
-    final text = utf8.decode(gzip.decode(body), allowMalformed: true);
+    final text = utf8.decode(
+      decodeBounded(steamService, GZipCodec(), body, maxBytes: _maxAppInfoBytes),
+      allowMalformed: true,
+    );
     return text.endsWith('\u0000') ? text.substring(0, text.length - 1) : text;
   }
 

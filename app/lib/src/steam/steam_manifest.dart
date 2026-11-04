@@ -1,8 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
+import 'dart:io';
 
+import '../store/store_http.dart';
 import 'protobuf.dart';
 import 'steam_crypto.dart';
 import 'steam_http.dart';
@@ -64,17 +65,66 @@ class SteamManifest {
   final List<SteamFile> files;
 
   /// Reads the zip the CDN sent, decrypting the file names with [depotKey] when the manifest encrypts them.
-  factory SteamManifest.parse(Uint8List zip, Uint8List depotKey) {
-    final Archive archive;
-    try {
-      archive = ZipDecoder().decodeBytes(zip);
-    } on Exception {
+  factory SteamManifest.parse(Uint8List zip, Uint8List depotKey) => _parseSections(_unzip(zip), depotKey);
+
+  static const _endOfCentralDirectory = 0x06054B50;
+  static const _centralDirectoryEntry = 0x02014B50;
+  static const _localFileHeader = 0x04034B50;
+  static const _stored = 0;
+  static const _deflated = 8;
+
+  /// The one file of the zip, located through its central directory and inflated no further than the size the
+  /// directory gives, so that a zip claiming little but inflating to much is refused while it inflates.
+  static Uint8List _unzip(Uint8List zip) {
+    final view = ByteData.sublistView(zip);
+    int read32(int offset) {
+      if (offset < 0 || offset + 4 > zip.length) {
+        throw const _Malformed();
+      }
+      return view.getUint32(offset, Endian.little);
+    }
+
+    int read16(int offset) {
+      if (offset < 0 || offset + 2 > zip.length) {
+        throw const _Malformed();
+      }
+      return view.getUint16(offset, Endian.little);
+    }
+
+    var end = zip.length - 22;
+    while (end >= 0 && read32(end) != _endOfCentralDirectory) {
+      end--;
+    }
+    if (end < 0 || read16(end + 10) != 1) {
       throw const _Malformed();
     }
-    if (archive.files.length != 1 || archive.files.single.size > _maxUnpackedBytes) {
+
+    final entry = read32(end + 16);
+    if (read32(entry) != _centralDirectoryEntry) {
       throw const _Malformed();
     }
-    return _parseSections(archive.files.single.content, depotKey);
+    final method = read16(entry + 10);
+    final compressedSize = read32(entry + 20);
+    final size = read32(entry + 24);
+    final header = read32(entry + 42);
+    if (read32(header) != _localFileHeader || size > _maxUnpackedBytes) {
+      throw const _Malformed();
+    }
+
+    final start = header + 30 + read16(header + 26) + read16(header + 28);
+    if (start + compressedSize > zip.length) {
+      throw const _Malformed();
+    }
+    final data = Uint8List.sublistView(zip, start, start + compressedSize);
+    final Uint8List content = switch (method) {
+      _stored => data,
+      _deflated => decodeBounded(steamService, ZLibCodec(raw: true), data, maxBytes: size),
+      _ => throw const _Malformed(),
+    };
+    if (content.length != size) {
+      throw const _Malformed();
+    }
+    return content;
   }
 
   static SteamManifest _parseSections(Uint8List data, Uint8List depotKey) {

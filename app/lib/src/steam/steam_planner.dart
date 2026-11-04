@@ -124,7 +124,7 @@ class SteamPlanner {
         continue;
       }
       final manifests = depot['manifests'];
-      final manifestId = int.tryParse(manifests?[branch]?.value('gid') ?? manifests?.value(branch) ?? '');
+      final manifestId = parseUint64(manifests?[branch]?.value('gid') ?? manifests?.value(branch) ?? '');
       if (manifestId == null) {
         continue;
       }
@@ -271,4 +271,14 @@ class SteamPlanner {
     }
     throw const SteamException('Sogen cannot tell how to start this game yet.');
   }
+}
+
+/// Reads an unsigned 64-bit decimal number, such as a manifest id, as the int with the same bits; ids above the
+/// signed range are negative ints.
+int? parseUint64(String text) {
+  final value = BigInt.tryParse(text);
+  if (value == null || value.isNegative || value.bitLength > 64) {
+    return null;
+  }
+  return value.toSigned(64).toInt();
 }

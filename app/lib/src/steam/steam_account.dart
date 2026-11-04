@@ -37,6 +37,10 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
   final SteamSignInPresenter _present;
   final SteamAuth _auth;
   SteamCredentials? _credentials;
+  int _session = 0;
+
+  /// Changes whenever the signed-in account changes, so that what was learned in one session is not used in another.
+  int get session => _session;
 
   @override
   StoreService get service => steamService;
@@ -54,6 +58,7 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
       debugPrint('Could not read the Steam account: ${e.message}');
     }
     _credentials = stored == null ? null : _parseStored(stored);
+    _session++;
     notifyListeners();
   }
 
@@ -84,9 +89,8 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
       final subject = int.tryParse('${claims['sub']}');
       final expiry = claims['exp'];
       final forClient = audience is List<Object?> ? audience.contains('client') : audience == 'client';
-      final expired =
-          expiry is int && DateTime.fromMillisecondsSinceEpoch(expiry * 1000).isBefore(now ?? DateTime.now());
-      if (!forClient || subject == null || expired) {
+      final valid = expiry is int && DateTime.fromMillisecondsSinceEpoch(expiry * 1000).isAfter(now ?? DateTime.now());
+      if (!forClient || subject == null || !valid) {
         return null;
       }
       return SteamCredentials(refreshToken: refreshToken, steamId: subject);
@@ -109,6 +113,7 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
     }
     await _secrets.write(_secretName, jsonEncode({'refreshToken': token}));
     _credentials = credentials;
+    _session++;
     notifyListeners();
     return true;
   }
@@ -116,6 +121,7 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
   @override
   Future<void> signOut() async {
     _credentials = null;
+    _session++;
     notifyListeners();
     await _secrets.delete(_secretName);
   }

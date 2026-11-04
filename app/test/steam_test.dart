@@ -185,6 +185,19 @@ void main() {
       expect(manifest.files.last.isDirectory, isTrue);
     });
 
+    test('a zip that inflates beyond the size its directory gives is rejected', () {
+      final zip = _manifestZip([_file('a', 0)]);
+      final view = ByteData.sublistView(zip);
+      var end = zip.length - 22;
+      while (view.getUint32(end, Endian.little) != 0x06054B50) {
+        end--;
+      }
+      final entry = view.getUint32(end + 16, Endian.little);
+      view.setUint32(entry + 24, view.getUint32(entry + 24, Endian.little) - 1, Endian.little);
+
+      expect(() => SteamManifest.parse(zip, _key), throwsA(isA<SteamException>()));
+    });
+
     test('a manifest without its end section is rejected', () {
       final zip = ZipDecoder().decodeBytes(_manifestZip([_file('a', 0)]));
       final sections = zip.files.single.content;
@@ -205,6 +218,18 @@ void main() {
       expect(depots.firstWhere((depot) => depot.id == 484).language, 'german');
       expect(depots.firstWhere((depot) => depot.id == 484).manifestId, 444);
       expect(depots.firstWhere((depot) => depot.id == 485).appId, 1007);
+    });
+
+    test('manifest ids above the signed 64-bit range are kept', () {
+      final info = KeyValues.parseText(
+        '"1" { "depots" { "2" { "manifests" { "public" { "gid" "18446744073709551615" } } } '
+        '"3" { "manifests" { "public" { "gid" "18446744073709551616" } } } } }',
+      );
+
+      final depots = SteamPlanner.windowsDepots(1, info);
+
+      expect(depots.map((depot) => depot.id), [2]);
+      expect(depots.single.manifestId.toUnsigned(64), 0xFFFFFFFFFFFFFFFF.toUnsigned(64));
     });
 
     test('gaps between chunks are filled with zeros and the Windows launch option is used', () {
@@ -257,13 +282,24 @@ void main() {
       expect(credentials?.steamId, 76561197960287930);
     });
 
-    test('a token for the web or an expired one cannot log on', () {
+    test('a token for the web, without an expiry or expired cannot log on', () {
       expect(
         SteamAccount.credentialsOf(
           token({
             'iss': 'steam',
             'sub': '1',
             'aud': ['web'],
+            'exp': 4102444800,
+          }),
+        ),
+        isNull,
+      );
+      expect(
+        SteamAccount.credentialsOf(
+          token({
+            'iss': 'steam',
+            'sub': '1',
+            'aud': ['client'],
           }),
         ),
         isNull,

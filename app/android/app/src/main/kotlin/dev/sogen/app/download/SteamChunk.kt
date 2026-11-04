@@ -25,6 +25,9 @@ object SteamChunk {
     private const val LZMA_PROPERTIES = 5
     private const val VZIP_FOOTER = 10
 
+    /** Steam's VZip uses an 8 MiB dictionary; a larger claim would only make the decoder allocate it. */
+    private const val MAX_LZMA_DICTIONARY = 64 * 1024 * 1024
+
     fun decode(file: ByteArray, depotKey: ByteArray, size: Long): ByteArray {
         val data = decrypt(file, depotKey)
         val decoded = when {
@@ -80,6 +83,9 @@ object SteamChunk {
         }
         val properties = data[VZIP_HEADER]
         val dictionarySize = ByteBuffer.wrap(data, VZIP_HEADER + 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
+        if (dictionarySize !in 1..MAX_LZMA_DICTIONARY) {
+            throw damaged()
+        }
         val compressed = ByteArrayInputStream(
             data,
             VZIP_HEADER + LZMA_PROPERTIES,

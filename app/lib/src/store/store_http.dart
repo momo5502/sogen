@@ -132,15 +132,29 @@ Object? _decode(List<int> bytes) {
 }
 
 /// Inflates zlib data, failing once the result would grow beyond [maxBytes].
-Uint8List inflateBounded(StoreService service, List<int> compressed, {required int maxBytes}) {
-  final inflated = _BoundedBytes(service, maxBytes);
-  final sink = ZLibCodec().decoder.startChunkedConversion(ByteConversionSink.from(inflated));
-  for (var offset = 0; offset < compressed.length; offset += 64 * 1024) {
-    final end = offset + 64 * 1024 < compressed.length ? offset + 64 * 1024 : compressed.length;
-    sink.add(compressed.sublist(offset, end));
+Uint8List inflateBounded(StoreService service, List<int> compressed, {required int maxBytes}) =>
+    decodeBounded(service, ZLibCodec(), compressed, maxBytes: maxBytes);
+
+/// Decodes [encoded] with [codec], such as zlib, raw deflate or gzip, failing once the result would grow beyond
+/// [maxBytes] while it is decoded.
+Uint8List decodeBounded(
+  StoreService service,
+  Codec<List<int>, List<int>> codec,
+  List<int> encoded, {
+  required int maxBytes,
+}) {
+  final decoded = _BoundedBytes(service, maxBytes);
+  final sink = codec.decoder.startChunkedConversion(ByteConversionSink.from(decoded));
+  try {
+    for (var offset = 0; offset < encoded.length; offset += 64 * 1024) {
+      final end = offset + 64 * 1024 < encoded.length ? offset + 64 * 1024 : encoded.length;
+      sink.add(encoded.sublist(offset, end));
+    }
+    sink.close();
+  } on FormatException {
+    throw service.error('${service.name} sent data Sogen does not understand.');
   }
-  sink.close();
-  return inflated.bytes.takeBytes();
+  return decoded.bytes.takeBytes();
 }
 
 /// Collects the decoder's output as it comes, refusing each piece that would grow it beyond [maxBytes] before keeping

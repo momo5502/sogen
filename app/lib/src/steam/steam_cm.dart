@@ -239,6 +239,8 @@ class SteamConnection {
       _handle(Uint8List.fromList(frame));
     } on FormatException {
       _onClosed();
+    } on StoreException {
+      _onClosed();
     }
   }
 
@@ -295,7 +297,7 @@ class SteamConnection {
       if (unzipped > _maxMultiBytes) {
         throw const FormatException('Multi message too large');
       }
-      payload = Uint8List.fromList(gzip.decode(payload));
+      payload = decodeBounded(steamService, GZipCodec(), payload, maxBytes: unzipped);
       if (payload.length != unzipped) {
         throw const FormatException('Multi message size mismatch');
       }
