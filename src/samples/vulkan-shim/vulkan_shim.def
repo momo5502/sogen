@@ -88,6 +88,7 @@ EXPORTS
     vkCmdPushConstants
     vkCmdPushConstants2KHR
     vkCmdSetAlphaToCoverageEnableEXT
+    vkCmdSetAttachmentFeedbackLoopEnableEXT
     vkCmdSetBlendConstants
     vkCmdSetCullMode
     vkCmdSetDepthBias
