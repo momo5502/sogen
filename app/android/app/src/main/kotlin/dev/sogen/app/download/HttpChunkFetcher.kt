@@ -44,6 +44,24 @@ data class CdnEndpoint(val urlFormat: String, val parameters: Map<String, String
         } catch (e: JSONException) {
             throw InvalidPlanException("Unreadable download links")
         }
+
+        /** The keys of the Steam depots a download decrypts its chunks with, which come with the links. */
+        fun readDepotKeys(file: File): Map<Int, ByteArray> = try {
+            val keys = JSONObject(file.readText()).optJSONObject("steamDepotKeys") ?: JSONObject()
+            keys.keys().asSequence().associate { depot ->
+                val hex = keys.getString(depot)
+                if (!depotKey.matches(hex)) {
+                    throw InvalidPlanException("Bad depot key")
+                }
+                depot.toInt() to ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+            }
+        } catch (e: JSONException) {
+            throw InvalidPlanException("Unreadable download links")
+        } catch (e: NumberFormatException) {
+            throw InvalidPlanException("Unreadable download links")
+        }
+
+        private val depotKey = Regex("[0-9a-f]{64}")
     }
 }
 

@@ -61,3 +61,29 @@ class DepotPath {
   @override
   String toString() => relative;
 }
+
+/// Windows compares names without case, so a folder named in two spellings is one folder in the guest. Every path is
+/// spelled with the folder spelling seen first, so that the device, which tells case apart, holds one folder too.
+class FolderSpellings {
+  FolderSpellings(this._service);
+
+  final StoreService _service;
+  final _spellings = <String, String>{};
+
+  /// The folders seen so far, by the key paths below them are compared with.
+  Set<String> get keys => _spellings.keys.toSet();
+
+  /// The spelling of a folder seen before, if any.
+  String? spellingOf(String folderKey) => _spellings[folderKey];
+
+  DepotPath spell(DepotPath path, {bool isFolder = false}) {
+    final segments = [...path.segments];
+    final folders = isFolder ? segments.length + 1 : segments.length;
+    for (var end = 1; end < folders; end++) {
+      final folder = segments.sublist(0, end).join('/');
+      final spelling = _spellings.putIfAbsent(folder.toLowerCase(), () => folder);
+      segments.replaceRange(0, end, spelling.split('/'));
+    }
+    return DepotPath.parse(segments.join('/'), service: _service);
+  }
+}

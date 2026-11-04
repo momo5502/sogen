@@ -2,8 +2,9 @@ import 'gog_manifest.dart';
 import 'install_script.dart';
 import 'play_task.dart';
 
-/// Where the chunks of a file come from: the game's own GOG CDN, the one GOG serves dependencies from, or Epic's.
-enum ChunkSource { game, dependency, epic }
+/// Where the chunks of a file come from: the game's own GOG CDN, the one GOG serves dependencies from, Epic's or
+/// Steam's.
+enum ChunkSource { game, dependency, epic, steam }
 
 /// A chunk several files take parts of, stored on the CDN of [source] at [path] below its endpoint.
 class SharedChunk {
@@ -13,6 +14,7 @@ class SharedChunk {
     required this.sha1,
     required this.size,
     required this.compressedSize,
+    this.depot,
   });
 
   final ChunkSource source;
@@ -21,24 +23,30 @@ class SharedChunk {
   final int size;
   final int compressedSize;
 
+  /// The Steam depot the chunk belongs to, whose key decrypts it.
+  final int? depot;
+
   Map<String, Object> toJson() => {
     'source': source.name,
     'path': path,
     'sha1': sha1,
     'size': size,
     'compressedSize': compressedSize,
+    'depot': ?depot,
   };
 }
 
-/// [size] bytes from [offset] of the plan's shared chunk [chunk].
+/// [size] bytes from [offset] of the plan's shared chunk [chunk], or [size] zero bytes that no chunk stores.
 class ChunkPart {
   const ChunkPart({required this.chunk, required this.offset, required this.size});
 
-  final int chunk;
+  const ChunkPart.zeros(this.size) : chunk = null, offset = 0;
+
+  final int? chunk;
   final int offset;
   final int size;
 
-  Map<String, Object> toJson() => {'chunk': chunk, 'offset': offset, 'size': size};
+  Map<String, Object> toJson() => chunk == null ? {'zeros': size} : {'chunk': chunk!, 'offset': offset, 'size': size};
 }
 
 /// A file to write, either from its own chunks or cut from one of the plan's containers.

@@ -14,6 +14,8 @@ import '../gog/gog_account.dart';
 import '../gog/gog_library.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../steam/steam_account.dart';
+import '../steam/steam_catalog.dart';
 import '../store/store_catalog.dart';
 import '../store/store_installer.dart';
 import '../support.dart';
@@ -35,6 +37,8 @@ class HomePage extends StatefulWidget {
     required this.gogCatalog,
     required this.epic,
     required this.epicCatalog,
+    required this.steam,
+    required this.steamCatalog,
     required this.installer,
   });
 
@@ -46,6 +50,8 @@ class HomePage extends StatefulWidget {
   final StoreCatalog gogCatalog;
   final EpicAccount epic;
   final StoreCatalog epicCatalog;
+  final SteamAccount steam;
+  final StoreCatalog steamCatalog;
   final StoreInstaller installer;
 
   @override
@@ -270,7 +276,14 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     canInstall: installed && !_installing,
                     color: SogenColors.accents[6],
                   ),
-                  const CenteredMessage(icon: LucideIcons.hourglass, text: 'Steam support is coming soon.'),
+                  StoreTab(
+                    account: widget.steam,
+                    catalog: widget.steamCatalog,
+                    installer: widget.installer,
+                    library: widget.library,
+                    canInstall: installed && !_installing,
+                    color: const Color(0xFF66C0F4),
+                  ),
                   StoreTab(
                     account: widget.epic,
                     catalog: widget.epicCatalog,
@@ -281,7 +294,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                   ),
                   SettingsTab(
                     settings: widget.settings,
-                    accounts: [widget.gog, widget.epic],
+                    accounts: [widget.gog, widget.steam, widget.epic],
                     onRedownloadRoot: installed && !_installing ? _redownloadRoot : null,
                   ),
                 ],
@@ -581,7 +594,7 @@ class _EmptyLibrary extends StatelessWidget {
 }
 
 /// The stores a library game can come from, by the names the user knows them by.
-const _storeNames = {GogLibrary.store: 'GOG', EpicLibrary.store: 'Epic'};
+const _storeNames = {GogLibrary.store: 'GOG', SteamCatalog.store: 'Steam', EpicLibrary.store: 'Epic'};
 
 /// How each tab's icon looks once its tab is active. Steam's and Epic's brand colors are black, which would vanish on
 /// the dark tab bar, so they use the light blue of Steam's client and white.

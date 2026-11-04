@@ -38,6 +38,7 @@ class TransferEngine(
     private val staging: File,
     private val plan: TransferPlan,
     private val fetcher: ChunkFetcher,
+    private val depotKeys: Map<Int, ByteArray> = emptyMap(),
     private val isStopped: () -> Boolean = { false },
     private val mayUseNetwork: () -> Boolean = { true },
     private val onProgress: (written: Long, total: Long) -> Unit = { _, _ -> },
@@ -107,7 +108,12 @@ class TransferEngine(
             val container = file.container
             if (file.parts.isNotEmpty()) {
                 for (part in file.parts) {
-                    sink(sharedChunk(part.chunk), part.offset.toInt(), part.size.toInt())
+                    val chunk = part.chunk
+                    if (chunk == null) {
+                        writeZeros(sink, part.size)
+                    } else {
+                        sink(sharedChunk(chunk), part.offset.toInt(), part.size.toInt())
+                    }
                 }
             } else if (container == null) {
                 for (chunk in file.chunks) {
@@ -190,12 +196,26 @@ class TransferEngine(
         return actualSha256
     }
 
+    private fun writeZeros(sink: Sink, size: Long) {
+        var remaining = size
+        while (remaining > 0) {
+            val length = minOf(remaining, ZEROS.size.toLong()).toInt()
+            sink(ZEROS, 0, length)
+            remaining -= length
+        }
+    }
+
     private fun sharedChunk(index: Int): ByteArray {
         decodedChunks[index]?.let { return it }
 
         val chunk = plan.sharedChunks[index]
         val data = when (chunk.source) {
             ChunkSource.EPIC -> EpicChunk.decode(download(chunk.source, chunk.path, chunk.compressedSize), chunk.size)
+            ChunkSource.STEAM -> {
+                // Depot keys come with the links, so a missing one is renewed by fetching fresh links.
+                val key = depotKeys[chunk.depot] ?: throw LinkExpiredException()
+                SteamChunk.decode(download(chunk.source, chunk.path, chunk.compressedSize), key, chunk.size)
+            }
             else -> throw InvalidPlanException("Unknown chunk format")
         }
         if (sha1(data) != chunk.sha1) {
@@ -340,6 +360,7 @@ class TransferEngine(
         const val FILES_DIRECTORY = "files"
         private const val COPY_BUFFER_SIZE = 1024 * 1024
         private const val DECODED_CHUNK_CACHE_BYTES = 64L * 1024 * 1024
+        private val ZEROS = ByteArray(COPY_BUFFER_SIZE)
         private const val PART_SUFFIX = ".part"
         private const val FILE_PREFIX = "file:"
         private const val CONTAINER_PREFIX = "container:"

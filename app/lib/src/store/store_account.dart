@@ -32,8 +32,18 @@ class DeviceSecretStorage implements SecretStorage {
 /// Marks the exception a store account raises once the store ended the session, after which it is signed out.
 abstract interface class SignedOutException implements StoreException {}
 
+/// What the store tabs and settings show of an account: whether it is signed in, and signing in and out.
+abstract interface class StoreSignIn implements Listenable {
+  StoreService get service;
+  bool get isSignedIn;
+
+  /// Completes with false when the user left the sign-in without finishing it.
+  Future<bool> signIn();
+  Future<void> signOut();
+}
+
 /// The account of a store signed in to through OAuth. Only the refresh token is stored; access tokens stay in memory.
-abstract class StoreAccount extends ChangeNotifier {
+abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
   StoreAccount({
     required this._secrets,
     required this._secretName,
@@ -61,6 +71,7 @@ abstract class StoreAccount extends ChangeNotifier {
   int _session = 0;
   Future<void> _secretChanges = Future.value();
 
+  @override
   StoreService get service;
 
   /// Shows the store's login page and returns the token request fields for the code it gave, or null when the user
@@ -86,6 +97,7 @@ abstract class StoreAccount extends ChangeNotifier {
   @protected
   SignedOutException signedOut();
 
+  @override
   bool get isSignedIn => _refreshToken != null;
 
   /// Reads the stored session, which the store accounts do once when the app starts.
@@ -111,7 +123,7 @@ abstract class StoreAccount extends ChangeNotifier {
     }
   }
 
-  /// Shows the store's login page. Completes with false when the user left it without signing in.
+  @override
   Future<bool> signIn() async {
     final grant = await authorize();
     if (grant == null) {
@@ -122,6 +134,7 @@ abstract class StoreAccount extends ChangeNotifier {
     return true;
   }
 
+  @override
   Future<void> signOut() async {
     _session++;
     _refreshToken = null;

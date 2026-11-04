@@ -17,7 +17,13 @@ import 'src/gog/gog_cdn.dart';
 import 'src/gog/gog_install_source.dart';
 import 'src/gog/gog_library.dart';
 import 'src/pages/home_page.dart';
+import 'src/pages/steam_sign_in_page.dart';
 import 'src/settings.dart';
+import 'src/steam/steam_account.dart';
+import 'src/steam/steam_auth.dart';
+import 'src/steam/steam_catalog.dart';
+import 'src/steam/steam_client.dart';
+import 'src/steam/steam_install_source.dart';
 import 'src/store/store_catalog.dart';
 import 'src/store/store_installer.dart';
 import 'src/theme.dart';
@@ -37,9 +43,17 @@ Future<void> main() async {
   final epic = await EpicAccount.load();
   final epicApi = EpicApi(epic);
   final epicContent = EpicContent(epicApi);
+  final navigator = GlobalKey<NavigatorState>();
+  final steam = await SteamAccount.load(
+    (auth) => navigator.currentState!.push<SteamAuthPoll>(
+      MaterialPageRoute(builder: (context) => SteamSignInPage(auth: auth)),
+    ),
+  );
+  final steamClient = SteamClient(steam);
   final installer = StoreInstaller(library, {
     GogLibrary.store: GogInstallSource(gogContent),
     EpicLibrary.store: EpicInstallSource(epicContent),
+    SteamCatalog.store: SteamInstallSource(steamClient),
   });
   await installer.restore().catchError((Object error) => debugPrint('Could not restore downloads: $error'));
 
@@ -53,7 +67,10 @@ Future<void> main() async {
       gogCatalog: GogCatalog(gog, gogContent),
       epic: epic,
       epicCatalog: EpicCatalog(epicApi, epicContent),
+      steam: steam,
+      steamCatalog: SteamCatalog(steamClient),
       installer: installer,
+      navigator: navigator,
     ),
   );
 }
@@ -69,7 +86,10 @@ class SogenApp extends StatelessWidget {
     required this.gogCatalog,
     required this.epic,
     required this.epicCatalog,
+    required this.steam,
+    required this.steamCatalog,
     required this.installer,
+    required this.navigator,
   });
 
   final EmulationRoot root;
@@ -80,11 +100,17 @@ class SogenApp extends StatelessWidget {
   final StoreCatalog gogCatalog;
   final EpicAccount epic;
   final StoreCatalog epicCatalog;
+  final SteamAccount steam;
+  final StoreCatalog steamCatalog;
   final StoreInstaller installer;
+
+  /// Lets the Steam account show its sign-in page, which it opens outside of any widget.
+  final GlobalKey<NavigatorState> navigator;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigator,
       title: 'Sogen',
       debugShowCheckedModeBanner: false,
       theme: buildSogenTheme(),
@@ -99,6 +125,8 @@ class SogenApp extends StatelessWidget {
           gogCatalog: gogCatalog,
           epic: epic,
           epicCatalog: epicCatalog,
+          steam: steam,
+          steamCatalog: steamCatalog,
           installer: installer,
         ),
       ),

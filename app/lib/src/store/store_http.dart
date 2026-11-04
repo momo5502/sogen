@@ -70,6 +70,24 @@ Future<(int, Uint8List)> sendBounded(
   required int maxBytes,
   Duration timeout = _timeout,
 }) async {
+  final (status, body, _) = await sendBoundedWithHeaders(
+    service,
+    client,
+    request,
+    maxBytes: maxBytes,
+    timeout: timeout,
+  );
+  return (status, body);
+}
+
+/// [sendBounded] for stores that answer with part of the result in headers.
+Future<(int, Uint8List, Map<String, String>)> sendBoundedWithHeaders(
+  StoreService service,
+  http.Client client,
+  http.BaseRequest request, {
+  required int maxBytes,
+  Duration timeout = _timeout,
+}) async {
   final elapsed = Stopwatch()..start();
   try {
     final response = await client.send(request).timeout(timeout);
@@ -91,7 +109,7 @@ Future<(int, Uint8List)> sendBounded(
     );
 
     try {
-      return (response.statusCode, await received.future.timeout(timeout - elapsed.elapsed));
+      return (response.statusCode, await received.future.timeout(timeout - elapsed.elapsed), response.headers);
     } on TimeoutException {
       await subscription.cancel();
       rethrow;

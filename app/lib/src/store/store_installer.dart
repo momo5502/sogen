@@ -22,8 +22,9 @@ enum DownloadStatus { running, paused, metered, linksExpired, noSpace, failed, c
 abstract interface class InstallSource {
   StoreService get service;
 
-  /// The CDN endpoints by the name of the [ChunkSource] they serve.
-  Future<Map<String, List<Map<String, Object?>>>> links(String productId);
+  /// The CDN endpoints by the name of the [ChunkSource] they serve, and what else the native downloader needs to fetch
+  /// them, like Steam's depot keys.
+  Future<Map<String, Object>> links(String productId);
 
   /// A square PNG icon of the game, if the store has one.
   Future<Uri?> icon(String productId);

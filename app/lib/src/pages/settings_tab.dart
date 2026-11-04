@@ -10,7 +10,7 @@ class SettingsTab extends StatefulWidget {
   const SettingsTab({super.key, required this.settings, required this.accounts, this.onRedownloadRoot});
 
   final AppSettings settings;
-  final List<StoreAccount> accounts;
+  final List<StoreSignIn> accounts;
 
   /// Downloads the emulation root again; null while it is not installed or an install is running.
   final VoidCallback? onRedownloadRoot;
@@ -30,7 +30,7 @@ class _SettingsTabState extends State<SettingsTab> {
     await widget.settings.setShowAds(show);
   }
 
-  Future<void> _signOut(StoreAccount account) async {
+  Future<void> _signOut(StoreSignIn account) async {
     final signOut = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(

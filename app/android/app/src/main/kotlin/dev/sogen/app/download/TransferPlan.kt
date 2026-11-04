@@ -8,12 +8,23 @@ class InvalidPlanException(message: String) : Exception(message)
 
 data class Chunk(val md5: String, val size: Long, val compressedMd5: String, val compressedSize: Long)
 
-enum class ChunkSource { GAME, DEPENDENCY, EPIC }
+enum class ChunkSource { GAME, DEPENDENCY, EPIC, STEAM }
 
-/** A chunk that several files take parts of, stored on the CDN at [path] in the format of its [source]. */
-data class SharedChunk(val source: ChunkSource, val path: String, val sha1: String, val size: Long, val compressedSize: Long)
+/**
+ * A chunk that several files take parts of, stored on the CDN at [path] in the format of its [source]. Steam chunks
+ * are encrypted with the key of their [depot].
+ */
+data class SharedChunk(
+    val source: ChunkSource,
+    val path: String,
+    val sha1: String,
+    val size: Long,
+    val compressedSize: Long,
+    val depot: Int? = null,
+)
 
-data class ChunkPart(val chunk: Int, val offset: Long, val size: Long)
+/** [size] bytes from [offset] of the shared chunk [chunk], or [size] zero bytes when [chunk] is null. */
+data class ChunkPart(val chunk: Int?, val offset: Long, val size: Long)
 
 data class PlannedFile(
     val path: String,
@@ -163,15 +174,23 @@ data class TransferPlan(
                 sha1 = hash(json, "sha1", sha1),
                 size = json.getLong("size"),
                 compressedSize = json.getLong("compressedSize"),
+                depot = if (json.has("depot")) json.getInt("depot") else null,
             )
             check(chunk.size in 0..MAX_CHUNK_SIZE && chunk.compressedSize in 0..MAX_CHUNK_SIZE, "Bad chunk size")
+            check((chunk.source == ChunkSource.STEAM) == (chunk.depot != null), "Bad chunk depot")
             return chunk
         }
 
         private fun parts(array: JSONArray, sharedChunks: List<SharedChunk>): List<ChunkPart> = array.objects().map {
-            val part = ChunkPart(chunk = it.getInt("chunk"), offset = it.getLong("offset"), size = it.getLong("size"))
-            check(part.chunk in sharedChunks.indices && part.offset >= 0 && part.size >= 0, "Bad part")
-            check(Math.addExact(part.offset, part.size) <= sharedChunks[part.chunk].size, "Part outside chunk")
+            if (it.has("zeros")) {
+                val zeros = it.getLong("zeros")
+                check(zeros in 0..MAX_INSTALL_SIZE, "Bad part")
+                return@map ChunkPart(chunk = null, offset = 0, size = zeros)
+            }
+            val chunk = it.getInt("chunk")
+            val part = ChunkPart(chunk = chunk, offset = it.getLong("offset"), size = it.getLong("size"))
+            check(chunk in sharedChunks.indices && part.offset >= 0 && part.size >= 0, "Bad part")
+            check(Math.addExact(part.offset, part.size) <= sharedChunks[chunk].size, "Part outside chunk")
             part
         }
 
@@ -193,6 +212,7 @@ data class TransferPlan(
             "game" -> ChunkSource.GAME
             "dependency" -> ChunkSource.DEPENDENCY
             "epic" -> ChunkSource.EPIC
+            "steam" -> ChunkSource.STEAM
             else -> throw InvalidPlanException("Unknown source")
         }
 

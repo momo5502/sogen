@@ -24,7 +24,7 @@ class StoreTab extends StatefulWidget {
     required this.color,
   });
 
-  final StoreAccount account;
+  final StoreSignIn account;
   final StoreCatalog catalog;
   final StoreInstaller installer;
   final GameLibrary library;

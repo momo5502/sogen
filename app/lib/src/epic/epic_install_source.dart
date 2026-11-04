@@ -14,7 +14,7 @@ class EpicInstallSource implements InstallSource {
   StoreService get service => epicService;
 
   @override
-  Future<Map<String, List<Map<String, Object?>>>> links(String productId) async {
+  Future<Map<String, Object>> links(String productId) async {
     final (namespace, catalogItemId) = await _content.catalogItemOf(productId);
     return {'epic': epicChunkEndpoints(await _content.location(namespace, catalogItemId, productId))};
   }

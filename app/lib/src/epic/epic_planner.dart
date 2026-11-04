@@ -154,7 +154,7 @@ class EpicPlanner {
     final chunksByGuid = {for (final chunk in manifest.chunks) EpicManifest.guidKey(chunk.guid): chunk};
     final sharedChunks = <SharedChunk>[];
     final chunkIndices = <String, int>{};
-    final folders = _FolderSpellings();
+    final folders = FolderSpellings(epicService);
     final files = <PlannedFile>[];
     final fileKeys = <String>{};
 
@@ -230,7 +230,7 @@ class EpicPlanner {
     );
   }
 
-  static PlayTask _playTask(EpicManifest manifest, Set<String> fileKeys, _FolderSpellings folders) {
+  static PlayTask _playTask(EpicManifest manifest, Set<String> fileKeys, FolderSpellings folders) {
     if (manifest.launchExe.isEmpty) {
       throw const EpicException('Sogen cannot tell how to start this game yet.');
     }
@@ -244,24 +244,6 @@ class EpicPlanner {
       arguments: splitWindowsCommandLine(manifest.launchCommand),
       workingDirectory: null,
     );
-  }
-}
-
-/// Windows compares names without case, so a folder named in two spellings is one folder in the guest. Every path is
-/// spelled with the folder spelling seen first, so that the device, which tells case apart, holds one folder too.
-class _FolderSpellings {
-  final _spellings = <String, String>{};
-
-  Set<String> get keys => _spellings.keys.toSet();
-
-  DepotPath spell(DepotPath path) {
-    final segments = [...path.segments];
-    for (var end = 1; end < segments.length; end++) {
-      final folder = segments.sublist(0, end).join('/');
-      final spelling = _spellings.putIfAbsent(folder.toLowerCase(), () => folder);
-      segments.replaceRange(0, end, spelling.split('/'));
-    }
-    return DepotPath.parse(segments.join('/'), service: epicService);
   }
 }
 
