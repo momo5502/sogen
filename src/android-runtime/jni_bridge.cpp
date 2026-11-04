@@ -144,6 +144,23 @@ namespace
         return result;
     }
 
+    std::vector<sogen::directory_mount> to_directory_mounts(JNIEnv& env, const jobjectArray values)
+    {
+        const auto strings = to_strings(env, values);
+        if (strings.size() % sogen::directory_mount::argument_count != 0)
+        {
+            throw std::runtime_error("Inconsistent directory mounts");
+        }
+
+        std::vector<sogen::directory_mount> result{};
+        for (size_t i = 0; i < strings.size(); i += sogen::directory_mount::argument_count)
+        {
+            result.push_back(sogen::directory_mount::from_arguments(std::span(strings).subspan(i, sogen::directory_mount::argument_count)));
+        }
+
+        return result;
+    }
+
     std::vector<sogen::android::document_tree> to_document_trees(JNIEnv& env, const jobjectArray trees)
     {
         std::vector<sogen::android::document_tree> result{};
@@ -192,9 +209,9 @@ extern "C"
 
     JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(
         JNIEnv* env, jobject /*self*/, const jlong handle, jstring root, jstring application, jobjectArray arguments,
-        jobjectArray environment, jstring root_layer, jobjectArray document_trees, jstring working_directory, jstring backend,
-        const jboolean live_network, jstring sandbox_executable, jstring vulkan_hook_directory, jstring vulkan_driver_directory,
-        jstring vulkan_driver_name, jstring snapshot_directory, jstring resume_file)
+        jobjectArray environment, jstring root_layer, jobjectArray directory_mounts, jobjectArray document_trees, jstring working_directory,
+        jstring backend, const jboolean live_network, jstring sandbox_executable, jstring vulkan_hook_directory,
+        jstring vulkan_driver_directory, jstring vulkan_driver_name, jstring snapshot_directory, jstring resume_file)
     {
         sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -218,6 +235,7 @@ extern "C"
 
         try
         {
+            config.directory_mounts = to_directory_mounts(*env, directory_mounts);
             config.document_trees = to_document_trees(*env, document_trees);
         }
         catch (const std::exception& e)

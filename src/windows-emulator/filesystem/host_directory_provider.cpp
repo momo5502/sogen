@@ -30,6 +30,12 @@ namespace sogen
 
     namespace
     {
+        // Windows junctions are reported as an implementation-defined file type rather than as symlinks.
+        bool is_link(const std::filesystem::file_status status)
+        {
+            return std::filesystem::is_symlink(status) || std::filesystem::is_other(status);
+        }
+
         bool is_subpath(const std::filesystem::path& root, const std::filesystem::path& target)
         {
             const auto relative_path = target.lexically_relative(root);
@@ -77,7 +83,24 @@ namespace sogen
             return std::filesystem::path{*match};
         }
 
-        std::filesystem::path recover_host_case(const std::filesystem::path& root, const std::filesystem::path& candidate)
+        // With refused links, the status of an entry is taken without following it, so that the one lookup also
+        // tells whether the entry is a link.
+        // A failed lookup reports file_type::none, which is kept apart from an entry that does not exist.
+        std::filesystem::file_status probe_host_entry(const std::filesystem::path& path, const host_links links)
+        {
+            std::error_code ec{};
+            return links == host_links::follow ? std::filesystem::status(path, ec) : std::filesystem::symlink_status(path, ec);
+        }
+
+        bool lookup_failed(const std::filesystem::file_status status)
+        {
+            return status.type() == std::filesystem::file_type::none;
+        }
+
+        // With refused links, each component is checked before anything is looked up beneath it, and a path through a
+        // link comes back empty.
+        std::optional<std::filesystem::path> recover_host_case(const std::filesystem::path& root, const std::filesystem::path& candidate,
+                                                               const host_links links)
         {
             const auto relative = candidate.lexically_relative(root);
             if (relative.empty())
@@ -95,24 +118,36 @@ namespace sogen
                     continue;
                 }
 
-                std::error_code ec{};
-                if (std::filesystem::exists(resolved / *component, ec))
-                {
-                    resolved /= *component;
-                    continue;
-                }
-
                 // The emulation root is created in lower case, so that is the spelling almost every mismatched
                 // component has on a case sensitive host. Trying it first keeps a failed probe deep in System32
                 // from scanning every directory on the way down.
                 const std::filesystem::path lowered{utils::string::to_lower(component->u16string())};
-                if (std::filesystem::exists(resolved / lowered, ec))
+                std::optional<std::filesystem::path> match{};
+                auto status = probe_host_entry(resolved / *component, links);
+                auto failed = lookup_failed(status);
+                if (std::filesystem::exists(status))
                 {
-                    resolved /= lowered;
-                    continue;
+                    match = *component;
+                }
+                else if (status = probe_host_entry(resolved / lowered, links); std::filesystem::exists(status))
+                {
+                    match = lowered;
+                }
+                else
+                {
+                    failed = failed || lookup_failed(status);
+                    match = find_entry_ignoring_case(resolved, *component);
+                    if (match && links == host_links::refuse)
+                    {
+                        status = probe_host_entry(resolved / *match, links);
+                    }
                 }
 
-                const auto match = find_entry_ignoring_case(resolved, *component);
+                if (links == host_links::refuse && (failed || (match && (!std::filesystem::exists(status) || is_link(status)))))
+                {
+                    return std::nullopt;
+                }
+
                 if (!match)
                 {
                     break;
@@ -279,10 +314,32 @@ namespace sogen
         return file_stat;
     }
 
-    host_directory_provider::host_directory_provider(std::filesystem::path target)
+    host_directory_provider::host_directory_provider(std::filesystem::path target, const host_links links)
         : target_(std::move(target)),
+          links_(links),
           lookup_ignores_case_(host_lookup_ignores_case(this->target_))
     {
+    }
+
+    bool host_directory_provider::avoids_links(const std::filesystem::path& root, const std::filesystem::path& host_path)
+    {
+        auto current = root;
+        for (const auto& component : host_path.lexically_relative(root))
+        {
+            current /= component;
+            std::error_code ec{};
+            const auto status = std::filesystem::symlink_status(current, ec);
+            if (status.type() == std::filesystem::file_type::not_found)
+            {
+                return true;
+            }
+            if (!std::filesystem::exists(status) || is_link(status))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     std::optional<std::filesystem::path> host_directory_provider::get_host_path(const windows_path& path) const
@@ -294,11 +351,22 @@ namespace sogen
 
         auto candidate = (this->target_ / path.to_portable_path()).lexically_normal();
         const auto root = this->target_.lexically_normal();
-        // The containment check is lexical and does not follow symlinks. Host symlinks inside the mount may
-        // point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
+        // The containment check is lexical and does not follow symlinks. Unless they are refused, host symlinks
+        // inside the mount may point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
         if (!is_subpath(root, candidate))
         {
             return std::nullopt;
+        }
+
+        // A normal path that passes through no link below the root needs no canonicalization.
+        if (this->links_ == host_links::refuse)
+        {
+            if (!this->lookup_ignores_case_)
+            {
+                return recover_host_case(root, candidate, this->links_);
+            }
+
+            return avoids_links(root, candidate) ? std::optional{candidate} : std::nullopt;
         }
 
         std::error_code ec{};
@@ -316,7 +384,7 @@ namespace sogen
             }
             else if (!std::filesystem::exists(candidate, ec))
             {
-                candidate = recover_host_case(root, candidate);
+                candidate = *recover_host_case(root, candidate, this->links_);
             }
         }
 
@@ -390,9 +458,26 @@ namespace sogen
         std::error_code ec{};
         for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
         {
+            bool is_directory{};
+            if (this->links_ == host_links::refuse)
+            {
+                std::error_code status_error{};
+                const auto status = file.symlink_status(status_error);
+                if (status_error || !std::filesystem::exists(status) || is_link(status))
+                {
+                    continue;
+                }
+
+                is_directory = std::filesystem::is_directory(status);
+            }
+            else
+            {
+                is_directory = file.is_directory(ec);
+            }
+
             directory_entry entry{
                 .name = file.path().filename().u16string(),
-                .is_directory = file.is_directory(ec),
+                .is_directory = is_directory,
             };
 
 #ifdef OS_WINDOWS

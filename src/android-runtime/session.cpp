@@ -92,6 +92,11 @@ namespace sogen::android
         {
             std::string configuration = "emulation-root=" + config.emulation_root.string() + "\nroot-layer=" + config.root_layer.string() +
                                         "\nbackend=" + config.backend + "\nnetwork=" + (config.live_network ? "live" : "offline") + "\n";
+            for (const auto& mount : config.directory_mounts)
+            {
+                configuration += "directory=" + mount.host_directory.string() + ":" + mount.guest_path.string() + ":" +
+                                 mount.upper_directory.string() + "\n";
+            }
             for (const auto& tree : config.document_trees)
             {
                 configuration += "documents=" + tree.uri + ":" + tree.guest_path + ":" + tree.upper_directory.string() + "\n";
@@ -100,6 +105,7 @@ namespace sogen::android
         }
 
         std::vector<std::string> create_child_arguments(const emulator_settings& settings,
+                                                        const std::vector<directory_mount>& directory_mounts,
                                                         const std::vector<document_mount>& document_mounts, const uint16_t port,
                                                         const std::string& token)
         {
@@ -121,6 +127,12 @@ namespace sogen::android
             if (settings.spoof_gpu_features)
             {
                 arguments.emplace_back("--spoof-gpu-features");
+            }
+
+            for (const auto& mount : directory_mounts)
+            {
+                arguments.emplace_back("--directory-mount");
+                std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
             }
 
             for (const auto& mount : document_mounts)
@@ -190,7 +202,16 @@ namespace sogen::android
 
             auto settings = create_emulator_settings(config);
 
-            std::vector<provider_mount> document_mounts{};
+            std::vector<provider_mount> mounts{};
+            for (const auto& mount : config.directory_mounts)
+            {
+                mounts.push_back(provider_mount{
+                    .guest_path = mount.guest_path,
+                    .provider = create_directory_mount(mount),
+                    .mode = filesystem_mode::copy_on_write,
+                });
+            }
+
             std::vector<std::unique_ptr<document_broker>> brokers{};
             std::vector<document_mount> child_document_mounts{};
             for (const auto& tree : config.document_trees)
@@ -211,7 +232,7 @@ namespace sogen::android
                     });
                 }
 
-                document_mounts.push_back(provider_mount{
+                mounts.push_back(provider_mount{
                     .guest_path = windows_path{tree.guest_path},
                     .provider =
                         std::make_unique<layered_provider>(std::make_unique<document_tree_provider>(tree.entries, std::move(source)),
@@ -224,13 +245,14 @@ namespace sogen::android
             if (!config.sandbox_executable.empty())
             {
                 processes = std::make_unique<subprocess_process_manager>(
-                    config.sandbox_executable, [settings, child_document_mounts](const auto port, const auto& token) {
-                        return create_child_arguments(settings, child_document_mounts, port, token);
+                    config.sandbox_executable,
+                    [settings, directory_mounts = config.directory_mounts, child_document_mounts](const auto port, const auto& token) {
+                        return create_child_arguments(settings, directory_mounts, child_document_mounts, port, token);
                     });
             }
 
             auto emulator = create_x86_64_emulator(parse_backend(config.backend));
-            emulator_interfaces interfaces{.ui = std::move(ui), .processes = processes.get(), .mounts = std::move(document_mounts)};
+            emulator_interfaces interfaces{.ui = std::move(ui), .processes = processes.get(), .mounts = std::move(mounts)};
             auto win_emu_ptr = config.resume_file.empty()
                                    ? std::make_unique<windows_emulator>(std::move(emulator), create_application_settings(config),
                                                                         std::move(settings), std::move(callbacks), std::move(interfaces))

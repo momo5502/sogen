@@ -149,6 +149,7 @@ class MainActivity : FlutterActivity() {
         environment = call.argument<Map<String, String>>("environment").orEmpty(),
         rootLayerDirectory = call.argument<String>("rootLayerDirectory").orEmpty(),
         documentMounts = call.argument<Map<String, String>>("documentMounts").orEmpty(),
+        directoryMounts = call.argument<Map<String, String>>("directoryMounts").orEmpty(),
         layerDirectory = call.argument<String>("layerDirectory").orEmpty(),
         workingDirectory = call.argument<String>("workingDirectory").orEmpty(),
         backend = call.argument<String>("backend").orEmpty(),

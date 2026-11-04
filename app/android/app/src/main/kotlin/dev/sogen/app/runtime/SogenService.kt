@@ -169,15 +169,21 @@ class SogenService : Service() {
     private fun runSession(config: RunConfig, callback: ISogenCallback) {
         val session = native ?: return
         val sandbox = File(applicationInfo.nativeLibraryDir, SANDBOX_LIBRARY)
-        val documentTrees = try {
-            listDocumentTrees(config)
+        val mounts = try {
+            resolveMounts(config)
         } catch (e: Exception) {
             Log.e(TAG, "Could not list the game folder", e)
             reportFailure(callback, "Could not read the game folder: ${e.message}")
             return
         }
 
-        val exitCode = session.run(config, documentTrees, if (sandbox.exists()) sandbox.path else "", prepareVulkanDriver())
+        val exitCode = session.run(
+            config,
+            mounts.first,
+            mounts.second,
+            if (sandbox.exists()) sandbox.path else "",
+            prepareVulkanDriver(),
+        )
         synchronized(statsSampler) {
             statsSampler.shutdownNow()
         }
@@ -189,11 +195,23 @@ class SogenService : Service() {
         }
     }
 
-    private fun listDocumentTrees(config: RunConfig): List<DocumentTree> {
-        require(config.documentMounts.isEmpty() || config.layerDirectory.isNotEmpty()) { "Document mounts need a layer directory" }
-        return config.documentMounts.entries.mapIndexed { index, (guest, uri) ->
+    /** Each mount keeps its writes in its own subdirectory of the layer directory, numbered across both kinds. */
+    private fun resolveMounts(config: RunConfig): Pair<List<DirectoryMount>, List<DocumentTree>> {
+        val mountCount = config.documentMounts.size + config.directoryMounts.size
+        require(mountCount == 0 || config.layerDirectory.isNotEmpty()) { "Mounts need a layer directory" }
+        require(config.documentMounts.keys.none { guest -> config.directoryMounts.keys.any { it.equals(guest, ignoreCase = true) } }) {
+            "A guest path is mounted twice"
+        }
+
+        val documentTrees = config.documentMounts.entries.mapIndexed { index, (guest, uri) ->
             DocumentTree.list(contentResolver, guest, uri, File(config.layerDirectory, index.toString()))
         }
+        val gamesDirectory = File(filesDir, GAMES_DIRECTORY)
+        val directoryMounts = config.directoryMounts.entries.mapIndexed { index, (guest, directory) ->
+            val slot = config.documentMounts.size + index
+            DirectoryMount.resolve(guest, directory, gamesDirectory, File(config.layerDirectory, slot.toString()))
+        }
+        return directoryMounts to documentTrees
     }
 
     private fun reportFailure(callback: ISogenCallback, message: String) {
@@ -292,6 +310,9 @@ class SogenService : Service() {
     private companion object {
         const val TAG = "SogenService"
         const val LOGGER_COLOR_RED = 1
+
+        /** Where the launcher installs games, below its files directory; installedGamesDirectory in game_library.dart. */
+        const val GAMES_DIRECTORY = "games"
 
         /** The sandbox executable, packaged as a library so that it is extracted to a directory apps may execute from. */
         const val SANDBOX_LIBRARY = "libsandbox.so"
