@@ -115,14 +115,14 @@ namespace sogen::py
     }
 
     hook_handle::hook_handle(sogen::guest_machine& emulator, emulator_hook* hook, nb::object owner)
-        : shared_state(std::make_shared<hook_state>(emulator, hook)),
-          owner(std::move(owner))
+        : owner(std::move(owner)),
+          shared_state(std::make_shared<hook_state>(emulator, hook))
     {
     }
 
     hook_handle::hook_handle(std::function<void()> remover, nb::object owner)
-        : shared_state(std::make_shared<hook_state>(std::move(remover))),
-          owner(std::move(owner))
+        : owner(std::move(owner)),
+          shared_state(std::make_shared<hook_state>(std::move(remover)))
     {
     }
 

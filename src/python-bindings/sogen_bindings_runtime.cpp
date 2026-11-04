@@ -43,7 +43,9 @@ namespace sogen::py
     {
         register_api_call_decorator(m);
 
-        nb::class_<hook_handle>(m, "Hook").def("remove", &hook_handle::remove).def_prop_ro("active", &hook_handle::active);
+        nb::class_<hook_handle>(m, "Hook", nb::type_slots{owner_gc_slots<hook_handle>.data()})
+            .def("remove", &hook_handle::remove)
+            .def_prop_ro("active", &hook_handle::active);
 
         nb::class_<api_hook_registry>(m, "ApiHooks")
             .def("__setitem__", &api_hook_registry::set_item)
