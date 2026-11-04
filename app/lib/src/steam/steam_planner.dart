@@ -90,7 +90,7 @@ class SteamPlanner {
     for (final host in hosts.take(4)) {
       final url = Uri.https(
         host,
-        '/depot/${depot.id}/manifest/${depot.manifestId.toUnsigned(64)}/5/${code.toUnsigned(64)}',
+        '/depot/${depot.id}/manifest/${formatUint64(depot.manifestId)}/5/${formatUint64(code)}',
       );
       try {
         final (status, body) = await sendBounded(
@@ -276,6 +276,10 @@ class SteamPlanner {
     throw const SteamException('Sogen cannot tell how to start this game yet.');
   }
 }
+
+/// Writes an int holding an unsigned 64-bit number, such as a manifest id or request code, in decimal; a negative int
+/// stands for a number above the signed range, which `toUnsigned` cannot make positive in a 64-bit int.
+String formatUint64(int value) => BigInt.from(value).toUnsigned(64).toString();
 
 /// Reads an unsigned 64-bit decimal number, such as a manifest id, as the int with the same bits; ids above the
 /// signed range are negative ints.

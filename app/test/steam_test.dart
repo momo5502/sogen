@@ -229,7 +229,7 @@ void main() {
       final depots = SteamPlanner.windowsDepots(1, info);
 
       expect(depots.map((depot) => depot.id), [2]);
-      expect(depots.single.manifestId.toUnsigned(64), 0xFFFFFFFFFFFFFFFF.toUnsigned(64));
+      expect(formatUint64(depots.single.manifestId), '18446744073709551615');
     });
 
     test('gaps between chunks are filled with zeros and the Windows launch option is used', () {
