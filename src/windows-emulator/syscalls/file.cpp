@@ -91,6 +91,11 @@ namespace sogen
                                                  info->completion_key);
             }
 
+            bool is_file_information_class(const uint32_t info_class)
+            {
+                return info_class != 0 && info_class < FileMaximumInformation;
+            }
+
             std::u16string normalize_named_pipe_path(const std::u16string_view filename)
             {
                 for (const auto prefix : dos_named_pipe_prefixes)
@@ -211,6 +216,12 @@ namespace sogen
                                              const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              const uint64_t file_information, const ULONG length, const FILE_INFORMATION_CLASS info_class)
         {
+            if (!is_file_information_class(static_cast<uint32_t>(info_class)))
+            {
+                c.win_emu.log.error("Unsupported NtSetInformationFile info class: 0x%X\n", static_cast<uint32_t>(info_class));
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             auto* f = c.proc.files.get(file_handle);
             if (!f)
             {
@@ -444,6 +455,13 @@ namespace sogen
                                                      const uint64_t fs_information, const ULONG length,
                                                      const FS_INFORMATION_CLASS fs_information_class)
         {
+            if (const auto info_class = static_cast<uint32_t>(fs_information_class);
+                info_class == 0 || info_class >= FileFsMaximumInformation)
+            {
+                c.win_emu.log.error("Unsupported NtQueryVolumeInformationFile info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             switch (fs_information_class)
             {
             case FileFsDeviceInformation:
@@ -681,6 +699,12 @@ namespace sogen
                                                const ULONG query_flags,
                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_name)
         {
+            if (!is_file_information_class(info_class))
+            {
+                c.win_emu.log.error("Unsupported NtQueryDirectoryFile info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             auto* f = c.proc.files.get(file_handle);
             if (!f || !f->is_directory())
             {
@@ -743,7 +767,7 @@ namespace sogen
                                                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                                const uint64_t file_information, uint32_t length, const uint32_t info_class)
         {
-            if (info_class == 0 || info_class >= FileMaximumInformation)
+            if (!is_file_information_class(info_class))
             {
                 return STATUS_INVALID_INFO_CLASS;
             }
@@ -1322,6 +1346,12 @@ namespace sogen
                                                  const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                                  const uint64_t file_information, const uint32_t length, const uint32_t info_class)
         {
+            if (!is_file_information_class(info_class))
+            {
+                c.win_emu.log.error("Unsupported NtQueryInformationByName info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
             block.Status = STATUS_SUCCESS;
             block.Information = 0;
