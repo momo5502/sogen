@@ -18,6 +18,7 @@ import 'src/gog/gog_install_source.dart';
 import 'src/gog/gog_library.dart';
 import 'src/pages/home_page.dart';
 import 'src/settings.dart';
+import 'src/store/cover_cache.dart';
 import 'src/store/store_catalog.dart';
 import 'src/store/store_installer.dart';
 import 'src/theme.dart';
@@ -42,6 +43,7 @@ Future<void> main() async {
     EpicLibrary.store: EpicInstallSource(epicContent),
   });
   await installer.restore().catchError((Object error) => debugPrint('Could not restore downloads: $error'));
+  final covers = await CoverCache.open();
 
   runApp(
     SogenApp(
@@ -54,6 +56,7 @@ Future<void> main() async {
       epic: epic,
       epicCatalog: EpicCatalog(epicApi, epicContent),
       installer: installer,
+      covers: covers,
     ),
   );
 }
@@ -70,6 +73,7 @@ class SogenApp extends StatelessWidget {
     required this.epic,
     required this.epicCatalog,
     required this.installer,
+    required this.covers,
   });
 
   final EmulationRoot root;
@@ -81,6 +85,7 @@ class SogenApp extends StatelessWidget {
   final EpicAccount epic;
   final StoreCatalog epicCatalog;
   final StoreInstaller installer;
+  final CoverCache covers;
 
   @override
   Widget build(BuildContext context) {
@@ -100,6 +105,7 @@ class SogenApp extends StatelessWidget {
           epic: epic,
           epicCatalog: epicCatalog,
           installer: installer,
+          covers: covers,
         ),
       ),
     );

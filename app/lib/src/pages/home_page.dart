@@ -14,6 +14,7 @@ import '../gog/gog_account.dart';
 import '../gog/gog_library.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../store/cover_cache.dart';
 import '../store/store_catalog.dart';
 import '../store/store_installer.dart';
 import '../support.dart';
@@ -36,6 +37,7 @@ class HomePage extends StatefulWidget {
     required this.epic,
     required this.epicCatalog,
     required this.installer,
+    required this.covers,
   });
 
   final EmulationRoot root;
@@ -47,6 +49,7 @@ class HomePage extends StatefulWidget {
   final EpicAccount epic;
   final StoreCatalog epicCatalog;
   final StoreInstaller installer;
+  final CoverCache covers;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -269,6 +272,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     library: widget.library,
                     canInstall: installed && !_installing,
                     color: SogenColors.accents[6],
+                    covers: widget.covers,
                   ),
                   const CenteredMessage(icon: LucideIcons.hourglass, text: 'Steam support is coming soon.'),
                   StoreTab(
@@ -278,6 +282,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     library: widget.library,
                     canInstall: installed && !_installing,
                     color: SogenColors.neutral100,
+                    covers: widget.covers,
                   ),
                   SettingsTab(
                     settings: widget.settings,

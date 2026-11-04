@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../game_library.dart';
+import '../store/cover_cache.dart';
 import '../store/store_account.dart';
 import '../store/store_catalog.dart';
 import '../store/store_game.dart';
@@ -22,6 +23,7 @@ class StoreTab extends StatefulWidget {
     required this.library,
     required this.canInstall,
     required this.color,
+    required this.covers,
   });
 
   final StoreAccount account;
@@ -34,6 +36,8 @@ class StoreTab extends StatefulWidget {
 
   /// The accent the signed-out card shows the store in.
   final Color color;
+
+  final CoverCache covers;
 
   @override
   State<StoreTab> createState() => _StoreTabState();
@@ -188,12 +192,14 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     if (installed) {
       return _GameRow(
         game: game,
+        covers: widget.covers,
         trailing: const Pill(label: 'Installed'),
       );
     }
     if (download != null) {
       return _GameRow(
         game: game,
+        covers: widget.covers,
         status: _DownloadStatusLine(download: download),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -220,6 +226,7 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     final preparing = _preparing.contains(game.productId);
     return _GameRow(
       game: game,
+      covers: widget.covers,
       trailing: preparing
           ? const Padding(
               padding: EdgeInsets.all(12),
@@ -403,9 +410,10 @@ class _OwnedGames extends StatelessWidget {
 }
 
 class _GameRow extends StatelessWidget {
-  const _GameRow({required this.game, this.trailing, this.status});
+  const _GameRow({required this.game, required this.covers, this.trailing, this.status});
 
   final StoreGame game;
+  final CoverCache covers;
   final Widget? trailing;
   final Widget? status;
 
@@ -423,15 +431,11 @@ class _GameRow extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(6),
               child: SizedBox(
-                width: 96,
+                width: _Cover.width,
                 height: 54,
                 child: image == null
                     ? const ColoredBox(color: SogenColors.neutral900)
-                    : Image.network(
-                        image.toString(),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => const ColoredBox(color: SogenColors.neutral900),
-                      ),
+                    : _Cover(url: image, covers: covers),
               ),
             ),
             const SizedBox(width: 16),
@@ -448,6 +452,51 @@ class _GameRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _Cover extends StatefulWidget {
+  const _Cover({required this.url, required this.covers});
+
+  static const width = 96.0;
+
+  final Uri url;
+  final CoverCache covers;
+
+  @override
+  State<_Cover> createState() => _CoverState();
+}
+
+class _CoverState extends State<_Cover> {
+  late Future<File?> _file = widget.covers.cover(widget.url);
+
+  @override
+  void didUpdateWidget(_Cover old) {
+    super.didUpdateWidget(old);
+    if (old.url != widget.url) {
+      _file = widget.covers.cover(widget.url);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const placeholder = ColoredBox(color: SogenColors.neutral900);
+    return FutureBuilder(
+      future: _file,
+      builder: (context, snapshot) {
+        final file = snapshot.data;
+        if (file == null) {
+          return placeholder;
+        }
+        return Image.file(
+          file,
+          // Store art is up to 2560 pixels wide; decoded at full size, a few covers would fill the image cache.
+          cacheWidth: (_Cover.width * MediaQuery.devicePixelRatioOf(context)).round(),
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => placeholder,
+        );
+      },
     );
   }
 }
