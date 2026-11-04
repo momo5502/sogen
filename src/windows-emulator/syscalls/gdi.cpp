@@ -113,7 +113,10 @@ namespace sogen
 
             constexpr int16_t k_gdi_batch_cmd_text_out = 2;
             constexpr int16_t k_gdi_batch_cmd_poly_pat_blt = 1;
+            constexpr int16_t k_gdi_batch_cmd_delete_object = 7;
+            constexpr int16_t k_gdi_batch_cmd_delete_region = 8;
             constexpr uint32_t k_gdibs_no_rect = 0x80000000u;
+            constexpr uint32_t k_ps_solid = 0;
             constexpr size_t k_gdi_poly_pat_blt_rect_offset = 0x30;
             constexpr size_t k_gdi_pat_rect_size = 0x18;
 
@@ -229,6 +232,16 @@ namespace sogen
                 POINTL viewport_org{};
                 std::array<gdi_batch_pat_rect, 1> rects{};
             };
+
+            // gdi32's DeleteObject queues brushes and pens that have a user attribute as command 7 and regions as command 8.
+            struct gdi_batch_delete_object
+            {
+                gdi_batch_header header{};
+                uint32_t reserved{};
+                uint64_t handle{};
+            };
+
+            static_assert(sizeof(gdi_batch_delete_object) == 0x10);
 
             constexpr uint32_t k_dxgk_adapter_count = 1;
             constexpr uint32_t k_dxgk_adapter_handle = 0x4000;
@@ -357,6 +370,34 @@ namespace sogen
                 }
 
                 return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, Objects) + (sizeof(uint64_t) * index));
+            }
+
+            // The stock objects, the memory DC default bitmap among them, and the system color brushes belong to the
+            // system on Windows: they are neither charged to the process nor deleted by DeleteObject.
+            template <typename Predicate>
+            bool any_system_gdi_object(const syscall_context& c, const Predicate& predicate)
+            {
+                if (predicate(c.proc.gdi_memory_dc_default_bitmap_handle))
+                {
+                    return true;
+                }
+
+                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::Objects)>; ++index)
+                {
+                    if (predicate(static_cast<uint32_t>(read_gdi_object_slot(c, index))))
+                    {
+                        return true;
+                    }
+                }
+
+                const auto server_info = c.proc.user_handles.get_server_info().read();
+                return std::ranges::any_of(server_info.ahbrSystem,
+                                           [&](const auto brush) { return predicate(static_cast<uint32_t>(brush)); });
+            }
+
+            bool is_system_gdi_object(const syscall_context& c, const uint32_t handle_value)
+            {
+                return any_system_gdi_object(c, [&](const uint32_t object) { return object == handle_value; });
             }
 
             bool write_gdi_object_slot(const syscall_context& c, const uint32_t index, const uint64_t value)
@@ -495,7 +536,8 @@ namespace sogen
             bool read_gdi_entry_for_handle(const syscall_context& c, uint32_t handle_value, GDI_HANDLE_ENTRY64& entry,
                                            uint64_t& entry_addr);
 
-            uint32_t allocate_gdi_object(const syscall_context& c, const uint8_t type, const uint32_t attr_size)
+            uint32_t allocate_gdi_object(const syscall_context& c, const uint8_t type, const uint32_t attr_size,
+                                         const bool has_user_attribute)
             {
                 const uint64_t attr = allocate_gdi_user_block(c, attr_size);
                 if (attr == 0)
@@ -503,13 +545,18 @@ namespace sogen
                     return 0;
                 }
 
-                const uint64_t user_ptr = (type == k_gdi_font_type) ? 0 : attr;
+                const uint64_t user_ptr = has_user_attribute ? attr : 0;
                 const auto handle_value = allocate_gdi_handle(c, type, user_ptr, attr);
                 if (handle_value == 0)
                 {
                     c.win_emu.memory.release_memory(attr, 0);
                 }
                 return handle_value;
+            }
+
+            uint32_t allocate_gdi_object(const syscall_context& c, const uint8_t type, const uint32_t attr_size)
+            {
+                return allocate_gdi_object(c, type, attr_size, type != k_gdi_font_type);
             }
 
             bool get_gdi_object_address(const syscall_context& c, const uint32_t handle_value, const uint8_t expected_type, uint64_t& addr)
@@ -1428,11 +1475,21 @@ namespace sogen
                 }
             }
 
+            void delete_batched_object(const syscall_context& c, const uint32_t handle_value, const uint8_t base_type)
+            {
+                GDI_HANDLE_ENTRY64 entry{};
+                uint64_t entry_addr = 0;
+                if (read_gdi_entry_for_handle(c, handle_value, entry, entry_addr) && entry.Type == base_type)
+                {
+                    handle_NtGdiDeleteObjectApp(c, handle_value);
+                }
+            }
+
             template <typename Batch>
             bool flush_gdi_text_batch(const syscall_context& c, const Batch& batch)
             {
                 const auto batch_offset = batch.Offset & ~k_gdibs_no_rect;
-                if (batch_offset == 0 || batch.HDC == 0 || batch_offset > sizeof(batch.Buffer))
+                if (batch_offset == 0 || batch_offset > sizeof(batch.Buffer))
                 {
                     return true;
                 }
@@ -1443,10 +1500,7 @@ namespace sogen
                 int32_t origin_x = 0;
                 int32_t origin_y = 0;
                 uint32_t present_handle = 0;
-                if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !surface)
-                {
-                    return true;
-                }
+                (void)get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle);
 
                 const auto* bytes = reinterpret_cast<const uint8_t*>(batch.Buffer);
                 size_t offset = 0;
@@ -1458,8 +1512,16 @@ namespace sogen
                         break;
                     }
 
-                    if (header->cmd == k_gdi_batch_cmd_text_out &&
-                        static_cast<size_t>(header->size) >= offsetof(gdi_batch_text_out, string))
+                    if ((header->cmd == k_gdi_batch_cmd_delete_object || header->cmd == k_gdi_batch_cmd_delete_region) &&
+                        static_cast<size_t>(header->size) >= sizeof(gdi_batch_delete_object))
+                    {
+                        gdi_batch_delete_object delete_object{};
+                        std::memcpy(&delete_object, bytes + offset, sizeof(delete_object));
+                        delete_batched_object(c, static_cast<uint32_t>(delete_object.handle),
+                                              header->cmd == k_gdi_batch_cmd_delete_object ? k_gdi_brush_type : k_gdi_region_type);
+                    }
+                    else if (surface && header->cmd == k_gdi_batch_cmd_text_out &&
+                             static_cast<size_t>(header->size) >= offsetof(gdi_batch_text_out, string))
                     {
                         const auto* text_out = reinterpret_cast<const gdi_batch_text_out*>(header);
                         RECT clip_rect{.left = text_out->rect.left + origin_x,
@@ -1497,7 +1559,7 @@ namespace sogen
                                       has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr, advances);
                         }
                     }
-                    else if (header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
+                    else if (surface && header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
                              static_cast<size_t>(header->size) >= k_gdi_poly_pat_blt_rect_offset)
                     {
                         uint32_t declared_count = 0;
@@ -1527,7 +1589,10 @@ namespace sogen
                     offset += static_cast<size_t>(header->size);
                 }
 
-                present_win_surface(c, present_handle, surface);
+                if (surface)
+                {
+                    present_win_surface(c, present_handle, surface);
+                }
                 return true;
             }
 
@@ -1570,7 +1635,7 @@ namespace sogen
                         continue;
                     }
 
-                    const uint32_t handle = allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size);
+                    const uint32_t handle = allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size, false);
                     if (handle != 0)
                     {
                         brush = handle;
@@ -1588,7 +1653,7 @@ namespace sogen
 
                 if (client_drawing_brush == 0)
                 {
-                    const uint32_t handle = allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size);
+                    const uint32_t handle = allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size, false);
                     if (handle != 0)
                     {
                         client_drawing_brush = handle;
@@ -2494,12 +2559,14 @@ namespace sogen
 
         uint64_t handle_NtGdiCreatePatternBrushInternal(const syscall_context& c, const handle /*bitmap*/, const uint32_t /*unused*/)
         {
-            return allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size);
+            return allocate_gdi_object(c, k_gdi_brush_type, k_gdi_brush_attr_size, false);
         }
 
-        uint64_t handle_NtGdiCreatePen(const syscall_context& c, const uint32_t /*style*/, const uint32_t /*width*/, const uint32_t color)
+        uint64_t handle_NtGdiCreatePen(const syscall_context& c, const uint32_t style, const uint32_t width, const uint32_t color)
         {
-            const auto handle = allocate_gdi_object(c, k_gdi_pen_type, k_gdi_pen_attr_size);
+            // On Windows only solid pens of width 0, the pens gdi32 can cache, have a user attribute. gdi32 deletes the
+            // others at once instead of queueing the delete in the GDI batch.
+            const auto handle = allocate_gdi_object(c, k_gdi_pen_type, k_gdi_pen_attr_size, style == k_ps_solid && width == 0);
             uint64_t pen_attr = 0;
             if (handle != 0 && get_gdi_object_address(c, static_cast<uint32_t>(handle), k_gdi_pen_type, pen_attr))
             {
@@ -2532,18 +2599,10 @@ namespace sogen
                 return 0;
             }
 
-            // Windows charges neither the stock objects, the memory DC default bitmap among them, nor the system color
-            // brushes to the process.
-            std::unordered_set<uint32_t> system_objects{c.proc.gdi_memory_dc_default_bitmap_handle};
-            for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::Objects)>; ++index)
-            {
-                system_objects.insert(static_cast<uint32_t>(read_gdi_object_slot(c, index)));
-            }
-            c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
-                for (const auto brush : server_info.ahbrSystem)
-                {
-                    system_objects.insert(static_cast<uint32_t>(brush));
-                }
+            std::unordered_set<uint32_t> system_objects{};
+            any_system_gdi_object(c, [&](const uint32_t object) {
+                system_objects.insert(object);
+                return false;
             });
 
             std::vector<GDI_HANDLE_ENTRY64> entries(GDI_MAX_HANDLE_COUNT);
@@ -3219,6 +3278,11 @@ namespace sogen
                 return 0;
             }
 
+            if (is_system_gdi_object(c, handle_value))
+            {
+                return 1;
+            }
+
             const emulator_object<GDI_HANDLE_ENTRY64> entry_obj{c.emu, entry_addr};
             entry_obj.access([&](GDI_HANDLE_ENTRY64& writable) {
                 const auto unique = writable.Unique;
@@ -3239,11 +3303,6 @@ namespace sogen
             if (entry.Object != 0)
             {
                 c.win_emu.memory.release_memory(entry.Object, 0);
-            }
-
-            if (handle_value == c.proc.gdi_memory_dc_default_bitmap_handle)
-            {
-                c.proc.gdi_memory_dc_default_bitmap_handle = 0;
             }
 
             c.proc.gdi_dc_states.erase(handle_value);
