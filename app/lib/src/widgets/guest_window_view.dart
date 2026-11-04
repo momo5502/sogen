@@ -73,7 +73,8 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     super.dispose();
   }
 
-  /// Logical pixels per guest pixel, as the window is scaled to fit.
+  /// Logical pixels per guest pixel. The window is centered with loose constraints, so the [FittedBox] only shrinks
+  /// it to fit and never enlarges it.
   double _scale = 1;
 
   @override
@@ -102,7 +103,7 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     if (window.width <= 0 || window.height <= 0 || !view.isFinite) {
       return 1;
     }
-    final scale = min(view.width / window.width, view.height / window.height);
+    final scale = min(1.0, min(view.width / window.width, view.height / window.height));
     return scale > 0 ? scale : 1;
   }
 
