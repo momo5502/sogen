@@ -7,6 +7,9 @@ import '../ads.dart';
 import '../emulation_root.dart';
 import '../game_library.dart';
 import '../gog/gog_account.dart';
+import '../gog/gog_cdn.dart';
+import '../gog/gog_installer.dart';
+import '../gog/gog_library.dart';
 import '../session.dart';
 import '../settings.dart';
 import '../support.dart';
@@ -25,6 +28,8 @@ class HomePage extends StatefulWidget {
     required this.settings,
     required this.ads,
     required this.gog,
+    required this.gogContent,
+    required this.installer,
   });
 
   final EmulationRoot root;
@@ -32,6 +37,8 @@ class HomePage extends StatefulWidget {
   final AppSettings settings;
   final Ads ads;
   final GogAccount gog;
+  final GogContent gogContent;
+  final GogInstaller installer;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -186,8 +193,10 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Remove ${game.name}?'),
-        content: const Text(
-          'The game files stay where they are. The saves and settings Sogen kept for the game are deleted.',
+        content: Text(
+          installIdOf(game.directory) != null
+              ? 'The game files Sogen downloaded are deleted, together with its saves and settings.'
+              : 'The game files stay where they are. The saves and settings Sogen kept for the game are deleted.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
@@ -252,7 +261,13 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 controller: _tabs,
                 children: [
                   _buildInstalled(installed),
-                  GogTab(account: widget.gog),
+                  GogTab(
+                    account: widget.gog,
+                    content: widget.gogContent,
+                    installer: widget.installer,
+                    library: widget.library,
+                    canInstall: installed && !_installing,
+                  ),
                   const CenteredMessage(icon: LucideIcons.hourglass, text: 'Steam support is coming soon.'),
                   const CenteredMessage(icon: LucideIcons.hourglass, text: 'Epic Games support is coming soon.'),
                 ],
@@ -310,6 +325,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     separatorBuilder: (_, _) => const SizedBox(height: 12),
                     itemBuilder: (context, index) => _GameCard(
                       game: games[index],
+                      icon: widget.library.iconOf(games[index]),
                       accent: SogenColors.accents[index % SogenColors.accents.length],
                       enabled: !_installing,
                       saving: _saving.containsKey(games[index].id),
@@ -445,6 +461,7 @@ class _SupportNotice extends StatelessWidget {
 class _GameCard extends StatelessWidget {
   const _GameCard({
     required this.game,
+    required this.icon,
     required this.accent,
     required this.enabled,
     required this.saving,
@@ -453,6 +470,7 @@ class _GameCard extends StatelessWidget {
   });
 
   final Game game;
+  final File? icon;
   final Color accent;
   final bool enabled;
   final bool saving;
@@ -472,7 +490,19 @@ class _GameCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              IconTile(icon: LucideIcons.gamepad2, color: accent),
+              if (icon case final icon?)
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    icon,
+                    width: 48,
+                    height: 48,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => IconTile(icon: LucideIcons.gamepad2, color: accent),
+                  ),
+                )
+              else
+                IconTile(icon: LucideIcons.gamepad2, color: accent),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
@@ -480,11 +510,16 @@ class _GameCard extends StatelessWidget {
                   children: [
                     Text(game.name, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
                     const SizedBox(height: 4),
-                    Text(
-                      saving ? 'Suspending…' : game.executable,
-                      overflow: TextOverflow.ellipsis,
-                      style: monospace(fontSize: 12, color: SogenColors.neutral400),
-                    ),
+                    if (saving)
+                      Text('Suspending…', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
+                    else if (game.source?.store == GogLibrary.store)
+                      Text('GOG', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
+                    else
+                      Text(
+                        game.executable,
+                        overflow: TextOverflow.ellipsis,
+                        style: monospace(fontSize: 12, color: SogenColors.neutral400),
+                      ),
                   ],
                 ),
               ),

@@ -1,11 +1,20 @@
 package dev.sogen.app
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.util.Log
 import android.view.KeyEvent
+import dev.sogen.app.download.DownloadService
+import dev.sogen.app.download.DownloadState
+import dev.sogen.app.download.Downloads
 import dev.sogen.app.runtime.RunConfig
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -23,6 +32,7 @@ class MainActivity : FlutterActivity() {
     private var gogSignIn: MethodChannel.Result? = null
     private val secrets by lazy { SecretStore(this) }
     private val secretChanges = Executors.newSingleThreadExecutor()
+    private var downloadListener: ((DownloadState) -> Unit)? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -94,6 +104,25 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(messenger, "dev.sogen.app/secrets").setMethodCallHandler { call, result ->
             handleSecretCall(call, result)
+        }
+
+        EventChannel(messenger, "dev.sogen.app/downloads/events").setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
+                val main = Handler(Looper.getMainLooper())
+                val listener: (DownloadState) -> Unit = { state -> main.post { sink.success(state.toMap()) } }
+                downloadListener?.let(Downloads::unlisten)
+                downloadListener = listener
+                Downloads.listen(listener)
+            }
+
+            override fun onCancel(arguments: Any?) {
+                downloadListener?.let(Downloads::unlisten)
+                downloadListener = null
+            }
+        })
+
+        MethodChannel(messenger, "dev.sogen.app/downloads").setMethodCallHandler { call, result ->
+            handleDownloadCall(call, result)
         }
 
         MethodChannel(messenger, "dev.sogen.app/gog").setMethodCallHandler { call, result ->
@@ -183,6 +212,67 @@ class MainActivity : FlutterActivity() {
         folderPick?.success(null)
         folderPick = result
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), PICK_FOLDER_REQUEST)
+    }
+
+    override fun onDestroy() {
+        downloadListener?.let(Downloads::unlisten)
+        downloadListener = null
+        super.onDestroy()
+    }
+
+    private fun handleDownloadCall(call: MethodCall, result: MethodChannel.Result) {
+        val installId = call.argument<String>("installId").orEmpty()
+        when (call.method) {
+            "status" -> result.success(Downloads.current?.toMap())
+            "isMetered" -> result.success(getSystemService(ConnectivityManager::class.java).isActiveNetworkMetered)
+            "start" -> {
+                if (Downloads.isRunning) {
+                    result.error("busy", "Another download is running", null)
+                    return
+                }
+
+                requestNotificationPermission()
+                startForegroundService(
+                    Intent(this, DownloadService::class.java)
+                        .setAction(DownloadService.ACTION_START)
+                        .putExtra(DownloadService.EXTRA_INSTALL_ID, installId),
+                )
+                result.success(null)
+            }
+
+            "pause" -> {
+                if (Downloads.isRunning) {
+                    startService(Intent(this, DownloadService::class.java).setAction(DownloadService.ACTION_PAUSE))
+                }
+                result.success(null)
+            }
+
+            "cancel" -> {
+                if (Downloads.isRunning && Downloads.current?.installId == installId) {
+                    startService(Intent(this, DownloadService::class.java).setAction(DownloadService.ACTION_CANCEL))
+                } else {
+                    try {
+                        Downloads.stagingOf(this, installId).deleteRecursively()
+                    } catch (e: IllegalArgumentException) {
+                        result.error("invalid", "Not an install id", null)
+                        return
+                    }
+                    Downloads.publish(DownloadState(installId, DownloadState.Status.CANCELLED))
+                }
+                result.success(null)
+            }
+
+            else -> result.notImplemented()
+        }
+    }
+
+    /** The download notification shows progress and its controls, but the download runs without it. */
+    private fun requestNotificationPermission() {
+        val missing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (missing) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+        }
     }
 
     /** Keystore operations can block, so they run off the UI thread, one at a time and in the order requested. */
@@ -294,6 +384,7 @@ class MainActivity : FlutterActivity() {
         const val TAG = "MainActivity"
         const val PICK_FOLDER_REQUEST = 1
         const val GOG_SIGN_IN_REQUEST = 2
+        const val NOTIFICATION_PERMISSION_REQUEST = 3
 
         val systemKeys = setOf(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)
 

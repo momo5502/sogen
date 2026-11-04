@@ -131,6 +131,34 @@ class GameSettings {
   };
 }
 
+/// The store a game was installed from, kept to tell which owned games are installed and which build they run.
+@immutable
+class GameSource {
+  const GameSource({required this.store, required this.productId, required this.buildId, required this.language});
+
+  static GameSource? fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) {
+      return null;
+    }
+
+    final store = json['store'];
+    final productId = json['productId'];
+    final buildId = json['buildId'];
+    final language = json['language'];
+    if (store is! String || productId is! String || buildId is! String || language is! String) {
+      return null;
+    }
+    return GameSource(store: store, productId: productId, buildId: buildId, language: language);
+  }
+
+  final String store;
+  final String productId;
+  final String buildId;
+  final String language;
+
+  Map<String, dynamic> toJson() => {'store': store, 'productId': productId, 'buildId': buildId, 'language': language};
+}
+
 @immutable
 class Game {
   const Game({
@@ -143,6 +171,9 @@ class Game {
     this.liveNetwork = false,
     this.console = false,
     this.settings = const GameSettings(),
+    this.workingDirectory,
+    this.source,
+    this.icon,
   });
 
   factory Game.fromJson(Map<String, dynamic> json) => Game(
@@ -155,6 +186,9 @@ class Game {
     liveNetwork: json['liveNetwork'] as bool? ?? false,
     console: json['console'] as bool? ?? false,
     settings: GameSettings.fromJson(json['settings'] as Map<String, dynamic>? ?? const {}),
+    workingDirectory: json['workingDirectory'] as String?,
+    source: GameSource.fromJson(json['source']),
+    icon: json['icon'] as String?,
   );
 
   final String id;
@@ -176,11 +210,19 @@ class Game {
 
   final GameSettings settings;
 
+  /// Working directory relative to [directory], using `/` separators, or null for the folder of [executable].
+  final String? workingDirectory;
+
+  final GameSource? source;
+
+  /// The game's icon, relative to the app's support directory.
+  final String? icon;
+
   String get guestExecutable => _toGuestPath(executable);
 
   bool get hasFolderAccess => isFolderUri(directory) || installIdOf(directory) != null;
 
-  String get guestWorkingDirectory => _toGuestPath(p.posix.dirname(executable));
+  String get guestWorkingDirectory => _toGuestPath(workingDirectory ?? p.posix.dirname(executable));
 
   String _toGuestPath(String relative) {
     if (relative == '.' || relative.isEmpty) {
@@ -199,6 +241,9 @@ class Game {
     bool? console,
     GameSettings? settings,
   }) => Game(
+    workingDirectory: workingDirectory,
+    source: source,
+    icon: icon,
     id: id,
     name: name ?? this.name,
     directory: directory ?? this.directory,
@@ -220,6 +265,9 @@ class Game {
     'liveNetwork': liveNetwork,
     'console': console,
     'settings': settings.toJson(),
+    'workingDirectory': ?workingDirectory,
+    'source': ?source?.toJson(),
+    'icon': ?icon,
   };
 }
 
@@ -309,6 +357,12 @@ class GameLibrary extends ChangeNotifier {
 
   List<Game> get games => List.unmodifiable(_games);
 
+  /// The icon file of [game], if it has one.
+  File? iconOf(Game game) {
+    final icon = game.icon;
+    return icon == null ? null : File(p.join(_file.parent.path, icon));
+  }
+
   static Future<GameLibrary> load() async {
     final support = await getApplicationSupportDirectory();
     final file = File(p.join(support.path, 'games.json'));
@@ -322,9 +376,16 @@ class GameLibrary extends ChangeNotifier {
     return GameLibrary._(file, games);
   }
 
+  /// Leaves the library as it was when the game cannot be stored.
   Future<void> add(Game game) async {
     _games.add(game);
-    await _save();
+    try {
+      await _save();
+    } catch (_) {
+      _games.removeWhere((entry) => identical(entry, game));
+      notifyListeners();
+      rethrow;
+    }
   }
 
   /// Replaces the game with the same id, which keeps its suspended state attached to it.
@@ -351,11 +412,24 @@ class GameLibrary extends ChangeNotifier {
     }
   }
 
-  /// Also deletes the changes the game made to its folder and to the emulation root.
+  /// Also deletes the changes the game made to its folder and to the emulation root, and the folder itself when Sogen
+  /// installed it. Folders the user picked are kept.
   Future<void> remove(Game game) async {
     _games.removeWhere((entry) => entry.id == game.id);
     await _save();
     await _deleteIfPresent(await _gameLayers(game));
+
+    final installId = installIdOf(game.directory);
+    if (installId != null) {
+      await _deleteIfPresent(Directory(p.join((await installedGamesDirectory()).path, installId)));
+    }
+    final icon = game.icon;
+    if (icon != null) {
+      final file = File(p.join((await getApplicationSupportDirectory()).path, icon));
+      if (file.existsSync()) {
+        await file.delete();
+      }
+    }
   }
 
   /// Android limits how many folder grants an app may keep, so the ones no game uses are given back, e.g. folders
