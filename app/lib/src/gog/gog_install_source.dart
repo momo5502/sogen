@@ -17,7 +17,4 @@ class GogInstallSource implements InstallSource {
     'game': [for (final endpoint in await _content.gameEndpoints(productId)) endpoint.toJson()],
     'dependency': [for (final endpoint in await _content.dependencyEndpoints()) endpoint.toJson()],
   };
-
-  @override
-  Future<Uri?> icon(String productId) => _content.squareIcon(productId);
 }

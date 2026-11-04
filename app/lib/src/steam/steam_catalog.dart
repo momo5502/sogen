@@ -32,10 +32,19 @@ class SteamCatalog implements StoreCatalog {
             store: store,
             productId: '$id',
             title: info['common']?.value('name') ?? '$id',
-            imageUrl: Uri.https('cdn.cloudflare.steamstatic.com', '/steam/apps/$id/header.jpg'),
+            imageUrl: _headerImage(id, info),
           ),
     ];
     return games..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+  }
+
+  /// The store header the app info names; apps without store art, like test apps, have none.
+  static Uri? _headerImage(int id, KeyValues info) {
+    final file = info['common']?['header_image']?.value('english');
+    if (file == null || file.isEmpty || file.contains('..')) {
+      return null;
+    }
+    return Uri.https('shared.akamai.steamstatic.com', '/store_item_assets/steam/apps/$id/$file');
   }
 
   static bool _isWindowsGame(KeyValues info) {

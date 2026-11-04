@@ -18,8 +18,4 @@ class EpicInstallSource implements InstallSource {
     final (namespace, catalogItemId) = await _content.catalogItemOf(productId);
     return {'epic': epicChunkEndpoints(await _content.location(namespace, catalogItemId, productId))};
   }
-
-  /// Epic's art is wide or tall, not square, so installed Epic games show the default icon.
-  @override
-  Future<Uri?> icon(String productId) async => null;
 }

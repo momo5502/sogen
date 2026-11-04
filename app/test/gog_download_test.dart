@@ -199,9 +199,6 @@ class _FakeContent implements GogContent {
   Future<Uint8List> chunk(List<CdnEndpoint> endpoints, GogChunk chunk) async => _smallFiles[chunk.compressedMd5]!;
 
   @override
-  Future<Uri?> squareIcon(String productId) async => null;
-
-  @override
   void close() {}
 }
 

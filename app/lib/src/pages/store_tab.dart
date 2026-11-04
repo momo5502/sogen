@@ -11,6 +11,7 @@ import '../store/store_game.dart';
 import '../store/store_http.dart';
 import '../store/store_installer.dart';
 import '../theme.dart';
+import '../widgets/game_row.dart';
 import '../widgets/sogen_widgets.dart';
 
 /// Signing in to a store, and the Windows games the account owns there.
@@ -24,6 +25,7 @@ class StoreTab extends StatefulWidget {
     required this.canInstall,
     required this.color,
     required this.covers,
+    required this.commands,
   });
 
   final StoreSignIn account;
@@ -38,6 +40,9 @@ class StoreTab extends StatefulWidget {
   final Color color;
 
   final CoverCache covers;
+
+  /// How the installed games of the store start, change and go.
+  final GameCommands commands;
 
   @override
   State<StoreTab> createState() => _StoreTabState();
@@ -183,23 +188,33 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     }
   }
 
-  Widget _row(StoreGame game) {
-    final installed = widget.library.games.any(
-      (entry) => entry.source?.store == game.store && entry.source?.productId == game.productId,
+  Widget _art(StoreGame game) {
+    final image = game.imageUrl;
+    return GameArt(
+      source: image == null ? null : StoreArt(image, widget.covers),
+      seed: '${game.store}/${game.productId}',
     );
+  }
+
+  Widget _row(StoreGame game) {
+    final installed = widget.library.games
+        .where((entry) => entry.source?.store == game.store && entry.source?.productId == game.productId)
+        .firstOrNull;
     final download = widget.installer.download(game.store, game.productId);
 
-    if (installed) {
-      return _GameRow(
-        game: game,
-        covers: widget.covers,
-        trailing: const Pill(label: 'Installed'),
+    if (installed != null) {
+      return GameRow(
+        art: _art(game),
+        title: game.title,
+        onTap: widget.commands.tap(installed),
+        dimmed: widget.commands.isBusy(installed),
+        trailing: widget.commands.actions(installed),
       );
     }
     if (download != null) {
-      return _GameRow(
-        game: game,
-        covers: widget.covers,
+      return GameRow(
+        art: _art(game),
+        title: game.title,
         status: _DownloadStatusLine(download: download),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -212,7 +227,7 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
               )
             else if (download.status != DownloadStatus.complete)
               IconButton(
-                icon: const Icon(LucideIcons.play),
+                icon: const Icon(LucideIcons.download),
                 tooltip: 'Resume',
                 onPressed: widget.installer.isBusy || !widget.canInstall ? null : () => _resume(game, download),
               ),
@@ -224,9 +239,9 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     }
 
     final preparing = _preparing.contains(game.productId);
-    return _GameRow(
-      game: game,
-      covers: widget.covers,
+    return GameRow(
+      art: _art(game),
+      title: game.title,
       trailing: preparing
           ? const Padding(
               padding: EdgeInsets.all(12),
@@ -417,98 +432,6 @@ class _OwnedGames extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _GameRow extends StatelessWidget {
-  const _GameRow({required this.game, required this.covers, this.trailing, this.status});
-
-  final StoreGame game;
-  final CoverCache covers;
-  final Widget? trailing;
-  final Widget? status;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final image = game.imageUrl;
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: SizedBox(
-                width: _Cover.width,
-                height: 54,
-                child: image == null
-                    ? const ColoredBox(color: SogenColors.neutral900)
-                    : _Cover(url: image, covers: covers),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(game.title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                  if (status != null) ...[const SizedBox(height: 8), status!],
-                ],
-              ),
-            ),
-            if (trailing != null) ...[const SizedBox(width: 8), trailing!],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Cover extends StatefulWidget {
-  const _Cover({required this.url, required this.covers});
-
-  static const width = 96.0;
-
-  final Uri url;
-  final CoverCache covers;
-
-  @override
-  State<_Cover> createState() => _CoverState();
-}
-
-class _CoverState extends State<_Cover> {
-  late Future<File?> _file = widget.covers.cover(widget.url);
-
-  @override
-  void didUpdateWidget(_Cover old) {
-    super.didUpdateWidget(old);
-    if (old.url != widget.url) {
-      _file = widget.covers.cover(widget.url);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const placeholder = ColoredBox(color: SogenColors.neutral900);
-    return FutureBuilder(
-      future: _file,
-      builder: (context, snapshot) {
-        final file = snapshot.data;
-        if (file == null) {
-          return placeholder;
-        }
-        return Image.file(
-          file,
-          // Store art is up to 2560 pixels wide; decoded at full size, a few covers would fill the image cache.
-          cacheWidth: (_Cover.width * MediaQuery.devicePixelRatioOf(context)).round(),
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => placeholder,
-        );
-      },
     );
   }
 }

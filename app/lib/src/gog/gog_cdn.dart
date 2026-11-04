@@ -89,32 +89,6 @@ class GogContent {
     return {for (final depot in depots.map(Dependency.fromJson)) depot.id: depot};
   }
 
-  /// GOG's square icon of the game: the product's own icon, or else the tile GOG Galaxy shows in its library.
-  Future<Uri?> squareIcon(String productId) async {
-    final product = await _json(Uri.https('api.gog.com', '/products/$productId'));
-    final images = product['images'];
-    final icon = images is Map<String, Object?> ? images['icon'] : null;
-    if (icon is String && icon.startsWith('//')) {
-      return _imageUrl('https:$icon');
-    }
-
-    final release = await _json(Uri.https('gamesdb.gog.com', '/platforms/gog/external_releases/$productId'));
-    final game = release['game'];
-    final tile = game is Map<String, Object?> ? game['square_icon'] : null;
-    final format = tile is Map<String, Object?> ? tile['url_format'] : null;
-    if (format is String) {
-      return _imageUrl(format.replaceAll('{formatter}', '_glx_square_icon_v2').replaceAll('{ext}', 'png'));
-    }
-    return null;
-  }
-
-  static Uri? _imageUrl(String url) {
-    final uri = Uri.tryParse(url);
-    final host = uri?.host ?? '';
-    final trusted = host == 'images.gog.com' || host.endsWith('.gog-statics.com');
-    return uri != null && uri.scheme == 'https' && trusted ? uri : null;
-  }
-
   /// An access token can be revoked before it expires, so a rejected one is replaced once.
   Future<List<CdnEndpoint>> gameEndpoints(String productId) async {
     final uri = Uri.https(_contentSystem, '/products/$productId/secure_link', {

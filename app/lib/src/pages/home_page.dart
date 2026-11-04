@@ -21,6 +21,7 @@ import '../store/store_catalog.dart';
 import '../store/store_installer.dart';
 import '../support.dart';
 import '../theme.dart';
+import '../widgets/game_row.dart';
 import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
 import 'game_page.dart';
@@ -169,35 +170,13 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     await widget.library.releaseUnusedFolders();
   }
 
-  void _showGameMenu(Game game) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: SogenColors.card,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(LucideIcons.pencil),
-              title: const Text('Edit'),
-              onTap: () {
-                Navigator.of(context).pop();
-                _edit(game);
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.trash2),
-              title: const Text('Remove'),
-              onTap: () {
-                Navigator.of(context).pop();
-                _confirmRemove(game);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  GameCommands get _commands => GameCommands(
+    play: _play,
+    edit: _edit,
+    remove: _confirmRemove,
+    isBusy: (game) => _saving.containsKey(game.id),
+    canPlay: !_installing,
+  );
 
   Future<void> _confirmRemove(Game game) async {
     final remove = await showDialog<bool>(
@@ -279,6 +258,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     canInstall: installed && !_installing,
                     color: SogenColors.accents[6],
                     covers: widget.covers,
+                    commands: _commands,
                   ),
                   StoreTab(
                     account: widget.steam,
@@ -288,6 +268,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     canInstall: installed && !_installing,
                     color: const Color(0xFF66C0F4),
                     covers: widget.covers,
+                    commands: _commands,
                   ),
                   StoreTab(
                     account: widget.epic,
@@ -297,6 +278,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     canInstall: installed && !_installing,
                     color: SogenColors.neutral100,
                     covers: widget.covers,
+                    commands: _commands,
                   ),
                   SettingsTab(
                     settings: widget.settings,
@@ -309,6 +291,29 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
           ],
         ),
       ),
+    );
+  }
+
+  /// Installed games say where they come from: their store, or their executable when they were added by hand.
+  Widget _installedRow(Game game) {
+    final theme = Theme.of(context);
+    final icon = widget.library.iconOf(game);
+    final saving = _saving.containsKey(game.id);
+    return GameRow(
+      art: GameArt(source: icon == null ? null : LocalArt(icon), seed: game.id),
+      title: game.name,
+      subtitle: switch (_storeNames[game.source?.store]) {
+        _ when saving => Text('Suspending…', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400)),
+        final store? => Text(store, style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400)),
+        null => Text(
+          game.executable,
+          overflow: TextOverflow.ellipsis,
+          style: monospace(fontSize: 12, color: SogenColors.neutral400),
+        ),
+      },
+      onTap: _commands.tap(game),
+      dimmed: saving,
+      trailing: _commands.actions(game),
     );
   }
 
@@ -356,15 +361,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                   sliver: SliverList.separated(
                     itemCount: games.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 12),
-                    itemBuilder: (context, index) => _GameCard(
-                      game: games[index],
-                      icon: widget.library.iconOf(games[index]),
-                      accent: SogenColors.accents[index % SogenColors.accents.length],
-                      enabled: !_installing,
-                      saving: _saving.containsKey(games[index].id),
-                      onPlay: () => _play(games[index]),
-                      onMenu: () => _showGameMenu(games[index]),
-                    ),
+                    itemBuilder: (context, index) => _installedRow(games[index]),
                   ),
                 ),
             ],
@@ -488,87 +485,6 @@ class _SupportNotice extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class _GameCard extends StatelessWidget {
-  const _GameCard({
-    required this.game,
-    required this.icon,
-    required this.accent,
-    required this.enabled,
-    required this.saving,
-    required this.onPlay,
-    required this.onMenu,
-  });
-
-  final Game game;
-  final File? icon;
-  final Color accent;
-  final bool enabled;
-  final bool saving;
-  final VoidCallback onPlay;
-  final VoidCallback onMenu;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    final card = Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: enabled && !saving ? onPlay : null,
-        onLongPress: saving ? null : onMenu,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              if (icon case final icon?)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.file(
-                    icon,
-                    width: 48,
-                    height: 48,
-                    // Icons may be wide store covers, which fill the square tile by their height.
-                    cacheHeight: (48 * MediaQuery.devicePixelRatioOf(context)).round(),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => IconTile(icon: LucideIcons.gamepad2, color: accent),
-                  ),
-                )
-              else
-                IconTile(icon: LucideIcons.gamepad2, color: accent),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(game.name, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    if (saving)
-                      Text('Suspending…', style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
-                    else if (_storeNames[game.source?.store] case final store?)
-                      Text(store, style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400))
-                    else
-                      Text(
-                        game.executable,
-                        overflow: TextOverflow.ellipsis,
-                        style: monospace(fontSize: 12, color: SogenColors.neutral400),
-                      ),
-                  ],
-                ),
-              ),
-              if (saving)
-                const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-              else
-                const Icon(LucideIcons.play, color: SogenColors.neutral300),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    return saving ? Opacity(opacity: 0.6, child: card) : card;
   }
 }
 

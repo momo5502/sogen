@@ -39,8 +39,4 @@ class SteamInstallSource implements InstallSource {
     for (final chunk in (plan['sharedChunks'] as List<Object?>?) ?? const [])
       if (chunk case {'depot': final int depot}) depot: (chunk as Map<String, Object?>)['app'] as int? ?? appId,
   };
-
-  /// Steam's square art is the community icon, which is not a PNG, so installed Steam games show the default icon.
-  @override
-  Future<Uri?> icon(String productId) async => null;
 }
