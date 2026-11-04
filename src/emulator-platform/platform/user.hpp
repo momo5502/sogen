@@ -259,11 +259,17 @@ namespace sogen
 
     struct USER_CLASS
     {
-        uint8_t pad_000[0x30];
+        uint8_t pad_000[2];
+        uint16_t atom;
+        uint8_t pad_004[0x1C];
+        uint64_t lpfnWndProc;
+        uint8_t pad_028[8];
         uint64_t lpszAnsiClassName;
         uint8_t pad_038[0xC8];
     };
 
+    static_assert(offsetof(USER_CLASS, atom) == 0x02);
+    static_assert(offsetof(USER_CLASS, lpfnWndProc) == 0x20);
     static_assert(offsetof(USER_CLASS, lpszAnsiClassName) == 0x30);
     static_assert(sizeof(USER_CLASS) == 0x100);
 

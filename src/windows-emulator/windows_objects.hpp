@@ -264,6 +264,7 @@ namespace sogen
     // across Windows builds (unlike the builtin control-class atoms, which vary per build and are
     // resolved through SERVERINFO.atomSysClass), so matching this canonical name is portable.
     inline constexpr std::u16string_view builtin_dialog_class_name = u"#32770";
+    inline constexpr uint16_t builtin_dialog_class_atom = 0x8002;
 
     inline std::u16string_view normalize_builtin_window_class_name(const std::u16string_view class_name)
     {

@@ -195,6 +195,14 @@ namespace sogen
             return name;
         }
 
+        void publish_class_to_guest(memory_manager& memory, const process_context::class_entry& entry)
+        {
+            emulator_object<USER_CLASS>{memory, entry.guest_obj_addr}.access([&](USER_CLASS& cls) {
+                cls.atom = entry.atom;
+                cls.lpfnWndProc = entry.wnd_class.lpfnWndProc;
+            });
+        }
+
         bool is_builtin_window_class_name(const std::u16string_view class_name)
         {
             const auto normalized = normalize_builtin_window_class_name(class_name);
@@ -222,6 +230,16 @@ namespace sogen
             }
 
             return 0;
+        }
+
+        uint16_t builtin_window_class_atom(process_context& proc, const std::u16string_view normalized_name)
+        {
+            if (normalized_name == builtin_dialog_class_name)
+            {
+                return builtin_dialog_class_atom;
+            }
+
+            return proc.add_or_find_atom(std::u16string{normalized_name});
         }
 
         process_context::class_entry* ensure_builtin_window_class(const syscall_context& c, const std::u16string_view class_name)
@@ -319,7 +337,8 @@ namespace sogen
             wnd_class.lpfnWndProc = wnd_proc;
             wnd_class.cbWndExtra = wnd_extra;
 
-            const auto entry = process_context::class_entry{cls_ptr, wnd_class, {}};
+            const auto entry = process_context::class_entry{cls_ptr, wnd_class, {}, builtin_window_class_atom(c.proc, normalized_name)};
+            publish_class_to_guest(c.win_emu.memory, entry);
             c.proc.classes.insert_or_assign(std::u16string{normalized_name}, entry);
             c.proc.classes.insert_or_assign(std::u16string{class_name}, entry);
             return &c.proc.classes.find(class_name)->second;
@@ -1392,6 +1411,73 @@ namespace sogen
             }
 
             return read_unicode_string(c.emu, uc_string, index);
+        }
+
+        struct class_argument
+        {
+            std::u16string name{};
+            std::optional<uint16_t> atom{};
+        };
+
+        class_argument read_class_argument(const syscall_context& c,
+                                           const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name)
+        {
+            if (!class_name)
+            {
+                return {};
+            }
+
+            if (class_name.value() <= std::numeric_limits<uint16_t>::max())
+            {
+                return {.name = {}, .atom = static_cast<uint16_t>(class_name.value())};
+            }
+
+            if (const auto string = class_name.read();
+                string.Length == 0 && string.Buffer != 0 && string.Buffer <= std::numeric_limits<uint16_t>::max())
+            {
+                return {.name = {}, .atom = static_cast<uint16_t>(string.Buffer)};
+            }
+
+            return {.name = read_unicode_string(c.emu, class_name), .atom = std::nullopt};
+        }
+
+        process_context::class_entry* find_class_by_atom(const syscall_context& c, const uint16_t atom)
+        {
+            for (auto& entry : c.proc.classes | std::views::values)
+            {
+                if (entry.atom == atom)
+                {
+                    return &entry;
+                }
+            }
+
+            return nullptr;
+        }
+
+        process_context::class_entry* find_registered_class(const syscall_context& c, const class_argument& cls)
+        {
+            if (cls.atom)
+            {
+                return find_class_by_atom(c, *cls.atom);
+            }
+
+            const auto it = c.proc.classes.find(cls.name);
+            return it != c.proc.classes.end() ? &it->second : nullptr;
+        }
+
+        process_context::class_entry* find_class(const syscall_context& c, const class_argument& cls)
+        {
+            if (!cls.atom)
+            {
+                return ensure_builtin_window_class(c, cls.name);
+            }
+
+            if (*cls.atom == builtin_dialog_class_atom)
+            {
+                return ensure_builtin_window_class(c, builtin_dialog_class_name);
+            }
+
+            return find_class_by_atom(c, *cls.atom);
         }
 
         std::u16string read_large_string_or_atom(const syscall_context& c, const emulator_object<LARGE_STRING> str_obj,
@@ -2871,9 +2957,15 @@ namespace sogen
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name)
         {
-            const auto want_class = class_name ? read_unicode_string_or_atom(c, class_name) : std::u16string{};
+            const auto cls = read_class_argument(c, class_name);
+            if (cls.atom && !find_class_by_atom(c, *cls.atom))
+            {
+                return 0;
+            }
+
+            const auto want_class = cls.atom ? resolve_atom_name(c, *cls.atom) : cls.name;
             const auto want_name = window_name ? read_unicode_string(c.emu, window_name) : std::u16string{};
-            const bool filter_class = class_name && !want_class.empty();
+            const bool filter_class = !want_class.empty();
             const bool filter_name = window_name && !want_name.empty();
 
             bool seen_child_after = child_after == 0;
@@ -3274,7 +3366,8 @@ namespace sogen
             const auto cls_ptr = process_context::allocate_user_class(c.win_emu.memory, class_name_str);
 
             const auto wnd_class = wnd_class_ex.read();
-            const auto entry = process_context::class_entry{cls_ptr, wnd_class, class_menu_name.read(), (flags & CSF_ANSIPROC) != 0};
+            const auto entry = process_context::class_entry{cls_ptr, wnd_class, class_menu_name.read(), index, (flags & CSF_ANSIPROC) != 0};
+            publish_class_to_guest(c.win_emu.memory, entry);
 
             if (c.win_emu.callbacks.on_generic_activity)
             {
@@ -3296,55 +3389,60 @@ namespace sogen
                                           const emulator_pointer /*instance*/,
                                           const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name)
         {
-            const auto cls_name = read_unicode_string_or_atom(c, class_name);
-
-            if (const auto it = c.proc.classes.find(cls_name); it != c.proc.classes.end())
+            const auto cls = read_class_argument(c, class_name);
+            const auto* entry = find_registered_class(c, cls);
+            if (!entry)
             {
-                if (class_menu_name)
+                if (cls.atom)
                 {
-                    class_menu_name.write(it->second.menu_name);
-                }
-
-                c.win_emu.memory.release_memory(it->second.guest_obj_addr, 0);
-                c.proc.classes.erase(it);
-            }
-
-            return c.proc.delete_atom(cls_name);
-        }
-
-        BOOL handle_NtUserGetClassInfoEx(const syscall_context& c, const hinstance /*instance*/,
-                                         const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                         const emulator_object<EMU_WNDCLASSEX> wnd_class_ex, const emulator_pointer /*menu_name*/,
-                                         const BOOL /*ansi*/)
-        {
-            std::u16string name_str = read_unicode_string_or_atom(c, class_name);
-
-            auto it = c.proc.classes.find(name_str);
-            if (it == c.proc.classes.end())
-            {
-                if (const auto* builtin = ensure_builtin_window_class(c, name_str))
-                {
-                    it = c.proc.classes.find(name_str);
-                    (void)builtin;
-                }
-            }
-
-            if (it == c.proc.classes.end())
-            {
-                if (c.win_emu.callbacks.on_generic_activity)
-                {
-                    c.win_emu.callbacks.on_generic_activity("GetClassInfoEx missing class '" + u16_to_u8(name_str) + "'");
+                    set_guest_last_error(c, 1411); // ERROR_CLASS_DOES_NOT_EXIST
                 }
 
                 return FALSE;
             }
 
-            if (wnd_class_ex)
+            if (class_menu_name)
             {
-                wnd_class_ex.write(it->second.wnd_class);
+                class_menu_name.write(entry->menu_name);
             }
 
+            const auto guest_obj_addr = entry->guest_obj_addr;
+            const auto atom = entry->atom;
+            c.win_emu.memory.release_memory(guest_obj_addr, 0);
+            std::erase_if(c.proc.classes, [&](const auto& item) { return item.second.guest_obj_addr == guest_obj_addr; });
+            c.proc.delete_atom(atom);
             return TRUE;
+        }
+
+        uint16_t handle_NtUserGetClassInfoEx(const syscall_context& c, const hinstance /*instance*/,
+                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                             const emulator_object<EMU_WNDCLASSEX> wnd_class_ex, const emulator_pointer /*menu_name*/,
+                                             const BOOL /*ansi*/)
+        {
+            const auto cls = read_class_argument(c, class_name);
+            const auto* entry = find_class(c, cls);
+            if (!entry)
+            {
+                if (cls.atom)
+                {
+                    set_guest_last_error(c, 1411); // ERROR_CLASS_DOES_NOT_EXIST
+                }
+
+                if (c.win_emu.callbacks.on_generic_activity)
+                {
+                    const auto shown_name = cls.atom ? make_atom_class_name(*cls.atom) : cls.name;
+                    c.win_emu.callbacks.on_generic_activity("GetClassInfoEx missing class '" + u16_to_u8(shown_name) + "'");
+                }
+
+                return 0;
+            }
+
+            if (wnd_class_ex)
+            {
+                wnd_class_ex.write(entry->wnd_class);
+            }
+
+            return entry->atom;
         }
 
         int handle_NtUserGetClassName(const syscall_context& c, const hwnd win_hwnd, const BOOL /*real*/,
@@ -5670,6 +5768,7 @@ namespace sogen
             case gclp_wndproc:
                 old_value = cls.lpfnWndProc;
                 cls.lpfnWndProc = dwNewLong;
+                publish_class_to_guest(c.win_emu.memory, entry->second);
                 break;
             case gclp_hmodule:
                 old_value = cls.hInstance;
@@ -6102,7 +6201,13 @@ namespace sogen
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
         {
             const auto name = c.proc.get_atom_name(atom);
-            if (!name || !atom_name)
+            if (!name)
+            {
+                set_guest_last_error(c, 6); // ERROR_INVALID_HANDLE
+                return 0;
+            }
+
+            if (!atom_name)
             {
                 return 0;
             }
