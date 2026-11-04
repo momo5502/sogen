@@ -6,6 +6,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../ads.dart';
 import '../emulation_root.dart';
 import '../game_library.dart';
+import '../gog/gog_account.dart';
 import '../session.dart';
 import '../settings.dart';
 import '../support.dart';
@@ -13,15 +14,24 @@ import '../theme.dart';
 import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
 import 'game_page.dart';
+import 'gog_library_page.dart';
 import 'settings_page.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.root, required this.library, required this.settings, required this.ads});
+  const HomePage({
+    super.key,
+    required this.root,
+    required this.library,
+    required this.settings,
+    required this.ads,
+    required this.gog,
+  });
 
   final EmulationRoot root;
   final GameLibrary library;
   final AppSettings settings;
   final Ads ads;
+  final GogAccount gog;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -69,7 +79,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _openSettings() {
-    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SettingsPage(settings: widget.settings)));
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsPage(settings: widget.settings, gog: widget.gog),
+      ),
+    );
+  }
+
+  void _openGogLibrary() {
+    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => GogLibraryPage(account: widget.gog)));
   }
 
   /// The library outlives the game page, so it reports failed writes even after the page is gone.
@@ -188,7 +206,7 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       body: SafeArea(
         child: ListenableBuilder(
-          listenable: Listenable.merge([widget.library, widget.settings]),
+          listenable: Listenable.merge([widget.library, widget.settings, widget.gog]),
           builder: (context, _) {
             final games = widget.library.games;
 
@@ -211,6 +229,8 @@ class _HomePageState extends State<HomePage> {
                                 onTap: _installRoot,
                                 child: const Text('Re-download emulation root'),
                               ),
+                            if (widget.gog.isSignedIn)
+                              PopupMenuItem(onTap: _openGogLibrary, child: const Text('GOG library')),
                             PopupMenuItem(onTap: () => openDiscord(context), child: const Text('Help and support')),
                             PopupMenuItem(onTap: _openSettings, child: const Text('Settings')),
                           ],

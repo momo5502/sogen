@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'src/ads.dart';
 import 'src/emulation_root.dart';
 import 'src/game_library.dart';
+import 'src/gog/gog_account.dart';
 import 'src/pages/home_page.dart';
 import 'src/settings.dart';
 import 'src/theme.dart';
@@ -20,17 +21,26 @@ Future<void> main() async {
     library.releaseUnusedFolders().catchError((Object error) => debugPrint('Could not release unused folders: $error')),
   );
   final settings = await AppSettings.load();
+  final gog = await GogAccount.load();
 
-  runApp(SogenApp(root: root, library: library, settings: settings, ads: Ads(settings)));
+  runApp(SogenApp(root: root, library: library, settings: settings, ads: Ads(settings), gog: gog));
 }
 
 class SogenApp extends StatelessWidget {
-  const SogenApp({super.key, required this.root, required this.library, required this.settings, required this.ads});
+  const SogenApp({
+    super.key,
+    required this.root,
+    required this.library,
+    required this.settings,
+    required this.ads,
+    required this.gog,
+  });
 
   final EmulationRoot root;
   final GameLibrary library;
   final AppSettings settings;
   final Ads ads;
+  final GogAccount gog;
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +50,7 @@ class SogenApp extends StatelessWidget {
       theme: buildSogenTheme(),
       home: _StartupScreen(
         ads: ads,
-        child: HomePage(root: root, library: library, settings: settings, ads: ads),
+        child: HomePage(root: root, library: library, settings: settings, ads: ads, gog: gog),
       ),
     );
   }
