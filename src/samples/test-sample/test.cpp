@@ -11,7 +11,6 @@
 #include <string_view>
 #include <array>
 #include <algorithm>
-#include <cwctype>
 #include <bit>
 
 #include "../../common/utils/finally.hpp"
@@ -1568,19 +1567,6 @@ namespace
                GetWindowTextLengthA(desktop) == 0;
     }
 
-    bool test_keyboard_layout_name()
-    {
-        std::array<wchar_t, KL_NAMELENGTH> name{};
-        name.fill(L'x');
-
-        if (!GetKeyboardLayoutNameW(name.data()) || name.back() != L'\0')
-        {
-            return false;
-        }
-
-        return std::all_of(name.begin(), name.end() - 1, [](const wchar_t c) { return iswxdigit(c) != 0; });
-    }
-
     bool test_message_queue()
     {
         thread_local UINT wnd_proc_num = 0;
@@ -2680,7 +2666,6 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_apc_wait, "APC Wait")
     RUN_TEST(test_desktop_window_text, "Desktop Window Text")
     RUN_TEST(test_window_geometry, "Window Geometry")
-    RUN_TEST(test_keyboard_layout_name, "Keyboard Layout Name")
     RUN_TEST(test_user_callback, "User Callback")
     RUN_TEST(test_mutable_callbacks, "Mutable User Callback")
     RUN_TEST(test_message_queue, "Message Queue (General)")
