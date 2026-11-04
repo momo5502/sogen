@@ -1452,5 +1452,24 @@ namespace sogen
         uint64_t Callback;
     };
 
+    struct PROCESS_STACK_ALLOCATION_INFORMATION
+    {
+        EmulatorTraits<Emu64>::SIZE_T ReserveSize;
+        EmulatorTraits<Emu64>::SIZE_T ZeroBits;
+        EmulatorTraits<Emu64>::PVOID StackBase;
+    };
+
+    struct PROCESS_STACK_ALLOCATION_INFORMATION_EX
+    {
+        ULONG PreferredNode;
+        ULONG Reserved0;
+        ULONG Reserved1;
+        ULONG Reserved2;
+        PROCESS_STACK_ALLOCATION_INFORMATION AllocInfo;
+    };
+
+    static_assert(sizeof(PROCESS_STACK_ALLOCATION_INFORMATION) == 0x18);
+    static_assert(sizeof(PROCESS_STACK_ALLOCATION_INFORMATION_EX) == 0x28);
+
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen
