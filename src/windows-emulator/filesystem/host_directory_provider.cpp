@@ -85,16 +85,16 @@ namespace sogen
 
         // With refused links, the status of an entry is taken without following it, so that the one lookup also
         // tells whether the entry is a link.
-        std::optional<std::filesystem::file_status> probe_host_entry(const std::filesystem::path& path, const host_links links)
+        // A failed lookup reports file_type::none, which is kept apart from an entry that does not exist.
+        std::filesystem::file_status probe_host_entry(const std::filesystem::path& path, const host_links links)
         {
             std::error_code ec{};
-            const auto status = links == host_links::follow ? std::filesystem::status(path, ec) : std::filesystem::symlink_status(path, ec);
-            if (!std::filesystem::exists(status))
-            {
-                return std::nullopt;
-            }
+            return links == host_links::follow ? std::filesystem::status(path, ec) : std::filesystem::symlink_status(path, ec);
+        }
 
-            return status;
+        bool lookup_failed(const std::filesystem::file_status status)
+        {
+            return status.type() == std::filesystem::file_type::none;
         }
 
         // With refused links, each component is checked before anything is looked up beneath it, and a path through a
@@ -124,16 +124,18 @@ namespace sogen
                 const std::filesystem::path lowered{utils::string::to_lower(component->u16string())};
                 std::optional<std::filesystem::path> match{};
                 auto status = probe_host_entry(resolved / *component, links);
-                if (status)
+                auto failed = lookup_failed(status);
+                if (std::filesystem::exists(status))
                 {
                     match = *component;
                 }
-                else if ((status = probe_host_entry(resolved / lowered, links)))
+                else if (status = probe_host_entry(resolved / lowered, links); std::filesystem::exists(status))
                 {
                     match = lowered;
                 }
                 else
                 {
+                    failed = failed || lookup_failed(status);
                     match = find_entry_ignoring_case(resolved, *component);
                     if (match && links == host_links::refuse)
                     {
@@ -141,14 +143,14 @@ namespace sogen
                     }
                 }
 
+                if (links == host_links::refuse && (failed || (match && (!std::filesystem::exists(status) || is_link(status)))))
+                {
+                    return std::nullopt;
+                }
+
                 if (!match)
                 {
                     break;
-                }
-
-                if (links == host_links::refuse && (!status || is_link(*status)))
-                {
-                    return std::nullopt;
                 }
 
                 resolved /= *match;
@@ -327,13 +329,13 @@ namespace sogen
             current /= component;
             std::error_code ec{};
             const auto status = std::filesystem::symlink_status(current, ec);
-            if (is_link(status))
-            {
-                return false;
-            }
-            if (!std::filesystem::exists(status))
+            if (status.type() == std::filesystem::file_type::not_found)
             {
                 return true;
+            }
+            if (!std::filesystem::exists(status) || is_link(status))
+            {
+                return false;
             }
         }
 
@@ -456,14 +458,16 @@ namespace sogen
         std::error_code ec{};
         for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
         {
-            if (this->links_ == host_links::refuse && is_link(file.symlink_status(ec)))
+            std::error_code status_error{};
+            const auto status = this->links_ == host_links::refuse ? file.symlink_status(status_error) : file.status(status_error);
+            if (this->links_ == host_links::refuse && (status_error || !std::filesystem::exists(status) || is_link(status)))
             {
                 continue;
             }
 
             directory_entry entry{
                 .name = file.path().filename().u16string(),
-                .is_directory = file.is_directory(ec),
+                .is_directory = std::filesystem::is_directory(status),
             };
 
 #ifdef OS_WINDOWS
