@@ -16,6 +16,7 @@ import '../session.dart';
 import '../settings.dart';
 import '../steam/steam_account.dart';
 import '../steam/steam_catalog.dart';
+import '../store/cover_cache.dart';
 import '../store/store_catalog.dart';
 import '../store/store_installer.dart';
 import '../support.dart';
@@ -40,6 +41,7 @@ class HomePage extends StatefulWidget {
     required this.steam,
     required this.steamCatalog,
     required this.installer,
+    required this.covers,
   });
 
   final EmulationRoot root;
@@ -53,6 +55,7 @@ class HomePage extends StatefulWidget {
   final SteamAccount steam;
   final StoreCatalog steamCatalog;
   final StoreInstaller installer;
+  final CoverCache covers;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -275,6 +278,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     library: widget.library,
                     canInstall: installed && !_installing,
                     color: SogenColors.accents[6],
+                    covers: widget.covers,
                   ),
                   StoreTab(
                     account: widget.steam,
@@ -283,6 +287,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     library: widget.library,
                     canInstall: installed && !_installing,
                     color: const Color(0xFF66C0F4),
+                    covers: widget.covers,
                   ),
                   StoreTab(
                     account: widget.epic,
@@ -291,6 +296,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                     library: widget.library,
                     canInstall: installed && !_installing,
                     color: SogenColors.neutral100,
+                    covers: widget.covers,
                   ),
                   SettingsTab(
                     settings: widget.settings,

@@ -24,6 +24,7 @@ import 'src/steam/steam_auth.dart';
 import 'src/steam/steam_catalog.dart';
 import 'src/steam/steam_client.dart';
 import 'src/steam/steam_install_source.dart';
+import 'src/store/cover_cache.dart';
 import 'src/store/store_catalog.dart';
 import 'src/store/store_installer.dart';
 import 'src/theme.dart';
@@ -56,6 +57,7 @@ Future<void> main() async {
     SteamCatalog.store: SteamInstallSource(steamClient),
   });
   await installer.restore().catchError((Object error) => debugPrint('Could not restore downloads: $error'));
+  final covers = await CoverCache.open();
 
   runApp(
     SogenApp(
@@ -70,6 +72,7 @@ Future<void> main() async {
       steam: steam,
       steamCatalog: SteamCatalog(steamClient),
       installer: installer,
+      covers: covers,
       navigator: navigator,
     ),
   );
@@ -89,6 +92,7 @@ class SogenApp extends StatelessWidget {
     required this.steam,
     required this.steamCatalog,
     required this.installer,
+    required this.covers,
     required this.navigator,
   });
 
@@ -103,6 +107,7 @@ class SogenApp extends StatelessWidget {
   final SteamAccount steam;
   final StoreCatalog steamCatalog;
   final StoreInstaller installer;
+  final CoverCache covers;
 
   /// Lets the Steam account show its sign-in page, which it opens outside of any widget.
   final GlobalKey<NavigatorState> navigator;
@@ -128,6 +133,7 @@ class SogenApp extends StatelessWidget {
           steam: steam,
           steamCatalog: steamCatalog,
           installer: installer,
+          covers: covers,
         ),
       ),
     );
