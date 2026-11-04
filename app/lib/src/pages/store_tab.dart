@@ -464,7 +464,13 @@ class _DownloadStatusLine extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        Text(text, style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400)),
+        Text(
+          text,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+        ),
       ],
     );
   }
