@@ -30,6 +30,8 @@
 #define FNID_SENDMESSAGEWTOOPTION 0x2B3
 #define FNID_SENDMESSAGECALLBACK  0x2B8
 
+#define CSF_ANSIPROC              0x0002
+
 namespace sogen
 {
 
@@ -264,6 +266,9 @@ namespace sogen
 
     static_assert(offsetof(USER_CLASS, lpszAnsiClassName) == 0x30);
     static_assert(sizeof(USER_CLASS) == 0x100);
+
+    // USER_WINDOW::bFlags is byte 2 of tagWND::state, so WNDS_ANSIWINDOWPROC (0x00080000) is bit 3 there.
+    constexpr uint8_t USER_WINDOW_ANSI_WINDOW_PROC = 0x08;
 
     struct USER_WINDOW
     {
