@@ -516,6 +516,8 @@ class _GameCard extends StatelessWidget {
                     icon,
                     width: 48,
                     height: 48,
+                    // Icons may be wide store covers, which fill the square tile by their height.
+                    cacheHeight: (48 * MediaQuery.devicePixelRatioOf(context)).round(),
                     fit: BoxFit.cover,
                     errorBuilder: (_, _, _) => IconTile(icon: LucideIcons.gamepad2, color: accent),
                   ),
