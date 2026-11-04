@@ -52,7 +52,7 @@ namespace sogen
 
       private:
         std::optional<std::filesystem::path> get_host_path(const windows_path& path) const override;
-        bool avoids_refused_links(const std::filesystem::path& root, const std::filesystem::path& host_path) const;
+        static bool avoids_links(const std::filesystem::path& root, const std::filesystem::path& host_path);
 
         std::filesystem::path target_{};
         host_links links_{};

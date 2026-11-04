@@ -86,6 +86,9 @@ namespace sogen::test
             EXPECT_NE(provider.open(guest({u"secret.txt"}), u"rb").status, STATUS_SUCCESS);
             EXPECT_EQ(names_in(provider), std::set<std::u16string>{u"inside.txt"});
             EXPECT_EQ(provider.open(guest({u"inside.txt"}), u"rb").status, STATUS_SUCCESS);
+            EXPECT_EQ(provider.open(guest({u"INSIDE.TXT"}), u"rb").status, STATUS_SUCCESS);
+            EXPECT_FALSE(provider.stat(guest({u"Escape", u"Secret.txt"})));
+            EXPECT_NE(provider.open(guest({u"SECRET.TXT"}), u"rb").status, STATUS_SUCCESS);
         }
 
         TEST_F(HostDirectoryLinksTest, FollowedLinksReachTheirTargets)

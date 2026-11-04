@@ -83,14 +83,22 @@ namespace sogen
             return std::filesystem::path{*match};
         }
 
-        bool host_entry_exists(const std::filesystem::path& path, const host_links links)
+        // With refused links, the status of an entry is taken without following it, so that the one lookup also
+        // tells whether the entry is a link.
+        std::optional<std::filesystem::file_status> probe_host_entry(const std::filesystem::path& path, const host_links links)
         {
             std::error_code ec{};
-            return links == host_links::follow ? std::filesystem::exists(path, ec)
-                                               : std::filesystem::exists(std::filesystem::symlink_status(path, ec));
+            const auto status = links == host_links::follow ? std::filesystem::status(path, ec) : std::filesystem::symlink_status(path, ec);
+            if (!std::filesystem::exists(status))
+            {
+                return std::nullopt;
+            }
+
+            return status;
         }
 
-        // Each component is checked for a refused link before the next one is looked up through it.
+        // With refused links, each component is checked before anything is looked up beneath it, and a path through a
+        // link comes back empty.
         std::optional<std::filesystem::path> recover_host_case(const std::filesystem::path& root, const std::filesystem::path& candidate,
                                                                const host_links links)
         {
@@ -115,17 +123,22 @@ namespace sogen
                 // from scanning every directory on the way down.
                 const std::filesystem::path lowered{utils::string::to_lower(component->u16string())};
                 std::optional<std::filesystem::path> match{};
-                if (host_entry_exists(resolved / *component, links))
+                auto status = probe_host_entry(resolved / *component, links);
+                if (status)
                 {
                     match = *component;
                 }
-                else if (host_entry_exists(resolved / lowered, links))
+                else if ((status = probe_host_entry(resolved / lowered, links)))
                 {
                     match = lowered;
                 }
                 else
                 {
                     match = find_entry_ignoring_case(resolved, *component);
+                    if (match && links == host_links::refuse)
+                    {
+                        status = probe_host_entry(resolved / *match, links);
+                    }
                 }
 
                 if (!match)
@@ -133,13 +146,12 @@ namespace sogen
                     break;
                 }
 
-                resolved /= *match;
-
-                std::error_code ec{};
-                if (links == host_links::refuse && is_link(std::filesystem::symlink_status(resolved, ec)))
+                if (links == host_links::refuse && (!status || is_link(*status)))
                 {
                     return std::nullopt;
                 }
+
+                resolved /= *match;
             }
 
             // Everything from the first component that has no counterpart on the host is kept as asked, because
@@ -307,13 +319,8 @@ namespace sogen
     {
     }
 
-    bool host_directory_provider::avoids_refused_links(const std::filesystem::path& root, const std::filesystem::path& host_path) const
+    bool host_directory_provider::avoids_links(const std::filesystem::path& root, const std::filesystem::path& host_path)
     {
-        if (this->links_ == host_links::follow)
-        {
-            return true;
-        }
-
         auto current = root;
         for (const auto& component : host_path.lexically_relative(root))
         {
@@ -349,17 +356,19 @@ namespace sogen
             return std::nullopt;
         }
 
-        std::error_code ec{};
-        if (!this->lookup_ignores_case_ && this->links_ == host_links::refuse)
+        // A normal path that passes through no link below the root needs no canonicalization.
+        if (this->links_ == host_links::refuse)
         {
-            auto recovered = recover_host_case(root, candidate, this->links_);
-            if (!recovered)
+            if (!this->lookup_ignores_case_)
             {
-                return std::nullopt;
+                return recover_host_case(root, candidate, this->links_);
             }
-            candidate = std::move(*recovered);
+
+            return avoids_links(root, candidate) ? std::optional{candidate} : std::nullopt;
         }
-        else if (!this->lookup_ignores_case_)
+
+        std::error_code ec{};
+        if (!this->lookup_ignores_case_)
         {
             // The emulation root is created in lower case, so that spelling is the hit for almost every guest path
             // and is tried first, in one stat. The guest's own spelling comes next, for entries the guest created,
@@ -375,11 +384,6 @@ namespace sogen
             {
                 candidate = *recover_host_case(root, candidate, this->links_);
             }
-        }
-
-        if (!this->avoids_refused_links(root, candidate))
-        {
-            return std::nullopt;
         }
 
         auto resolved = weakly_canonical(candidate, ec);
