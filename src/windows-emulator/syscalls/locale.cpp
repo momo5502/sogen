@@ -270,16 +270,29 @@ namespace sogen
             return static_cast<uint32_t>(count);
         }
 
-        BOOL handle_NtUserGetKeyboardLayoutName(const syscall_context& c, const emulator_pointer name)
+        // user32 passes a UNICODE_STRING describing the caller's KL_NAMELENGTH buffer, not the buffer itself.
+        BOOL handle_NtUserGetKeyboardLayoutName(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> name)
         {
-            if (name == 0)
+            if (!name)
             {
                 return FALSE;
             }
 
-            auto keyboard_layout_name = keyboard_layout_to_name(get_keyboard_layouts(c.win_emu.registry).front());
-            keyboard_layout_name.push_back(u'\0');
-            c.emu.write_memory(name, keyboard_layout_name.data(), keyboard_layout_name.size() * sizeof(char16_t));
+            const auto keyboard_layout_name = keyboard_layout_to_name(get_keyboard_layouts(c.win_emu.registry).front());
+            const auto length = keyboard_layout_name.size() * sizeof(char16_t);
+
+            auto string = name.read();
+            if (!string.Buffer || string.MaximumLength < length + sizeof(char16_t))
+            {
+                return FALSE;
+            }
+
+            constexpr char16_t terminator = 0;
+            c.emu.write_memory(string.Buffer, keyboard_layout_name.data(), length);
+            c.emu.write_memory(string.Buffer + length, &terminator, sizeof(terminator));
+
+            string.Length = static_cast<USHORT>(length);
+            name.write(string);
             return TRUE;
         }
 
