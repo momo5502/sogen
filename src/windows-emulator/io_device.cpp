@@ -261,6 +261,82 @@ namespace sogen
         win_emu.wake_idle_vcpu();
     }
 
+    namespace
+    {
+        NTSTATUS retain_completion_port(process_context& process, const emulator_thread* active_thread, const handle completion_port,
+                                        handle& retained_port)
+        {
+            const auto resolved_port = process.resolve_object_pseudo_handle(completion_port, active_thread);
+            if (resolved_port.value.type != handle_types::io_completion || !process.io_completions.get(resolved_port))
+            {
+                auto* store = process.get_handle_store(resolved_port);
+                return store && store->get_object(resolved_port) ? STATUS_OBJECT_TYPE_MISMATCH : STATUS_INVALID_HANDLE;
+            }
+
+            if (!io_completion_wait::retain_handle_reference(process, active_thread, resolved_port, retained_port))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            return STATUS_SUCCESS;
+        }
+    }
+
+    NTSTATUS associate_completion_port(process_context& process, const emulator_thread* active_thread,
+                                       std::optional<device_completion_association>& association, const handle completion_port,
+                                       const uint64_t key)
+    {
+        if (association)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        handle retained_port{};
+        const auto status = retain_completion_port(process, active_thread, completion_port, retained_port);
+        if (status == STATUS_SUCCESS)
+        {
+            association = device_completion_association{.completion_port = retained_port, .key = key};
+        }
+
+        return status;
+    }
+
+    NTSTATUS replace_completion_port(process_context& process, const emulator_thread* active_thread,
+                                     std::optional<device_completion_association>& association, const handle completion_port,
+                                     const uint64_t key)
+    {
+        if (!association)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (!completion_port.bits)
+        {
+            release_completion_association(process, association);
+            return STATUS_SUCCESS;
+        }
+
+        handle retained_port{};
+        const auto status = retain_completion_port(process, active_thread, completion_port, retained_port);
+        if (status != STATUS_SUCCESS)
+        {
+            return status;
+        }
+
+        release_completion_association(process, association);
+        association = device_completion_association{.completion_port = retained_port, .key = key};
+        return STATUS_SUCCESS;
+    }
+
+    void release_completion_association(process_context& process, std::optional<device_completion_association>& association)
+    {
+        if (association)
+        {
+            io_completion_wait::release_handle_reference(process, association->completion_port);
+            association.reset();
+        }
+    }
+
     NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
     {
         this->assert_validity();
@@ -302,25 +378,16 @@ namespace sogen
                                                              const handle completion_port, const uint64_t key)
     {
         this->assert_validity();
-        if (this->file_->completion_association)
-        {
-            return STATUS_INVALID_PARAMETER;
-        }
+        auto& association = this->file_->completion_association;
+        return associate_completion_port(process, active_thread, association, completion_port, key);
+    }
 
-        const auto resolved_port = process.resolve_object_pseudo_handle(completion_port, active_thread);
-        if (resolved_port.value.type != handle_types::io_completion || !process.io_completions.get(resolved_port))
-        {
-            return STATUS_INVALID_HANDLE;
-        }
-
-        handle retained_port{};
-        if (!io_completion_wait::retain_handle_reference(process, active_thread, resolved_port, retained_port))
-        {
-            return STATUS_INVALID_HANDLE;
-        }
-
-        this->file_->completion_association = device_completion_association{.completion_port = retained_port, .key = key};
-        return STATUS_SUCCESS;
+    NTSTATUS io_device_container::replace_completion_association(process_context& process, const emulator_thread* active_thread,
+                                                                 const handle completion_port, const uint64_t key)
+    {
+        this->assert_validity();
+        auto& association = this->file_->completion_association;
+        return replace_completion_port(process, active_thread, association, completion_port, key);
     }
 
     void io_device_container::set_completion_notification_flags(const ULONG flags)
@@ -337,11 +404,7 @@ namespace sogen
             return;
         }
         this->file_->device->release_references(process);
-        if (this->file_->completion_association)
-        {
-            io_completion_wait::release_handle_reference(process, this->file_->completion_association->completion_port);
-            this->file_->completion_association.reset();
-        }
+        release_completion_association(process, this->file_->completion_association);
     }
 
     void io_device_container::work(windows_emulator& win_emu)

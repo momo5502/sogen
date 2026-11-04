@@ -136,6 +136,8 @@ namespace sogen
                 auto* file = c.proc.files.get(h);
                 if (file && file->ref_count == 1)
                 {
+                    release_completion_association(c.proc, file->completion_association);
+
                     for (auto it = c.proc.file_locks.begin(); it != c.proc.file_locks.end();)
                     {
                         auto& locks = it->second.locks;

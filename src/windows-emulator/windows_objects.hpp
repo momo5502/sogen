@@ -1,6 +1,7 @@
 #pragma once
 
 #include "handles.hpp"
+#include "io_device.hpp"
 #include "memory_manager.hpp"
 #include "filesystem/guest_file.hpp"
 
@@ -890,6 +891,8 @@ namespace sogen
         uint32_t file_mode{}; // FileModeInformation
         uint8_t drive_number{'c' - 'a' + 1};
         std::vector<directory_change_watch> change_watches{};
+        std::optional<device_completion_association> completion_association{};
+        ULONG completion_notification_flags{};
 
         bool is_file() const
         {
@@ -910,6 +913,8 @@ namespace sogen
             buffer.write(this->drive_number);
             buffer.write(this->handle);
             buffer.write_vector(this->change_watches);
+            buffer.write_optional(this->completion_association);
+            buffer.write(this->completion_notification_flags);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -921,6 +926,8 @@ namespace sogen
             buffer.read(this->drive_number);
             buffer.read(this->handle);
             buffer.read_vector(this->change_watches);
+            buffer.read_optional(this->completion_association);
+            buffer.read(this->completion_notification_flags);
         }
     };
 
