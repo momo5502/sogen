@@ -307,6 +307,12 @@ namespace sogen
                                       const OBJECT_INFORMATION_CLASS object_information_class, const emulator_pointer object_information,
                                       const ULONG object_information_length, const emulator_object<ULONG> return_length)
         {
+            if (static_cast<uint32_t>(object_information_class) >= MaxObjectInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtQueryObject info class: 0x%X\n", static_cast<uint32_t>(object_information_class));
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle, c.vcpu.active_thread);
 
             if (object_information_class == ObjectNameInformation)
