@@ -19,8 +19,8 @@ class SteamCatalog implements StoreCatalog {
 
   @override
   String get signInDescription =>
-      'Sign in to see the Windows games you own on Steam. You approve the sign-in in the Steam mobile app, so Sogen '
-      'never sees your password.';
+      'Sign in to see the Windows games you own on Steam, by approving it in the Steam mobile app or with your '
+      'password, which Sogen sends only to Steam and does not keep.';
 
   @override
   Future<List<StoreGame>> games() async {

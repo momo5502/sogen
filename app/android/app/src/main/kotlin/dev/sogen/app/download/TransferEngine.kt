@@ -259,11 +259,19 @@ class TransferEngine(
 
     /** Keeps the next chunks the files need on their way, as many as fit in the prefetch limit. */
     private fun fillPrefetch() {
-        while (prefetchNext < prefetchOrder.size && prefetchedBytes < PREFETCH_BYTES) {
-            val index = prefetchOrder[prefetchNext++]
-            if (index !in prefetched && index !in decodedChunks) {
-                prefetched[index] = submit(index)
+        while (prefetchNext < prefetchOrder.size && prefetched.size < PARALLEL_DOWNLOADS) {
+            val index = prefetchOrder[prefetchNext]
+            if (index in prefetched || index in decodedChunks) {
+                prefetchNext++
+                continue
             }
+            // A chunk is only added while it fits; the first one always is, so a large chunk cannot stall the transfer.
+            val size = plan.sharedChunks[index].size
+            if (prefetched.isNotEmpty() && prefetchedBytes + size > PREFETCH_BYTES) {
+                break
+            }
+            prefetched[index] = submit(index)
+            prefetchNext++
         }
     }
 

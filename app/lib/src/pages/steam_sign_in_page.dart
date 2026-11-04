@@ -30,6 +30,10 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
   bool _polling = false;
   bool _working = false;
 
+  /// Counts the sign-ins started, so that one finishing after the user started another or switched methods is
+  /// dropped instead of replacing the current one.
+  int _attempt = 0;
+
   /// Set once the QR code was scanned; the code then stays as it is so a rotation cannot race the approval.
   bool _scanned = false;
 
@@ -57,8 +61,10 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
       return;
     }
     _poll?.cancel();
+    _attempt++;
     setState(() {
       _method = method;
+      _working = false;
       _session = null;
       _error = null;
       _scanned = false;
@@ -70,6 +76,7 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
 
   Future<void> _beginQr() async {
     _poll?.cancel();
+    final attempt = ++_attempt;
     setState(() {
       _session = null;
       _error = null;
@@ -77,11 +84,11 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
     });
     try {
       final challenge = await widget.auth.beginQrSession('Sogen');
-      if (mounted && _method == _Method.qr) {
+      if (mounted && attempt == _attempt) {
         _start(challenge);
       }
     } on SteamException catch (e) {
-      if (mounted) {
+      if (mounted && attempt == _attempt) {
         setState(() => _error = e.message);
       }
     }
@@ -94,22 +101,23 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
     if (account.isEmpty || password.isEmpty) {
       return;
     }
+    final attempt = ++_attempt;
+    _password.clear();
     setState(() {
       _working = true;
       _error = null;
     });
     try {
       final session = await widget.auth.beginCredentialsSession('Sogen', account, password);
-      _password.clear();
-      if (mounted) {
+      if (mounted && attempt == _attempt) {
         _start(session);
       }
     } on SteamException catch (e) {
-      if (mounted) {
+      if (mounted && attempt == _attempt) {
         setState(() => _error = e.message);
       }
     } finally {
-      if (mounted) {
+      if (mounted && attempt == _attempt) {
         setState(() => _working = false);
       }
     }
@@ -121,19 +129,22 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
       return;
     }
     final guard = session.guards.contains(SteamGuard.deviceCode) ? SteamGuard.deviceCode : SteamGuard.emailCode;
+    final attempt = _attempt;
     setState(() {
       _working = true;
       _error = null;
     });
     try {
       await widget.auth.submitGuardCode(session, guard, code);
-      unawaited(_check());
+      if (attempt == _attempt) {
+        unawaited(_check());
+      }
     } on SteamWrongCodeException catch (e) {
-      if (mounted) {
+      if (mounted && attempt == _attempt) {
         setState(() => _error = e.message);
       }
     } on SteamException catch (e) {
-      if (mounted) {
+      if (mounted && attempt == _attempt) {
         _poll?.cancel();
         setState(() {
           _session = null;
@@ -141,7 +152,7 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
         });
       }
     } finally {
-      if (mounted) {
+      if (mounted && attempt == _attempt) {
         setState(() => _working = false);
       }
     }
