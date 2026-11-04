@@ -13,6 +13,9 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.zip.Deflater
 
 class EpicTransferTest {
@@ -20,7 +23,7 @@ class EpicTransferTest {
     val temporary = TemporaryFolder()
 
     private val cdn = HashMap<String, ByteArray>()
-    private val requests = mutableListOf<String>()
+    private val requests = Collections.synchronizedList(mutableListOf<String>())
     private val fetcher = ChunkFetcher { _, path, _ ->
         requests.add(path)
         cdn[path] ?: throw IOException("Missing chunk")
@@ -97,7 +100,25 @@ class EpicTransferTest {
 
         assertArrayEquals(first, output("Game.exe").readBytes())
         assertArrayEquals(second, output("Data/pak.bin").readBytes())
-        assertEquals(listOf("/ChunksV4/01/A_1.chunk", "/ChunksV4/02/B_2.chunk"), requests)
+        assertEquals(listOf("/ChunksV4/01/A_1.chunk", "/ChunksV4/02/B_2.chunk"), requests.sorted())
+    }
+
+    @Test
+    fun laterChunksAreFetchedWhileEarlierOnesAreStillDownloading() {
+        val plan = plan()
+        val secondRequested = CountDownLatch(1)
+        val overlapping = ChunkFetcher { source, path, size ->
+            if (path.endsWith("B_2.chunk")) {
+                secondRequested.countDown()
+            } else if (!secondRequested.await(5, TimeUnit.SECONDS)) {
+                throw IOException("The second chunk was only requested after the first")
+            }
+            fetcher.fetch(source, path, size)
+        }
+
+        TransferEngine(temporary.root, plan, overlapping).run()
+
+        assertArrayEquals(second, output("Data/pak.bin").readBytes())
     }
 
     @Test
