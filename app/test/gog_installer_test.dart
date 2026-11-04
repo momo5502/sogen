@@ -60,10 +60,12 @@ void main() {
 
   late Directory support;
   late List<String> starts;
+  late List<String> cancels;
 
   setUp(() {
     support = Directory.systemTemp.createTempSync('sogen-installer-');
     starts = [];
+    cancels = [];
 
     const game = Game(
       id: '1',
@@ -80,6 +82,8 @@ void main() {
     messenger.setMockMethodCallHandler(downloads, (call) async {
       if (call.method == 'start') {
         starts.add(call.arguments['installId'] as String);
+      } else if (call.method == 'cancel') {
+        cancels.add(call.arguments['installId'] as String);
       }
       return null;
     });
@@ -110,5 +114,25 @@ void main() {
     links.release();
     await first;
     expect(starts, [installId]);
+  });
+
+  test('cancelling while a start fetches its links calls the start off before it reaches the downloader', () async {
+    final links = _SlowLinks();
+    final installer = GogInstaller(
+      GameLibrary.at(File(p.join(support.path, 'games.json')), []),
+      links,
+      supportDirectory: () async => support,
+    );
+    await installer.restore();
+
+    final resume = installer.resume('42', allowMetered: false);
+    final cancel = installer.cancel('42');
+    links.release();
+
+    await resume;
+    await cancel;
+    expect(starts, isEmpty);
+    expect(cancels, [installId]);
+    expect(File(p.join(support.path, 'downloads', installId, 'links.json')).existsSync(), isFalse);
   });
 }

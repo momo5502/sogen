@@ -232,12 +232,19 @@ class MainActivity : FlutterActivity() {
                 }
 
                 requestNotificationPermission()
-                startForegroundService(
-                    Intent(this, DownloadService::class.java)
-                        .setAction(DownloadService.ACTION_START)
-                        .putExtra(DownloadService.EXTRA_INSTALL_ID, installId)
-                        .putExtra(DownloadService.EXTRA_ALLOW_METERED, call.argument<Boolean>("allowMetered") == true),
-                )
+                try {
+                    startForegroundService(
+                        Intent(this, DownloadService::class.java)
+                            .setAction(DownloadService.ACTION_START)
+                            .putExtra(DownloadService.EXTRA_INSTALL_ID, installId)
+                            .putExtra(DownloadService.EXTRA_ALLOW_METERED, call.argument<Boolean>("allowMetered") == true),
+                    )
+                } catch (e: RuntimeException) {
+                    // Android 12 and later refuse to start a foreground service while the app is in the background.
+                    Downloads.release(installId)
+                    result.error("start_failed", e.javaClass.simpleName, null)
+                    return
+                }
                 result.success(null)
             }
 
@@ -249,7 +256,7 @@ class MainActivity : FlutterActivity() {
             }
 
             "cancel" -> {
-                if (Downloads.isRunning && Downloads.current?.installId == installId) {
+                if (Downloads.holds(installId)) {
                     startService(Intent(this, DownloadService::class.java).setAction(DownloadService.ACTION_CANCEL))
                     result.success(null)
                 } else {

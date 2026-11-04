@@ -120,6 +120,8 @@ class GogInstaller extends ChangeNotifier {
 
   /// Set from the moment a start is accepted until the native side runs it, which takes fetching fresh links.
   String? _starting;
+  Future<void>? _startInProgress;
+  final _cancelledStarts = <String>{};
 
   bool get isBusy =>
       _starting != null || _downloads.values.any((download) => download.status == DownloadStatus.running);
@@ -232,11 +234,19 @@ class GogInstaller extends ChangeNotifier {
 
   Future<void> pause() => _channel.invokeMethod<void>('pause');
 
+  /// A start that is still fetching links is called off first, so it never starts a download whose files are gone.
   Future<void> cancel(String productId) async {
     final download = _downloads[productId];
-    if (download != null) {
-      await _channel.invokeMethod<void>('cancel', {'installId': download.installId});
+    if (download == null) {
+      return;
     }
+
+    final starting = _startInProgress;
+    if (_starting == download.installId && starting != null) {
+      _cancelledStarts.add(download.installId);
+      await starting.catchError((Object _) {});
+    }
+    await _channel.invokeMethod<void>('cancel', {'installId': download.installId});
   }
 
   Future<bool> isMetered() async => await _channel.invokeMethod<bool>('isMetered') ?? true;
@@ -248,10 +258,16 @@ class GogInstaller extends ChangeNotifier {
       throw const GogException('Another game is downloading.');
     }
     _starting = pending.installId;
+    final start = _startReserved(pending, allowMetered: allowMetered);
+    _startInProgress = start;
     try {
-      await _startReserved(pending, allowMetered: allowMetered);
+      await start;
+    } on _StartCancelled {
+      // The user cancelled the download while it was starting; cancel() deletes it.
     } finally {
       _starting = null;
+      _startInProgress = null;
+      _cancelledStarts.remove(pending.installId);
       notifyListeners();
     }
   }
@@ -268,13 +284,18 @@ class GogInstaller extends ChangeNotifier {
       'game': [for (final endpoint in await _content.gameEndpoints(pending.game.source!.productId)) endpoint.toJson()],
       'dependency': [for (final endpoint in await _content.dependencyEndpoints()) endpoint.toJson()],
     };
+    if (_cancelledStarts.contains(pending.installId)) {
+      throw const _StartCancelled();
+    }
     await _writeAtomically(File(p.join(staging.path, 'links.json')), jsonEncode(links));
 
     _pending[pending.installId] = pending;
     try {
       await _channel.invokeMethod<void>('start', {'installId': pending.installId, 'allowMetered': allowMetered});
-    } on PlatformException {
-      throw const GogException('Another game is downloading.');
+    } on PlatformException catch (e) {
+      throw e.code == 'busy'
+          ? const GogException('Another game is downloading.')
+          : const GogException('Sogen could not start the download. Open Sogen and try again.');
     }
     // The native side reports the state from here on; a download it already reported on keeps that state.
     if (_downloads[pending.game.source!.productId]?.installId != pending.installId) {
@@ -434,4 +455,8 @@ class GogInstaller extends ChangeNotifier {
     _subscription?.cancel();
     super.dispose();
   }
+}
+
+class _StartCancelled implements Exception {
+  const _StartCancelled();
 }

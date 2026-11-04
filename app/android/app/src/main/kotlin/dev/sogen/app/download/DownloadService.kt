@@ -99,6 +99,10 @@ object Downloads {
         return true
     }
 
+    /** Whether [installId] holds the one download that can run, though its service may not have started it yet. */
+    @Synchronized
+    fun holds(installId: String) = reserved == installId
+
     @Synchronized
     fun release(installId: String) {
         if (reserved == installId) {
