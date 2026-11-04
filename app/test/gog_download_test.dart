@@ -125,7 +125,6 @@ class _FakeContent implements GogContent {
   Future<Object?> buildManifest(GogBuild build) async => {
     'version': 2,
     'baseProductId': '42',
-    'buildId': build.buildId,
     'installDirectory': 'Beneath a Steel Sky',
     'dependencies': declared,
     'depots': [
@@ -187,6 +186,7 @@ class _FakeContent implements GogContent {
     'MSVC2015': Dependency(id: 'MSVC2015', manifest: 'f' * 32, size: 1, bundled: false),
     'nGlide': Dependency(id: 'nGlide', manifest: '1' * 32, size: 1, bundled: true),
     'PhysX': Dependency(id: 'PhysX', manifest: '2' * 32, size: 1, bundled: false),
+    'DOSBox074': Dependency(id: 'DOSBox074', manifest: '3' * 32, size: 1, bundled: true),
   };
 
   @override
@@ -280,6 +280,34 @@ void main() {
         ],
       };
       expect(InstallScript.parse(utf8.encode(jsonEncode(script)), 'en-US').actions, isEmpty);
+    });
+
+    test('accepts the copy of one support file to the same name in the game folder', () {
+      final script = {
+        'actions': [
+          {
+            'install': {
+              'action': 'supportData',
+              'arguments': {'source': r'{supportDir}\app\lure.ini', 'target': '{app}/lure.ini', 'type': 'file'},
+            },
+          },
+        ],
+      };
+      expect(InstallScript.parse(utf8.encode(jsonEncode(script)), 'en-US').actions, isEmpty);
+    });
+
+    test('refuses a support file copied to another name', () {
+      final script = {
+        'actions': [
+          {
+            'install': {
+              'action': 'supportData',
+              'arguments': {'source': '{supportDir}/app/lure.ini', 'target': '{app}/other.ini', 'type': 'file'},
+            },
+          },
+        ],
+      };
+      expect(() => InstallScript.parse(utf8.encode(jsonEncode(script)), 'en-US'), throwsA(isA<GogException>()));
     });
 
     test('refuses support data copied from anywhere else, naming the step', () {
@@ -404,6 +432,71 @@ void main() {
 
     test('two depots with the same file fail instead of one silently winning', () async {
       final content = _FakeContent(extraNeutralItems: [_FakeContent._file('SCUMMVM/scummvm.exe', 1)]);
+      await expectLater(plan(content), throwsA(isA<GogException>()));
+    });
+
+    test(
+      'DOSBox configurations switch to the game resolution instead of drawing into a desktop-sized window',
+      () async {
+        final content = _FakeContent(
+          declared: ['DOSBox074'],
+          extraNeutralItems: [
+            {
+              ..._FakeContent._file(r'app\dosboxGAME.conf', 3),
+              'flags': ['support'],
+            },
+          ],
+        );
+        final steps = (await plan(content)).script.actions.whereType<SetIni>().where((step) => step.section == 'sdl');
+
+        expect(steps.map((step) => (step.file.relative, step.key, step.value)), [
+          ('dosboxGAME.conf', 'fullresolution', 'original'),
+        ]);
+      },
+    );
+
+    test('the first saves of DOSBox games go where their configurations overlay saves', () async {
+      final content = _FakeContent(
+        declared: ['DOSBox074'],
+        extraNeutralItems: [
+          {
+            ..._FakeContent._file(r'save\SAVEGAME\START.SAV', 4),
+            'flags': ['support'],
+          },
+        ],
+      );
+      final files = (await plan(content)).plan.files.map((file) => file.path);
+      expect(files, contains('cloud_saves/SAVEGAME/START.SAV'));
+    });
+
+    test('first saves of other games make the game unavailable', () async {
+      final content = _FakeContent(
+        extraNeutralItems: [
+          {
+            ..._FakeContent._file(r'save\SAVEGAME\START.SAV', 4),
+            'flags': ['support'],
+          },
+        ],
+      );
+      await expectLater(plan(content), throwsA(isA<GogException>()));
+    });
+
+    test('games without DOSBox keep their configurations as they are', () async {
+      final steps = (await plan(_FakeContent())).script.actions
+          .whereType<SetIni>()
+          .where((step) => step.section == 'sdl');
+      expect(steps, isEmpty);
+    });
+
+    test('support files outside app and save make the game unavailable', () async {
+      final content = _FakeContent(
+        extraNeutralItems: [
+          {
+            ..._FakeContent._file(r'other\notes.txt', 1),
+            'flags': ['support'],
+          },
+        ],
+      );
       await expectLater(plan(content), throwsA(isA<GogException>()));
     });
 

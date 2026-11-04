@@ -236,7 +236,13 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
             indicatorSize: TabBarIndicatorSize.tab,
             tabs: [
               for (final (index, tab) in _tabIcons.indexed)
-                _IconTab(label: tab.label, position: _tabs.animation!, index: index, icon: tab.icon),
+                _IconTab(
+                  label: tab.label,
+                  showLabel: MediaQuery.sizeOf(context).width >= _labelledTabsMinWidth,
+                  position: _tabs.animation!,
+                  index: index,
+                  icon: tab.icon,
+                ),
             ],
           ),
         ),
@@ -572,29 +578,52 @@ const _tabIcons = [
 
 /// A tab shown by its icon alone, named by a tooltip and for screen readers, so that all tabs fit side by side. The
 /// icon follows the tab bar's position, so it takes its color gradually while the user swipes towards its tab.
+/// From this width on, every tab has room for its label next to its icon, e.g. on a tablet held sideways.
+const _labelledTabsMinWidth = 600.0;
+
 class _IconTab extends StatelessWidget {
-  const _IconTab({required this.icon, required this.label, required this.position, required this.index});
+  const _IconTab({
+    required this.icon,
+    required this.label,
+    required this.showLabel,
+    required this.position,
+    required this.index,
+  });
 
   final _TabIcon icon;
   final String label;
+  final bool showLabel;
   final Animation<double> position;
   final int index;
 
   @override
   Widget build(BuildContext context) {
+    final iconWidget = SizedBox.square(
+      dimension: 22,
+      child: AnimatedBuilder(
+        animation: position,
+        builder: (context, _) => icon.build((1 - (position.value - index).abs()).clamp(0.0, 1.0)),
+      ),
+    );
+
+    if (showLabel) {
+      return Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            iconWidget,
+            const SizedBox(width: 10),
+            Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+      );
+    }
+
     return Tooltip(
       message: label,
       child: Semantics(
         label: label,
-        child: Tab(
-          child: SizedBox.square(
-            dimension: 22,
-            child: AnimatedBuilder(
-              animation: position,
-              builder: (context, _) => icon.build((1 - (position.value - index).abs()).clamp(0.0, 1.0)),
-            ),
-          ),
-        ),
+        child: Tab(child: iconWidget),
       ),
     );
   }

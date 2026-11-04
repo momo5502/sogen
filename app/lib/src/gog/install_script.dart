@@ -25,7 +25,8 @@ sealed class ScriptAction {
     switch (action) {
       case 'savePath' || 'setRegistry':
         return null;
-      case 'supportData' when arguments['type'] == 'folder' && _isSupportAppCopy(arguments):
+      case 'supportData'
+          when (arguments['type'] == 'folder' || arguments['type'] == 'file') && _isSupportAppCopy(arguments):
         return null;
       case 'supportData' when arguments['type'] == 'folder' && !arguments.containsKey('source'):
         return CreateFolder(_gamePath(arguments['target'], unsupported));
@@ -48,11 +49,20 @@ sealed class ScriptAction {
     }
   }
 
-  /// GOG Galaxy copies the support files below `app` into the game folder; Sogen already installs them there.
+  /// GOG Galaxy copies the support files below `app`, or one of them, to the same place in the game folder; Sogen
+  /// already installs them there.
   static bool _isSupportAppCopy(Map<String, Object?> arguments) {
     String? normalized(Object? path) =>
         path is String ? path.replaceAll(r'\', '/').replaceFirst(RegExp(r'/+$'), '') : null;
-    return normalized(arguments['source']) == '{supportDir}/app' && normalized(arguments['target']) == '{app}';
+    final source = normalized(arguments['source']);
+    final target = normalized(arguments['target']);
+    if (source == null || target == null || !source.startsWith('{supportDir}/app') || !target.startsWith('{app}')) {
+      return false;
+    }
+
+    final sourceRest = source.substring('{supportDir}/app'.length);
+    final targetRest = target.substring('{app}'.length);
+    return sourceRest == targetRest && (sourceRest.isEmpty || sourceRest.startsWith('/'));
   }
 
   /// `{app}` is the game folder; scripts that touch anything outside of it are not supported.

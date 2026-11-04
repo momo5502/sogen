@@ -10,9 +10,13 @@ import 'depot_path.dart';
 
 /// A game GOG can send in a form Sogen installs, before a language is chosen.
 class GogRelease {
-  const GogRelease({required this.productId, required this.manifest});
+  const GogRelease({required this.productId, required this.buildId, required this.manifest});
 
   final String productId;
+
+  /// Taken from the builds list, since some build manifests do not name their build.
+  final String buildId;
+
   final BuildManifest manifest;
 
   List<String> get languages => manifest.languages;
@@ -36,6 +40,8 @@ class GogPlanner {
   /// Dependencies whose files Sogen installs into the game folder, known to need nothing but their files.
   static final _bundledDependencies = RegExp(r'^(ScummVM|DOSBox\w*)$');
 
+  static bool _isDosBox(String dependency) => dependency.startsWith('DOSBox');
+
   /// Installers of runtimes the emulation root already has, so games that list them need nothing more.
   static final _rootRuntimes = RegExp(r'^(DirectX|MSVC\d{4}(_x64)?|dotNet\w*)$');
 
@@ -56,7 +62,7 @@ class GogPlanner {
     if (manifest.baseProductId != productId) {
       throw const GogException('GOG sent a game manifest Sogen does not understand.');
     }
-    return GogRelease(productId: productId, manifest: manifest);
+    return GogRelease(productId: productId, buildId: build.buildId, manifest: manifest);
   }
 
   Future<PlannedInstall> plan(GogRelease release, String language) async {
@@ -65,7 +71,7 @@ class GogPlanner {
       throw const GogException('This game is not available in that language.');
     }
 
-    final files = _PlanBuilder();
+    final files = _PlanBuilder(runsInDosBox: manifest.dependencies.any(_isDosBox));
     final depots = manifest.depots.where(
       (depot) =>
           depot.productId == manifest.baseProductId && (depot.isLanguageNeutral || depot.languages.contains(language)),
@@ -95,7 +101,7 @@ class GogPlanner {
 
     final plan = files.build(
       productId: release.productId,
-      buildId: manifest.buildId,
+      buildId: release.buildId,
       language: language,
       dependencies: bundled,
     );
@@ -106,11 +112,33 @@ class GogPlanner {
     }
     final script = await _read(files, DepotPath.parse('goggame-${release.productId}.script'), endpoints);
 
+    final steps = script == null ? const InstallScript([]) : files.resolveScript(InstallScript.parse(script, language));
     return PlannedInstall(
       plan: plan,
       playTask: files.resolve(PlayTask.fromInfo(info)),
-      script: script == null ? const InstallScript([]) : files.resolveScript(InstallScript.parse(script, language)),
+      script: InstallScript([...steps.actions, ..._dosBoxDisplaySteps(plan)]),
     );
+  }
+
+  /// GOG's DOSBox configurations open a window the size of the desktop and draw the game unscaled in its middle, so
+  /// the screen shows a small picture framed in black. Switching to the game's own resolution makes the window the
+  /// picture, which Sogen then scales to fill the screen.
+  static List<ScriptAction> _dosBoxDisplaySteps(TransferPlan plan) {
+    if (!plan.dependencies.any(_isDosBox)) {
+      return const [];
+    }
+
+    return [
+      for (final file in plan.files)
+        if (RegExp(r'^dosbox[^/]*\.conf$', caseSensitive: false).hasMatch(file.path))
+          SetIni(
+            file: DepotPath.parse(file.path),
+            section: 'sdl',
+            key: 'fullresolution',
+            value: 'original',
+            utf8: false,
+          ),
+    ];
   }
 
   /// Reads one of the small files that describe a game before the rest is downloaded, so that Sogen refuses games
@@ -147,6 +175,11 @@ class _FoundFile {
 }
 
 class _PlanBuilder {
+  _PlanBuilder({required this.runsInDosBox});
+
+  /// Whether the game runs in GOG's DOSBox, whose configurations overlay `cloud_saves` onto the game's drive.
+  final bool runsInDosBox;
+
   final _files = <String, (DepotFile, ChunkSource, int?)>{};
   final _directories = <String, String>{};
   final _containers = <PlannedContainer>[];
@@ -172,12 +205,18 @@ class _PlanBuilder {
   }
 
   /// GOG Galaxy copies the support files below `app` into the game folder, where scripts and play tasks expect them.
-  static DepotFile _relocated(DepotFile file) {
+  /// Those below `save` are the first saves of DOSBox games, which go where their configuration looks for saves.
+  DepotFile _relocated(DepotFile file) {
     if (!file.support) {
       return file;
     }
 
-    final inGame = file.path.segments.first.toLowerCase() == 'app' ? file.path.withoutFirstFolder : null;
+    final below = file.path.withoutFirstFolder;
+    final inGame = switch (file.path.segments.first.toLowerCase()) {
+      'app' => below,
+      'save' when below != null && runsInDosBox => DepotPath.parse('cloud_saves') / below,
+      _ => null,
+    };
     if (inGame == null) {
       throw GogException('This game contains support files (${file.path}) that Sogen cannot install yet.');
     }
