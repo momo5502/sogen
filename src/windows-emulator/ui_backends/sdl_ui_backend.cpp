@@ -675,6 +675,7 @@ namespace sogen
                 bool has_surface{};
                 bool translucent{};
                 std::vector<uint32_t> blended_pixels{};
+                std::optional<std::pair<int, int>> placed_position{};
             };
 
             struct pending_key_release
@@ -788,7 +789,8 @@ namespace sogen
 
                     // A host window sits where its guest window's frame is, so a user move moves the guest window.
                     case SDL_EVENT_WINDOW_MOVED:
-                        if (const auto guest = this->resolve_guest(event.window.windowID); guest != 0)
+                        if (const auto guest = this->resolve_guest(event.window.windowID);
+                            guest != 0 && !this->consume_own_placement(guest, event.window.data1, event.window.data2))
                         {
                             const auto position = (static_cast<uint64_t>(static_cast<uint16_t>(event.window.data2)) << 16) |
                                                   static_cast<uint16_t>(event.window.data1);
@@ -1132,9 +1134,9 @@ namespace sogen
                     return;
                 }
 
-                finish_host_window(window, desc.rect.left, desc.rect.top, flags);
-
                 auto& state = this->windows_[desc.handle];
+                place_host_window(window, state.placed_position, [&] { finish_host_window(window, desc.rect.left, desc.rect.top, flags); });
+
                 state.desc = desc;
                 state.window = window;
                 state.renderer = renderer;
@@ -1225,7 +1227,7 @@ namespace sogen
                     return false;
                 }
 
-                finish_host_window(window, x, y, flags);
+                place_host_window(window, state.placed_position, [&] { finish_host_window(window, x, y, flags); });
 
                 SDL_StopTextInput(old_window);
                 this->guest_by_window_id_.erase(SDL_GetWindowID(old_window));
@@ -1280,9 +1282,11 @@ namespace sogen
                         if (state->desc.top_level)
                         {
                             const auto& insets = state->desc.client_insets;
-                            SDL_SetWindowPosition(state->window, rect.left, rect.top);
-                            SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
-                                              std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
+                            place_host_window(state->window, state->placed_position, [&] {
+                                SDL_SetWindowPosition(state->window, rect.left, rect.top);
+                                SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
+                                                  std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
+                            });
                         }
                         this->redraw_related(window);
                         this->apply_cursor_capture();
@@ -1300,7 +1304,7 @@ namespace sogen
                         {
                             if (visible)
                             {
-                                SDL_ShowWindow(state->window);
+                                place_host_window(state->window, state->placed_position, [&] { SDL_ShowWindow(state->window); });
                                 apply_x11_focus_fallback(state->window);
                             }
                             else
@@ -1852,6 +1856,34 @@ namespace sogen
                                          .relative_motion = relative,
                                          .host_position = host_position});
                 }
+            }
+
+            // The host may put a window elsewhere than asked while placing or showing it (macOS keeps a titled window
+            // below the menu bar) and reports that as a move. Windows would have kept the guest's position, so that
+            // move is the answer to the guest's own request, not a user or window manager move to follow.
+            template <typename Placement>
+            static void place_host_window(SDL_Window* window, std::optional<std::pair<int, int>>& placed_position,
+                                          const Placement& placement)
+            {
+                const auto before = host_window_position(window);
+                placement();
+                if (const auto after = host_window_position(window); after != before)
+                {
+                    placed_position = after;
+                }
+            }
+
+            static std::pair<int, int> host_window_position(SDL_Window* window)
+            {
+                std::pair<int, int> position{};
+                SDL_GetWindowPosition(window, &position.first, &position.second);
+                return position;
+            }
+
+            bool consume_own_placement(const hwnd window, const int x, const int y)
+            {
+                auto* state = this->resolve_window(window);
+                return state && std::exchange(state->placed_position, std::nullopt) == std::pair{x, y};
             }
 
             // The user moved the host window, so the frame origin this backend converts screen coordinates against has
