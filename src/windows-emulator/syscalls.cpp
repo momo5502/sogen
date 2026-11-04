@@ -878,9 +878,11 @@ namespace sogen
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, uint32_t color, uint64_t unused);
         uint64_t handle_NtGdiCreatePatternBrushInternal(const syscall_context& c, handle bitmap, uint32_t unused);
         uint64_t handle_NtGdiCreatePen(const syscall_context& c, uint32_t style, uint32_t width, uint32_t color);
-        uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c);
+        uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c, emulator_pointer log_palette, uint32_t entry_count);
         uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c);
-        NTSTATUS handle_NtGdiDoPalette();
+        LONG handle_NtGdiDoPalette(const syscall_context& c, handle object, uint16_t start, uint16_t count, emulator_pointer entries,
+                                   uint32_t function, BOOL inbound);
+        uint32_t handle_NtGdiGetNearestPaletteIndex(const syscall_context& c, handle palette, COLORREF color);
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
         DWORD handle_NtUserGetGuiResources(const syscall_context& c, handle process, DWORD flags);
         int32_t handle_NtGdiSaveDC(const syscall_context& c, hdc dc);
@@ -2157,6 +2159,7 @@ namespace sogen
         add_handler(NtGdiCreatePaletteInternal);
         add_handler(NtGdiCreateHalftonePalette);
         add_handler(NtGdiDoPalette);
+        add_handler(NtGdiGetNearestPaletteIndex);
         add_handler(NtUserSelectPalette);
         add_handler(NtGdiCreateDIBSection);
         add_handler(NtUserGetKeyNameText);

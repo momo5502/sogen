@@ -156,6 +156,16 @@ namespace sogen
 
     static_assert(sizeof(EMU_TTPOLYCURVE_HEADER) == 0x04);
 
+    struct EMU_PALETTEENTRY
+    {
+        BYTE peRed;
+        BYTE peGreen;
+        BYTE peBlue;
+        BYTE peFlags;
+    };
+
+    static_assert(sizeof(EMU_PALETTEENTRY) == 0x04);
+
     struct EMU_BITMAPINFOHEADER
     {
         DWORD biSize;
