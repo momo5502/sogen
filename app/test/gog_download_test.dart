@@ -190,6 +190,7 @@ class _FakeContent implements GogContent {
     'MSVC2015': Dependency(id: 'MSVC2015', manifest: 'f' * 32, size: 1, bundled: false),
     'nGlide': Dependency(id: 'nGlide', manifest: '1' * 32, size: 1, bundled: true),
     'PhysX': Dependency(id: 'PhysX', manifest: '2' * 32, size: 1, bundled: false),
+    'DOSBox074': Dependency(id: 'DOSBox074', manifest: '3' * 32, size: 1, bundled: true),
   };
 
   @override
@@ -437,6 +438,33 @@ void main() {
     test('two depots with the same file fail instead of one silently winning', () async {
       final content = _FakeContent(extraNeutralItems: [_FakeContent._file('SCUMMVM/scummvm.exe', 1)]);
       await expectLater(plan(content), throwsA(isA<GogException>()));
+    });
+
+    test(
+      'DOSBox configurations switch to the game resolution instead of drawing into a desktop-sized window',
+      () async {
+        final content = _FakeContent(
+          declared: ['DOSBox074'],
+          extraNeutralItems: [
+            {
+              ..._FakeContent._file(r'app\dosboxGAME.conf', 3),
+              'flags': ['support'],
+            },
+          ],
+        );
+        final steps = (await plan(content)).script.actions.whereType<SetIni>().where((step) => step.section == 'sdl');
+
+        expect(steps.map((step) => (step.file.relative, step.key, step.value)), [
+          ('dosboxGAME.conf', 'fullresolution', 'original'),
+        ]);
+      },
+    );
+
+    test('games without DOSBox keep their configurations as they are', () async {
+      final steps = (await plan(_FakeContent())).script.actions
+          .whereType<SetIni>()
+          .where((step) => step.section == 'sdl');
+      expect(steps, isEmpty);
     });
 
     test('support files outside app and save make the game unavailable', () async {

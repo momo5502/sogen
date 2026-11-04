@@ -110,11 +110,33 @@ class GogPlanner {
     }
     final script = await _read(files, DepotPath.parse('goggame-${release.productId}.script'), endpoints);
 
+    final steps = script == null ? const InstallScript([]) : files.resolveScript(InstallScript.parse(script, language));
     return PlannedInstall(
       plan: plan,
       playTask: files.resolve(PlayTask.fromInfo(info)),
-      script: script == null ? const InstallScript([]) : files.resolveScript(InstallScript.parse(script, language)),
+      script: InstallScript([...steps.actions, ..._dosBoxDisplaySteps(plan)]),
     );
+  }
+
+  /// GOG's DOSBox configurations open a window the size of the desktop and draw the game unscaled in its middle, so
+  /// the screen shows a small picture framed in black. Switching to the game's own resolution makes the window the
+  /// picture, which Sogen then scales to fill the screen.
+  static List<ScriptAction> _dosBoxDisplaySteps(TransferPlan plan) {
+    if (!plan.dependencies.any((dependency) => dependency.startsWith('DOSBox'))) {
+      return const [];
+    }
+
+    return [
+      for (final file in plan.files)
+        if (RegExp(r'^dosbox[^/]*\.conf$', caseSensitive: false).hasMatch(file.path))
+          SetIni(
+            file: DepotPath.parse(file.path),
+            section: 'sdl',
+            key: 'fullresolution',
+            value: 'original',
+            utf8: false,
+          ),
+    ];
   }
 
   /// Reads one of the small files that describe a game before the rest is downloaded, so that Sogen refuses games
