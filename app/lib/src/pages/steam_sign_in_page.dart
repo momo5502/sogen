@@ -136,7 +136,7 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
     });
     try {
       await widget.auth.submitGuardCode(session, guard, code);
-      if (attempt == _attempt) {
+      if (mounted && attempt == _attempt) {
         unawaited(_check());
       }
     } on SteamWrongCodeException catch (e) {
@@ -173,9 +173,11 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
       return;
     }
     _polling = true;
+    final attempt = _attempt;
+    bool current() => mounted && attempt == _attempt && identical(session, _session);
     try {
       final poll = await widget.auth.poll(session);
-      if (!mounted || !identical(session, _session)) {
+      if (!mounted || attempt != _attempt || !identical(session, _session)) {
         return;
       }
       if (poll.approved) {
@@ -188,7 +190,7 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
         });
       }
     } on SteamAuthExpiredException catch (e) {
-      if (mounted) {
+      if (current()) {
         if (_method == _Method.qr) {
           unawaited(_beginQr());
         } else {
@@ -200,7 +202,7 @@ class _SteamSignInPageState extends State<SteamSignInPage> {
         }
       }
     } on SteamException catch (e) {
-      if (mounted) {
+      if (current()) {
         _poll?.cancel();
         setState(() => _error = e.message);
       }
