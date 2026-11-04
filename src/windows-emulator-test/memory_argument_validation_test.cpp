@@ -11,6 +11,16 @@ namespace sogen::syscalls
                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                     emulator_object<ULARGE_INTEGER> maximum_size, ULONG section_page_protection,
                                     ULONG allocation_attributes, handle file_handle);
+    NTSTATUS handle_NtMapViewOfSection(const syscall_context& c, handle section_handle, handle process_handle,
+                                       emulator_object<uint64_t> base_address,
+                                       EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, ULONG_PTR) zero_bits,
+                                       EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) commit_size,
+                                       emulator_object<LARGE_INTEGER> section_offset,
+                                       emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size,
+                                       SECTION_INHERIT inherit_disposition, ULONG allocation_type, ULONG win32_protect);
+    NTSTATUS handle_NtFlushVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
+                                         emulator_object<uint64_t> region_size,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
     NTSTATUS handle_NtQuerySection(const syscall_context& c, handle section_handle, SECTION_INFORMATION_CLASS section_information_class,
                                    uint64_t section_information, EmulatorTraits<Emu64>::SIZE_T section_information_length,
                                    emulator_object<EmulatorTraits<Emu64>::SIZE_T> result_length);
@@ -21,6 +31,15 @@ namespace sogen::test
     namespace
     {
         constexpr uint32_t untouched = 0xAAAAAAAA;
+
+        struct flush_result
+        {
+            NTSTATUS status;
+            uint64_t base;
+            uint64_t size;
+            NTSTATUS io_status;
+            uint64_t io_information;
+        };
 
         struct protect_result
         {
@@ -74,6 +93,42 @@ namespace sogen::test
                 EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateSection(this->context(), output, 0, {this->emu->memory}, maximum_size,
                                                                            PAGE_READWRITE, SEC_COMMIT, {}));
                 return output.read();
+            }
+
+            uint64_t map_pagefile_view(const uint64_t size)
+            {
+                const emulator_object<handle> section{this->emu->memory, this->storage + 0x300};
+                const emulator_object<ULARGE_INTEGER> maximum_size{this->emu->memory, this->storage + 0x400};
+                maximum_size.write(ULARGE_INTEGER{.QuadPart = size});
+                EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateSection(this->context(), section, 0, {this->emu->memory}, maximum_size,
+                                                                           PAGE_READWRITE, SEC_COMMIT, {}));
+
+                const emulator_object<uint64_t> base{this->emu->memory, this->storage + 0x600};
+                const emulator_object<EmulatorTraits<Emu64>::SIZE_T> view_size{this->emu->memory, this->storage + 0x608};
+                base.write(0);
+                view_size.write(0);
+                EXPECT_EQ(STATUS_SUCCESS,
+                          syscalls::handle_NtMapViewOfSection(this->context(), section.read(), CURRENT_PROCESS, base, 0, 0,
+                                                              {this->emu->memory}, view_size, ViewUnmap, 0, PAGE_READWRITE));
+                return base.read();
+            }
+
+            flush_result flush(const uint64_t base, const uint64_t size)
+            {
+                const emulator_object<uint64_t> base_address{this->emu->memory, this->storage + 0x900};
+                const emulator_object<uint64_t> region_size{this->emu->memory, this->storage + 0x908};
+                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status{this->emu->memory, this->storage + 0x910};
+                base_address.write(base);
+                region_size.write(size);
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> sentinel{};
+                sentinel.Status = untouched;
+                sentinel.Information = untouched;
+                io_status.write(sentinel);
+
+                const auto status =
+                    syscalls::handle_NtFlushVirtualMemory(this->context(), CURRENT_PROCESS, base_address, region_size, io_status);
+                const auto block = io_status.read();
+                return {status, base_address.read(), region_size.read(), block.Status, block.Information};
             }
 
             handle create_image_section()
@@ -154,6 +209,36 @@ namespace sogen::test
         EXPECT_EQ(committed, result.base);
         EXPECT_EQ(0x1000u, result.size);
         EXPECT_EQ(static_cast<uint32_t>(PAGE_READWRITE), result.old_protection);
+    }
+
+    TEST_F(MemoryArgumentValidationTest, FlushChecksTheSizeAgainstTheViewWithoutWrapping)
+    {
+        constexpr uint64_t view_length = 0x10000;
+        constexpr uint64_t offset = 0xFFF;
+        const auto view = this->map_pagefile_view(view_length);
+        ASSERT_NE(0u, view);
+
+        struct flush_case
+        {
+            uint64_t size;
+            flush_result expected;
+        };
+
+        const std::vector<flush_case> cases{
+            {UINT64_MAX, {STATUS_INVALID_PARAMETER, view + offset, UINT64_MAX, untouched, untouched}},
+            {view_length + 1, {STATUS_NOT_MAPPED_VIEW, view, view_length + 1, STATUS_NOT_MAPPED_VIEW, 0}},
+            {view_length - offset, {STATUS_NOT_MAPPED_DATA, view, view_length - offset, STATUS_NOT_MAPPED_DATA, 0}},
+        };
+
+        for (const auto& test_case : cases)
+        {
+            const auto result = this->flush(view + offset, test_case.size);
+            EXPECT_EQ(test_case.expected.status, result.status) << test_case.size;
+            EXPECT_EQ(test_case.expected.base, result.base) << test_case.size;
+            EXPECT_EQ(test_case.expected.size, result.size) << test_case.size;
+            EXPECT_EQ(test_case.expected.io_status, result.io_status) << test_case.size;
+            EXPECT_EQ(test_case.expected.io_information, result.io_information) << test_case.size;
+        }
     }
 
     TEST_F(MemoryArgumentValidationTest, QueryingADataSectionRefusesImageAndUnknownClasses)
