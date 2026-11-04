@@ -1,7 +1,9 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:simple_icons/simple_icons.dart';
 
 import '../ads.dart';
 import '../emulation_root.dart';
@@ -228,12 +230,12 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
               tabAlignment: TabAlignment.start,
               padding: const EdgeInsets.symmetric(horizontal: 12),
               dividerColor: SogenColors.neutral800,
-              tabs: const [
-                Tab(text: 'Installed'),
-                Tab(text: 'GOG'),
-                Tab(text: 'Steam'),
-                Tab(text: 'Epic'),
-                Tab(text: 'Settings'),
+              tabs: [
+                const _LabelledTab(icon: _SogenMark(), label: 'Installed'),
+                const _LabelledTab(icon: Icon(SimpleIcons.gogdotcom), label: 'GOG'),
+                const _LabelledTab(icon: Icon(SimpleIcons.steam), label: 'Steam'),
+                const _LabelledTab(icon: Icon(SimpleIcons.epicgames), label: 'Epic'),
+                const _LabelledTab(icon: Icon(LucideIcons.settings), label: 'Settings'),
               ],
             ),
             Expanded(
@@ -547,6 +549,45 @@ class _EmptyLibrary extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// A tab showing its icon next to its label rather than above it, so the tab bar keeps the height of a text tab.
+class _LabelledTab extends StatelessWidget {
+  const _LabelledTab({required this.icon, required this.label});
+
+  final Widget icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tab(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconTheme.merge(
+            data: const IconThemeData(size: 18),
+            child: SizedBox.square(dimension: 18, child: icon),
+          ),
+          const SizedBox(width: 8),
+          Text(label),
+        ],
+      ),
+    );
+  }
+}
+
+/// The Sogen logo without its dark disc, drawn in the tab's color like the other tab icons.
+class _SogenMark extends StatelessWidget {
+  const _SogenMark();
+
+  @override
+  Widget build(BuildContext context) {
+    final color = IconTheme.of(context).color ?? DefaultTextStyle.of(context).style.color;
+    return SvgPicture.asset(
+      'assets/sogen_mark.svg',
+      colorFilter: color == null ? null : ColorFilter.mode(color, BlendMode.srcIn),
     );
   }
 }
