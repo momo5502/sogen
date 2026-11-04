@@ -270,8 +270,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   Widget _buildInstalled(bool installed) {
-    final theme = Theme.of(context);
-
     return ListenableBuilder(
       listenable: Listenable.merge([widget.library, widget.settings]),
       builder: (context, _) {
@@ -304,18 +302,6 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 ),
               ),
             if (installed) ...[
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                sliver: SliverToBoxAdapter(
-                  child: Row(
-                    children: [
-                      Text('Library', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                      const SizedBox(width: 12),
-                      Pill(label: games.length == 1 ? '1 game' : '${games.length} games'),
-                    ],
-                  ),
-                ),
-              ),
               if (games.isEmpty)
                 const SliverPadding(
                   padding: EdgeInsets.symmetric(horizontal: 24),
