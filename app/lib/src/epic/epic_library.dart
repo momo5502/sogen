@@ -80,10 +80,11 @@ class EpicLibrary {
 
   Future<List<EpicGame>> games() async {
     final installable = await _windowsApps();
+    // An account can hold several entitlements to the same catalog item, each listed as a record of its own.
     final owned = <String, _LibraryItem>{};
     for (final item in await _libraryItems()) {
       if (item.namespace != _engineNamespace && installable.contains(item.appName)) {
-        owned.putIfAbsent(item.appName, () => item);
+        owned.putIfAbsent('${item.namespace}/${item.catalogItemId}', () => item);
       }
     }
 
@@ -101,10 +102,9 @@ class EpicLibrary {
     for (final (index, entry) in byNamespace.entries.indexed) {
       for (final item in entry.value) {
         final metadata = catalogs[index][item.catalogItemId];
-        if (metadata is Map<String, Object?> && metadata['mainGameItem'] != null) {
-          continue;
+        if (_isGame(metadata)) {
+          games.add(_game(item, metadata));
         }
-        games.add(_game(item, metadata));
       }
     }
 
@@ -198,26 +198,54 @@ class EpicLibrary {
     );
   }
 
-  /// The wide box art, since the library shows games in wide tiles.
+  /// Add-ons and DLC are catalog items of their own that the launcher lists below their game, not as games.
+  static bool _isGame(Object? metadata) {
+    if (metadata is! Map<String, Object?>) {
+      return true;
+    }
+    if (metadata['mainGameItem'] != null) {
+      return false;
+    }
+    final categories = metadata['categories'];
+    final paths = [
+      if (categories is List<Object?>)
+        for (final category in categories)
+          if (category case {'path': final String path}) path,
+    ];
+    return paths.isEmpty ||
+        (paths.any((path) => path == 'games' || path == 'applications') && !paths.contains('addons'));
+  }
+
+  /// Wide art first, since the library shows games in wide tiles, then whatever image the catalog has.
   static Uri? _imageUrl(Object? metadata) {
     final images = metadata is Map<String, Object?> ? metadata['keyImages'] : null;
     if (images is! List<Object?>) {
       return null;
     }
 
-    for (final type in const ['DieselGameBox', 'OfferImageWide', 'DieselStoreFrontWide', 'Thumbnail']) {
-      for (final image in images) {
-        if (image case {'type': final String imageType, 'url': final String url} when imageType == type) {
-          final parsed = Uri.tryParse(url);
-          final host = parsed?.host ?? '';
-          if (parsed?.scheme == 'https' && (host.endsWith('.epicgames.com') || host.endsWith('.unrealengine.com'))) {
-            return parsed;
-          }
-        }
+    final byType = <String, Uri>{
+      for (final image in images.reversed)
+        if (image case {'type': final String type, 'url': final String url})
+          if (Uri.tryParse(url) case final parsed? when parsed.scheme == 'https' && parsed.host.isNotEmpty)
+            type: parsed,
+    };
+    for (final type in _imageTypes) {
+      if (byType[type] case final url?) {
+        return url;
       }
     }
-    return null;
+    return byType.values.firstOrNull;
   }
+
+  static const _imageTypes = [
+    'DieselGameBox',
+    'OfferImageWide',
+    'DieselStoreFrontWide',
+    'Featured',
+    'DieselGameBoxTall',
+    'OfferImageTall',
+    'Thumbnail',
+  ];
 }
 
 class _LibraryItem {

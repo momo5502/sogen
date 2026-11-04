@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sogen_app/src/epic/epic_account.dart';
 import 'package:sogen_app/src/epic/epic_http.dart';
+import 'package:sogen_app/src/epic/epic_library.dart';
 import 'package:sogen_app/src/epic/epic_manifest.dart';
 import 'package:sogen_app/src/epic/epic_planner.dart';
 import 'package:sogen_app/src/store/store_account.dart';
@@ -277,6 +278,78 @@ void main() {
       final manifest = EpicManifest.parse(_manifest(_body([_shared, _tail], _files, launchExe: 'Missing.exe')));
 
       expect(() => EpicPlanner.planManifest('Game', manifest), throwsA(isA<EpicException>()));
+    });
+  });
+
+  group('EpicLibrary', () {
+    http.Response json(Object body) => http.Response(jsonEncode(body), 200);
+
+    Map<String, Object> record(String appName, String catalogItemId) => {
+      'namespace': 'ns',
+      'catalogItemId': catalogItemId,
+      'appName': appName,
+      'sandboxType': 'PUBLIC',
+    };
+
+    test('a game is listed once however many records name it, without its add-ons', () async {
+      final secrets = _MemorySecrets()..values['epic'] = jsonEncode({'refreshToken': 'stored'});
+      final client = MockClient((request) async {
+        final path = request.url.path;
+        if (path.endsWith('/oauth/token')) {
+          return json({'access_token': 'a', 'refresh_token': 'r', 'expires_in': 3600});
+        }
+        if (path.endsWith('/assets/Windows')) {
+          return json([
+            for (final app in ['Game', 'GameAgain', 'Addon', 'Other']) {'appName': app},
+          ]);
+        }
+        if (path.endsWith('/library/api/public/items')) {
+          return json({
+            'records': [
+              record('Game', 'game'),
+              record('GameAgain', 'game'),
+              record('Addon', 'addon'),
+              record('Other', 'other'),
+            ],
+            'responseMetadata': <String, Object>{},
+          });
+        }
+        return json({
+          'game': {
+            'title': 'Game',
+            'categories': [
+              {'path': 'games'},
+            ],
+            'keyImages': [
+              {'type': 'DieselGameBoxTall', 'url': 'https://cdn1.epicgames.com/tall.jpg'},
+              {'type': 'DieselGameBox', 'url': 'https://cdn1.epicgames.com/wide.jpg'},
+            ],
+          },
+          'addon': {
+            'title': 'Game: Soundtrack',
+            'categories': [
+              {'path': 'addons'},
+            ],
+          },
+          'other': {
+            'title': 'Other',
+            'categories': [
+              {'path': 'games'},
+            ],
+            'keyImages': [
+              {'type': 'SomethingNew', 'url': 'https://media.example/other.jpg'},
+            ],
+          },
+        });
+      });
+      final account = EpicAccount(secrets: secrets, loginPage: (_) async => null, client: client);
+      await account.restore();
+
+      final games = await EpicLibrary(EpicApi(account, client: client)).games();
+
+      expect(games.map((game) => game.title), ['Game', 'Other']);
+      expect(games.first.imageUrl.toString(), 'https://cdn1.epicgames.com/wide.jpg');
+      expect(games.last.imageUrl.toString(), 'https://media.example/other.jpg');
     });
   });
 
