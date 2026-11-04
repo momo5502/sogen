@@ -6,6 +6,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.io.RandomAccessFile
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.zip.DataFormatException
 import java.util.zip.Inflater
@@ -163,9 +165,8 @@ class TransferEngine(
             throw DamagedDownloadException("A downloaded file does not match what GOG said")
         }
 
-        if (!part.renameTo(output)) {
-            throw IOException("Could not finish writing a file")
-        }
+        // A damaged file from an earlier run is replaced; File.renameTo only replaces on some platforms.
+        Files.move(part.toPath(), output.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         return actualSha256
     }
 

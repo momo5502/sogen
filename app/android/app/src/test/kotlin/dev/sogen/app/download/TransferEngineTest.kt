@@ -48,7 +48,7 @@ class TransferEngineTest {
     private val small = "small".toByteArray()
 
     private fun plan(): TransferPlan {
-        val container = cdn.add(Stored("....$small....".toByteArray()))
+        val container = cdn.add(Stored("....".toByteArray() + small + "....".toByteArray()))
         val json = JSONObject()
             .put("format", TransferPlan.FORMAT)
             .put("productId", "1")
