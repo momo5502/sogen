@@ -74,6 +74,7 @@ CALL :collect_file "%WINDIR%\SysWOW64\en-US", comdlg32.dll.mui, %EMU_SYSDIR_WOW6
 CALL :collect coml2.dll
 CALL :collect coremessaging.dll
 CALL :collect credssp.dll
+CALL :collect crtdll.dll
 CALL :collect crypt32.dll
 CALL :collect cryptbase.dll
 CALL :collect cryptsp.dll
@@ -91,6 +92,7 @@ CALL :collect dciman32.dll
 CALL :collect ddraw.dll
 CALL :collect devobj.dll
 CALL :collect diagnosticdatasettings.dll
+CALL :collect dinput.dll
 CALL :collect dinput8.dll
 CALL :collect dnsapi.dll
 CALL :collect dpapi.dll
@@ -193,6 +195,7 @@ CALL :collect shcore.dll
 CALL :collect shell32.dll
 CALL :collect_file "%WINDIR%\System32\en-US", shell32.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect_file "%WINDIR%\SysWOW64\en-US", shell32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
+CALL :collect shfolder.dll
 CALL :collect shlwapi.dll
 CALL :collect slwga.dll
 CALL :collect sppc.dll
