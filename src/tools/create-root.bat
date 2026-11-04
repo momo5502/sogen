@@ -71,6 +71,7 @@ CALL :collect comctl32.dll
 CALL :collect comdlg32.dll
 CALL :collect_file "%WINDIR%\System32\en-US", comdlg32.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect_file "%WINDIR%\SysWOW64\en-US", comdlg32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
+CALL :collect coml2.dll
 CALL :collect coremessaging.dll
 CALL :collect credssp.dll
 CALL :collect crypt32.dll
@@ -116,7 +117,9 @@ CALL :collect iphlpapi.dll
 CALL :collect kdcom.dll
 CALL :collect kernel.appcore.dll
 CALL :collect kernel32.dll
+CALL :collect_file "%WINDIR%\System32\en-US", kernel32.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect kernelbase.dll
+CALL :collect_file "%WINDIR%\System32\en-US", kernelbase.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect ktmw32.dll
 CALL :collect mfperfhelper.dll
 CALL :collect mfplat.dll
@@ -132,6 +135,7 @@ CALL :collect msasn1.dll
 CALL :collect mscms.dll
 CALL :collect mscoree.dll
 CALL :collect msdmo.dll
+CALL :collect msimg32.dll
 CALL :collect mskeyprotect.dll
 CALL :collect msvcp140.dll
 CALL :collect msvcp140_1.dll
@@ -160,6 +164,8 @@ CALL :collect ntasn1.dll
 CALL :collect ntdll.dll
 CALL :collect ntmarta.dll
 CALL :collect ole32.dll
+CALL :collect oleacc.dll
+CALL :collect oleaccrc.dll
 CALL :collect oleaut32.dll
 CALL :collect opengl32.dll
 CALL :collect pdh.dll
