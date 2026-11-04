@@ -203,6 +203,43 @@ namespace sogen
                     return mod->module_path.to_unc_path();
                 }
             }
+
+            NTSTATUS release_page_range(const syscall_context& c, const emulator_object<uint64_t> base_address,
+                                        const emulator_object<uint64_t> region_size)
+            {
+                const auto requested_base = base_address.read();
+                const auto release_base = page_align_down(requested_base);
+                const auto release_end = page_align_up(requested_base + region_size.read());
+
+                const auto region_info = c.win_emu.memory.get_region_info(release_base);
+                if (!region_info.is_reserved)
+                {
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+                }
+
+                const auto denied_status = memory_region_policy::nt_free_virtual_memory_denied_status(region_info.kind);
+                if (denied_status != STATUS_SUCCESS)
+                {
+                    return denied_status;
+                }
+
+                if (region_info.kind != memory_region_kind::private_allocation)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (release_end > region_info.allocation_base + region_info.allocation_length)
+                {
+                    return STATUS_UNABLE_TO_FREE_VM;
+                }
+
+                const auto release_length = static_cast<size_t>(release_end - release_base);
+                c.win_emu.memory.release_memory(release_base, release_length);
+
+                base_address.write(release_base);
+                region_size.write(release_length);
+                return STATUS_SUCCESS;
+            }
         }
 
         NTSTATUS query_child_memory(const syscall_context& c, const emulator_process& process, const uint64_t base_address,
@@ -792,8 +829,19 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER_4;
             }
 
+            const auto release = (free_type & MEM_RELEASE) != 0;
+            if (release && (free_type & MEM_DECOMMIT))
+            {
+                return STATUS_INVALID_PARAMETER_4;
+            }
+
             const auto allocation_base = base_address.read();
             const auto allocation_size = bytes_to_allocate.read();
+
+            if (release && (allocation_base > MAX_ALLOCATION_ADDRESS || allocation_size > MAX_ALLOCATION_END_EXCL - allocation_base))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
 
             if (!c.proc.is_current_process_handle(process_handle))
             {
@@ -803,7 +851,6 @@ namespace sogen
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
-                const bool release = (free_type & MEM_RELEASE) != 0;
                 if (free_type & ~(MEM_RELEASE | MEM_DECOMMIT))
                 {
                     return STATUS_INVALID_PARAMETER_4;
@@ -821,7 +868,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (free_type & MEM_RELEASE)
+            if (release)
             {
                 if (free_type & (MEM_PRESERVE_PLACEHOLDER | MEM_COALESCE_PLACEHOLDERS))
                 {
@@ -842,7 +889,7 @@ namespace sogen
                 }
                 if (allocation_size)
                 {
-                    return STATUS_INVALID_PARAMETER;
+                    return release_page_range(c, base_address, bytes_to_allocate);
                 }
 
                 // The base is rounded down to a page; the rounded base must equal the region's base.
