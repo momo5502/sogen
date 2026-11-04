@@ -155,8 +155,8 @@ class TransferEngine(
     ): String {
         output.parentFile?.mkdirs()
         val part = File(output.path + PART_SUFFIX)
-        val md5Digest = MessageDigest.getInstance("MD5")
-        val sha1Digest = MessageDigest.getInstance("SHA-1")
+        val md5Digest = expected.md5?.let { MessageDigest.getInstance("MD5") }
+        val sha1Digest = expected.sha1?.let { MessageDigest.getInstance("SHA-1") }
         val sha256Digest = MessageDigest.getInstance("SHA-256")
         var length = 0L
 
@@ -171,8 +171,8 @@ class TransferEngine(
                     throw DamagedDownloadException("A file is larger than its store said")
                 }
                 stream.write(bytes, offset, count)
-                md5Digest.update(bytes, offset, count)
-                sha1Digest.update(bytes, offset, count)
+                md5Digest?.update(bytes, offset, count)
+                sha1Digest?.update(bytes, offset, count)
                 sha256Digest.update(bytes, offset, count)
                 if (countProgress) {
                     written += count
@@ -183,8 +183,8 @@ class TransferEngine(
         }
 
         val actualSha256 = sha256Digest.digest().toHex()
-        val damaged = length != size || expected.md5 != null && md5Digest.digest().toHex() != expected.md5 ||
-            expected.sha1 != null && sha1Digest.digest().toHex() != expected.sha1 ||
+        val damaged = length != size || md5Digest != null && md5Digest.digest().toHex() != expected.md5 ||
+            sha1Digest != null && sha1Digest.digest().toHex() != expected.sha1 ||
             expected.sha256 != null && actualSha256 != expected.sha256
         if (damaged) {
             part.delete()

@@ -71,7 +71,11 @@ class SteamPlanner {
         continue;
       }
       final code = await _client.manifestRequestCode(depot.appId, depot.id, depot.manifestId, branch);
-      manifests.add(SteamManifest.parse(await _manifest(hosts, depot, code), key));
+      final manifest = SteamManifest.parse(await _manifest(hosts, depot, code), key);
+      if (manifest.depotId != depot.id || manifest.manifestId != depot.manifestId) {
+        throw const SteamException('Steam sent the manifest of another depot.');
+      }
+      manifests.add(manifest);
     }
     if (manifests.isEmpty) {
       throw const SteamException('This game has no files for Windows that your account owns.');
