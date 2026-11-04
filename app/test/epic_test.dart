@@ -228,6 +228,23 @@ void main() {
       );
     });
 
+    test('a body that inflates beyond the size the header gives is rejected', () {
+      final body = _body([_shared, _tail], _files);
+      final manifest = _manifest(body);
+      ByteData.sublistView(manifest).setUint32(8, body.length - 1, Endian.little);
+
+      expect(() => EpicManifest.parse(manifest), throwsA(isA<EpicException>()));
+    });
+
+    test('an uncompressed body that does not match its hash is rejected', () {
+      final body = _body([_shared, _tail], _files);
+
+      expect(
+        () => EpicManifest.parse(_manifest(body, storedAs: 0, hashOverride: List.filled(20, 0))),
+        throwsA(isA<EpicException>()),
+      );
+    });
+
     test('an encrypted manifest is refused', () {
       expect(
         () => EpicManifest.parse(_manifest(_body([_shared, _tail], _files), storedAs: 3)),

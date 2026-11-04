@@ -115,21 +115,33 @@ Object? _decode(List<int> bytes) {
 
 /// Inflates zlib data, failing once the result would grow beyond [maxBytes].
 Uint8List inflateBounded(StoreService service, List<int> compressed, {required int maxBytes}) {
-  final inflated = BytesBuilder(copy: false);
-  final sink = ZLibCodec().decoder.startChunkedConversion(
-    ByteConversionSink.withCallback((bytes) => inflated.add(bytes)),
-  );
+  final inflated = _BoundedBytes(service, maxBytes);
+  final sink = ZLibCodec().decoder.startChunkedConversion(ByteConversionSink.from(inflated));
   for (var offset = 0; offset < compressed.length; offset += 64 * 1024) {
     final end = offset + 64 * 1024 < compressed.length ? offset + 64 * 1024 : compressed.length;
     sink.add(compressed.sublist(offset, end));
-    if (inflated.length > maxBytes) {
-      throw service.error('${service.name} sent data that is too large.');
-    }
   }
   sink.close();
-  if (inflated.length > maxBytes) {
-    throw service.error('${service.name} sent data that is too large.');
+  return inflated.bytes.takeBytes();
+}
+
+/// Collects the decoder's output as it comes, refusing each piece that would grow it beyond [maxBytes] before keeping
+/// it.
+class _BoundedBytes implements Sink<List<int>> {
+  _BoundedBytes(this._service, this._maxBytes);
+
+  final StoreService _service;
+  final int _maxBytes;
+  final bytes = BytesBuilder(copy: false);
+
+  @override
+  void add(List<int> data) {
+    if (data.length > _maxBytes - bytes.length) {
+      throw _service.error('${_service.name} sent data that is too large.');
+    }
+    bytes.add(data);
   }
 
-  return inflated.takeBytes();
+  @override
+  void close() {}
 }

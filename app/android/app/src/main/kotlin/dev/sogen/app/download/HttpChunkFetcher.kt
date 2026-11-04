@@ -99,12 +99,12 @@ private fun download(url: URL, size: Long): ByteArray {
             while (length < body.size) {
                 val read = stream.read(body, length, body.size - length)
                 if (read < 0) {
-                    throw DamagedDownloadException("A download from GOG was cut short")
+                    throw DamagedDownloadException("A download was cut short")
                 }
                 length += read
             }
             if (stream.read() >= 0) {
-                throw DamagedDownloadException("A download from GOG was damaged")
+                throw DamagedDownloadException("A download was damaged")
             }
         }
         return body

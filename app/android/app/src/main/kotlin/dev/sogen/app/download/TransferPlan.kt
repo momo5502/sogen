@@ -171,7 +171,7 @@ data class TransferPlan(
         private fun parts(array: JSONArray, sharedChunks: List<SharedChunk>): List<ChunkPart> = array.objects().map {
             val part = ChunkPart(chunk = it.getInt("chunk"), offset = it.getLong("offset"), size = it.getLong("size"))
             check(part.chunk in sharedChunks.indices && part.offset >= 0 && part.size >= 0, "Bad part")
-            check(part.offset + part.size <= sharedChunks[part.chunk].size, "Part outside chunk")
+            check(Math.addExact(part.offset, part.size) <= sharedChunks[part.chunk].size, "Part outside chunk")
             part
         }
 

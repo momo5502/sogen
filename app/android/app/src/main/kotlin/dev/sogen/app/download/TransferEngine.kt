@@ -48,10 +48,8 @@ class TransferEngine(
     private var written = 0L
 
     /** Files take neighbouring parts of the same chunks, so recently decoded chunks are kept for the next files. */
-    private val decodedChunks = object : LinkedHashMap<Int, ByteArray>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, ByteArray>) =
-            values.sumOf { it.size.toLong() } > DECODED_CHUNK_CACHE_BYTES
-    }
+    private val decodedChunks = LinkedHashMap<Int, ByteArray>(16, 0.75f, true)
+    private var decodedChunkBytes = 0L
 
     fun run() {
         filesRoot.mkdirs()
@@ -96,7 +94,7 @@ class TransferEngine(
         val output = File(containersRoot, "$index.bin")
         val sha256 = writeChecked(output, plan.containers[index].size, Expected(), countProgress = false) { sink ->
             for (chunk in plan.containers[index].chunks) {
-                sink(inflate(plan.containers[index].source, chunk))
+                sink.all(inflate(plan.containers[index].source, chunk))
             }
         }
         journal.append(containerKey(index), sha256)
@@ -109,12 +107,11 @@ class TransferEngine(
             val container = file.container
             if (file.parts.isNotEmpty()) {
                 for (part in file.parts) {
-                    val chunk = sharedChunk(part.chunk)
-                    sink(chunk.copyOfRange(part.offset.toInt(), (part.offset + part.size).toInt()))
+                    sink(sharedChunk(part.chunk), part.offset.toInt(), part.size.toInt())
                 }
             } else if (container == null) {
                 for (chunk in file.chunks) {
-                    sink(inflate(file.source, chunk))
+                    sink.all(inflate(file.source, chunk))
                 }
             } else {
                 RandomAccessFile(File(containersRoot, "$container.bin"), "r").use { source ->
@@ -123,7 +120,7 @@ class TransferEngine(
                     while (remaining > 0) {
                         val buffer = ByteArray(minOf(remaining, COPY_BUFFER_SIZE.toLong()).toInt())
                         source.readFully(buffer)
-                        sink(buffer)
+                        sink.all(buffer)
                         remaining -= buffer.size
                     }
                 }
@@ -135,13 +132,20 @@ class TransferEngine(
 
     private class Expected(val md5: String? = null, val sha1: String? = null, val sha256: String? = null)
 
+    /** Takes [length] bytes from [offset] of a buffer, so parts of a shared chunk are written without copying them. */
+    private fun interface Sink {
+        operator fun invoke(bytes: ByteArray, offset: Int, length: Int)
+
+        fun all(bytes: ByteArray) = invoke(bytes, 0, bytes.size)
+    }
+
     /** Writes [output] through a `.part` file, checking its size and hashes before it takes the final name. */
     private fun writeChecked(
         output: File,
         size: Long,
         expected: Expected,
         countProgress: Boolean,
-        produce: ((ByteArray) -> Unit) -> Unit,
+        produce: (Sink) -> Unit,
     ): String {
         output.parentFile?.mkdirs()
         val part = File(output.path + PART_SUFFIX)
@@ -151,21 +155,21 @@ class TransferEngine(
         var length = 0L
 
         FileOutputStream(part).use { stream ->
-            produce { bytes ->
+            produce { bytes, offset, count ->
                 if (isStopped()) {
                     throw TransferStoppedException()
                 }
 
-                length += bytes.size
+                length += count
                 if (length > size) {
-                    throw DamagedDownloadException("A file is larger than GOG said")
+                    throw DamagedDownloadException("A file is larger than its store said")
                 }
-                stream.write(bytes)
-                md5Digest.update(bytes)
-                sha1Digest.update(bytes)
-                sha256Digest.update(bytes)
+                stream.write(bytes, offset, count)
+                md5Digest.update(bytes, offset, count)
+                sha1Digest.update(bytes, offset, count)
+                sha256Digest.update(bytes, offset, count)
                 if (countProgress) {
-                    written += bytes.size
+                    written += count
                     onProgress(written, plan.installedBytes)
                 }
             }
@@ -178,7 +182,7 @@ class TransferEngine(
             expected.sha256 != null && actualSha256 != expected.sha256
         if (damaged) {
             part.delete()
-            throw DamagedDownloadException("A downloaded file does not match what GOG said")
+            throw DamagedDownloadException("A downloaded file does not match what its store said")
         }
 
         // A damaged file from an earlier run is replaced; File.renameTo only replaces on some platforms.
@@ -186,16 +190,26 @@ class TransferEngine(
         return actualSha256
     }
 
-    private fun sharedChunk(index: Int): ByteArray = decodedChunks.getOrPut(index) {
+    private fun sharedChunk(index: Int): ByteArray {
+        decodedChunks[index]?.let { return it }
+
         val chunk = plan.sharedChunks[index]
         val data = when (chunk.source) {
             ChunkSource.EPIC -> EpicChunk.decode(download(chunk.source, chunk.path, chunk.compressedSize), chunk.size)
             else -> throw InvalidPlanException("Unknown chunk format")
         }
         if (sha1(data) != chunk.sha1) {
-            throw DamagedDownloadException("A download from Epic was damaged")
+            throw DamagedDownloadException("A download was damaged")
         }
-        data
+
+        decodedChunks[index] = data
+        decodedChunkBytes += data.size
+        val entries = decodedChunks.entries.iterator()
+        while (decodedChunkBytes > DECODED_CHUNK_CACHE_BYTES && decodedChunks.size > 1) {
+            decodedChunkBytes -= entries.next().value.size
+            entries.remove()
+        }
+        return data
     }
 
     private fun download(source: ChunkSource, path: String, size: Long): ByteArray {
@@ -212,7 +226,7 @@ class TransferEngine(
         val md5 = chunk.compressedMd5
         val compressed = download(source, "/${md5.substring(0, 2)}/${md5.substring(2, 4)}/$md5", chunk.compressedSize)
         if (compressed.size.toLong() != chunk.compressedSize || md5(compressed) != chunk.compressedMd5) {
-            throw DamagedDownloadException("A download from GOG was damaged")
+            throw DamagedDownloadException("A download was damaged")
         }
 
         val inflater = Inflater()
@@ -232,11 +246,11 @@ class TransferEngine(
             if (overlong || length != output.size || !inflater.finished() || inflater.remaining != 0 ||
                 md5(output) != chunk.md5
             ) {
-                throw DamagedDownloadException("A download from GOG was damaged")
+                throw DamagedDownloadException("A download was damaged")
             }
             return output
         } catch (e: DataFormatException) {
-            throw DamagedDownloadException("A download from GOG was damaged")
+            throw DamagedDownloadException("A download was damaged")
         } finally {
             inflater.end()
         }

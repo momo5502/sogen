@@ -113,17 +113,13 @@ class EpicManifest {
     }
 
     final stored = Uint8List.sublistView(bytes, headerSize);
-    final Uint8List body;
-    if (storedAs & _storedCompressed != 0) {
-      if (stored.length != compressedSize || uncompressedSize > _maxBodyBytes) {
-        throw const _Malformed();
-      }
-      body = inflateBounded(epicService, stored, maxBytes: uncompressedSize);
-      if (body.length != uncompressedSize || !_equal(sha1.convert(body).bytes, sha)) {
-        throw const _Malformed();
-      }
-    } else {
-      body = stored;
+    final compressed = storedAs & _storedCompressed != 0;
+    if (stored.length != (compressed ? compressedSize : uncompressedSize) || uncompressedSize > _maxBodyBytes) {
+      throw const _Malformed();
+    }
+    final body = compressed ? inflateBounded(epicService, stored, maxBytes: uncompressedSize) : stored;
+    if (body.length != uncompressedSize || !_equal(sha1.convert(body).bytes, sha)) {
+      throw const _Malformed();
     }
 
     return _parseBody(_Reader(body));
