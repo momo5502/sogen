@@ -206,7 +206,6 @@ class BuildDepot {
 class BuildManifest {
   const BuildManifest({
     required this.baseProductId,
-    required this.buildId,
     required this.depots,
     required this.dependencies,
     required this.installDirectory,
@@ -224,7 +223,6 @@ class BuildManifest {
 
     return BuildManifest(
       baseProductId: _field<String>(json, 'baseProductId'),
-      buildId: _field<String>(json, 'buildId'),
       depots: depots.map(BuildDepot.fromJson).toList(),
       dependencies: (json['dependencies'] as List<Object?>? ?? const [])
           .map((dependency) => dependency is String ? dependency : _malformed())
@@ -234,7 +232,6 @@ class BuildManifest {
   }
 
   final String baseProductId;
-  final String buildId;
   final List<BuildDepot> depots;
   final List<String> dependencies;
   final String installDirectory;

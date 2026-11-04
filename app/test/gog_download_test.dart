@@ -125,7 +125,6 @@ class _FakeContent implements GogContent {
   Future<Object?> buildManifest(GogBuild build) async => {
     'version': 2,
     'baseProductId': '42',
-    'buildId': build.buildId,
     'installDirectory': 'Beneath a Steel Sky',
     'dependencies': declared,
     'depots': [
@@ -164,6 +163,10 @@ class _FakeContent implements GogContent {
           _file('sky.dsk', 100),
           {
             ..._file(r'app\beneath.ini', 10),
+            'flags': ['support'],
+          },
+          {
+            ..._file(r'save\SAVEGAME\START.SAV', 4),
             'flags': ['support'],
           },
           ...extraNeutralItems,
@@ -282,6 +285,34 @@ void main() {
       expect(InstallScript.parse(utf8.encode(jsonEncode(script)), 'en-US').actions, isEmpty);
     });
 
+    test('accepts the copy of one support file to the same name in the game folder', () {
+      final script = {
+        'actions': [
+          {
+            'install': {
+              'action': 'supportData',
+              'arguments': {'source': r'{supportDir}\app\lure.ini', 'target': '{app}/lure.ini', 'type': 'file'},
+            },
+          },
+        ],
+      };
+      expect(InstallScript.parse(utf8.encode(jsonEncode(script)), 'en-US').actions, isEmpty);
+    });
+
+    test('refuses a support file copied to another name', () {
+      final script = {
+        'actions': [
+          {
+            'install': {
+              'action': 'supportData',
+              'arguments': {'source': '{supportDir}/app/lure.ini', 'target': '{app}/other.ini', 'type': 'file'},
+            },
+          },
+        ],
+      };
+      expect(() => InstallScript.parse(utf8.encode(jsonEncode(script)), 'en-US'), throwsA(isA<GogException>()));
+    });
+
     test('refuses support data copied from anywhere else, naming the step', () {
       final script = {
         'actions': [
@@ -375,6 +406,7 @@ void main() {
         'goggame-42.script',
         'scummvm/scummvm.exe',
         'scummvm/SDL2.dll',
+        'cloud_saves/SAVEGAME/START.SAV',
       });
       expect(files['scummvm/scummvm.exe']!.source, ChunkSource.dependency);
       expect(planned.plan.buildId, '2');
@@ -404,6 +436,18 @@ void main() {
 
     test('two depots with the same file fail instead of one silently winning', () async {
       final content = _FakeContent(extraNeutralItems: [_FakeContent._file('SCUMMVM/scummvm.exe', 1)]);
+      await expectLater(plan(content), throwsA(isA<GogException>()));
+    });
+
+    test('support files outside app and save make the game unavailable', () async {
+      final content = _FakeContent(
+        extraNeutralItems: [
+          {
+            ..._FakeContent._file(r'other\notes.txt', 1),
+            'flags': ['support'],
+          },
+        ],
+      );
       await expectLater(plan(content), throwsA(isA<GogException>()));
     });
 

@@ -10,9 +10,13 @@ import 'depot_path.dart';
 
 /// A game GOG can send in a form Sogen installs, before a language is chosen.
 class GogRelease {
-  const GogRelease({required this.productId, required this.manifest});
+  const GogRelease({required this.productId, required this.buildId, required this.manifest});
 
   final String productId;
+
+  /// Taken from the builds list, since some build manifests do not name their build.
+  final String buildId;
+
   final BuildManifest manifest;
 
   List<String> get languages => manifest.languages;
@@ -56,7 +60,7 @@ class GogPlanner {
     if (manifest.baseProductId != productId) {
       throw const GogException('GOG sent a game manifest Sogen does not understand.');
     }
-    return GogRelease(productId: productId, manifest: manifest);
+    return GogRelease(productId: productId, buildId: build.buildId, manifest: manifest);
   }
 
   Future<PlannedInstall> plan(GogRelease release, String language) async {
@@ -95,7 +99,7 @@ class GogPlanner {
 
     final plan = files.build(
       productId: release.productId,
-      buildId: manifest.buildId,
+      buildId: release.buildId,
       language: language,
       dependencies: bundled,
     );
@@ -171,13 +175,20 @@ class _PlanBuilder {
     }
   }
 
-  /// GOG Galaxy copies the support files below `app` into the game folder, where scripts and play tasks expect them.
+  /// GOG Galaxy copies the support files below `app` into the game folder, where scripts and play tasks expect them,
+  /// and keeps those below `save` as the game's first saves.
   static DepotFile _relocated(DepotFile file) {
     if (!file.support) {
       return file;
     }
 
-    final inGame = file.path.segments.first.toLowerCase() == 'app' ? file.path.withoutFirstFolder : null;
+    final below = file.path.withoutFirstFolder;
+    final inGame = switch (file.path.segments.first.toLowerCase()) {
+      'app' => below,
+      // The starting saves of GOG's DOSBox games; their configurations overlay cloud_saves onto the game's drive.
+      'save' when below != null => DepotPath.parse('cloud_saves') / below,
+      _ => null,
+    };
     if (inGame == null) {
       throw GogException('This game contains support files (${file.path}) that Sogen cannot install yet.');
     }
