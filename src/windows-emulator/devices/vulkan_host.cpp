@@ -613,6 +613,7 @@ namespace sogen
             PFN_vkCmdSetRasterizerDiscardEnable cmd_set_rasterizer_discard_enable{};
             PFN_vkCmdSetDepthBiasEnable cmd_set_depth_bias_enable{};
             PFN_vkCmdSetPrimitiveRestartEnable cmd_set_primitive_restart_enable{};
+            PFN_vkCmdSetAttachmentFeedbackLoopEnableEXT cmd_set_attachment_feedback_loop_enable{};
         };
 
         struct surface_data
@@ -4839,6 +4840,8 @@ namespace sogen
             data.cmd_set_depth_bias_enable = reinterpret_cast<PFN_vkCmdSetDepthBiasEnable>(resolve("vkCmdSetDepthBiasEnable"));
             data.cmd_set_primitive_restart_enable =
                 reinterpret_cast<PFN_vkCmdSetPrimitiveRestartEnable>(resolve("vkCmdSetPrimitiveRestartEnable"));
+            data.cmd_set_attachment_feedback_loop_enable =
+                reinterpret_cast<PFN_vkCmdSetAttachmentFeedbackLoopEnableEXT>(resolve("vkCmdSetAttachmentFeedbackLoopEnableEXT"));
         }
 
         data.memory_types = this->impl_->get_guest_memory_types(instance->second, pd->second.handle);
@@ -11182,6 +11185,13 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             dev->second.cmd_set_primitive_restart_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::attachment_feedback_loop_enable:
+            if (!dev->second.cmd_set_attachment_feedback_loop_enable)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_attachment_feedback_loop_enable(handle, value);
             break;
         default:
             return VK_ERROR_INITIALIZATION_FAILED;

@@ -2414,6 +2414,12 @@ extern "C"
         record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::primitive_restart_enable, primitiveRestartEnable);
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetAttachmentFeedbackLoopEnableEXT(VkCommandBuffer commandBuffer,
+                                                                                             VkImageAspectFlags aspectMask)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::attachment_feedback_loop_enable, aspectMask);
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBuffer(VkCommandBuffer commandBuffer, VkBuffer srcBuffer, VkBuffer dstBuffer,
                                                                      uint32_t regionCount, const VkBufferCopy* pRegions)
     {
@@ -7172,6 +7178,8 @@ extern "C"
             {.name = "vkCmdSetDepthBiasEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBiasEnable)},
             {.name = "vkCmdSetPrimitiveRestartEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
             {.name = "vkCmdSetPrimitiveRestartEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
+            {.name = "vkCmdSetAttachmentFeedbackLoopEnableEXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetAttachmentFeedbackLoopEnableEXT)},
             {.name = "vkGetMemoryWin32HandleKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetMemoryWin32HandleKHR)},
         };
 
