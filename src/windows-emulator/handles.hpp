@@ -42,6 +42,7 @@ namespace sogen
             thread_state_change,
             window_station,
             debug_object,
+            cursor,
         };
     };
 

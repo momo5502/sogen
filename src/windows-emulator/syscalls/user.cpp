@@ -2912,9 +2912,162 @@ namespace sogen
             return c.proc.current_cursor;
         }
 
-        hicon handle_NtUserCreateEmptyCursorObject()
+        namespace
         {
-            return make_pseudo_handle(0x100, handle_types::reserved).bits;
+            constexpr uint16_t k_cursor_type_cursor = 1;
+            constexpr uint16_t k_cursor_type_icon = 3;
+            constexpr uint16_t k_oic_sample = 32512;
+            constexpr uint16_t k_oic_shield = 32518;
+            constexpr uint16_t k_ocr_normal = 32512;
+            constexpr uint16_t k_ocr_up = 32516;
+            constexpr uint16_t k_idc_sizenwse = 32642;
+            constexpr uint16_t k_idc_sizeall = 32646;
+            constexpr uint16_t k_idc_no = 32648;
+            constexpr uint16_t k_idc_last_system = 32652;
+            constexpr uint16_t k_idc_pin = 32671;
+            constexpr uint16_t k_idc_person = 32672;
+            constexpr uint32_t k_cursorf_lrshared = 0x4;
+            constexpr DWORD k_error_invalid_cursor_handle = 1402;
+            constexpr uint32_t k_stock_cursor_size = 32;
+            constexpr std::u16string_view k_stock_cursor_module = u"USER32";
+
+            struct cursor_resource
+            {
+                std::u16string name{};
+                uint16_t id{};
+            };
+
+            std::u16string read_cursor_string(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> string)
+            {
+                if (!string || string.read().Length == 0)
+                {
+                    return {};
+                }
+
+                return read_unicode_string(c.emu, string);
+            }
+
+            cursor_resource read_cursor_resource(const syscall_context& c,
+                                                 const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> resource)
+            {
+                if (resource)
+                {
+                    const auto string = resource.read();
+                    if (string.Length == 0 && string.Buffer <= std::numeric_limits<uint16_t>::max())
+                    {
+                        return {.name = {}, .id = static_cast<uint16_t>(string.Buffer)};
+                    }
+                }
+
+                return {.name = read_cursor_string(c, resource), .id = 0};
+            }
+
+            uint64_t copy_cursor_bitmap(const syscall_context& c, const hbitmap source, const uint32_t max_rows)
+            {
+                const auto source_it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(source));
+                if (source_it == c.proc.gdi_bitmap_surfaces.end())
+                {
+                    return 0;
+                }
+
+                const auto width = source_it->second.width;
+                const auto height = std::min(source_it->second.height, max_rows);
+                const auto bits_pixel = source_it->second.guest_bpp;
+
+                const auto copy = handle_NtGdiCreateBitmap(c, width, height, 1, bits_pixel, 0);
+                const auto copy_it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(copy));
+                if (copy_it == c.proc.gdi_bitmap_surfaces.end())
+                {
+                    return 0;
+                }
+
+                const auto& pixels = source_it->second.pixels;
+                const auto count = std::min(pixels.size(), static_cast<size_t>(width) * height);
+                copy_it->second.pixels.assign(pixels.begin(), pixels.begin() + static_cast<std::ptrdiff_t>(count));
+                return copy;
+            }
+
+            uint16_t cursor_name_length(const UNICODE_STRING<EmulatorTraits<Emu64>>& string, const std::u16string& name)
+            {
+                return static_cast<uint16_t>(std::min<size_t>(name.size(), string.MaximumLength > 0 ? string.MaximumLength - 1 : 0));
+            }
+
+            bool is_cursor_name_writable(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> target,
+                                         const std::u16string& name)
+            {
+                if (!target)
+                {
+                    return true;
+                }
+
+                const auto string = target.read();
+                if (string.MaximumLength == 0)
+                {
+                    return true;
+                }
+
+                return is_writable_range(c.win_emu.memory, string.Buffer, (cursor_name_length(string, name) + 1) * sizeof(char16_t));
+            }
+
+            // Length and MaximumLength count characters here: user32 sizes its WCHAR buffers with them.
+            void write_cursor_name(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> target,
+                                   const std::u16string& name)
+            {
+                if (!target)
+                {
+                    return;
+                }
+
+                auto string = target.read();
+                const auto length = cursor_name_length(string, name);
+                if (string.MaximumLength > 0)
+                {
+                    c.emu.write_memory(string.Buffer, name.data(), length * sizeof(char16_t));
+                    c.emu.write_memory(string.Buffer + length * sizeof(char16_t), u"\0", sizeof(char16_t));
+                }
+
+                string.Length = length;
+                target.write(string);
+            }
+
+            bool is_system_resource_id(const uint16_t type, const uint16_t id)
+            {
+                if (type == k_cursor_type_icon)
+                {
+                    return id >= k_oic_sample && id <= k_oic_shield;
+                }
+
+                return type == k_cursor_type_cursor &&
+                       ((id >= k_ocr_normal && id <= k_ocr_up) || (id >= k_idc_sizenwse && id <= k_idc_sizeall) ||
+                        (id >= k_idc_no && id <= k_idc_last_system) || id == k_idc_pin || id == k_idc_person);
+            }
+
+            hicon create_stock_cursor(const syscall_context& c, const uint16_t type, cursor_resource resource)
+            {
+                auto [handle, cursor] = c.proc.cursor_icons.create(c.win_emu.memory);
+                cursor.module_name = k_stock_cursor_module;
+                cursor.resource_name = std::move(resource.name);
+                cursor.resource_id = resource.id;
+                cursor.type = type;
+                cursor.flags = k_cursorf_lrshared;
+                cursor.bpp = 32;
+                cursor.width = k_stock_cursor_size;
+                cursor.height = 2 * k_stock_cursor_size;
+                cursor.mask = handle_NtGdiCreateBitmap(c, cursor.width, cursor.height, 1, 1, 0);
+                cursor.color = handle_NtGdiCreateBitmap(c, cursor.width, k_stock_cursor_size, 1, 32, 0);
+                if (cursor.type == k_cursor_type_icon)
+                {
+                    cursor.hotspot_x = k_stock_cursor_size / 2;
+                    cursor.hotspot_y = k_stock_cursor_size / 2;
+                }
+
+                return handle.bits;
+            }
+        }
+
+        hicon handle_NtUserCreateEmptyCursorObject(const syscall_context& c)
+        {
+            return c.proc.cursor_icons.create(c.win_emu.memory).first.bits;
         }
 
         BOOL handle_NtUserSetCursorIconData()
@@ -2922,8 +3075,32 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserSetCursorIconDataEx()
+        BOOL handle_NtUserSetCursorIconDataEx(const syscall_context& c, const hicon icon,
+                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> module_name,
+                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> resource,
+                                              const emulator_object<EMU_CURSORDATA> data, const int /*thread_cursor_size*/)
         {
+            auto* cursor = c.proc.cursor_icons.get(icon);
+            if (!cursor || !data)
+            {
+                return FALSE;
+            }
+
+            const auto cursor_data = data.read();
+            auto resource_key = read_cursor_resource(c, resource);
+
+            cursor->module_name = read_cursor_string(c, module_name);
+            cursor->resource_name = std::move(resource_key.name);
+            cursor->resource_id = resource_key.id;
+            cursor->type = cursor_data.rt;
+            cursor->flags = cursor_data.flags;
+            cursor->hotspot_x = cursor_data.xHotspot;
+            cursor->hotspot_y = cursor_data.yHotspot;
+            cursor->mask = cursor_data.hbmMask;
+            cursor->color = cursor_data.hbmColor;
+            cursor->bpp = cursor_data.bpp;
+            cursor->width = cursor_data.cx;
+            cursor->height = cursor_data.cy;
             return TRUE;
         }
 
@@ -2932,14 +3109,65 @@ namespace sogen
             return TRUE;
         }
 
-        hicon handle_NtUserFindExistingCursorIcon()
+        hicon handle_NtUserFindExistingCursorIcon(const syscall_context& c,
+                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> module_name,
+                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> resource,
+                                                  const emulator_object<EMU_CURSORFIND> find)
         {
-            return make_pseudo_handle(0x100, handle_types::reserved).bits;
+            if (!find)
+            {
+                return 0;
+            }
+
+            const auto wanted = find.read();
+            const auto wanted_type = static_cast<uint16_t>(wanted.rt);
+            const auto wanted_module = read_cursor_string(c, module_name);
+            const auto wanted_resource = read_cursor_resource(c, resource);
+
+            for (const auto& [index, cursor] : c.proc.cursor_icons)
+            {
+                if ((cursor.flags & k_cursorf_lrshared) != 0 && cursor.type == wanted_type &&
+                    utils::string::equals_ignore_case(cursor.module_name, wanted_module) && cursor.resource_id == wanted_resource.id &&
+                    utils::string::equals_ignore_case(cursor.resource_name, wanted_resource.name) &&
+                    (wanted.cx == 0 || wanted.cx == cursor.width) && (wanted.cy == 0 || wanted.cy * 2 == cursor.height))
+                {
+                    return c.proc.cursor_icons.make_handle(index).bits;
+                }
+            }
+
+            if (wanted.cx == 0 && wanted.cy == 0 &&
+                utils::string::equals_ignore_case(wanted_module, std::u16string{k_stock_cursor_module}) && wanted_resource.name.empty() &&
+                is_system_resource_id(wanted_type, wanted_resource.id))
+            {
+                return create_stock_cursor(c, wanted_type, wanted_resource);
+            }
+
+            return 0;
         }
 
-        BOOL handle_NtUserDestroyCursor(const syscall_context&, const hicon icon, const DWORD /*flags*/)
+        BOOL handle_NtUserDestroyCursor(const syscall_context& c, const hicon icon, const DWORD /*flags*/)
         {
-            return icon != 0 ? TRUE : FALSE;
+            const auto* cursor = c.proc.cursor_icons.get(icon);
+            if (!cursor)
+            {
+                set_guest_last_error(c, k_error_invalid_cursor_handle);
+                return FALSE;
+            }
+
+            if ((cursor->flags & k_cursorf_lrshared) != 0)
+            {
+                return TRUE;
+            }
+
+            for (const auto bitmap : {cursor->mask, cursor->color})
+            {
+                if (bitmap != 0)
+                {
+                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(bitmap));
+                }
+            }
+
+            return c.proc.cursor_icons.erase(icon) ? TRUE : FALSE;
         }
 
         hicon handle_NtUserGetCursorFrameInfo(const syscall_context&, const hicon icon, const UINT /*frame*/,
@@ -2955,66 +3183,76 @@ namespace sogen
             return icon;
         }
 
-        BOOL handle_NtUserGetIconSize(const syscall_context&, const hicon icon, const UINT /*frame*/, const emulator_object<int> cx,
+        BOOL handle_NtUserGetIconSize(const syscall_context& c, const hicon icon, const UINT /*frame*/, const emulator_object<int> cx,
                                       const emulator_object<int> cy)
         {
-            if (icon == 0 || !cx || !cy)
+            const auto* cursor = c.proc.cursor_icons.get(icon);
+            if (!cursor || !cx || !cy)
             {
                 return FALSE;
             }
 
-            cx.write(32);
-            cy.write(64);
+            cx.write(static_cast<int>(cursor->width));
+            cy.write(static_cast<int>(cursor->height));
             return TRUE;
         }
 
         BOOL handle_NtUserGetIconInfo(const syscall_context& c, const hicon icon, const emulator_object<EMU_ICONINFO> icon_info,
                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> inst_name,
                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> res_name,
-                                      const emulator_object<uint32_t> bpp, const BOOL /*internal*/)
+                                      const emulator_object<uint32_t> bpp, const BOOL internal)
         {
-            if (icon == 0 || !icon_info)
+            const auto* cursor = c.proc.cursor_icons.get(icon);
+            if (!cursor || !icon_info)
             {
-                set_guest_last_error(c, 1414); // ERROR_INVALID_CURSOR_HANDLE
+                set_guest_last_error(c, k_error_invalid_cursor_handle);
                 return FALSE;
             }
 
-            const auto mask = handle_NtGdiCreateBitmap(c, 32, 32, 1, 1, 0);
-            const auto color = handle_NtGdiCreateBitmap(c, 32, 32, 1, 32, 0);
-            if (mask == 0 || color == 0)
+            if (!is_cursor_name_writable(c, inst_name, cursor->module_name) ||
+                (!(res_name && cursor->resource_name.empty()) && !is_cursor_name_writable(c, res_name, cursor->resource_name)))
             {
-                if (mask != 0)
+                return FALSE;
+            }
+
+            const auto mask_rows = cursor->color != 0 && !internal ? cursor->height / 2 : cursor->height;
+            const auto mask = copy_cursor_bitmap(c, cursor->mask, mask_rows);
+            const auto color = cursor->color != 0 ? copy_cursor_bitmap(c, cursor->color, cursor->height) : 0;
+            if (mask == 0 || (cursor->color != 0 && color == 0))
+            {
+                for (const auto bitmap : {mask, color})
                 {
-                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(mask));
-                }
-                if (color != 0)
-                {
-                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(color));
+                    if (bitmap != 0)
+                    {
+                        handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(bitmap));
+                    }
                 }
                 return FALSE;
             }
 
-            const EMU_ICONINFO info{
-                .fIcon = TRUE,
-                .xHotspot = 16,
-                .yHotspot = 16,
+            icon_info.write(EMU_ICONINFO{
+                .fIcon = cursor->type == k_cursor_type_icon,
+                .xHotspot = static_cast<DWORD>(cursor->hotspot_x),
+                .yHotspot = static_cast<DWORD>(cursor->hotspot_y),
                 .hbmMask = mask,
                 .hbmColor = color,
-            };
-            icon_info.write(info);
+            });
 
-            const auto clear_name = [&](const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>& name) {
-                if (name)
-                {
-                    auto value = name.read();
-                    value.Length = 0;
-                    name.write(value);
-                }
-            };
-            clear_name(inst_name);
-            clear_name(res_name);
+            write_cursor_name(c, inst_name, cursor->module_name);
 
-            bpp.write_if_valid(32);
+            if (res_name && cursor->resource_name.empty())
+            {
+                auto string = res_name.read();
+                string.Length = 0;
+                string.Buffer = cursor->resource_id;
+                res_name.write(string);
+            }
+            else
+            {
+                write_cursor_name(c, res_name, cursor->resource_name);
+            }
+
+            bpp.write_if_valid(cursor->bpp);
             return TRUE;
         }
 

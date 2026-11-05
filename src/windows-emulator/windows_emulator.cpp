@@ -2889,6 +2889,7 @@ namespace sogen
 
         buffer.register_factory<menu>([this] { return menu{this->emu()}; });
         buffer.register_factory<accelerator_table>([this] { return accelerator_table{this->emu()}; });
+        buffer.register_factory<cursor_icon>([this] { return cursor_icon{this->emu()}; });
     }
 
     void windows_emulator::request_suspend()

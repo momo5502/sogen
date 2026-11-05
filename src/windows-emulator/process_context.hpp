@@ -705,6 +705,7 @@ namespace sogen
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};
         user_handle_store<handle_types::accelerator_table, accelerator_table> accelerator_tables{user_handles};
+        user_handle_store<handle_types::cursor, cursor_icon> cursor_icons{user_handles};
         handle_store<handle_types::deferred_window_positions, deferred_window_positions> deferred_window_position_batches{};
         handle_store<handle_types::registry, registry_key> registry_keys{};
         handle_store<handle_types::process, emulator_process> processes{};

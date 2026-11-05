@@ -602,11 +602,17 @@ namespace sogen
         BOOL handle_NtUserSetCursorPos(const syscall_context& c, int32_t x, int32_t y);
         hcursor handle_NtUserSetCursor(const syscall_context& c, hcursor cursor);
         hcursor handle_NtUserGetCursor(const syscall_context& c);
-        hicon handle_NtUserCreateEmptyCursorObject();
+        hicon handle_NtUserCreateEmptyCursorObject(const syscall_context& c);
         BOOL handle_NtUserSetCursorIconData();
-        BOOL handle_NtUserSetCursorIconDataEx();
+        BOOL handle_NtUserSetCursorIconDataEx(const syscall_context& c, hicon icon,
+                                              emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> module_name,
+                                              emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> resource,
+                                              emulator_object<EMU_CURSORDATA> data, int thread_cursor_size);
         BOOL handle_NtUserGetRequiredCursorSizes();
-        hicon handle_NtUserFindExistingCursorIcon();
+        hicon handle_NtUserFindExistingCursorIcon(const syscall_context& c,
+                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> module_name,
+                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> resource,
+                                                  emulator_object<EMU_CURSORFIND> find);
         BOOL handle_NtUserDestroyCursor(const syscall_context& c, hicon icon, DWORD flags);
         hicon handle_NtUserGetCursorFrameInfo(const syscall_context& c, hicon icon, UINT frame, emulator_object<uint32_t> rate_jiffies,
                                               emulator_object<uint32_t> frame_count);
