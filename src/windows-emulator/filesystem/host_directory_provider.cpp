@@ -25,6 +25,11 @@
 #include <unistd.h>
 #endif
 
+#ifdef OS_WINDOWS
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 namespace sogen
 {
 
@@ -56,6 +61,43 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
         }
+
+#ifdef OS_WINDOWS
+        // Windows only re-creates an existing hidden or system file when the new file keeps those attributes, which is
+        // how an NT caller overwrites it. The guest does not see host attributes, so it cannot ask for them itself.
+        FILE* recreate_keeping_attributes(const std::filesystem::path& path, const std::u16string& mode)
+        {
+            constexpr DWORD kept_attributes = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM;
+            const auto attributes = GetFileAttributesW(path.c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & kept_attributes) == 0)
+            {
+                return nullptr;
+            }
+
+            const bool readable = mode.find(u'+') != std::u16string::npos;
+            const auto handle = CreateFileW(path.c_str(), GENERIC_WRITE | (readable ? GENERIC_READ : 0), FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                            nullptr, CREATE_ALWAYS, attributes & kept_attributes, nullptr);
+            if (handle == INVALID_HANDLE_VALUE)
+            {
+                return nullptr;
+            }
+
+            const auto descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(handle), _O_BINARY | (readable ? _O_RDWR : _O_WRONLY));
+            if (descriptor == -1)
+            {
+                CloseHandle(handle);
+                return nullptr;
+            }
+
+            auto* file = _wfdopen(descriptor, u16_to_w(mode).c_str());
+            if (!file)
+            {
+                _close(descriptor);
+            }
+
+            return file;
+        }
+#endif
 
         std::optional<std::filesystem::path> find_entry_ignoring_case(const std::filesystem::path& directory,
                                                                       const std::filesystem::path& name)
@@ -510,6 +552,12 @@ namespace sogen
 
         FILE* file{};
         const auto error = open_unicode(&file, *host_path, mode);
+#ifdef OS_WINDOWS
+        if (!file && error == EACCES && mode.starts_with(u'w'))
+        {
+            file = recreate_keeping_attributes(*host_path, mode);
+        }
+#endif
         if (!file)
         {
             return {.status = map_open_error(error)};
