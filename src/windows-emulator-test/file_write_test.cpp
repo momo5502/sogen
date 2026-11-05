@@ -95,6 +95,38 @@ namespace sogen::test
         EXPECT_EQ(std::string("AAAA\0\0\0\0BBBB", 12), contents);
     }
 
+    // A hidden host file cannot be re-created on Windows, but the guest does not see it as hidden and may overwrite it.
+    TEST(FileWriteTest, OverwritingAnExistingFileTruncatesIt)
+    {
+        const auto directory = create_test_directory();
+        const auto cleanup = utils::finally([&] {
+            std::error_code error{};
+            std::filesystem::remove_all(directory, error);
+        });
+
+        const auto host_path = directory / "marker";
+        std::ofstream{host_path, std::ios::binary} << "previous contents";
+#ifdef _WIN32
+        ASSERT_TRUE(SetFileAttributesW(host_path.c_str(), FILE_ATTRIBUTE_HIDDEN));
+#endif
+
+        auto emu = create_empty_emulator();
+        emu.file_sys.map(windows_path{'x', {}}, directory, filesystem_mode::read_write);
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        const auto file_handle = create_guest_file(emu, context, storage, u"\\??\\x:\\marker", GENERIC_READ | GENERIC_WRITE);
+
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> status{emu.memory, storage + 0x10};
+        emu.memory.write_memory(storage + 0x100, "1234", 4);
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtWriteFile(context, file_handle, 0, 0, 0, status, storage + 0x100, 4, {emu.memory}, {emu.memory}));
+        emu.process.files.erase(file_handle);
+
+        std::ifstream written{host_path, std::ios::binary};
+        const std::string contents{std::istreambuf_iterator<char>(written), {}};
+        EXPECT_EQ("1234", contents);
+    }
+
     TEST(FileWriteTest, LocksFarPastTheEndOfTheFileAreGranted)
     {
         const auto directory = create_test_directory();

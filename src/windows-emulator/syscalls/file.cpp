@@ -2484,10 +2484,25 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
+            // An existing file is overwritten by truncating it rather than re-creating it: a host refuses to re-create a file
+            // that is hidden or a system file on the host, which the guest does not see as such.
+            const bool overwrites_existing_file =
+                file_exists && mode.starts_with(u'w') &&
+                (create_disposition == FILE_SUPERSEDE || create_disposition == FILE_OVERWRITE || create_disposition == FILE_OVERWRITE_IF);
+            if (overwrites_existing_file)
+            {
+                mode = u"r+b";
+            }
+
             auto [io, status] = file_sys.open(path, mode);
             if (status != STATUS_SUCCESS)
             {
                 return status;
+            }
+
+            if (overwrites_existing_file && !io->resize(0))
+            {
+                return STATUS_ACCESS_DENIED;
             }
 
             f.handle = guest_file{file_sys, path, std::move(mode), std::move(io)};
