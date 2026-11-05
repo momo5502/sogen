@@ -344,6 +344,12 @@ namespace sogen
                     return std::make_unique<static_socket>(*this, af);
                 }
 
+                // The in-process network only has loopback, which Windows leaves out of the local address list.
+                std::vector<address> get_local_addresses(const int /*family*/) override
+                {
+                    return {};
+                }
+
                 int poll_sockets(std::span<poll_entry> entries) override
                 {
                     int ready_count = 0;
