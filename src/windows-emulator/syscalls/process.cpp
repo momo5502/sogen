@@ -249,6 +249,11 @@ namespace sogen
             process_create_request request{};
             request.command_line = u16_to_u8(original_command_line);
             request.parent_process_id = c.proc.process_id;
+            utils::buffer_serializer registry_state{};
+            c.win_emu.registry.serialize_runtime_state(registry_state);
+            const auto& bytes = registry_state.get_buffer();
+            request.registry_state.assign(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                          reinterpret_cast<const uint8_t*>(bytes.data()) + bytes.size());
             const windows_path application_path{read_unicode_string(c.emu, parameters.ImagePathName)};
             request.application = u16_to_u8(application_path.u16string());
             request.working_directory =

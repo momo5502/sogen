@@ -68,6 +68,7 @@ table ProcessCreateRequest {
     command_line: string (required);
     debugged: bool;
     parent_process_id: uint;
+    registry_state: [ubyte];
 }
 
 table ProcessStarted {
