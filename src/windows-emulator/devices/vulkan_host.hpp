@@ -259,6 +259,10 @@ namespace sogen
         bool has_device(uint64_t device) const;
         bool has_swapchains() const;
         uint64_t host_import_alignment(uint64_t device) const;
+        // Whether imported host memory can back this image or buffer: the device imports host allocations for its
+        // parameters, so binding imported memory re-creates it for that.
+        bool image_takes_host_import(uint64_t device, uint64_t image) const;
+        bool buffer_takes_host_import(uint64_t device, uint64_t buffer) const;
         bool is_host_visible_memory_type(uint64_t device, uint32_t memory_type_index) const;
         int32_t import_host_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint32_t flags, uint32_t device_mask,
                                    void* host_pointer, uint64_t& out_memory);
