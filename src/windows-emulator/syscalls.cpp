@@ -569,6 +569,8 @@ namespace sogen
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseCapture(const syscall_context& c);
         BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
+        uint32_t handle_NtUserGetRegisteredRawInputDevices(const syscall_context& c, emulator_pointer devices,
+                                                           emulator_pointer device_count, uint32_t size);
         ULONG handle_NtUserGetRawInputDeviceList(const syscall_context& c, emulator_pointer devices, emulator_pointer device_count,
                                                  uint32_t size);
         ULONG handle_NtUserGetRawInputDeviceInfo(const syscall_context& c, handle device, uint32_t command, emulator_pointer data,
@@ -1861,6 +1863,7 @@ namespace sogen
         add_handler(NtUserSetCapture);
         add_handler(NtUserReleaseCapture);
         add_handler(NtUserRegisterRawInputDevices);
+        add_handler(NtUserGetRegisteredRawInputDevices);
         add_handler(NtUserGetRawInputData);
         add_handler(NtUserDefSetText);
         add_handler(NtUserSetWindowState);

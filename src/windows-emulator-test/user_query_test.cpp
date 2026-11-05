@@ -11,6 +11,9 @@ namespace sogen::syscalls
     BOOL handle_NtUserShowOwnedPopups(const syscall_context& c, hwnd owner, BOOL show);
     BOOL handle_NtUserGetCurrentInputMessageSource(const syscall_context& c, emulator_pointer source);
     BOOL handle_NtUserGetTitleBarInfo(const syscall_context& c, hwnd window_handle, emulator_pointer info_address);
+    BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
+    uint32_t handle_NtUserGetRegisteredRawInputDevices(const syscall_context& c, emulator_pointer devices, emulator_pointer device_count,
+                                                       uint32_t size);
 }
 
 namespace sogen::test
@@ -314,5 +317,123 @@ namespace sogen::test
         EXPECT_EQ(0, rect.top);
         EXPECT_EQ(0, rect.right);
         EXPECT_EQ(0, rect.bottom);
+    }
+
+    // The results were measured on Windows 11 with GetRegisteredRawInputDevices in a 64-bit process, whose calls go to the
+    // syscall unchanged.
+    TEST_F(UserQueryTest, RegisteredRawInputDevicesFollowTheWindowsSemantics)
+    {
+        constexpr uint32_t k_ridev_nolegacy = 0x30;
+        constexpr uint64_t count_address_offset = 0x800;
+        constexpr uint32_t device_size = sizeof(RAWINPUTDEVICE64);
+        constexpr auto failed = static_cast<uint32_t>(-1);
+        const auto window = this->create_top_level_window(0, k_overlapped_window);
+        const uint64_t count_address = this->storage + count_address_offset;
+
+        const auto registered = [&](const emulator_pointer devices, const uint32_t capacity, const uint32_t size) {
+            this->emu.memory.write_memory(count_address, capacity);
+            this->set_last_error(untouched_error);
+            return syscalls::handle_NtUserGetRegisteredRawInputDevices(this->context(), devices, count_address, size);
+        };
+        const auto count = [&] { return this->emu.memory.read_memory<uint32_t>(count_address); };
+        const auto register_devices = [&](const std::vector<RAWINPUTDEVICE64>& devices) {
+            this->emu.memory.write_memory(this->storage, devices.data(), devices.size() * sizeof(RAWINPUTDEVICE64));
+            return syscalls::handle_NtUserRegisterRawInputDevices(this->context(), this->storage, static_cast<uint32_t>(devices.size()),
+                                                                  device_size);
+        };
+
+        EXPECT_EQ(0u, registered(0, 5, device_size));
+        EXPECT_EQ(0u, count());
+        EXPECT_EQ(failed, registered(this->storage, 0, device_size));
+        EXPECT_EQ(87u, this->last_error());
+
+        ASSERT_EQ(TRUE, register_devices({{.usUsagePage = 1, .usUsage = 6, .dwFlags = k_ridev_nolegacy, .hwndTarget = window},
+                                          {.usUsagePage = 1, .usUsage = 2, .dwFlags = 0, .hwndTarget = 0},
+                                          {.usUsagePage = 1, .usUsage = 5, .dwFlags = RIDEV_INPUTSINK, .hwndTarget = window}}));
+
+        EXPECT_EQ(0u, registered(0, 0, device_size));
+        EXPECT_EQ(3u, count());
+        EXPECT_EQ(failed, registered(this->storage, 2, device_size));
+        EXPECT_EQ(3u, count());
+        EXPECT_EQ(122u, this->last_error());
+        EXPECT_EQ(failed, registered(this->storage, 8, device_size + 4));
+        EXPECT_EQ(8u, count());
+        EXPECT_EQ(87u, this->last_error());
+
+        const uint64_t untouched_device = 0xAAAAAAAAAAAAAAAAULL;
+        this->emu.memory.write_memory(this->storage + (3 * device_size), untouched_device);
+        ASSERT_EQ(3u, registered(this->storage, 8, device_size));
+        EXPECT_EQ(8u, count());
+        const auto device = [&](const uint32_t index) {
+            return this->emu.memory.read_memory<RAWINPUTDEVICE64>(this->storage + (index * device_size));
+        };
+        EXPECT_EQ(2, device(0).usUsage);
+        EXPECT_EQ(0u, device(0).dwFlags);
+        EXPECT_EQ(0u, device(0).hwndTarget);
+        EXPECT_EQ(5, device(1).usUsage);
+        EXPECT_EQ(static_cast<uint32_t>(RIDEV_INPUTSINK), device(1).dwFlags);
+        EXPECT_EQ(window, device(1).hwndTarget);
+        EXPECT_EQ(6, device(2).usUsage);
+        EXPECT_EQ(k_ridev_nolegacy, device(2).dwFlags);
+        EXPECT_EQ(untouched_device, this->emu.memory.read_memory<uint64_t>(this->storage + (3 * device_size)));
+
+        ASSERT_EQ(TRUE, register_devices({{.usUsagePage = 1, .usUsage = 2, .dwFlags = RIDEV_INPUTSINK, .hwndTarget = window},
+                                          {.usUsagePage = 1, .usUsage = 6, .dwFlags = RIDEV_REMOVE, .hwndTarget = 0}}));
+        ASSERT_EQ(2u, registered(this->storage, 8, device_size));
+        EXPECT_EQ(2, device(0).usUsage);
+        EXPECT_EQ(static_cast<uint32_t>(RIDEV_INPUTSINK), device(0).dwFlags);
+        EXPECT_EQ(window, device(0).hwndTarget);
+        EXPECT_EQ(5, device(1).usUsage);
+    }
+
+    // Measured on Windows 11 like the test above: the count only has to be writable when it is written, which a successful call
+    // does not do, and the whole buffer the count names must be writable before anything is written into it.
+    TEST_F(UserQueryTest, RegisteredRawInputDevicesNeedWritableOutput)
+    {
+        constexpr uint32_t device_size = sizeof(RAWINPUTDEVICE64);
+        constexpr auto failed = static_cast<uint32_t>(-1);
+        constexpr DWORD error_noaccess = 998;
+
+        const std::array registrations{RAWINPUTDEVICE64{.usUsagePage = 1, .usUsage = 2, .dwFlags = 0, .hwndTarget = 0},
+                                       RAWINPUTDEVICE64{.usUsagePage = 1, .usUsage = 6, .dwFlags = 0, .hwndTarget = 0}};
+        this->emu.memory.write_memory(this->storage, registrations.data(), sizeof(registrations));
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserRegisterRawInputDevices(this->context(), this->storage, 2, device_size));
+
+        const auto writable = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto read_only = this->emu.memory.allocate_memory(0x1000, memory_permission::read);
+        const auto registered = [&](const emulator_pointer devices, const emulator_pointer count, const uint32_t capacity) {
+            this->emu.memory.write_memory(count, capacity);
+            this->set_last_error(untouched_error);
+            return syscalls::handle_NtUserGetRegisteredRawInputDevices(this->context(), devices, count, device_size);
+        };
+        const auto count_at = [&](const emulator_pointer count) { return this->emu.memory.read_memory<uint32_t>(count); };
+
+        EXPECT_EQ(failed, registered(0, read_only, 0));
+        EXPECT_EQ(error_noaccess, this->last_error());
+        EXPECT_EQ(0u, count_at(read_only));
+
+        EXPECT_EQ(failed, registered(writable, read_only, 1));
+        EXPECT_EQ(error_noaccess, this->last_error());
+        EXPECT_EQ(1u, count_at(read_only));
+
+        EXPECT_EQ(2u, registered(writable, read_only, 8));
+        EXPECT_EQ(8u, count_at(read_only));
+
+        const auto count = this->storage + 0x800;
+        for (const uint32_t capacity : {1u, 8u})
+        {
+            EXPECT_EQ(failed, registered(read_only, count, capacity));
+            EXPECT_EQ(error_noaccess, this->last_error());
+            EXPECT_EQ(capacity, count_at(count));
+        }
+
+        const auto pages = this->emu.memory.allocate_memory(0x2000, memory_permission::read_write);
+        ASSERT_TRUE(this->emu.memory.protect_memory(pages + 0x1000, 0x1000, memory_permission::read));
+        const auto ending_before_read_only = pages + 0x1000 - (2 * device_size);
+        const std::array<uint8_t, 2 * device_size> untouched{};
+        this->emu.memory.write_memory(ending_before_read_only, untouched.data(), untouched.size());
+        EXPECT_EQ(failed, registered(ending_before_read_only, count, 8));
+        EXPECT_EQ(error_noaccess, this->last_error());
+        EXPECT_EQ(0, this->emu.memory.read_memory<RAWINPUTDEVICE64>(ending_before_read_only).usUsage);
     }
 }

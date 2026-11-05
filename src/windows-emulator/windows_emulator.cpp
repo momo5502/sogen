@@ -2033,15 +2033,17 @@ namespace sogen
     void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy, const uint16_t button_flags,
                                                    const uint16_t button_data)
     {
+        const auto* mouse = this->process.raw_mouse_registration();
         this->deliver_raw_input({.keyboard = false, .dx = dx, .dy = dy, .mouse_buttons = button_flags, .mouse_button_data = button_data},
-                                this->process.raw_mouse_target);
+                                mouse ? mouse->target : hwnd{});
     }
 
     void windows_emulator::deliver_raw_keyboard_input(const uint16_t vkey, const uint16_t scan_code, const uint32_t message,
                                                       const bool extended)
     {
+        const auto* keyboard = this->process.raw_keyboard_registration();
         this->deliver_raw_input({.keyboard = true, .vkey = vkey, .scan_code = scan_code, .key_message = message, .key_extended = extended},
-                                this->process.raw_keyboard_target);
+                                keyboard ? keyboard->target : hwnd{});
     }
 
     void windows_emulator::set_foreground_window(const hwnd window)
@@ -2507,7 +2509,7 @@ namespace sogen
             // Synthesize that delta from the change in tracked cursor position before updating it. A
             // SetCursorPos recenter pre-updates cursor_x/y, so the warp-echo motion event yields a zero
             // delta -- no spurious look -- while genuine motion between recenters produces the real delta.
-            if (this->process.raw_mouse_registered)
+            if (this->process.raw_mouse_registration())
             {
                 if (event.message == WM_MOUSEMOVE)
                 {
@@ -2587,7 +2589,7 @@ namespace sogen
         }
 
         // Raw-input games (e.g. Skyrim) read the keyboard via WM_INPUT/GetRawInputData, not WM_KEYDOWN.
-        if (this->process.raw_keyboard_registered && is_keyboard_message(event.message))
+        if (this->process.raw_keyboard_registration() && is_keyboard_message(event.message))
         {
             const auto vk = static_cast<uint16_t>(event.wParam & 0xFFFF);
             auto scan_code = static_cast<uint16_t>((event.lParam >> 16) & 0xFF);
