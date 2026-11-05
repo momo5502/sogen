@@ -1196,13 +1196,35 @@ namespace sogen
                 return SDL_CreateWindow(title.c_str(), width, height, flags);
             }
 
+            // A guest window at the top of its screen would put the host title bar above the display, where it cannot be
+            // grabbed. The frame of a host window with a title bar is kept inside the display's usable area, a little below
+            // its top edge. A borderless one (a guest window without a full WS_CAPTION) has no title bar to keep reachable
+            // and stays where the guest put it.
+            static void set_host_window_position(SDL_Window* window, int x, int y)
+            {
+                constexpr int top_margin = 20;
+                const SDL_Point point{.x = x, .y = y};
+                SDL_Rect usable{};
+                int border_top{};
+                int border_left{};
+                if ((SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) == 0 &&
+                    SDL_GetDisplayUsableBounds(SDL_GetDisplayForPoint(&point), &usable) &&
+                    SDL_GetWindowBordersSize(window, &border_top, &border_left, nullptr, nullptr))
+                {
+                    x = std::max(x, usable.x + border_left);
+                    y = std::max(y, usable.y + top_margin + border_top);
+                }
+
+                SDL_SetWindowPosition(window, x, y);
+            }
+
             static void finish_host_window(SDL_Window* window, const int x, const int y, const Uint64 flags)
             {
 #ifdef _WIN32
                 apply_application_icon(window);
 #endif
 
-                SDL_SetWindowPosition(window, x, y);
+                set_host_window_position(window, x, y);
                 SDL_StartTextInput(window);
                 if ((flags & SDL_WINDOW_HIDDEN) == 0)
                 {
@@ -1285,7 +1307,7 @@ namespace sogen
                         {
                             const auto& insets = state->desc.client_insets;
                             place_host_window(state->window, state->placed_position, [&] {
-                                SDL_SetWindowPosition(state->window, rect.left, rect.top);
+                                set_host_window_position(state->window, rect.left, rect.top);
                                 SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
                                                   std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
                             });
