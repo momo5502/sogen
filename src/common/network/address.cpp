@@ -1,5 +1,13 @@
 #include "address.hpp"
 
+#ifdef _WIN32
+#include <iphlpapi.h>
+#elif !defined(__EMSCRIPTEN__)
+#include <ifaddrs.h>
+#include <net/if.h>
+#endif
+
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <stdexcept>
@@ -403,6 +411,103 @@ namespace sogen::network
 
         return results;
     }
+
+#ifndef __EMSCRIPTEN__
+    namespace
+    {
+        // The same link-local address can be on several interfaces, which only its scope tells apart.
+        bool is_same_local_address(const address& a, const address& b)
+        {
+            return a == b && (!a.is_ipv6() || a.get_in6_addr().sin6_scope_id == b.get_in6_addr().sin6_scope_id);
+        }
+
+        void add_unique(std::vector<address>& addresses, const sockaddr* addr, const socklen_t length)
+        {
+            address a{};
+            a.set_address(addr, length);
+            if (std::ranges::none_of(addresses, [&](const address& existing) { return is_same_local_address(existing, a); }))
+            {
+                addresses.emplace_back(a);
+            }
+        }
+    }
+#endif
+
+#ifdef _WIN32
+    std::vector<address> address::get_local_addresses(const int family)
+    {
+        constexpr ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER | GAA_FLAG_SKIP_FRIENDLY_NAME;
+
+        std::vector<std::byte> buffer{};
+        ULONG size = 0x4000;
+        ULONG result = ERROR_BUFFER_OVERFLOW;
+        while (result == ERROR_BUFFER_OVERFLOW)
+        {
+            buffer.resize(size);
+            result = GetAdaptersAddresses(static_cast<ULONG>(family), flags, nullptr,
+                                          reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buffer.data()), &size);
+        }
+
+        std::vector<address> addresses{};
+        if (result != ERROR_SUCCESS)
+        {
+            return addresses;
+        }
+
+        for (const auto* adapter = reinterpret_cast<const IP_ADAPTER_ADDRESSES*>(buffer.data()); adapter; adapter = adapter->Next)
+        {
+            if (adapter->OperStatus != IfOperStatusUp || adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK)
+            {
+                continue;
+            }
+
+            // Tentative, duplicate and deprecated addresses are not usable, and SIO_ADDRESS_LIST_QUERY leaves them out:
+            // https://learn.microsoft.com/en-us/windows/win32/winsock/sio-address-list-query
+            for (const auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next)
+            {
+                const auto& socket_address = unicast->Address;
+                if (socket_address.lpSockaddr->sa_family == family && unicast->DadState == IpDadStatePreferred)
+                {
+                    add_unique(addresses, socket_address.lpSockaddr, socket_address.iSockaddrLength);
+                }
+            }
+        }
+
+        return addresses;
+    }
+#elif defined(__EMSCRIPTEN__)
+    std::vector<address> address::get_local_addresses(const int /*family*/)
+    {
+        return {};
+    }
+#else
+    std::vector<address> address::get_local_addresses(const int family)
+    {
+        std::vector<address> addresses{};
+
+        ifaddrs* interfaces = nullptr;
+        if (getifaddrs(&interfaces) != 0)
+        {
+            return addresses;
+        }
+
+        const auto _ = utils::finally([&interfaces] { freeifaddrs(interfaces); });
+
+        for (const auto* entry = interfaces; entry; entry = entry->ifa_next)
+        {
+            if (!entry->ifa_addr || entry->ifa_addr->sa_family != family || (entry->ifa_flags & IFF_UP) == 0 ||
+                (entry->ifa_flags & IFF_LOOPBACK) != 0)
+            {
+                continue;
+            }
+
+            const auto length = family == AF_INET6 ? sizeof(sockaddr_in6) : sizeof(sockaddr_in);
+            add_unique(addresses, entry->ifa_addr, static_cast<socklen_t>(length));
+        }
+
+        return addresses;
+    }
+#endif
 }
 
 namespace std

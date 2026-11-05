@@ -883,6 +883,8 @@ namespace sogen
                     return STATUS_SUCCESS;
                 case AFD_SET_INFORMATION:
                     return this->ioctl_set_information(win_emu, c);
+                case AFD_ADDRESS_LIST_QUERY:
+                    return ioctl_address_list_query(win_emu, c);
                 case AFD_GET_INFORMATION:
                 case AFD_QUERY_HANDLES:
                 case AFD_TRANSPORT_IOCTL:
@@ -1773,6 +1775,72 @@ namespace sogen
                 // Windows reports the length of the AFD_SET_CONTEXT socket context here, not the address length.
                 return write_address(win_emu, c, convert_to_win_address(win_emu, *remote_address),
                                      static_cast<ULONG>(this->shared_context_.size()));
+            }
+
+            // The input is the address family, and the output a TRANSPORT_ADDRESS: the address count, then a TA_ADDRESS per address.
+            // An output too small for all of them gets the count and the addresses that fit whole, and Information always
+            // tells the size of the whole list.
+            static NTSTATUS ioctl_address_list_query(windows_emulator& win_emu, const io_device_context& c)
+            {
+                if (c.input_buffer_length < sizeof(uint16_t) || c.output_buffer_length < sizeof(int32_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto win_family = win_emu.emu().read_memory<uint16_t>(c.input_buffer);
+                const auto addresses = get_local_addresses(win_emu, win_family);
+
+                const auto count = static_cast<int32_t>(addresses.size());
+                win_emu.emu().write_memory(c.output_buffer, count);
+
+                uint64_t offset = sizeof(count);
+                bool complete = true;
+                for (const auto& address : addresses)
+                {
+                    const auto entry = to_ta_address(win_emu, address);
+                    if (complete && offset + entry.size() <= c.output_buffer_length)
+                    {
+                        win_emu.emu().write_memory(c.output_buffer + offset, entry.data(), entry.size());
+                    }
+                    else
+                    {
+                        complete = false;
+                    }
+
+                    offset += entry.size();
+                }
+
+                if (c.io_status_block)
+                {
+                    status_block block{};
+                    block.Information = static_cast<ULONG>(offset);
+                    c.io_status_block.write(block);
+                }
+
+                return complete ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW;
+            }
+
+            static std::vector<network::address> get_local_addresses(windows_emulator& win_emu, const uint16_t win_family)
+            {
+                constexpr uint16_t win_af_inet = 2;
+                constexpr uint16_t win_af_inet6 = 23;
+                if (win_family != win_af_inet && win_family != win_af_inet6)
+                {
+                    return {};
+                }
+
+                return win_emu.socket_factory().get_local_addresses(translate_win_to_host_address_family(win_family));
+            }
+
+            // A TA_ADDRESS is the address length and the Windows sockaddr with the family as the address type.
+            static std::vector<std::byte> to_ta_address(const windows_emulator& win_emu, const network::address& address)
+            {
+                auto entry = convert_to_win_address(win_emu, address);
+                const auto address_length = static_cast<uint16_t>(entry.size() - sizeof(uint16_t));
+
+                entry.insert(entry.begin(), sizeof(address_length), std::byte{});
+                memcpy(entry.data(), &address_length, sizeof(address_length));
+                return entry;
             }
 
             static NTSTATUS write_address(windows_emulator& win_emu, const io_device_context& c,
