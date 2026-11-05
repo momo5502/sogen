@@ -412,6 +412,7 @@ namespace sogen::network
         return results;
     }
 
+#ifndef __EMSCRIPTEN__
     namespace
     {
         // The same link-local address can be on several interfaces, which only its scope tells apart.
@@ -430,6 +431,7 @@ namespace sogen::network
             }
         }
     }
+#endif
 
 #ifdef _WIN32
     std::vector<address> address::get_local_addresses(const int family)
