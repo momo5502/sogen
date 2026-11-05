@@ -393,8 +393,22 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (remove_signaled_packet && wait_packet->queued_completion)
+            if (!wait_packet->associated)
             {
+                return STATUS_CANCELLED;
+            }
+
+            // Windows queues the packet when the target is signalled; the emulator only does so on demand, so a
+            // signal that already happened has to be turned into its packet before the wait can be judged.
+            io_completion_wait::materialize_signaled_wait_packets(c.win_emu, wait_packet->io_completion_handle);
+
+            if (wait_packet->queued_completion)
+            {
+                if (!remove_signaled_packet)
+                {
+                    return STATUS_PENDING;
+                }
+
                 if (auto* completion = c.proc.io_completions.get(wait_packet->io_completion_handle))
                 {
                     if (completion->remove_by_wait_packet(wait_completion_packet_handle))
