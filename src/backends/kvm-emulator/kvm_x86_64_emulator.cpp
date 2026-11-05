@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <cpuid.h>
 #include <immintrin.h>
 
 #include <algorithm>
@@ -100,7 +101,13 @@ namespace sogen::kvm
             const auto first = reinterpret_cast<uintptr_t>(base) & ~(cache_line_size - 1);
             const auto last = reinterpret_cast<uintptr_t>(base) + size;
 
-            static const bool has_clflushopt = __builtin_cpu_supports("clflushopt");
+            static const bool has_clflushopt = [] {
+                unsigned int eax{};
+                unsigned int ebx{};
+                unsigned int ecx{};
+                unsigned int edx{};
+                return __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx) && (ebx & bit_CLFLUSHOPT) != 0;
+            }();
             if (has_clflushopt)
             {
                 flush_cache_lines_clflushopt(first, last);
