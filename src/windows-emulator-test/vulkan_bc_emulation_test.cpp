@@ -99,4 +99,25 @@ namespace sogen::test
         EXPECT_FALSE(plan_bc_copy(layout, bc1, {}, {.mip = 2, .layer_count = 1, .width = 1, .height = 1, .depth = 1}));
         EXPECT_FALSE(plan_bc_copy(layout, bc1, {}, {.mip = 0, .base_layer = 1, .layer_count = 1, .width = 4, .height = 4, .depth = 1}));
     }
+
+    // vkCmdCopyBufferToImage requires block-aligned offsets, whole blocks except where the region ends at the edge of the
+    // mip level, and buffer offsets, row lengths and image heights in whole blocks no smaller than the region.
+    TEST(VulkanBcEmulationTest, CopiesFollowTheRulesForBlockCompressedImages)
+    {
+        const auto bc1 = format(k_bc1_rgba_srgb);
+        const bc_shadow_layout layout(bc1, 10, 10, 1, 1, 1);
+        const auto region = [](const int32_t x, const uint32_t width) {
+            return bc_image_region{.mip = 0, .layer_count = 1, .x = x, .y = 0, .width = width, .height = 4, .depth = 1};
+        };
+
+        EXPECT_TRUE(plan_bc_copy(layout, bc1, {}, region(8, 2)));
+        EXPECT_FALSE(plan_bc_copy(layout, bc1, {}, region(0, 6)));
+
+        EXPECT_TRUE(plan_bc_copy(layout, bc1, {.offset = 8, .row_length = 8, .image_height = 4}, region(0, 8)));
+        EXPECT_FALSE(plan_bc_copy(layout, bc1, {.offset = 4}, region(0, 8)));
+        EXPECT_FALSE(plan_bc_copy(layout, bc1, {.row_length = 4}, region(0, 8)));
+        EXPECT_FALSE(plan_bc_copy(layout, bc1, {.row_length = 10}, region(0, 8)));
+        EXPECT_FALSE(plan_bc_copy(layout, bc1, {.image_height = 2}, region(0, 8)));
+        EXPECT_FALSE(plan_bc_copy(layout, bc1, {.image_height = 6}, region(0, 8)));
+    }
 }

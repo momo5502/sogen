@@ -84,14 +84,26 @@ namespace sogen
         for (uint32_t mip = 0; mip < levels; ++mip)
         {
             mip_layout level{};
-            level.blocks_x = blocks(mip_extent(width, mip));
-            level.blocks_y = blocks(mip_extent(height, mip));
+            level.width = mip_extent(width, mip);
+            level.height = mip_extent(height, mip);
+            level.blocks_x = blocks(level.width);
+            level.blocks_y = blocks(level.height);
             level.depth = mip_extent(std::max(1u, depth), mip);
             level.offset = this->size_;
             level.layer_bytes = static_cast<uint64_t>(level.blocks_x) * level.blocks_y * level.depth * this->block_bytes_;
             this->size_ += level.layer_bytes * layers;
             this->mips_.push_back(level);
         }
+    }
+
+    uint32_t bc_shadow_layout::width(const uint32_t mip) const
+    {
+        return this->mips_.at(mip).width;
+    }
+
+    uint32_t bc_shadow_layout::height(const uint32_t mip) const
+    {
+        return this->mips_.at(mip).height;
     }
 
     uint32_t bc_shadow_layout::blocks_x(const uint32_t mip) const
@@ -136,31 +148,40 @@ namespace sogen
                                              const bc_buffer_region& buffer, const bc_image_region& image)
     {
         const auto layers = std::max(1u, image.layer_count);
-        if (image.mip >= layout.mip_levels() || image.base_layer + layers > layout.array_layers())
+        const auto depth = std::max(1u, image.depth);
+        if (image.mip >= layout.mip_levels() || image.base_layer + layers > layout.array_layers() || (depth > 1 && layers > 1) ||
+            image.x < 0 || image.y < 0 || image.z < 0 || image.width == 0 || image.height == 0)
         {
             return std::nullopt;
         }
 
-        if (image.x < 0 || image.y < 0 || image.z < 0 || image.x % k_block != 0 || image.y % k_block != 0 || image.width == 0 ||
-            image.height == 0)
+        const auto x = static_cast<uint32_t>(image.x);
+        const auto y = static_cast<uint32_t>(image.y);
+        const auto z = static_cast<uint32_t>(image.z);
+        const auto mip_width = layout.width(image.mip);
+        const auto mip_height = layout.height(image.mip);
+        const bool inside = x + image.width <= mip_width && y + image.height <= mip_height && z + depth <= layout.depth(image.mip);
+        const bool whole_blocks = x % k_block == 0 && y % k_block == 0 && (image.width % k_block == 0 || x + image.width == mip_width) &&
+                                  (image.height % k_block == 0 || y + image.height == mip_height);
+        if (!inside || !whole_blocks)
         {
             return std::nullopt;
         }
 
-        const auto block_x = static_cast<uint32_t>(image.x) / k_block;
-        const auto block_y = static_cast<uint32_t>(image.y) / k_block;
+        const auto row_length = buffer.row_length != 0 ? buffer.row_length : image.width;
+        const auto image_height = buffer.image_height != 0 ? buffer.image_height : image.height;
+        if (buffer.offset % format.block_bytes != 0 || row_length < image.width || image_height < image.height ||
+            buffer.row_length % k_block != 0 || buffer.image_height % k_block != 0)
+        {
+            return std::nullopt;
+        }
+
+        const auto block_x = x / k_block;
+        const auto block_y = y / k_block;
         const auto blocks_wide = blocks(image.width);
         const auto blocks_high = blocks(image.height);
-        const auto depth = std::max(1u, image.depth);
-        if (block_x + blocks_wide > layout.blocks_x(image.mip) || block_y + blocks_high > layout.blocks_y(image.mip) ||
-            static_cast<uint32_t>(image.z) + depth > layout.depth(image.mip) || (depth > 1 && layers > 1))
-        {
-            return std::nullopt;
-        }
-
-        const uint64_t buffer_row_bytes =
-            static_cast<uint64_t>(blocks(buffer.row_length != 0 ? buffer.row_length : image.width)) * format.block_bytes;
-        const uint64_t buffer_slice_bytes = buffer_row_bytes * blocks(buffer.image_height != 0 ? buffer.image_height : image.height);
+        const uint64_t buffer_row_bytes = static_cast<uint64_t>(blocks(row_length)) * format.block_bytes;
+        const uint64_t buffer_slice_bytes = buffer_row_bytes * blocks(image_height);
         const uint64_t row_bytes = static_cast<uint64_t>(blocks_wide) * format.block_bytes;
 
         bc_copy_plan plan{};
@@ -169,18 +190,18 @@ namespace sogen
         plan.slices = layers * depth;
         plan.shadow_row_bytes = layout.row_bytes(image.mip);
         plan.shadow_slice_bytes = layout.slice_bytes(image.mip);
-        plan.shadow_offset = layout.offset(image.mip, image.base_layer, static_cast<uint32_t>(image.z), block_y, block_x);
+        plan.shadow_offset = layout.offset(image.mip, image.base_layer, z, block_y, block_x);
 
         const bool whole_rows = row_bytes == layout.row_bytes(image.mip) && row_bytes == buffer_row_bytes;
         for (uint32_t slice = 0; slice < plan.slices; ++slice)
         {
             const uint32_t layer = depth > 1 ? image.base_layer : image.base_layer + slice;
-            const uint32_t z = static_cast<uint32_t>(image.z) + (depth > 1 ? slice : 0);
+            const uint32_t slice_z = z + (depth > 1 ? slice : 0);
             const uint64_t buffer_slice = buffer.offset + (slice * buffer_slice_bytes);
             if (whole_rows)
             {
                 plan.rows.push_back({.buffer_offset = buffer_slice,
-                                     .shadow_offset = layout.offset(image.mip, layer, z, block_y, 0),
+                                     .shadow_offset = layout.offset(image.mip, layer, slice_z, block_y, 0),
                                      .size = row_bytes * blocks_high});
                 continue;
             }
@@ -188,7 +209,7 @@ namespace sogen
             for (uint32_t row = 0; row < blocks_high; ++row)
             {
                 plan.rows.push_back({.buffer_offset = buffer_slice + (row * buffer_row_bytes),
-                                     .shadow_offset = layout.offset(image.mip, layer, z, block_y + row, block_x),
+                                     .shadow_offset = layout.offset(image.mip, layer, slice_z, block_y + row, block_x),
                                      .size = row_bytes});
             }
         }

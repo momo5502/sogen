@@ -53,6 +53,8 @@ namespace sogen
             return this->array_layers_;
         }
 
+        uint32_t width(uint32_t mip) const;
+        uint32_t height(uint32_t mip) const;
         uint32_t blocks_x(uint32_t mip) const;
         uint32_t blocks_y(uint32_t mip) const;
         uint32_t depth(uint32_t mip) const;
@@ -64,6 +66,8 @@ namespace sogen
       private:
         struct mip_layout
         {
+            uint32_t width{};
+            uint32_t height{};
             uint32_t blocks_x{};
             uint32_t blocks_y{};
             uint32_t depth{};
@@ -118,7 +122,9 @@ namespace sogen
         uint64_t shadow_slice_bytes{};
     };
 
-    // Nothing for regions that are not block aligned or that leave the image.
+    // Nothing for regions Vulkan does not allow for block-compressed images: offsets that are not block aligned, partial
+    // blocks other than at the edge of the mip level, buffer offsets, rows or images that are not whole blocks or are smaller
+    // than the region, and regions that leave the image.
     std::optional<bc_copy_plan> plan_bc_copy(const bc_shadow_layout& layout, const bc_emulated_format& format,
                                              const bc_buffer_region& buffer, const bc_image_region& image);
 }

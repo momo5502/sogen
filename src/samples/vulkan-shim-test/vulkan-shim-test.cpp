@@ -788,6 +788,8 @@ namespace
         std::array<std::array<int, 4>, 16> texels;
         // Which channels hold interpolated BC3 alpha, BC4 or BC5 values, which decoders compute at different precisions.
         std::array<bool, 4> interpolated_channels;
+        // The format of the image the block is copied into, whose decoding the texels are, when it is not the same.
+        VkFormat copy_format = VK_FORMAT_UNDEFINED;
     };
 
     using rgb = std::array<int, 3>;
@@ -883,6 +885,14 @@ namespace
             return std::array<int, 4>{c[0], c[1], c[2], t * 17};
         });
 
+        // The same blocks without alpha: the fourth color of the three-color mode is opaque black.
+        add("BC1 copied into BC1 without alpha", VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, color_block(0x001F, 0xF800),
+            {false, false, false, false}, [&](const int t) {
+                const auto& c = three[t % 4];
+                return std::array<int, 4>{c[0], c[1], c[2], 255};
+            });
+        cases.back().copy_format = VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+
         auto bc3 = channel_block(255, 0);
         bc3.insert(bc3.end(), colors.begin(), colors.end());
         add("BC3 interpolated alpha", VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, bc3, {false, false, false, true},
@@ -910,7 +920,7 @@ namespace
         return cases;
     }
 
-    // Uploads each block, copies it to a second image, reads that back, and blits the first image into an uncompressed one
+    // Uploads each block, copies it to a second image, reads that back, and blits the second image into an uncompressed one
     // to compare its texels. Decoders may round interpolated colors either way, so those may differ by one. Interpolated
     // BC3 alpha, BC4 and BC5 values differ by more on hardware that decodes them at another precision (up to 7 on NVIDIA).
     bool test_bc_formats(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkPhysicalDevice physical_device,
@@ -1026,11 +1036,14 @@ namespace
         bool all_ok = true;
         for (const auto& test : make_bc_cases())
         {
+            const VkFormat copy_format = test.copy_format != VK_FORMAT_UNDEFINED ? test.copy_format : test.format;
             VkFormatProperties bc_properties{};
             vkGetPhysicalDeviceFormatProperties(physical_device, test.format, &bc_properties);
+            VkFormatProperties copy_properties{};
+            vkGetPhysicalDeviceFormatProperties(physical_device, copy_format, &copy_properties);
             VkFormatProperties texel_properties{};
             vkGetPhysicalDeviceFormatProperties(physical_device, test.texel_format, &texel_properties);
-            if ((bc_properties.optimalTilingFeatures & needed) != needed ||
+            if ((bc_properties.optimalTilingFeatures & needed) != needed || (copy_properties.optimalTilingFeatures & needed) != needed ||
                 (texel_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0)
             {
                 std::printf("[shim-test] %s -> SKIP (format unsupported)\n", test.name);
@@ -1039,7 +1052,7 @@ namespace
 
             constexpr VkImageUsageFlags transfer = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
             const VkImage blocks = create_image(test.format, transfer | VK_IMAGE_USAGE_SAMPLED_BIT);
-            const VkImage copied = create_image(test.format, transfer | VK_IMAGE_USAGE_SAMPLED_BIT);
+            const VkImage copied = create_image(copy_format, transfer | VK_IMAGE_USAGE_SAMPLED_BIT);
             const VkImage texels = create_image(test.texel_format, transfer);
 
             VkBufferCreateInfo buffer_info{};
@@ -1100,7 +1113,7 @@ namespace
                 blit.srcOffsets[1] = {.x = 4, .y = 4, .z = 1};
                 blit.dstOffsets[1] = {.x = 4, .y = 4, .z = 1};
                 barrier(cmd, texels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-                vkCmdBlitImage(cmd, blocks, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, texels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                vkCmdBlitImage(cmd, copied, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, texels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
                                VK_FILTER_NEAREST);
                 barrier(cmd, texels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
                 region.bufferOffset = texel_offset;
