@@ -199,6 +199,43 @@ class LinuxGarbageCollectionTest(unittest.TestCase):
             with self.subTest(view=name):
                 self.assertIs(view(app, name), view(app, name))
 
+    def test_module_callback_snapshots_outlive_state_restore_and_emulator(self):
+        def metadata(module):
+            return (
+                module.name, str(module.path), module.image_base, module.entry_point,
+                [(section.name, section.start, section.length) for section in module.sections],
+            )
+
+        def capture(origin, restore):
+            app = create(application=True)
+            modules = []
+            app.callbacks.on_module_load = modules.append
+            if origin == "runtime":
+                modules.clear()
+                app.start()
+            self.assertTrue(modules)
+            retained = list(modules)
+            expected = [metadata(module) for module in retained]
+            if restore == "snapshot":
+                app.save_snapshot()
+                app.restore_snapshot()
+            else:
+                app.deserialize_state(app.serialize_state())
+
+            def callback(*args):
+                return app
+
+            app.callbacks.on_stdout = callback
+            return weakref.ref(callback), retained, expected
+
+        for origin in ("replay", "runtime"):
+            for restore in ("snapshot", "deserialize"):
+                with self.subTest(origin=origin, restore=restore):
+                    witness, modules, expected = capture(origin, restore)
+                    gc.collect()
+                    self.assertIsNone(witness())
+                    self.assertEqual([metadata(module) for module in modules], expected)
+
     def test_symbol_callback_cycle_is_collected(self):
         def install():
             app = create()

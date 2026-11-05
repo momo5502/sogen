@@ -128,7 +128,7 @@ namespace sogen::py
             }
 
             nb::gil_scoped_acquire gil{};
-            this->module_load_cb(make_linux_view(module, this->owner_object()));
+            this->module_load_cb(copy_linux_module(module));
         });
         this->thread_create_observer_id = this->emu->on_thread_create.add([this](linux_thread& thread) {
             if (this->thread_create_cb.is_none())
@@ -230,7 +230,7 @@ namespace sogen::py
         {
             for (auto& [_, module] : this->emu->mod_manager.get_modules())
             {
-                this->module_load_cb(make_linux_view(module, this->owner_object()));
+                this->module_load_cb(copy_linux_module(module));
             }
         }
     }
