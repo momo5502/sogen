@@ -415,8 +415,10 @@ namespace sogen::test
                   STATUS_SUCCESS);
         ASSERT_EQ(this->close(this->reader), STATUS_SUCCESS);
 
-        const auto status = this->write("lost");
-        EXPECT_TRUE(NT_ERROR(status));
+        auto context = this->request(this->writer, 4);
+        context.apc_context = 0x5678;
+        this->emu->memory.write_memory(this->storage + 0x21000, "lost", 4);
+        EXPECT_TRUE(NT_ERROR(this->pipe(this->writer).start_io(*this->emu, context, false)));
 
         io_completion_message message{};
         EXPECT_FALSE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
@@ -551,6 +553,7 @@ namespace sogen::test
                   STATUS_SUCCESS);
         original->set_completion_notification_flags(1);
         auto context = this->request(duplicate, 16);
+        context.apc_context = 0x5678;
         EXPECT_EQ(context.completion_port, completion);
         EXPECT_EQ(context.completion_key, 42u);
         EXPECT_EQ(context.completion_notification_flags, 1u);

@@ -1562,8 +1562,7 @@ namespace sogen
         }
 
         // Windows completes I/O on a file bound to a completion port asynchronously: even a read served from the
-        // cache returns STATUS_PENDING, and success or end of file reaches the caller through the packet. A request
-        // without an ApcContext queues no packet.
+        // cache returns STATUS_PENDING, and success or end of file reaches the caller through the packet.
         NTSTATUS complete_file_io(const syscall_context& c, const file& f, const uint64_t event, const uint64_t apc_routine,
                                   const uint64_t apc_context, const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                   const uint64_t wow64_io_status_block, const NTSTATUS status, const uint64_t information)
@@ -1574,16 +1573,13 @@ namespace sogen
                 return status;
             }
 
-            if (apc_context)
-            {
-                io_device_context context{c.emu};
-                context.event = make_handle(event);
-                context.apc_context = apc_context;
-                context.io_status_block = io_status_block;
-                context.completion_port = f.completion_association->completion_port;
-                context.completion_key = f.completion_association->key;
-                io_device::queue_io_completion(c.win_emu, context);
-            }
+            io_device_context context{c.emu};
+            context.event = make_handle(event);
+            context.apc_context = apc_context;
+            context.io_status_block = io_status_block;
+            context.completion_port = f.completion_association->completion_port;
+            context.completion_key = f.completion_association->key;
+            io_device::queue_io_completion(c.win_emu, context);
 
             return STATUS_PENDING;
         }
