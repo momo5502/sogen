@@ -12,7 +12,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# GitHub's API and release CDN occasionally answer with a 5xx or time out; retry before failing the job.
+# GitHub's API and release CDN occasionally answer with an HTTP error such as 504; retry those before failing the job.
 foreach ($cmdlet in 'Invoke-WebRequest', 'Invoke-RestMethod') {
     $PSDefaultParameterValues["${cmdlet}:MaximumRetryCount"] = 5
     $PSDefaultParameterValues["${cmdlet}:RetryIntervalSec"] = 10
