@@ -46,11 +46,12 @@ namespace sogen
                     const auto text = is_string ? try_read_hard_error_string(c, values.at(i)) : std::nullopt;
                     if (text)
                     {
-                        c.win_emu.log.error("  Parameter %u: %s\n", i, u16_to_u8(*text).c_str());
+                        c.win_emu.log.error("  Parameter %u: %s\n", static_cast<unsigned int>(i), u16_to_u8(*text).c_str());
                     }
                     else
                     {
-                        c.win_emu.log.error("  Parameter %u: 0x%llX\n", i, static_cast<unsigned long long>(values.at(i)));
+                        c.win_emu.log.error("  Parameter %u: 0x%llX\n", static_cast<unsigned int>(i),
+                                            static_cast<unsigned long long>(values.at(i)));
                     }
                 }
             }

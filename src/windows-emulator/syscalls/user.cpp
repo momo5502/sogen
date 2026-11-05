@@ -7332,7 +7332,7 @@ namespace sogen
             constexpr DWORD state_focusable = 0x100000;
             constexpr uint32_t cs_noclose = 0x200;
 
-            enum : size_t
+            enum class title_bar_element : size_t
             {
                 title_bar,
                 reserved,
@@ -7343,42 +7343,43 @@ namespace sogen
             };
 
             std::array<DWORD, 6> states{};
-            states[title_bar] = state_focusable;
+            const auto state = [&states](const title_bar_element element) -> DWORD& { return states[static_cast<size_t>(element)]; };
+            state(title_bar_element::title_bar) = state_focusable;
 
             if ((win.style & WS_CAPTION) != WS_CAPTION)
             {
-                states[title_bar] |= state_invisible;
+                state(title_bar_element::title_bar) |= state_invisible;
                 return states;
             }
 
-            states[reserved] = state_invisible;
+            state(title_bar_element::reserved) = state_invisible;
 
             if ((win.style & WS_SYSMENU) == 0)
             {
-                std::fill(states.begin() + minimize_button, states.end(), state_invisible);
+                std::fill(states.begin() + static_cast<size_t>(title_bar_element::minimize_button), states.end(), state_invisible);
                 return states;
             }
 
             if ((win.style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) == 0)
             {
-                states[minimize_button] = state_invisible;
-                states[maximize_button] = state_invisible;
+                state(title_bar_element::minimize_button) = state_invisible;
+                state(title_bar_element::maximize_button) = state_invisible;
             }
             else
             {
-                states[minimize_button] = (win.style & WS_MINIMIZEBOX) == 0 ? state_unavailable : 0;
-                states[maximize_button] = (win.style & WS_MAXIMIZEBOX) == 0 ? state_unavailable : 0;
+                state(title_bar_element::minimize_button) = (win.style & WS_MINIMIZEBOX) == 0 ? state_unavailable : 0;
+                state(title_bar_element::maximize_button) = (win.style & WS_MAXIMIZEBOX) == 0 ? state_unavailable : 0;
             }
 
             if ((win.ex_style & WS_EX_CONTEXTHELP) == 0)
             {
-                states[help_button] = state_invisible;
+                state(title_bar_element::help_button) = state_invisible;
             }
 
             const auto window_class = c.proc.classes.find(win.class_name);
             if (window_class != c.proc.classes.end() && (window_class->second.wnd_class.style & cs_noclose) != 0)
             {
-                states[close_button] = state_unavailable;
+                state(title_bar_element::close_button) = state_unavailable;
             }
 
             return states;
@@ -7410,7 +7411,7 @@ namespace sogen
             info.cbSize = requested_size;
             info.rcTitleBar = get_title_bar_rect(c, *win);
             const auto states = get_title_bar_states(c, *win);
-            std::copy(states.begin(), states.end(), std::begin(info.rgstate));
+            std::ranges::copy(states, std::begin(info.rgstate));
 
             if (!c.win_emu.memory.try_write_memory(info_address, &info, sizeof(info)))
             {
