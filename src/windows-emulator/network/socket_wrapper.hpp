@@ -43,6 +43,7 @@ namespace sogen
 
           private:
             socket socket_{};
+            bool listening_{};
         };
     }
 
