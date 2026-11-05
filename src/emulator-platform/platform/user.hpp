@@ -267,20 +267,41 @@ namespace sogen
         EMULATOR_CAST(typename Traits::PVOID, UNICODE_STRING*) pusMenuName;
     };
 
+    // The client view of tagCLS that user32's _GetClassData reads (offsets from its 19041 index tables).
     struct USER_CLASS
     {
         uint8_t pad_000[2];
         uint16_t atom;
-        uint8_t pad_004[0x1C];
+        uint16_t fnid;
+        uint16_t CSF_flags;
+        uint32_t style;
+        uint32_t cbclsExtra;
+        uint64_t lpszClientAnsiMenuName;
+        uint64_t lpszClientUnicodeMenuName;
         uint64_t lpfnWndProc;
-        uint8_t pad_028[8];
+        uint64_t lpszMenuName;
         uint64_t lpszAnsiClassName;
-        uint8_t pad_038[0xC8];
+        uint64_t hIconSm;
+        uint64_t hModule;
+        uint64_t hbrBackground;
+        uint32_t cbwndExtra;
+        uint8_t pad_054[0xAC];
     };
 
     static_assert(offsetof(USER_CLASS, atom) == 0x02);
+    static_assert(offsetof(USER_CLASS, fnid) == 0x04);
+    static_assert(offsetof(USER_CLASS, CSF_flags) == 0x06);
+    static_assert(offsetof(USER_CLASS, style) == 0x08);
+    static_assert(offsetof(USER_CLASS, cbclsExtra) == 0x0C);
+    static_assert(offsetof(USER_CLASS, lpszClientAnsiMenuName) == 0x10);
+    static_assert(offsetof(USER_CLASS, lpszClientUnicodeMenuName) == 0x18);
     static_assert(offsetof(USER_CLASS, lpfnWndProc) == 0x20);
+    static_assert(offsetof(USER_CLASS, lpszMenuName) == 0x28);
     static_assert(offsetof(USER_CLASS, lpszAnsiClassName) == 0x30);
+    static_assert(offsetof(USER_CLASS, hIconSm) == 0x38);
+    static_assert(offsetof(USER_CLASS, hModule) == 0x40);
+    static_assert(offsetof(USER_CLASS, hbrBackground) == 0x48);
+    static_assert(offsetof(USER_CLASS, cbwndExtra) == 0x50);
     static_assert(sizeof(USER_CLASS) == 0x100);
 
     // USER_WINDOW::bFlags is byte 2 of tagWND::state, so WNDS_ANSIWINDOWPROC (0x00080000) is bit 3 there.
