@@ -1436,12 +1436,13 @@ namespace sogen
             VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT;
         static constexpr VkImageUsageFlags bc_emulated_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
-        // Views of an emulated image in an uncompressed format would see decoded texels, not blocks.
+        // A fully bound shadow cannot follow sparse, aliased or protected images, and views in an uncompressed format would
+        // see decoded texels, not blocks.
         static bool is_bc_emulation_supported(const uint32_t tiling, const uint32_t usage, const uint32_t flags)
         {
             constexpr VkImageUsageFlags supported_usage = VK_IMAGE_USAGE_SAMPLED_BIT | bc_emulated_usage;
-            return tiling == VK_IMAGE_TILING_OPTIMAL && (usage & ~supported_usage) == 0 &&
-                   (flags & VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT) == 0;
+            constexpr VkImageCreateFlags supported_flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+            return tiling == VK_IMAGE_TILING_OPTIMAL && (usage & ~supported_usage) == 0 && (flags & ~supported_flags) == 0;
         }
 
         // The push constants of snapshot_shaders/bc_decode.comp.glsl.
@@ -2601,7 +2602,7 @@ namespace sogen
             job.rows = plan.blocks_y * block;
             job.scratch_bytes = static_cast<VkDeviceSize>(job.row_texels) * job.rows * bc.format.texel_bytes * plan.slices;
             job.groups_x = (plan.blocks_x + group - 1) / group;
-            job.groups_y = ((plan.blocks_y * plan.slices) + group - 1) / group;
+            job.groups_y = (plan.blocks_y + group - 1) / group;
             job.parameters = {
                 .source = {static_cast<uint32_t>(source), static_cast<uint32_t>(source >> 32)},
                 .blocks_x = plan.blocks_x,
@@ -2666,14 +2667,9 @@ namespace sogen
         // Decodes the blocks of a region from the shadow into the image: the decode shader turns them into texels in scratch,
         // and those are copied into the image.
         VkResult record_bc_decode(device_data& dev, command_buffer_data& command_buffer, const image_data& image,
-                                  const VkImageLayout layout, const bc_image_region& region)
+                                  const VkImageLayout layout, const bc_image_region& region, const bc_copy_plan& plan)
         {
             const auto& bc = *image.bc;
-            const auto plan = plan_bc_copy(bc.layout, bc.format, {}, region);
-            if (!plan)
-            {
-                return VK_ERROR_FORMAT_NOT_SUPPORTED;
-            }
             if (!this->can_dispatch(dev, command_buffer))
             {
                 return VK_ERROR_FEATURE_NOT_PRESENT;
@@ -2683,7 +2679,7 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
 
-            auto job = make_bc_decode_job(bc, *plan);
+            auto job = make_bc_decode_job(bc, plan);
             const auto* scratch = this->bc_scratch(dev, command_buffer, job.scratch_bytes);
             if (!scratch)
             {
@@ -2697,7 +2693,7 @@ namespace sogen
                        VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             dev.cmd_bind_pipeline(handle, VK_PIPELINE_BIND_POINT_COMPUTE, dev.bc_pipeline);
             dev.cmd_push_constants(handle, dev.bc_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(job.parameters), &job.parameters);
-            dev.cmd_dispatch(handle, job.groups_x, job.groups_y, 1);
+            dev.cmd_dispatch(handle, job.groups_x, job.groups_y, plan.slices);
             bc_barrier(dev, handle, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                        VK_ACCESS_TRANSFER_READ_BIT);
 
@@ -2707,7 +2703,7 @@ namespace sogen
             copy.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                                      .mipLevel = region.mip,
                                      .baseArrayLayer = region.base_layer,
-                                     .layerCount = region.layer_count};
+                                     .layerCount = region.depth > 1 ? 1 : plan.slices};
             copy.imageOffset = {.x = region.x, .y = region.y, .z = region.z};
             copy.imageExtent = {.width = region.width, .height = region.height, .depth = region.depth};
             dev.cmd_copy_buffer_to_image(handle, scratch->handle, image.handle, layout, 1, &copy);
@@ -2736,7 +2732,7 @@ namespace sogen
                        VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                        VK_ACCESS_TRANSFER_WRITE_BIT);
             dev.cmd_copy_buffer(command_buffer.handle, source, bc.shadow->handle, static_cast<uint32_t>(copies.size()), copies.data());
-            return this->record_bc_decode(dev, command_buffer, image, layout, to_bc_region(region));
+            return this->record_bc_decode(dev, command_buffer, image, layout, to_bc_region(region), *plan);
         }
 
         // The image holds decoded texels, so the blocks come from the shadow.
@@ -2770,21 +2766,22 @@ namespace sogen
                     .depth = region.depth ? region.depth : 1};
         }
 
-        // Copies the blocks between the shadows of two emulated images. Copies between an emulated image and any other are
-        // not supported.
-        static VkResult record_bc_shadow_copy(const device_data& dev, const command_buffer_data& command_buffer, const image_data& src,
-                                              const image_data& dst, const vulkan_host::image_copy_region& region)
+        // Copies the blocks between the shadows of two emulated images, and gives the plan for the destination. Copies
+        // between an emulated image and any other are not supported.
+        static std::optional<bc_copy_plan> record_bc_shadow_copy(const device_data& dev, const command_buffer_data& command_buffer,
+                                                                 const image_data& src, const image_data& dst,
+                                                                 const vulkan_host::image_copy_region& region)
         {
             if (!src.bc || !dst.bc || src.bc->format.block_bytes != dst.bc->format.block_bytes)
             {
-                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+                return std::nullopt;
             }
 
             const auto src_plan = plan_bc_copy(src.bc->layout, src.bc->format, {}, to_bc_region(region, true));
-            const auto dst_plan = plan_bc_copy(dst.bc->layout, dst.bc->format, {}, to_bc_region(region, false));
+            auto dst_plan = plan_bc_copy(dst.bc->layout, dst.bc->format, {}, to_bc_region(region, false));
             if (!src_plan || !dst_plan || src_plan->slices != dst_plan->slices)
             {
-                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+                return std::nullopt;
             }
 
             std::vector<VkBufferCopy> copies;
@@ -2805,7 +2802,7 @@ namespace sogen
                        VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
             dev.cmd_copy_buffer(command_buffer.handle, src.bc->shadow->handle, dst.bc->shadow->handle, static_cast<uint32_t>(copies.size()),
                                 copies.data());
-            return VK_SUCCESS;
+            return dst_plan;
         }
 
         uint32_t find_memory_type(const device_data& dev, uint32_t type_bits, VkMemoryPropertyFlags required)
@@ -7765,10 +7762,10 @@ namespace sogen
 
         if (src->second.bc || dst->second.bc)
         {
-            if (const VkResult result = impl::record_bc_shadow_copy(dev->second, cb->second, src->second, dst->second, r);
-                result != VK_SUCCESS)
+            const auto dst_plan = impl::record_bc_shadow_copy(dev->second, cb->second, src->second, dst->second, r);
+            if (!dst_plan)
             {
-                return result;
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
             }
 
             // Compatible BC formats can decode the same blocks differently, such as BC1 with and without alpha, so the
@@ -7776,7 +7773,7 @@ namespace sogen
             if (src->second.bc->format.kind != dst->second.bc->format.kind)
             {
                 return this->impl_->record_bc_decode(dev->second, cb->second, dst->second, translate_layout(dst_layout),
-                                                     impl::to_bc_region(r, false));
+                                                     impl::to_bc_region(r, false), *dst_plan);
             }
         }
 
@@ -8820,10 +8817,12 @@ namespace sogen
         }
 
         uint32_t host_format = format;
+        // The image's texels were decoded as the image's format, which a mutable view in a format that decodes differently,
+        // such as BC4 SNORM of a BC4 UNORM image, would misread.
         if (img->second.bc)
         {
             const auto emulated = get_bc_emulated_format(format);
-            if (!emulated)
+            if (!emulated || emulated->kind != img->second.bc->format.kind)
             {
                 return VK_ERROR_FORMAT_NOT_SUPPORTED;
             }
@@ -11947,8 +11946,8 @@ namespace sogen
             template <typename Parameters>
             void decode_blocks(const VkImage image, const uint32_t mip, const uint32_t layer, const VkExtent3D extent,
                                const VkImageLayout layout, const VkPipeline pipeline, const VkPipelineLayout pipeline_layout,
-                               const Parameters& parameters, const uint32_t groups_x, const uint32_t groups_y, const VkBuffer scratch,
-                               const uint32_t row_texels, const uint32_t rows)
+                               const Parameters& parameters, const uint32_t groups_x, const uint32_t groups_y, const uint32_t slices,
+                               const VkBuffer scratch, const uint32_t row_texels, const uint32_t rows)
             {
                 const auto& device = this->device_;
                 this->submit([&](const VkCommandBuffer command_buffer) {
@@ -11977,7 +11976,7 @@ namespace sogen
                     device.cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
                     device.cmd_push_constants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters),
                                               &parameters);
-                    device.cmd_dispatch(command_buffer, groups_x, groups_y, 1);
+                    device.cmd_dispatch(command_buffer, groups_x, groups_y, slices);
 
                     memory.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
                     memory.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -14106,7 +14105,7 @@ namespace sogen
                     transfer_for(device, owners[index])
                         .decode_blocks(restored.handle, entry.mip, entry.layer, extent, static_cast<VkImageLayout>(layouts[index]),
                                        device_data.bc_pipeline, device_data.bc_layout, job.parameters, job.groups_x, job.groups_y,
-                                       scratch->handle, job.row_texels, job.rows);
+                                       plan->slices, scratch->handle, job.row_texels, job.rows);
                 }
 
                 restored.layouts = std::move(layouts);

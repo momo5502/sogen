@@ -120,4 +120,32 @@ namespace sogen::test
         EXPECT_FALSE(plan_bc_copy(layout, bc1, {.image_height = 2}, region(0, 8)));
         EXPECT_FALSE(plan_bc_copy(layout, bc1, {.image_height = 6}, region(0, 8)));
     }
+
+    TEST(VulkanBcEmulationTest, RemainingArrayLayersCoverTheLayersFromTheBaseOn)
+    {
+        const auto bc3 = format(k_bc3_unorm);
+        const bc_shadow_layout layout(bc3, 4, 4, 1, 1, 3);
+        constexpr uint32_t remaining_array_layers = ~0u;
+
+        const auto from_second = plan_bc_copy(
+            layout, bc3, {}, {.mip = 0, .base_layer = 1, .layer_count = remaining_array_layers, .width = 4, .height = 4, .depth = 1});
+        ASSERT_TRUE(from_second.has_value());
+        EXPECT_EQ(2u, from_second->slices);
+
+        const auto all =
+            plan_bc_copy(layout, bc3, {}, {.mip = 0, .layer_count = remaining_array_layers, .width = 4, .height = 4, .depth = 1});
+        ASSERT_TRUE(all.has_value());
+        EXPECT_EQ(3u, all->slices);
+    }
+
+    TEST(VulkanBcEmulationTest, RegionsWhoseEndWrapsAroundAreRefused)
+    {
+        const auto bc1 = format(k_bc1_rgba_srgb);
+        const bc_shadow_layout layout(bc1, 16, 16, 1, 1, 3);
+
+        EXPECT_FALSE(plan_bc_copy(layout, bc1, {}, {.mip = 0, .layer_count = 1, .x = 8, .width = 0xFFFFFFFC, .height = 4, .depth = 1}));
+        EXPECT_FALSE(plan_bc_copy(layout, bc1, {}, {.mip = 0, .layer_count = 1, .y = 8, .width = 4, .height = 0xFFFFFFFC, .depth = 1}));
+        EXPECT_FALSE(
+            plan_bc_copy(layout, bc1, {}, {.mip = 0, .base_layer = 2, .layer_count = 0xFFFFFFFE, .width = 4, .height = 4, .depth = 1}));
+    }
 }

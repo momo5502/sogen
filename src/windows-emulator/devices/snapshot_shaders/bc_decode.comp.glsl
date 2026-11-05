@@ -144,9 +144,9 @@ void decode_channel(uint low_word, uint high_word, bool is_signed, out uint texe
 void main()
 {
     uint block_x = gl_GlobalInvocationID.x;
-    uint block_y = gl_GlobalInvocationID.y % p.blocks_y;
-    uint slice = gl_GlobalInvocationID.y / p.blocks_y;
-    if (block_x >= p.blocks_x || slice >= p.slices)
+    uint block_y = gl_GlobalInvocationID.y;
+    uint slice = gl_GlobalInvocationID.z;
+    if (block_x >= p.blocks_x || block_y >= p.blocks_y || slice >= p.slices)
     {
         return;
     }

@@ -28,6 +28,7 @@ namespace sogen
         constexpr uint32_t k_bc5_snorm = 142;
 
         constexpr uint32_t k_block = 4;
+        constexpr uint32_t k_remaining_array_layers = ~0u;
 
         uint32_t blocks(const uint32_t texels)
         {
@@ -147,20 +148,23 @@ namespace sogen
     std::optional<bc_copy_plan> plan_bc_copy(const bc_shadow_layout& layout, const bc_emulated_format& format,
                                              const bc_buffer_region& buffer, const bc_image_region& image)
     {
-        const auto layers = std::max(1u, image.layer_count);
-        const auto depth = std::max(1u, image.depth);
-        if (image.mip >= layout.mip_levels() || image.base_layer + layers > layout.array_layers() || (depth > 1 && layers > 1) ||
-            image.x < 0 || image.y < 0 || image.z < 0 || image.width == 0 || image.height == 0)
+        if (image.mip >= layout.mip_levels() || image.base_layer >= layout.array_layers() || image.x < 0 || image.y < 0 || image.z < 0 ||
+            image.width == 0 || image.height == 0)
         {
             return std::nullopt;
         }
 
+        const auto layers =
+            image.layer_count == k_remaining_array_layers ? layout.array_layers() - image.base_layer : std::max(1u, image.layer_count);
+        const auto depth = std::max(1u, image.depth);
         const auto x = static_cast<uint32_t>(image.x);
         const auto y = static_cast<uint32_t>(image.y);
         const auto z = static_cast<uint32_t>(image.z);
         const auto mip_width = layout.width(image.mip);
         const auto mip_height = layout.height(image.mip);
-        const bool inside = x + image.width <= mip_width && y + image.height <= mip_height && z + depth <= layout.depth(image.mip);
+        const auto fits = [](const uint64_t offset, const uint64_t size, const uint64_t limit) { return offset + size <= limit; };
+        const bool inside = fits(image.base_layer, layers, layout.array_layers()) && fits(x, image.width, mip_width) &&
+                            fits(y, image.height, mip_height) && fits(z, depth, layout.depth(image.mip)) && (depth == 1 || layers == 1);
         const bool whole_blocks = x % k_block == 0 && y % k_block == 0 && (image.width % k_block == 0 || x + image.width == mip_width) &&
                                   (image.height % k_block == 0 || y + image.height == mip_height);
         if (!inside || !whole_blocks)

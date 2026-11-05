@@ -893,6 +893,18 @@ namespace
             });
         cases.back().copy_format = VK_FORMAT_BC1_RGB_UNORM_BLOCK;
 
+        // BC4 reads the same 8 bytes as one channel: the color endpoints' low bytes as its endpoints, the rest as indices.
+        const auto bc1 = color_block(0xF800, 0x001F);
+        uint64_t bc1_as_indices = 0;
+        for (size_t i = 2; i < bc1.size(); ++i)
+        {
+            bc1_as_indices |= static_cast<uint64_t>(bc1[i]) << (8 * (i - 2));
+        }
+        const auto bc1_as_channel = channel_palette(bc1[0], bc1[1], 0, 255);
+        add("BC1 copied into BC4", VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, bc1, {true, false, false, false},
+            [&](const int t) { return std::array<int, 4>{bc1_as_channel[(bc1_as_indices >> (3 * t)) & 7], 0, 0, 255}; });
+        cases.back().copy_format = VK_FORMAT_BC4_UNORM_BLOCK;
+
         auto bc3 = channel_block(255, 0);
         bc3.insert(bc3.end(), colors.begin(), colors.end());
         add("BC3 interpolated alpha", VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, bc3, {false, false, false, true},
