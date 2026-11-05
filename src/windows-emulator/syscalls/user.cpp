@@ -1969,6 +1969,19 @@ namespace sogen
             return 1;
         }
 
+        handle default_desktop(const syscall_context& c)
+        {
+            if (c.proc.default_desktop.bits == 0)
+            {
+                desktop desk{};
+                desk.name = u"Default";
+                desk.window_station = interactive_window_station;
+                c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
+            }
+
+            return c.proc.default_desktop;
+        }
+
         hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, const ULONG thread_id)
         {
             emulator_thread* target = nullptr;
@@ -1995,15 +2008,7 @@ namespace sogen
 
             if (target->win32k_desktop.bits == 0)
             {
-                if (c.proc.default_desktop.bits == 0)
-                {
-                    desktop desk{};
-                    desk.name = u"Default";
-                    desk.window_station = interactive_window_station;
-                    c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
-                }
-
-                target->win32k_desktop = c.proc.default_desktop;
+                target->win32k_desktop = default_desktop(c);
             }
 
             return target->win32k_desktop.bits;
@@ -3577,6 +3582,25 @@ namespace sogen
             desk.name = std::move(name);
             desk.window_station = station;
 
+            return c.proc.desktops.store(std::move(desk)).bits;
+        }
+
+        // Each call opens a new handle to the desktop that receives input, the default one, so closing it leaves the desktop
+        // of the process' threads open.
+        hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, const DWORD /*flags*/, const BOOL inherit,
+                                            const ACCESS_MASK /*desired_access*/)
+        {
+            const auto* input_desktop = c.proc.desktops.get(default_desktop(c));
+            if (!input_desktop)
+            {
+                return 0;
+            }
+
+            desktop desk{};
+            desk.name = input_desktop->name;
+            desk.window_station = input_desktop->window_station;
+            desk.mapped_object = input_desktop->mapped_object;
+            desk.inherit = inherit != FALSE;
             return c.proc.desktops.store(std::move(desk)).bits;
         }
 

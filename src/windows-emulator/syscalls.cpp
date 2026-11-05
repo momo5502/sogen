@@ -638,6 +638,7 @@ namespace sogen
                                               emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                               emulator_pointer device, emulator_pointer devmode, DWORD flags, ACCESS_MASK desired_access,
                                               ULONG heap_size);
+        hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, DWORD flags, BOOL inherit, ACCESS_MASK desired_access);
         BOOL handle_NtUserCloseDesktop(const syscall_context& c, handle desktop_handle);
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
         BOOL handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
@@ -1946,6 +1947,7 @@ namespace sogen
         add_handler(NtUserSetProcessWindowStation);
         add_handler(NtUserCloseWindowStation);
         add_handler(NtUserCreateDesktopEx);
+        add_handler(NtUserOpenInputDesktop);
         add_handler(NtUserCloseDesktop);
         add_handler(NtUserCallHwndParam);
         add_handler(NtUserCallHwndLock);
