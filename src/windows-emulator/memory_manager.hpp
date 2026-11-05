@@ -229,6 +229,7 @@ namespace sogen
         memory_stats compute_memory_stats() const;
 
         void set_dep_enabled(bool enabled);
+        void set_execute_implies_read(bool enabled);
 
         bool is_dep_enabled() const
         {
@@ -241,6 +242,7 @@ namespace sogen
         std::atomic<std::uint64_t> layout_version_{0};
         std::uint64_t default_allocation_address_{0x100000000ULL};
         bool dep_enabled_{true};
+        bool execute_implies_read_{false};
         std::vector<uint64_t> host_reserved_addresses_{};
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
@@ -252,6 +254,7 @@ namespace sogen
         void update_layout_version();
         bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool allow_image_section);
         memory_permission get_effective_permissions(nt_memory_permission permissions) const;
+        void reapply_memory_protections();
 
         // allocate_memory(address, ...) without the host-range rescan the public overload performs
         // first; reserve_host_memory_ranges calls this to avoid recursing back into itself.

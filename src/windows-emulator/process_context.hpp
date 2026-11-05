@@ -502,6 +502,7 @@ namespace sogen
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         std::map<uint32_t, EMU_LOGFONTW> gdi_fonts{};
         std::map<uint32_t, std::vector<RECT>> gdi_regions{};
+        std::map<uint32_t, std::vector<EMU_PALETTEENTRY>> gdi_palettes{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         dxgk_state dxgk{};

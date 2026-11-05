@@ -45,9 +45,8 @@ namespace sogen
 
         // syscalls/exception.cpp
         NTSTATUS handle_NtRaiseHardError(const syscall_context& c, NTSTATUS error_status, ULONG number_of_parameters,
-                                         emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string_parameter_mask,
-                                         uint64_t parameters, HARDERROR_RESPONSE_OPTION valid_response_option,
-                                         emulator_object<HARDERROR_RESPONSE> response);
+                                         ULONG unicode_string_parameter_mask, uint64_t parameters,
+                                         HARDERROR_RESPONSE_OPTION valid_response_option, emulator_object<HARDERROR_RESPONSE> response);
         NTSTATUS handle_NtRaiseException(const syscall_context& c,
                                          emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> exception_record,
                                          emulator_object<CONTEXT64> thread_context, BOOLEAN handle_exception);
@@ -809,6 +808,7 @@ namespace sogen
         BOOL handle_NtUserIsTouchWindow();
         uint64_t handle_NtUserGetTopLevelWindow(const syscall_context& c, hwnd window);
         BOOL handle_NtUserGetWindowPlacement(const syscall_context& c, hwnd window_handle, emulator_pointer placement_address);
+        BOOL handle_NtUserGetTitleBarInfo(const syscall_context& c, hwnd window_handle, emulator_pointer info_address);
         BOOL handle_NtUserTrackMouseEvent();
         BOOL handle_NtUserSetWindowRgn();
         BOOL handle_NtUserAlterWindowStyle();
@@ -877,9 +877,11 @@ namespace sogen
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, uint32_t color, uint64_t unused);
         uint64_t handle_NtGdiCreatePatternBrushInternal(const syscall_context& c, handle bitmap, uint32_t unused);
         uint64_t handle_NtGdiCreatePen(const syscall_context& c, uint32_t style, uint32_t width, uint32_t color);
-        uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c);
+        uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c, emulator_pointer log_palette, uint32_t entry_count);
         uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c);
-        NTSTATUS handle_NtGdiDoPalette();
+        LONG handle_NtGdiDoPalette(const syscall_context& c, handle object, uint16_t start, uint16_t count, emulator_pointer entries,
+                                   uint32_t function, BOOL inbound);
+        uint32_t handle_NtGdiGetNearestPaletteIndex(const syscall_context& c, handle palette, COLORREF color);
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
         DWORD handle_NtUserGetGuiResources(const syscall_context& c, handle process, DWORD flags);
         int32_t handle_NtGdiSaveDC(const syscall_context& c, hdc dc);
@@ -2135,6 +2137,7 @@ namespace sogen
         add_handler(NtUserCheckMenuItem);
         add_handler(NtUserSetWindowCompositionAttribute);
         add_handler(NtUserGetWindowPlacement);
+        add_handler(NtUserGetTitleBarInfo);
         add_handler(NtUserSetWindowPlacement);
         add_handler(NtUserCreateCaret);
         add_handler(NtUserDestroyCaret);
@@ -2155,6 +2158,7 @@ namespace sogen
         add_handler(NtGdiCreatePaletteInternal);
         add_handler(NtGdiCreateHalftonePalette);
         add_handler(NtGdiDoPalette);
+        add_handler(NtGdiGetNearestPaletteIndex);
         add_handler(NtUserSelectPalette);
         add_handler(NtGdiCreateDIBSection);
         add_handler(NtUserGetKeyNameText);

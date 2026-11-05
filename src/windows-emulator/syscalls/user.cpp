@@ -7292,6 +7292,136 @@ namespace sogen
             return TRUE;
         }
 
+        int32_t get_system_metric(const syscall_context& c, const size_t index)
+        {
+            return c.proc.user_handles.get_server_info().read().systemMetrics[index];
+        }
+
+        RECT get_title_bar_rect(const syscall_context& c, const window& win)
+        {
+            constexpr size_t sm_cycaption = 4;
+            constexpr size_t sm_cxsize = 30;
+            constexpr size_t sm_cysmcaption = 51;
+
+            if ((win.style & WS_CAPTION) != WS_CAPTION)
+            {
+                return {};
+            }
+
+            const auto insets = win.nonclient_insets();
+            auto rect = get_window_rect(win);
+            rect.left += insets.left;
+            rect.top += insets.top;
+            rect.right -= insets.right;
+
+            const bool tool_window = (win.ex_style & WS_EX_TOOLWINDOW) != 0;
+            rect.bottom = rect.top + get_system_metric(c, tool_window ? sm_cysmcaption : sm_cycaption);
+
+            if (!tool_window && (win.style & WS_SYSMENU) != 0)
+            {
+                rect.left += get_system_metric(c, sm_cxsize);
+            }
+
+            return rect;
+        }
+
+        std::array<DWORD, 6> get_title_bar_states(const syscall_context& c, const window& win)
+        {
+            constexpr DWORD state_unavailable = 0x1;
+            constexpr DWORD state_invisible = 0x8000;
+            constexpr DWORD state_focusable = 0x100000;
+            constexpr uint32_t cs_noclose = 0x200;
+
+            enum class title_bar_element : size_t
+            {
+                title_bar,
+                reserved,
+                minimize_button,
+                maximize_button,
+                help_button,
+                close_button,
+            };
+
+            std::array<DWORD, 6> states{};
+            const auto state = [&states](const title_bar_element element) -> DWORD& { return states[static_cast<size_t>(element)]; };
+            state(title_bar_element::title_bar) = state_focusable;
+
+            if ((win.style & WS_CAPTION) != WS_CAPTION)
+            {
+                state(title_bar_element::title_bar) |= state_invisible;
+                return states;
+            }
+
+            state(title_bar_element::reserved) = state_invisible;
+
+            if ((win.style & WS_SYSMENU) == 0)
+            {
+                std::fill(states.begin() + static_cast<size_t>(title_bar_element::minimize_button), states.end(), state_invisible);
+                return states;
+            }
+
+            if ((win.style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) == 0)
+            {
+                state(title_bar_element::minimize_button) = state_invisible;
+                state(title_bar_element::maximize_button) = state_invisible;
+            }
+            else
+            {
+                state(title_bar_element::minimize_button) = (win.style & WS_MINIMIZEBOX) == 0 ? state_unavailable : 0;
+                state(title_bar_element::maximize_button) = (win.style & WS_MAXIMIZEBOX) == 0 ? state_unavailable : 0;
+            }
+
+            if ((win.ex_style & WS_EX_CONTEXTHELP) == 0)
+            {
+                state(title_bar_element::help_button) = state_invisible;
+            }
+
+            const auto window_class = c.proc.classes.find(win.class_name);
+            if (window_class != c.proc.classes.end() && (window_class->second.wnd_class.style & cs_noclose) != 0)
+            {
+                state(title_bar_element::close_button) = state_unavailable;
+            }
+
+            return states;
+        }
+
+        BOOL handle_NtUserGetTitleBarInfo(const syscall_context& c, const hwnd window_handle, const emulator_pointer info_address)
+        {
+            const auto* win = c.proc.windows.get(window_handle);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            DWORD requested_size{};
+            if (info_address == 0 || !c.win_emu.memory.try_read_memory(info_address, &requested_size, sizeof(requested_size)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return FALSE;
+            }
+
+            if (requested_size != sizeof(EMU_TITLEBARINFO))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return FALSE;
+            }
+
+            EMU_TITLEBARINFO info{};
+            info.cbSize = requested_size;
+            info.rcTitleBar = get_title_bar_rect(c, *win);
+            const auto states = get_title_bar_states(c, *win);
+            std::ranges::copy(states, std::begin(info.rgstate));
+
+            if (!c.win_emu.memory.try_write_memory(info_address, &info, sizeof(info)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
         BOOL handle_NtUserTrackMouseEvent()
         {
             return TRUE;
