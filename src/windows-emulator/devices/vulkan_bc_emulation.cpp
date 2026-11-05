@@ -46,29 +46,29 @@ namespace sogen
         switch (format)
         {
         case k_bc1_rgb_unorm:
-            return bc_emulated_format{k_r8g8b8a8_unorm, bc_decode_kind::bc1_rgb, 8, 4};
+            return bc_emulated_format{.substitute = k_r8g8b8a8_unorm, .kind = bc_decode_kind::bc1_rgb, .block_bytes = 8, .texel_bytes = 4};
         case k_bc1_rgb_srgb:
-            return bc_emulated_format{k_r8g8b8a8_srgb, bc_decode_kind::bc1_rgb, 8, 4};
+            return bc_emulated_format{.substitute = k_r8g8b8a8_srgb, .kind = bc_decode_kind::bc1_rgb, .block_bytes = 8, .texel_bytes = 4};
         case k_bc1_rgba_unorm:
-            return bc_emulated_format{k_r8g8b8a8_unorm, bc_decode_kind::bc1_rgba, 8, 4};
+            return bc_emulated_format{.substitute = k_r8g8b8a8_unorm, .kind = bc_decode_kind::bc1_rgba, .block_bytes = 8, .texel_bytes = 4};
         case k_bc1_rgba_srgb:
-            return bc_emulated_format{k_r8g8b8a8_srgb, bc_decode_kind::bc1_rgba, 8, 4};
+            return bc_emulated_format{.substitute = k_r8g8b8a8_srgb, .kind = bc_decode_kind::bc1_rgba, .block_bytes = 8, .texel_bytes = 4};
         case k_bc2_unorm:
-            return bc_emulated_format{k_r8g8b8a8_unorm, bc_decode_kind::bc2, 16, 4};
+            return bc_emulated_format{.substitute = k_r8g8b8a8_unorm, .kind = bc_decode_kind::bc2, .block_bytes = 16, .texel_bytes = 4};
         case k_bc2_srgb:
-            return bc_emulated_format{k_r8g8b8a8_srgb, bc_decode_kind::bc2, 16, 4};
+            return bc_emulated_format{.substitute = k_r8g8b8a8_srgb, .kind = bc_decode_kind::bc2, .block_bytes = 16, .texel_bytes = 4};
         case k_bc3_unorm:
-            return bc_emulated_format{k_r8g8b8a8_unorm, bc_decode_kind::bc3, 16, 4};
+            return bc_emulated_format{.substitute = k_r8g8b8a8_unorm, .kind = bc_decode_kind::bc3, .block_bytes = 16, .texel_bytes = 4};
         case k_bc3_srgb:
-            return bc_emulated_format{k_r8g8b8a8_srgb, bc_decode_kind::bc3, 16, 4};
+            return bc_emulated_format{.substitute = k_r8g8b8a8_srgb, .kind = bc_decode_kind::bc3, .block_bytes = 16, .texel_bytes = 4};
         case k_bc4_unorm:
-            return bc_emulated_format{k_r8_unorm, bc_decode_kind::bc4_unorm, 8, 1};
+            return bc_emulated_format{.substitute = k_r8_unorm, .kind = bc_decode_kind::bc4_unorm, .block_bytes = 8, .texel_bytes = 1};
         case k_bc4_snorm:
-            return bc_emulated_format{k_r8_snorm, bc_decode_kind::bc4_snorm, 8, 1};
+            return bc_emulated_format{.substitute = k_r8_snorm, .kind = bc_decode_kind::bc4_snorm, .block_bytes = 8, .texel_bytes = 1};
         case k_bc5_unorm:
-            return bc_emulated_format{k_r8g8_unorm, bc_decode_kind::bc5_unorm, 16, 2};
+            return bc_emulated_format{.substitute = k_r8g8_unorm, .kind = bc_decode_kind::bc5_unorm, .block_bytes = 16, .texel_bytes = 2};
         case k_bc5_snorm:
-            return bc_emulated_format{k_r8g8_snorm, bc_decode_kind::bc5_snorm, 16, 2};
+            return bc_emulated_format{.substitute = k_r8g8_snorm, .kind = bc_decode_kind::bc5_snorm, .block_bytes = 16, .texel_bytes = 2};
         default:
             return std::nullopt;
         }

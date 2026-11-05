@@ -2487,7 +2487,7 @@ namespace sogen
             return buffer;
         }
 
-        bool ensure_bc_pipeline(device_data& dev)
+        static bool ensure_bc_pipeline(device_data& dev)
         {
             if (dev.bc_pipeline)
             {
@@ -2513,13 +2513,14 @@ namespace sogen
                 return false;
             }
 
-            VkComputePipelineCreateInfo pipeline_info{};
-            pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-            pipeline_info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-            pipeline_info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-            pipeline_info.stage.module = dev.bc_module;
-            pipeline_info.stage.pName = "main";
-            pipeline_info.layout = dev.bc_layout;
+            const VkComputePipelineCreateInfo pipeline_info{
+                .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                          .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                          .module = dev.bc_module,
+                          .pName = "main"},
+                .layout = dev.bc_layout,
+            };
             return dev.create_compute_pipelines(dev.handle, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &dev.bc_pipeline) == VK_SUCCESS;
         }
 
