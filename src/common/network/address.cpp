@@ -459,10 +459,12 @@ namespace sogen::network
                 continue;
             }
 
+            // Tentative, duplicate and deprecated addresses are not usable, and SIO_ADDRESS_LIST_QUERY leaves them out:
+            // https://learn.microsoft.com/en-us/windows/win32/winsock/sio-address-list-query
             for (const auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next)
             {
                 const auto& socket_address = unicast->Address;
-                if (socket_address.lpSockaddr->sa_family == family)
+                if (socket_address.lpSockaddr->sa_family == family && unicast->DadState == IpDadStatePreferred)
                 {
                     add_unique(addresses, socket_address.lpSockaddr, socket_address.iSockaddrLength);
                 }
