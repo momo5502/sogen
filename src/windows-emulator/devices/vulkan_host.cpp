@@ -11519,7 +11519,10 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_push_constants(cb->second.handle, layout->second.handle, stage_flags, offset, size, data);
-        impl::record_push_constants(cb->second, pipeline_layout, stage_flags, offset, size, data);
+        if (dev->second.bc_emulation)
+        {
+            impl::record_push_constants(cb->second, pipeline_layout, stage_flags, offset, size, data);
+        }
         return VK_SUCCESS;
     }
 
