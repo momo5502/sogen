@@ -2487,7 +2487,7 @@ namespace sogen
             // An existing file is overwritten by truncating it rather than re-creating it: a host refuses to re-create a file
             // that is hidden or a system file on the host, which the guest does not see as such.
             const bool overwrites_existing_file =
-                file_exists && mode.starts_with(u'w') &&
+                file_exists && mode == u"w+b" &&
                 (create_disposition == FILE_SUPERSEDE || create_disposition == FILE_OVERWRITE || create_disposition == FILE_OVERWRITE_IF);
             if (overwrites_existing_file)
             {
