@@ -914,6 +914,7 @@ namespace sogen
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         uint64_t handle_NtGdiSelectBitmap(const syscall_context& c, hdc dc, handle bitmap);
         uint64_t handle_NtGdiSelectFont(const syscall_context& c, hdc dc, uint64_t font);
+        BOOL handle_NtGdiFillRgn(const syscall_context& c, hdc dc, handle region, hbrush brush);
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         BOOL handle_NtGdiGetDCDword(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
         BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, hdc dc, uint32_t method, uint32_t value, emulator_pointer result);
@@ -2099,6 +2100,7 @@ namespace sogen
         add_handler(NtGdiDdDDISignalSynchronizationObjectFromCpu);
         add_handler(NtUnBindCompositionSurface);
         add_handler(NtGdiSelectFont);
+        add_handler(NtGdiFillRgn);
         add_handler(NtUserInitThreadCoreMessagingIocp2);
         add_handler(NtUserDrainThreadCoreMessagingCompletions2);
         add_handler(NtUserSetTimer);
