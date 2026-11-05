@@ -530,15 +530,24 @@ namespace sogen
         // mouse button was pressed since the last GetAsyncKeyState query for that virtual key.
         std::array<uint8_t, 256> async_key_state{};
 
-        // Raw mouse input registration (NtUserRegisterRawInputDevices). When registered, mouse motion
-        // synthesizes relative-mouse RAWINPUT delivered as WM_INPUT, so in-game mouse-look works.
-        // raw_mouse_target is the explicit hwndTarget; 0 means "follow focus" (deliver to the foreground
-        // window), resolved at delivery time so a registration done before any window is foreground still works.
-        bool raw_mouse_registered{};
-        hwnd raw_mouse_target{};
-        // Keyboard raw input registration (HID usage page 0x01, usage 0x06), mirroring the mouse fields above.
-        bool raw_keyboard_registered{};
-        hwnd raw_keyboard_target{};
+        struct raw_input_registration
+        {
+            uint16_t usage_page{};
+            uint16_t usage{};
+            uint32_t flags{};
+            // 0 follows the keyboard focus, which is resolved at delivery time so that a registration made before any
+            // window is in the foreground still works.
+            hwnd target{};
+        };
+
+        // The devices registered for raw input, in the order of usage page and usage that NtUserGetRegisteredRawInputDevices
+        // reports them in. A registered mouse or keyboard has its input also arrive as WM_INPUT, which games read for
+        // mouse-look and key presses.
+        std::vector<raw_input_registration> raw_input_registrations{};
+
+        const raw_input_registration* find_raw_input_registration(uint16_t usage_page, uint16_t usage) const;
+        const raw_input_registration* raw_mouse_registration() const;
+        const raw_input_registration* raw_keyboard_registration() const;
 
         // Keyboard and mouse input held back until every low-level hook it is due for has seen it, in arrival order.
         struct low_level_input

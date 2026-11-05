@@ -156,6 +156,16 @@ namespace sogen
 
     static_assert(sizeof(RAWINPUTDEVICE32) == 0x0C);
 
+    struct RAWINPUTDEVICE64
+    {
+        uint16_t usUsagePage;
+        uint16_t usUsage;
+        uint32_t dwFlags;
+        uint64_t hwndTarget;
+    };
+
+    static_assert(sizeof(RAWINPUTDEVICE64) == 0x10);
+
     struct RAWINPUTHEADER32
     {
         uint32_t dwType;

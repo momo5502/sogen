@@ -2122,10 +2122,38 @@ namespace sogen
             return TRUE;
         }
 
-        // Games use raw input (RAWINPUTDEVICE with usUsagePage=1/usUsage=2, the generic mouse) for in-game
-        // mouse-look: instead of consuming WM_MOUSEMOVE they register here and read relative deltas from the
-        // WM_INPUT messages we then synthesize. Record the target window so handle_ui_event knows to deliver
-        // raw input; a RIDEV_REMOVE entry for the mouse unregisters it.
+        // A registration replaces an earlier one of the same usage page and usage, and RIDEV_REMOVE drops it. They are kept in
+        // the order NtUserGetRegisteredRawInputDevices reports them in.
+        void register_raw_input_device(std::vector<process_context::raw_input_registration>& registrations, const RAWINPUTDEVICE32& device)
+        {
+            const auto position = std::ranges::lower_bound(registrations, std::pair{device.usUsagePage, device.usUsage}, {},
+                                                           [](const process_context::raw_input_registration& registration) {
+                                                               return std::pair{registration.usage_page, registration.usage};
+                                                           });
+            const bool exists =
+                position != registrations.end() && position->usage_page == device.usUsagePage && position->usage == device.usUsage;
+
+            if ((device.dwFlags & RIDEV_REMOVE) != 0)
+            {
+                if (exists)
+                {
+                    registrations.erase(position);
+                }
+                return;
+            }
+
+            const process_context::raw_input_registration registration{
+                .usage_page = device.usUsagePage, .usage = device.usUsage, .flags = device.dwFlags, .target = device.hwndTarget};
+            if (exists)
+            {
+                *position = registration;
+            }
+            else
+            {
+                registrations.insert(position, registration);
+            }
+        }
+
         BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, const emulator_pointer devices, const uint32_t device_count,
                                                   const uint32_t size)
         {
@@ -2142,32 +2170,66 @@ namespace sogen
                     return FALSE;
                 }
 
-                constexpr uint16_t hid_usage_page_generic = 0x01;
-                constexpr uint16_t hid_usage_generic_mouse = 0x02;
-                constexpr uint16_t hid_usage_generic_keyboard = 0x06;
-                if (device.usUsagePage != hid_usage_page_generic ||
-                    (device.usUsage != hid_usage_generic_mouse && device.usUsage != hid_usage_generic_keyboard))
-                {
-                    continue;
-                }
-
-                // hwndTarget == 0 is the valid "follow keyboard focus" mode; keep it as-is and resolve the
-                // destination at delivery time rather than freezing whatever window is foreground right now
-                // (registration often happens at startup before any window has become foreground).
-                const bool remove = (device.dwFlags & RIDEV_REMOVE) != 0;
-                if (device.usUsage == hid_usage_generic_mouse)
-                {
-                    c.proc.raw_mouse_registered = !remove;
-                    c.proc.raw_mouse_target = remove ? hwnd{} : device.hwndTarget;
-                }
-                else
-                {
-                    c.proc.raw_keyboard_registered = !remove;
-                    c.proc.raw_keyboard_target = remove ? hwnd{} : device.hwndTarget;
-                }
+                register_raw_input_device(c.proc.raw_input_registrations, device);
             }
 
             return TRUE;
+        }
+
+        // On success the registrations are written in the order of usage page and usage, and the count stays as given.
+        uint32_t handle_NtUserGetRegisteredRawInputDevices(const syscall_context& c, const emulator_pointer devices,
+                                                           const emulator_pointer device_count, const uint32_t size)
+        {
+            constexpr auto failed = static_cast<uint32_t>(-1);
+            if (size != sizeof(RAWINPUTDEVICE64))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return failed;
+            }
+
+            uint32_t capacity{};
+            if (!c.win_emu.memory.try_read_memory(device_count, &capacity, sizeof(capacity)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return failed;
+            }
+
+            const auto& registrations = c.proc.raw_input_registrations;
+            const auto needed = static_cast<uint32_t>(registrations.size());
+            if (devices == 0)
+            {
+                c.win_emu.memory.try_write_memory(device_count, &needed, sizeof(needed));
+                return 0;
+            }
+
+            if (capacity == 0)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return failed;
+            }
+
+            if (capacity < needed)
+            {
+                c.win_emu.memory.try_write_memory(device_count, &needed, sizeof(needed));
+                set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
+                return failed;
+            }
+
+            for (uint32_t i = 0; i < needed; ++i)
+            {
+                const auto& registration = registrations[i];
+                const RAWINPUTDEVICE64 device{.usUsagePage = registration.usage_page,
+                                              .usUsage = registration.usage,
+                                              .dwFlags = registration.flags,
+                                              .hwndTarget = registration.target};
+                if (!c.win_emu.memory.try_write_memory(devices + (static_cast<uint64_t>(i) * sizeof(device)), &device, sizeof(device)))
+                {
+                    set_guest_last_error(c, 998); // ERROR_NOACCESS
+                    return failed;
+                }
+            }
+
+            return needed;
         }
 
         ULONG handle_NtUserGetRawInputDeviceList(const syscall_context& c, const emulator_pointer devices,

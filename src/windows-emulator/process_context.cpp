@@ -851,10 +851,7 @@ namespace sogen
         buffer.write(this->cursor_shape_visible);
         buffer.write(this->key_state);
         buffer.write(this->async_key_state);
-        buffer.write(this->raw_mouse_registered);
-        buffer.write(this->raw_mouse_target);
-        buffer.write(this->raw_keyboard_registered);
-        buffer.write(this->raw_keyboard_target);
+        buffer.write_vector(this->raw_input_registrations);
         buffer.write_vector(this->pending_low_level_input);
         buffer.write(this->next_low_level_input_id);
         buffer.write(this->next_hook_handle);
@@ -985,10 +982,7 @@ namespace sogen
         buffer.read(this->cursor_shape_visible);
         buffer.read(this->key_state);
         buffer.read(this->async_key_state);
-        buffer.read(this->raw_mouse_registered);
-        buffer.read(this->raw_mouse_target);
-        buffer.read(this->raw_keyboard_registered);
-        buffer.read(this->raw_keyboard_target);
+        buffer.read_vector(this->raw_input_registrations);
         buffer.read_vector(this->pending_low_level_input);
         buffer.read(this->next_low_level_input_id);
         buffer.read(this->next_hook_handle);
@@ -1692,6 +1686,29 @@ namespace sogen
         {
             knowndlls64_sections[lname] = section;
         }
+    }
+
+    const process_context::raw_input_registration* process_context::find_raw_input_registration(const uint16_t usage_page,
+                                                                                                const uint16_t usage) const
+    {
+        const auto registration = std::ranges::find_if(this->raw_input_registrations, [&](const raw_input_registration& entry) {
+            return entry.usage_page == usage_page && entry.usage == usage;
+        });
+        return registration == this->raw_input_registrations.end() ? nullptr : &*registration;
+    }
+
+    const process_context::raw_input_registration* process_context::raw_mouse_registration() const
+    {
+        constexpr uint16_t hid_usage_page_generic = 0x01;
+        constexpr uint16_t hid_usage_generic_mouse = 0x02;
+        return this->find_raw_input_registration(hid_usage_page_generic, hid_usage_generic_mouse);
+    }
+
+    const process_context::raw_input_registration* process_context::raw_keyboard_registration() const
+    {
+        constexpr uint16_t hid_usage_page_generic = 0x01;
+        constexpr uint16_t hid_usage_generic_keyboard = 0x06;
+        return this->find_raw_input_registration(hid_usage_page_generic, hid_usage_generic_keyboard);
     }
 
 } // namespace sogen
