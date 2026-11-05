@@ -427,7 +427,7 @@ namespace sogen::network
             a.set_address(addr, length);
             if (std::ranges::none_of(addresses, [&](const address& existing) { return is_same_local_address(existing, a); }))
             {
-                addresses.emplace_back(std::move(a));
+                addresses.emplace_back(a);
             }
         }
     }
