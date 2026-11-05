@@ -2176,21 +2176,32 @@ namespace sogen
             return TRUE;
         }
 
-        // On success the registrations are written in the order of usage page and usage, and the count stays as given.
+        bool write_registered_device_count(const syscall_context& c, const emulator_pointer device_count, const uint32_t count)
+        {
+            return is_writable_range(c.win_emu.memory, device_count, sizeof(count)) &&
+                   c.win_emu.memory.try_write_memory(device_count, &count, sizeof(count));
+        }
+
+        // On success the registrations are written in the order of usage page and usage, and the count stays as given, so only
+        // the failing paths need it writable. The whole buffer the count names must be writable, even when it is too small.
         uint32_t handle_NtUserGetRegisteredRawInputDevices(const syscall_context& c, const emulator_pointer devices,
                                                            const emulator_pointer device_count, const uint32_t size)
         {
             constexpr auto failed = static_cast<uint32_t>(-1);
+            constexpr DWORD error_invalid_parameter = 87;
+            constexpr DWORD error_insufficient_buffer = 122;
+            constexpr DWORD error_noaccess = 998;
+
             if (size != sizeof(RAWINPUTDEVICE64))
             {
-                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                set_guest_last_error(c, error_invalid_parameter);
                 return failed;
             }
 
             uint32_t capacity{};
             if (!c.win_emu.memory.try_read_memory(device_count, &capacity, sizeof(capacity)))
             {
-                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                set_guest_last_error(c, error_noaccess);
                 return failed;
             }
 
@@ -2198,9 +2209,9 @@ namespace sogen
             const auto needed = static_cast<uint32_t>(registrations.size());
             if (devices == 0)
             {
-                if (!c.win_emu.memory.try_write_memory(device_count, &needed, sizeof(needed)))
+                if (!write_registered_device_count(c, device_count, needed))
                 {
-                    set_guest_last_error(c, 998); // ERROR_NOACCESS
+                    set_guest_last_error(c, error_noaccess);
                     return failed;
                 }
                 return 0;
@@ -2208,14 +2219,20 @@ namespace sogen
 
             if (capacity == 0)
             {
-                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                set_guest_last_error(c, error_invalid_parameter);
+                return failed;
+            }
+
+            if (!is_writable_range(c.win_emu.memory, devices, static_cast<uint64_t>(capacity) * sizeof(RAWINPUTDEVICE64)))
+            {
+                set_guest_last_error(c, error_noaccess);
                 return failed;
             }
 
             if (capacity < needed)
             {
-                const bool reported = c.win_emu.memory.try_write_memory(device_count, &needed, sizeof(needed));
-                set_guest_last_error(c, reported ? 122 : 998); // ERROR_INSUFFICIENT_BUFFER or ERROR_NOACCESS
+                const bool reported = write_registered_device_count(c, device_count, needed);
+                set_guest_last_error(c, reported ? error_insufficient_buffer : error_noaccess);
                 return failed;
             }
 
@@ -2226,11 +2243,7 @@ namespace sogen
                                               .usUsage = registration.usage,
                                               .dwFlags = registration.flags,
                                               .hwndTarget = registration.target};
-                if (!c.win_emu.memory.try_write_memory(devices + (static_cast<uint64_t>(i) * sizeof(device)), &device, sizeof(device)))
-                {
-                    set_guest_last_error(c, 998); // ERROR_NOACCESS
-                    return failed;
-                }
+                c.win_emu.memory.write_memory(devices + (static_cast<uint64_t>(i) * sizeof(device)), &device, sizeof(device));
             }
 
             return needed;
