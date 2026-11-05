@@ -414,13 +414,19 @@ namespace sogen::network
 
     namespace
     {
+        // The same link-local address can be on several interfaces, which only its scope tells apart.
+        bool is_same_local_address(const address& a, const address& b)
+        {
+            return a == b && (!a.is_ipv6() || a.get_in6_addr().sin6_scope_id == b.get_in6_addr().sin6_scope_id);
+        }
+
         void add_unique(std::vector<address>& addresses, const sockaddr* addr, const socklen_t length)
         {
             address a{};
             a.set_address(addr, length);
-            if (std::ranges::find(addresses, a) == addresses.end())
+            if (std::ranges::none_of(addresses, [&](const address& existing) { return is_same_local_address(existing, a); }))
             {
-                addresses.emplace_back(a);
+                addresses.emplace_back(std::move(a));
             }
         }
     }

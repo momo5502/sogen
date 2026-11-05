@@ -1835,12 +1835,11 @@ namespace sogen
             // A TA_ADDRESS is the address length and the Windows sockaddr with the family as the address type.
             static std::vector<std::byte> to_ta_address(const windows_emulator& win_emu, const network::address& address)
             {
-                const auto win_address = convert_to_win_address(win_emu, address);
-                const auto address_length = static_cast<uint16_t>(win_address.size() - sizeof(uint16_t));
+                auto entry = convert_to_win_address(win_emu, address);
+                const auto address_length = static_cast<uint16_t>(entry.size() - sizeof(uint16_t));
 
-                std::vector<std::byte> entry(sizeof(address_length));
+                entry.insert(entry.begin(), sizeof(address_length), std::byte{});
                 memcpy(entry.data(), &address_length, sizeof(address_length));
-                entry.insert(entry.end(), win_address.begin(), win_address.end());
                 return entry;
             }
 
