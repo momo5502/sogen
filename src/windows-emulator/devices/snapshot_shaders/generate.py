@@ -18,6 +18,7 @@ shaders = [
     ("write_sample_sint", "frag", "write_sample.frag.glsl", ["SINT_FORMAT"]),
     ("write_sample_depth", "frag", "write_sample.frag.glsl", ["DEPTH_FORMAT"]),
     ("write_sample_stencil", "frag", "write_sample.frag.glsl", ["STENCIL_FORMAT"]),
+    ("bc_decode", "comp", "bc_decode.comp.glsl", []),
 ]
 
 lines = [

@@ -2,6 +2,7 @@
 #include "../vulkan_handle_utils.hpp"
 #include "spirv_clip_distance.hpp"
 #include "vulkan_format_block.hpp"
+#include "vulkan_bc_emulation.hpp"
 #include "snapshot_shaders.hpp"
 
 #include <address_utils.hpp>
@@ -335,7 +336,58 @@ namespace sogen
             VkPhysicalDevice handle{};
             uint64_t instance_id{};
             std::optional<bool> portability{};
+            std::optional<bool> bc_emulation{};
         };
+
+        static std::vector<VkQueueFamilyProperties> get_queue_families(const instance_data& instance, const VkPhysicalDevice device)
+        {
+            uint32_t count = 0;
+            if (!instance.get_queue_family_properties)
+            {
+                return {};
+            }
+            instance.get_queue_family_properties(device, &count, nullptr);
+            std::vector<VkQueueFamilyProperties> families(count);
+            instance.get_queue_family_properties(device, &count, families.data());
+            return families;
+        }
+
+        // BC formats are decoded on devices without textureCompressionBC, by a shader that addresses its buffers by device
+        // address, which needs Vulkan 1.2. Uploads run the decode in the guest's command buffer, so every queue that can
+        // copy has to be able to dispatch too.
+        static bool can_emulate_bc(const instance_data& instance, physical_device_data& device)
+        {
+            if (!device.bc_emulation)
+            {
+                bool emulate = false;
+                if (instance.get_physical_device_features2 && instance.get_physical_device_properties)
+                {
+                    const auto families = get_queue_families(instance, device.handle);
+                    const bool copies_without_compute = std::ranges::any_of(families, [](const VkQueueFamilyProperties& family) {
+                        return (family.queueFlags & VK_QUEUE_COMPUTE_BIT) == 0 &&
+                               (family.queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT)) != 0;
+                    });
+
+                    VkPhysicalDeviceProperties properties{};
+                    instance.get_physical_device_properties(device.handle, &properties);
+
+                    VkPhysicalDeviceBufferDeviceAddressFeatures address{};
+                    address.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+                    VkPhysicalDeviceFeatures2 features{};
+                    features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+                    features.pNext = &address;
+                    instance.get_physical_device_features2(device.handle, &features);
+
+                    // SOGEN_FORCE_BC_EMULATION decodes BC formats on devices that have them, to test the decoding there. Uploads
+                    // recorded for a queue that cannot dispatch then fail.
+                    const bool forced = std::getenv("SOGEN_FORCE_BC_EMULATION") != nullptr;
+                    emulate = properties.apiVersion >= VK_API_VERSION_1_2 && address.bufferDeviceAddress &&
+                              (forced || (!features.features.textureCompressionBC && !copies_without_compute));
+                }
+                device.bc_emulation = emulate;
+            }
+            return *device.bc_emulation;
+        }
 
         static bool has_device_extension(const instance_data& instance, VkPhysicalDevice device, const std::string_view name)
         {
@@ -439,9 +491,18 @@ namespace sogen
             VkPhysicalDevice physical_device{}; // the device this was created from (for memory queries)
             guest_memory_types memory_types{};
             uint32_t queue_family_index{}; // the single family this device was created with
+            // Every family the device has queues of, which the bridge's own buffers are shared between.
+            std::vector<uint32_t> queue_families{};
+            // The capabilities of every family of the physical device, by index.
+            std::vector<VkQueueFlags> queue_family_flags{};
             // The driver lacks these features although the guest was told otherwise; shaders are rewritten.
             bool strip_clip_distance{};
             bool strip_cull_distance{};
+            // The driver lacks BC textures, which are decoded into an uncompressed format instead (see bc_image).
+            bool bc_emulation{};
+            VkShaderModule bc_module{};
+            VkPipelineLayout bc_layout{};
+            VkPipeline bc_pipeline{};
             PFN_vkDestroyDevice destroy_device{};
             PFN_vkGetDeviceQueue get_device_queue{};
             PFN_vkQueueWaitIdle queue_wait_idle{};
@@ -763,6 +824,16 @@ namespace sogen
             uint64_t secondary{};
         };
 
+        struct owned_device_buffer;
+
+        struct push_constant_write
+        {
+            uint64_t layout{};
+            uint32_t stages{};
+            uint32_t offset{};
+            std::vector<std::byte> data{};
+        };
+
         struct command_buffer_data
         {
             VkCommandBuffer handle{};
@@ -782,6 +853,12 @@ namespace sogen
             std::vector<std::pair<uint64_t, uint32_t>> restored_query_reads{};
             // A command buffer the guest may submit while it is still pending cannot be reset to record it again.
             bool simultaneous_use{};
+            // The guest's compute pipeline and push constants, which decoding BC images in between rebinds and replays.
+            uint64_t compute_pipeline{};
+            std::vector<push_constant_write> push_constants{};
+            // Where BC blocks are decoded before they are copied into the image. Every decode in the command buffer
+            // reuses the largest one; smaller ones stay until the next recording, since earlier commands use them.
+            std::vector<std::shared_ptr<owned_device_buffer>> bc_scratch{};
             // Every object the recorded commands looked up. Ids are never reused, so one that no longer exists, or whose
             // memory no longer does, was destroyed after being recorded and invalidated the command buffer.
             std::unordered_set<uint64_t> references{};
@@ -1298,6 +1375,100 @@ namespace sogen
             uint32_t flags{};
         };
 
+        // A buffer the bridge allocated for itself on the host device, released with its last owner.
+        struct owned_device_buffer
+        {
+            VkDevice device{};
+            PFN_vkDestroyBuffer destroy_buffer{};
+            PFN_vkFreeMemory free_memory{};
+            VkBuffer handle{};
+            VkDeviceMemory memory{};
+            uint32_t memory_type{};
+            VkDeviceSize allocation_size{};
+            VkDeviceSize size{};
+            VkDeviceAddress address{};
+
+            owned_device_buffer() = default;
+            owned_device_buffer(const owned_device_buffer&) = delete;
+            owned_device_buffer& operator=(const owned_device_buffer&) = delete;
+            owned_device_buffer(owned_device_buffer&&) = delete;
+            owned_device_buffer& operator=(owned_device_buffer&&) = delete;
+
+            ~owned_device_buffer()
+            {
+                if (this->handle)
+                {
+                    this->destroy_buffer(this->device, this->handle, nullptr);
+                }
+                if (this->memory)
+                {
+                    this->free_memory(this->device, this->memory, nullptr);
+                }
+            }
+        };
+
+        // What a new recording starts without. Only the largest scratch buffer is kept, for reuse.
+        static void forget_recording(command_buffer_data& command_buffer)
+        {
+            command_buffer.recorded.clear();
+            command_buffer.recorded_results.clear();
+            command_buffer.references.clear();
+            command_buffer.layout_transitions.clear();
+            command_buffer.query_resets.clear();
+            command_buffer.query_reset_positions.clear();
+            command_buffer.restored_query_reads.clear();
+            command_buffer.compute_pipeline = 0;
+            command_buffer.push_constants.clear();
+            if (command_buffer.bc_scratch.size() > 1)
+            {
+                const auto largest =
+                    std::ranges::max_element(command_buffer.bc_scratch, {}, [](const auto& scratch) { return scratch->size; });
+                auto kept = std::move(*largest);
+                command_buffer.bc_scratch.clear();
+                command_buffer.bc_scratch.push_back(std::move(kept));
+            }
+        }
+
+        // What an emulated BC image can do: the guest samples it and copies to and from it, and the bridge copies decoded
+        // texels into it.
+        static constexpr VkFormatFeatureFlags bc_emulated_features =
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+            VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT;
+        static constexpr VkImageUsageFlags bc_emulated_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+
+        // A fully bound shadow cannot follow sparse, aliased or protected images, and views in an uncompressed format would
+        // see decoded texels, not blocks.
+        static bool is_bc_emulation_supported(const uint32_t tiling, const uint32_t usage, const uint32_t flags)
+        {
+            constexpr VkImageUsageFlags supported_usage = VK_IMAGE_USAGE_SAMPLED_BIT | bc_emulated_usage;
+            constexpr VkImageCreateFlags supported_flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+            return tiling == VK_IMAGE_TILING_OPTIMAL && (usage & ~supported_usage) == 0 && (flags & ~supported_flags) == 0;
+        }
+
+        // The push constants of snapshot_shaders/bc_decode.comp.glsl.
+        struct bc_decode_parameters
+        {
+            std::array<uint32_t, 2> source{};
+            std::array<uint32_t, 2> decoded{};
+            uint32_t blocks_x{};
+            uint32_t blocks_y{};
+            uint32_t slices{};
+            uint32_t source_row_bytes{};
+            uint32_t source_slice_bytes{};
+            uint32_t decoded_row_words{};
+            uint32_t decoded_slice_words{};
+            uint32_t kind{};
+        };
+
+        // A BC image on a device without BC textures: the host image has the uncompressed substitute format, and the
+        // compressed contents the guest wrote are kept in the shadow, since they cannot be read back from the image.
+        struct bc_image
+        {
+            bc_emulated_format format{};
+            bc_shadow_layout layout;
+            std::shared_ptr<owned_device_buffer> shadow{};
+        };
+
         struct image_data
         {
             VkImage handle{};
@@ -1324,6 +1495,7 @@ namespace sogen
             // A swapchain proxy image is never presented itself, and only presentable images may be in
             // VK_IMAGE_LAYOUT_PRESENT_SRC_KHR. It is in VK_IMAGE_LAYOUT_GENERAL whenever the guest believes it is in that layout.
             bool swapchain_proxy{};
+            std::shared_ptr<const bc_image> bc{};
 
             VkImageLayout host_layout(const uint32_t layout) const
             {
@@ -2254,6 +2426,393 @@ namespace sogen
 
         // Picks the first memory type set in `type_bits` that has all `required` property flags, using
         // the memory properties of the device's physical device. Returns UINT32_MAX if none qualifies.
+        // A device-local buffer the decode shader reads or writes by address. Null when the device is out of memory.
+        std::shared_ptr<owned_device_buffer> create_device_address_buffer(const device_data& dev, const VkDeviceSize size)
+        {
+            auto buffer = std::make_shared<owned_device_buffer>();
+            buffer->device = dev.handle;
+            buffer->destroy_buffer = dev.destroy_buffer;
+            buffer->free_memory = dev.free_memory;
+            buffer->size = size;
+
+            VkBufferCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            info.size = size;
+            info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+            // The guest's queues and snapshots use the buffer without the ownership transfers an exclusive buffer would need.
+            if (dev.queue_families.size() > 1)
+            {
+                info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+                info.queueFamilyIndexCount = static_cast<uint32_t>(dev.queue_families.size());
+                info.pQueueFamilyIndices = dev.queue_families.data();
+            }
+            else
+            {
+                info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            }
+            if (dev.create_buffer(dev.handle, &info, nullptr, &buffer->handle) != VK_SUCCESS)
+            {
+                return nullptr;
+            }
+
+            VkMemoryRequirements requirements{};
+            dev.get_buffer_memory_requirements(dev.handle, buffer->handle, &requirements);
+            uint32_t type = this->find_memory_type(dev, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (type == UINT32_MAX)
+            {
+                type = this->find_memory_type(dev, requirements.memoryTypeBits, 0);
+            }
+
+            VkMemoryAllocateFlagsInfo flags{};
+            flags.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+            flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+            VkMemoryAllocateInfo allocate{};
+            allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocate.pNext = &flags;
+            allocate.allocationSize = requirements.size;
+            allocate.memoryTypeIndex = type;
+            if (type == UINT32_MAX || dev.allocate_memory(dev.handle, &allocate, nullptr, &buffer->memory) != VK_SUCCESS ||
+                dev.bind_buffer_memory(dev.handle, buffer->handle, buffer->memory, 0) != VK_SUCCESS)
+            {
+                return nullptr;
+            }
+            buffer->memory_type = type;
+            buffer->allocation_size = requirements.size;
+
+            VkBufferDeviceAddressInfo address{};
+            address.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+            address.buffer = buffer->handle;
+            buffer->address = dev.get_buffer_device_address(dev.handle, &address);
+            return buffer;
+        }
+
+        static bool ensure_bc_pipeline(device_data& dev)
+        {
+            if (dev.bc_pipeline)
+            {
+                return true;
+            }
+
+            VkShaderModuleCreateInfo module_info{};
+            module_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            module_info.codeSize = sizeof(snapshot_shaders::bc_decode);
+            module_info.pCode = snapshot_shaders::bc_decode.data();
+            if (!dev.bc_module && dev.create_shader_module(dev.handle, &module_info, nullptr, &dev.bc_module) != VK_SUCCESS)
+            {
+                return false;
+            }
+
+            const VkPushConstantRange range{.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT, .offset = 0, .size = sizeof(bc_decode_parameters)};
+            VkPipelineLayoutCreateInfo layout_info{};
+            layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            layout_info.pushConstantRangeCount = 1;
+            layout_info.pPushConstantRanges = &range;
+            if (!dev.bc_layout && dev.create_pipeline_layout(dev.handle, &layout_info, nullptr, &dev.bc_layout) != VK_SUCCESS)
+            {
+                return false;
+            }
+
+            const VkComputePipelineCreateInfo pipeline_info{
+                .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = 0,
+                .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                          .pNext = nullptr,
+                          .flags = 0,
+                          .stage = VK_SHADER_STAGE_COMPUTE_BIT,
+                          .module = dev.bc_module,
+                          .pName = "main",
+                          .pSpecializationInfo = nullptr},
+                .layout = dev.bc_layout,
+                .basePipelineHandle = VK_NULL_HANDLE,
+                .basePipelineIndex = -1,
+            };
+            return dev.create_compute_pipelines(dev.handle, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &dev.bc_pipeline) == VK_SUCCESS;
+        }
+
+        static void bc_barrier(const device_data& dev, const VkCommandBuffer command_buffer, const VkPipelineStageFlags src_stages,
+                               const VkAccessFlags src_access, const VkPipelineStageFlags dst_stages, const VkAccessFlags dst_access)
+        {
+            VkMemoryBarrier barrier{};
+            barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+            barrier.srcAccessMask = src_access;
+            barrier.dstAccessMask = dst_access;
+            dev.cmd_pipeline_barrier(command_buffer, src_stages, dst_stages, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+        }
+
+        // A write that a later one with the same layout and stages covers no longer matters for replaying them.
+        static void record_push_constants(command_buffer_data& command_buffer, const uint64_t layout, const uint32_t stages,
+                                          const uint32_t offset, const uint32_t size, const void* data)
+        {
+            std::erase_if(command_buffer.push_constants, [&](const push_constant_write& write) {
+                return write.layout == layout && write.stages == stages && write.offset >= offset &&
+                       write.offset + write.data.size() <= static_cast<uint64_t>(offset) + size;
+            });
+
+            const auto* bytes = static_cast<const std::byte*>(data);
+            command_buffer.push_constants.push_back(
+                {.layout = layout, .stages = stages, .offset = offset, .data = std::vector<std::byte>(bytes, bytes + size)});
+        }
+
+        static bc_image_region to_bc_region(const vulkan_host::buffer_image_copy_region& region)
+        {
+            return {.mip = region.mip_level,
+                    .base_layer = region.base_array_layer,
+                    .layer_count = region.layer_count ? region.layer_count : 1,
+                    .x = region.image_offset_x,
+                    .y = region.image_offset_y,
+                    .z = region.image_offset_z,
+                    .width = region.width,
+                    .height = region.height,
+                    .depth = region.depth ? region.depth : 1};
+        }
+
+        static bc_buffer_region to_bc_buffer(const vulkan_host::buffer_image_copy_region& region)
+        {
+            return {.offset = region.buffer_offset, .row_length = region.buffer_row_length, .image_height = region.buffer_image_height};
+        }
+
+        static std::vector<VkBufferCopy> to_buffer_copies(const bc_copy_plan& plan, const bool to_shadow)
+        {
+            std::vector<VkBufferCopy> copies;
+            copies.reserve(plan.rows.size());
+            for (const auto& row : plan.rows)
+            {
+                copies.push_back({.srcOffset = to_shadow ? row.buffer_offset : row.shadow_offset,
+                                  .dstOffset = to_shadow ? row.shadow_offset : row.buffer_offset,
+                                  .size = row.size});
+            }
+            return copies;
+        }
+
+        // A decode of the blocks a copy plan covers: the shader's parameters, apart from where the texels go, and the layout
+        // of the decoded texels, rows of whole blocks one slice after another.
+        struct bc_decode_job
+        {
+            bc_decode_parameters parameters{};
+            uint32_t row_texels{};
+            uint32_t rows{};
+            VkDeviceSize scratch_bytes{};
+            uint32_t groups_x{};
+            uint32_t groups_y{};
+        };
+
+        static bc_decode_job make_bc_decode_job(const bc_image& bc, const bc_copy_plan& plan)
+        {
+            constexpr uint32_t block = 4;
+            constexpr uint32_t group = 8;
+            const uint32_t row_words = plan.blocks_x * bc.format.texel_bytes;
+            const VkDeviceAddress source = bc.shadow->address + plan.shadow_offset;
+
+            bc_decode_job job{};
+            job.row_texels = plan.blocks_x * block;
+            job.rows = plan.blocks_y * block;
+            job.scratch_bytes = static_cast<VkDeviceSize>(job.row_texels) * job.rows * bc.format.texel_bytes * plan.slices;
+            job.groups_x = (plan.blocks_x + group - 1) / group;
+            job.groups_y = (plan.blocks_y + group - 1) / group;
+            job.parameters = {
+                .source = {static_cast<uint32_t>(source), static_cast<uint32_t>(source >> 32)},
+                .blocks_x = plan.blocks_x,
+                .blocks_y = plan.blocks_y,
+                .slices = plan.slices,
+                .source_row_bytes = static_cast<uint32_t>(plan.shadow_row_bytes),
+                .source_slice_bytes = static_cast<uint32_t>(plan.shadow_slice_bytes),
+                .decoded_row_words = row_words,
+                .decoded_slice_words = row_words * job.rows,
+                .kind = static_cast<uint32_t>(bc.format.kind),
+            };
+            return job;
+        }
+
+        static void set_decoded_address(bc_decode_job& job, const VkDeviceAddress address)
+        {
+            job.parameters.decoded = {static_cast<uint32_t>(address), static_cast<uint32_t>(address >> 32)};
+        }
+
+        owned_device_buffer* bc_scratch(const device_data& dev, command_buffer_data& command_buffer, const VkDeviceSize size)
+        {
+            if (command_buffer.bc_scratch.empty() || command_buffer.bc_scratch.back()->size < size)
+            {
+                auto scratch = this->create_device_address_buffer(dev, size);
+                if (!scratch)
+                {
+                    return nullptr;
+                }
+                command_buffer.bc_scratch.push_back(std::move(scratch));
+            }
+            return command_buffer.bc_scratch.back().get();
+        }
+
+        // Binding a pipeline leaves the descriptor sets bound, so the guest's compute pipeline and its push constants are all
+        // the decode replaces. Push constants are replayed for every stage, since drivers may keep them in one block.
+        void restore_guest_compute_state(const device_data& dev, const command_buffer_data& command_buffer) const
+        {
+            if (const auto pipeline = this->pipelines.find(command_buffer.compute_pipeline); pipeline != this->pipelines.end())
+            {
+                dev.cmd_bind_pipeline(command_buffer.handle, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline->second.handle);
+            }
+
+            for (const auto& write : command_buffer.push_constants)
+            {
+                if (const auto layout = this->pipeline_layouts.find(write.layout); layout != this->pipeline_layouts.end())
+                {
+                    dev.cmd_push_constants(command_buffer.handle, layout->second.handle, write.stages, write.offset,
+                                           static_cast<uint32_t>(write.data.size()), write.data.data());
+                }
+            }
+        }
+
+        // The blocks go into the shadow, the decode shader turns them into texels in scratch, and those are copied into the
+        // image. Everything but the decode is a transfer command.
+        bool can_dispatch(const device_data& dev, const command_buffer_data& command_buffer) const
+        {
+            const auto pool = this->command_pools.find(command_buffer.pool_id);
+            return pool != this->command_pools.end() && pool->second.queue_family_index < dev.queue_family_flags.size() &&
+                   (dev.queue_family_flags[pool->second.queue_family_index] & VK_QUEUE_COMPUTE_BIT) != 0;
+        }
+
+        // Decodes the blocks of a region from the shadow into the image: the decode shader turns them into texels in scratch,
+        // and those are copied into the image.
+        VkResult record_bc_decode(device_data& dev, command_buffer_data& command_buffer, const image_data& image,
+                                  const VkImageLayout layout, const bc_image_region& region, const bc_copy_plan& plan)
+        {
+            const auto& bc = *image.bc;
+            if (!this->can_dispatch(dev, command_buffer))
+            {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            if (!ensure_bc_pipeline(dev))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+
+            auto job = make_bc_decode_job(bc, plan);
+            const auto* scratch = this->bc_scratch(dev, command_buffer, job.scratch_bytes);
+            if (!scratch)
+            {
+                return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+            }
+            set_decoded_address(job, scratch->address);
+
+            const VkCommandBuffer handle = command_buffer.handle;
+            bc_barrier(dev, handle, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+            dev.cmd_bind_pipeline(handle, VK_PIPELINE_BIND_POINT_COMPUTE, dev.bc_pipeline);
+            dev.cmd_push_constants(handle, dev.bc_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(job.parameters), &job.parameters);
+            dev.cmd_dispatch(handle, job.groups_x, job.groups_y, plan.slices);
+            bc_barrier(dev, handle, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_ACCESS_TRANSFER_READ_BIT);
+
+            VkBufferImageCopy copy{};
+            copy.bufferRowLength = job.row_texels;
+            copy.bufferImageHeight = job.rows;
+            copy.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                     .mipLevel = region.mip,
+                                     .baseArrayLayer = region.base_layer,
+                                     .layerCount = region.depth > 1 ? 1 : plan.slices};
+            copy.imageOffset = {.x = region.x, .y = region.y, .z = region.z};
+            copy.imageExtent = {.width = region.width, .height = region.height, .depth = region.depth};
+            dev.cmd_copy_buffer_to_image(handle, scratch->handle, image.handle, layout, 1, &copy);
+
+            this->restore_guest_compute_state(dev, command_buffer);
+            return VK_SUCCESS;
+        }
+
+        // The blocks go into the shadow first, since the image cannot give them back once they are decoded.
+        VkResult record_bc_upload(device_data& dev, command_buffer_data& command_buffer, const VkBuffer source, const image_data& image,
+                                  const VkImageLayout layout, const vulkan_host::buffer_image_copy_region& region)
+        {
+            const auto& bc = *image.bc;
+            const auto plan = plan_bc_copy(bc.layout, bc.format, to_bc_buffer(region), to_bc_region(region));
+            if (!plan)
+            {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+            if (!this->can_dispatch(dev, command_buffer))
+            {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+
+            const auto copies = to_buffer_copies(*plan, true);
+            bc_barrier(dev, command_buffer.handle, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_ACCESS_TRANSFER_WRITE_BIT);
+            dev.cmd_copy_buffer(command_buffer.handle, source, bc.shadow->handle, static_cast<uint32_t>(copies.size()), copies.data());
+            return this->record_bc_decode(dev, command_buffer, image, layout, to_bc_region(region), *plan);
+        }
+
+        // The image holds decoded texels, so the blocks come from the shadow.
+        static VkResult record_bc_readback(const device_data& dev, const command_buffer_data& command_buffer, const image_data& image,
+                                           const VkBuffer destination, const vulkan_host::buffer_image_copy_region& region)
+        {
+            const auto& bc = *image.bc;
+            const auto plan = plan_bc_copy(bc.layout, bc.format, to_bc_buffer(region), to_bc_region(region));
+            if (!plan)
+            {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+
+            const auto copies = to_buffer_copies(*plan, false);
+            bc_barrier(dev, command_buffer.handle, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            dev.cmd_copy_buffer(command_buffer.handle, bc.shadow->handle, destination, static_cast<uint32_t>(copies.size()), copies.data());
+            return VK_SUCCESS;
+        }
+
+        static bc_image_region to_bc_region(const vulkan_host::image_copy_region& region, const bool source)
+        {
+            return {.mip = source ? region.src_mip_level : region.dst_mip_level,
+                    .base_layer = source ? region.src_base_array_layer : region.dst_base_array_layer,
+                    .layer_count = std::max(1u, source ? region.src_layer_count : region.dst_layer_count),
+                    .x = source ? region.src_offset_x : region.dst_offset_x,
+                    .y = source ? region.src_offset_y : region.dst_offset_y,
+                    .z = source ? region.src_offset_z : region.dst_offset_z,
+                    .width = region.width,
+                    .height = region.height,
+                    .depth = region.depth ? region.depth : 1};
+        }
+
+        // Copies the blocks between the shadows of two emulated images, and gives the plan for the destination. Copies
+        // between an emulated image and any other are not supported.
+        static std::optional<bc_copy_plan> record_bc_shadow_copy(const device_data& dev, const command_buffer_data& command_buffer,
+                                                                 const image_data& src, const image_data& dst,
+                                                                 const vulkan_host::image_copy_region& region)
+        {
+            if (!src.bc || !dst.bc || src.bc->format.block_bytes != dst.bc->format.block_bytes)
+            {
+                return std::nullopt;
+            }
+
+            const auto src_plan = plan_bc_copy(src.bc->layout, src.bc->format, {}, to_bc_region(region, true));
+            auto dst_plan = plan_bc_copy(dst.bc->layout, dst.bc->format, {}, to_bc_region(region, false));
+            if (!src_plan || !dst_plan || src_plan->slices != dst_plan->slices)
+            {
+                return std::nullopt;
+            }
+
+            std::vector<VkBufferCopy> copies;
+            const uint64_t row_size = static_cast<uint64_t>(src_plan->blocks_x) * src.bc->format.block_bytes;
+            for (uint32_t slice = 0; slice < src_plan->slices; ++slice)
+            {
+                for (uint32_t row = 0; row < src_plan->blocks_y; ++row)
+                {
+                    copies.push_back(
+                        {.srcOffset = src_plan->shadow_offset + (slice * src_plan->shadow_slice_bytes) + (row * src_plan->shadow_row_bytes),
+                         .dstOffset = dst_plan->shadow_offset + (slice * dst_plan->shadow_slice_bytes) + (row * dst_plan->shadow_row_bytes),
+                         .size = row_size});
+                }
+            }
+
+            bc_barrier(dev, command_buffer.handle, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                       VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+            dev.cmd_copy_buffer(command_buffer.handle, src.bc->shadow->handle, dst.bc->shadow->handle, static_cast<uint32_t>(copies.size()),
+                                copies.data());
+            return dst_plan;
+        }
+
         uint32_t find_memory_type(const device_data& dev, uint32_t type_bits, VkMemoryPropertyFlags required)
         {
             const auto instance = this->instances.find(dev.instance_id);
@@ -3143,6 +3702,20 @@ namespace sogen
             }
             this->erase_owned(this->queues, [&](const queue_data& d) { return d.device_id == device_id; });
 
+            auto& device = it->second;
+            if (device.bc_pipeline)
+            {
+                device.destroy_pipeline(device.handle, device.bc_pipeline, nullptr);
+            }
+            if (device.bc_layout)
+            {
+                device.destroy_pipeline_layout(device.handle, device.bc_layout, nullptr);
+            }
+            if (device.bc_module)
+            {
+                device.destroy_shader_module(device.handle, device.bc_module, nullptr);
+            }
+
             if (it->second.handle && it->second.destroy_device)
             {
                 it->second.destroy_device(it->second.handle, nullptr);
@@ -3627,11 +4200,21 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        const auto emulated = get_bc_emulated_format(format);
+        const bool emulate = emulated && impl::can_emulate_bc(instance->second, pd->second);
+
         VkFormatProperties properties{};
-        instance->second.get_physical_device_format_properties(pd->second.handle, static_cast<VkFormat>(format), &properties);
+        instance->second.get_physical_device_format_properties(pd->second.handle,
+                                                               static_cast<VkFormat>(emulate ? emulated->substitute : format), &properties);
         out_linear = properties.linearTilingFeatures;
         out_optimal = properties.optimalTilingFeatures;
         out_buffer = properties.bufferFeatures;
+        if (emulate)
+        {
+            out_linear = 0;
+            out_optimal &= impl::bc_emulated_features;
+            out_buffer = 0;
+        }
         return VK_SUCCESS;
     }
 
@@ -3653,10 +4236,17 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        const auto emulated = get_bc_emulated_format(format);
+        const bool emulate = emulated && impl::can_emulate_bc(instance->second, pd->second);
+        if (emulate && !impl::is_bc_emulation_supported(tiling, usage, flags))
+        {
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        }
+
         VkImageFormatProperties properties{};
         const VkResult result = instance->second.get_physical_device_image_format_properties(
-            pd->second.handle, static_cast<VkFormat>(format), static_cast<VkImageType>(type), static_cast<VkImageTiling>(tiling), usage,
-            flags, &properties);
+            pd->second.handle, static_cast<VkFormat>(emulate ? emulated->substitute : format), static_cast<VkImageType>(type),
+            static_cast<VkImageTiling>(tiling), emulate ? usage | impl::bc_emulated_usage : usage, flags, &properties);
         if (result != VK_SUCCESS)
         {
             return result;
@@ -3664,7 +4254,8 @@ namespace sogen
 
         out.max_mip_levels = properties.maxMipLevels;
         out.max_array_layers = properties.maxArrayLayers;
-        out.sample_counts = properties.sampleCounts;
+        // Blocks reach an image through buffer copies, which multisampled images do not take.
+        out.sample_counts = emulate ? static_cast<uint32_t>(VK_SAMPLE_COUNT_1_BIT) : properties.sampleCounts;
         out.max_extent_width = properties.maxExtent.width;
         out.max_extent_height = properties.maxExtent.height;
         out.max_extent_depth = properties.maxExtent.depth;
@@ -4275,6 +4866,30 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    namespace
+    {
+        // A feature structure may appear only once in the chain, so a guest structure that has the feature gets it set.
+        bool enable_chained_buffer_device_address(std::vector<std::vector<std::byte>>& chained)
+        {
+            bool enabled = false;
+            for (auto& buffer : chained)
+            {
+                auto* base = reinterpret_cast<VkBaseOutStructure*>(buffer.data());
+                if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES)
+                {
+                    reinterpret_cast<VkPhysicalDeviceVulkan12Features*>(base)->bufferDeviceAddress = VK_TRUE;
+                    enabled = true;
+                }
+                else if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES)
+                {
+                    reinterpret_cast<VkPhysicalDeviceBufferDeviceAddressFeatures*>(base)->bufferDeviceAddress = VK_TRUE;
+                    enabled = true;
+                }
+            }
+            return enabled;
+        }
+    }
+
     int32_t vulkan_host::create_device(uint64_t physical_device, const void* queue_entries, size_t queue_entry_count,
                                        const void* extension_blob, size_t extension_blob_size, uint32_t extension_count,
                                        const void* feature_blob, size_t feature_blob_size, uint32_t feature_struct_count,
@@ -4552,6 +5167,18 @@ namespace sogen
             }
         }
 
+        // Decoding BC images addresses the bridge's own buffers by device address. It is enabled on the host device only;
+        // the guest does not depend on it.
+        const bool bc_emulation = impl::can_emulate_bc(instance->second, pd->second);
+        VkPhysicalDeviceBufferDeviceAddressFeatures address_features{};
+        address_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+        if (bc_emulation && !enable_chained_buffer_device_address(chained))
+        {
+            address_features.bufferDeviceAddress = VK_TRUE;
+            feature_tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&address_features);
+            feature_tail = reinterpret_cast<VkBaseOutStructure*>(&address_features);
+        }
+
         VkDeviceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
@@ -4560,7 +5187,7 @@ namespace sogen
         create_info.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
         // Enabled features ride the pNext chain (VkPhysicalDeviceFeatures2 + the chained structs); a
         // chain present means pEnabledFeatures must stay null.
-        if (has_feature_chain || placed_map_alignment != 0 || present_fences)
+        if (has_feature_chain || placed_map_alignment != 0 || present_fences || bc_emulation)
         {
             create_info.pNext = &features2;
         }
@@ -4598,6 +5225,18 @@ namespace sogen
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
         data.present_fences = present_fences;
+        data.bc_emulation = bc_emulation;
+        for (const auto& family : impl::get_queue_families(instance->second, pd->second.handle))
+        {
+            data.queue_family_flags.push_back(family.queueFlags);
+        }
+        for (const auto& queue_info : queue_infos)
+        {
+            if (std::ranges::find(data.queue_families, queue_info.queueFamilyIndex) == data.queue_families.end())
+            {
+                data.queue_families.push_back(queue_info.queueFamilyIndex);
+            }
+        }
 
         if (spoof_missing_features && instance->second.get_physical_device_features2)
         {
@@ -5043,13 +5682,7 @@ namespace sogen
         if (result == VK_SUCCESS)
         {
             cb->second.simultaneous_use = (flags & VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT) != 0;
-            cb->second.recorded.clear();
-            cb->second.recorded_results.clear();
-            cb->second.references.clear();
-            cb->second.layout_transitions.clear();
-            cb->second.query_resets.clear();
-            cb->second.query_reset_positions.clear();
-            cb->second.restored_query_reads.clear();
+            impl::forget_recording(cb->second);
         }
         return result;
     }
@@ -5134,13 +5767,7 @@ namespace sogen
             {
                 if (command_buffer.pool_id == pool)
                 {
-                    command_buffer.recorded.clear();
-                    command_buffer.recorded_results.clear();
-                    command_buffer.references.clear();
-                    command_buffer.layout_transitions.clear();
-                    command_buffer.query_resets.clear();
-                    command_buffer.query_reset_positions.clear();
-                    command_buffer.restored_query_reads.clear();
+                    impl::forget_recording(command_buffer);
                 }
             }
         }
@@ -5204,13 +5831,7 @@ namespace sogen
         const VkResult result = dev->second.reset_command_buffer(cb->second.handle, flags);
         if (result == VK_SUCCESS)
         {
-            cb->second.recorded.clear();
-            cb->second.recorded_results.clear();
-            cb->second.references.clear();
-            cb->second.layout_transitions.clear();
-            cb->second.query_resets.clear();
-            cb->second.query_reset_positions.clear();
-            cb->second.restored_query_reads.clear();
+            impl::forget_recording(cb->second);
         }
         return result;
     }
@@ -6537,6 +7158,17 @@ namespace sogen
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
+        const auto emulated = dev->second.bc_emulation ? get_bc_emulated_format(format) : std::nullopt;
+        if (emulated)
+        {
+            if (!impl::is_bc_emulation_supported(tiling, usage, flags) || info.samples != VK_SAMPLE_COUNT_1_BIT)
+            {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+            info.format = static_cast<VkFormat>(emulated->substitute);
+            info.usage |= impl::bc_emulated_usage;
+        }
+
         // Multisampled images are read by sampling them and written by rendering to them.
         const VkImageUsageFlags transfer_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                                                  (info.samples > VK_SAMPLE_COUNT_1_BIT ? VK_IMAGE_USAGE_SAMPLED_BIT : 0);
@@ -6575,8 +7207,22 @@ namespace sogen
             return result;
         }
 
+        std::shared_ptr<const impl::bc_image> bc{};
+        if (emulated)
+        {
+            const bc_shadow_layout layout(*emulated, width, height, info.extent.depth, info.mipLevels, info.arrayLayers);
+            auto shadow = this->impl_->create_device_address_buffer(dev->second, layout.size());
+            if (!shadow)
+            {
+                dev->second.destroy_image(dev->second.handle, image, nullptr);
+                return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+            }
+            bc = std::make_shared<const impl::bc_image>(impl::bc_image{.format = *emulated, .layout = layout, .shadow = std::move(shadow)});
+        }
+
         const uint64_t id = this->impl_->allocate_id();
         impl::image_data data{.handle = image, .device_id = device, .samples = samples ? samples : 1, .copyable = copyable};
+        data.bc = std::move(bc);
         data.create = impl::image_create_params{
             .format = format,
             .width = width,
@@ -6988,6 +7634,11 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        if (img->second.bc)
+        {
+            return impl::record_bc_readback(dev->second, cb->second, img->second, buf->second.handle, r);
+        }
+
         VkBufferImageCopy region{};
         region.bufferOffset = r.buffer_offset;
         region.bufferRowLength = r.buffer_row_length;
@@ -7077,6 +7728,12 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        if (img->second.bc)
+        {
+            return this->impl_->record_bc_upload(dev->second, cb->second, buf->second.handle, img->second, translate_layout(image_layout),
+                                                 r);
+        }
+
         VkBufferImageCopy region{};
         region.bufferOffset = r.buffer_offset;
         region.bufferRowLength = r.buffer_row_length;
@@ -7109,6 +7766,23 @@ namespace sogen
         if (dev == this->impl_->devices.end() || !dev->second.cmd_copy_image)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (src->second.bc || dst->second.bc)
+        {
+            const auto dst_plan = impl::record_bc_shadow_copy(dev->second, cb->second, src->second, dst->second, r);
+            if (!dst_plan)
+            {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+
+            // Compatible BC formats can decode the same blocks differently, such as BC1 with and without alpha, so the
+            // destination's texels come from decoding its blocks.
+            if (src->second.bc->format.kind != dst->second.bc->format.kind)
+            {
+                return this->impl_->record_bc_decode(dev->second, cb->second, dst->second, translate_layout(dst_layout),
+                                                     impl::to_bc_region(r, false), *dst_plan);
+            }
         }
 
         VkImageCopy region{};
@@ -7145,6 +7819,11 @@ namespace sogen
         if (dev == this->impl_->devices.end() || !dev->second.cmd_blit_image)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (dst->second.bc)
+        {
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
         }
 
         VkImageBlit region{};
@@ -8145,11 +8824,24 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        uint32_t host_format = format;
+        // The image's texels were decoded as the image's format, which a mutable view in a format that decodes differently,
+        // such as BC4 SNORM of a BC4 UNORM image, would misread.
+        if (img->second.bc)
+        {
+            const auto emulated = get_bc_emulated_format(format);
+            if (!emulated || emulated->kind != img->second.bc->format.kind)
+            {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+            host_format = emulated->substitute;
+        }
+
         VkImageViewCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         info.image = img->second.handle;
         info.viewType = static_cast<VkImageViewType>(view_type);
-        info.format = static_cast<VkFormat>(format);
+        info.format = static_cast<VkFormat>(host_format);
         info.components = {.r = static_cast<VkComponentSwizzle>(swizzle_r),
                            .g = static_cast<VkComponentSwizzle>(swizzle_g),
                            .b = static_cast<VkComponentSwizzle>(swizzle_b),
@@ -10300,6 +10992,10 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_bind_pipeline(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), pipe->second.handle);
+        if (bind_point == VK_PIPELINE_BIND_POINT_COMPUTE)
+        {
+            cb->second.compute_pipeline = pipeline;
+        }
         return VK_SUCCESS;
     }
 
@@ -10831,6 +11527,10 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_push_constants(cb->second.handle, layout->second.handle, stage_flags, offset, size, data);
+        if (dev->second.bc_emulation)
+        {
+            impl::record_push_constants(cb->second, pipeline_layout, stage_flags, offset, size, data);
+        }
         return VK_SUCCESS;
     }
 
@@ -11252,6 +11952,65 @@ namespace sogen
             snapshot_transfer& operator=(const snapshot_transfer&) = delete;
             snapshot_transfer(snapshot_transfer&&) = delete;
             snapshot_transfer& operator=(snapshot_transfer&&) = delete;
+
+            // Decodes blocks already in a shadow into one subresource, which goes from undefined to layout.
+            template <typename Parameters>
+            void decode_blocks(const VkImage image, const uint32_t mip, const uint32_t layer, const VkExtent3D extent,
+                               const VkImageLayout layout, const VkPipeline pipeline, const VkPipelineLayout pipeline_layout,
+                               const Parameters& parameters, const uint32_t groups_x, const uint32_t groups_y, const uint32_t slices,
+                               const VkBuffer scratch, const uint32_t row_texels, const uint32_t rows)
+            {
+                const auto& device = this->device_;
+                this->submit([&](const VkCommandBuffer command_buffer) {
+                    VkMemoryBarrier memory{};
+                    memory.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+                    memory.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+                    memory.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+                    VkImageMemoryBarrier to_transfer{};
+                    to_transfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+                    to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    to_transfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                    to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    to_transfer.image = image;
+                    to_transfer.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                                                    .baseMipLevel = mip,
+                                                    .levelCount = 1,
+                                                    .baseArrayLayer = layer,
+                                                    .layerCount = 1};
+                    device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1, &memory, 0,
+                                                nullptr, 1, &to_transfer);
+
+                    device.cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+                    device.cmd_push_constants(command_buffer, pipeline_layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters),
+                                              &parameters);
+                    device.cmd_dispatch(command_buffer, groups_x, groups_y, slices);
+
+                    memory.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                    memory.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+                    device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1,
+                                                &memory, 0, nullptr, 0, nullptr);
+
+                    VkBufferImageCopy copy{};
+                    copy.bufferRowLength = row_texels;
+                    copy.bufferImageHeight = rows;
+                    copy.imageSubresource = {
+                        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = mip, .baseArrayLayer = layer, .layerCount = 1};
+                    copy.imageExtent = extent;
+                    device.cmd_copy_buffer_to_image(command_buffer, scratch, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+                    VkImageMemoryBarrier to_layout = to_transfer;
+                    to_layout.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                    to_layout.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+                    to_layout.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                    to_layout.newLayout = layout;
+                    device.cmd_pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0,
+                                                nullptr, 0, nullptr, 1, &to_layout);
+                });
+            }
 
             // False if the memory's type cannot back transfer buffers, so that only its images can be saved.
             bool copy(const VkDeviceMemory memory, const uint32_t memory_type_index, const std::span<std::byte> contents,
@@ -12508,6 +13267,46 @@ namespace sogen
                 throw std::runtime_error("Vulkan image " + std::to_string(id) + " is being handed between queue families");
             }
 
+            // The blocks of an emulated BC image are in its shadow, saved in the layout a copy of the image would have.
+            if (image.bc)
+            {
+                std::vector<std::byte> shadow{};
+                for (uint32_t mip = 0; mip < create.mip_levels; ++mip)
+                {
+                    for (uint32_t layer = 0; layer < create.array_layers; ++layer)
+                    {
+                        const auto index = image.subresource_index(0, mip, layer);
+                        const auto layout = static_cast<VkImageLayout>(image.layouts[index]);
+                        if (layout == VK_IMAGE_LAYOUT_UNDEFINED || layout == VK_IMAGE_LAYOUT_PREINITIALIZED || image.memory_id == 0)
+                        {
+                            continue;
+                        }
+
+                        const auto& stored = *image.bc->shadow;
+                        if (shadow.empty())
+                        {
+                            shadow.resize(static_cast<size_t>(stored.allocation_size));
+                            if (!transfer_for(image.device_id, image.owners[index]).copy(stored.memory, stored.memory_type, shadow, false))
+                            {
+                                throw std::runtime_error("Snapshots cannot save the contents of Vulkan image " + std::to_string(id) +
+                                                         " yet");
+                            }
+                        }
+
+                        const auto begin = static_cast<ptrdiff_t>(image.bc->layout.offset(mip, layer, 0, 0, 0));
+                        const auto size = static_cast<ptrdiff_t>(image.bc->layout.subresource_bytes(mip));
+                        buffer.write(true);
+                        buffer.write(static_cast<uint32_t>(VK_IMAGE_ASPECT_COLOR_BIT));
+                        buffer.write(mip);
+                        buffer.write(layer);
+                        buffer.write_vector(std::vector<std::byte>(shadow.begin() + begin, shadow.begin() + begin + size));
+                    }
+                }
+
+                buffer.write(false);
+                continue;
+            }
+
             const auto aspects = get_vulkan_format_aspects(create.format);
             uint32_t aspect = 0;
             for (uint32_t bit = 1; bit <= VK_IMAGE_ASPECT_STENCIL_BIT; bit <<= 1)
@@ -13262,6 +14061,67 @@ namespace sogen
             if (!saved.empty() && !restored.copyable)
             {
                 throw std::runtime_error("Vulkan image " + std::to_string(id) + " can no longer be copied on this GPU");
+            }
+
+            // An emulated BC image gets its blocks back into the shadow, from which each saved subresource is decoded.
+            if (restored.bc && !saved.empty())
+            {
+                auto& device_data = impl.devices.at(device);
+                const auto& bc = *restored.bc;
+                const auto& stored = *bc.shadow;
+                const auto failed = [&] {
+                    return std::runtime_error("Restoring the contents of Vulkan image " + std::to_string(id) + " failed");
+                };
+
+                std::vector<std::byte> shadow(static_cast<size_t>(stored.allocation_size));
+                for (const auto& entry : saved)
+                {
+                    if (entry.mip >= create.mip_levels || entry.layer >= create.array_layers ||
+                        entry.contents.size() != bc.layout.subresource_bytes(entry.mip))
+                    {
+                        throw failed();
+                    }
+                    std::ranges::copy(entry.contents,
+                                      shadow.begin() + static_cast<ptrdiff_t>(bc.layout.offset(entry.mip, entry.layer, 0, 0, 0)));
+                }
+
+                const auto first_index = restored.subresource_index(0, saved.front().mip, saved.front().layer);
+                if (!transfer_for(device, owners[first_index]).copy(stored.memory, stored.memory_type, shadow, true) ||
+                    !impl::ensure_bc_pipeline(device_data))
+                {
+                    throw failed();
+                }
+
+                for (const auto& entry : saved)
+                {
+                    const VkExtent3D extent{.width = std::max(1U, create.width >> entry.mip),
+                                            .height = std::max(1U, create.height >> entry.mip),
+                                            .depth = std::max(1U, create.depth >> entry.mip)};
+                    const auto plan = plan_bc_copy(bc.layout, bc.format, {},
+                                                   {.mip = entry.mip,
+                                                    .base_layer = entry.layer,
+                                                    .layer_count = 1,
+                                                    .width = extent.width,
+                                                    .height = extent.height,
+                                                    .depth = extent.depth});
+                    auto job = plan ? impl::make_bc_decode_job(bc, *plan) : impl::bc_decode_job{};
+                    const auto scratch = plan ? impl.create_device_address_buffer(device_data, job.scratch_bytes) : nullptr;
+                    if (!scratch)
+                    {
+                        throw failed();
+                    }
+                    impl::set_decoded_address(job, scratch->address);
+
+                    const auto index = restored.subresource_index(0, entry.mip, entry.layer);
+                    transfer_for(device, owners[index])
+                        .decode_blocks(restored.handle, entry.mip, entry.layer, extent, static_cast<VkImageLayout>(layouts[index]),
+                                       device_data.bc_pipeline, device_data.bc_layout, job.parameters, job.groups_x, job.groups_y,
+                                       plan->slices, scratch->handle, job.row_texels, job.rows);
+                }
+
+                restored.layouts = std::move(layouts);
+                restored.owners = std::move(owners);
+                continue;
             }
 
             const auto aspects = get_vulkan_format_aspects(create.format);
