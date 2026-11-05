@@ -739,13 +739,13 @@ namespace sogen
             std::unique_ptr<emulator_process_target> managed_target{};
             if (options.managed_process)
             {
-                win_emu->setup_process_if_necessary();
-                win_emu->process.parent_process_id = options.managed_process->request().parent_process_id;
                 if (!options.managed_process->request().registry_state.empty())
                 {
                     utils::buffer_deserializer state{options.managed_process->request().registry_state};
                     win_emu->registry.deserialize_runtime_state(state);
                 }
+                win_emu->setup_process_if_necessary();
+                win_emu->process.parent_process_id = options.managed_process->request().parent_process_id;
                 if (options.managed_process->request().debugged)
                 {
                     win_emu->attach_debugger();

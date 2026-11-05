@@ -763,6 +763,7 @@ namespace sogen
                         c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                     basic_info.AffinityMask = processor_count >= 64 ? ~0ull : ((1ull << processor_count) - 1);
                     basic_info.UniqueProcessId = c.proc.process_id;
+                    basic_info.InheritedFromUniqueProcessId = c.proc.parent_process_id;
                 };
 
                 switch (process_information_length)
