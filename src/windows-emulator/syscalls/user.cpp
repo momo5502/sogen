@@ -2198,7 +2198,11 @@ namespace sogen
             const auto needed = static_cast<uint32_t>(registrations.size());
             if (devices == 0)
             {
-                c.win_emu.memory.try_write_memory(device_count, &needed, sizeof(needed));
+                if (!c.win_emu.memory.try_write_memory(device_count, &needed, sizeof(needed)))
+                {
+                    set_guest_last_error(c, 998); // ERROR_NOACCESS
+                    return failed;
+                }
                 return 0;
             }
 
@@ -2210,8 +2214,8 @@ namespace sogen
 
             if (capacity < needed)
             {
-                c.win_emu.memory.try_write_memory(device_count, &needed, sizeof(needed));
-                set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
+                const bool reported = c.win_emu.memory.try_write_memory(device_count, &needed, sizeof(needed));
+                set_guest_last_error(c, reported ? 122 : 998); // ERROR_INSUFFICIENT_BUFFER or ERROR_NOACCESS
                 return failed;
             }
 
