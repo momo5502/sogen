@@ -63,16 +63,7 @@ namespace sogen
 
         bool socket_wrapper::is_listening()
         {
-            if (!this->socket_.is_valid())
-            {
-                return false;
-            }
-
-            int val{};
-            socklen_t len = sizeof(val);
-            const auto res = getsockopt(this->socket_.get_socket(), SOL_SOCKET, SO_ACCEPTCONN, reinterpret_cast<char*>(&val), &len);
-
-            return res != SOCKET_ERROR && val == 1;
+            return this->listening_;
         }
 
         std::optional<address> socket_wrapper::get_local_address()
@@ -97,7 +88,13 @@ namespace sogen
 
         bool socket_wrapper::listen(int backlog)
         {
-            return ::listen(this->socket_.get_socket(), backlog) == 0;
+            if (::listen(this->socket_.get_socket(), backlog) != 0)
+            {
+                return false;
+            }
+
+            this->listening_ = true;
+            return true;
         }
 
         std::unique_ptr<i_socket> socket_wrapper::accept(address& address)
