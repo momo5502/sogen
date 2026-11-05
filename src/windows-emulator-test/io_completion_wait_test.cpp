@@ -11,6 +11,8 @@ namespace sogen::syscalls
                                                     emulator_pointer apc_context, NTSTATUS io_status,
                                                     EmulatorTraits<Emu64>::ULONG_PTR io_status_information,
                                                     emulator_object<BOOLEAN> already_signaled);
+    NTSTATUS handle_NtCancelWaitCompletionPacket(const syscall_context& c, handle wait_completion_packet_handle,
+                                                 BOOLEAN remove_signaled_packet);
     NTSTATUS handle_NtClose(const syscall_context& c, handle h);
 }
 
@@ -267,5 +269,79 @@ namespace sogen::test
     {
         const auto file_handle = this->emu->process.files.store(file{});
         EXPECT_EQ(this->associate(file_handle), STATUS_OBJECT_TYPE_MISMATCH);
+    }
+
+    using WaitCompletionCancelTest = ConsoleWaitCompletionTest;
+
+    // Expected values captured on Windows 11 (build 26200), x64 and WoW64.
+    TEST_F(WaitCompletionCancelTest, StatusAndPacketFollowTheWaitState)
+    {
+        struct cancel_case
+        {
+            const char* row;
+            bool associate;
+            bool signal_before_cancel;
+            bool dequeue_before_cancel;
+            BOOLEAN remove_signaled_packet;
+            NTSTATUS status;
+            std::optional<NTSTATUS> second_status;
+            ULONG packets_after;
+        };
+
+        const std::array<cancel_case, 6> cases{{
+            {"never associated", false, false, false, FALSE, STATUS_CANCELLED, STATUS_CANCELLED, 0},
+            {"unsignalled, keep", true, false, false, FALSE, STATUS_SUCCESS, STATUS_CANCELLED, 0},
+            {"unsignalled, remove", true, false, false, TRUE, STATUS_SUCCESS, std::nullopt, 0},
+            {"queued, keep", true, true, false, FALSE, STATUS_PENDING, STATUS_PENDING, 1},
+            {"queued, remove", true, true, false, TRUE, STATUS_SUCCESS, STATUS_CANCELLED, 0},
+            {"already dequeued", true, true, true, FALSE, STATUS_CANCELLED, std::nullopt, 0},
+        }};
+
+        for (const auto& c : cases)
+        {
+            SCOPED_TRACE(c.row);
+            const auto wait_packet = this->emu->process.wait_completion_packets.store(wait_completion_packet{});
+            event synchronization_event{};
+            synchronization_event.type = SynchronizationEvent;
+            const auto target = this->emu->process.events.store(std::move(synchronization_event));
+            auto& target_event = *this->emu->process.events.get(target);
+
+            if (c.associate)
+            {
+                ASSERT_EQ(syscalls::handle_NtAssociateWaitCompletionPacket(this->context(), wait_packet, this->completion, target, 0x1234,
+                                                                           0x5678, STATUS_SUCCESS, 42, *this->signaled),
+                          STATUS_SUCCESS);
+            }
+
+            io_completion_message message{};
+            target_event.signaled = c.signal_before_cancel;
+            if (c.dequeue_before_cancel)
+            {
+                ASSERT_TRUE(io_completion_wait::dequeue_io_completion_message(*this->emu, this->completion, message));
+            }
+
+            EXPECT_EQ(syscalls::handle_NtCancelWaitCompletionPacket(this->context(), wait_packet, c.remove_signaled_packet), c.status);
+            if (c.second_status)
+            {
+                EXPECT_EQ(syscalls::handle_NtCancelWaitCompletionPacket(this->context(), wait_packet, c.remove_signaled_packet),
+                          *c.second_status);
+            }
+
+            if (!c.signal_before_cancel)
+            {
+                target_event.signaled = true;
+            }
+
+            ULONG packets = 0;
+            while (io_completion_wait::dequeue_io_completion_message(*this->emu, this->completion, message))
+            {
+                ++packets;
+            }
+            EXPECT_EQ(packets, c.packets_after);
+            EXPECT_EQ(target_event.signaled, !c.signal_before_cancel);
+
+            EXPECT_EQ(syscalls::handle_NtClose(this->context(), wait_packet), STATUS_SUCCESS);
+            EXPECT_EQ(syscalls::handle_NtClose(this->context(), target), STATUS_SUCCESS);
+        }
     }
 }
