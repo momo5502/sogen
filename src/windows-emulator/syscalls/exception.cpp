@@ -74,7 +74,7 @@ namespace sogen
 
             log_hard_error(c, error_status, number_of_parameters, unicode_string_parameter_mask, parameters);
 
-            c.proc.exit_status = error_status;
+            c.proc.mark_exited(error_status);
             c.win_emu.callbacks.on_exception();
             c.emu.stop();
 
@@ -130,7 +130,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            c.proc.exit_status = record.ExceptionCode;
+            c.proc.mark_exited(record.ExceptionCode);
             c.win_emu.callbacks.on_exception();
             c.emu.stop();
 

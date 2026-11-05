@@ -53,6 +53,26 @@ table InheritedPipe {
     completion_notification_flags: uint;
 }
 
+enum SharedObjectKind : ubyte {
+    Section,
+    Event,
+    Mutant,
+}
+
+// A kernel object another process can open: a pagefile section's pages, or an event's or mutant's state, in named host
+// shared memory. Size, protection and attributes describe sections; event_type describes events.
+table SharedObject {
+    kind: SharedObjectKind;
+    guest_handle: ulong;
+    memory: string (required);
+    size: ulong;
+    protection: uint;
+    attributes: uint;
+    event_type: uint;
+    access: uint;
+    inherit: bool;
+}
+
 table ProcessCreateRequest {
     application: string (required);
     argument0: string (required);
@@ -67,6 +87,7 @@ table ProcessCreateRequest {
     inherited_pipes: [InheritedPipe];
     command_line: string (required);
     debugged: bool;
+    inherited_objects: [SharedObject];
 }
 
 table ProcessStarted {
@@ -78,6 +99,7 @@ table ProcessStarted {
 
 table ProcessExited {
     exit_code: ulong;
+    cycles: ulong;
 }
 
 table ResumeProcessRequest {}
@@ -171,6 +193,51 @@ table DebugContinueRequest {
 table DebugDetachRequest {
 }
 
+table InstallObjectRequest {
+    object: SharedObject (required);
+}
+
+table InstallObjectResponse {
+    error: ProcessError = None;
+    handle: ulong;
+}
+
+table ExportObjectRequest {
+    handle: ulong;
+}
+
+table ExportObjectResponse {
+    error: ProcessError = None;
+    object: SharedObject;
+}
+
+table CloseHandleRequest {
+    handle: ulong;
+}
+
+// Tokens travel as the pseudo-handle that identifies them: none, the impersonation token or the anonymous one.
+table SetThreadTokenRequest {
+    thread_id: uint;
+    token: ulong;
+}
+
+table ThreadTokenRequest {
+    thread_id: uint;
+}
+
+table ThreadTokenResponse {
+    error: ProcessError = None;
+    token: ulong;
+}
+
+table CycleTimeRequest {
+}
+
+table CycleTimeResponse {
+    error: ProcessError = None;
+    cycles: ulong;
+}
+
 table ThreadContextRequest {
     thread_id: uint;
     wow64: bool;
@@ -250,6 +317,16 @@ union MessagePayload {
     ThreadInformationRequest,
     ThreadInformationResponse,
     DebugDetachRequest,
+    InstallObjectRequest,
+    InstallObjectResponse,
+    ExportObjectRequest,
+    ExportObjectResponse,
+    CloseHandleRequest,
+    SetThreadTokenRequest,
+    ThreadTokenRequest,
+    ThreadTokenResponse,
+    CycleTimeRequest,
+    CycleTimeResponse,
 }
 
 table Message {

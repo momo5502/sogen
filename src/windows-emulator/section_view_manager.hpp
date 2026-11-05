@@ -22,10 +22,14 @@ namespace sogen
     class section_view_manager
     {
       public:
-        // The new storage holds one reference, owned by the section object.
-        uint64_t create_storage(size_t size);
+        // The new storage holds one reference, owned by the section object. Shareable storage can be opened by another
+        // process through its memory's name.
+        uint64_t create_storage(size_t size, bool shareable = false);
+        uint64_t adopt_storage(utils::shared_host_buffer memory);
+        void add_reference(uint64_t storage_id);
         void release_storage(uint64_t storage_id);
         size_t storage_size(uint64_t storage_id) const;
+        const utils::shared_host_buffer* storage_memory(uint64_t storage_id) const;
 
         // Maps the view at address, or in place of a placeholder there, when it is nonzero.
         uint64_t map_view(memory_manager& memory, uint64_t storage_id, uint64_t offset, size_t size, nt_memory_permission permissions,

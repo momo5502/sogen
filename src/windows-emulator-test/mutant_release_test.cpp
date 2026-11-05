@@ -108,9 +108,9 @@ namespace sogen::test
     TEST_F(MutantReleaseTest, PreviousCountIsTheSignalStateBeforeTheRelease)
     {
         const auto h = this->create_mutant(true);
-        const auto thread_id = this->context().thread().id;
-        ASSERT_TRUE(this->object(h).try_lock(thread_id).has_value());
-        ASSERT_TRUE(this->object(h).try_lock(thread_id).has_value());
+        const auto owner = mutant::make_owner(this->emu->process.process_id, this->context().thread().id);
+        ASSERT_TRUE(this->object(h).try_lock(owner).has_value());
+        ASSERT_TRUE(this->object(h).try_lock(owner).has_value());
 
         for (const LONG expected : {-2, -1, 0})
         {
@@ -132,7 +132,7 @@ namespace sogen::test
         EXPECT_EQ(untouched, previous);
 
         const auto foreign = this->create_mutant(false);
-        ASSERT_TRUE(this->object(foreign).try_lock(other_thread_id).has_value());
+        ASSERT_TRUE(this->object(foreign).try_lock(mutant::make_owner(this->emu->process.process_id, other_thread_id)).has_value());
         EXPECT_EQ(STATUS_MUTANT_NOT_OWNED, this->release(foreign, previous));
         EXPECT_EQ(untouched, previous);
     }
@@ -140,19 +140,19 @@ namespace sogen::test
     TEST_F(MutantReleaseTest, ReleasingAnAbandonedMutantReportsAbandoned)
     {
         const auto h = this->create_mutant(false);
-        ASSERT_TRUE(this->object(h).try_lock(other_thread_id).has_value());
+        ASSERT_TRUE(this->object(h).try_lock(mutant::make_owner(this->emu->process.process_id, other_thread_id)).has_value());
         this->object(h).abandon();
 
         LONG previous{};
         EXPECT_EQ(STATUS_ABANDONED, this->release(h, previous));
         EXPECT_EQ(untouched, previous);
-        EXPECT_TRUE(this->object(h).abandoned);
+        EXPECT_TRUE(this->object(h).is_abandoned());
     }
 
     TEST_F(MutantReleaseTest, SignalAndWaitOnAnAbandonedMutantReturnsWithoutWaiting)
     {
         const auto h = this->create_mutant(false);
-        ASSERT_TRUE(this->object(h).try_lock(other_thread_id).has_value());
+        ASSERT_TRUE(this->object(h).try_lock(mutant::make_owner(this->emu->process.process_id, other_thread_id)).has_value());
         this->object(h).abandon();
 
         const emulator_object<LARGE_INTEGER> timeout{this->emu->memory, this->storage + 0x200};
@@ -160,6 +160,6 @@ namespace sogen::test
 
         EXPECT_EQ(STATUS_ABANDONED,
                   syscalls::handle_NtSignalAndWaitForSingleObject(this->context(), h, this->create_event(), FALSE, timeout));
-        EXPECT_TRUE(this->object(h).abandoned);
+        EXPECT_TRUE(this->object(h).is_abandoned());
     }
 }

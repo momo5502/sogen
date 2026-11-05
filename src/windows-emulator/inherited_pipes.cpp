@@ -40,6 +40,14 @@ namespace sogen
                 throw std::runtime_error("Inherited guest pipe handle conflicts with child setup");
             }
         }
+        for (const auto& object : request.inherited_objects)
+        {
+            if (!emulator.process.install_shared_object(object, make_handle(object.guest_handle)))
+            {
+                throw std::runtime_error("Inherited guest object handle conflicts with child setup");
+            }
+        }
+
         emulator.process.process_params64.access([&](RTL_USER_PROCESS_PARAMETERS64& parameters) {
             parameters.StandardInput = request.standard_input;
             parameters.StandardOutput = request.standard_output;

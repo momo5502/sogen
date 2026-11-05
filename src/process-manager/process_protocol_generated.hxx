@@ -27,6 +27,10 @@ struct InheritedPipe;
 struct InheritedPipeBuilder;
 struct InheritedPipeT;
 
+struct SharedObject;
+struct SharedObjectBuilder;
+struct SharedObjectT;
+
 struct ProcessCreateRequest;
 struct ProcessCreateRequestBuilder;
 struct ProcessCreateRequestT;
@@ -98,6 +102,46 @@ struct DebugContinueRequestT;
 struct DebugDetachRequest;
 struct DebugDetachRequestBuilder;
 struct DebugDetachRequestT;
+
+struct InstallObjectRequest;
+struct InstallObjectRequestBuilder;
+struct InstallObjectRequestT;
+
+struct InstallObjectResponse;
+struct InstallObjectResponseBuilder;
+struct InstallObjectResponseT;
+
+struct ExportObjectRequest;
+struct ExportObjectRequestBuilder;
+struct ExportObjectRequestT;
+
+struct ExportObjectResponse;
+struct ExportObjectResponseBuilder;
+struct ExportObjectResponseT;
+
+struct CloseHandleRequest;
+struct CloseHandleRequestBuilder;
+struct CloseHandleRequestT;
+
+struct SetThreadTokenRequest;
+struct SetThreadTokenRequestBuilder;
+struct SetThreadTokenRequestT;
+
+struct ThreadTokenRequest;
+struct ThreadTokenRequestBuilder;
+struct ThreadTokenRequestT;
+
+struct ThreadTokenResponse;
+struct ThreadTokenResponseBuilder;
+struct ThreadTokenResponseT;
+
+struct CycleTimeRequest;
+struct CycleTimeRequestBuilder;
+struct CycleTimeRequestT;
+
+struct CycleTimeResponse;
+struct CycleTimeResponseBuilder;
+struct CycleTimeResponseT;
 
 struct ThreadContextRequest;
 struct ThreadContextRequestBuilder;
@@ -256,6 +300,39 @@ inline const char *EnumNameMemoryPermission(MemoryPermission e) {
   return EnumNamesMemoryPermission()[index];
 }
 
+enum SharedObjectKind : uint8_t {
+  SharedObjectKind_Section = 0,
+  SharedObjectKind_Event = 1,
+  SharedObjectKind_Mutant = 2,
+  SharedObjectKind_MIN = SharedObjectKind_Section,
+  SharedObjectKind_MAX = SharedObjectKind_Mutant
+};
+
+inline const SharedObjectKind (&EnumValuesSharedObjectKind())[3] {
+  static const SharedObjectKind values[] = {
+    SharedObjectKind_Section,
+    SharedObjectKind_Event,
+    SharedObjectKind_Mutant
+  };
+  return values;
+}
+
+inline const char * const *EnumNamesSharedObjectKind() {
+  static const char * const names[4] = {
+    "Section",
+    "Event",
+    "Mutant",
+    nullptr
+  };
+  return names;
+}
+
+inline const char *EnumNameSharedObjectKind(SharedObjectKind e) {
+  if (::flatbuffers::IsOutRange(e, SharedObjectKind_Section, SharedObjectKind_Mutant)) return "";
+  const size_t index = static_cast<size_t>(e);
+  return EnumNamesSharedObjectKind()[index];
+}
+
 enum DebugEventKind : uint8_t {
   DebugEventKind_CreateProcess = 0,
   DebugEventKind_CreateThread = 1,
@@ -330,11 +407,21 @@ enum MessagePayload : uint8_t {
   MessagePayload_ThreadInformationRequest = 25,
   MessagePayload_ThreadInformationResponse = 26,
   MessagePayload_DebugDetachRequest = 27,
+  MessagePayload_InstallObjectRequest = 28,
+  MessagePayload_InstallObjectResponse = 29,
+  MessagePayload_ExportObjectRequest = 30,
+  MessagePayload_ExportObjectResponse = 31,
+  MessagePayload_CloseHandleRequest = 32,
+  MessagePayload_SetThreadTokenRequest = 33,
+  MessagePayload_ThreadTokenRequest = 34,
+  MessagePayload_ThreadTokenResponse = 35,
+  MessagePayload_CycleTimeRequest = 36,
+  MessagePayload_CycleTimeResponse = 37,
   MessagePayload_MIN = MessagePayload_NONE,
-  MessagePayload_MAX = MessagePayload_DebugDetachRequest
+  MessagePayload_MAX = MessagePayload_CycleTimeResponse
 };
 
-inline const MessagePayload (&EnumValuesMessagePayload())[28] {
+inline const MessagePayload (&EnumValuesMessagePayload())[38] {
   static const MessagePayload values[] = {
     MessagePayload_NONE,
     MessagePayload_Hello,
@@ -363,13 +450,23 @@ inline const MessagePayload (&EnumValuesMessagePayload())[28] {
     MessagePayload_QueryMemoryResponse,
     MessagePayload_ThreadInformationRequest,
     MessagePayload_ThreadInformationResponse,
-    MessagePayload_DebugDetachRequest
+    MessagePayload_DebugDetachRequest,
+    MessagePayload_InstallObjectRequest,
+    MessagePayload_InstallObjectResponse,
+    MessagePayload_ExportObjectRequest,
+    MessagePayload_ExportObjectResponse,
+    MessagePayload_CloseHandleRequest,
+    MessagePayload_SetThreadTokenRequest,
+    MessagePayload_ThreadTokenRequest,
+    MessagePayload_ThreadTokenResponse,
+    MessagePayload_CycleTimeRequest,
+    MessagePayload_CycleTimeResponse
   };
   return values;
 }
 
 inline const char * const *EnumNamesMessagePayload() {
-  static const char * const names[29] = {
+  static const char * const names[39] = {
     "NONE",
     "Hello",
     "ProcessCreateRequest",
@@ -398,13 +495,23 @@ inline const char * const *EnumNamesMessagePayload() {
     "ThreadInformationRequest",
     "ThreadInformationResponse",
     "DebugDetachRequest",
+    "InstallObjectRequest",
+    "InstallObjectResponse",
+    "ExportObjectRequest",
+    "ExportObjectResponse",
+    "CloseHandleRequest",
+    "SetThreadTokenRequest",
+    "ThreadTokenRequest",
+    "ThreadTokenResponse",
+    "CycleTimeRequest",
+    "CycleTimeResponse",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMessagePayload(MessagePayload e) {
-  if (::flatbuffers::IsOutRange(e, MessagePayload_NONE, MessagePayload_DebugDetachRequest)) return "";
+  if (::flatbuffers::IsOutRange(e, MessagePayload_NONE, MessagePayload_CycleTimeResponse)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMessagePayload()[index];
 }
@@ -521,6 +628,46 @@ template<> struct MessagePayloadTraits<ProcessProtocol::DebugDetachRequest> {
   static const MessagePayload enum_value = MessagePayload_DebugDetachRequest;
 };
 
+template<> struct MessagePayloadTraits<ProcessProtocol::InstallObjectRequest> {
+  static const MessagePayload enum_value = MessagePayload_InstallObjectRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::InstallObjectResponse> {
+  static const MessagePayload enum_value = MessagePayload_InstallObjectResponse;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::ExportObjectRequest> {
+  static const MessagePayload enum_value = MessagePayload_ExportObjectRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::ExportObjectResponse> {
+  static const MessagePayload enum_value = MessagePayload_ExportObjectResponse;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::CloseHandleRequest> {
+  static const MessagePayload enum_value = MessagePayload_CloseHandleRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::SetThreadTokenRequest> {
+  static const MessagePayload enum_value = MessagePayload_SetThreadTokenRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::ThreadTokenRequest> {
+  static const MessagePayload enum_value = MessagePayload_ThreadTokenRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::ThreadTokenResponse> {
+  static const MessagePayload enum_value = MessagePayload_ThreadTokenResponse;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::CycleTimeRequest> {
+  static const MessagePayload enum_value = MessagePayload_CycleTimeRequest;
+};
+
+template<> struct MessagePayloadTraits<ProcessProtocol::CycleTimeResponse> {
+  static const MessagePayload enum_value = MessagePayload_CycleTimeResponse;
+};
+
 template<typename T> struct MessagePayloadUnionTraits {
   static const MessagePayload enum_value = MessagePayload_NONE;
 };
@@ -631,6 +778,46 @@ template<> struct MessagePayloadUnionTraits<ProcessProtocol::ThreadInformationRe
 
 template<> struct MessagePayloadUnionTraits<ProcessProtocol::DebugDetachRequestT> {
   static const MessagePayload enum_value = MessagePayload_DebugDetachRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::InstallObjectRequestT> {
+  static const MessagePayload enum_value = MessagePayload_InstallObjectRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::InstallObjectResponseT> {
+  static const MessagePayload enum_value = MessagePayload_InstallObjectResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::ExportObjectRequestT> {
+  static const MessagePayload enum_value = MessagePayload_ExportObjectRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::ExportObjectResponseT> {
+  static const MessagePayload enum_value = MessagePayload_ExportObjectResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::CloseHandleRequestT> {
+  static const MessagePayload enum_value = MessagePayload_CloseHandleRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::SetThreadTokenRequestT> {
+  static const MessagePayload enum_value = MessagePayload_SetThreadTokenRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::ThreadTokenRequestT> {
+  static const MessagePayload enum_value = MessagePayload_ThreadTokenRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::ThreadTokenResponseT> {
+  static const MessagePayload enum_value = MessagePayload_ThreadTokenResponse;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::CycleTimeRequestT> {
+  static const MessagePayload enum_value = MessagePayload_CycleTimeRequest;
+};
+
+template<> struct MessagePayloadUnionTraits<ProcessProtocol::CycleTimeResponseT> {
+  static const MessagePayload enum_value = MessagePayload_CycleTimeResponse;
 };
 
 struct MessagePayloadUnion {
@@ -878,6 +1065,86 @@ struct MessagePayloadUnion {
   const ProcessProtocol::DebugDetachRequestT *AsDebugDetachRequest() const {
     return type == MessagePayload_DebugDetachRequest ?
       reinterpret_cast<const ProcessProtocol::DebugDetachRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::InstallObjectRequestT *AsInstallObjectRequest() {
+    return type == MessagePayload_InstallObjectRequest ?
+      reinterpret_cast<ProcessProtocol::InstallObjectRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::InstallObjectRequestT *AsInstallObjectRequest() const {
+    return type == MessagePayload_InstallObjectRequest ?
+      reinterpret_cast<const ProcessProtocol::InstallObjectRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::InstallObjectResponseT *AsInstallObjectResponse() {
+    return type == MessagePayload_InstallObjectResponse ?
+      reinterpret_cast<ProcessProtocol::InstallObjectResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::InstallObjectResponseT *AsInstallObjectResponse() const {
+    return type == MessagePayload_InstallObjectResponse ?
+      reinterpret_cast<const ProcessProtocol::InstallObjectResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::ExportObjectRequestT *AsExportObjectRequest() {
+    return type == MessagePayload_ExportObjectRequest ?
+      reinterpret_cast<ProcessProtocol::ExportObjectRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::ExportObjectRequestT *AsExportObjectRequest() const {
+    return type == MessagePayload_ExportObjectRequest ?
+      reinterpret_cast<const ProcessProtocol::ExportObjectRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::ExportObjectResponseT *AsExportObjectResponse() {
+    return type == MessagePayload_ExportObjectResponse ?
+      reinterpret_cast<ProcessProtocol::ExportObjectResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::ExportObjectResponseT *AsExportObjectResponse() const {
+    return type == MessagePayload_ExportObjectResponse ?
+      reinterpret_cast<const ProcessProtocol::ExportObjectResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::CloseHandleRequestT *AsCloseHandleRequest() {
+    return type == MessagePayload_CloseHandleRequest ?
+      reinterpret_cast<ProcessProtocol::CloseHandleRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::CloseHandleRequestT *AsCloseHandleRequest() const {
+    return type == MessagePayload_CloseHandleRequest ?
+      reinterpret_cast<const ProcessProtocol::CloseHandleRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::SetThreadTokenRequestT *AsSetThreadTokenRequest() {
+    return type == MessagePayload_SetThreadTokenRequest ?
+      reinterpret_cast<ProcessProtocol::SetThreadTokenRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::SetThreadTokenRequestT *AsSetThreadTokenRequest() const {
+    return type == MessagePayload_SetThreadTokenRequest ?
+      reinterpret_cast<const ProcessProtocol::SetThreadTokenRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::ThreadTokenRequestT *AsThreadTokenRequest() {
+    return type == MessagePayload_ThreadTokenRequest ?
+      reinterpret_cast<ProcessProtocol::ThreadTokenRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::ThreadTokenRequestT *AsThreadTokenRequest() const {
+    return type == MessagePayload_ThreadTokenRequest ?
+      reinterpret_cast<const ProcessProtocol::ThreadTokenRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::ThreadTokenResponseT *AsThreadTokenResponse() {
+    return type == MessagePayload_ThreadTokenResponse ?
+      reinterpret_cast<ProcessProtocol::ThreadTokenResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::ThreadTokenResponseT *AsThreadTokenResponse() const {
+    return type == MessagePayload_ThreadTokenResponse ?
+      reinterpret_cast<const ProcessProtocol::ThreadTokenResponseT *>(value) : nullptr;
+  }
+  ProcessProtocol::CycleTimeRequestT *AsCycleTimeRequest() {
+    return type == MessagePayload_CycleTimeRequest ?
+      reinterpret_cast<ProcessProtocol::CycleTimeRequestT *>(value) : nullptr;
+  }
+  const ProcessProtocol::CycleTimeRequestT *AsCycleTimeRequest() const {
+    return type == MessagePayload_CycleTimeRequest ?
+      reinterpret_cast<const ProcessProtocol::CycleTimeRequestT *>(value) : nullptr;
+  }
+  ProcessProtocol::CycleTimeResponseT *AsCycleTimeResponse() {
+    return type == MessagePayload_CycleTimeResponse ?
+      reinterpret_cast<ProcessProtocol::CycleTimeResponseT *>(value) : nullptr;
+  }
+  const ProcessProtocol::CycleTimeResponseT *AsCycleTimeResponse() const {
+    return type == MessagePayload_CycleTimeResponse ?
+      reinterpret_cast<const ProcessProtocol::CycleTimeResponseT *>(value) : nullptr;
   }
 };
 
@@ -1239,6 +1506,174 @@ inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipeDirect(
 
 ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(::flatbuffers::FlatBufferBuilder &_fbb, const InheritedPipeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct SharedObjectT : public ::flatbuffers::NativeTable {
+  typedef SharedObject TableType;
+  ProcessProtocol::SharedObjectKind kind = ProcessProtocol::SharedObjectKind_Section;
+  uint64_t guest_handle = 0;
+  std::string memory{};
+  uint64_t size = 0;
+  uint32_t protection = 0;
+  uint32_t attributes = 0;
+  uint32_t event_type = 0;
+  uint32_t access = 0;
+  bool inherit = false;
+};
+
+struct SharedObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef SharedObjectT NativeTableType;
+  typedef SharedObjectBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_KIND = 4,
+    VT_GUEST_HANDLE = 6,
+    VT_MEMORY = 8,
+    VT_SIZE = 10,
+    VT_PROTECTION = 12,
+    VT_ATTRIBUTES = 14,
+    VT_EVENT_TYPE = 16,
+    VT_ACCESS = 18,
+    VT_INHERIT = 20
+  };
+  ProcessProtocol::SharedObjectKind kind() const {
+    return static_cast<ProcessProtocol::SharedObjectKind>(GetField<uint8_t>(VT_KIND, 0));
+  }
+  uint64_t guest_handle() const {
+    return GetField<uint64_t>(VT_GUEST_HANDLE, 0);
+  }
+  const ::flatbuffers::String *memory() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_MEMORY);
+  }
+  uint64_t size() const {
+    return GetField<uint64_t>(VT_SIZE, 0);
+  }
+  uint32_t protection() const {
+    return GetField<uint32_t>(VT_PROTECTION, 0);
+  }
+  uint32_t attributes() const {
+    return GetField<uint32_t>(VT_ATTRIBUTES, 0);
+  }
+  uint32_t event_type() const {
+    return GetField<uint32_t>(VT_EVENT_TYPE, 0);
+  }
+  uint32_t access() const {
+    return GetField<uint32_t>(VT_ACCESS, 0);
+  }
+  bool inherit() const {
+    return GetField<uint8_t>(VT_INHERIT, 0) != 0;
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_KIND, 1) &&
+           VerifyField<uint64_t>(verifier, VT_GUEST_HANDLE, 8) &&
+           VerifyOffsetRequired(verifier, VT_MEMORY) &&
+           verifier.VerifyString(memory()) &&
+           VerifyField<uint64_t>(verifier, VT_SIZE, 8) &&
+           VerifyField<uint32_t>(verifier, VT_PROTECTION, 4) &&
+           VerifyField<uint32_t>(verifier, VT_ATTRIBUTES, 4) &&
+           VerifyField<uint32_t>(verifier, VT_EVENT_TYPE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_ACCESS, 4) &&
+           VerifyField<uint8_t>(verifier, VT_INHERIT, 1) &&
+           verifier.EndTable();
+  }
+  SharedObjectT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(SharedObjectT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<SharedObject> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SharedObjectT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct SharedObjectBuilder {
+  typedef SharedObject Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_kind(ProcessProtocol::SharedObjectKind kind) {
+    fbb_.AddElement<uint8_t>(SharedObject::VT_KIND, static_cast<uint8_t>(kind), 0);
+  }
+  void add_guest_handle(uint64_t guest_handle) {
+    fbb_.AddElement<uint64_t>(SharedObject::VT_GUEST_HANDLE, guest_handle, 0);
+  }
+  void add_memory(::flatbuffers::Offset<::flatbuffers::String> memory) {
+    fbb_.AddOffset(SharedObject::VT_MEMORY, memory);
+  }
+  void add_size(uint64_t size) {
+    fbb_.AddElement<uint64_t>(SharedObject::VT_SIZE, size, 0);
+  }
+  void add_protection(uint32_t protection) {
+    fbb_.AddElement<uint32_t>(SharedObject::VT_PROTECTION, protection, 0);
+  }
+  void add_attributes(uint32_t attributes) {
+    fbb_.AddElement<uint32_t>(SharedObject::VT_ATTRIBUTES, attributes, 0);
+  }
+  void add_event_type(uint32_t event_type) {
+    fbb_.AddElement<uint32_t>(SharedObject::VT_EVENT_TYPE, event_type, 0);
+  }
+  void add_access(uint32_t access) {
+    fbb_.AddElement<uint32_t>(SharedObject::VT_ACCESS, access, 0);
+  }
+  void add_inherit(bool inherit) {
+    fbb_.AddElement<uint8_t>(SharedObject::VT_INHERIT, static_cast<uint8_t>(inherit), 0);
+  }
+  explicit SharedObjectBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<SharedObject> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<SharedObject>(end);
+    fbb_.Required(o, SharedObject::VT_MEMORY);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<SharedObject> CreateSharedObject(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::SharedObjectKind kind = ProcessProtocol::SharedObjectKind_Section,
+    uint64_t guest_handle = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> memory = 0,
+    uint64_t size = 0,
+    uint32_t protection = 0,
+    uint32_t attributes = 0,
+    uint32_t event_type = 0,
+    uint32_t access = 0,
+    bool inherit = false) {
+  SharedObjectBuilder builder_(_fbb);
+  builder_.add_size(size);
+  builder_.add_guest_handle(guest_handle);
+  builder_.add_access(access);
+  builder_.add_event_type(event_type);
+  builder_.add_attributes(attributes);
+  builder_.add_protection(protection);
+  builder_.add_memory(memory);
+  builder_.add_inherit(inherit);
+  builder_.add_kind(kind);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<SharedObject> CreateSharedObjectDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::SharedObjectKind kind = ProcessProtocol::SharedObjectKind_Section,
+    uint64_t guest_handle = 0,
+    const char *memory = nullptr,
+    uint64_t size = 0,
+    uint32_t protection = 0,
+    uint32_t attributes = 0,
+    uint32_t event_type = 0,
+    uint32_t access = 0,
+    bool inherit = false) {
+  auto memory__ = memory ? _fbb.CreateString(memory) : 0;
+  return ProcessProtocol::CreateSharedObject(
+      _fbb,
+      kind,
+      guest_handle,
+      memory__,
+      size,
+      protection,
+      attributes,
+      event_type,
+      access,
+      inherit);
+}
+
+::flatbuffers::Offset<SharedObject> CreateSharedObject(::flatbuffers::FlatBufferBuilder &_fbb, const SharedObjectT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct ProcessCreateRequestT : public ::flatbuffers::NativeTable {
   typedef ProcessCreateRequest TableType;
   std::string application{};
@@ -1254,6 +1689,7 @@ struct ProcessCreateRequestT : public ::flatbuffers::NativeTable {
   std::vector<std::unique_ptr<ProcessProtocol::InheritedPipeT>> inherited_pipes{};
   std::string command_line{};
   bool debugged = false;
+  std::vector<std::unique_ptr<ProcessProtocol::SharedObjectT>> inherited_objects{};
   ProcessCreateRequestT() = default;
   ProcessCreateRequestT(const ProcessCreateRequestT &o);
   ProcessCreateRequestT(ProcessCreateRequestT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -1276,7 +1712,8 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
     VT_STANDARD_ERROR = 22,
     VT_INHERITED_PIPES = 24,
     VT_COMMAND_LINE = 26,
-    VT_DEBUGGED = 28
+    VT_DEBUGGED = 28,
+    VT_INHERITED_OBJECTS = 30
   };
   const ::flatbuffers::String *application() const {
     return GetPointer<const ::flatbuffers::String *>(VT_APPLICATION);
@@ -1317,6 +1754,9 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   bool debugged() const {
     return GetField<uint8_t>(VT_DEBUGGED, 0) != 0;
   }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::SharedObject>> *inherited_objects() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::SharedObject>> *>(VT_INHERITED_OBJECTS);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1343,6 +1783,9 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
            VerifyOffsetRequired(verifier, VT_COMMAND_LINE) &&
            verifier.VerifyString(command_line()) &&
            VerifyField<uint8_t>(verifier, VT_DEBUGGED, 1) &&
+           VerifyOffset(verifier, VT_INHERITED_OBJECTS) &&
+           verifier.VerifyVector(inherited_objects()) &&
+           verifier.VerifyVectorOfTables(inherited_objects()) &&
            verifier.EndTable();
   }
   ProcessCreateRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1393,6 +1836,9 @@ struct ProcessCreateRequestBuilder {
   void add_debugged(bool debugged) {
     fbb_.AddElement<uint8_t>(ProcessCreateRequest::VT_DEBUGGED, static_cast<uint8_t>(debugged), 0);
   }
+  void add_inherited_objects(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::SharedObject>>> inherited_objects) {
+    fbb_.AddOffset(ProcessCreateRequest::VT_INHERITED_OBJECTS, inherited_objects);
+  }
   explicit ProcessCreateRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1422,11 +1868,13 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(
     uint64_t standard_error = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>>> inherited_pipes = 0,
     ::flatbuffers::Offset<::flatbuffers::String> command_line = 0,
-    bool debugged = false) {
+    bool debugged = false,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::SharedObject>>> inherited_objects = 0) {
   ProcessCreateRequestBuilder builder_(_fbb);
   builder_.add_standard_error(standard_error);
   builder_.add_standard_output(standard_output);
   builder_.add_standard_input(standard_input);
+  builder_.add_inherited_objects(inherited_objects);
   builder_.add_command_line(command_line);
   builder_.add_inherited_pipes(inherited_pipes);
   builder_.add_thread_id(thread_id);
@@ -1454,7 +1902,8 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
     uint64_t standard_error = 0,
     const std::vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> *inherited_pipes = nullptr,
     const char *command_line = nullptr,
-    bool debugged = false) {
+    bool debugged = false,
+    const std::vector<::flatbuffers::Offset<ProcessProtocol::SharedObject>> *inherited_objects = nullptr) {
   auto application__ = application ? _fbb.CreateString(application) : 0;
   auto argument0__ = argument0 ? _fbb.CreateString(argument0) : 0;
   auto working_directory__ = working_directory ? _fbb.CreateString(working_directory) : 0;
@@ -1462,6 +1911,7 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
   auto environment__ = environment ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::EnvironmentVariable>>(*environment) : 0;
   auto inherited_pipes__ = inherited_pipes ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>>(*inherited_pipes) : 0;
   auto command_line__ = command_line ? _fbb.CreateString(command_line) : 0;
+  auto inherited_objects__ = inherited_objects ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::SharedObject>>(*inherited_objects) : 0;
   return ProcessProtocol::CreateProcessCreateRequest(
       _fbb,
       application__,
@@ -1476,7 +1926,8 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
       standard_error,
       inherited_pipes__,
       command_line__,
-      debugged);
+      debugged,
+      inherited_objects__);
 }
 
 ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessCreateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -1570,21 +2021,27 @@ inline ::flatbuffers::Offset<ProcessStarted> CreateProcessStarted(
 struct ProcessExitedT : public ::flatbuffers::NativeTable {
   typedef ProcessExited TableType;
   uint64_t exit_code = 0;
+  uint64_t cycles = 0;
 };
 
 struct ProcessExited FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ProcessExitedT NativeTableType;
   typedef ProcessExitedBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
-    VT_EXIT_CODE = 4
+    VT_EXIT_CODE = 4,
+    VT_CYCLES = 6
   };
   uint64_t exit_code() const {
     return GetField<uint64_t>(VT_EXIT_CODE, 0);
+  }
+  uint64_t cycles() const {
+    return GetField<uint64_t>(VT_CYCLES, 0);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_EXIT_CODE, 8) &&
+           VerifyField<uint64_t>(verifier, VT_CYCLES, 8) &&
            verifier.EndTable();
   }
   ProcessExitedT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1599,6 +2056,9 @@ struct ProcessExitedBuilder {
   void add_exit_code(uint64_t exit_code) {
     fbb_.AddElement<uint64_t>(ProcessExited::VT_EXIT_CODE, exit_code, 0);
   }
+  void add_cycles(uint64_t cycles) {
+    fbb_.AddElement<uint64_t>(ProcessExited::VT_CYCLES, cycles, 0);
+  }
   explicit ProcessExitedBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1612,8 +2072,10 @@ struct ProcessExitedBuilder {
 
 inline ::flatbuffers::Offset<ProcessExited> CreateProcessExited(
     ::flatbuffers::FlatBufferBuilder &_fbb,
-    uint64_t exit_code = 0) {
+    uint64_t exit_code = 0,
+    uint64_t cycles = 0) {
   ProcessExitedBuilder builder_(_fbb);
+  builder_.add_cycles(cycles);
   builder_.add_exit_code(exit_code);
   return builder_.Finish();
 }
@@ -2723,6 +3185,589 @@ inline ::flatbuffers::Offset<DebugDetachRequest> CreateDebugDetachRequest(
 
 ::flatbuffers::Offset<DebugDetachRequest> CreateDebugDetachRequest(::flatbuffers::FlatBufferBuilder &_fbb, const DebugDetachRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct InstallObjectRequestT : public ::flatbuffers::NativeTable {
+  typedef InstallObjectRequest TableType;
+  std::unique_ptr<ProcessProtocol::SharedObjectT> object{};
+  InstallObjectRequestT() = default;
+  InstallObjectRequestT(const InstallObjectRequestT &o);
+  InstallObjectRequestT(InstallObjectRequestT&&) FLATBUFFERS_NOEXCEPT = default;
+  InstallObjectRequestT &operator=(InstallObjectRequestT o) FLATBUFFERS_NOEXCEPT;
+};
+
+struct InstallObjectRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef InstallObjectRequestT NativeTableType;
+  typedef InstallObjectRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_OBJECT = 4
+  };
+  const ProcessProtocol::SharedObject *object() const {
+    return GetPointer<const ProcessProtocol::SharedObject *>(VT_OBJECT);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffsetRequired(verifier, VT_OBJECT) &&
+           verifier.VerifyTable(object()) &&
+           verifier.EndTable();
+  }
+  InstallObjectRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(InstallObjectRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<InstallObjectRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const InstallObjectRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct InstallObjectRequestBuilder {
+  typedef InstallObjectRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_object(::flatbuffers::Offset<ProcessProtocol::SharedObject> object) {
+    fbb_.AddOffset(InstallObjectRequest::VT_OBJECT, object);
+  }
+  explicit InstallObjectRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<InstallObjectRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<InstallObjectRequest>(end);
+    fbb_.Required(o, InstallObjectRequest::VT_OBJECT);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<InstallObjectRequest> CreateInstallObjectRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ::flatbuffers::Offset<ProcessProtocol::SharedObject> object = 0) {
+  InstallObjectRequestBuilder builder_(_fbb);
+  builder_.add_object(object);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<InstallObjectRequest> CreateInstallObjectRequest(::flatbuffers::FlatBufferBuilder &_fbb, const InstallObjectRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct InstallObjectResponseT : public ::flatbuffers::NativeTable {
+  typedef InstallObjectResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  uint64_t handle = 0;
+};
+
+struct InstallObjectResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef InstallObjectResponseT NativeTableType;
+  typedef InstallObjectResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_HANDLE = 6
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  uint64_t handle() const {
+    return GetField<uint64_t>(VT_HANDLE, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyField<uint64_t>(verifier, VT_HANDLE, 8) &&
+           verifier.EndTable();
+  }
+  InstallObjectResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(InstallObjectResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<InstallObjectResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const InstallObjectResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct InstallObjectResponseBuilder {
+  typedef InstallObjectResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(InstallObjectResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_handle(uint64_t handle) {
+    fbb_.AddElement<uint64_t>(InstallObjectResponse::VT_HANDLE, handle, 0);
+  }
+  explicit InstallObjectResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<InstallObjectResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<InstallObjectResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<InstallObjectResponse> CreateInstallObjectResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    uint64_t handle = 0) {
+  InstallObjectResponseBuilder builder_(_fbb);
+  builder_.add_handle(handle);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<InstallObjectResponse> CreateInstallObjectResponse(::flatbuffers::FlatBufferBuilder &_fbb, const InstallObjectResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ExportObjectRequestT : public ::flatbuffers::NativeTable {
+  typedef ExportObjectRequest TableType;
+  uint64_t handle = 0;
+};
+
+struct ExportObjectRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ExportObjectRequestT NativeTableType;
+  typedef ExportObjectRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_HANDLE = 4
+  };
+  uint64_t handle() const {
+    return GetField<uint64_t>(VT_HANDLE, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_HANDLE, 8) &&
+           verifier.EndTable();
+  }
+  ExportObjectRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ExportObjectRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ExportObjectRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ExportObjectRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ExportObjectRequestBuilder {
+  typedef ExportObjectRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_handle(uint64_t handle) {
+    fbb_.AddElement<uint64_t>(ExportObjectRequest::VT_HANDLE, handle, 0);
+  }
+  explicit ExportObjectRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ExportObjectRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ExportObjectRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ExportObjectRequest> CreateExportObjectRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t handle = 0) {
+  ExportObjectRequestBuilder builder_(_fbb);
+  builder_.add_handle(handle);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ExportObjectRequest> CreateExportObjectRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ExportObjectRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ExportObjectResponseT : public ::flatbuffers::NativeTable {
+  typedef ExportObjectResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  std::unique_ptr<ProcessProtocol::SharedObjectT> object{};
+  ExportObjectResponseT() = default;
+  ExportObjectResponseT(const ExportObjectResponseT &o);
+  ExportObjectResponseT(ExportObjectResponseT&&) FLATBUFFERS_NOEXCEPT = default;
+  ExportObjectResponseT &operator=(ExportObjectResponseT o) FLATBUFFERS_NOEXCEPT;
+};
+
+struct ExportObjectResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ExportObjectResponseT NativeTableType;
+  typedef ExportObjectResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_OBJECT = 6
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  const ProcessProtocol::SharedObject *object() const {
+    return GetPointer<const ProcessProtocol::SharedObject *>(VT_OBJECT);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyOffset(verifier, VT_OBJECT) &&
+           verifier.VerifyTable(object()) &&
+           verifier.EndTable();
+  }
+  ExportObjectResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ExportObjectResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ExportObjectResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ExportObjectResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ExportObjectResponseBuilder {
+  typedef ExportObjectResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(ExportObjectResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_object(::flatbuffers::Offset<ProcessProtocol::SharedObject> object) {
+    fbb_.AddOffset(ExportObjectResponse::VT_OBJECT, object);
+  }
+  explicit ExportObjectResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ExportObjectResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ExportObjectResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ExportObjectResponse> CreateExportObjectResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    ::flatbuffers::Offset<ProcessProtocol::SharedObject> object = 0) {
+  ExportObjectResponseBuilder builder_(_fbb);
+  builder_.add_object(object);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ExportObjectResponse> CreateExportObjectResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ExportObjectResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct CloseHandleRequestT : public ::flatbuffers::NativeTable {
+  typedef CloseHandleRequest TableType;
+  uint64_t handle = 0;
+};
+
+struct CloseHandleRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CloseHandleRequestT NativeTableType;
+  typedef CloseHandleRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_HANDLE = 4
+  };
+  uint64_t handle() const {
+    return GetField<uint64_t>(VT_HANDLE, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_HANDLE, 8) &&
+           verifier.EndTable();
+  }
+  CloseHandleRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CloseHandleRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<CloseHandleRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CloseHandleRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CloseHandleRequestBuilder {
+  typedef CloseHandleRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_handle(uint64_t handle) {
+    fbb_.AddElement<uint64_t>(CloseHandleRequest::VT_HANDLE, handle, 0);
+  }
+  explicit CloseHandleRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CloseHandleRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CloseHandleRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CloseHandleRequest> CreateCloseHandleRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t handle = 0) {
+  CloseHandleRequestBuilder builder_(_fbb);
+  builder_.add_handle(handle);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<CloseHandleRequest> CreateCloseHandleRequest(::flatbuffers::FlatBufferBuilder &_fbb, const CloseHandleRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct SetThreadTokenRequestT : public ::flatbuffers::NativeTable {
+  typedef SetThreadTokenRequest TableType;
+  uint32_t thread_id = 0;
+  uint64_t token = 0;
+};
+
+struct SetThreadTokenRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef SetThreadTokenRequestT NativeTableType;
+  typedef SetThreadTokenRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_THREAD_ID = 4,
+    VT_TOKEN = 6
+  };
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
+  }
+  uint64_t token() const {
+    return GetField<uint64_t>(VT_TOKEN, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           VerifyField<uint64_t>(verifier, VT_TOKEN, 8) &&
+           verifier.EndTable();
+  }
+  SetThreadTokenRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(SetThreadTokenRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<SetThreadTokenRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadTokenRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct SetThreadTokenRequestBuilder {
+  typedef SetThreadTokenRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(SetThreadTokenRequest::VT_THREAD_ID, thread_id, 0);
+  }
+  void add_token(uint64_t token) {
+    fbb_.AddElement<uint64_t>(SetThreadTokenRequest::VT_TOKEN, token, 0);
+  }
+  explicit SetThreadTokenRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<SetThreadTokenRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<SetThreadTokenRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<SetThreadTokenRequest> CreateSetThreadTokenRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0,
+    uint64_t token = 0) {
+  SetThreadTokenRequestBuilder builder_(_fbb);
+  builder_.add_token(token);
+  builder_.add_thread_id(thread_id);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<SetThreadTokenRequest> CreateSetThreadTokenRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadTokenRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ThreadTokenRequestT : public ::flatbuffers::NativeTable {
+  typedef ThreadTokenRequest TableType;
+  uint32_t thread_id = 0;
+};
+
+struct ThreadTokenRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ThreadTokenRequestT NativeTableType;
+  typedef ThreadTokenRequestBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_THREAD_ID = 4
+  };
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           verifier.EndTable();
+  }
+  ThreadTokenRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ThreadTokenRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ThreadTokenRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ThreadTokenRequestBuilder {
+  typedef ThreadTokenRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(ThreadTokenRequest::VT_THREAD_ID, thread_id, 0);
+  }
+  explicit ThreadTokenRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ThreadTokenRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ThreadTokenRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ThreadTokenRequest> CreateThreadTokenRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0) {
+  ThreadTokenRequestBuilder builder_(_fbb);
+  builder_.add_thread_id(thread_id);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ThreadTokenRequest> CreateThreadTokenRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct ThreadTokenResponseT : public ::flatbuffers::NativeTable {
+  typedef ThreadTokenResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  uint64_t token = 0;
+};
+
+struct ThreadTokenResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef ThreadTokenResponseT NativeTableType;
+  typedef ThreadTokenResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_TOKEN = 6
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  uint64_t token() const {
+    return GetField<uint64_t>(VT_TOKEN, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyField<uint64_t>(verifier, VT_TOKEN, 8) &&
+           verifier.EndTable();
+  }
+  ThreadTokenResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(ThreadTokenResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<ThreadTokenResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct ThreadTokenResponseBuilder {
+  typedef ThreadTokenResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(ThreadTokenResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_token(uint64_t token) {
+    fbb_.AddElement<uint64_t>(ThreadTokenResponse::VT_TOKEN, token, 0);
+  }
+  explicit ThreadTokenResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<ThreadTokenResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<ThreadTokenResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<ThreadTokenResponse> CreateThreadTokenResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    uint64_t token = 0) {
+  ThreadTokenResponseBuilder builder_(_fbb);
+  builder_.add_token(token);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<ThreadTokenResponse> CreateThreadTokenResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct CycleTimeRequestT : public ::flatbuffers::NativeTable {
+  typedef CycleTimeRequest TableType;
+};
+
+struct CycleTimeRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CycleTimeRequestT NativeTableType;
+  typedef CycleTimeRequestBuilder Builder;
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           verifier.EndTable();
+  }
+  CycleTimeRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CycleTimeRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<CycleTimeRequest> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CycleTimeRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CycleTimeRequestBuilder {
+  typedef CycleTimeRequest Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  explicit CycleTimeRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CycleTimeRequest> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CycleTimeRequest>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CycleTimeRequest> CreateCycleTimeRequest(
+    ::flatbuffers::FlatBufferBuilder &_fbb) {
+  CycleTimeRequestBuilder builder_(_fbb);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<CycleTimeRequest> CreateCycleTimeRequest(::flatbuffers::FlatBufferBuilder &_fbb, const CycleTimeRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
+struct CycleTimeResponseT : public ::flatbuffers::NativeTable {
+  typedef CycleTimeResponse TableType;
+  ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
+  uint64_t cycles = 0;
+};
+
+struct CycleTimeResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef CycleTimeResponseT NativeTableType;
+  typedef CycleTimeResponseBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ERROR = 4,
+    VT_CYCLES = 6
+  };
+  ProcessProtocol::ProcessError error() const {
+    return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
+  }
+  uint64_t cycles() const {
+    return GetField<uint64_t>(VT_CYCLES, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
+           VerifyField<uint64_t>(verifier, VT_CYCLES, 8) &&
+           verifier.EndTable();
+  }
+  CycleTimeResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(CycleTimeResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<CycleTimeResponse> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CycleTimeResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct CycleTimeResponseBuilder {
+  typedef CycleTimeResponse Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_error(ProcessProtocol::ProcessError error) {
+    fbb_.AddElement<uint8_t>(CycleTimeResponse::VT_ERROR, static_cast<uint8_t>(error), 0);
+  }
+  void add_cycles(uint64_t cycles) {
+    fbb_.AddElement<uint64_t>(CycleTimeResponse::VT_CYCLES, cycles, 0);
+  }
+  explicit CycleTimeResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<CycleTimeResponse> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<CycleTimeResponse>(end);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<CycleTimeResponse> CreateCycleTimeResponse(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    uint64_t cycles = 0) {
+  CycleTimeResponseBuilder builder_(_fbb);
+  builder_.add_cycles(cycles);
+  builder_.add_error(error);
+  return builder_.Finish();
+}
+
+::flatbuffers::Offset<CycleTimeResponse> CreateCycleTimeResponse(::flatbuffers::FlatBufferBuilder &_fbb, const CycleTimeResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct ThreadContextRequestT : public ::flatbuffers::NativeTable {
   typedef ThreadContextRequest TableType;
   uint32_t thread_id = 0;
@@ -3517,6 +4562,36 @@ struct Message FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ProcessProtocol::DebugDetachRequest *payload_as_DebugDetachRequest() const {
     return payload_type() == ProcessProtocol::MessagePayload_DebugDetachRequest ? static_cast<const ProcessProtocol::DebugDetachRequest *>(payload()) : nullptr;
   }
+  const ProcessProtocol::InstallObjectRequest *payload_as_InstallObjectRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_InstallObjectRequest ? static_cast<const ProcessProtocol::InstallObjectRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::InstallObjectResponse *payload_as_InstallObjectResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_InstallObjectResponse ? static_cast<const ProcessProtocol::InstallObjectResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::ExportObjectRequest *payload_as_ExportObjectRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_ExportObjectRequest ? static_cast<const ProcessProtocol::ExportObjectRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::ExportObjectResponse *payload_as_ExportObjectResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_ExportObjectResponse ? static_cast<const ProcessProtocol::ExportObjectResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::CloseHandleRequest *payload_as_CloseHandleRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_CloseHandleRequest ? static_cast<const ProcessProtocol::CloseHandleRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::SetThreadTokenRequest *payload_as_SetThreadTokenRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_SetThreadTokenRequest ? static_cast<const ProcessProtocol::SetThreadTokenRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::ThreadTokenRequest *payload_as_ThreadTokenRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_ThreadTokenRequest ? static_cast<const ProcessProtocol::ThreadTokenRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::ThreadTokenResponse *payload_as_ThreadTokenResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_ThreadTokenResponse ? static_cast<const ProcessProtocol::ThreadTokenResponse *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::CycleTimeRequest *payload_as_CycleTimeRequest() const {
+    return payload_type() == ProcessProtocol::MessagePayload_CycleTimeRequest ? static_cast<const ProcessProtocol::CycleTimeRequest *>(payload()) : nullptr;
+  }
+  const ProcessProtocol::CycleTimeResponse *payload_as_CycleTimeResponse() const {
+    return payload_type() == ProcessProtocol::MessagePayload_CycleTimeResponse ? static_cast<const ProcessProtocol::CycleTimeResponse *>(payload()) : nullptr;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -3636,6 +4711,46 @@ template<> inline const ProcessProtocol::ThreadInformationResponse *Message::pay
 
 template<> inline const ProcessProtocol::DebugDetachRequest *Message::payload_as<ProcessProtocol::DebugDetachRequest>() const {
   return payload_as_DebugDetachRequest();
+}
+
+template<> inline const ProcessProtocol::InstallObjectRequest *Message::payload_as<ProcessProtocol::InstallObjectRequest>() const {
+  return payload_as_InstallObjectRequest();
+}
+
+template<> inline const ProcessProtocol::InstallObjectResponse *Message::payload_as<ProcessProtocol::InstallObjectResponse>() const {
+  return payload_as_InstallObjectResponse();
+}
+
+template<> inline const ProcessProtocol::ExportObjectRequest *Message::payload_as<ProcessProtocol::ExportObjectRequest>() const {
+  return payload_as_ExportObjectRequest();
+}
+
+template<> inline const ProcessProtocol::ExportObjectResponse *Message::payload_as<ProcessProtocol::ExportObjectResponse>() const {
+  return payload_as_ExportObjectResponse();
+}
+
+template<> inline const ProcessProtocol::CloseHandleRequest *Message::payload_as<ProcessProtocol::CloseHandleRequest>() const {
+  return payload_as_CloseHandleRequest();
+}
+
+template<> inline const ProcessProtocol::SetThreadTokenRequest *Message::payload_as<ProcessProtocol::SetThreadTokenRequest>() const {
+  return payload_as_SetThreadTokenRequest();
+}
+
+template<> inline const ProcessProtocol::ThreadTokenRequest *Message::payload_as<ProcessProtocol::ThreadTokenRequest>() const {
+  return payload_as_ThreadTokenRequest();
+}
+
+template<> inline const ProcessProtocol::ThreadTokenResponse *Message::payload_as<ProcessProtocol::ThreadTokenResponse>() const {
+  return payload_as_ThreadTokenResponse();
+}
+
+template<> inline const ProcessProtocol::CycleTimeRequest *Message::payload_as<ProcessProtocol::CycleTimeRequest>() const {
+  return payload_as_CycleTimeRequest();
+}
+
+template<> inline const ProcessProtocol::CycleTimeResponse *Message::payload_as<ProcessProtocol::CycleTimeResponse>() const {
+  return payload_as_CycleTimeResponse();
 }
 
 struct MessageBuilder {
@@ -3785,6 +4900,56 @@ inline ::flatbuffers::Offset<InheritedPipe> InheritedPipe::Pack(::flatbuffers::F
       _completion_notification_flags);
 }
 
+inline SharedObjectT *SharedObject::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<SharedObjectT>(new SharedObjectT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void SharedObject::UnPackTo(SharedObjectT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = kind(); _o->kind = _e; }
+  { auto _e = guest_handle(); _o->guest_handle = _e; }
+  { auto _e = memory(); if (_e) _o->memory = _e->str(); }
+  { auto _e = size(); _o->size = _e; }
+  { auto _e = protection(); _o->protection = _e; }
+  { auto _e = attributes(); _o->attributes = _e; }
+  { auto _e = event_type(); _o->event_type = _e; }
+  { auto _e = access(); _o->access = _e; }
+  { auto _e = inherit(); _o->inherit = _e; }
+}
+
+inline ::flatbuffers::Offset<SharedObject> CreateSharedObject(::flatbuffers::FlatBufferBuilder &_fbb, const SharedObjectT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return SharedObject::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<SharedObject> SharedObject::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SharedObjectT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const SharedObjectT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _kind = _o->kind;
+  auto _guest_handle = _o->guest_handle;
+  auto _memory = _fbb.CreateString(_o->memory);
+  auto _size = _o->size;
+  auto _protection = _o->protection;
+  auto _attributes = _o->attributes;
+  auto _event_type = _o->event_type;
+  auto _access = _o->access;
+  auto _inherit = _o->inherit;
+  return ProcessProtocol::CreateSharedObject(
+      _fbb,
+      _kind,
+      _guest_handle,
+      _memory,
+      _size,
+      _protection,
+      _attributes,
+      _event_type,
+      _access,
+      _inherit);
+}
+
 inline ProcessCreateRequestT::ProcessCreateRequestT(const ProcessCreateRequestT &o)
       : application(o.application),
         argument0(o.argument0),
@@ -3801,6 +4966,8 @@ inline ProcessCreateRequestT::ProcessCreateRequestT(const ProcessCreateRequestT 
   for (const auto &environment_ : o.environment) { environment.emplace_back((environment_) ? new ProcessProtocol::EnvironmentVariableT(*environment_) : nullptr); }
   inherited_pipes.reserve(o.inherited_pipes.size());
   for (const auto &inherited_pipes_ : o.inherited_pipes) { inherited_pipes.emplace_back((inherited_pipes_) ? new ProcessProtocol::InheritedPipeT(*inherited_pipes_) : nullptr); }
+  inherited_objects.reserve(o.inherited_objects.size());
+  for (const auto &inherited_objects_ : o.inherited_objects) { inherited_objects.emplace_back((inherited_objects_) ? new ProcessProtocol::SharedObjectT(*inherited_objects_) : nullptr); }
 }
 
 inline ProcessCreateRequestT &ProcessCreateRequestT::operator=(ProcessCreateRequestT o) FLATBUFFERS_NOEXCEPT {
@@ -3817,6 +4984,7 @@ inline ProcessCreateRequestT &ProcessCreateRequestT::operator=(ProcessCreateRequ
   std::swap(inherited_pipes, o.inherited_pipes);
   std::swap(command_line, o.command_line);
   std::swap(debugged, o.debugged);
+  std::swap(inherited_objects, o.inherited_objects);
   return *this;
 }
 
@@ -3842,6 +5010,7 @@ inline void ProcessCreateRequest::UnPackTo(ProcessCreateRequestT *_o, const ::fl
   { auto _e = inherited_pipes(); if (_e) { _o->inherited_pipes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inherited_pipes[_i]) { _e->Get(_i)->UnPackTo(_o->inherited_pipes[_i].get(), _resolver); } else { _o->inherited_pipes[_i] = std::unique_ptr<ProcessProtocol::InheritedPipeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inherited_pipes.resize(0); } }
   { auto _e = command_line(); if (_e) _o->command_line = _e->str(); }
   { auto _e = debugged(); _o->debugged = _e; }
+  { auto _e = inherited_objects(); if (_e) { _o->inherited_objects.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inherited_objects[_i]) { _e->Get(_i)->UnPackTo(_o->inherited_objects[_i].get(), _resolver); } else { _o->inherited_objects[_i] = std::unique_ptr<ProcessProtocol::SharedObjectT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inherited_objects.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessCreateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3865,6 +5034,7 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> ProcessCreateRequest::Pack(::
   auto _inherited_pipes = _o->inherited_pipes.size() ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> (_o->inherited_pipes.size(), [](size_t i, _VectorArgs *__va) { return ProcessProtocol::CreateInheritedPipe(*__va->__fbb, __va->__o->inherited_pipes[i].get(), __va->__rehasher); }, &_va ) : 0;
   auto _command_line = _fbb.CreateString(_o->command_line);
   auto _debugged = _o->debugged;
+  auto _inherited_objects = _o->inherited_objects.size() ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::SharedObject>> (_o->inherited_objects.size(), [](size_t i, _VectorArgs *__va) { return ProcessProtocol::CreateSharedObject(*__va->__fbb, __va->__o->inherited_objects[i].get(), __va->__rehasher); }, &_va ) : 0;
   return ProcessProtocol::CreateProcessCreateRequest(
       _fbb,
       _application,
@@ -3879,7 +5049,8 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> ProcessCreateRequest::Pack(::
       _standard_error,
       _inherited_pipes,
       _command_line,
-      _debugged);
+      _debugged,
+      _inherited_objects);
 }
 
 inline ProcessStartedT *ProcessStarted::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -3927,6 +5098,7 @@ inline void ProcessExited::UnPackTo(ProcessExitedT *_o, const ::flatbuffers::res
   (void)_o;
   (void)_resolver;
   { auto _e = exit_code(); _o->exit_code = _e; }
+  { auto _e = cycles(); _o->cycles = _e; }
 }
 
 inline ::flatbuffers::Offset<ProcessExited> CreateProcessExited(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessExitedT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3938,9 +5110,11 @@ inline ::flatbuffers::Offset<ProcessExited> ProcessExited::Pack(::flatbuffers::F
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ProcessExitedT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _exit_code = _o->exit_code;
+  auto _cycles = _o->cycles;
   return ProcessProtocol::CreateProcessExited(
       _fbb,
-      _exit_code);
+      _exit_code,
+      _cycles);
 }
 
 inline ResumeProcessRequestT *ResumeProcessRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -4413,6 +5587,298 @@ inline ::flatbuffers::Offset<DebugDetachRequest> DebugDetachRequest::Pack(::flat
       _fbb);
 }
 
+inline InstallObjectRequestT::InstallObjectRequestT(const InstallObjectRequestT &o)
+      : object((o.object) ? new ProcessProtocol::SharedObjectT(*o.object) : nullptr) {
+}
+
+inline InstallObjectRequestT &InstallObjectRequestT::operator=(InstallObjectRequestT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(object, o.object);
+  return *this;
+}
+
+inline InstallObjectRequestT *InstallObjectRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<InstallObjectRequestT>(new InstallObjectRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void InstallObjectRequest::UnPackTo(InstallObjectRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = object(); if (_e) { if(_o->object) { _e->UnPackTo(_o->object.get(), _resolver); } else { _o->object = std::unique_ptr<ProcessProtocol::SharedObjectT>(_e->UnPack(_resolver)); } } else if (_o->object) { _o->object.reset(); } }
+}
+
+inline ::flatbuffers::Offset<InstallObjectRequest> CreateInstallObjectRequest(::flatbuffers::FlatBufferBuilder &_fbb, const InstallObjectRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return InstallObjectRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<InstallObjectRequest> InstallObjectRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const InstallObjectRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const InstallObjectRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _object = _o->object ? ProcessProtocol::CreateSharedObject(_fbb, _o->object.get(), _rehasher) : 0;
+  return ProcessProtocol::CreateInstallObjectRequest(
+      _fbb,
+      _object);
+}
+
+inline InstallObjectResponseT *InstallObjectResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<InstallObjectResponseT>(new InstallObjectResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void InstallObjectResponse::UnPackTo(InstallObjectResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = handle(); _o->handle = _e; }
+}
+
+inline ::flatbuffers::Offset<InstallObjectResponse> CreateInstallObjectResponse(::flatbuffers::FlatBufferBuilder &_fbb, const InstallObjectResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return InstallObjectResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<InstallObjectResponse> InstallObjectResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const InstallObjectResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const InstallObjectResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _handle = _o->handle;
+  return ProcessProtocol::CreateInstallObjectResponse(
+      _fbb,
+      _error,
+      _handle);
+}
+
+inline ExportObjectRequestT *ExportObjectRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ExportObjectRequestT>(new ExportObjectRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ExportObjectRequest::UnPackTo(ExportObjectRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = handle(); _o->handle = _e; }
+}
+
+inline ::flatbuffers::Offset<ExportObjectRequest> CreateExportObjectRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ExportObjectRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ExportObjectRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ExportObjectRequest> ExportObjectRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ExportObjectRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ExportObjectRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _handle = _o->handle;
+  return ProcessProtocol::CreateExportObjectRequest(
+      _fbb,
+      _handle);
+}
+
+inline ExportObjectResponseT::ExportObjectResponseT(const ExportObjectResponseT &o)
+      : error(o.error),
+        object((o.object) ? new ProcessProtocol::SharedObjectT(*o.object) : nullptr) {
+}
+
+inline ExportObjectResponseT &ExportObjectResponseT::operator=(ExportObjectResponseT o) FLATBUFFERS_NOEXCEPT {
+  std::swap(error, o.error);
+  std::swap(object, o.object);
+  return *this;
+}
+
+inline ExportObjectResponseT *ExportObjectResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ExportObjectResponseT>(new ExportObjectResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ExportObjectResponse::UnPackTo(ExportObjectResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = object(); if (_e) { if(_o->object) { _e->UnPackTo(_o->object.get(), _resolver); } else { _o->object = std::unique_ptr<ProcessProtocol::SharedObjectT>(_e->UnPack(_resolver)); } } else if (_o->object) { _o->object.reset(); } }
+}
+
+inline ::flatbuffers::Offset<ExportObjectResponse> CreateExportObjectResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ExportObjectResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ExportObjectResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ExportObjectResponse> ExportObjectResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ExportObjectResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ExportObjectResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _object = _o->object ? ProcessProtocol::CreateSharedObject(_fbb, _o->object.get(), _rehasher) : 0;
+  return ProcessProtocol::CreateExportObjectResponse(
+      _fbb,
+      _error,
+      _object);
+}
+
+inline CloseHandleRequestT *CloseHandleRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<CloseHandleRequestT>(new CloseHandleRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void CloseHandleRequest::UnPackTo(CloseHandleRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = handle(); _o->handle = _e; }
+}
+
+inline ::flatbuffers::Offset<CloseHandleRequest> CreateCloseHandleRequest(::flatbuffers::FlatBufferBuilder &_fbb, const CloseHandleRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CloseHandleRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<CloseHandleRequest> CloseHandleRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CloseHandleRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CloseHandleRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _handle = _o->handle;
+  return ProcessProtocol::CreateCloseHandleRequest(
+      _fbb,
+      _handle);
+}
+
+inline SetThreadTokenRequestT *SetThreadTokenRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<SetThreadTokenRequestT>(new SetThreadTokenRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void SetThreadTokenRequest::UnPackTo(SetThreadTokenRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = thread_id(); _o->thread_id = _e; }
+  { auto _e = token(); _o->token = _e; }
+}
+
+inline ::flatbuffers::Offset<SetThreadTokenRequest> CreateSetThreadTokenRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadTokenRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return SetThreadTokenRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<SetThreadTokenRequest> SetThreadTokenRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadTokenRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const SetThreadTokenRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _thread_id = _o->thread_id;
+  auto _token = _o->token;
+  return ProcessProtocol::CreateSetThreadTokenRequest(
+      _fbb,
+      _thread_id,
+      _token);
+}
+
+inline ThreadTokenRequestT *ThreadTokenRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ThreadTokenRequestT>(new ThreadTokenRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ThreadTokenRequest::UnPackTo(ThreadTokenRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = thread_id(); _o->thread_id = _e; }
+}
+
+inline ::flatbuffers::Offset<ThreadTokenRequest> CreateThreadTokenRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ThreadTokenRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ThreadTokenRequest> ThreadTokenRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ThreadTokenRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _thread_id = _o->thread_id;
+  return ProcessProtocol::CreateThreadTokenRequest(
+      _fbb,
+      _thread_id);
+}
+
+inline ThreadTokenResponseT *ThreadTokenResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<ThreadTokenResponseT>(new ThreadTokenResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void ThreadTokenResponse::UnPackTo(ThreadTokenResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = token(); _o->token = _e; }
+}
+
+inline ::flatbuffers::Offset<ThreadTokenResponse> CreateThreadTokenResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return ThreadTokenResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<ThreadTokenResponse> ThreadTokenResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ThreadTokenResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _token = _o->token;
+  return ProcessProtocol::CreateThreadTokenResponse(
+      _fbb,
+      _error,
+      _token);
+}
+
+inline CycleTimeRequestT *CycleTimeRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<CycleTimeRequestT>(new CycleTimeRequestT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void CycleTimeRequest::UnPackTo(CycleTimeRequestT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+}
+
+inline ::flatbuffers::Offset<CycleTimeRequest> CreateCycleTimeRequest(::flatbuffers::FlatBufferBuilder &_fbb, const CycleTimeRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CycleTimeRequest::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<CycleTimeRequest> CycleTimeRequest::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CycleTimeRequestT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CycleTimeRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  return ProcessProtocol::CreateCycleTimeRequest(
+      _fbb);
+}
+
+inline CycleTimeResponseT *CycleTimeResponse::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<CycleTimeResponseT>(new CycleTimeResponseT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void CycleTimeResponse::UnPackTo(CycleTimeResponseT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = error(); _o->error = _e; }
+  { auto _e = cycles(); _o->cycles = _e; }
+}
+
+inline ::flatbuffers::Offset<CycleTimeResponse> CreateCycleTimeResponse(::flatbuffers::FlatBufferBuilder &_fbb, const CycleTimeResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return CycleTimeResponse::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<CycleTimeResponse> CycleTimeResponse::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const CycleTimeResponseT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const CycleTimeResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _error = _o->error;
+  auto _cycles = _o->cycles;
+  return ProcessProtocol::CreateCycleTimeResponse(
+      _fbb,
+      _error,
+      _cycles);
+}
+
 inline ThreadContextRequestT *ThreadContextRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
   auto _o = std::unique_ptr<ThreadContextRequestT>(new ThreadContextRequestT());
   UnPackTo(_o.get(), _resolver);
@@ -4835,6 +6301,46 @@ inline bool VerifyMessagePayload(::flatbuffers::VerifierTemplate<B> &verifier, c
       auto ptr = reinterpret_cast<const ProcessProtocol::DebugDetachRequest *>(obj);
       return verifier.VerifyTable(ptr);
     }
+    case MessagePayload_InstallObjectRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::InstallObjectRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_InstallObjectResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::InstallObjectResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_ExportObjectRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ExportObjectRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_ExportObjectResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ExportObjectResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_CloseHandleRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CloseHandleRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_SetThreadTokenRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SetThreadTokenRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_ThreadTokenRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadTokenRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_ThreadTokenResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadTokenResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_CycleTimeRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CycleTimeRequest *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case MessagePayload_CycleTimeResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CycleTimeResponse *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
     default: return true;
   }
 }
@@ -4963,6 +6469,46 @@ inline void *MessagePayloadUnion::UnPack(const void *obj, MessagePayload type, c
       auto ptr = reinterpret_cast<const ProcessProtocol::DebugDetachRequest *>(obj);
       return ptr->UnPack(resolver);
     }
+    case MessagePayload_InstallObjectRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::InstallObjectRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_InstallObjectResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::InstallObjectResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_ExportObjectRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ExportObjectRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_ExportObjectResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ExportObjectResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_CloseHandleRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CloseHandleRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_SetThreadTokenRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SetThreadTokenRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_ThreadTokenRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadTokenRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_ThreadTokenResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadTokenResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_CycleTimeRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CycleTimeRequest *>(obj);
+      return ptr->UnPack(resolver);
+    }
+    case MessagePayload_CycleTimeResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CycleTimeResponse *>(obj);
+      return ptr->UnPack(resolver);
+    }
     default: return nullptr;
   }
 }
@@ -5078,6 +6624,46 @@ inline ::flatbuffers::Offset<void> MessagePayloadUnion::Pack(::flatbuffers::Flat
       auto ptr = reinterpret_cast<const ProcessProtocol::DebugDetachRequestT *>(value);
       return CreateDebugDetachRequest(_fbb, ptr, _rehasher).Union();
     }
+    case MessagePayload_InstallObjectRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::InstallObjectRequestT *>(value);
+      return CreateInstallObjectRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_InstallObjectResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::InstallObjectResponseT *>(value);
+      return CreateInstallObjectResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_ExportObjectRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ExportObjectRequestT *>(value);
+      return CreateExportObjectRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_ExportObjectResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ExportObjectResponseT *>(value);
+      return CreateExportObjectResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_CloseHandleRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CloseHandleRequestT *>(value);
+      return CreateCloseHandleRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_SetThreadTokenRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::SetThreadTokenRequestT *>(value);
+      return CreateSetThreadTokenRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_ThreadTokenRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadTokenRequestT *>(value);
+      return CreateThreadTokenRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_ThreadTokenResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::ThreadTokenResponseT *>(value);
+      return CreateThreadTokenResponse(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_CycleTimeRequest: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CycleTimeRequestT *>(value);
+      return CreateCycleTimeRequest(_fbb, ptr, _rehasher).Union();
+    }
+    case MessagePayload_CycleTimeResponse: {
+      auto ptr = reinterpret_cast<const ProcessProtocol::CycleTimeResponseT *>(value);
+      return CreateCycleTimeResponse(_fbb, ptr, _rehasher).Union();
+    }
     default: return 0;
   }
 }
@@ -5190,6 +6776,46 @@ inline MessagePayloadUnion::MessagePayloadUnion(const MessagePayloadUnion &u) : 
     }
     case MessagePayload_DebugDetachRequest: {
       value = new ProcessProtocol::DebugDetachRequestT(*reinterpret_cast<ProcessProtocol::DebugDetachRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_InstallObjectRequest: {
+      value = new ProcessProtocol::InstallObjectRequestT(*reinterpret_cast<ProcessProtocol::InstallObjectRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_InstallObjectResponse: {
+      value = new ProcessProtocol::InstallObjectResponseT(*reinterpret_cast<ProcessProtocol::InstallObjectResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_ExportObjectRequest: {
+      value = new ProcessProtocol::ExportObjectRequestT(*reinterpret_cast<ProcessProtocol::ExportObjectRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_ExportObjectResponse: {
+      value = new ProcessProtocol::ExportObjectResponseT(*reinterpret_cast<ProcessProtocol::ExportObjectResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_CloseHandleRequest: {
+      value = new ProcessProtocol::CloseHandleRequestT(*reinterpret_cast<ProcessProtocol::CloseHandleRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_SetThreadTokenRequest: {
+      value = new ProcessProtocol::SetThreadTokenRequestT(*reinterpret_cast<ProcessProtocol::SetThreadTokenRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_ThreadTokenRequest: {
+      value = new ProcessProtocol::ThreadTokenRequestT(*reinterpret_cast<ProcessProtocol::ThreadTokenRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_ThreadTokenResponse: {
+      value = new ProcessProtocol::ThreadTokenResponseT(*reinterpret_cast<ProcessProtocol::ThreadTokenResponseT *>(u.value));
+      break;
+    }
+    case MessagePayload_CycleTimeRequest: {
+      value = new ProcessProtocol::CycleTimeRequestT(*reinterpret_cast<ProcessProtocol::CycleTimeRequestT *>(u.value));
+      break;
+    }
+    case MessagePayload_CycleTimeResponse: {
+      value = new ProcessProtocol::CycleTimeResponseT(*reinterpret_cast<ProcessProtocol::CycleTimeResponseT *>(u.value));
       break;
     }
     default:
@@ -5331,6 +6957,56 @@ inline void MessagePayloadUnion::Reset() {
     }
     case MessagePayload_DebugDetachRequest: {
       auto ptr = reinterpret_cast<ProcessProtocol::DebugDetachRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_InstallObjectRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::InstallObjectRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_InstallObjectResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::InstallObjectResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_ExportObjectRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::ExportObjectRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_ExportObjectResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::ExportObjectResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_CloseHandleRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::CloseHandleRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_SetThreadTokenRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::SetThreadTokenRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_ThreadTokenRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::ThreadTokenRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_ThreadTokenResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::ThreadTokenResponseT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_CycleTimeRequest: {
+      auto ptr = reinterpret_cast<ProcessProtocol::CycleTimeRequestT *>(value);
+      delete ptr;
+      break;
+    }
+    case MessagePayload_CycleTimeResponse: {
+      auto ptr = reinterpret_cast<ProcessProtocol::CycleTimeResponseT *>(value);
       delete ptr;
       break;
     }

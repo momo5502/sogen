@@ -177,7 +177,13 @@ namespace sogen::test
 
             bool is_signaled(const handle h)
             {
-                return this->emu->process.events.get(h)->signaled;
+                return this->emu->process.events.get(h)->is_signaled();
+            }
+
+            // Thread ids are only unique within a process, so a mutant owner names both.
+            uint64_t owner_of(const uint32_t thread_id) const
+            {
+                return mutant::make_owner(this->emu->process.process_id, thread_id);
             }
 
             std::unique_ptr<windows_emulator> emu{};
@@ -200,8 +206,8 @@ namespace sogen::test
         EXPECT_EQ(FALSE, info.AbandonedState);
 
         const auto thread_id = this->context().thread().id;
-        ASSERT_TRUE(this->mutant_object(owned).try_lock(thread_id).has_value());
-        ASSERT_TRUE(this->mutant_object(owned).try_lock(thread_id).has_value());
+        ASSERT_TRUE(this->mutant_object(owned).try_lock(this->owner_of(thread_id)).has_value());
+        ASSERT_TRUE(this->mutant_object(owned).try_lock(this->owner_of(thread_id)).has_value());
         info = this->query_mutant_basic(owned);
         EXPECT_EQ(-2, info.CurrentCount);
         EXPECT_EQ(TRUE, info.OwnedByCaller);
@@ -212,7 +218,7 @@ namespace sogen::test
         EXPECT_EQ(FALSE, info.AbandonedState);
 
         const auto foreign = this->create_mutant(false);
-        ASSERT_TRUE(this->mutant_object(foreign).try_lock(other_thread_id).has_value());
+        ASSERT_TRUE(this->mutant_object(foreign).try_lock(this->owner_of(other_thread_id)).has_value());
         info = this->query_mutant_basic(foreign);
         EXPECT_EQ(0, info.CurrentCount);
         EXPECT_EQ(FALSE, info.OwnedByCaller);
@@ -225,7 +231,7 @@ namespace sogen::test
     TEST_F(SyncQueryTest, MutantBasicInformationReportsAnAbandonedMutantAsSignaled)
     {
         const auto h = this->create_mutant(false);
-        ASSERT_TRUE(this->mutant_object(h).try_lock(other_thread_id).has_value());
+        ASSERT_TRUE(this->mutant_object(h).try_lock(this->owner_of(other_thread_id)).has_value());
         this->mutant_object(h).abandon();
 
         auto info = this->query_mutant_basic(h);
@@ -233,7 +239,7 @@ namespace sogen::test
         EXPECT_EQ(FALSE, info.OwnedByCaller);
         EXPECT_EQ(TRUE, info.AbandonedState);
 
-        ASSERT_TRUE(this->mutant_object(h).try_lock(this->context().thread().id).has_value());
+        ASSERT_TRUE(this->mutant_object(h).try_lock(this->owner_of(this->context().thread().id)).has_value());
         info = this->query_mutant_basic(h);
         EXPECT_EQ(0, info.CurrentCount);
         EXPECT_EQ(TRUE, info.OwnedByCaller);
@@ -249,7 +255,7 @@ namespace sogen::test
         EXPECT_EQ(this->context().thread().id, owner.UniqueThread);
 
         const auto foreign = this->create_mutant(false);
-        ASSERT_TRUE(this->mutant_object(foreign).try_lock(other_thread_id).has_value());
+        ASSERT_TRUE(this->mutant_object(foreign).try_lock(this->owner_of(other_thread_id)).has_value());
         owner = this->query_mutant_owner(foreign);
         EXPECT_EQ(process_id, owner.UniqueProcess);
         EXPECT_EQ(other_thread_id, owner.UniqueThread);

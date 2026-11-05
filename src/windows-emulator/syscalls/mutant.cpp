@@ -22,11 +22,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto [old_count, succeeded] = mutant->release(c.thread().id);
+            const auto [old_count, succeeded] = mutant->release(mutant::make_owner(c.proc.process_id, c.thread().id));
 
             if (!succeeded)
             {
-                return mutant->abandoned ? STATUS_ABANDONED : STATUS_MUTANT_NOT_OWNED;
+                return mutant->is_abandoned() ? STATUS_ABANDONED : STATUS_MUTANT_NOT_OWNED;
             }
 
             if (previous_count)
@@ -110,7 +110,7 @@ namespace sogen
 
             if (initial_owner)
             {
-                e.try_lock(c.thread().id);
+                e.try_lock(mutant::make_owner(c.proc.process_id, c.thread().id));
             }
 
             const auto handle = c.proc.mutants.store(std::move(e));
@@ -152,14 +152,17 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto is_owned = mutant->locked_count > 0;
+            const auto [locked_count, owner, abandoned] = mutant->lock_state();
+            const auto is_owned = locked_count > 0;
+            const auto owning_process_id = static_cast<uint32_t>(owner >> 32);
+            const auto owning_thread_id = static_cast<uint32_t>(owner);
 
             if (mutant_information_class == MutantBasicInformation)
             {
                 emulator_object<MUTANT_BASIC_INFORMATION>{c.emu, mutant_information}.access([&](MUTANT_BASIC_INFORMATION& info) {
-                    info.CurrentCount = 1 - static_cast<LONG>(mutant->locked_count);
-                    info.OwnedByCaller = is_owned && mutant->owning_thread_id == c.thread().id;
-                    info.AbandonedState = mutant->abandoned;
+                    info.CurrentCount = 1 - static_cast<LONG>(locked_count);
+                    info.OwnedByCaller = is_owned && owner == mutant::make_owner(c.proc.process_id, c.thread().id);
+                    info.AbandonedState = abandoned;
                 });
             }
             else
@@ -167,8 +170,8 @@ namespace sogen
                 MUTANT_OWNER_INFORMATION info{};
                 if (is_owned)
                 {
-                    info.ClientId.UniqueProcess = c.proc.process_id;
-                    info.ClientId.UniqueThread = mutant->owning_thread_id;
+                    info.ClientId.UniqueProcess = owning_process_id;
+                    info.ClientId.UniqueThread = owning_thread_id;
                 }
 
                 emulator_object<MUTANT_OWNER_INFORMATION>{c.emu, mutant_information}.write(info);
