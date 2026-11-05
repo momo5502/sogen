@@ -299,6 +299,30 @@ Future<Directory> installedGamesDirectory() async {
   return Directory(p.join(support.path, 'games'));
 }
 
+/// The `.exe` files in [directory] and in its folders up to [maxDepth] levels down, as paths relative to it.
+Future<List<String>> findExecutablesIn(Directory directory, {required int maxDepth}) async {
+  final executables = <String>[];
+  final pending = [(directory, '', 0)];
+  try {
+    while (pending.isNotEmpty) {
+      final (folder, prefix, depth) = pending.removeAt(0);
+      await for (final entity in folder.list(followLinks: false)) {
+        final path = '$prefix${p.basename(entity.path)}';
+        if (entity is Directory) {
+          if (depth < maxDepth) {
+            pending.add((entity, '$path/', depth + 1));
+          }
+        } else if (entity is File && path.toLowerCase().endsWith('.exe')) {
+          executables.add(path);
+        }
+      }
+    }
+  } on FileSystemException {
+    // An unreadable folder offers what was found before it.
+  }
+  return executables;
+}
+
 /// A readable form of a folder URI, e.g. `Games/Skyrim` for the tree of `primary:Games/Skyrim`.
 String describeFolder(String directory) {
   if (installIdOf(directory) != null) {
