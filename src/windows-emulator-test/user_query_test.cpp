@@ -327,7 +327,7 @@ namespace sogen::test
         constexpr uint64_t count_address_offset = 0x800;
         constexpr uint32_t device_size = sizeof(RAWINPUTDEVICE64);
         constexpr auto failed = static_cast<uint32_t>(-1);
-        const auto window = this->create_top_level_window(0, WS_OVERLAPPEDWINDOW);
+        const auto window = this->create_top_level_window(0, k_overlapped_window);
         const uint64_t count_address = this->storage + count_address_offset;
 
         const auto registered = [&](const emulator_pointer devices, const uint32_t capacity, const uint32_t size) {
