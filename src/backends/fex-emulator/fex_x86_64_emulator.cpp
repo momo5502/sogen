@@ -2729,9 +2729,14 @@ namespace sogen::fex
                 throw std::runtime_error("FEX MMIO mappings must be page aligned");
             }
 
+            const bool backed = this->is_in_low_guest_window(this->to_host_address(address));
+
 #if SOGEN_FEX_HYPERVISOR
-            // Inside the VM the region is a real page refreshed before every entry, so every kind of load reads it.
-            if (this->hypervisor_)
+            // Inside the VM an unbacked region is a real page refreshed before every entry, so every kind of load
+            // reads it. A backed region is owned by the shadow table instead: map_host_memory replaces its VM pages
+            // with the shared host pages, which leaves a VM MMIO entry pointing at pages the shadow table later
+            // drops, and the next refresh then looks up an unmapped page.
+            if (this->hypervisor_ && !backed)
             {
                 hvf::map_mmio(*this->vm_, address, size, read_cb, std::move(write_cb));
             }
@@ -2754,7 +2759,7 @@ namespace sogen::fex
                 }
             }
 #endif
-            if (this->is_in_low_guest_window(this->to_host_address(address)))
+            if (backed)
             {
                 this->map_backed_mmio(address, size, std::move(read_cb));
                 return;
@@ -3145,8 +3150,8 @@ namespace sogen::fex
                 if (!backed)
                 {
 #if SOGEN_FEX_HYPERVISOR
-                    // A backed region is no longer an MMIO mapping in the VM: map_host_memory replaced it with the
-                    // shared host pages the shadow table tracks, which the path below releases.
+                    // Only an unbacked region is a VM MMIO mapping; a backed one is owned by the shadow table,
+                    // which the path below releases.
                     if (this->hypervisor_)
                     {
                         hvf::unmap(*this->vm_, address, size);
@@ -6288,6 +6293,7 @@ namespace sogen::fex
         // As in-process: a deferred hook or an InterruptFaultPage unwind without a stop resumes the guest.
         for (;;)
         {
+            this->emulator_.refresh_mmio_backings();
             this->run_dispatcher_in_vm();
 
             const bool hook_dispatched = this->emulator_.dispatch_pending_hook_if_any(*this);
