@@ -4370,20 +4370,26 @@ namespace sogen::fex
         {
             const uint64_t pc = get_host_pc(uctx);
 
-            // FEXCore rewrites a faulting access in its own code into a half-barrier sequence, so it does not trap
-            // again. Emulating each access instead traps on every execution.
-            if (this->context_ && this->context_->IsAddressInCodeBuffer(vcpu.thread_, pc))
+            // FEXCore backpatches only its own code buffer and emulates an access anywhere else with aligned atomics.
+            if (this->context_)
             {
+                const bool in_code_buffer = this->context_->IsAddressInCodeBuffer(vcpu.thread_, pc);
 #ifdef __APPLE__
-                ::pthread_jit_write_protect_np(0);
+                if (in_code_buffer)
+                {
+                    ::pthread_jit_write_protect_np(0);
+                }
                 auto* gprs = reinterpret_cast<uint64_t*>(&uctx->uc_mcontext->__ss);
 #else
                 auto* gprs = reinterpret_cast<uint64_t*>(uctx->uc_mcontext.regs);
 #endif
                 const auto skip = FEXCore::ArchHelpers::Arm64::HandleUnalignedAccess(
-                    vcpu.thread_, FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::HalfBarrier, pc, gprs);
+                    vcpu.thread_, FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::HalfBarrier, pc, gprs, in_code_buffer);
 #ifdef __APPLE__
-                ::pthread_jit_write_protect_np(1);
+                if (in_code_buffer)
+                {
+                    ::pthread_jit_write_protect_np(1);
+                }
 #endif
                 if (skip)
                 {
