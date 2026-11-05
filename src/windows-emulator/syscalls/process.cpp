@@ -248,6 +248,7 @@ namespace sogen
 
             process_create_request request{};
             request.command_line = u16_to_u8(original_command_line);
+            request.parent_process_id = c.proc.process_id;
             const windows_path application_path{read_unicode_string(c.emu, parameters.ImagePathName)};
             request.application = u16_to_u8(application_path.u16string());
             request.working_directory =
@@ -523,34 +524,35 @@ namespace sogen
                     }
                 }
 
-                // The synthetic Steam process: report it as alive so a guest steam_api's GetExitCodeProcess
-                // liveness check succeeds. Only ProcessBasicInformation is meaningful; any other class is
-                // rejected cleanly rather than falling through to the default (which stops the emulator).
-                if (process_handle == STEAM_PROCESS_HANDLE)
+                // Both handles are synthetic and report an active process; Steam's guest API relies on this for
+                // its GetExitCodeProcess liveness check. Only ProcessBasicInformation is supported, as falling
+                // through to the default for other classes would stop the emulator.
+                if (process_handle == STEAM_PROCESS_HANDLE || process_handle == PARENT_PROCESS_HANDLE)
                 {
                     if (info_class != ProcessBasicInformation)
                     {
                         return STATUS_NOT_SUPPORTED;
                     }
 
-                    const auto init_steam_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
+                    const auto init_external_process_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                         basic_info = {};
                         basic_info.ExitStatus = STATUS_PENDING; // STILL_ACTIVE
-                        basic_info.UniqueProcessId = STEAM_FAKE_PROCESS_ID;
+                        basic_info.UniqueProcessId =
+                            process_handle == PARENT_PROCESS_HANDLE ? c.proc.parent_process_id : STEAM_FAKE_PROCESS_ID;
                     };
 
                     switch (process_information_length)
                     {
                     case sizeof(PROCESS_BASIC_INFORMATION64):
                         return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length,
-                                                                         return_length, init_steam_info);
+                                                                         return_length, init_external_process_info);
                     case sizeof(PROCESS_EXTENDED_BASIC_INFORMATION):
                         return handle_query<PROCESS_EXTENDED_BASIC_INFORMATION>(c.emu, process_information, process_information_length,
                                                                                 return_length,
                                                                                 [&](PROCESS_EXTENDED_BASIC_INFORMATION& ext) {
                                                                                     ext = {};
                                                                                     ext.Size = sizeof(PROCESS_EXTENDED_BASIC_INFORMATION);
-                                                                                    init_steam_info(ext.BasicInfo);
+                                                                                    init_external_process_info(ext.BasicInfo);
                                                                                 });
                     default:
                         return STATUS_INFO_LENGTH_MISMATCH;
@@ -1172,6 +1174,12 @@ namespace sogen
                     process_handle.write(handle);
                     return STATUS_SUCCESS;
                 }
+            }
+
+            if (c.proc.parent_process_id != 0 && id.UniqueProcess == c.proc.parent_process_id)
+            {
+                process_handle.write(PARENT_PROCESS_HANDLE);
+                return STATUS_SUCCESS;
             }
 
             // The one synthetic external process we vouch for: the Steam client. A guest steam_api reads

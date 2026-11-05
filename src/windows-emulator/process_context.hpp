@@ -713,6 +713,7 @@ namespace sogen
 
         // Process and thread ids share Windows' 4-aligned client ID space.
         uint32_t process_id{default_guest_process_id};
+        uint32_t parent_process_id{};
         uint32_t initial_thread_id{8};
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};

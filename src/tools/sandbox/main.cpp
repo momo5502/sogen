@@ -307,6 +307,7 @@ namespace sogen::sandbox
             if (managed_connection)
             {
                 win_emu.setup_process_if_necessary();
+                win_emu.process.parent_process_id = managed_connection->request().parent_process_id;
                 if (managed_connection->request().debugged)
                 {
                     win_emu.attach_debugger();

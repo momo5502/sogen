@@ -67,6 +67,7 @@ table ProcessCreateRequest {
     inherited_pipes: [InheritedPipe];
     command_line: string (required);
     debugged: bool;
+    parent_process_id: uint;
 }
 
 table ProcessStarted {

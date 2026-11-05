@@ -740,6 +740,7 @@ namespace sogen
             if (options.managed_process)
             {
                 win_emu->setup_process_if_necessary();
+                win_emu->process.parent_process_id = options.managed_process->request().parent_process_id;
                 if (options.managed_process->request().debugged)
                 {
                     win_emu->attach_debugger();
