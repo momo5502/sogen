@@ -65,7 +65,10 @@ namespace sogen
         uint8_t pad_1394[0x74];
         uint32_t dpi96DialogBaseUnitWidth;
         uint32_t dpi96DialogBaseUnitHeight;
-        uint8_t pad_1410[0x73C];
+        uint8_t pad_1410[0x738];
+        // user32's GetKeyState answers keys below 0x20 from the thread's CLIENTINFO cache while the cache carries
+        // this generation. win32k stamps the cache in NtUserGetKeyState and advances this on every key change.
+        uint32_t keyStateGeneration;
         uint32_t asyncKeyStateGeneration;
         // user32's GetCapture only asks win32k for the capture window while this is nonzero.
         uint32_t captureCount;
@@ -87,6 +90,7 @@ namespace sogen
     static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitWidth) == 0x1408);
     static_assert(offsetof(USER_SERVERINFO, captureCount) == 0x1B50);
     static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitHeight) == 0x140C);
+    static_assert(offsetof(USER_SERVERINFO, keyStateGeneration) == 0x1B48);
     static_assert(offsetof(USER_SERVERINFO, asyncKeyStateGeneration) == 0x1B4C);
     static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);
     static_assert(offsetof(USER_SERVERINFO, foregroundWindow) == 0x1DE0);
