@@ -10,8 +10,9 @@ namespace sogen
 {
     namespace worker_factory_support
     {
-        bool enqueue_release_completion(process_context& process, const handle worker_factory_handle)
+        bool enqueue_release_completion(windows_emulator& win_emu, const handle worker_factory_handle)
         {
+            auto& process = win_emu.process;
             auto* factory = process.worker_factories.get(worker_factory_handle);
             if (!factory)
             {
@@ -29,18 +30,18 @@ namespace sogen
             message.io_status_block.Information = 0;
             message.worker_factory_handle = worker_factory_handle;
             message.worker_factory_release = true;
-            completion->enqueue(message);
+            io_completion_wait::insert(win_emu, factory->io_completion_handle, *completion, message);
             return true;
         }
 
-        void on_io_completion_message_dequeued(process_context& process, const io_completion_message& message)
+        void on_io_completion_message_dequeued(windows_emulator& win_emu, const io_completion_message& message)
         {
             if (!message.worker_factory_release || message.worker_factory_handle.bits == 0)
             {
                 return;
             }
 
-            auto* factory = process.worker_factories.get(message.worker_factory_handle);
+            auto* factory = win_emu.process.worker_factories.get(message.worker_factory_handle);
             if (!factory)
             {
                 return;
@@ -57,7 +58,7 @@ namespace sogen
                 return;
             }
 
-            if (!enqueue_release_completion(process, message.worker_factory_handle))
+            if (!enqueue_release_completion(win_emu, message.worker_factory_handle))
             {
                 factory->release_pending = false;
             }
@@ -438,7 +439,7 @@ namespace sogen
             {
                 factory->release_pending = true;
 
-                if (!worker_factory_support::enqueue_release_completion(c.proc, worker_factory_handle))
+                if (!worker_factory_support::enqueue_release_completion(c.win_emu, worker_factory_handle))
                 {
                     factory->release_pending = false;
                     --factory->pending_release_count;
@@ -457,9 +458,19 @@ namespace sogen
             const emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> mini_packets, const ULONG count,
             const emulator_object<ULONG> packets_returned, const emulator_pointer /*deferred_work*/)
         {
-            if (count == 0 || !mini_packets)
+            // As NtRemoveIoCompletionEx: up to 0x7FFFFFF mini packets, whose array and returned count are probed before the
+            // handle is looked at (19041).
+            constexpr ULONG max_count = 0x7FFFFFF;
+            if (count == 0 || count > max_count || !mini_packets)
             {
                 return STATUS_INVALID_PARAMETER;
+            }
+
+            if (const auto status =
+                    io_completion_wait::probe_completion_entries(c.win_emu.memory, mini_packets.value(), count, packets_returned.value());
+                status != STATUS_SUCCESS)
+            {
+                return status;
             }
 
             auto* factory = c.proc.worker_factories.get(worker_factory_handle);
@@ -468,18 +479,19 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (!c.proc.io_completions.get(factory->io_completion_handle))
+            auto* completion = c.proc.io_completions.get(factory->io_completion_handle);
+            if (!completion)
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto removed =
-                io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion_handle, mini_packets, count);
-            packets_returned.write_if_valid(removed);
-            if (removed > 0)
+            const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion_handle, count);
+            if (!messages.empty())
             {
-                return STATUS_SUCCESS;
+                return io_completion_wait::write_entries(c.win_emu.memory, mini_packets.value(), packets_returned.value(), messages);
             }
+
+            packets_returned.write_if_valid(0);
 
             auto& t = c.thread();
             t.await_objects = {};
@@ -511,6 +523,7 @@ namespace sogen
                 }
             }
 
+            io_completion_wait::add_waiter(*completion, t.id);
             c.win_emu.yield_thread(c.vcpu, false);
             return STATUS_SUCCESS;
         }

@@ -1151,6 +1151,9 @@ namespace sogen
         std::u16string name{};
         uint32_t number_of_concurrent_threads{};
         std::vector<io_completion_message> queue{};
+        // Ids of the threads waiting for a packet, the latest last. KeRemoveQueueEx puts a new waiter at the head of the
+        // queue's wait list and KeInsertQueue gives a packet to the head, so the latest waiter gets the next packet.
+        std::vector<uint32_t> waiters{};
 
         void enqueue(const io_completion_message& message)
         {
@@ -1189,6 +1192,7 @@ namespace sogen
             buffer.write(this->name);
             buffer.write(this->number_of_concurrent_threads);
             buffer.write_vector(this->queue);
+            buffer.write_vector(this->waiters);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1196,6 +1200,7 @@ namespace sogen
             buffer.read(this->name);
             buffer.read(this->number_of_concurrent_threads);
             buffer.read_vector(this->queue);
+            buffer.read_vector(this->waiters);
         }
     };
 

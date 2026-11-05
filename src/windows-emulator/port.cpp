@@ -392,7 +392,7 @@ namespace sogen
         }
         io_completion_message message{};
         message.key_context = this->completion_key_;
-        completion->enqueue(message);
+        io_completion_wait::insert(win_emu, this->completion_port_, *completion, message);
         win_emu.wake_idle_vcpu();
     }
 
