@@ -97,6 +97,17 @@ class _GameEditorPageState extends State<GameEditorPage> {
   }
 
   static Future<List<String>> _findExecutables(String directory) async {
+    final found = await _searchFolder(directory);
+    return [...found]..sort((a, b) => '/'.allMatches(a).length.compareTo('/'.allMatches(b).length));
+  }
+
+  static Future<List<String>> _searchFolder(String directory) async {
+    final installId = installIdOf(directory);
+    if (installId != null) {
+      final games = await installedGamesDirectory();
+      return findExecutablesIn(Directory(p.join(games.path, installId)), maxDepth: _maxSearchDepth);
+    }
+
     if (!isFolderUri(directory)) {
       return const [];
     }
@@ -105,7 +116,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
       'uri': directory,
       'maxDepth': _maxSearchDepth,
     });
-    return [...?found]..sort((a, b) => '/'.allMatches(a).length.compareTo('/'.allMatches(b).length));
+    return found ?? const [];
   }
 
   static Map<String, String> _parseEnvironment(String text) {

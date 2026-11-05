@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sogen_app/src/game_library.dart';
 
 void main() {
@@ -51,5 +54,25 @@ void main() {
 
   test('an unknown orientation falls back to following the device', () {
     expect(GameSettings.fromJson({'orientation': 'sideways'}).orientation, ScreenOrientation.sensor);
+  });
+
+  test('executables are found up to the search depth, relative to the folder', () async {
+    final folder = await Directory.systemTemp.createTemp('sogen_executables');
+    addTearDown(() => folder.delete(recursive: true));
+    for (final path in ['Game.exe', 'bin/Launcher.EXE', 'a/b/c/Deep.exe', 'a/b/c/d/TooDeep.exe', 'readme.txt']) {
+      await File(p.join(folder.path, path)).create(recursive: true);
+    }
+
+    final executables = await findExecutablesIn(folder, maxDepth: 3);
+
+    expect(executables, unorderedEquals(['Game.exe', 'bin/Launcher.EXE', 'a/b/c/Deep.exe']));
+  });
+
+  test('a missing folder has no executables', () async {
+    final folder = Directory(
+      p.join(Directory.systemTemp.path, 'sogen_missing_${DateTime.now().microsecondsSinceEpoch}'),
+    );
+
+    expect(await findExecutablesIn(folder, maxDepth: 3), isEmpty);
   });
 }
