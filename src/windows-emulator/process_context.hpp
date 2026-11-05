@@ -437,6 +437,7 @@ namespace sogen
         void restore_windows_after_state_restore(windows_emulator& win_emu);
 
         generic_handle_store* get_handle_store(handle handle);
+        size_t handle_count() const;
         emulator_thread* find_thread_by_id(uint32_t thread_id);
         const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
         bool is_window_effectively_visible(hwnd window) const;
@@ -681,6 +682,8 @@ namespace sogen
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
         void set_mouse_capture(hwnd window);
         void release_mouse_capture(hwnd window);
+
+        // process_context::handle_count() adds up these kernel object stores by hand: a store added here has to be added there too.
         handle_store<handle_types::event, event> events{};
         handle_store<handle_types::file, file> files{};
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};

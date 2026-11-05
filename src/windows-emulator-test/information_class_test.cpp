@@ -93,6 +93,11 @@ namespace sogen::test
                 return {.address = this->storage + 0x100, .length = 0x100};
             }
 
+            handle thread_handle() const
+            {
+                return this->emu->process.threads.find_handle(this->emu->vcpu(0).active_thread);
+            }
+
             template <typename Length = uint32_t>
             emulator_object<Length> poisoned_length() const
             {
@@ -157,6 +162,83 @@ namespace sogen::test
             EXPECT_EQ(STATUS_INVALID_INFO_CLASS, this->query_process(CURRENT_PROCESS, 0x7FFF, target)) << target.address;
             EXPECT_EQ(untouched, this->returned_length()) << target.address;
         }
+    }
+
+    TEST_F(InformationClassTest, QueryProcessFixedSizeClassesFollowWindowsLengthAndHandleRules)
+    {
+        const auto read_only_buffer = this->emu->memory.allocate_memory(0x1000, memory_permission::read);
+
+        struct fixed_size_class
+        {
+            uint32_t info_class;
+            uint32_t size;
+        };
+
+        for (const auto [info_class, size] : {fixed_size_class{ProcessIoCounters, 48},
+                                              {ProcessHandleCount, 4},
+                                              {ProcessSessionInformation, 4},
+                                              {ProcessBreakOnTermination, 4}})
+        {
+            for (const auto process : {CURRENT_PROCESS, GUEST_PROCESS_HANDLE})
+            {
+                for (const uint32_t length : {0u, 1u, size - 1, size + 8})
+                {
+                    EXPECT_EQ(STATUS_INFO_LENGTH_MISMATCH,
+                              this->query_process(process, info_class, {.address = this->data().address, .length = length}))
+                        << info_class << " " << length;
+                    EXPECT_EQ(untouched, this->returned_length()) << info_class << " " << length;
+                }
+            }
+
+            for (const auto process : {handle{}, garbage_handle})
+            {
+                EXPECT_EQ(STATUS_INVALID_HANDLE,
+                          this->query_process(process, info_class, {.address = this->data().address, .length = size}))
+                    << info_class;
+                EXPECT_EQ(untouched, this->returned_length()) << info_class;
+            }
+
+            for (const auto process : {this->event_handle, this->thread_handle(), CURRENT_THREAD})
+            {
+                EXPECT_EQ(STATUS_OBJECT_TYPE_MISMATCH,
+                          this->query_process(process, info_class, {.address = this->data().address, .length = size}))
+                    << info_class;
+                EXPECT_EQ(untouched, this->returned_length()) << info_class;
+            }
+
+            for (const auto address : {read_only_buffer, bad_pointer, uint64_t{0}})
+            {
+                EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->query_process(CURRENT_PROCESS, info_class, {.address = address, .length = size}))
+                    << info_class << " " << address;
+                EXPECT_EQ(untouched, this->returned_length()) << info_class << " " << address;
+
+                EXPECT_EQ(STATUS_INFO_LENGTH_MISMATCH,
+                          this->query_process(CURRENT_PROCESS, info_class, {.address = address, .length = size + 8}))
+                    << info_class << " " << address;
+                EXPECT_EQ(untouched, this->returned_length()) << info_class << " " << address;
+            }
+        }
+
+        for (const uint32_t length : {5u, 7u, 9u, 16u})
+        {
+            EXPECT_EQ(STATUS_INFO_LENGTH_MISMATCH,
+                      this->query_process(CURRENT_PROCESS, ProcessHandleCount, {.address = this->data().address, .length = length}))
+                << length;
+            EXPECT_EQ(untouched, this->returned_length()) << length;
+        }
+
+        EXPECT_EQ(STATUS_SUCCESS, this->query_process(CURRENT_PROCESS, ProcessHandleCount, {.address = this->data().address, .length = 8}));
+        EXPECT_EQ(4u, this->returned_length());
+
+        for (const auto address : {read_only_buffer, bad_pointer})
+        {
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->query_process(CURRENT_PROCESS, ProcessHandleCount, {.address = address, .length = 8}))
+                << address;
+        }
+
+        const emulator_object<ULONG> fields{this->emu->memory, this->data().address};
+        EXPECT_NE(0u, fields.read(0));
+        EXPECT_EQ(fields.read(0), fields.read(1));
     }
 
     TEST_F(InformationClassTest, SetProcessRejectsClassesPastTheLastOneBeforeLookingAtTheHandle)
