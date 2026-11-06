@@ -31,6 +31,12 @@ namespace sogen
         LONG cx;
         LONG cy;
     } SIZE;
+
+    struct STYLESTRUCT
+    {
+        DWORD styleOld;
+        DWORD styleNew;
+    };
 #endif
 
     using wparam = pointer;

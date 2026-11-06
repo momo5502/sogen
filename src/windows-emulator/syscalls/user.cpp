@@ -6152,34 +6152,41 @@ namespace sogen
             return old_value;
         }
 
-        struct window_style_values
+        emulator_pointer begin_window_style_change(const syscall_context& c, const handle hWnd, const int nIndex, const uint32_t new_style,
+                                                   const callback_id callback)
         {
-            uint32_t old_style{};
-            uint32_t new_style{};
-        };
-
-        emulator_pointer set_window_long(const syscall_context& c, const handle hWnd, const int nIndex, const emulator_pointer dwNewLong,
-                                         const callback_id callback)
-        {
-            auto* win = c.proc.windows.get(hWnd);
+            const auto* win = c.proc.windows.get(hWnd);
             if (!win)
             {
                 return 0;
             }
 
+            if ((win->style & WS_CHILD) == 0)
+            {
+                // TODO: Support top-level style changes together with cached non-client geometry and frame refresh.
+                return 0;
+            }
+
+            window_style_change_state state{};
+            state.old_style = nIndex == GWL_STYLE ? win->style : win->ex_style;
+            state.style_alloc = c.emu.push_stack(STYLESTRUCT{state.old_style, new_style});
+            const auto address = state.style_alloc.address();
+            dispatch_window_message(c, callback, std::move(state), *win, WM_STYLECHANGING,
+                                    static_cast<uint64_t>(static_cast<int64_t>(nIndex)), address);
+            return 0;
+        }
+
+        emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
+                                                       BOOL /*Ansi*/)
+        {
             if (nIndex == GWL_STYLE || nIndex == GWL_EXSTYLE)
             {
-                if ((win->style & WS_CHILD) == 0)
-                {
-                    // TODO: Support top-level style changes together with cached non-client geometry and frame refresh.
-                    return 0;
-                }
-                window_style_change_state state{};
-                state.old_style = nIndex == GWL_STYLE ? win->style : win->ex_style;
-                state.style_alloc = c.emu.push_stack(window_style_values{state.old_style, static_cast<uint32_t>(dwNewLong)});
-                const auto address = state.style_alloc.address();
-                dispatch_window_message(c, callback, std::move(state), *win, WM_STYLECHANGING,
-                                        static_cast<uint64_t>(static_cast<int64_t>(nIndex)), address);
+                return begin_window_style_change(c, hWnd, nIndex, static_cast<uint32_t>(dwNewLong), callback_id::NtUserSetWindowLongPtr);
+            }
+
+            auto* win = c.proc.windows.get(hWnd);
+            if (!win)
+            {
                 return 0;
             }
 
@@ -6258,16 +6265,16 @@ namespace sogen
                 return win ? old_style : 0;
             }
 
-            const auto styles = c.emu.read_memory<window_style_values>(state.style_alloc.address());
+            const auto styles = c.emu.read_memory<STYLESTRUCT>(state.style_alloc.address());
             if (nIndex == GWL_STYLE)
             {
-                win->style = styles.new_style;
-                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = styles.new_style; });
+                win->style = styles.styleNew;
+                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = styles.styleNew; });
             }
             else
             {
-                win->ex_style = styles.new_style;
-                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwExStyle = styles.new_style; });
+                win->ex_style = styles.styleNew;
+                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwExStyle = styles.styleNew; });
             }
 
             state.style_applied = true;
@@ -6277,22 +6284,20 @@ namespace sogen
             return 0;
         }
 
-        emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, const handle hWnd, const int nIndex,
-                                                       const emulator_pointer dwNewLong, const BOOL /*Ansi*/)
-        {
-            return set_window_long(c, hWnd, nIndex, dwNewLong, callback_id::NtUserSetWindowLongPtr);
-        }
-
         emulator_pointer completion_NtUserSetWindowLongPtr(const syscall_context& c, const handle hWnd, const int nIndex,
                                                            const emulator_pointer /*dwNewLong*/, const BOOL /*Ansi*/)
         {
             return complete_window_style_change(c, hWnd, nIndex, callback_id::NtUserSetWindowLongPtr);
         }
 
-        uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL /*Ansi*/)
+        uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi)
         {
-            const auto oldValue =
-                set_window_long(c, hWnd, nIndex, static_cast<emulator_pointer>(dwNewLong), callback_id::NtUserSetWindowLong);
+            if (nIndex == GWL_STYLE || nIndex == GWL_EXSTYLE)
+            {
+                return static_cast<uint32_t>(begin_window_style_change(c, hWnd, nIndex, dwNewLong, callback_id::NtUserSetWindowLong));
+            }
+
+            const auto oldValue = handle_NtUserSetWindowLongPtr(c, hWnd, nIndex, static_cast<emulator_pointer>(dwNewLong), Ansi);
             return static_cast<uint32_t>(oldValue);
         }
 
