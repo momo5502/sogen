@@ -6183,7 +6183,7 @@ namespace sogen
 
             window_style_change_state state{};
             state.old_style = nIndex == GWL_STYLE ? win->style : win->ex_style;
-            state.style_alloc = c.emu.push_stack(STYLESTRUCT{state.old_style, new_style});
+            state.style_alloc = c.emu.push_stack(STYLESTRUCT{.styleOld = state.old_style, .styleNew = new_style});
             const auto address = state.style_alloc.address();
             dispatch_window_message(c, callback, std::move(state), *win, WM_STYLECHANGING,
                                     static_cast<uint64_t>(static_cast<int64_t>(nIndex)), address);
