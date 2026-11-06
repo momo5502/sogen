@@ -1,12 +1,34 @@
 #include "emulation_test_utils.hpp"
 #include <devices/qt_raster.hpp>
+#include <syscall_utils.hpp>
 #include <cstring>
+
+namespace sogen::syscalls
+{
+    NTSTATUS handle_NtOpenFile(const syscall_context& c, emulator_object<handle> file_handle, ACCESS_MASK desired_access,
+                               emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                               emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, ULONG share_access,
+                               ULONG open_options);
+}
 
 namespace sogen::test
 {
     namespace
     {
         namespace raster = qt_raster;
+
+        windows_emulator make_raster_emulator()
+        {
+            emulator_interfaces interfaces{};
+            interfaces.ui = std::make_unique<null_ui_backend>();
+            interfaces.audio = std::make_unique<null_audio_backend>();
+            interfaces.console = std::make_unique<null_console_backend>();
+            return windows_emulator{
+                create_x86_64_emulator_from_environment(),
+                emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                {},
+                std::move(interfaces)};
+        }
 
         struct client
         {
@@ -261,6 +283,105 @@ namespace sogen::test
         EXPECT_EQ(raster::result::invalid_parameter, c.send(orphan));
         EXPECT_EQ(raster::result::success, c.send(c.creation(2)));
         EXPECT_EQ(raster::max_windows, c.session.windows().size());
+    }
+
+    TEST(QtRasterSessionTest, FrameTakesOwnershipOfTheAlreadyReadPixelBuffer)
+    {
+        client c;
+        c.start();
+        ASSERT_EQ(raster::result::success, c.send(c.creation()));
+        auto packet = c.packet(raster::Frame, 1);
+        packet.a = {2, 2, 8, 1000, 0, 0, 2, 2};
+        std::vector<uint8_t> pixels(16, 0x42);
+        packet.size = static_cast<uint32_t>(pixels.size());
+        const auto original = reinterpret_cast<uintptr_t>(pixels.data());
+        ASSERT_EQ(raster::result::success,
+                  c.session.exchange(packet, std::move(pixels), 4096, [](std::span<const uint8_t>) { return true; }));
+        c.sequence = packet.seq;
+        const auto retained = c.session.latest_frame();
+        ASSERT_TRUE(retained);
+        EXPECT_EQ(original, reinterpret_cast<uintptr_t>(retained->pixels->data()));
+        EXPECT_EQ(16, retained->pixels->size());
+        EXPECT_EQ(0x42, retained->pixels->at(15));
+        ASSERT_EQ(raster::result::success, c.send(c.packet(raster::Destroy, 1)));
+        ASSERT_EQ(raster::result::success, c.send(c.packet(raster::End)));
+        EXPECT_EQ(0x42, retained->pixels->at(15));
+    }
+
+    TEST(QtRasterDeviceTest, ProtectedBuffersRejectAccessWithoutStartingTheSession)
+    {
+        auto emu = make_raster_emulator();
+        const auto storage = emu.memory.allocate_memory(0x5000, memory_permission::read_write);
+        auto device = create_qt_raster({});
+        auto* raster_device = dynamic_cast<qt_raster_device*>(device.get());
+        ASSERT_NE(nullptr, raster_device);
+        io_device_context request{emu.memory};
+        request.io_control_code = raster::ioctl;
+        request.io_status_block = {emu.memory, storage};
+        request.input_buffer = storage + 0x1000;
+        request.input_buffer_length = sizeof(raster::Packet);
+        request.output_buffer = storage + 0x3000;
+        request.output_buffer_length = sizeof(raster::Packet);
+        raster::Packet hello{};
+        hello.op = raster::Hello;
+        hello.seq = 1;
+        emu.memory.write_memory(request.input_buffer, &hello, sizeof(hello));
+        ASSERT_TRUE(emu.memory.protect_memory(storage + 0x1000, 0x1000, memory_permission::none));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, device->io_control(emu, request));
+        EXPECT_FALSE(raster_device->session().active());
+        EXPECT_EQ(0, request.io_status_block.read().Information);
+        raster_device->session().reset();
+        ASSERT_TRUE(emu.memory.protect_memory(storage + 0x1000, 0x1000, memory_permission::read_write));
+
+        request.input_buffer = storage + 0x2000 - sizeof(hello) + 1;
+        emu.memory.write_memory(request.input_buffer, &hello, sizeof(hello));
+        ASSERT_TRUE(emu.memory.protect_memory(storage + 0x2000, 0x1000, memory_permission::none));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, device->io_control(emu, request));
+        EXPECT_FALSE(raster_device->session().active());
+        raster_device->session().reset();
+        ASSERT_TRUE(emu.memory.protect_memory(storage + 0x2000, 0x1000, memory_permission::read_write));
+
+        std::array<uint8_t, sizeof(raster::Packet)> sentinel{};
+        sentinel.fill(0xA5);
+        emu.memory.write_memory(request.output_buffer, sentinel.data(), sentinel.size());
+        ASSERT_TRUE(emu.memory.protect_memory(storage + 0x3000, 0x1000, memory_permission::read));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, device->io_control(emu, request));
+        EXPECT_FALSE(raster_device->session().active());
+        EXPECT_EQ(0, request.io_status_block.read().Information);
+        std::array<uint8_t, sizeof(raster::Packet)> output{};
+        emu.memory.read_memory(request.output_buffer, output.data(), output.size());
+        EXPECT_EQ(sentinel, output);
+        raster_device->session().reset();
+        ASSERT_TRUE(emu.memory.protect_memory(storage + 0x3000, 0x1000, memory_permission::read_write));
+        EXPECT_EQ(STATUS_SUCCESS, device->io_control(emu, request));
+        EXPECT_TRUE(raster_device->session().active());
+    }
+
+    TEST(QtRasterDeviceTest, Wow64OpenReturnsAnErrorWithoutAnExceptionOrHandle)
+    {
+        auto emu = make_raster_emulator();
+        emu.process.is_wow64_process = true;
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        for (const auto path : {u"\\Device\\SogenQtBridge", u"\\??\\SogenQtBridge"})
+        {
+            emulator_allocator allocator{emu.memory, storage, 0x1000};
+            const auto name = allocator.make_unicode_string(path);
+            const auto attributes = allocator.reserve<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>();
+            OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>> value{};
+            value.Length = sizeof(value);
+            value.ObjectName = name.value();
+            attributes.write(value);
+            const auto output = allocator.reserve<handle>();
+            constexpr handle sentinel{.bits = 0xDEADBEEF};
+            output.write(sentinel);
+            const auto status = allocator.reserve<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>();
+            NTSTATUS result = STATUS_SUCCESS;
+            EXPECT_NO_THROW(result = syscalls::handle_NtOpenFile(context, output, GENERIC_READ, attributes, status, 0, 0));
+            EXPECT_EQ(STATUS_NOT_SUPPORTED, result);
+            EXPECT_EQ(sentinel, output.read());
+            EXPECT_FALSE(emu.process.exit_status.has_value());
+        }
     }
 
     TEST(QtRasterDeviceTest, GuestBufferFailuresAndActiveSnapshotsDoNotLoseSessionState)

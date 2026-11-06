@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "qt_raster.hpp"
 #include "../windows_emulator.hpp"
+#include "../syscall_utils.hpp"
 
 namespace sogen
 {
@@ -19,22 +20,37 @@ namespace sogen
         {
             return STATUS_INVALID_PARAMETER;
         }
+        if (!is_readable_range(win_emu.memory, context.input_buffer, context.input_buffer_length))
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
         try
         {
-            std::vector<uint8_t> input(context.input_buffer_length);
-            if (!win_emu.emu().try_read_memory(context.input_buffer, input.data(), input.size()))
+            qt_raster::Packet packet{};
+            if (!win_emu.emu().try_read_memory(context.input_buffer, &packet, sizeof(packet)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+            if (!qt_raster::valid(packet, context.input_buffer_length))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            std::vector<uint8_t> payload(packet.size);
+            if (!payload.empty() && !win_emu.emu().try_read_memory(context.input_buffer + sizeof(packet), payload.data(), payload.size()))
             {
                 return STATUS_ACCESS_VIOLATION;
             }
             size_t written{};
-            const auto result = this->session_.exchange(input, context.output_buffer_length, [&](const std::span<const uint8_t> bytes) {
-                if (!win_emu.emu().try_write_memory(context.output_buffer, bytes.data(), bytes.size()))
-                {
-                    return false;
-                }
-                written = bytes.size();
-                return true;
-            });
+            const auto result = this->session_.exchange(
+                packet, std::move(payload), context.output_buffer_length, [&](const std::span<const uint8_t> bytes) {
+                    if (!is_writable_range(win_emu.memory, context.output_buffer, bytes.size()) ||
+                        !win_emu.emu().try_write_memory(context.output_buffer, bytes.data(), bytes.size()))
+                    {
+                        return false;
+                    }
+                    written = bytes.size();
+                    return true;
+                });
             switch (result)
             {
             case qt_raster::result::success:
@@ -82,12 +98,8 @@ namespace sogen
         return this->session_;
     }
 
-    std::unique_ptr<io_device> create_qt_raster(const device_creation_context& context)
+    std::unique_ptr<io_device> create_qt_raster(const device_creation_context&)
     {
-        if (context.is_32_bit)
-        {
-            throw std::runtime_error("The raster bridge requires a 64-bit guest");
-        }
         return std::make_unique<qt_raster_device>();
     }
 }

@@ -71,11 +71,20 @@ namespace sogen::qt_raster
         }
         Packet packet{};
         std::memcpy(&packet, request.data(), sizeof(packet));
-        if (!valid(packet, request.size()) || packet.seq == 0)
+        if (!valid(packet, request.size()))
         {
             return result::invalid_parameter;
         }
-        const auto payload = request.subspan(sizeof(Packet));
+        return this->exchange(packet, {request.begin() + sizeof(Packet), request.end()}, capacity, write_reply);
+    }
+
+    result session::exchange(const Packet& packet, std::vector<uint8_t> storage, const size_t capacity, const reply_writer& write_reply)
+    {
+        if (!valid(packet, sizeof(Packet) + storage.size()) || packet.seq == 0)
+        {
+            return result::invalid_parameter;
+        }
+        const std::span<const uint8_t> payload{storage};
         const bool hello = packet.op == Hello;
         if (hello)
         {
@@ -102,7 +111,7 @@ namespace sogen::qt_raster
         reply.op = Ack;
         reply.seq = packet.seq;
         reply.session = this->identity_;
-        std::vector<uint8_t> response(sizeof(reply));
+        std::span<const uint8_t> reply_payload{};
         std::function<void()> commit = [] {};
         const auto entry = this->windows_.find(packet.id);
         if (packet.op != Hello && packet.op != Poll && packet.op != End && entry == this->windows_.end() && packet.op != Create)
@@ -227,7 +236,7 @@ namespace sogen::qt_raster
                         .width = packet.a[0],
                         .height = packet.a[1],
                         .stride = packet.a[2],
-                        .pixels = std::make_shared<const std::vector<uint8_t>>(payload.begin(), payload.end())};
+                        .pixels = std::make_shared<const std::vector<uint8_t>>(std::move(storage))};
             commit = [this, entry, old_size, value = std::move(value)] {
                 this->frame_bytes_ = this->frame_bytes_ - old_size + value.pixels->size();
                 entry->second.surface = value;
@@ -252,7 +261,7 @@ namespace sogen::qt_raster
                 {
                     return result::buffer_too_small;
                 }
-                response.insert(response.end(), bytes.begin(), bytes.end());
+                reply_payload = bytes;
                 commit = [this] { this->input_.pop_front(); };
             }
             break;
@@ -267,7 +276,12 @@ namespace sogen::qt_raster
             return result::invalid_parameter;
         }
 
+        std::vector<uint8_t> response(sizeof(reply) + reply_payload.size());
         std::memcpy(response.data(), &reply, sizeof(reply));
+        if (!reply_payload.empty())
+        {
+            std::memcpy(response.data() + sizeof(reply), reply_payload.data(), reply_payload.size());
+        }
         if (!write_reply(response))
         {
             return result::access_violation;

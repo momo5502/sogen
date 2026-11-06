@@ -28,7 +28,7 @@ namespace
     qreal scale = 1;
     QRect screenGeometry(0, 0, 1280, 900);
 
-    qb::Packet exchange(qb::Packet p, const QByteArray& data = {})
+    qb::Packet exchange(qb::Packet p, QByteArrayView data = {})
     {
         const std::lock_guard lock(exchange_mutex);
         if (sequence == UINT32_MAX || data.size() > qb::max_payload)
@@ -38,9 +38,12 @@ namespace
         p.seq = ++sequence;
         p.session = session;
         p.size = uint32_t(data.size());
-        QByteArray request(int(sizeof(p)), Qt::Uninitialized);
+        QByteArray request(qsizetype(sizeof(p)) + data.size(), Qt::Uninitialized);
         std::memcpy(request.data(), &p, sizeof(p));
-        request += data;
+        if (!data.empty())
+        {
+            std::memcpy(request.data() + sizeof(p), data.data(), size_t(data.size()));
+        }
         char reply[4096]{};
         DWORD received = 0;
         if (!DeviceIoControl(device, qb::ioctl, request.data(), DWORD(request.size()), reply, sizeof(reply), &received, nullptr))
@@ -79,7 +82,7 @@ namespace
         return result;
     }
 
-    void send(qb::Op op, uint32_t id, std::initializer_list<int32_t> args = {}, const QByteArray& data = {})
+    void send(qb::Op op, uint32_t id, std::initializer_list<int32_t> args = {}, QByteArrayView data = {})
     {
         if (args.size() > qb::Packet{}.a.size())
         {
@@ -269,7 +272,7 @@ namespace
             auto r = region.boundingRect();
             send(qb::Frame, uint32_t(w->winId()),
                  {image_.width(), image_.height(), int(image_.bytesPerLine()), int(scale * 1000), r.x(), r.y(), r.width(), r.height()},
-                 QByteArray(reinterpret_cast<const char*>(image_.constBits()), int(image_.sizeInBytes())));
+                 QByteArrayView(reinterpret_cast<const char*>(image_.constBits()), image_.sizeInBytes()));
         }
     };
 

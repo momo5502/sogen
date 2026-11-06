@@ -84,7 +84,7 @@ int main(int argc, char** argv)
             sogen::emulator_settings{.disable_logging = true, .emulation_root = argv[1], .root_mode = sogen::filesystem_mode::read_write},
             std::move(callbacks), std::move(interfaces)};
         emulator.start();
-        if (emulator.process.exit_status != 0 || !input_queued || !captured || frames == 0)
+        if (emulator.process.exit_status != uint32_t{0} || !input_queued || !captured || frames == 0)
         {
             throw std::runtime_error("Guest painting, input and successful exit were not all observed");
         }

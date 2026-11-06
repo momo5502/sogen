@@ -7,7 +7,8 @@ probe; native display and browser presentation are separate work.
 
 The example uses the private platform interfaces from guest SDK version 6.8.3.
 Build the plugin against exactly the SDK used by the calculator and runtime DLLs.
-Other versions and 32-bit guests are not supported by this example.
+Other versions are not supported by this example. A 32-bit guest opening the device
+receives `STATUS_NOT_SUPPORTED`.
 
 ## Build and run
 
@@ -84,13 +85,16 @@ Accepted requests return a header acknowledgement, except `Hello` and `Poll`.
 request sequence and identity. Key events include bounded UTF-8 text. Unknown
 operations, invalid lengths, stale identities and invalid geometry fail without
 advancing the accepted sequence or changing window state. Too-small output and
-failed guest writes preserve queued input for retry.
+failed guest writes preserve queued input for retry. The device checks page protection
+over the complete input and the exact reply range before accessing guest buffers.
 
 Limits are 64 live windows, 256 pending input events, 4032 input payload bytes per
 event and 64 MiB of live window pixels per session. Requests are limited to a
 64-byte header plus 64 MiB. A retained latest-frame reference may keep one deleted
-window's frame alive; request and replacement copies temporarily add bounded
-storage. Destroying a window discards its pending events. Calls to session methods
+window's frame alive; in-flight requests and previous frames temporarily add bounded
+storage. The device reads pixels directly into an owned buffer and transfers that buffer
+to the session. The guest plugin views the backing image while building its request,
+avoiding an intermediate image copy. Destroying a window discards its pending events. Calls to session methods
 must be serialized; device requests and probe callbacks use the emulator's kernel
 lock. A future presenter must use the same synchronization contract.
 

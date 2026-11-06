@@ -59,6 +59,7 @@ namespace sogen::qt_raster
         void reset();
 
         result exchange(std::span<const uint8_t> request, size_t capacity, const reply_writer& write_reply);
+        result exchange(const Packet& packet, std::vector<uint8_t> storage, size_t capacity, const reply_writer& write_reply);
         bool enqueue_input(const Packet& event, std::span<const uint8_t> payload = {});
 
         bool active() const;

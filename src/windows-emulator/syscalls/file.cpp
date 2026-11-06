@@ -2306,6 +2306,11 @@ namespace sogen
                     return STATUS_NO_SUCH_DEVICE;
                 }
 
+                if (*io_device_name == u"SogenQtBridge" && needs_32_bit_devices(c.win_emu))
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
                 const io_device_creation_data data{
                     .buffer = ea_buffer,
                     .length = ea_length,
