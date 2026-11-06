@@ -12,6 +12,8 @@ The launcher selects the guest `bridge` platform and uses the existing Windows e
 plugin and runtime DLLs. It needs no host Qt SDK. Frames become ordinary SDL windows;
 mouse, keyboard, focus, resize and close events return through the shared raster protocol.
 Keyboard text is paired with its physical press so text input is not delivered twice.
+UTF-16 surrogate pairs become one Unicode character; unpaired halves are discarded.
+Both wheel axes and the Back/Forward mouse buttons are forwarded to the guest.
 
 The presenter is an optional consumer of the raster session and scoped host-window routes.
 It lives outside the emulator device implementation. The launcher delegates every UI method

@@ -184,6 +184,7 @@ namespace sogen::qt_raster
             window cached{};
             ui_event_router::subscription subscription{};
             std::optional<pending_key> pending{};
+            uint16_t high_surrogate{};
             std::map<uint64_t, int32_t> pressed{};
             int32_t modifiers{};
             int32_t buttons{};
@@ -294,6 +295,7 @@ namespace sogen::qt_raster
             auto& state = found->second;
             if (event.message != WM_CHAR)
             {
+                state.high_surrogate = 0;
                 this->flush_key(id, state);
             }
             const auto x = static_cast<int16_t>(event.lParam & 0xFFFFu);
@@ -311,8 +313,11 @@ namespace sogen::qt_raster
             case WM_MBUTTONDOWN:
             case WM_LBUTTONUP:
             case WM_RBUTTONUP:
-            case WM_MBUTTONUP: {
-                const auto down = event.message == WM_LBUTTONDOWN || event.message == WM_RBUTTONDOWN || event.message == WM_MBUTTONDOWN;
+            case WM_MBUTTONUP:
+            case WM_XBUTTONDOWN:
+            case WM_XBUTTONUP: {
+                const auto down = event.message == WM_LBUTTONDOWN || event.message == WM_RBUTTONDOWN || event.message == WM_MBUTTONDOWN ||
+                                  event.message == WM_XBUTTONDOWN;
                 int32_t button = 4;
                 if (event.message == WM_LBUTTONDOWN || event.message == WM_LBUTTONUP)
                 {
@@ -322,13 +327,27 @@ namespace sogen::qt_raster
                 {
                     button = 2;
                 }
+                else if (event.message == WM_XBUTTONDOWN || event.message == WM_XBUTTONUP)
+                {
+                    const auto extra = (event.wParam >> 16u) & 0xFFFFu;
+                    if (extra != 1 && extra != 2)
+                    {
+                        break;
+                    }
+                    button = extra == 1 ? 8 : 16;
+                }
                 state.buttons = down ? state.buttons | button : state.buttons & ~button;
                 mouse(down ? qt_press : qt_release, button);
                 break;
             }
             case WM_MOUSEWHEEL:
-                this->queue(id, Wheel, {x, y, 0, static_cast<int16_t>((event.wParam >> 16u) & 0xFFFFu), state.modifiers});
+            case WM_MOUSEHWHEEL: {
+                const auto delta = static_cast<int16_t>((event.wParam >> 16u) & 0xFFFFu);
+                const bool horizontal = event.message == WM_MOUSEHWHEEL;
+                // Horizontal wheel polarity is opposite in Qt and WM_MOUSEHWHEEL.
+                this->queue(id, Wheel, {x, y, horizontal ? -delta : 0, horizontal ? 0 : delta, state.modifiers});
                 break;
+            }
             case WM_KEYDOWN:
             case WM_SYSKEYDOWN: {
                 state.modifiers |= modifier_flag(event.wParam);
@@ -362,8 +381,23 @@ namespace sogen::qt_raster
                 break;
             }
             case WM_CHAR: {
-                const auto cp = static_cast<uint32_t>(event.wParam);
-                if (cp < 0x20 || cp == 0x7F || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
+                auto cp = static_cast<uint32_t>(event.wParam);
+                const auto high = std::exchange(state.high_surrogate, uint16_t{});
+                if (cp >= 0xD800 && cp <= 0xDBFF)
+                {
+                    state.high_surrogate = static_cast<uint16_t>(cp);
+                    break;
+                }
+                if (cp >= 0xDC00 && cp <= 0xDFFF)
+                {
+                    if (high == 0)
+                    {
+                        this->flush_key(id, state);
+                        break;
+                    }
+                    cp = 0x10000 + ((uint32_t{high} - 0xD800) << 10u) + (cp - 0xDC00);
+                }
+                if (cp < 0x20 || cp == 0x7F || cp > 0x10FFFF)
                 {
                     this->flush_key(id, state);
                     break;
@@ -395,7 +429,7 @@ namespace sogen::qt_raster
                     this->key(id, qt_key_release, code, state.modifiers);
                 }
                 state.pressed.clear();
-                for (const int32_t button : {1, 2, 4})
+                for (const int32_t button : {1, 2, 4, 8, 16})
                 {
                     if ((state.buttons & button) != 0)
                     {

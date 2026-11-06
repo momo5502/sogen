@@ -159,7 +159,8 @@ namespace sogen::test
         this->event(WM_KEYDOWN, 0xBB, uint64_t{1} << 30);
         this->event(WM_CHAR, '+');
         this->event(WM_KEYUP, 0xBB);
-        this->event(WM_CHAR, 0x1F642);
+        this->event(WM_CHAR, 0xD83D);
+        this->event(WM_CHAR, 0xDE42);
         this->update();
         const auto press = this->poll();
         EXPECT_EQ(wire::Key, press.first.op);
@@ -173,6 +174,101 @@ namespace sogen::test
         EXPECT_EQ("", release.second);
         EXPECT_EQ("\xF0\x9F\x99\x82", this->poll().second);
         EXPECT_EQ(7, this->poll().first.a[0]);
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+    }
+
+    TEST_F(NativeRasterTest, SurrogatePairsRetainThePhysicalKeyRepeatAndRelease)
+    {
+        this->event(WM_KEYDOWN, 'A', uint64_t{1} << 30);
+        this->event(WM_CHAR, 0xD83D);
+        this->update();
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+        this->event(WM_CHAR, 0xDE42);
+        this->event(WM_KEYUP, 'A');
+        this->update();
+        const auto press = this->poll();
+        EXPECT_EQ(wire::Key, press.first.op);
+        EXPECT_EQ(6, press.first.a[0]);
+        EXPECT_EQ(0x1F642, press.first.a[1]);
+        EXPECT_EQ(1, press.first.a[3]);
+        EXPECT_EQ("\xF0\x9F\x99\x82", press.second);
+        const auto release = this->poll();
+        EXPECT_EQ(7, release.first.a[0]);
+        EXPECT_EQ(0x1F642, release.first.a[1]);
+        EXPECT_EQ("", release.second);
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+    }
+
+    TEST_F(NativeRasterTest, UnpairedSurrogatesDoNotLeakAcrossTextOrFocusChanges)
+    {
+        this->event(WM_CHAR, 0xDE42);
+        this->event(WM_CHAR, 0xD83D);
+        this->event(WM_CHAR, 'a');
+        this->event(WM_CHAR, 0xD83D);
+        this->event(WM_CHAR, 0xD834);
+        this->event(WM_CHAR, 0xDD1E);
+        this->event(WM_CHAR, 0xD83D);
+        this->event(WM_KILLFOCUS);
+        this->event(WM_CHAR, 0xDE42);
+        this->update();
+        const auto letter = this->poll();
+        EXPECT_EQ("a", letter.second);
+        EXPECT_EQ('A', letter.first.a[1]);
+        EXPECT_EQ(7, this->poll().first.a[0]);
+        const auto music = this->poll();
+        EXPECT_EQ("\xF0\x9D\x84\x9E", music.second);
+        EXPECT_EQ(0x1D11E, music.first.a[1]);
+        EXPECT_EQ(7, this->poll().first.a[0]);
+        EXPECT_EQ(wire::Focus, this->poll().first.op);
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+    }
+
+    TEST_F(NativeRasterTest, WheelAxesPreserveCoordinatesModifiersAndQtDirection)
+    {
+        this->event(WM_KEYDOWN, VK_CONTROL);
+        for (const int16_t delta : {120, -120})
+        {
+            const auto wparam = uint64_t{static_cast<uint16_t>(delta)} << 16;
+            const auto point = (uint64_t{34} << 16) | static_cast<uint16_t>(-12);
+            this->event(WM_MOUSEWHEEL, wparam, point);
+            this->event(WM_MOUSEHWHEEL, wparam, point);
+        }
+        this->update();
+        this->poll();
+        for (const int32_t delta : {120, -120})
+        {
+            for (const auto expected :
+                 {std::array<int32_t, 8>{-12, 34, 0, delta, 0x04000000}, std::array<int32_t, 8>{-12, 34, -delta, 0, 0x04000000}})
+            {
+                const auto packet = this->poll().first;
+                EXPECT_EQ(wire::Wheel, packet.op);
+                EXPECT_EQ(expected, packet.a);
+            }
+        }
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+    }
+
+    TEST_F(NativeRasterTest, BackAndForwardButtonsPreserveTransitionsAndReleaseOnFocusLoss)
+    {
+        const auto point = (uint64_t{34} << 16) | uint16_t{12};
+        this->event(WM_XBUTTONDOWN, uint64_t{1} << 16, point);
+        this->event(WM_XBUTTONDOWN, uint64_t{2} << 16, point);
+        this->event(WM_XBUTTONUP, uint64_t{1} << 16, point);
+        this->event(WM_XBUTTONUP, uint64_t{2} << 16, point);
+        this->event(WM_XBUTTONDOWN, uint64_t{1} << 16, point);
+        this->event(WM_XBUTTONDOWN, uint64_t{2} << 16, point);
+        this->event(WM_KILLFOCUS);
+        this->update();
+        for (const auto expected :
+             {std::array<int32_t, 8>{12, 34, 8, 8, 2}, std::array<int32_t, 8>{12, 34, 24, 16, 2}, std::array<int32_t, 8>{12, 34, 16, 8, 3},
+              std::array<int32_t, 8>{12, 34, 0, 16, 3}, std::array<int32_t, 8>{12, 34, 8, 8, 2}, std::array<int32_t, 8>{12, 34, 24, 16, 2},
+              std::array<int32_t, 8>{0, 0, 16, 8, 3}, std::array<int32_t, 8>{0, 0, 0, 16, 3}})
+        {
+            const auto packet = this->poll().first;
+            EXPECT_EQ(wire::Mouse, packet.op);
+            EXPECT_EQ(expected, packet.a);
+        }
+        EXPECT_EQ(wire::Focus, this->poll().first.op);
         EXPECT_EQ(wire::Empty, this->poll().first.op);
     }
 
