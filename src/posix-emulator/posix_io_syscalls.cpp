@@ -272,11 +272,17 @@ namespace sogen
             return copy_to_guest(context, destination, chunk.first(copied));
         }
 
-        posix_result read_chunk(const posix_io_context& context, posix_fd& file, const uint64_t destination,
+        // A FIFO or device opened by path cannot rewind what it delivered either, so it is read like a stream.
+        bool reads_like_stream(const posix_fd& file)
+        {
+            return is_host_stream(file) || (file.type == fd_type::file && !file.seek(0, SEEK_CUR));
+        }
+
+        posix_result read_chunk(const posix_io_context& context, posix_fd& file, const bool is_stream, const uint64_t destination,
                                 const std::span<std::byte> chunk)
         {
-            return is_host_stream(file) ? read_stream_chunk(context, file, destination, chunk)
-                                        : read_seekable_chunk(context, file, destination, chunk);
+            return is_stream ? read_stream_chunk(context, file, destination, chunk)
+                             : read_seekable_chunk(context, file, destination, chunk);
         }
 
         posix_result write_output_stream(const posix_io_context& context, FILE* stream, const std::span<const std::byte> chunk)
@@ -341,12 +347,13 @@ namespace sogen
             return *error;
         }
 
+        const auto is_stream = reads_like_stream(*file);
         std::vector<std::byte> chunk(static_cast<size_t>(std::min<uint64_t>(size, TRANSFER_CHUNK_SIZE)));
         uint64_t transferred = 0;
         while (transferred < size)
         {
             const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(size - transferred, chunk.size()));
-            const auto result = read_chunk(context, *file, buffer + transferred, std::span{chunk}.first(chunk_size));
+            const auto result = read_chunk(context, *file, is_stream, buffer + transferred, std::span{chunk}.first(chunk_size));
             if (const auto* error = std::get_if<posix_errno>(&result))
             {
                 return posix_partial_transfer(transferred, *error);
@@ -354,7 +361,7 @@ namespace sogen
 
             const auto bytes_read = std::get<uint64_t>(result);
             transferred += bytes_read;
-            if (bytes_read < chunk_size || is_host_stream(*file))
+            if (bytes_read < chunk_size || is_stream)
             {
                 break;
             }

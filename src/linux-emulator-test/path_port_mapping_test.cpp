@@ -21,6 +21,11 @@
 #include <unistd.h>
 #endif
 
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/stat.h>
+#endif
+
 namespace sogen
 {
     namespace
@@ -639,6 +644,43 @@ namespace sogen
         emu.memory.read_memory(last_writable_bytes, copied.data(), copied.size());
         EXPECT_EQ(std::string_view(copied.data(), copied.size()), "AB");
         EXPECT_EQ(read_guest_file(emu, fd, 4), "CD");
+    }
+
+    TEST(LinuxFileDescriptorTest, ReadFromFifoIntoPartlyWritableBufferKeepsTheRest)
+    {
+#if defined(_WIN32)
+        GTEST_SKIP() << "Windows has no FIFOs that can be opened by path";
+#else
+        constexpr auto last_writable_bytes = guest_memory_base + guest_memory_size - 2;
+        constexpr std::string_view queued = "ABCD";
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        const auto fifo_path = emulation_root / "fifo";
+        ASSERT_EQ(::mkfifo(fifo_path.c_str(), 0600), 0);
+
+        const auto writer = ::open(fifo_path.c_str(), O_RDWR);
+        ASSERT_GE(writer, 0);
+        ASSERT_EQ(::write(writer, queued.data(), queued.size()), static_cast<ssize_t>(queued.size()));
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base + guest_memory_size, guest_memory_size, memory_permission::read));
+        write_guest_string(emu, guest_memory_base, "/fifo");
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY);
+        ::close(writer);
+        ASSERT_GE(fd, 0);
+
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_read, static_cast<uint64_t>(fd), last_writable_bytes, queued.size()), 2);
+        std::array<char, 2> copied{};
+        emu.memory.read_memory(last_writable_bytes, copied.data(), copied.size());
+        EXPECT_EQ(std::string_view(copied.data(), copied.size()), "AB");
+        EXPECT_EQ(read_guest_file(emu, fd, queued.size()), "CD");
+#endif
     }
 
     TEST(LinuxFileDescriptorTest, SeekingPipeFailsWithIllegalSeek)
