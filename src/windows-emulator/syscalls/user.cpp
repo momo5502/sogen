@@ -1969,6 +1969,25 @@ namespace sogen
             return 1;
         }
 
+        handle default_desktop(const syscall_context& c)
+        {
+            if (c.proc.default_desktop.bits == 0)
+            {
+                desktop desk{};
+                desk.name = u"Default";
+                desk.window_station = interactive_window_station;
+                c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
+            }
+
+            return c.proc.default_desktop;
+        }
+
+        handle resolve_desktop(const syscall_context& c, const handle desktop_handle)
+        {
+            const auto* desk = c.proc.desktops.get(desktop_handle);
+            return desk && desk->opened_desktop.bits != 0 ? desk->opened_desktop : desktop_handle;
+        }
+
         hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, const ULONG thread_id)
         {
             emulator_thread* target = nullptr;
@@ -1995,15 +2014,7 @@ namespace sogen
 
             if (target->win32k_desktop.bits == 0)
             {
-                if (c.proc.default_desktop.bits == 0)
-                {
-                    desktop desk{};
-                    desk.name = u"Default";
-                    desk.window_station = interactive_window_station;
-                    c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
-                }
-
-                target->win32k_desktop = c.proc.default_desktop;
+                target->win32k_desktop = default_desktop(c);
             }
 
             return target->win32k_desktop.bits;
@@ -3455,7 +3466,8 @@ namespace sogen
         {
             for (const auto& [index, desk] : c.proc.desktops)
             {
-                if (desk.window_station == window_station && utils::string::equals_ignore_case(std::u16string_view{desk.name}, name))
+                if (desk.opened_desktop.bits == 0 && desk.window_station == window_station &&
+                    utils::string::equals_ignore_case(std::u16string_view{desk.name}, name))
                 {
                     return c.proc.desktops.make_handle(index).bits;
                 }
@@ -3577,6 +3589,24 @@ namespace sogen
             desk.name = std::move(name);
             desk.window_station = station;
 
+            return c.proc.desktops.store(std::move(desk)).bits;
+        }
+
+        hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, const DWORD /*flags*/, const BOOL inherit,
+                                            const ACCESS_MASK /*desired_access*/)
+        {
+            const auto input_desktop_handle = default_desktop(c);
+            const auto* input_desktop = c.proc.desktops.get(input_desktop_handle);
+            if (!input_desktop)
+            {
+                return 0;
+            }
+
+            desktop desk{};
+            desk.name = input_desktop->name;
+            desk.window_station = input_desktop->window_station;
+            desk.opened_desktop = input_desktop_handle;
+            desk.inherit = inherit != FALSE;
             return c.proc.desktops.store(std::move(desk)).bits;
         }
 
@@ -5647,7 +5677,7 @@ namespace sogen
         {
             if (handle.value.type == handle_types::desktop && !handle.value.is_pseudo)
             {
-                auto* desktop = c.proc.desktops.get(handle);
+                auto* desktop = c.proc.desktops.get(resolve_desktop(c, handle));
                 if (!desktop)
                 {
                     return 0;
@@ -7469,7 +7499,7 @@ namespace sogen
                 {
                     return fail(error_invalid_parameter);
                 }
-                const BOOL receives_input = object == c.proc.default_desktop;
+                const BOOL receives_input = resolve_desktop(c, object) == c.proc.default_desktop;
                 return write(&receives_input, sizeof(receives_input));
             }
             default:
