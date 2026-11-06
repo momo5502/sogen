@@ -124,6 +124,48 @@ namespace sogen::macos_test
             0x0F, 0x05,                   // syscall
         });
 
+        constexpr auto PIPE_FIONREAD_CODE = std::to_array<uint8_t>({
+            0xB8, 0x2A, 0x00, 0x00, 0x02,                   // mov eax, 0x200002A (pipe)
+            0x0F, 0x05,                                     // syscall
+            0x89, 0xC3,                                     // mov ebx, eax (read end)
+            0x89, 0xD7,                                     // mov edi, edx (write end)
+            0xC6, 0x04, 0x24, 0x5A,                         // mov byte [rsp], 'Z'
+            0x48, 0x89, 0xE6,                               // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00,                   // mov edx, 1
+            0xB8, 0x04, 0x00, 0x00, 0x02,                   // mov eax, 0x2000004 (write)
+            0x0F, 0x05,                                     // syscall
+            0xC7, 0x44, 0x24, 0x08, 0xFF, 0xFF, 0xFF, 0xFF, // mov dword [rsp + 8], -1
+            0x89, 0xDF,                                     // mov edi, ebx
+            0xBE, 0x7F, 0x66, 0x04, 0x40,                   // mov esi, 0x4004667F (FIONREAD)
+            0x48, 0x8D, 0x54, 0x24, 0x08,                   // lea rdx, [rsp + 8]
+            0xB8, 0x36, 0x00, 0x00, 0x02,                   // mov eax, 0x2000036 (ioctl)
+            0x0F, 0x05,                                     // syscall
+            0x8B, 0x7C, 0x24, 0x08,                         // mov edi, dword [rsp + 8]
+            0xB8, 0x01, 0x00, 0x00, 0x02,                   // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                     // syscall
+        });
+
+        constexpr auto PIPE_FIONBIO_READ_CODE = std::to_array<uint8_t>({
+            0xB8, 0x2A, 0x00, 0x00, 0x02,                   // mov eax, 0x200002A (pipe)
+            0x0F, 0x05,                                     // syscall
+            0x89, 0xC3,                                     // mov ebx, eax (read end)
+            0xC7, 0x44, 0x24, 0x08, 0x01, 0x00, 0x00, 0x00, // mov dword [rsp + 8], 1
+            0x89, 0xDF,                                     // mov edi, ebx
+            0xBE, 0x7E, 0x66, 0x04, 0x80,                   // mov esi, 0x8004667E (FIONBIO)
+            0x48, 0x8D, 0x54, 0x24, 0x08,                   // lea rdx, [rsp + 8]
+            0xB8, 0x36, 0x00, 0x00, 0x02,                   // mov eax, 0x2000036 (ioctl)
+            0x0F, 0x05,                                     // syscall
+            0x89, 0xDF,                                     // mov edi, ebx
+            0x48, 0x89, 0xE6,                               // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00,                   // mov edx, 1
+            0xB8, 0x03, 0x00, 0x00, 0x02,                   // mov eax, 0x2000003 (read)
+            0x0F, 0x05,                                     // syscall
+            0x89, 0xC7,                                     // mov edi, eax
+            0x11, 0xFF,                                     // adc edi, edi
+            0xB8, 0x01, 0x00, 0x00, 0x02,                   // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                     // syscall
+        });
+
         constexpr auto OVERSIZED_WRITE_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02,                               // mov eax, 0x2000004 (write)
             0xBF, 0x01, 0x00, 0x00, 0x00,                               // mov edi, 1
@@ -580,6 +622,21 @@ namespace sogen::macos_test
         const auto result = run_image(make_test_image(PIPE_ROUND_TRIP_CODE));
 
         EXPECT_EQ(result.exit_status, 'Z');
+    }
+
+    TEST(MacosEmulationTest, ReportsBytesQueuedInPipe)
+    {
+        const auto result = run_image(make_test_image(PIPE_FIONREAD_CODE));
+
+        EXPECT_EQ(result.exit_status, 1);
+    }
+
+    TEST(MacosEmulationTest, ReadOfEmptyPipeMadeNonBlockingByIoctlFailsWithAgain)
+    {
+        const auto result = run_image(make_test_image(PIPE_FIONBIO_READ_CODE));
+
+        constexpr int eagain = 35;
+        EXPECT_EQ(result.exit_status, (eagain * 2) + 1);
     }
 
     TEST(MacosEmulationTest, FailsReadIntoUnwritableRangeWithoutConsumingInput)

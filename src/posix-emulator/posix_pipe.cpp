@@ -6,8 +6,10 @@
 #include <utility>
 
 #if defined(_WIN32)
+#include <utils/win.hpp>
 #include <io.h>
 #else
+#include <sys/ioctl.h>
 #include <unistd.h>
 #endif
 
@@ -37,30 +39,39 @@ namespace sogen
 #endif
         }
 
-        // Windows anonymous pipes have neither flag, so a non-blocking read is emulated when it happens.
-        void apply_host_flags(const int descriptor, const bool nonblocking, const bool close_on_exec)
+        int host_descriptor(FILE* handle)
+        {
+#if defined(_WIN32)
+            return _fileno(handle);
+#else
+            return ::fileno(handle);
+#endif
+        }
+
+        // Windows anonymous pipes have no such flag, so a non-blocking read is emulated when it happens.
+        void set_host_nonblocking(const int descriptor, const bool nonblocking)
         {
 #if defined(_WIN32)
             (void)descriptor;
             (void)nonblocking;
-            (void)close_on_exec;
 #else
-            if (nonblocking)
+            const auto flags = ::fcntl(descriptor, F_GETFL, 0);
+            if (flags >= 0)
             {
-                const auto flags = ::fcntl(descriptor, F_GETFL, 0);
-                if (flags >= 0)
-                {
-                    ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK);
-                }
+                ::fcntl(descriptor, F_SETFL, nonblocking ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK));
             }
+#endif
+        }
 
-            if (close_on_exec)
+        void set_host_close_on_exec(const int descriptor)
+        {
+#if defined(_WIN32)
+            (void)descriptor;
+#else
+            const auto flags = ::fcntl(descriptor, F_GETFD, 0);
+            if (flags >= 0)
             {
-                const auto flags = ::fcntl(descriptor, F_GETFD, 0);
-                if (flags >= 0)
-                {
-                    ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
-                }
+                ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC);
             }
 #endif
         }
@@ -102,7 +113,15 @@ namespace sogen
 
         for (const auto descriptor : descriptors)
         {
-            apply_host_flags(descriptor, nonblock_flag != 0, close_on_exec);
+            if (nonblock_flag != 0)
+            {
+                set_host_nonblocking(descriptor, true);
+            }
+
+            if (close_on_exec)
+            {
+                set_host_close_on_exec(descriptor);
+            }
         }
 
         auto read_end = make_pipe_end(fd_type::pipe_read, open_pipe_stream(descriptors[0], "rb"), ACCESS_READ_ONLY | nonblock_flag);
@@ -116,5 +135,37 @@ namespace sogen
             .read_fd = fds.allocate(std::move(read_end), close_on_exec),
             .write_fd = fds.allocate(std::move(write_end), close_on_exec),
         };
+    }
+
+    std::optional<uint64_t> posix_pipe_queued_bytes(const posix_fd& read_end)
+    {
+        const auto descriptor = host_descriptor(read_end.handle);
+#if defined(_WIN32)
+        auto* const handle = reinterpret_cast<HANDLE>(_get_osfhandle(descriptor));
+        DWORD available = 0;
+        if (handle == INVALID_HANDLE_VALUE || PeekNamedPipe(handle, nullptr, 0, nullptr, &available, nullptr) == 0)
+        {
+            return std::nullopt;
+        }
+
+        return uint64_t{available};
+#else
+        int available = 0;
+        if (::ioctl(descriptor, FIONREAD, &available) != 0 || available < 0)
+        {
+            return std::nullopt;
+        }
+
+        return static_cast<uint64_t>(available);
+#endif
+    }
+
+    void posix_set_nonblocking(posix_fd& file, const int nonblock_flag, const bool nonblocking)
+    {
+        file.flags = nonblocking ? (file.flags | nonblock_flag) : (file.flags & ~nonblock_flag);
+        if (file.type == fd_type::pipe_read || file.type == fd_type::pipe_write)
+        {
+            set_host_nonblocking(host_descriptor(file.handle), nonblocking);
+        }
     }
 }

@@ -49,7 +49,8 @@ namespace sogen
 
             const auto& created = std::get<posix_pipe>(result);
             const std::array<int32_t, 2> descriptors{created.read_fd, created.write_fd};
-            if (!c.emu_ref.memory.try_write_memory(pipefd_addr, descriptors.data(), sizeof(descriptors)))
+            if (!c.emu_ref.memory.is_writable_range(pipefd_addr, sizeof(descriptors)) ||
+                !c.emu_ref.memory.try_write_memory(pipefd_addr, descriptors.data(), sizeof(descriptors)))
             {
                 c.proc.fds.close(created.read_fd);
                 c.proc.fds.close(created.write_fd);

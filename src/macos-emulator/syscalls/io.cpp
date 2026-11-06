@@ -61,7 +61,7 @@ namespace sogen
             return fds.allocate(std::move(file));
         }
 
-        std::optional<int32_t> readable_bytes(const posix_fd& file)
+        std::optional<uint64_t> readable_bytes(const posix_fd& file)
         {
             std::error_code ec{};
             const uint64_t size = std::filesystem::file_size(path_from_utf8(file.host_path), ec);
@@ -71,7 +71,24 @@ namespace sogen
                 return std::nullopt;
             }
 
-            return static_cast<int32_t>(std::min<uint64_t>(size - std::min(size, *position), INT32_MAX));
+            return size - std::min(size, *position);
+        }
+
+        // XNU queues a pipe's data on its read end, so the write end and the standard streams, which are presented
+        // as pipes, have nothing to read.
+        std::optional<uint64_t> queued_bytes(const posix_fd& file)
+        {
+            if (file.type == fd_type::pipe_read)
+            {
+                return posix_pipe_queued_bytes(file);
+            }
+
+            if (file.type == fd_type::pipe_write || file.is_standard_stream())
+            {
+                return 0;
+            }
+
+            return readable_bytes(file);
         }
 
         int open_directory(posix_fd_table& fds, std::string guest_path, const std::filesystem::path& host_path)
@@ -327,31 +344,47 @@ namespace sogen
         const auto request = get_macos_syscall_argument(c.emu, 1);
         const auto argument = get_macos_syscall_argument(c.emu, 2);
 
-        const auto* file = c.emu_ref.fds.get(fd);
+        auto* file = c.emu_ref.fds.get(fd);
         if (file == nullptr)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
             return;
         }
 
-        const auto is_pipe = file->is_standard_stream() || file->type == fd_type::pipe_read || file->type == fd_type::pipe_write;
-        const auto is_file = file->type == fd_type::file && !is_pipe;
-        if (request == fioclex || request == fionclex || ((is_pipe || is_file) && (request == fionbio || request == fioasync)))
+        const auto has_file_ioctls = file->type == fd_type::file || file->type == fd_type::pipe_read || file->type == fd_type::pipe_write;
+        if (request == fioclex || request == fionclex || (has_file_ioctls && request == fioasync))
         {
             write_macos_syscall_success(c, 0);
             return;
         }
 
-        if ((is_pipe || is_file) && request == fionread)
+        if (has_file_ioctls && request == fionbio)
         {
-            const auto available = is_pipe ? std::optional<int32_t>{0} : readable_bytes(*file);
+            int32_t nonblocking{};
+            if (!c.emu_ref.memory.is_readable_range(argument, sizeof(nonblocking)) ||
+                !c.emu.try_read_memory(argument, &nonblocking, sizeof(nonblocking)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                return;
+            }
+
+            posix_set_nonblocking(*file, MACOS_O_NONBLOCK, nonblocking != 0);
+            write_macos_syscall_success(c, 0);
+            return;
+        }
+
+        if (has_file_ioctls && request == fionread)
+        {
+            const auto available = queued_bytes(*file);
             if (!available)
             {
                 write_macos_syscall_error(c, macos_errno::MACOS_EIO);
                 return;
             }
 
-            if (!c.emu.try_write_memory(argument, &*available, sizeof(*available)))
+            const auto reported = static_cast<int32_t>(std::min<uint64_t>(*available, INT32_MAX));
+            if (!c.emu_ref.memory.is_writable_range(argument, sizeof(reported)) ||
+                !c.emu.try_write_memory(argument, &reported, sizeof(reported)))
             {
                 write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
                 return;
@@ -361,7 +394,7 @@ namespace sogen
             return;
         }
 
-        if (is_pipe || is_file)
+        if (has_file_ioctls)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_ENOTTY);
             return;
