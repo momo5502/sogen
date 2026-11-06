@@ -79,6 +79,8 @@ namespace sogen::android
             return emulator_settings{
                 .intercept_rdtsc = false,
                 .intercept_kusd = false,
+                // A game resumed from a save goes on from it, as its timeouts expect.
+                .keep_guest_time_across_snapshots = true,
                 .emulation_root = config.emulation_root,
                 .root_mode = filesystem_mode::copy_on_write,
                 .root_layer = config.root_layer,

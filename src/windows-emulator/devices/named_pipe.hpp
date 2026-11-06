@@ -54,6 +54,7 @@ namespace sogen
         bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block, std::optional<uint32_t> issuing_thread_id = {}) override;
         bool has_pending_io(uint32_t issuing_thread_id) const override;
         void release_references(process_context& process) override;
+        void move_absolute_deadlines(std::chrono::steady_clock::duration system_time_ahead) override;
         NTSTATUS start_io(windows_emulator& win_emu, io_device_context context, bool reading);
         void copy_configuration(const named_pipe& source);
         void complete_waits(windows_emulator& win_emu, const windows_path& pipe_path, NTSTATUS status);
@@ -100,6 +101,7 @@ namespace sogen
         {
             std::u16string name;
             std::optional<std::chrono::steady_clock::time_point> deadline;
+            bool deadline_absolute;
 
             bool has_expired(utils::clock& clock) const
             {
