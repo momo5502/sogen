@@ -866,6 +866,7 @@ namespace sogen
           intercept_kusd_(settings.intercept_kusd),
           spoof_gpu_features_(settings.spoof_gpu_features),
           elevated_(settings.elevated),
+          max_display_mode_(settings.max_display_mode),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
     {
         if (this->vcpu_count_ == 0)
@@ -874,6 +875,11 @@ namespace sogen
         }
 
         this->memory.set_execute_implies_read(guest_architecture_of(*this->emu_) == windows_guest_architecture::x86_64);
+
+        if (this->max_display_mode_ && std::ranges::find(display_modes, *this->max_display_mode_) == display_modes.end())
+        {
+            throw std::invalid_argument("The maximum display mode must be one of the display's modes");
+        }
 
         if (this->vcpu_count_ > 1 && !this->emu_->supports_multiple_vcpus())
         {
