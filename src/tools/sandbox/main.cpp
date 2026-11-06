@@ -306,7 +306,13 @@ namespace sogen::sandbox
             std::unique_ptr<emulator_process_target> managed_target{};
             if (managed_connection)
             {
+                if (!managed_connection->request().registry_state.empty())
+                {
+                    utils::buffer_deserializer state{managed_connection->request().registry_state};
+                    win_emu.registry.deserialize_runtime_state(state);
+                }
                 win_emu.setup_process_if_necessary();
+                win_emu.process.parent_process_id = managed_connection->request().parent_process_id;
                 if (managed_connection->request().debugged)
                 {
                     win_emu.attach_debugger();

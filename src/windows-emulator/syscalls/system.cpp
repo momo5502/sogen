@@ -596,7 +596,7 @@ namespace sogen
 
             proc.NextEntryOffset = 0; // Single process; terminator
             proc.UniqueProcessId = process_id;
-            proc.InheritedFromUniqueProcessId = 0;
+            proc.InheritedFromUniqueProcessId = c.proc.parent_process_id;
 
             // Ideally this should be a monotonically increasing value assigned when
             // the emulated process is created. The process ID is a reasonable fallback
@@ -670,6 +670,7 @@ namespace sogen
             proc.NumberOfThreads = static_cast<ULONG>(thread_ids.size());
             proc.BasePriority = 8;
             proc.UniqueProcessId = process_id;
+            proc.InheritedFromUniqueProcessId = c.proc.parent_process_id;
             proc.HandleCount = 0;
             proc.SessionId = 0;
 

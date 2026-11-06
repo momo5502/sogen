@@ -7514,8 +7514,8 @@ namespace sogen
 
             const auto counts_this_process = process.bits == gui_resources_global_process || c.proc.is_current_process_handle(process);
             const auto* other_process = counts_this_process ? nullptr : c.proc.processes.get(process);
-            const auto is_other_process =
-                !counts_this_process && (process == STEAM_PROCESS_HANDLE || (other_process != nullptr && other_process->process));
+            const auto is_other_process = !counts_this_process && (process == STEAM_PROCESS_HANDLE || process == PARENT_PROCESS_HANDLE ||
+                                                                   (other_process != nullptr && other_process->process));
 
             if (flags > gui_resources_userobjects_peak || (!counts_this_process && !is_other_process))
             {

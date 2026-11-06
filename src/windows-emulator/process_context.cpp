@@ -916,6 +916,7 @@ namespace sogen
 
         buffer.write_vector(this->default_register_set);
         buffer.write(this->process_id);
+        buffer.write(this->parent_process_id);
         buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
@@ -1048,6 +1049,7 @@ namespace sogen
 
         buffer.read_vector(this->default_register_set);
         buffer.read(this->process_id);
+        buffer.read(this->parent_process_id);
         buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
 

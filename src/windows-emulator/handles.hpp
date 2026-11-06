@@ -669,6 +669,7 @@ namespace sogen
     // pid value seeded into that registry key.
     constexpr uint32_t STEAM_FAKE_PROCESS_ID = 0x8B0;
     constexpr auto STEAM_PROCESS_HANDLE = make_pseudo_handle(0x1, handle_types::process);
+    constexpr auto PARENT_PROCESS_HANDLE = make_pseudo_handle(0x2, handle_types::process);
 
     constexpr auto CURRENT_PROCESS = make_handle(~0ULL);
     constexpr auto CURRENT_THREAD = make_handle(~1ULL);
