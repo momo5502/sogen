@@ -10,7 +10,7 @@
 #include <vector>
 
 #if defined(_WIN32)
-#include <windows.h>
+#include <utils/win.hpp>
 #include <io.h>
 #else
 #include <unistd.h>
