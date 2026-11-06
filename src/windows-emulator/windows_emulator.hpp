@@ -428,6 +428,7 @@ namespace sogen
         void update_key_state(const ui_event& event);
         ui_event resolve_injected_event(const ui_event& event) const;
         void apply_cursor_capture();
+        void set_foreground_window(hwnd window);
 
         // The highest address the process's own code can reach: 32-bit code only reaches the low 2GB unless the
         // executable is large-address aware.
@@ -736,7 +737,6 @@ namespace sogen
       private:
         bool save_dispatching_thread(vcpu_context* vcpu);
         void reload_dispatching_thread(vcpu_context& vcpu) const;
-        void set_foreground_window(hwnd window);
         void deliver_ui_event(const ui_event& event);
         void resize_window_from_host(hwnd window_handle, bool maximized, int32_t client_width, int32_t client_height);
         void move_window_from_host(hwnd window_handle, int32_t x, int32_t y);

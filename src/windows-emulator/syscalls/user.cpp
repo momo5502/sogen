@@ -3595,6 +3595,7 @@ namespace sogen
         // versions use different numbers, so the table is gated by guest build below.
         constexpr uint32_t user_call_set_dialog_pointer = 99;
         constexpr uint32_t user_call_set_dialog_system_menu = 111;
+        constexpr uint32_t user_call_set_foreground_window = 112;
         constexpr uint32_t user_call_update_window = 115;
         constexpr uint32_t user_call_set_msg_box = 89;
         constexpr uint32_t user_call_release_dc = 0x39;
@@ -3615,6 +3616,18 @@ namespace sogen
             return 0;
         }
 
+        BOOL set_foreground_window(const syscall_context& c, const hwnd hwnd)
+        {
+            if (!c.proc.windows.get(hwnd))
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            c.win_emu.set_foreground_window(hwnd);
+            return TRUE;
+        }
+
         BOOL handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
         {
             if (c.win_emu.version.is_build_within(19041, 19046))
@@ -3622,6 +3635,12 @@ namespace sogen
                 if (routine == user_call_set_dialog_system_menu)
                 {
                     return handle_NtUserSetDialogSystemMenu(c, hwnd);
+                }
+
+                if (routine == user_call_set_foreground_window)
+                {
+                    // user32!SetForegroundWindow is dispatched through NtUserCallHwndLock(112) on Win10.
+                    return set_foreground_window(c, hwnd);
                 }
 
                 if (routine == user_call_update_window)
