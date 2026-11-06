@@ -330,11 +330,12 @@ namespace sogen
         }
 
         controller::controller(windows_emulator& win_emu, std::string configuration, std::filesystem::path directory,
-                               outcome_callback on_outcome)
+                               outcome_callback on_outcome, const bool keep_running)
             : win_emu_(win_emu),
               configuration_(std::move(configuration)),
               directory_(std::move(directory)),
               on_outcome_(std::move(on_outcome)),
+              keep_running_(keep_running),
               watcher_([this] { this->watch(); })
         {
         }
@@ -486,7 +487,7 @@ namespace sogen
                     this->on_outcome_(outcome);
                 }
 
-                if (ended || outcome.error.empty())
+                if (ended || (outcome.error.empty() && !this->keep_running_))
                 {
                     return outcome.error.empty();
                 }
