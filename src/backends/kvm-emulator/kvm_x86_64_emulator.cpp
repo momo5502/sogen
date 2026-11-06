@@ -11,6 +11,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <cpuid.h>
 #include <immintrin.h>
 
 #include <algorithm>
@@ -89,6 +90,15 @@ namespace sogen::kvm
             }
         }
 
+        bool supports_clflushopt()
+        {
+            unsigned int eax{};
+            unsigned int ebx{};
+            unsigned int ecx{};
+            unsigned int edx{};
+            return __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx) && (ebx & bit_CLFLUSHOPT) != 0;
+        }
+
         // Evict the CPU cache for [base, base + size) and order the evictions before subsequent device access.
         void flush_cache_line_range(const void* base, size_t size)
         {
@@ -100,7 +110,7 @@ namespace sogen::kvm
             const auto first = reinterpret_cast<uintptr_t>(base) & ~(cache_line_size - 1);
             const auto last = reinterpret_cast<uintptr_t>(base) + size;
 
-            static const bool has_clflushopt = __builtin_cpu_supports("clflushopt");
+            static const bool has_clflushopt = supports_clflushopt();
             if (has_clflushopt)
             {
                 flush_cache_lines_clflushopt(first, last);
@@ -461,7 +471,12 @@ namespace sogen::kvm
                 this->vcpu_thread_.store(pthread_self(), std::memory_order_release);
                 this->run_->immediate_exit = 0;
 
-                while (!this->stop_requested_)
+                // The access of a KVM_EXIT_MMIO is only carried out by the next KVM_RUN, on whatever register state the
+                // vCPU holds then. Returning before that would hand the access to the next thread scheduled on this vCPU,
+                // so a stop waits for one more KVM_RUN: stop sets immediate_exit, and KVM completes pending MMIO before it
+                // honours immediate_exit.
+                bool mmio_completion_pending = false;
+                while (!this->stop_requested_ || mmio_completion_pending)
                 {
                     const auto step_rip = this->read_instruction_pointer();
                     if (this->handle_pre_run_instruction())
@@ -482,6 +497,7 @@ namespace sogen::kvm
                     this->run_active_ = true;
                     const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_RUN, 0);
                     this->run_active_ = false;
+                    mmio_completion_pending = false;
                     this->invalidate_register_cache();
 
                     if (rc < 0)
@@ -534,6 +550,7 @@ namespace sogen::kvm
                     case KVM_EXIT_MMIO:
                         if (this->handle_mmio_exit())
                         {
+                            mmio_completion_pending = true;
                             continue;
                         }
 
@@ -2003,6 +2020,35 @@ namespace sogen::kvm
                 return std::nullopt;
             }
 
+            bool maps_page_for(const uint64_t address, const memory_operation operation) const
+            {
+                const auto entry = this->mapped_pages_.find(detail::align_down_to_page(address));
+                if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
+                {
+                    return false;
+                }
+
+                const auto required = operation == memory_operation::write ? memory_permission::write : memory_permission::read;
+                return (entry->second->permissions & required) == required;
+            }
+
+            // KVM_EXIT_MMIO arrives in the middle of KVM's emulation of the instruction: KVM splits the access into
+            // exits of at most 8 bytes, and the next KVM_RUN completes each one with run->mmio.data instead of
+            // executing the access again. Once the page is accessible, every remaining exit of that access has to be
+            // carried out here on the guest memory.
+            void complete_mmio_from_guest_memory(const uint64_t address)
+            {
+                auto& mmio = this->run_->mmio;
+                if (mmio.is_write)
+                {
+                    this->write_memory(address, mmio.data, mmio.len);
+                }
+                else
+                {
+                    this->read_memory(address, mmio.data, mmio.len);
+                }
+            }
+
             bool handle_mmio_exit()
             {
                 const auto& mmio = this->run_->mmio;
@@ -2026,9 +2072,23 @@ namespace sogen::kvm
                 const auto violation_address = translated_guest_address.value_or(mmio.phys_addr);
                 const auto violation_type = translated_guest_address ? memory_violation_type::protection : memory_violation_type::unmapped;
                 const auto operation = mmio.is_write ? memory_operation::write : memory_operation::read;
+                const auto is_accessible = [&] { return translated_guest_address && this->maps_page_for(violation_address, operation); };
+
+                if (is_accessible())
+                {
+                    this->complete_mmio_from_guest_memory(violation_address);
+                    return true;
+                }
+
                 for (auto& [_, hook] : this->memory_violation_hooks_)
                 {
                     const auto result = hook(*this, violation_address, mmio.len, operation, violation_type);
+                    if (result == memory_violation_continuation::restart && is_accessible())
+                    {
+                        this->complete_mmio_from_guest_memory(violation_address);
+                        return true;
+                    }
+
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;

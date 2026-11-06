@@ -147,12 +147,26 @@ namespace sogen::test
         }
     }
 
+    TEST_F(ObjectNameInformationTest, SyntheticProcessHandlesHaveProcessType)
+    {
+        for (const auto h : {handle{PARENT_PROCESS_HANDLE}, handle{STEAM_PROCESS_HANDLE}})
+        {
+            ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryObject(this->context(), h, ObjectTypeInformation, this->information(), 0x100,
+                                                                     this->return_length()));
+            const auto info = this->emu->memory.read_memory<OBJECT_TYPE_INFORMATION>(this->information());
+            std::u16string name(info.TypeName.Length / sizeof(char16_t), u'\0');
+            this->emu->memory.read_memory(info.TypeName.Buffer, name.data(), info.TypeName.Length);
+            EXPECT_EQ(u"Process", name);
+        }
+    }
+
     TEST_F(ObjectNameInformationTest, UnnamedObjectsAnswerAnEmptyName)
     {
         auto& proc = this->emu->process;
-        for (const auto h : {proc.events.store(event{}), proc.mutants.store(mutant{}), proc.semaphores.store(semaphore{}),
-                             proc.timers.store(timer{}), proc.sections.store(section{}), proc.sections.store(file_section({})),
-                             CURRENT_PROCESS_TOKEN, DUMMY_IMPERSONATION_TOKEN, ANONYMOUS_IMPERSONATION_TOKEN})
+        for (const auto h :
+             {proc.events.store(event{}), proc.mutants.store(mutant{}), proc.semaphores.store(semaphore{}), proc.timers.store(timer{}),
+              proc.sections.store(section{}), proc.sections.store(file_section({})), CURRENT_PROCESS_TOKEN, DUMMY_IMPERSONATION_TOKEN,
+              ANONYMOUS_IMPERSONATION_TOKEN, handle{PARENT_PROCESS_HANDLE}, handle{STEAM_PROCESS_HANDLE}})
         {
             SCOPED_TRACE(h.bits);
             for (const ULONG length : {0x0u, 0x4u, 0xFu})

@@ -173,6 +173,11 @@ namespace sogen
         c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
             teb.LastErrorValue = static_cast<ULONG>(last_error); //
         });
+
+        if (const auto& teb32 = c.vcpu.active_thread->teb32)
+        {
+            teb32->access([&](TEB32& teb) { teb.LastErrorValue = static_cast<ULONG>(last_error); });
+        }
     }
 
     inline bool is_uppercase(const char character)

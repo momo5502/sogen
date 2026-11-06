@@ -1093,35 +1093,36 @@ namespace sogen::py
         hook_handle stored{this->emu->emu(), hook, nb::none()};
         this->active_hooks.emplace_back(stored);
 
-        auto exposed = stored;
-        exposed.owner = nb::cast(this, nb::rv_policy::reference_internal);
-        return exposed;
+        return stored;
     }
 
     hook_handle linux_hook_registry::memory_execution(nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_memory_execution([cb = std::move(callback)](cpu_interface&, uint64_t address) {
-            nb::gil_scoped_acquire gil{};
-            cb(address);
-        });
+        auto* hook =
+            this->emu->emu().hook_memory_execution([cb = this->capture_callback(std::move(callback))](cpu_interface&, uint64_t address) {
+                nb::gil_scoped_acquire gil{};
+                (*cb)(address);
+            });
         return make_hook(hook);
     }
 
     hook_handle linux_hook_registry::memory_execution_at(uint64_t address, nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_memory_execution(address, [cb = std::move(callback)](cpu_interface&, uint64_t addr) {
-            nb::gil_scoped_acquire gil{};
-            cb(addr);
-        });
+        auto* hook = this->emu->emu().hook_memory_execution(
+            address, [cb = this->capture_callback(std::move(callback))](cpu_interface&, uint64_t addr) {
+                nb::gil_scoped_acquire gil{};
+                (*cb)(addr);
+            });
         return make_hook(hook);
     }
 
     hook_handle linux_hook_registry::memory_read(uint64_t address, uint64_t size, nb::object callback)
     {
         auto* hook = this->emu->emu().hook_memory_read(
-            address, size, [cb = std::move(callback)](cpu_interface&, uint64_t addr, const void* data, size_t length) {
+            address, size,
+            [cb = this->capture_callback(std::move(callback))](cpu_interface&, uint64_t addr, const void* data, size_t length) {
                 nb::gil_scoped_acquire gil{};
-                cb(addr, nb::bytes(static_cast<const char*>(data), static_cast<nb::ssize_t>(length)));
+                (*cb)(addr, nb::bytes(static_cast<const char*>(data), static_cast<nb::ssize_t>(length)));
             });
         return make_hook(hook);
     }
@@ -1129,32 +1130,28 @@ namespace sogen::py
     hook_handle linux_hook_registry::memory_write(uint64_t address, uint64_t size, nb::object callback)
     {
         auto* hook = this->emu->emu().hook_memory_write(
-            address, size, [cb = std::move(callback)](cpu_interface&, uint64_t addr, const void* data, size_t length) {
+            address, size,
+            [cb = this->capture_callback(std::move(callback))](cpu_interface&, uint64_t addr, const void* data, size_t length) {
                 nb::gil_scoped_acquire gil{};
-                cb(addr, nb::bytes(static_cast<const char*>(data), static_cast<nb::ssize_t>(length)));
+                (*cb)(addr, nb::bytes(static_cast<const char*>(data), static_cast<nb::ssize_t>(length)));
             });
         return make_hook(hook);
     }
 
     hook_handle linux_hook_registry::instruction(x86_hookable_instructions instruction_type, nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_instruction(instruction_type, [cb = std::move(callback)](cpu_interface&, uint64_t data) {
-            nb::gil_scoped_acquire gil{};
-            return coerce_instruction_continuation(cb(data));
-        });
+        auto* hook = this->emu->emu().hook_instruction(instruction_type,
+                                                       [cb = this->capture_callback(std::move(callback))](cpu_interface&, uint64_t data) {
+                                                           nb::gil_scoped_acquire gil{};
+                                                           return coerce_instruction_continuation((*cb)(data));
+                                                       });
         return make_hook(hook);
     }
 
     hook_handle linux_hook_registry::interrupt(nb::object callback)
     {
         auto* emulator = this->emu;
-        auto callback_holder = std::shared_ptr<nb::object>{
-            new nb::object(std::move(callback)),
-            [](nb::object* cb) {
-                nb::gil_scoped_acquire gil{};
-                delete cb;
-            },
-        };
+        auto callback_holder = this->capture_callback(std::move(callback));
         const auto observer_id = emulator->add_interrupt_observer([cb = std::move(callback_holder)](int interrupt) {
             nb::gil_scoped_acquire gil{};
             (*cb)(interrupt);
@@ -1163,30 +1160,23 @@ namespace sogen::py
         hook_handle stored{[emulator, observer_id] { emulator->remove_interrupt_observer(observer_id); }, nb::none()};
         this->active_hooks.emplace_back(stored);
 
-        auto exposed = stored;
-        exposed.owner = nb::cast(this, nb::rv_policy::reference_internal);
-        return exposed;
+        return stored;
     }
 
     hook_handle linux_hook_registry::basic_block(nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_basic_block([cb = std::move(callback)](cpu_interface&, const sogen::basic_block& block) {
-            nb::gil_scoped_acquire gil{};
-            cb(block);
-        });
+        auto* hook = this->emu->emu().hook_basic_block(
+            [cb = this->capture_callback(std::move(callback))](cpu_interface&, const sogen::basic_block& block) {
+                nb::gil_scoped_acquire gil{};
+                (*cb)(block);
+            });
         return make_hook(hook);
     }
 
     hook_handle linux_hook_registry::memory_violation(nb::object callback)
     {
         auto* emulator = this->emu;
-        auto callback_holder = std::shared_ptr<nb::object>{
-            new nb::object(std::move(callback)),
-            [](nb::object* cb) {
-                nb::gil_scoped_acquire gil{};
-                delete cb;
-            },
-        };
+        auto callback_holder = this->capture_callback(std::move(callback));
         const auto observer_id = emulator->add_memory_violation_observer(
             [cb = std::move(callback_holder)](uint64_t address, size_t size, memory_operation operation, memory_violation_type type) {
                 nb::gil_scoped_acquire gil{};
@@ -1197,9 +1187,7 @@ namespace sogen::py
         hook_handle stored{[emulator, observer_id] { emulator->remove_memory_violation_observer(observer_id); }, nb::none()};
         this->active_hooks.emplace_back(stored);
 
-        auto exposed = stored;
-        exposed.owner = nb::cast(this, nb::rv_policy::reference_internal);
-        return exposed;
+        return stored;
     }
 
     sogen_linux_emulator::sogen_linux_emulator(std::unique_ptr<linux_emulator> emulator)
@@ -1332,7 +1320,7 @@ namespace sogen::py
         nb::list result{};
         for (auto& [_, module] : this->emu->mod_manager.get_modules())
         {
-            result.append(nb::cast(module));
+            result.append(copy_linux_module(module));
         }
         return result;
     }

@@ -137,7 +137,7 @@ namespace sogen::test
         child.process.value = 1;
         const auto child_handle = this->emu.process.processes.store(std::move(child));
 
-        for (const auto other_process : {child_handle, handle{STEAM_PROCESS_HANDLE}})
+        for (const auto other_process : {child_handle, handle{STEAM_PROCESS_HANDLE}, handle{PARENT_PROCESS_HANDLE}})
         {
             for (const DWORD flags : {0u, 1u, 2u, 3u, 4u})
             {

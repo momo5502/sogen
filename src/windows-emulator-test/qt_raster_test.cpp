@@ -371,7 +371,7 @@ namespace sogen::test
                              emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
                              {},
                              std::move(interfaces)};
-        emu.process.kusd.setup(emu.version, {});
+        emu.process.kusd.setup(emu.version, {}, std::nullopt);
         const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
         const auto handle = emu.process.devices.store(io_device_container{u"SogenQtBridge", emu, {}});
         auto* device = emu.process.devices.get(handle);

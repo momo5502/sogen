@@ -259,6 +259,61 @@ namespace sogen
         }
     };
 
+    struct cursor_icon : user_object<USER_CURSOR>
+    {
+        std::u16string module_name{};
+        std::u16string resource_name{};
+        uint16_t resource_id{};
+        uint16_t type{};
+        uint32_t flags{};
+        int16_t hotspot_x{};
+        int16_t hotspot_y{};
+        hbitmap mask{};
+        hbitmap color{};
+        uint32_t bpp{};
+        uint32_t width{};
+        uint32_t height{};
+
+        cursor_icon(memory_interface& memory)
+            : user_object(memory)
+        {
+        }
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            user_object::serialize_object(buffer);
+            buffer.write(this->module_name);
+            buffer.write(this->resource_name);
+            buffer.write(this->resource_id);
+            buffer.write(this->type);
+            buffer.write(this->flags);
+            buffer.write(this->hotspot_x);
+            buffer.write(this->hotspot_y);
+            buffer.write(this->mask);
+            buffer.write(this->color);
+            buffer.write(this->bpp);
+            buffer.write(this->width);
+            buffer.write(this->height);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            user_object::deserialize_object(buffer);
+            buffer.read(this->module_name);
+            buffer.read(this->resource_name);
+            buffer.read(this->resource_id);
+            buffer.read(this->type);
+            buffer.read(this->flags);
+            buffer.read(this->hotspot_x);
+            buffer.read(this->hotspot_y);
+            buffer.read(this->mask);
+            buffer.read(this->color);
+            buffer.read(this->bpp);
+            buffer.read(this->width);
+            buffer.read(this->height);
+        }
+    };
+
     // WC_DIALOG = MAKEINTATOM(0x8002); user32 creates dialogs and message boxes with this fixed
     // system atom, which the kernel reports as the class name "#32770". The atom value is constant
     // across Windows builds (unlike the builtin control-class atoms, which vary per build and are
@@ -716,12 +771,16 @@ namespace sogen
         uint64_t mapped_object{};
         // Desktop names are scoped to a window station, so the same name in two stations is two desktops.
         uint64_t window_station{};
+        // Set on a further handle to an existing desktop, such as the one NtUserOpenInputDesktop returns. Windows gives each
+        // its own handle value and inherit flag, while the desktop and its state stay shared.
+        handle opened_desktop{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
             buffer.write(this->mapped_object);
             buffer.write(this->window_station);
+            buffer.write(this->opened_desktop);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -729,6 +788,7 @@ namespace sogen
             buffer.read(this->name);
             buffer.read(this->mapped_object);
             buffer.read(this->window_station);
+            buffer.read(this->opened_desktop);
         }
     };
 
@@ -1096,6 +1156,9 @@ namespace sogen
         std::u16string name{};
         uint32_t number_of_concurrent_threads{};
         std::vector<io_completion_message> queue{};
+        // Ids of the threads waiting for a packet, the latest last. KeRemoveQueueEx puts a new waiter at the head of the
+        // queue's wait list and KeInsertQueue gives a packet to the head, so the latest waiter gets the next packet.
+        std::vector<uint32_t> waiters{};
 
         void enqueue(const io_completion_message& message)
         {
@@ -1134,6 +1197,7 @@ namespace sogen
             buffer.write(this->name);
             buffer.write(this->number_of_concurrent_threads);
             buffer.write_vector(this->queue);
+            buffer.write_vector(this->waiters);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1141,6 +1205,7 @@ namespace sogen
             buffer.read(this->name);
             buffer.read(this->number_of_concurrent_threads);
             buffer.read_vector(this->queue);
+            buffer.read_vector(this->waiters);
         }
     };
 

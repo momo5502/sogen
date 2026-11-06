@@ -36,6 +36,11 @@ namespace sogen
         uint16_t tag{};
         std::optional<registry_notify_block> notify_block{};
 
+        // Worked out on first use and kept for the key's life: its path never changes and loaded hives are read-only.
+        // Not serialized, so a restored key works them out again.
+        mutable std::optional<utils::path_key> full_path{};
+        mutable std::optional<std::pair<hive_parser*, hive_key*>> backing_key{};
+
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->hive);
@@ -195,7 +200,7 @@ namespace sogen
         std::map<utils::path_key, uint64_t> key_generations_{};
 
         utils::path_key normalize_path(utils::path_key path) const;
-        static utils::path_key get_full_key_path(const registry_key& key);
+        static const utils::path_key& get_full_key_path(const registry_key& key);
         uint64_t get_generation(const utils::path_key& full_path) const;
         bool is_deleted_hive_key(const utils::path_key& full_path) const;
         std::optional<exposed_hive_key> get_original_hive_key(const registry_key& key);

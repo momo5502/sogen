@@ -4,6 +4,7 @@
 #include "../linux_stat.hpp"
 #include "../procfs.hpp"
 
+#include <posix_descriptor_syscalls.hpp>
 #include <posix_path_resolution.hpp>
 
 #include <algorithm>
@@ -47,6 +48,9 @@ namespace sogen
         constexpr int LINUX_O_APPEND = 02000;
         constexpr int LINUX_O_DIRECTORY = 0200000;
         constexpr int LINUX_O_CLOEXEC = 02000000;
+
+        // getrlimit reports RLIMIT_NOFILE as unlimited, so only the descriptor's int type bounds it.
+        constexpr int LINUX_DESCRIPTOR_LIMIT = std::numeric_limits<int>::max();
 
         int64_t host_read_fd(const int fd, void* buffer, const size_t count)
         {
@@ -140,35 +144,6 @@ namespace sogen
             return bytes_read;
         }
 
-        std::optional<size_t> seek_memory_file(posix_fd& fd, const int64_t offset, const int whence)
-        {
-            const auto content_size = static_cast<int64_t>(fd.memory_file->content.size());
-            auto base = int64_t{0};
-            if (whence == 1)
-            {
-                base = static_cast<int64_t>(fd.memory_file->offset);
-            }
-            else if (whence == 2)
-            {
-                base = content_size;
-            }
-
-            if ((offset > 0 && base > std::numeric_limits<int64_t>::max() - offset) ||
-                (offset < 0 && base < std::numeric_limits<int64_t>::min() - offset))
-            {
-                return std::nullopt;
-            }
-
-            const auto target = base + offset;
-            if (target < 0)
-            {
-                return std::nullopt;
-            }
-
-            fd.memory_file->offset = static_cast<size_t>(target);
-            return fd.memory_file->offset;
-        }
-
         uint8_t file_type_to_d_type(const std::filesystem::file_type type)
         {
             // Linux DT_* values
@@ -248,17 +223,17 @@ namespace sogen
             return 0;
         }
 
-        linux_directory_listing build_cached_dir_entries(const std::filesystem::path& dir_path)
+        std::vector<posix_directory_entry> list_directory(const std::filesystem::path& dir_path)
         {
-            linux_directory_listing entries{};
+            std::vector<posix_directory_entry> entries{};
 
             // Include "." and ".." first to match Linux behavior.
             entries.push_back(
-                {.ino = get_inode_for_path(dir_path), .d_type = file_type_to_d_type(std::filesystem::file_type::directory), .name = "."});
+                {.inode = get_inode_for_path(dir_path), .type = file_type_to_d_type(std::filesystem::file_type::directory), .name = "."});
 
             const auto parent = dir_path.parent_path().empty() ? dir_path : dir_path.parent_path();
             entries.push_back(
-                {.ino = get_inode_for_path(parent), .d_type = file_type_to_d_type(std::filesystem::file_type::directory), .name = ".."});
+                {.inode = get_inode_for_path(parent), .type = file_type_to_d_type(std::filesystem::file_type::directory), .name = ".."});
 
             std::error_code ec{};
             for (const auto& de : std::filesystem::directory_iterator(dir_path, ec))
@@ -275,113 +250,14 @@ namespace sogen
                     ec.clear();
                 }
 
-                linux_cached_dir_entry entry{};
-                entry.ino = get_inode_for_path(p);
-                entry.d_type = file_type_to_d_type(type);
+                posix_directory_entry entry{};
+                entry.inode = get_inode_for_path(p);
+                entry.type = file_type_to_d_type(type);
                 entry.name = p.filename().string();
                 entries.push_back(std::move(entry));
             }
 
             return entries;
-        }
-
-        void init_directory_fd_state(linux_process_context& proc, const int fd, const std::filesystem::path& dir_path)
-        {
-            proc.directory_entries[fd] = std::make_shared<const linux_directory_listing>(build_cached_dir_entries(dir_path));
-        }
-
-        void share_directory_entries(linux_process_context& proc, const int oldfd, const int newfd)
-        {
-            const auto entries = proc.directory_entries.find(oldfd);
-            if (entries != proc.directory_entries.end())
-            {
-                proc.directory_entries[newfd] = entries->second;
-            }
-        }
-
-        void cleanup_closed_fd(linux_process_context& proc, const int fd)
-        {
-            proc.directory_entries.erase(fd);
-            proc.epoll_instances.erase(fd);
-
-            std::vector<linux_epoll_instance*> cleaned_instances{};
-            for (auto& [epfd, instance] : proc.epoll_instances)
-            {
-                (void)epfd;
-                if (!instance || std::ranges::find(cleaned_instances, instance.get()) != cleaned_instances.end())
-                {
-                    continue;
-                }
-
-                cleaned_instances.push_back(instance.get());
-                auto& entries = instance->entries;
-                entries.erase(std::ranges::remove_if(entries, [fd](const linux_epoll_entry& entry) { return entry.fd == fd; }).begin(),
-                              entries.end());
-            }
-        }
-
-        std::shared_ptr<linux_epoll_instance> get_epoll_instance(linux_process_context& proc, const int fd)
-        {
-            const auto it = proc.epoll_instances.find(fd);
-            return it != proc.epoll_instances.end() ? it->second : std::shared_ptr<linux_epoll_instance>{};
-        }
-
-        int dup_fd_preserve_epoll_state(linux_process_context& proc, const int oldfd, const int minimum_fd = 0)
-        {
-            const auto* old_entry = proc.fds.get(oldfd);
-            const bool duplicates_epoll = old_entry != nullptr && old_entry->type == fd_type::epoll;
-            const auto epoll_instance = duplicates_epoll ? get_epoll_instance(proc, oldfd) : std::shared_ptr<linux_epoll_instance>{};
-            if (duplicates_epoll && !epoll_instance)
-            {
-                return -1;
-            }
-            const auto result = proc.fds.dup_fd(oldfd, minimum_fd);
-            if (result < 0)
-            {
-                return result;
-            }
-
-            share_directory_entries(proc, oldfd, result);
-            if (duplicates_epoll)
-            {
-                proc.epoll_instances[result] = epoll_instance;
-            }
-
-            return result;
-        }
-
-        int dup2_fd_cleanup_overwrite(linux_process_context& proc, const int oldfd, const int newfd)
-        {
-            const auto* old_entry = proc.fds.get(oldfd);
-            const bool duplicates_epoll = oldfd != newfd && old_entry != nullptr && old_entry->type == fd_type::epoll;
-            const auto epoll_instance = duplicates_epoll ? get_epoll_instance(proc, oldfd) : std::shared_ptr<linux_epoll_instance>{};
-            if (duplicates_epoll && !epoll_instance)
-            {
-                return -1;
-            }
-            const bool replaces_existing_fd = oldfd != newfd && proc.fds.get(newfd) != nullptr;
-            const auto result = proc.fds.dup2_fd(oldfd, newfd);
-            if (result < 0)
-            {
-                return result;
-            }
-
-            if (replaces_existing_fd)
-            {
-                cleanup_closed_fd(proc, newfd);
-            }
-
-            if (oldfd != newfd)
-            {
-                share_directory_entries(proc, oldfd, newfd);
-            }
-
-            if (duplicates_epoll)
-            {
-                proc.epoll_instances[newfd] = epoll_instance;
-            }
-
-            return result;
         }
 
         size_t align_up_8(const size_t value)
@@ -1014,9 +890,9 @@ namespace sogen
             new_fd.guest_path = resolved_guest.value_or(std::string{});
             new_fd.flags = flags;
             new_fd.read_only_mapping = read_only_mapping;
+            new_fd.directory_listing = list_directory(host_path);
 
             const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
-            init_directory_fd_state(c.proc, fd_num, host_path);
             write_linux_syscall_result(c, fd_num);
             return;
         }
@@ -1043,17 +919,13 @@ namespace sogen
     void sys_close(const linux_syscall_context& c)
     {
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
-
-        if (!c.proc.fds.close(fd))
+        const auto result = posix_close(c.proc.fds, fd);
+        if (std::holds_alternative<uint64_t>(result))
         {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
+            cleanup_linux_socket_state(fd);
         }
 
-        cleanup_closed_fd(c.proc, fd);
-        cleanup_linux_socket_state(fd);
-
-        write_linux_syscall_result(c, 0);
+        write_linux_syscall_result(c, result);
     }
 
     void sys_fstat(const linux_syscall_context& c)
@@ -1097,52 +969,8 @@ namespace sogen
     {
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         const auto offset = static_cast<int64_t>(get_linux_syscall_argument(c.emu, 1));
-        const auto whence = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
-        auto* fd_entry = c.proc.fds.get(fd);
-
-        if (!fd_entry)
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        if (fd_entry->type == fd_type::memory_file)
-        {
-            if (!fd_entry->memory_file)
-            {
-                write_linux_syscall_result(c, -LINUX_EBADF);
-                return;
-            }
-
-            const auto pos = seek_memory_file(*fd_entry, offset, whence);
-            write_linux_syscall_result(c, pos.has_value() ? static_cast<int64_t>(*pos) : -LINUX_EINVAL);
-            return;
-        }
-
-        if (!fd_entry->handle)
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        int origin = SEEK_SET;
-        if (whence == 1)
-        {
-            origin = SEEK_CUR;
-        }
-        else if (whence == 2)
-        {
-            origin = SEEK_END;
-        }
-
-        if (fseek(fd_entry->handle, static_cast<long>(offset), origin) /* NOLINT(google-runtime-int) */ != 0)
-        {
-            write_linux_syscall_result(c, -LINUX_EINVAL);
-            return;
-        }
-
-        const auto pos = ftell(fd_entry->handle);
-        write_linux_syscall_result(c, pos);
+        const auto whence = static_cast<uint32_t>(get_linux_syscall_argument(c.emu, 2));
+        write_linux_syscall_result(c, posix_lseek(c.proc.fds, fd, offset, whence));
     }
 
     void sys_access(const linux_syscall_context& c)
@@ -1256,9 +1084,9 @@ namespace sogen
             new_fd.guest_path = resolved_guest.value_or(std::string{});
             new_fd.flags = flags;
             new_fd.read_only_mapping = read_only_mapping;
+            new_fd.directory_listing = list_directory(host_path);
 
             const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
-            init_directory_fd_state(c.proc, fd_num, host_path);
             write_linux_syscall_result(c, fd_num);
             return;
         }
@@ -1523,16 +1351,14 @@ namespace sogen
     void sys_dup(const linux_syscall_context& c)
     {
         const auto oldfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
-        const auto result = dup_fd_preserve_epoll_state(c.proc, oldfd);
-        write_linux_syscall_result(c, result >= 0 ? result : -LINUX_EBADF);
+        write_linux_syscall_result(c, posix_dup(c.proc.fds, oldfd, 0, false, LINUX_DESCRIPTOR_LIMIT));
     }
 
     void sys_dup2(const linux_syscall_context& c)
     {
         const auto oldfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         const auto newfd = static_cast<int>(get_linux_syscall_argument(c.emu, 1));
-        const auto result = dup2_fd_cleanup_overwrite(c.proc, oldfd, newfd);
-        write_linux_syscall_result(c, result >= 0 ? result : -LINUX_EBADF);
+        write_linux_syscall_result(c, posix_dup2(c.proc.fds, oldfd, newfd, LINUX_DESCRIPTOR_LIMIT));
     }
 
     void sys_dup3(const linux_syscall_context& c)
@@ -1547,16 +1373,10 @@ namespace sogen
             return;
         }
 
-        const auto result = dup2_fd_cleanup_overwrite(c.proc, oldfd, newfd);
-        if (result < 0)
+        const auto result = posix_dup2(c.proc.fds, oldfd, newfd, LINUX_DESCRIPTOR_LIMIT);
+        if (std::holds_alternative<uint64_t>(result))
         {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        if (flags & LINUX_O_CLOEXEC)
-        {
-            c.proc.fds.set_close_on_exec(newfd, true);
+            c.proc.fds.set_close_on_exec(newfd, (flags & LINUX_O_CLOEXEC) != 0);
         }
 
         write_linux_syscall_result(c, result);
@@ -1564,6 +1384,13 @@ namespace sogen
 
     void sys_fcntl(const linux_syscall_context& c)
     {
+        constexpr int LINUX_F_DUPFD = 0;
+        constexpr int LINUX_F_GETFD = 1;
+        constexpr int LINUX_F_SETFD = 2;
+        constexpr int LINUX_F_GETFL = 3;
+        constexpr int LINUX_F_SETFL = 4;
+        constexpr int LINUX_F_DUPFD_CLOEXEC = 1030;
+
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         const auto cmd = static_cast<int>(get_linux_syscall_argument(c.emu, 1));
         const auto arg = get_linux_syscall_argument(c.emu, 2);
@@ -1575,58 +1402,21 @@ namespace sogen
             return;
         }
 
-        constexpr int LINUX_F_DUPFD = 0;
-        constexpr int LINUX_F_GETFD = 1;
-        constexpr int LINUX_F_SETFD = 2;
-        constexpr int LINUX_F_GETFL = 3;
-        constexpr int LINUX_F_SETFL = 4;
-        constexpr int LINUX_F_DUPFD_CLOEXEC = 1030;
-
-        if ((cmd == LINUX_F_DUPFD || cmd == LINUX_F_DUPFD_CLOEXEC) && arg > static_cast<uint64_t>(std::numeric_limits<int>::max()))
-        {
-            write_linux_syscall_result(c, -LINUX_EINVAL);
-            return;
-        }
-
         switch (cmd)
         {
-        case LINUX_F_DUPFD: {
-            const auto minimum_fd = static_cast<int>(arg);
-            if (minimum_fd < 0)
-            {
-                write_linux_syscall_result(c, -LINUX_EINVAL);
-                break;
-            }
-
-            const auto new_fd = dup_fd_preserve_epoll_state(c.proc, fd, minimum_fd);
-            write_linux_syscall_result(c, new_fd >= 0 ? new_fd : -LINUX_EMFILE);
+        case LINUX_F_DUPFD:
+        case LINUX_F_DUPFD_CLOEXEC:
+            write_linux_syscall_result(
+                c, posix_dup(c.proc.fds, fd, static_cast<int64_t>(arg), cmd == LINUX_F_DUPFD_CLOEXEC, LINUX_DESCRIPTOR_LIMIT));
             break;
-        }
-        case LINUX_F_DUPFD_CLOEXEC: {
-            const auto minimum_fd = static_cast<int>(arg);
-            if (minimum_fd < 0)
-            {
-                write_linux_syscall_result(c, -LINUX_EINVAL);
-                break;
-            }
-
-            const auto new_fd = dup_fd_preserve_epoll_state(c.proc, fd, minimum_fd);
-            if (new_fd >= 0)
-            {
-                c.proc.fds.set_close_on_exec(new_fd, true);
-            }
-            write_linux_syscall_result(c, new_fd >= 0 ? new_fd : -LINUX_EMFILE);
-            break;
-        }
         case LINUX_F_GETFD:
-            write_linux_syscall_result(c, c.proc.fds.is_close_on_exec(fd) ? 1 : 0);
+            write_linux_syscall_result(c, posix_get_descriptor_flags(c.proc.fds, fd));
             break;
         case LINUX_F_SETFD:
-            c.proc.fds.set_close_on_exec(fd, (arg & 1) != 0);
-            write_linux_syscall_result(c, 0);
+            write_linux_syscall_result(c, posix_set_descriptor_flags(c.proc.fds, fd, arg));
             break;
         case LINUX_F_GETFL:
-            write_linux_syscall_result(c, fd_entry->flags);
+            write_linux_syscall_result(c, posix_get_status_flags(c.proc.fds, fd));
             break;
         case LINUX_F_SETFL:
             fd_entry->flags = static_cast<int>(arg);
@@ -1849,19 +1639,12 @@ namespace sogen
             return;
         }
 
-        if (!c.proc.directory_entries.contains(fd))
+        if (!fd_entry->directory_listing)
         {
-            init_directory_fd_state(c.proc, fd, fd_entry->host_path);
+            fd_entry->directory_listing = list_directory(fd_entry->host_path);
         }
 
-        auto entries_it = c.proc.directory_entries.find(fd);
-        if (entries_it == c.proc.directory_entries.end())
-        {
-            write_linux_syscall_result(c, 0);
-            return;
-        }
-
-        const auto& entries = *entries_it->second;
+        const auto& entries = *fd_entry->directory_listing;
         auto& offset = fd_entry->directory_position;
 
         size_t written = 0;
@@ -1883,10 +1666,10 @@ namespace sogen
             }
 
             linux_dirent64_header hdr{};
-            hdr.d_ino = entry.ino;
+            hdr.d_ino = entry.inode;
             hdr.d_off = static_cast<int64_t>(offset) + 1;
             hdr.d_reclen = static_cast<uint16_t>(reclen);
-            hdr.d_type = entry.d_type;
+            hdr.d_type = entry.type;
 
             std::vector<uint8_t> record(reclen, 0);
             memcpy(record.data(), &hdr, sizeof(hdr));
