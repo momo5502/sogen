@@ -469,7 +469,8 @@ namespace sogen
                     break;
                 }
                 case handle_types::process: {
-                    if (!c.proc.processes.get(effective_handle))
+                    if (effective_handle != STEAM_PROCESS_HANDLE && effective_handle != PARENT_PROCESS_HANDLE &&
+                        !c.proc.processes.get(effective_handle))
                     {
                         return STATUS_INVALID_HANDLE;
                     }
