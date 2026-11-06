@@ -1,6 +1,7 @@
 #include "posix_open.hpp"
 #include "posix_host_error.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <fcntl.h>
 #include <filesystem>
@@ -200,6 +201,39 @@ namespace sogen
             return stream;
         }
 
+        bool has_non_directory_ancestor(const std::filesystem::path& host_path)
+        {
+            for (auto ancestor = host_path.parent_path(); !ancestor.empty(); ancestor = ancestor.parent_path())
+            {
+                std::error_code ec{};
+                const auto status = std::filesystem::status(ancestor, ec);
+                if (std::filesystem::exists(status))
+                {
+                    return !std::filesystem::is_directory(status);
+                }
+
+                if (ancestor == ancestor.parent_path())
+                {
+                    break;
+                }
+            }
+
+            return false;
+        }
+
+        // Windows reports a path below a regular file as missing, so ENOTDIR is derived from the path when the host
+        // gives no more specific reason.
+        posix_errno unresolved_path_error(const std::filesystem::path& host_path, const std::error_code& ec)
+        {
+            const auto condition = ec.default_error_condition();
+            if (ec && condition.category() == std::generic_category() && condition.value() != ENOENT)
+            {
+                return posix_errno_from_host(condition.value());
+            }
+
+            return has_non_directory_ancestor(host_path) ? posix_errno::enotdir : posix_errno::enoent;
+        }
+
         posix_fd make_descriptor(const fd_type type, const std::filesystem::path& host_path, const posix_open_request& request,
                                  const bool read_only_mapping)
         {
@@ -253,14 +287,14 @@ namespace sogen
             return static_cast<uint64_t>(fd);
         }
 
-        if (request.directory)
+        if (!exists && (request.directory || !request.create))
         {
-            return exists ? posix_errno::enotdir : posix_errno::enoent;
+            return unresolved_path_error(host_path, ec);
         }
 
-        if (!exists && !request.create)
+        if (request.directory)
         {
-            return posix_errno::enoent;
+            return posix_errno::enotdir;
         }
 
         if (read_only_mapping && modifies_file(request))

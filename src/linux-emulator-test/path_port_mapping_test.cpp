@@ -756,6 +756,32 @@ namespace sogen
         EXPECT_EQ(descriptors, (std::array<int32_t, 2>{3, 4}));
     }
 
+    TEST(LinuxFileDescriptorTest, OpeningPathBelowRegularFileFailsWithNotDirectory)
+    {
+        constexpr int64_t linux_enotdir = 20;
+        constexpr int64_t linux_enoent = 2;
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        {
+            std::ofstream file(emulation_root / "file.txt", std::ios::binary);
+            file << "A";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+
+        write_guest_string(emu, guest_memory_base, "/file.txt/child");
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY), -linux_enotdir);
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_DIRECTORY), -linux_enotdir);
+
+        write_guest_string(emu, guest_memory_base, "/missing/child");
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY), -linux_enoent);
+    }
+
     TEST(LinuxFileDescriptorTest, SeekingPipeFailsWithIllegalSeek)
     {
         constexpr int64_t linux_espipe = 29;
