@@ -2191,10 +2191,7 @@ namespace sogen
             const auto path = filename.substr(unc_prefix.size());
 
             const std::set<std::u16string, std::less<>> devices{
-                u"Nsi",
-                u"MountPointManager",
-                u"SogenGpu",
-                u"SogenSteam",
+                u"Nsi", u"MountPointManager", u"SogenGpu", u"SogenSteam", u"SogenQtBridge",
             };
 
             if (devices.contains(path))
@@ -2341,6 +2338,11 @@ namespace sogen
                     printer.cancel();
                     c.win_emu.callbacks.on_generic_access("Opening unsupported device", filename);
                     return STATUS_NO_SUCH_DEVICE;
+                }
+
+                if (*io_device_name == u"SogenQtBridge" && needs_32_bit_devices(c.win_emu))
+                {
+                    return STATUS_NOT_SUPPORTED;
                 }
 
                 const io_device_creation_data data{
