@@ -143,6 +143,9 @@ namespace sogen
         // alias host memory into the guest non-coherently.
         bool host_memory_aliasing_is_coherent() const override;
         bool supports_page_granular_protection() const override;
+        bool supports_restartable_faults() const override;
+        // Whether a guard page below a thread stack can grow the stack: it has to fault, and the access has to run again.
+        bool supports_guarded_stack_growth() const;
         void flush_host_memory_cache(const void* host_pointer, size_t size) override;
         bool track_access(uint64_t address, size_t size) override;
         void take_written_ranges(uint64_t address, size_t size,

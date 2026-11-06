@@ -990,10 +990,11 @@ namespace sogen
 
     // Stacks created while the backend could fault on single pages keep their guard pages; once it no longer can (a
     // debugger took the watchpoints), those guard pages would never fault and the stacks would run into reserved
-    // memory, so they are committed in full like the stacks created afterwards.
-    void windows_emulator::commit_thread_stacks_if_page_protection_was_lost()
+    // memory, so they are committed in full like the stacks created afterwards. A restored process can bring guarded
+    // stacks to a backend that cannot grow them at all.
+    void windows_emulator::commit_thread_stacks_without_guarded_growth()
     {
-        if (this->thread_stacks_committed_in_full_ || this->memory.supports_page_granular_protection())
+        if (this->thread_stacks_committed_in_full_ || this->memory.supports_guarded_stack_growth())
         {
             return;
         }
@@ -1008,7 +1009,7 @@ namespace sogen
 
         if (this->page_protection_check_due_.exchange(false))
         {
-            this->commit_thread_stacks_if_page_protection_was_lost();
+            this->commit_thread_stacks_without_guarded_growth();
         }
 
         const auto needed_switch = vcpu.switch_thread.exchange(false);
@@ -3131,6 +3132,8 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->thread_stacks_committed_in_full_ = false;
+        this->commit_thread_stacks_without_guarded_growth();
         // A state saved while vCPU 0 was idle, without prepare_serialization, has no running thread.
         this->occupy_idle_first_vcpu(nullptr);
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
@@ -3257,6 +3260,8 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->thread_stacks_committed_in_full_ = false;
+        this->commit_thread_stacks_without_guarded_growth();
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
     }
