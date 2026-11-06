@@ -13,6 +13,8 @@ namespace sogen::test
                                                                        0x98, 0xb4, 0xa1, 0x98, 0x0d, 0x00, 0xd2, 0x34};
         constexpr std::array<uint8_t, 16> audio_client_interface_26100{0x11, 0xd1, 0x74, 0xd5, 0x26, 0x61, 0xd7, 0x49,
                                                                        0x9b, 0x86, 0x4d, 0xe6, 0xb6, 0x50, 0xd4, 0xfc};
+        constexpr std::array<uint8_t, 16> audio_client_interface_19041{0x76, 0x52, 0x93, 0x5f, 0x7b, 0x1c, 0xf5, 0x46,
+                                                                       0xac, 0x77, 0x07, 0x77, 0x59, 0x00, 0x1d, 0x2b};
 
         constexpr size_t reply_header_size = 0x18;
         constexpr uint32_t sample_rate = 44100;
@@ -219,6 +221,56 @@ namespace sogen::test
 
         this->emu->memory.write_memory(header + 0x10, uint64_t{4096});
         EXPECT_TRUE(this->play_cursor_reaches(header + 0x18, 4096));
+    }
+
+    TEST_F(AudioServiceTest, ReadsWindows10IsFormatSupportedFormat)
+    {
+        this->expect_format_accepted(audio_client_interface_19041, 8, 312, 368);
+        this->expect_format_accepted(audio_client_interface_19041, 4, 284, 332);
+    }
+
+    TEST_F(AudioServiceTest, AnswersWindows10SessionOpnums)
+    {
+        this->expect_session_opnums(audio_client_interface_19041, 26, 54, 120);
+    }
+
+    TEST_F(AudioServiceTest, CreatesWindows10RenderControlData)
+    {
+#if defined(OS_EMSCRIPTEN) && !defined(__EMSCRIPTEN_PTHREADS__)
+        GTEST_SKIP() << "Requires host threads";
+#endif
+        const auto header = this->create_render_buffer(audio_client_interface_19041);
+        ASSERT_NE(0u, header);
+
+        EXPECT_EQ(0x45504344u, this->read_guest<uint32_t>(header + 0xC0));
+        EXPECT_EQ(22u + 200u, this->read_guest<uint32_t>(header + 0xC8));
+        EXPECT_EQ(uint16_t{0xFFFE}, this->read_guest<uint16_t>(header + 0x17C));
+
+        this->emu->memory.write_memory(header + 0x10, uint64_t{4096});
+        EXPECT_TRUE(this->play_cursor_reaches(header + 0x18, 4096));
+    }
+
+    TEST_F(AudioServiceTest, PlacesWindows10RenderSectionAfterItsThirdStreamI64)
+    {
+#if defined(OS_EMSCRIPTEN) && !defined(__EMSCRIPTEN_PTHREADS__)
+        GTEST_SKIP() << "Requires host threads";
+#endif
+        this->bind(u"\\RPC Control\\AudioClientRpc", audio_client_interface_19041, 8);
+        const auto context = this->open_stream(368);
+        std::vector<uint8_t> data(44);
+        std::memcpy(data.data(), context.data(), context.size());
+        std::memcpy(data.data() + 24, &one_second_hns, sizeof(one_second_hns));
+
+        const auto reply = this->call(7, data);
+        ASSERT_EQ(STATUS_SUCCESS, reply.status);
+        ASSERT_TRUE(reply.payload.has_value());
+        const auto& payload = *reply.payload;
+        EXPECT_EQ(reply_header_size + 0x7C, payload.size());
+        EXPECT_EQ(0u, read<uint64_t>(payload, reply_header_size + 0x30));
+        EXPECT_EQ(1u, read<uint32_t>(payload, reply_header_size + 0x58));
+        EXPECT_EQ(1u, read<uint32_t>(payload, reply_header_size + 0x5C));
+        EXPECT_EQ(1u, read<uint64_t>(payload, reply_header_size + 0x60));
+        EXPECT_EQ(0u, trailing_hresult(payload));
     }
 
     TEST_F(AudioServiceTest, KeepsServer2025RenderControlData)
