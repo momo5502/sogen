@@ -638,6 +638,7 @@ namespace sogen
                                               emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                               emulator_pointer device, emulator_pointer devmode, DWORD flags, ACCESS_MASK desired_access,
                                               ULONG heap_size);
+        hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, DWORD flags, BOOL inherit, ACCESS_MASK desired_access);
         BOOL handle_NtUserCloseDesktop(const syscall_context& c, handle desktop_handle);
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
         BOOL handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
@@ -748,9 +749,12 @@ namespace sogen
         BOOL handle_NtUserZapActiveAndFocus(const syscall_context& c);
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL Ansi);
+        emulator_pointer completion_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
+                                                           BOOL Ansi);
         emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                       BOOL Ansi);
         uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
+        uint32_t completion_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
         uint64_t handle_NtUserGetAncestor(const syscall_context& c, hwnd child_hwnd, UINT flags);
         BOOL handle_NtUserIsTopLevelWindow(const syscall_context& c, hwnd window);
         BOOL handle_NtUserRedrawWindow(const syscall_context& c, hwnd hwnd, emulator_object<RECT> update_rect, uint64_t update_rgn,
@@ -923,6 +927,7 @@ namespace sogen
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         uint64_t handle_NtGdiSelectBitmap(const syscall_context& c, hdc dc, handle bitmap);
         uint64_t handle_NtGdiSelectFont(const syscall_context& c, hdc dc, uint64_t font);
+        BOOL handle_NtGdiFillRgn(const syscall_context& c, hdc dc, handle region, hbrush brush);
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         BOOL handle_NtGdiGetDCDword(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
         BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, hdc dc, uint32_t method, uint32_t value, emulator_pointer result);
@@ -1101,8 +1106,11 @@ namespace sogen
             {
                 if (performance_counter)
                 {
+                    // With the reference TSC page this is the value ntdll computes from it in user mode, from the same TSC.
+                    const auto tsc = c.proc.kusd.reference_tsc_page() ? c.emu.read_native_timestamp_counter() : std::nullopt;
                     performance_counter.access([&](LARGE_INTEGER& value) {
-                        value.QuadPart = c.win_emu.clock().steady_now().time_since_epoch().count(); //
+                        value.QuadPart = tsc ? static_cast<LONGLONG>(c.proc.kusd.query_performance_counter(*tsc))
+                                             : c.win_emu.clock().steady_now().time_since_epoch().count();
                     });
                 }
 
@@ -1946,6 +1954,7 @@ namespace sogen
         add_handler(NtUserSetProcessWindowStation);
         add_handler(NtUserCloseWindowStation);
         add_handler(NtUserCreateDesktopEx);
+        add_handler(NtUserOpenInputDesktop);
         add_handler(NtUserCloseDesktop);
         add_handler(NtUserCallHwndParam);
         add_handler(NtUserCallHwndLock);
@@ -2110,6 +2119,7 @@ namespace sogen
         add_handler(NtGdiDdDDISignalSynchronizationObjectFromCpu);
         add_handler(NtUnBindCompositionSurface);
         add_handler(NtGdiSelectFont);
+        add_handler(NtGdiFillRgn);
         add_handler(NtUserInitThreadCoreMessagingIocp2);
         add_handler(NtUserDrainThreadCoreMessagingCompletions2);
         add_handler(NtUserSetTimer);
@@ -2241,6 +2251,8 @@ namespace sogen
         add_callback(NtUserEndDeferWindowPosEx, deferred_window_position_state);
         add_callback(NtUserMessageCall, message_call_state);
         add_callback(NtUserGetComboBoxInfo, message_call_state);
+        add_callback(NtUserSetWindowLong, window_style_change_state);
+        add_callback(NtUserSetWindowLongPtr, window_style_change_state);
         add_callback(NtUserUpdateWindow, window_update_state);
         add_callback(NtUserGetMessage, get_message_hook_state);
         add_callback(NtUserPeekMessage, get_message_hook_state);

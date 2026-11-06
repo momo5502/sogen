@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <optional>
 #include <source_location>
 #include <sstream>
 #include <stdexcept>
@@ -235,6 +236,12 @@ namespace sogen
 
         virtual memory_interface& memory() = 0;
         virtual const memory_interface& memory() const = 0;
+
+        // The guest's timestamp counter as RDTSC would read it now, on backends whose guest runs RDTSC natively.
+        virtual std::optional<uint64_t> read_native_timestamp_counter()
+        {
+            return std::nullopt;
+        }
 
         // Guest memory is shared by every vCPU, so a CPU can stand in wherever a
         // memory_interface is expected (emulator_object, read_string, ...). Only

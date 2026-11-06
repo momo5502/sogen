@@ -391,12 +391,13 @@ namespace sogen
         };
 
         process_context(memory_interface& emu, memory_manager& memory, utils::clock& clock, callbacks& cb, const bool intercept_kusd,
-                        const windows_guest_architecture architecture = windows_guest_architecture::x86_64)
+                        const windows_guest_architecture architecture = windows_guest_architecture::x86_64,
+                        std::function<std::optional<native_tsc>()> read_tsc = {})
             : callbacks_(&cb),
               base_allocator(emu),
               peb64(emu),
               process_params64(emu),
-              kusd(memory, clock, intercept_kusd),
+              kusd(memory, clock, intercept_kusd, std::move(read_tsc)),
               user_handles(memory)
         {
             (void)windows_abi_for(architecture);

@@ -8,7 +8,9 @@ move, unavailable, hand and background-progress cursors. Other IDs select the ar
 Guest cursor selection reaches this path through `NtUserSetCursor` for numeric stock
 cursor resources from `USER32`. Selecting a stock cursor updates the host shape while
 preserving the previous-handle return value and the existing visibility/display-count
-behavior. Custom or named cursor resources and icons retain their current behavior.
+behavior. Custom or named cursor resources and icons select the neutral arrow until
+custom shapes are supported. Snapshot restoration and deserialization reapply the saved
+shape and visibility using the same stock-resource classification.
 [SetCursor](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setcursor)
 with a null handle still hides the pointer; selecting a shape while the display count is
 negative leaves it hidden until `ShowCursor` makes the count non-negative.

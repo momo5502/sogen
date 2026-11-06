@@ -30,9 +30,9 @@ namespace sogen::test
                 this->shape = idc;
             }
 
-            void set_cursor_visibility(const bool visible) override
+            void set_cursor_visibility(const bool value) override
             {
-                this->visible = visible;
+                this->visible = value;
             }
 
             std::optional<uint32_t> shape{};
@@ -44,10 +44,10 @@ namespace sogen::test
           protected:
             void SetUp() override
             {
-                auto ui = std::make_unique<cursor_ui>();
-                this->ui = ui.get();
+                auto backend = std::make_unique<cursor_ui>();
+                this->ui = backend.get();
                 emulator_interfaces interfaces{};
-                interfaces.ui = std::move(ui);
+                interfaces.ui = std::move(backend);
                 this->emu =
                     std::make_unique<windows_emulator>(create_x86_64_emulator_from_environment(), get_sample_app_settings({}),
                                                        emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root()},
@@ -89,6 +89,53 @@ namespace sogen::test
                 return cursor;
             }
 
+            void check_restore(const bool snapshot, const bool custom, const bool hidden)
+            {
+                const auto wait = this->stock(32514);
+                const auto text = this->stock(32513);
+                auto selected = wait;
+                if (custom)
+                {
+                    auto [handle, cursor] = this->emu->process.cursor_icons.create(this->emu->memory);
+                    cursor.type = 1;
+                    cursor.module_name = u"sample.dll";
+                    cursor.resource_id = 32514;
+                    selected = handle.bits;
+                }
+                syscalls::handle_NtUserSetCursor(this->context(), selected);
+                if (hidden)
+                {
+                    syscalls::handle_NtUserShowCursor(this->context(), FALSE);
+                }
+                utils::buffer_serializer saved{};
+                if (snapshot)
+                {
+                    this->emu->save_snapshot();
+                }
+                else
+                {
+                    this->emu->serialize(saved);
+                }
+                syscalls::handle_NtUserSetCursor(this->context(), text);
+                if (hidden)
+                {
+                    syscalls::handle_NtUserShowCursor(this->context(), TRUE);
+                }
+                ASSERT_EQ(32513u, this->ui->shape);
+                if (snapshot)
+                {
+                    this->emu->restore_snapshot();
+                }
+                else
+                {
+                    utils::buffer_deserializer reader{saved.get_buffer()};
+                    this->emu->deserialize(reader);
+                }
+                EXPECT_EQ(selected, this->emu->process.current_cursor);
+                EXPECT_EQ(custom ? 32512u : 32514u, this->ui->shape);
+                EXPECT_EQ(!hidden, this->ui->visible);
+            }
+
             std::unique_ptr<windows_emulator> emu{};
             cursor_ui* ui{};
             uint64_t storage{};
@@ -127,7 +174,7 @@ namespace sogen::test
         EXPECT_EQ(32513u, this->ui->shape);
     }
 
-    TEST_F(CursorSelectionTest, OtherCursorResourcesKeepTheirExistingBehavior)
+    TEST_F(CursorSelectionTest, NonStockCursorResourcesSelectTheNeutralArrow)
     {
         const auto text = this->stock(32513);
         syscalls::handle_NtUserSetCursor(this->context(), text);
@@ -136,19 +183,44 @@ namespace sogen::test
         custom.module_name = u"sample.dll";
         custom.resource_id = 32512;
         EXPECT_EQ(text, syscalls::handle_NtUserSetCursor(this->context(), handle.bits));
-        EXPECT_EQ(32513u, this->ui->shape);
+        EXPECT_EQ(32512u, this->ui->shape);
         EXPECT_TRUE(this->ui->visible);
         custom.module_name = u"USER32";
         custom.resource_name = u"NamedCursor";
+        syscalls::handle_NtUserSetCursor(this->context(), text);
         syscalls::handle_NtUserSetCursor(this->context(), handle.bits);
-        EXPECT_EQ(32513u, this->ui->shape);
+        EXPECT_EQ(32512u, this->ui->shape);
         custom.resource_name.clear();
         custom.type = 3;
+        syscalls::handle_NtUserSetCursor(this->context(), text);
         syscalls::handle_NtUserSetCursor(this->context(), handle.bits);
-        EXPECT_EQ(32513u, this->ui->shape);
+        EXPECT_EQ(32512u, this->ui->shape);
         custom.type = 1;
         custom.resource_id = 42;
+        syscalls::handle_NtUserSetCursor(this->context(), text);
         syscalls::handle_NtUserSetCursor(this->context(), handle.bits);
-        EXPECT_EQ(32513u, this->ui->shape);
+        EXPECT_EQ(32512u, this->ui->shape);
+    }
+
+    TEST_F(CursorSelectionTest, SnapshotRestoresTheStockCursorShapeAndVisibility)
+    {
+        this->check_restore(true, false, false);
+        this->check_restore(true, false, true);
+    }
+
+    TEST_F(CursorSelectionTest, DeserializationRestoresTheStockCursorShapeAndVisibility)
+    {
+        this->check_restore(false, false, false);
+        this->check_restore(false, false, true);
+    }
+
+    TEST_F(CursorSelectionTest, SnapshotRestoresTheNeutralArrowForCustomCursors)
+    {
+        this->check_restore(true, true, false);
+    }
+
+    TEST_F(CursorSelectionTest, DeserializationRestoresTheNeutralArrowForCustomCursors)
+    {
+        this->check_restore(false, true, false);
     }
 } // namespace sogen::test

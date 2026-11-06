@@ -749,10 +749,19 @@ namespace sogen
             case SystemProcessInformation:
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
+            case SystemHypervisorSharedPageInformation:
+                // ntdll keeps this address and computes QueryPerformanceCounter from the page in user mode.
+                if (const auto page = c.proc.kusd.reference_tsc_page())
+                {
+                    return handle_query<uint64_t>(c.emu, system_information, system_information_length, return_length,
+                                                  [&](uint64_t& address) { address = *page; });
+                }
+
+                return STATUS_NOT_SUPPORTED;
+
             case SystemFlushInformation:
             case SystemSecureBootPolicyInformation:
             case SystemCodeIntegrityPoliciesFullInformation:
-            case SystemHypervisorSharedPageInformation:
             case SystemFeatureConfigurationInformation:
             case SystemFeatureConfigurationSectionInformation:
             case SystemFirmwareTableInformation:

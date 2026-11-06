@@ -428,6 +428,7 @@ namespace sogen
         void update_key_state(const ui_event& event);
         ui_event resolve_injected_event(const ui_event& event) const;
         void apply_cursor_capture();
+        void apply_cursor_shape();
         void set_foreground_window(hwnd window);
 
         // The highest address the process's own code can reach: 32-bit code only reaches the low 2GB unless the
@@ -583,6 +584,17 @@ namespace sogen
         bool runs_elevated() const
         {
             return this->elevated_;
+        }
+
+        // The rate of the guest's own timestamp counter while the guest reads it natively, without RDTSC interception.
+        std::optional<uint64_t> native_timestamp_counter_frequency() const
+        {
+            if (this->intercept_rdtsc_ || !this->use_native_timestamp_counter_)
+            {
+                return std::nullopt;
+            }
+
+            return this->emu_->native_timestamp_counter_frequency();
         }
 
         uint32_t vcpu_count() const
@@ -811,6 +823,8 @@ namespace sogen
 
         void register_factories(utils::buffer_deserializer& buffer);
         void ensure_serialization_support() const;
+        void idle_secondary_vcpus();
+        void occupy_idle_first_vcpu(emulator_thread* preferred);
     };
 
 } // namespace sogen

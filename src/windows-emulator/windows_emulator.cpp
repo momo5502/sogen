@@ -845,7 +845,18 @@ namespace sogen
                        ? registry_manager{emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"}
                        : registry_manager{}),
           mod_manager(memory, file_sys, this->callbacks, guest_architecture_of(*this->emu_)),
-          process(*this->emu_, memory, *this->clock_, this->callbacks, settings.intercept_kusd, guest_architecture_of(*this->emu_)),
+          process(*this->emu_, memory, *this->clock_, this->callbacks, settings.intercept_kusd, guest_architecture_of(*this->emu_),
+                  [this]() -> std::optional<native_tsc> {
+                      // vCPUs share one TSC; the guest reads it natively only without RDTSC interception.
+                      const auto frequency = this->native_timestamp_counter_frequency();
+                      const auto value = frequency ? this->emu_->get_guest_cpu(0).read_native_timestamp_counter() : std::nullopt;
+                      if (!value)
+                      {
+                          return std::nullopt;
+                      }
+
+                      return native_tsc{.value = *value, .frequency = *frequency};
+                  }),
           use_relative_time_(settings.use_relative_time),
           // Instruction precision runs through a global execution hook; backends that only count instructions
           // (single-stepping) cannot provide it.
@@ -1010,10 +1021,25 @@ namespace sogen
             if (this->vcpu_count_ > 1 && vcpu.active_thread)
             {
                 // Nothing runnable for this vCPU: detach the stale thread so another
-                // vCPU can pick it up once it becomes ready.
-                vcpu.active_thread->save(vcpu.cpu);
-                vcpu.active_thread = nullptr;
+                // vCPU can pick it up once it becomes ready. As in a switch's register
+                // transfer, its registers are saved with the kernel lock released. The
+                // vCPU counts as idle meanwhile, so a thread readied during the save
+                // credits it a wakeup.
+                auto& detached = *std::exchange(vcpu.active_thread, nullptr);
+                detached.registers_in_transit = true;
+                ++this->idle_vcpus_;
+                lock.unlock();
+                detached.save(vcpu.cpu);
+                lock.lock();
+                --this->idle_vcpus_;
+                detached.registers_in_transit = false;
                 this->thread_registers_saved_.notify_all();
+
+                // A pass that ran during the save skipped it.
+                if (detached.is_thread_ready(*this))
+                {
+                    continue;
+                }
             }
 
             const auto host_wait_pending = has_pending_host_wait(this->process);
@@ -2973,11 +2999,80 @@ namespace sogen
         {
             device.prepare_serialization(*this);
         }
+
+        // A snapshot keeps one running thread, vCPU 0's, whose registers the backend saves. The threads the other vCPUs
+        // run go back into their thread objects with their live registers, as when a vCPU drops a thread; restored, the
+        // scheduler hands them out again.
+        emulator_thread* running_elsewhere{};
+        for (uint32_t i = 1; i < this->vcpu_count_; ++i)
+        {
+            auto& vcpu = *this->vcpus_[i];
+            if (vcpu.active_thread && !vcpu.active_thread_saved)
+            {
+                vcpu.active_thread->save(vcpu.cpu);
+            }
+            if (!running_elsewhere && vcpu.active_thread && !vcpu.active_thread->is_terminated())
+            {
+                running_elsewhere = vcpu.active_thread;
+            }
+        }
+        this->idle_secondary_vcpus();
+        this->occupy_idle_first_vcpu(running_elsewhere);
+    }
+
+    // A snapshot keeps a running thread on vCPU 0, as one taken with a single vCPU always does, but with several vCPUs, vCPU
+    // 0 may be idle when the process stops. It then gets a thread the way a switch hands it one: the preferred one (a
+    // thread another vCPU was running), else the first that has not ended.
+    void windows_emulator::occupy_idle_first_vcpu(emulator_thread* preferred)
+    {
+        auto& first = *this->vcpus_[0];
+        if (first.active_thread)
+        {
+            return;
+        }
+
+        auto* thread = preferred;
+        for (auto& candidate : this->process.threads | std::views::values)
+        {
+            if (thread)
+            {
+                break;
+            }
+            if (!candidate.is_terminated())
+            {
+                thread = &candidate;
+            }
+        }
+
+        if (thread)
+        {
+            first.set_active_thread(thread);
+            thread->restore(first.cpu, this->process.gdt_base);
+            thread->setup_if_necessary(first.cpu, this->process);
+        }
+    }
+
+    void windows_emulator::idle_secondary_vcpus()
+    {
+        for (uint32_t i = 1; i < this->vcpu_count_; ++i)
+        {
+            auto& vcpu = *this->vcpus_[i];
+            vcpu.set_active_thread(nullptr);
+            vcpu.active_thread_saved = false;
+            vcpu.switch_thread = false;
+        }
     }
 
     void windows_emulator::serialize(utils::buffer_serializer& buffer) const
     {
         this->ensure_serialization_support();
+        for (uint32_t i = 1; i < this->vcpu_count_; ++i)
+        {
+            if (this->vcpus_[i]->active_thread)
+            {
+                throw std::runtime_error("A snapshot keeps only vCPU 0's thread running; call prepare_serialization first");
+            }
+        }
 
         buffer.write(this->application_settings_);
         buffer.write(this->setup_completed_);
@@ -3033,8 +3128,12 @@ namespace sogen
         emulator_thread* restored_thread{};
         this->process.deserialize(buffer, restored_thread);
         this->vcpus_[0]->set_active_thread(restored_thread);
+        this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        // A state saved while vCPU 0 was idle, without prepare_serialization, has no running thread.
+        this->occupy_idle_first_vcpu(nullptr);
+        this->apply_cursor_shape();
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
         this->release_held_input();
@@ -3079,6 +3178,26 @@ namespace sogen
         }
         const auto* executable = this->mod_manager.executable;
         return (executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) ? 0xFFFEFFFF : 0x7FFEFFFF;
+    }
+
+    void windows_emulator::apply_cursor_shape()
+    {
+        if (this->process.current_cursor == 0)
+        {
+            return;
+        }
+        uint32_t idc = 32512;
+        const auto* cursor = this->process.cursor_icons.get(this->process.current_cursor);
+        if (cursor && cursor->type == 1 && cursor->resource_name.empty() &&
+            utils::string::equals_ignore_case(cursor->module_name, std::u16string{u"USER32"}) &&
+            ((cursor->resource_id >= 32512 && cursor->resource_id <= 32516) ||
+             (cursor->resource_id >= 32642 && cursor->resource_id <= 32646) ||
+             (cursor->resource_id >= 32648 && cursor->resource_id <= 32652) || cursor->resource_id == 32671 ||
+             cursor->resource_id == 32672))
+        {
+            idc = cursor->resource_id;
+        }
+        this->ui().set_system_cursor(idc);
     }
 
     // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while
@@ -3156,8 +3275,10 @@ namespace sogen
         emulator_thread* restored_thread{};
         this->process.deserialize(buffer, restored_thread);
         this->vcpus_[0]->set_active_thread(restored_thread);
+        this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->apply_cursor_shape();
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
     }

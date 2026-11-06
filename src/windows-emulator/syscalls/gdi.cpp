@@ -3587,6 +3587,80 @@ namespace sogen
             return dc != 0 ? font : 0;
         }
 
+        BOOL handle_NtGdiFillRgn(const syscall_context& c, const hdc dc, const handle region, const hbrush brush)
+        {
+            uint64_t dc_attr = 0;
+            if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            {
+                return FALSE;
+            }
+
+            (void)handle_NtGdiFlush(c);
+
+            const auto rects = read_gdi_region(c, static_cast<uint32_t>(region.bits));
+            if (!rects)
+            {
+                return FALSE;
+            }
+            if (rects->empty())
+            {
+                return TRUE;
+            }
+
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            uint32_t present_handle = 0;
+            auto* surface = resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
+            if (!surface)
+            {
+                return TRUE;
+            }
+
+            const auto is_visible = [&](const RECT& rect) {
+                return static_cast<int64_t>(rect.left) + origin_x < surface->width &&
+                       static_cast<int64_t>(rect.top) + origin_y < surface->height && static_cast<int64_t>(rect.right) + origin_x > 0 &&
+                       static_cast<int64_t>(rect.bottom) + origin_y > 0;
+            };
+            if (!std::ranges::any_of(*rects, is_visible))
+            {
+                return TRUE;
+            }
+
+            const auto brush_handle = static_cast<uint32_t>(brush);
+            GDI_HANDLE_ENTRY64 brush_entry{};
+            uint64_t entry_address = 0;
+            if (!read_gdi_entry_for_handle(c, brush_handle, brush_entry, entry_address) || brush_entry.Type != k_gdi_brush_type)
+            {
+                return FALSE;
+            }
+
+            auto color = get_brush_color_in_dc(c, dc, brush_handle);
+            if (gdi_object_type(brush_entry) != k_gdi_brush_type)
+            {
+                if (brush_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_null_pen_index)))
+                {
+                    return FALSE;
+                }
+                color = brush_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_dc_pen_index))
+                            ? read_dc_attr_colorref(c, dc_attr + k_gdi_dc_attr_dc_pen_color_offset)
+                            : read_dc_attr_colorref(c, brush_entry.Object + sizeof(uint32_t));
+            }
+            if (!color)
+            {
+                return FALSE;
+            }
+
+            const auto rop2 = static_cast<uint8_t>(((get_dc_rop2(c, dc) - 1u) & 0xFu) + 1u);
+            for (const auto& rect : *rects)
+            {
+                fill_rect_rop2(*surface, static_cast<int64_t>(rect.left) + origin_x, static_cast<int64_t>(rect.top) + origin_y,
+                               static_cast<int64_t>(rect.right) + origin_x, static_cast<int64_t>(rect.bottom) + origin_y, *color, rop2);
+            }
+
+            present_win_surface(c, present_handle, surface);
+            return TRUE;
+        }
+
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, const handle bitmap)
         {
             const auto bitmap_handle = static_cast<uint32_t>(bitmap.bits);

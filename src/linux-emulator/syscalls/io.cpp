@@ -144,8 +144,7 @@ namespace sogen
 #endif
         }
 
-        bool epoll_instance_has_ready_entries(linux_process_context& proc, const linux_epoll_instance& instance,
-                                              std::vector<int>& epoll_stack);
+        bool epoll_has_ready_entries(linux_process_context& proc, const posix_fd& epoll, std::vector<int>& epoll_stack);
 
         bool fd_has_readable_data(linux_process_context& proc, const int fd, const posix_fd& fd_entry, std::vector<int>& epoll_stack)
         {
@@ -174,14 +173,8 @@ namespace sogen
                 return false;
             }
 
-            auto it = proc.epoll_instances.find(fd);
-            if (it == proc.epoll_instances.end() || !it->second)
-            {
-                return false;
-            }
-
             epoll_stack.push_back(fd);
-            const auto has_ready_entries = epoll_instance_has_ready_entries(proc, *it->second, epoll_stack);
+            const auto has_ready_entries = epoll_has_ready_entries(proc, fd_entry, epoll_stack);
             epoll_stack.pop_back();
             return has_ready_entries;
         }
@@ -191,7 +184,7 @@ namespace sogen
             return fd.type == fd_type::file || fd.type == fd_type::pipe_write || fd.type == fd_type::socket;
         }
 
-        uint32_t ready_events_for_entry(linux_process_context& proc, const linux_epoll_entry& entry, std::vector<int>& epoll_stack)
+        uint32_t ready_events_for_entry(linux_process_context& proc, const posix_epoll_entry& entry, std::vector<int>& epoll_stack)
         {
             auto* fd_entry = proc.fds.get(entry.fd);
             if (!fd_entry)
@@ -213,10 +206,9 @@ namespace sogen
             return ready_events;
         }
 
-        bool epoll_instance_has_ready_entries(linux_process_context& proc, const linux_epoll_instance& instance,
-                                              std::vector<int>& epoll_stack)
+        bool epoll_has_ready_entries(linux_process_context& proc, const posix_fd& epoll, std::vector<int>& epoll_stack)
         {
-            return std::ranges::any_of(instance.entries, [&proc, &epoll_stack](const linux_epoll_entry& entry) {
+            return std::ranges::any_of(epoll.epoll_entries, [&proc, &epoll_stack](const posix_epoll_entry& entry) {
                 return ready_events_for_entry(proc, entry, epoll_stack) != 0;
             });
         }
@@ -403,7 +395,6 @@ namespace sogen
         efd.type = fd_type::epoll;
 
         const auto fd_num = c.proc.fds.allocate(std::move(efd), (flags & LINUX_O_CLOEXEC) != 0);
-        c.proc.epoll_instances[fd_num] = std::make_shared<linux_epoll_instance>();
 
         write_linux_syscall_result(c, fd_num);
     }
@@ -416,8 +407,7 @@ namespace sogen
         const auto event_addr = get_linux_syscall_argument(c.emu, 3);
 
         auto* epoll_fd = c.proc.fds.get(epfd);
-        auto it = c.proc.epoll_instances.find(epfd);
-        if (!epoll_fd || epoll_fd->type != fd_type::epoll || it == c.proc.epoll_instances.end() || !it->second)
+        if (!epoll_fd || epoll_fd->type != fd_type::epoll)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -432,22 +422,17 @@ namespace sogen
         switch (op)
         {
         case EPOLL_CTL_ADD: {
-            linux_epoll_entry entry{};
-            entry.fd = fd;
-            entry.events = ev.events;
-            entry.data = ev.data;
-            it->second->entries.push_back(entry);
+            epoll_fd->epoll_entries.push_back({.fd = fd, .events = ev.events, .data = ev.data});
             write_linux_syscall_result(c, 0);
             break;
         }
         case EPOLL_CTL_DEL: {
-            auto& entries = it->second->entries;
-            entries.erase(std::ranges::remove_if(entries, [fd](const linux_epoll_entry& e) { return e.fd == fd; }).begin(), entries.end());
+            std::erase_if(epoll_fd->epoll_entries, [fd](const posix_epoll_entry& e) { return e.fd == fd; });
             write_linux_syscall_result(c, 0);
             break;
         }
         case EPOLL_CTL_MOD: {
-            for (auto& entry : it->second->entries)
+            for (auto& entry : epoll_fd->epoll_entries)
             {
                 if (entry.fd == fd)
                 {
@@ -475,8 +460,7 @@ namespace sogen
         (void)timeout;
 
         auto* epoll_fd = c.proc.fds.get(epfd);
-        auto it = c.proc.epoll_instances.find(epfd);
-        if (!epoll_fd || epoll_fd->type != fd_type::epoll || it == c.proc.epoll_instances.end() || !it->second)
+        if (!epoll_fd || epoll_fd->type != fd_type::epoll)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -484,7 +468,7 @@ namespace sogen
 
         int count = 0;
         std::vector<int> epoll_stack{epfd};
-        for (const auto& entry : it->second->entries)
+        for (const auto& entry : epoll_fd->epoll_entries)
         {
             if (count >= maxevents)
             {

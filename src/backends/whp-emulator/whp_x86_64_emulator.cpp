@@ -1265,6 +1265,11 @@ namespace sogen::whp
                 return true;
             }
 
+            std::optional<uint64_t> read_native_timestamp_counter() override
+            {
+                return this->get_register(WHvX64RegisterTsc).Reg64;
+            }
+
             WHV_REGISTER_VALUE get_register(const WHV_REGISTER_NAME name) const
             {
                 WHV_REGISTER_VALUE value{};
@@ -1990,23 +1995,16 @@ namespace sogen::whp
                 this->memory_write_hooks_.erase(hook);
             }
 
+            // Only vCPU 0's registers: the emulator saves the threads the other vCPUs run into their thread objects first
+            // (windows_emulator::prepare_serialization), and a vCPU holds nothing between threads that its threads do not
+            // carry, since save_registers is what a thread switch moves.
             void serialize_state(utils::buffer_serializer& buffer, const bool) const override
             {
-                if (this->vcpus_.size() > 1)
-                {
-                    throw std::runtime_error("Multi-vCPU snapshots are not supported yet");
-                }
-
                 buffer.write_vector(this->vcpus_[0]->save_registers());
             }
 
             void deserialize_state(utils::buffer_deserializer& buffer, const bool) override
             {
-                if (this->vcpus_.size() > 1)
-                {
-                    throw std::runtime_error("Multi-vCPU snapshots are not supported yet");
-                }
-
                 this->vcpus_[0]->restore_registers(buffer.read_vector<std::byte>());
             }
 
@@ -2038,6 +2036,19 @@ namespace sogen::whp
             bool supports_native_timestamp_counter() const override
             {
                 return true;
+            }
+
+            std::optional<uint64_t> native_timestamp_counter_frequency() const override
+            {
+                UINT64 frequency{};
+                UINT32 bytes_written{};
+                if (FAILED(WHvGetCapability(WHvCapabilityCodeProcessorClockFrequency, &frequency, sizeof(frequency), &bytes_written)) ||
+                    frequency == 0)
+                {
+                    return std::nullopt;
+                }
+
+                return frequency;
             }
 
             bool supports_global_memory_execution_hooks() const override
