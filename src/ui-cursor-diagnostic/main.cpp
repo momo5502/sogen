@@ -91,7 +91,7 @@ namespace
             }
             else if (event.message == WM_KEYDOWN && event.wParam >= '1' && event.wParam <= '4')
             {
-                ui.set_system_cursor(cursors[event.wParam - '1']);
+                ui.set_system_cursor(cursors[static_cast<size_t>(event.wParam - '1')]);
             }
         });
         ui.create_window({.handle = window_id,
