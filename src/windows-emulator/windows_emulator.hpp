@@ -432,6 +432,7 @@ namespace sogen
         void update_key_state(const ui_event& event);
         ui_event resolve_injected_event(const ui_event& event) const;
         void apply_cursor_capture();
+        void set_foreground_window(hwnd window);
 
         // The highest address the process's own code can reach: 32-bit code only reaches the low 2GB unless the
         // executable is large-address aware.
@@ -588,6 +589,17 @@ namespace sogen
             return this->elevated_;
         }
 
+        // The rate of the guest's own timestamp counter while the guest reads it natively, without RDTSC interception.
+        std::optional<uint64_t> native_timestamp_counter_frequency() const
+        {
+            if (this->intercept_rdtsc_ || !this->use_native_timestamp_counter_)
+            {
+                return std::nullopt;
+            }
+
+            return this->emu_->native_timestamp_counter_frequency();
+        }
+
         uint32_t vcpu_count() const
         {
             return this->vcpu_count_;
@@ -672,6 +684,7 @@ namespace sogen
         void yield_thread(vcpu_context& vcpu, bool alertable = false);
         bool perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock);
         bool perform_thread_switch(vcpu_context& vcpu);
+        void commit_thread_stacks_if_page_protection_was_lost();
         bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
         // Runs f with the kernel lock released, for host calls that can block for a long time (e.g. a GPU present)
@@ -740,7 +753,6 @@ namespace sogen
       private:
         bool save_dispatching_thread(vcpu_context* vcpu);
         void reload_dispatching_thread(vcpu_context& vcpu) const;
-        void set_foreground_window(hwnd window);
         void deliver_ui_event(const ui_event& event);
         void resize_window_from_host(hwnd window_handle, bool maximized, int32_t client_width, int32_t client_height);
         void move_window_from_host(hwnd window_handle, int32_t x, int32_t y);
@@ -760,6 +772,8 @@ namespace sogen
         uint32_t vcpu_count_{1};
         std::atomic_bool suspend_requested_{false};
         std::atomic_bool should_stop{false};
+        std::atomic_bool page_protection_check_due_{false};
+        bool thread_stacks_committed_in_full_{false};
 
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
@@ -813,6 +827,8 @@ namespace sogen
 
         void register_factories(utils::buffer_deserializer& buffer);
         void ensure_serialization_support() const;
+        void idle_secondary_vcpus();
+        void occupy_idle_first_vcpu(emulator_thread* preferred);
     };
 
 } // namespace sogen

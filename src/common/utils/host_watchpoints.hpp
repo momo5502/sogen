@@ -16,5 +16,8 @@ namespace sogen::utils::host_watchpoints
     };
 
     size_t capacity();
+
+    // capacity() is probed once; a debugger attached later takes the watchpoints over, which this also reports.
+    bool available();
     bool program(std::span<const range> ranges);
 }

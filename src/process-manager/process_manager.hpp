@@ -110,6 +110,8 @@ namespace sogen
         uint64_t standard_error{};
         std::vector<process_inherited_pipe> inherited_pipes{};
         bool debugged{};
+        uint32_t parent_process_id{};
+        std::vector<uint8_t> registry_state{};
     };
 
     struct process_create_result

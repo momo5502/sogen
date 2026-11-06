@@ -95,6 +95,49 @@ namespace sogen::test
         EXPECT_EQ(std::string("AAAA\0\0\0\0BBBB", 12), contents);
     }
 
+    // The guest does not see host attributes, so overwriting a file that is hidden on a Windows host must work like overwriting any
+    // other file, whichever access the overwriting handle has.
+    TEST(FileWriteTest, OverwritingAnExistingFileEmptiesIt)
+    {
+        const auto directory = create_test_directory();
+        const auto cleanup = utils::finally([&] {
+            std::error_code error{};
+            std::filesystem::remove_all(directory, error);
+        });
+
+        constexpr std::array accesses{GENERIC_READ | GENERIC_WRITE, static_cast<ACCESS_MASK>(FILE_WRITE_DATA),
+                                      static_cast<ACCESS_MASK>(FILE_APPEND_DATA)};
+        for (const auto access : accesses)
+        {
+            SCOPED_TRACE(access);
+            const auto host_path = directory / "marker";
+            std::filesystem::remove(host_path);
+            std::ofstream{host_path, std::ios::binary} << "previous contents";
+#ifdef _WIN32
+            ASSERT_TRUE(SetFileAttributesW(host_path.c_str(), FILE_ATTRIBUTE_HIDDEN));
+#endif
+
+            auto emu = create_empty_emulator();
+            emu.file_sys.map(windows_path{'x', {}}, directory, filesystem_mode::read_write);
+            const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+            const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+            const auto file_handle = create_guest_file(emu, context, storage, u"\\??\\x:\\marker", access);
+
+            const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> status{emu.memory, storage + 0x10};
+            emu.memory.write_memory(storage + 0x100, "1234", 4);
+            ASSERT_EQ(STATUS_SUCCESS,
+                      syscalls::handle_NtWriteFile(context, file_handle, 0, 0, 0, status, storage + 0x100, 4, {emu.memory}, {emu.memory}));
+            emu.process.files.erase(file_handle);
+
+            std::ifstream written{host_path, std::ios::binary};
+            const std::string contents{std::istreambuf_iterator<char>(written), {}};
+            EXPECT_EQ("1234", contents);
+#ifdef _WIN32
+            EXPECT_NE(0u, GetFileAttributesW(host_path.c_str()) & FILE_ATTRIBUTE_HIDDEN);
+#endif
+        }
+    }
+
     TEST(FileWriteTest, LocksFarPastTheEndOfTheFileAreGranted)
     {
         const auto directory = create_test_directory();

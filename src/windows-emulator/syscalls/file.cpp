@@ -183,6 +183,28 @@ namespace sogen
                 return path;
             }
 
+            constexpr ULONG supported_disposition_flags = FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS |
+                                                          FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK |
+                                                          FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE;
+
+            NTSTATUS set_delete_disposition(const syscall_context& c, file& f, const bool wants_delete, const bool posix_semantics)
+            {
+                if (!wants_delete)
+                {
+                    f.handle.cancel_delete();
+                    f.handle.set_delete_on_close(false);
+                    return STATUS_SUCCESS;
+                }
+
+                if (f.is_directory() && !c.win_emu.file_sys.list_directory(f.handle.path()).empty())
+                {
+                    return STATUS_DIRECTORY_NOT_EMPTY;
+                }
+
+                f.handle.mark_delete_pending(posix_semantics);
+                return STATUS_SUCCESS;
+            }
+
             bool read_file_stat(const guest_file& handle, struct compat_stat& file_stat)
             {
                 const auto result = handle.stat();
@@ -347,7 +369,12 @@ namespace sogen
             {
                 if (length < sizeof(FILE_DISPOSITION_INFORMATION))
                 {
-                    return STATUS_BUFFER_OVERFLOW;
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                if (!is_readable_range(c.win_emu.memory, file_information, length))
+                {
+                    return STATUS_ACCESS_VIOLATION;
                 }
 
                 if (!(f->access_mask & DELETE))
@@ -357,9 +384,7 @@ namespace sogen
 
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION>(file_information);
 
-                f->handle.set_delete_on_close(info.DeleteFile != FALSE);
-
-                return STATUS_SUCCESS;
+                return set_delete_disposition(c, *f, info.DeleteFile != FALSE, false);
             }
 
             if (info_class == FileDispositionInformationEx)
@@ -369,7 +394,17 @@ namespace sogen
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
+                if (!is_readable_range(c.win_emu.memory, file_information, length))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
+                if (info.Flags & ~supported_disposition_flags)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
                 const bool wants_delete = (info.Flags & FILE_DISPOSITION_DELETE) != 0;
 
                 if (wants_delete && !(f->access_mask & DELETE))
@@ -377,9 +412,7 @@ namespace sogen
                     return STATUS_ACCESS_DENIED;
                 }
 
-                f->handle.set_delete_on_close(wants_delete);
-
-                return STATUS_SUCCESS;
+                return set_delete_disposition(c, *f, wants_delete, (info.Flags & FILE_DISPOSITION_POSIX_SEMANTICS) != 0);
             }
 
             if (info_class == FilePositionInformation)
@@ -1074,6 +1107,7 @@ namespace sogen
                 FILE_STANDARD_INFORMATION i{};
                 i.Directory = f->is_directory() ? TRUE : FALSE;
                 i.NumberOfLinks = 1;
+                i.DeletePending = f->handle.is_delete_pending() ? TRUE : FALSE;
 
                 if (f->handle)
                 {
@@ -2371,6 +2405,11 @@ namespace sogen
 
             auto& file_sys = c.win_emu.file_sys;
 
+            if (file_sys.is_delete_pending(path))
+            {
+                return STATUS_DELETE_PENDING;
+            }
+
             if ((create_options & FILE_DELETE_ON_CLOSE) && !file_sys.is_writable(path))
             {
                 return STATUS_ACCESS_DENIED;
@@ -2480,6 +2519,17 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
+            // An appending handle cannot also truncate, so an append-only overwrite empties the existing file first.
+            const bool overwrites =
+                create_disposition == FILE_SUPERSEDE || create_disposition == FILE_OVERWRITE || create_disposition == FILE_OVERWRITE_IF;
+            if (file_exists && overwrites && mode == u"a+b")
+            {
+                if (const auto truncation = file_sys.open(path, u"wb"); !truncation.file)
+                {
+                    return truncation.status;
+                }
+            }
+
             auto [io, status] = file_sys.open(path, mode);
             if (status != STATUS_SUCCESS)
             {
@@ -2538,6 +2588,11 @@ namespace sogen
             if (filepath.is_relative())
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            if (c.win_emu.file_sys.is_delete_pending(filepath))
+            {
+                return STATUS_DELETE_PENDING;
             }
 
             const auto file_stat_result = c.win_emu.file_sys.stat(filepath);
@@ -2604,6 +2659,11 @@ namespace sogen
             if (filepath.is_relative())
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            if (c.win_emu.file_sys.is_delete_pending(filepath))
+            {
+                return STATUS_DELETE_PENDING;
             }
 
             const auto file_stat_result = c.win_emu.file_sys.stat(filepath);

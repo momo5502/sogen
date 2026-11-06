@@ -257,7 +257,7 @@ namespace sogen
         message.key_context = context.completion_key;
         message.apc_context = context.apc_context;
         message.io_status_block = context.io_status_block.read();
-        completion->enqueue(message);
+        io_completion_wait::insert(win_emu, context.completion_port, *completion, message);
         win_emu.wake_idle_vcpu();
     }
 

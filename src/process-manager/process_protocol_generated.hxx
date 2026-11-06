@@ -1254,6 +1254,8 @@ struct ProcessCreateRequestT : public ::flatbuffers::NativeTable {
   std::vector<std::unique_ptr<ProcessProtocol::InheritedPipeT>> inherited_pipes{};
   std::string command_line{};
   bool debugged = false;
+  uint32_t parent_process_id = 0;
+  std::vector<uint8_t> registry_state{};
   ProcessCreateRequestT() = default;
   ProcessCreateRequestT(const ProcessCreateRequestT &o);
   ProcessCreateRequestT(ProcessCreateRequestT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -1276,7 +1278,9 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
     VT_STANDARD_ERROR = 22,
     VT_INHERITED_PIPES = 24,
     VT_COMMAND_LINE = 26,
-    VT_DEBUGGED = 28
+    VT_DEBUGGED = 28,
+    VT_PARENT_PROCESS_ID = 30,
+    VT_REGISTRY_STATE = 32
   };
   const ::flatbuffers::String *application() const {
     return GetPointer<const ::flatbuffers::String *>(VT_APPLICATION);
@@ -1317,6 +1321,12 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   bool debugged() const {
     return GetField<uint8_t>(VT_DEBUGGED, 0) != 0;
   }
+  uint32_t parent_process_id() const {
+    return GetField<uint32_t>(VT_PARENT_PROCESS_ID, 0);
+  }
+  const ::flatbuffers::Vector<uint8_t> *registry_state() const {
+    return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_REGISTRY_STATE);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1343,6 +1353,9 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
            VerifyOffsetRequired(verifier, VT_COMMAND_LINE) &&
            verifier.VerifyString(command_line()) &&
            VerifyField<uint8_t>(verifier, VT_DEBUGGED, 1) &&
+           VerifyField<uint32_t>(verifier, VT_PARENT_PROCESS_ID, 4) &&
+           VerifyOffset(verifier, VT_REGISTRY_STATE) &&
+           verifier.VerifyVector(registry_state()) &&
            verifier.EndTable();
   }
   ProcessCreateRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1393,6 +1406,12 @@ struct ProcessCreateRequestBuilder {
   void add_debugged(bool debugged) {
     fbb_.AddElement<uint8_t>(ProcessCreateRequest::VT_DEBUGGED, static_cast<uint8_t>(debugged), 0);
   }
+  void add_parent_process_id(uint32_t parent_process_id) {
+    fbb_.AddElement<uint32_t>(ProcessCreateRequest::VT_PARENT_PROCESS_ID, parent_process_id, 0);
+  }
+  void add_registry_state(::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> registry_state) {
+    fbb_.AddOffset(ProcessCreateRequest::VT_REGISTRY_STATE, registry_state);
+  }
   explicit ProcessCreateRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1422,11 +1441,15 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(
     uint64_t standard_error = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>>> inherited_pipes = 0,
     ::flatbuffers::Offset<::flatbuffers::String> command_line = 0,
-    bool debugged = false) {
+    bool debugged = false,
+    uint32_t parent_process_id = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<uint8_t>> registry_state = 0) {
   ProcessCreateRequestBuilder builder_(_fbb);
   builder_.add_standard_error(standard_error);
   builder_.add_standard_output(standard_output);
   builder_.add_standard_input(standard_input);
+  builder_.add_registry_state(registry_state);
+  builder_.add_parent_process_id(parent_process_id);
   builder_.add_command_line(command_line);
   builder_.add_inherited_pipes(inherited_pipes);
   builder_.add_thread_id(thread_id);
@@ -1454,7 +1477,9 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
     uint64_t standard_error = 0,
     const std::vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> *inherited_pipes = nullptr,
     const char *command_line = nullptr,
-    bool debugged = false) {
+    bool debugged = false,
+    uint32_t parent_process_id = 0,
+    const std::vector<uint8_t> *registry_state = nullptr) {
   auto application__ = application ? _fbb.CreateString(application) : 0;
   auto argument0__ = argument0 ? _fbb.CreateString(argument0) : 0;
   auto working_directory__ = working_directory ? _fbb.CreateString(working_directory) : 0;
@@ -1462,6 +1487,7 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
   auto environment__ = environment ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::EnvironmentVariable>>(*environment) : 0;
   auto inherited_pipes__ = inherited_pipes ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>>(*inherited_pipes) : 0;
   auto command_line__ = command_line ? _fbb.CreateString(command_line) : 0;
+  auto registry_state__ = registry_state ? _fbb.CreateVector<uint8_t>(*registry_state) : 0;
   return ProcessProtocol::CreateProcessCreateRequest(
       _fbb,
       application__,
@@ -1476,7 +1502,9 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
       standard_error,
       inherited_pipes__,
       command_line__,
-      debugged);
+      debugged,
+      parent_process_id,
+      registry_state__);
 }
 
 ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessCreateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -3796,7 +3824,9 @@ inline ProcessCreateRequestT::ProcessCreateRequestT(const ProcessCreateRequestT 
         standard_output(o.standard_output),
         standard_error(o.standard_error),
         command_line(o.command_line),
-        debugged(o.debugged) {
+        debugged(o.debugged),
+        parent_process_id(o.parent_process_id),
+        registry_state(o.registry_state) {
   environment.reserve(o.environment.size());
   for (const auto &environment_ : o.environment) { environment.emplace_back((environment_) ? new ProcessProtocol::EnvironmentVariableT(*environment_) : nullptr); }
   inherited_pipes.reserve(o.inherited_pipes.size());
@@ -3817,6 +3847,8 @@ inline ProcessCreateRequestT &ProcessCreateRequestT::operator=(ProcessCreateRequ
   std::swap(inherited_pipes, o.inherited_pipes);
   std::swap(command_line, o.command_line);
   std::swap(debugged, o.debugged);
+  std::swap(parent_process_id, o.parent_process_id);
+  std::swap(registry_state, o.registry_state);
   return *this;
 }
 
@@ -3842,6 +3874,8 @@ inline void ProcessCreateRequest::UnPackTo(ProcessCreateRequestT *_o, const ::fl
   { auto _e = inherited_pipes(); if (_e) { _o->inherited_pipes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inherited_pipes[_i]) { _e->Get(_i)->UnPackTo(_o->inherited_pipes[_i].get(), _resolver); } else { _o->inherited_pipes[_i] = std::unique_ptr<ProcessProtocol::InheritedPipeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inherited_pipes.resize(0); } }
   { auto _e = command_line(); if (_e) _o->command_line = _e->str(); }
   { auto _e = debugged(); _o->debugged = _e; }
+  { auto _e = parent_process_id(); _o->parent_process_id = _e; }
+  { auto _e = registry_state(); if (_e) { _o->registry_state.resize(_e->size()); std::copy(_e->begin(), _e->end(), _o->registry_state.begin()); } }
 }
 
 inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessCreateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -3865,6 +3899,8 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> ProcessCreateRequest::Pack(::
   auto _inherited_pipes = _o->inherited_pipes.size() ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> (_o->inherited_pipes.size(), [](size_t i, _VectorArgs *__va) { return ProcessProtocol::CreateInheritedPipe(*__va->__fbb, __va->__o->inherited_pipes[i].get(), __va->__rehasher); }, &_va ) : 0;
   auto _command_line = _fbb.CreateString(_o->command_line);
   auto _debugged = _o->debugged;
+  auto _parent_process_id = _o->parent_process_id;
+  auto _registry_state = _o->registry_state.size() ? _fbb.CreateVector(_o->registry_state) : 0;
   return ProcessProtocol::CreateProcessCreateRequest(
       _fbb,
       _application,
@@ -3879,7 +3915,9 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> ProcessCreateRequest::Pack(::
       _standard_error,
       _inherited_pipes,
       _command_line,
-      _debugged);
+      _debugged,
+      _parent_process_id,
+      _registry_state);
 }
 
 inline ProcessStartedT *ProcessStarted::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {

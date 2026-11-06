@@ -366,6 +366,203 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        struct kernel_object_type
+        {
+            USHORT index{};
+            ACCESS_MASK generic_all{};
+        };
+
+        // Object type indices and GENERIC_ALL mappings that NtQueryObject(ObjectTypesInformation) reports on
+        // ntoskrnl 10.0.19041.7417. Window, menu and other USER objects are not kernel objects.
+        std::optional<kernel_object_type> get_kernel_object_type(const handle_types::type type)
+        {
+            switch (type)
+            {
+            case handle_types::file:
+            case handle_types::device:
+                return kernel_object_type{.index = 37, .generic_all = 0x1F01FF};
+            case handle_types::event:
+                return kernel_object_type{.index = 16, .generic_all = 0x1F0003};
+            case handle_types::section:
+                return kernel_object_type{.index = 42, .generic_all = 0xF001F};
+            case handle_types::semaphore:
+                return kernel_object_type{.index = 19, .generic_all = 0x1F0003};
+            case handle_types::port:
+                return kernel_object_type{.index = 46, .generic_all = 0x1F0001};
+            case handle_types::thread:
+            case handle_types::managed_thread:
+                return kernel_object_type{.index = 8, .generic_all = 0x1FFFFF};
+            case handle_types::registry:
+                return kernel_object_type{.index = 44, .generic_all = 0xF003F};
+            case handle_types::mutant:
+                return kernel_object_type{.index = 17, .generic_all = 0x1F0001};
+            case handle_types::timer:
+                return kernel_object_type{.index = 20, .generic_all = 0x1F0003};
+            case handle_types::desktop:
+                return kernel_object_type{.index = 25, .generic_all = 0xF01FF};
+            case handle_types::io_completion:
+                return kernel_object_type{.index = 35, .generic_all = 0x1F0003};
+            case handle_types::wait_completion_packet:
+                return kernel_object_type{.index = 36, .generic_all = 0xF0001};
+            case handle_types::worker_factory:
+                return kernel_object_type{.index = 30, .generic_all = 0xF00FF};
+            case handle_types::job:
+                return kernel_object_type{.index = 6, .generic_all = 0x1F003F};
+            case handle_types::private_namespace:
+                return kernel_object_type{.index = 3, .generic_all = 0xF000F};
+            case handle_types::process:
+                return kernel_object_type{.index = 7, .generic_all = 0x1FFFFF};
+            case handle_types::window_station:
+                return kernel_object_type{.index = 24, .generic_all = 0xF037F};
+            case handle_types::debug_object:
+                return kernel_object_type{.index = 15, .generic_all = 0x1F000F};
+            default:
+                return std::nullopt;
+            }
+        }
+
+        struct kernel_handle
+        {
+            handle guest_handle{};
+            handle_types::type type{};
+            const ref_counted_object* object{}; // none for the process's fixed interactive window station
+        };
+
+        template <handle_types::type Type, typename T>
+        void collect_kernel_handles(std::vector<kernel_handle>& handles, const handle_store<Type, T>& store)
+        {
+            for (const auto& [index, object] : store)
+            {
+                handles.push_back({.guest_handle = store.make_handle(index), .type = Type, .object = &object});
+            }
+        }
+
+        std::vector<kernel_handle> collect_kernel_handles(const process_context& proc)
+        {
+            std::vector<kernel_handle> handles{};
+            collect_kernel_handles(handles, proc.events);
+            collect_kernel_handles(handles, proc.files);
+            collect_kernel_handles(handles, proc.sections);
+            collect_kernel_handles(handles, proc.devices);
+            collect_kernel_handles(handles, proc.semaphores);
+            collect_kernel_handles(handles, proc.io_completions);
+            collect_kernel_handles(handles, proc.wait_completion_packets);
+            collect_kernel_handles(handles, proc.worker_factories);
+            collect_kernel_handles(handles, proc.jobs);
+            collect_kernel_handles(handles, proc.ports);
+            collect_kernel_handles(handles, proc.mutants);
+            collect_kernel_handles(handles, proc.private_namespaces);
+            collect_kernel_handles(handles, proc.window_stations);
+            collect_kernel_handles(handles, proc.desktops);
+            collect_kernel_handles(handles, proc.debug_objects);
+            collect_kernel_handles(handles, proc.timers);
+            collect_kernel_handles(handles, proc.registry_keys);
+            collect_kernel_handles(handles, proc.processes);
+            collect_kernel_handles(handles, proc.managed_threads);
+            collect_kernel_handles(handles, proc.threads);
+
+            // Until the process sets another one, NtUserGetProcessWindowStation returns the interactive window station as
+            // the fixed handle 1. It is the process's window station handle like any other, but it lives in no store.
+            if (proc.process_window_station != 0 && make_handle(proc.process_window_station).value.type != handle_types::window_station)
+            {
+                handles.push_back({.guest_handle = make_handle(proc.process_window_station), .type = handle_types::window_station});
+            }
+
+            std::ranges::sort(handles, {}, [](const kernel_handle& h) { return static_cast<uint32_t>(h.guest_handle.bits); });
+            return handles;
+        }
+
+        constexpr uint64_t FAKE_KERNEL_OBJECT_BASE = 0xFFFFB00000000000ULL;
+
+        uint64_t get_fake_kernel_object_address(const handle h)
+        {
+            const auto object_key = (static_cast<uint64_t>(h.value.type) << 21) | h.value.id;
+            return FAKE_KERNEL_OBJECT_BASE + (object_key << 6);
+        }
+
+        NTSTATUS handle_system_extended_handle_information(const syscall_context& c, const uint64_t system_information,
+                                                           const uint32_t system_information_length,
+                                                           const emulator_object<uint32_t> return_length)
+        {
+            using Traits = EmulatorTraits<Emu64>;
+            using information_t = SYSTEM_HANDLE_INFORMATION_EX<Traits>;
+            using entry_t = SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX<Traits>;
+
+            constexpr auto header_size = offsetof(information_t, Handles);
+            constexpr auto minimum_size = static_cast<uint32_t>(header_size + sizeof(entry_t));
+
+            // ExpQuerySystemInformation probes the whole buffer for ULONG-aligned write access before any class
+            // check, so a small invalid buffer fails with STATUS_ACCESS_VIOLATION rather than a length mismatch.
+            if (system_information_length != 0)
+            {
+                if (system_information % sizeof(ULONG) != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+
+                if (!is_writable_range(c.win_emu.memory, system_information, system_information_length))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+            }
+
+            if (return_length && !is_writable_range(c.win_emu.memory, return_length.value(), sizeof(uint32_t)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (system_information_length < minimum_size)
+            {
+                return_length.write_if_valid(minimum_size);
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            if (system_information % alignof(Traits::ULONG_PTR) != 0)
+            {
+                return STATUS_DATATYPE_MISALIGNMENT;
+            }
+
+            std::vector<std::pair<kernel_handle, kernel_object_type>> entries{};
+            for (const auto& h : collect_kernel_handles(c.proc))
+            {
+                if (const auto type = get_kernel_object_type(h.type))
+                {
+                    entries.emplace_back(h, *type);
+                }
+            }
+
+            // NumberOfHandles counts every handle even when the buffer holds fewer entries. The kernel never
+            // writes the header's Reserved field or the Reserved field of an entry.
+            const Traits::ULONG_PTR number_of_handles = entries.size();
+            c.emu.write_memory(system_information, &number_of_handles, sizeof(number_of_handles));
+
+            const auto required_size = static_cast<uint32_t>(header_size + entries.size() * sizeof(entry_t));
+            const auto end = system_information + system_information_length;
+            auto next_entry = system_information + header_size;
+
+            for (const auto& [h, type] : entries)
+            {
+                if (next_entry + sizeof(entry_t) > end)
+                {
+                    break;
+                }
+
+                entry_t entry{};
+                entry.Object = get_fake_kernel_object_address(h.guest_handle);
+                entry.UniqueProcessId = c.proc.process_id;
+                entry.HandleValue = static_cast<uint32_t>(h.guest_handle.bits);
+                entry.GrantedAccess = type.generic_all;
+                entry.ObjectTypeIndex = type.index;
+                entry.HandleAttributes =
+                    h.object ? ((h.object->protect_from_close ? OBJ_PROTECT_CLOSE : 0) | (h.object->inherit ? OBJ_INHERIT : 0)) : 0;
+                c.emu.write_memory(next_entry, &entry, offsetof(entry_t, Reserved));
+                next_entry += sizeof(entry_t);
+            }
+
+            return_length.write_if_valid(required_size);
+            return required_size > system_information_length ? STATUS_INFO_LENGTH_MISMATCH : STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_system_basicprocess_information(const syscall_context& c, const uint64_t system_information,
                                                         const uint32_t system_information_length,
                                                         const emulator_object<uint32_t> return_length)
@@ -399,7 +596,7 @@ namespace sogen
 
             proc.NextEntryOffset = 0; // Single process; terminator
             proc.UniqueProcessId = process_id;
-            proc.InheritedFromUniqueProcessId = 0;
+            proc.InheritedFromUniqueProcessId = c.proc.parent_process_id;
 
             // Ideally this should be a monotonically increasing value assigned when
             // the emulated process is created. The process ID is a reasonable fallback
@@ -473,6 +670,7 @@ namespace sogen
             proc.NumberOfThreads = static_cast<ULONG>(thread_ids.size());
             proc.BasePriority = 8;
             proc.UniqueProcessId = process_id;
+            proc.InheritedFromUniqueProcessId = c.proc.parent_process_id;
             proc.HandleCount = 0;
             proc.SessionId = 0;
 
@@ -551,10 +749,19 @@ namespace sogen
             case SystemProcessInformation:
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
+            case SystemHypervisorSharedPageInformation:
+                // ntdll keeps this address and computes QueryPerformanceCounter from the page in user mode.
+                if (const auto page = c.proc.kusd.reference_tsc_page())
+                {
+                    return handle_query<uint64_t>(c.emu, system_information, system_information_length, return_length,
+                                                  [&](uint64_t& address) { address = *page; });
+                }
+
+                return STATUS_NOT_SUPPORTED;
+
             case SystemFlushInformation:
             case SystemSecureBootPolicyInformation:
             case SystemCodeIntegrityPoliciesFullInformation:
-            case SystemHypervisorSharedPageInformation:
             case SystemFeatureConfigurationInformation:
             case SystemFeatureConfigurationSectionInformation:
             case SystemFirmwareTableInformation:
@@ -1030,6 +1237,13 @@ namespace sogen
                         info.FirmwareType = 2; // FirmwareTypeUefi
                         info.BootFlags = 0;
                     });
+
+            case SystemExtendedHandleInformation:
+                if (c.win_emu.version.is_build_within(19041, 19046))
+                {
+                    return handle_system_extended_handle_information(c, system_information, system_information_length, return_length);
+                }
+                [[fallthrough]];
 
             default:
                 c.win_emu.log.error("Unsupported system info class: 0x%X\n", info_class);

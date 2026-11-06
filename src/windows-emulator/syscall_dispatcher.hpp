@@ -306,6 +306,28 @@ namespace sogen
         }
     };
 
+    struct window_style_change_state : completion_state
+    {
+        emulator_stack_allocation style_alloc{};
+        uint32_t old_style{};
+        bool style_applied{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->style_alloc);
+            buffer.write(this->old_style);
+            buffer.write(this->style_applied);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->style_alloc);
+            buffer.read(this->old_style);
+            buffer.read(this->style_applied);
+        }
+    };
+
     struct message_call_state : completion_state
     {
         hwnd window{};

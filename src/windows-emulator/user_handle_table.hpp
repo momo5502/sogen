@@ -334,6 +334,8 @@ namespace sogen
                 return TYPE_MONITOR;
             case handle_types::type::accelerator_table:
                 return TYPE_ACCELTABLE;
+            case handle_types::type::cursor:
+                return TYPE_CURSOR;
             default:
                 throw std::runtime_error("Unhandled handle type!");
             }

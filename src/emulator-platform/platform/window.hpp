@@ -31,6 +31,12 @@ namespace sogen
         LONG cx;
         LONG cy;
     } SIZE;
+
+    struct STYLESTRUCT
+    {
+        DWORD styleOld;
+        DWORD styleNew;
+    };
 #endif
 
     using wparam = pointer;
@@ -98,6 +104,40 @@ namespace sogen
         DWORD yHotspot;
         hbitmap hbmMask;
         hbitmap hbmColor;
+    };
+
+    struct EMU_CURSORDATA
+    {
+        pointer lpName;
+        pointer lpModName;
+        uint16_t rt;
+        uint16_t reserved_12[3];
+        DWORD flags;
+        int16_t xHotspot;
+        int16_t yHotspot;
+        hbitmap hbmMask;
+        hbitmap hbmColor;
+        uint8_t reserved_30[0x20];
+        DWORD bpp;
+        DWORD cx;
+        DWORD cy;
+    };
+
+    static_assert(offsetof(EMU_CURSORDATA, rt) == 0x10);
+    static_assert(offsetof(EMU_CURSORDATA, flags) == 0x18);
+    static_assert(offsetof(EMU_CURSORDATA, xHotspot) == 0x1C);
+    static_assert(offsetof(EMU_CURSORDATA, hbmMask) == 0x20);
+    static_assert(offsetof(EMU_CURSORDATA, hbmColor) == 0x28);
+    static_assert(offsetof(EMU_CURSORDATA, bpp) == 0x50);
+    static_assert(offsetof(EMU_CURSORDATA, cy) == 0x58);
+
+    struct EMU_CURSORFIND
+    {
+        hicon hcur;
+        DWORD rt;
+        DWORD cx;
+        DWORD cy;
+        DWORD bpp;
     };
 
     struct EMU_CURSORINFO
@@ -237,6 +277,8 @@ namespace sogen
 #define WS_CLIPCHILDREN             0x02000000L
 #define WS_MAXIMIZE                 0x01000000L
 #define WS_CAPTION                  0x00C00000L
+#define WS_VSCROLL                  0x00200000L
+#define WS_HSCROLL                  0x00100000L
 #define WS_BORDER                   0x00800000L
 #define WS_DLGFRAME                 0x00400000L
 #define WS_SYSMENU                  0x00080000L
@@ -244,9 +286,12 @@ namespace sogen
 #define WS_MINIMIZEBOX              0x00020000L
 #define WS_MAXIMIZEBOX              0x00010000L
 
+#define WS_EX_DLGMODALFRAME         0x00000001L
 #define WS_EX_NOPARENTNOTIFY        0x00000004L
 #define WS_EX_TRANSPARENT           0x00000020L
 #define WS_EX_TOOLWINDOW            0x00000080L
+#define WS_EX_WINDOWEDGE            0x00000100L
+#define WS_EX_STATICEDGE            0x00020000L
 #define WS_EX_CONTEXTHELP           0x00000400L
 #define WS_EX_LAYERED               0x00080000L
 #define WS_EX_CLIENTEDGE            0x00000200L
@@ -321,6 +366,8 @@ namespace sogen
 #define WM_DWMNCRENDERINGCHANGED    0x031F
 #define WM_WINDOWPOSCHANGING        0x0046
 #define WM_WINDOWPOSCHANGED         0x0047
+#define WM_STYLECHANGING            0x007C
+#define WM_STYLECHANGED             0x007D
 #define WM_NCCREATE                 0x0081
 #define WM_NCDESTROY                0x0082
 #define WM_NCCALCSIZE               0x0083

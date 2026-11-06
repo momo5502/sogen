@@ -27,7 +27,7 @@ Get-ChildItem $profileListPath -ErrorAction SilentlyContinue | ForEach-Object {
     if ($p) {
         # The folders every profile gets from the default profile. The shell only resolves a known folder that
         # exists, so a missing one makes SHGetFolderPath fail and games fall back to saving somewhere else.
-        New-FilesysDirectories $p @('appdata\local', 'appdata\roaming', 'appdata\locallow',
+        New-FilesysDirectories $p @('appdata\local', 'appdata\local\temp', 'appdata\roaming', 'appdata\locallow',
                                     'appdata\roaming\microsoft\windows\start menu\programs\startup', 'desktop', 'documents',
                                     'downloads', 'favorites', 'links', 'music', 'pictures', 'saved games', 'videos')
     }

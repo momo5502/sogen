@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sogen_bindings.hpp"
+#include "python_gc.hpp"
 #include <utils/function.hpp>
 #include <functional>
 #include <optional>
@@ -45,8 +46,8 @@ namespace sogen::py
             }
         };
 
-        std::shared_ptr<hook_state> shared_state{};
         nb::object owner = nb::none();
+        std::shared_ptr<hook_state> shared_state{};
 
         hook_handle() = default;
         hook_handle(sogen::guest_machine& emulator, emulator_hook* hook, nb::object owner);
@@ -307,6 +308,8 @@ namespace sogen::py
         void set(std::string_view name, nb::object callable);
         void clear(std::string_view name);
         void refresh_memory_violate_observer();
+        int traverse(visitproc visit, void* arg) const;
+        void clear_references();
 
         nb::object owner_object() const;
         static nb::object linux_callback_registry::* slot_for(std::string_view name);
@@ -421,10 +424,12 @@ namespace sogen::py
         linux_emulator* emu{};
         std::shared_ptr<linux_symbol_hook_registry> symbols{};
         std::vector<hook_handle> active_hooks{};
+        std::vector<std::weak_ptr<nb::object>> callback_references{};
 
         explicit linux_hook_registry(linux_emulator& emulator);
 
         hook_handle make_hook(emulator_hook* hook);
+        std::shared_ptr<nb::object> capture_callback(nb::object callback);
 
         hook_handle memory_execution(nb::object callback);
         hook_handle memory_execution_at(uint64_t address, nb::object callback);
@@ -476,6 +481,7 @@ namespace sogen::py
         std::shared_ptr<linux_hook_registry> hooks{};
         std::shared_ptr<linux_debug_facade> debug{};
         std::vector<std::byte> snapshot_{};
+        std::map<const void*, nb::object> view_cache{};
         explicit sogen_linux_emulator(std::unique_ptr<linux_emulator> emulator);
 
         ~sogen_linux_emulator();
@@ -516,4 +522,25 @@ namespace sogen::py
         linux_mapped_module* find_module_by_address(uint64_t address) const;
         linux_mapped_module* find_module_by_name(std::string_view name) const;
     };
+
+    template <typename T>
+    nb::object make_linux_view(T& value, const nb::object& owner)
+    {
+        auto& emulator = nb::cast<sogen_linux_emulator&>(owner);
+        const auto* key = static_cast<const void*>(&value);
+        if (const auto it = emulator.view_cache.find(key); it != emulator.view_cache.end())
+        {
+            auto cached = it->second();
+            if (!cached.is_none())
+            {
+                return cached;
+            }
+        }
+        std::erase_if(emulator.view_cache, [](const auto& entry) { return entry.second().is_none(); });
+        auto result = nb::cast(owned_view<T>{.value = &value, .owner = owner});
+        emulator.view_cache.insert_or_assign(key, nb::weakref(result));
+        return result;
+    }
+
+    nb::object copy_linux_module(const linux_mapped_module& module);
 }
