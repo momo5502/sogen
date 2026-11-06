@@ -40,6 +40,7 @@ endif()
 
 if(_SOGEN_BUILD_STANDALONE_TARGETS)
   add_subdirectory(qt-raster-probe)
+  add_subdirectory(qt-raster-native)
   add_subdirectory(windows-analyzer)
   add_subdirectory(linux-analyzer)
   add_subdirectory(macos-analyzer)
