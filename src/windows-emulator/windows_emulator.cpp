@@ -1021,10 +1021,25 @@ namespace sogen
             if (this->vcpu_count_ > 1 && vcpu.active_thread)
             {
                 // Nothing runnable for this vCPU: detach the stale thread so another
-                // vCPU can pick it up once it becomes ready.
-                vcpu.active_thread->save(vcpu.cpu);
-                vcpu.active_thread = nullptr;
+                // vCPU can pick it up once it becomes ready. As in a switch's register
+                // transfer, its registers are saved with the kernel lock released. The
+                // vCPU counts as idle meanwhile, so a thread readied during the save
+                // credits it a wakeup.
+                auto& detached = *std::exchange(vcpu.active_thread, nullptr);
+                detached.registers_in_transit = true;
+                ++this->idle_vcpus_;
+                lock.unlock();
+                detached.save(vcpu.cpu);
+                lock.lock();
+                --this->idle_vcpus_;
+                detached.registers_in_transit = false;
                 this->thread_registers_saved_.notify_all();
+
+                // A pass that ran during the save skipped it.
+                if (detached.is_thread_ready(*this))
+                {
+                    continue;
+                }
             }
 
             const auto host_wait_pending = has_pending_host_wait(this->process);

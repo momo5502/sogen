@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <functional>
 #include <future>
 #include <map>
 #include <memory>
@@ -37,6 +38,7 @@ namespace sogen::test
         constexpr uint64_t second_rax = 0x2001;
         constexpr uint64_t written_rax = 0x3001;
         constexpr uint64_t untouched_rax = 0x4001;
+        constexpr uint64_t live_rbx = 0x7001;
         constexpr uint64_t thread_ip = 0x10000;
         constexpr uint32_t reserved_eax = 0x5001;
         constexpr uint32_t written_eax = 0x6001;
@@ -142,6 +144,9 @@ namespace sogen::test
         class second_vcpu final : public register_file_cpu<x86_64_cpu>
         {
           public:
+            // Runs at the start of every register save of this vCPU.
+            std::function<void()> on_save{};
+
             explicit second_vcpu(memory_interface& memory)
                 : memory_(&memory)
             {
@@ -150,6 +155,16 @@ namespace sogen::test
             size_t index() const override
             {
                 return 1;
+            }
+
+            std::vector<std::byte> save_registers() const override
+            {
+                if (this->on_save)
+                {
+                    this->on_save();
+                }
+
+                return register_file_cpu::save_registers();
             }
 
             memory_interface& memory() override
@@ -937,6 +952,76 @@ namespace sogen::test
         const auto _ = utils::finally([&] { this->emu->stop(); });
 
         EXPECT_TRUE(this->wait_for_deletion(transferred));
+    }
+
+    TEST_F(RunningThreadContextTest, IdleVcpuSavesTheThreadItDropsWithTheKernelLockReleased)
+    {
+        auto& vcpu = this->emu->vcpu(1);
+        auto& dropped = this->thread(this->second);
+        this->emu->synchronize([&] { dropped.waiting_for_alert = true; });
+        std::atomic_bool saving{false};
+        std::atomic_bool released{false};
+        this->machine->second().on_save = [&] {
+            saving = true;
+            this->wait_until(released);
+        };
+
+        auto second_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
+        this->wait_until(saving);
+        auto observed = std::async(std::launch::async, [&] {
+            return this->emu->synchronize([&] { return dropped.registers_in_transit && !vcpu.active_thread; });
+        });
+        const auto _ = utils::finally([&] {
+            released = true;
+            this->emu->stop();
+        });
+
+        ASSERT_EQ(std::future_status::ready, observed.wait_for(std::chrono::seconds(2)));
+        EXPECT_TRUE(observed.get());
+        EXPECT_FALSE(this->emu->activate_thread(this->emu->vcpu(0), 12));
+
+        released = true;
+        while (this->emu->synchronize([&] { return dropped.registers_in_transit; }))
+        {
+            std::this_thread::yield();
+        }
+
+        EXPECT_EQ(second_rax, this->saved_register(this->second, x86_register::rax));
+        this->emu->stop();
+        EXPECT_FALSE(second_vcpu.get());
+    }
+
+    TEST_F(RunningThreadContextTest, ThreadReadiedWhileItsIdleVcpuSavesItRunsAgain)
+    {
+        auto& vcpu = this->emu->vcpu(1);
+        auto& dropped = this->thread(this->second);
+        this->emu->synchronize([&] {
+            dropped.waiting_for_alert = true;
+            vcpu.x64_cpu().reg(x86_register::rbx, live_rbx);
+        });
+        std::atomic_bool saving{false};
+        std::atomic_bool released{false};
+        this->machine->second().on_save = [&] {
+            saving = true;
+            this->wait_until(released);
+        };
+
+        auto second_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
+        this->wait_until(saving);
+        auto alert = std::async(std::launch::async, [&] { this->emu->synchronize([&] { dropped.alerted = true; }); });
+        const auto _ = utils::finally([&] {
+            released = true;
+            this->emu->stop();
+        });
+
+        ASSERT_EQ(std::future_status::ready, alert.wait_for(std::chrono::seconds(2)));
+        released = true;
+
+        ASSERT_EQ(std::future_status::ready, second_vcpu.wait_for(std::chrono::seconds(2)));
+        EXPECT_TRUE(second_vcpu.get());
+        EXPECT_EQ(&dropped, vcpu.active_thread);
+        EXPECT_EQ(static_cast<uint64_t>(STATUS_ALERTED), this->rax(1));
+        EXPECT_EQ(live_rbx, vcpu.x64_cpu().reg(x86_register::rbx));
     }
 
     TEST_F(RunningThreadContextTest, GetDoesNotWaitForAThreadInAnUnlockedHostWait)
