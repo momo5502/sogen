@@ -1130,6 +1130,86 @@ namespace sogen::test
         EXPECT_TRUE(this->wait_for_deletion(this->first));
     }
 
+    // A snapshot keeps one running thread, vCPU 0's. Taking it puts the thread vCPU 1 runs back into its thread object with
+    // its live registers; restored, vCPU 1 starts idle and picks that thread up where it was.
+    TEST_F(RunningThreadContextTest, SnapshotKeepsTheLiveRegistersOfTheThreadOnEveryVcpu)
+    {
+        utils::buffer_serializer refused{};
+        EXPECT_THROW(this->emu->serialize(refused), std::runtime_error);
+
+        utils::buffer_serializer state{};
+        this->emu->synchronize([&] {
+            this->emu->prepare_serialization();
+            this->emu->serialize(state);
+        });
+        EXPECT_EQ(nullptr, this->emu->vcpu(1).active_thread);
+
+        utils::buffer_deserializer deserializer{state};
+        this->emu->synchronize([&] { this->emu->deserialize(deserializer); });
+        EXPECT_EQ(&this->thread(this->first), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(first_rax, this->rax(0));
+        EXPECT_EQ(nullptr, this->emu->vcpu(1).active_thread);
+
+        ASSERT_TRUE(this->emu->activate_thread(this->emu->vcpu(1), 12));
+        EXPECT_EQ(second_rax, this->rax(1));
+        EXPECT_EQ(thread_ip, this->rip(1));
+    }
+
+    // vCPU 0 can be idle when a process with several vCPUs stops. The snapshot then keeps the thread vCPU 1 was running
+    // as vCPU 0's, with its live registers, so the restored process has a running thread to continue.
+    TEST_F(RunningThreadContextTest, SnapshotOfAnIdleFirstVcpuKeepsTheThreadAnotherVcpuRan)
+    {
+        utils::buffer_serializer state{};
+        this->emu->synchronize([&] {
+            auto& vcpu = this->emu->vcpu(0);
+            vcpu.active_thread->save(vcpu.cpu); // what a vCPU does when it drops its thread for lack of work
+            vcpu.set_active_thread(nullptr);
+            vcpu.x64_cpu().reg(x86_register::rax, stale_rax);
+
+            this->emu->prepare_serialization();
+            this->emu->serialize(state);
+        });
+        EXPECT_EQ(&this->thread(this->second), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(second_rax, this->rax(0));
+        EXPECT_EQ(nullptr, this->emu->vcpu(1).active_thread);
+
+        utils::buffer_deserializer deserializer{state};
+        this->emu->synchronize([&] { this->emu->deserialize(deserializer); });
+        EXPECT_EQ(&this->thread(this->second), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(second_rax, this->rax(0));
+        EXPECT_EQ(thread_ip, this->rip(0));
+
+        ASSERT_TRUE(this->emu->activate_thread(this->emu->vcpu(1), 8));
+        EXPECT_EQ(first_rax, this->rax(1));
+    }
+
+    // With every vCPU idle, vCPU 0 keeps the first thread that has not ended, with its saved registers; a state saved
+    // without a running thread gets that thread when it is restored.
+    TEST_F(RunningThreadContextTest, SnapshotOfIdleVcpusKeepsTheFirstLiveThread)
+    {
+        utils::buffer_serializer state{};
+        this->emu->synchronize([&] {
+            for (const size_t index : {size_t{0}, size_t{1}})
+            {
+                auto& vcpu = this->emu->vcpu(index);
+                vcpu.active_thread->save(vcpu.cpu);
+                vcpu.set_active_thread(nullptr);
+                vcpu.x64_cpu().reg(x86_register::rax, stale_rax);
+            }
+
+            this->emu->serialize(state);
+            this->emu->prepare_serialization();
+        });
+        EXPECT_EQ(&this->thread(this->first), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(first_rax, this->rax(0));
+        EXPECT_EQ(nullptr, this->emu->vcpu(1).active_thread);
+
+        utils::buffer_deserializer deserializer{state};
+        this->emu->synchronize([&] { this->emu->deserialize(deserializer); });
+        EXPECT_EQ(&this->thread(this->first), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(first_rax, this->rax(0));
+    }
+
     TEST_F(RunningThreadContextTest, FailedReloadAfterAnUnlockedHostCallReachesTheCaller)
     {
         std::atomic_bool entered{false};
