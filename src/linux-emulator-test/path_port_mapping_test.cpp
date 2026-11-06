@@ -389,6 +389,58 @@ namespace sogen
         EXPECT_EQ(read_guest_file(emu, fd, 1), "C");
     }
 
+    TEST(LinuxFileDescriptorTest, RestoredDuplicateKeepsEpollInterestList)
+    {
+        constexpr uint32_t epollin = 0x1;
+        constexpr uint64_t epoll_ctl_add = 1;
+        constexpr uint64_t registered_data = 0x1122334455667788;
+        constexpr auto event_address = guest_memory_base + 0x200;
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        {
+            std::ofstream file(emulation_root / "file.txt", std::ios::binary);
+            file << "data";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/file.txt");
+
+        const auto file = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY);
+        ASSERT_GE(file, 0);
+        const auto epoll = invoke_syscall(emu, linux_syscalls::LINUX_SYS_epoll_create1);
+        ASSERT_GE(epoll, 0);
+
+        emu.memory.write_memory(event_address, &epollin, sizeof(epollin));
+        emu.memory.write_memory(event_address + sizeof(epollin), &registered_data, sizeof(registered_data));
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_epoll_ctl, static_cast<uint64_t>(epoll), epoll_ctl_add,
+                                 static_cast<uint64_t>(file), event_address),
+                  0);
+
+        const auto duplicate = invoke_syscall(emu, linux_syscalls::LINUX_SYS_dup, static_cast<uint64_t>(epoll));
+        ASSERT_GE(duplicate, 0);
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_close, static_cast<uint64_t>(epoll)), 0);
+
+        utils::buffer_serializer serializer{};
+        emu.process.fds.serialize(serializer);
+        utils::buffer_deserializer deserializer{serializer.get_buffer()};
+        emu.process.fds.deserialize(deserializer);
+
+        constexpr auto ready_address = guest_memory_base + 0x300;
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_epoll_wait, static_cast<uint64_t>(duplicate), ready_address, 1), 1);
+
+        uint32_t ready_events{};
+        uint64_t ready_data{};
+        emu.memory.read_memory(ready_address, &ready_events, sizeof(ready_events));
+        emu.memory.read_memory(ready_address + sizeof(ready_events), &ready_data, sizeof(ready_data));
+        EXPECT_EQ(ready_events, epollin);
+        EXPECT_EQ(ready_data, registered_data);
+    }
+
     TEST(LinuxSocketSyscallTest, SocketpairIsExplicitlyUnsupported)
     {
         temp_tree temp{};

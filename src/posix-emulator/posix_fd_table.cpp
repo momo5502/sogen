@@ -198,6 +198,8 @@ namespace sogen
             buffer.write(fd.guest_path);
             buffer.write(fd.flags);
             buffer.write(fd.directory_position);
+            buffer.write_optional(fd.directory_listing);
+            buffer.write_vector(fd.epoll_entries);
             buffer.write(fd.read_only_mapping);
 
             if (fd.type == fd_type::memory_file)
@@ -249,6 +251,8 @@ namespace sogen
             buffer.read(fd.guest_path);
             buffer.read(fd.flags);
             buffer.read(fd.directory_position);
+            buffer.read_optional(fd.directory_listing);
+            buffer.read_vector(fd.epoll_entries);
             buffer.read(fd.read_only_mapping);
 
             if (fd.type == fd_type::memory_file)

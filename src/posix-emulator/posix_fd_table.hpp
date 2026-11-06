@@ -6,11 +6,13 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <serialization.hpp>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #include <io.h>
@@ -31,6 +33,35 @@ namespace sogen
         eventfd,
         directory,
         epoll,
+    };
+
+    // The type holds a DT_* value, which Linux and the BSDs number alike.
+    struct posix_directory_entry
+    {
+        uint64_t inode{};
+        uint8_t type{};
+        std::string name{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->inode);
+            buffer.write(this->type);
+            buffer.write(this->name);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->inode);
+            buffer.read(this->type);
+            buffer.read(this->name);
+        }
+    };
+
+    struct posix_epoll_entry
+    {
+        int fd{};
+        uint32_t events{};
+        uint64_t data{};
     };
 
     struct posix_memory_fd
@@ -84,6 +115,8 @@ namespace sogen
         std::shared_ptr<posix_memory_fd> memory_file{};
         int flags{};
         uint64_t directory_position{};
+        std::optional<std::vector<posix_directory_entry>> directory_listing{};
+        std::vector<posix_epoll_entry> epoll_entries{};
         bool read_only_mapping{};
 
         std::shared_ptr<posix_socket_state> socket_state{};
@@ -115,6 +148,8 @@ namespace sogen
               memory_file(std::move(other.memory_file)),
               flags(other.flags),
               directory_position(other.directory_position),
+              directory_listing(std::move(other.directory_listing)),
+              epoll_entries(std::move(other.epoll_entries)),
               read_only_mapping(other.read_only_mapping),
               socket_state(std::move(other.socket_state))
         {
@@ -132,6 +167,8 @@ namespace sogen
                 memory_file = std::move(other.memory_file);
                 flags = other.flags;
                 directory_position = other.directory_position;
+                directory_listing = std::move(other.directory_listing);
+                epoll_entries = std::move(other.epoll_entries);
                 read_only_mapping = other.read_only_mapping;
                 socket_state = std::move(other.socket_state);
             }
@@ -236,6 +273,15 @@ namespace sogen
             if (it != this->fds_.end())
             {
                 it->second.close_on_exec = value;
+            }
+        }
+
+        template <typename Visitor>
+        void for_each_file(const Visitor& visitor)
+        {
+            for (const auto& entry : this->fds_ | std::views::values)
+            {
+                visitor(*entry.file);
             }
         }
 

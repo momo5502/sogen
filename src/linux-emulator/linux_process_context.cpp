@@ -11,89 +11,8 @@ namespace sogen
 
     using namespace elf; // NOLINT(google-build-using-namespace)
 
-    namespace utils
-    {
-        static void serialize(buffer_serializer& buffer, const linux_cached_dir_entry& entry)
-        {
-            buffer.write(entry.ino);
-            buffer.write(entry.d_type);
-            buffer.write(entry.name);
-        }
-
-        static void deserialize(buffer_deserializer& buffer, linux_cached_dir_entry& entry)
-        {
-            buffer.read(entry.ino);
-            buffer.read(entry.d_type);
-            buffer.read(entry.name);
-        }
-
-        static void serialize(buffer_serializer& buffer, const linux_epoll_instance& instance)
-        {
-            buffer.write_vector(instance.entries);
-        }
-
-        static void deserialize(buffer_deserializer& buffer, linux_epoll_instance& instance)
-        {
-            buffer.read_vector(instance.entries);
-        }
-    }
-
     namespace
     {
-        void serialize_directory_entries(utils::buffer_serializer& buffer,
-                                         const std::map<int, std::shared_ptr<const linux_directory_listing>>& directory_entries)
-        {
-            std::vector<const linux_directory_listing*> listings{};
-            std::map<const linux_directory_listing*, uint64_t> listing_indices{};
-            for (const auto& [fd, listing] : directory_entries)
-            {
-                if (listing_indices.emplace(listing.get(), listings.size()).second)
-                {
-                    listings.push_back(listing.get());
-                }
-            }
-
-            buffer.write<uint64_t>(listings.size());
-            for (const auto* listing : listings)
-            {
-                buffer.write_vector(*listing);
-            }
-
-            buffer.write<uint64_t>(directory_entries.size());
-            for (const auto& [fd, listing] : directory_entries)
-            {
-                buffer.write(fd);
-                buffer.write<uint64_t>(listing_indices.at(listing.get()));
-            }
-        }
-
-        std::map<int, std::shared_ptr<const linux_directory_listing>> deserialize_directory_entries(utils::buffer_deserializer& buffer)
-        {
-            const auto listing_count = buffer.read<uint64_t>();
-            std::vector<std::shared_ptr<const linux_directory_listing>> listings{};
-            listings.reserve(static_cast<size_t>(listing_count));
-            for (uint64_t i = 0; i < listing_count; ++i)
-            {
-                listings.push_back(std::make_shared<const linux_directory_listing>(buffer.read_vector<linux_cached_dir_entry>()));
-            }
-
-            std::map<int, std::shared_ptr<const linux_directory_listing>> directory_entries{};
-            const auto fd_count = buffer.read<uint64_t>();
-            for (uint64_t i = 0; i < fd_count; ++i)
-            {
-                const auto fd = buffer.read<int>();
-                const auto listing_index = buffer.read<uint64_t>();
-                if (listing_index >= listings.size())
-                {
-                    throw std::runtime_error("Linux process snapshot references an invalid directory listing");
-                }
-
-                directory_entries.emplace(fd, listings[static_cast<size_t>(listing_index)]);
-            }
-
-            return directory_entries;
-        }
-
         constexpr uint64_t STACK_SIZE = 0x800000; // 8MB
         constexpr uint64_t STACK_TOP = 0x7ffffffde000;
 
@@ -436,19 +355,6 @@ namespace sogen
     void linux_process_context::serialize(utils::buffer_serializer& buffer) const
     {
         this->fds.serialize(buffer);
-        serialize_directory_entries(buffer, this->directory_entries);
-
-        buffer.write<uint64_t>(this->epoll_instances.size());
-        for (const auto& [fd, instance] : this->epoll_instances)
-        {
-            buffer.write(fd);
-            if (!instance)
-            {
-                throw std::runtime_error("Linux process snapshot found an invalid epoll instance");
-            }
-            buffer.write(*instance);
-        }
-
         buffer.write(this->brk_base);
         buffer.write(this->brk_current);
         buffer.write_map(this->threads);
@@ -472,17 +378,6 @@ namespace sogen
     {
         posix_fd_table new_fds{};
         new_fds.deserialize(buffer);
-        auto new_directory_entries = deserialize_directory_entries(buffer);
-
-        std::map<int, std::shared_ptr<linux_epoll_instance>> new_epoll_instances{};
-        const auto epoll_count = buffer.read<uint64_t>();
-        for (uint64_t i = 0; i < epoll_count; ++i)
-        {
-            const auto fd = buffer.read<int>();
-            auto instance = std::make_shared<linux_epoll_instance>();
-            buffer.read(*instance);
-            new_epoll_instances.emplace(fd, std::move(instance));
-        }
 
         auto new_brk_base = buffer.read<uint64_t>();
         auto new_brk_current = buffer.read<uint64_t>();
@@ -504,8 +399,6 @@ namespace sogen
         auto new_auxv = buffer.read_vector<linux_auxv_entry>();
 
         this->fds = std::move(new_fds);
-        this->directory_entries = std::move(new_directory_entries);
-        this->epoll_instances = std::move(new_epoll_instances);
         this->brk_base = new_brk_base;
         this->brk_current = new_brk_current;
         this->threads = std::move(new_threads);
