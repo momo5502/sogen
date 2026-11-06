@@ -366,6 +366,13 @@ namespace sogen
         }
     };
 
+    enum class stack_guard_fault
+    {
+        outside_stack,
+        grown,
+        overflow,
+    };
+
     class emulator_thread : public ref_counted_object
     {
       public:
@@ -380,7 +387,7 @@ namespace sogen
         }
 
         emulator_thread(memory_manager& memory, const process_context& context, uint64_t start_address, uint64_t argument,
-                        uint64_t stack_size, uint32_t create_flags, uint32_t id, bool initial_thread);
+                        uint64_t stack_size, uint32_t create_flags, uint32_t id, bool initial_thread, uint64_t stack_commit_size = 0);
 
         emulator_thread(const emulator_thread&) = delete;
         emulator_thread& operator=(const emulator_thread&) = delete;
@@ -559,6 +566,10 @@ namespace sogen
         }
 
         void refresh_execution_context(cpu_interface& cpu, uint64_t gdt_base) const;
+
+        stack_guard_fault handle_stack_guard_fault(uint64_t address) const;
+        void grow_stack_for_frame(uint64_t address, uint64_t end) const;
+        void commit_stacks_in_full() const;
 
         void setup_if_necessary(cpu_interface& emu, const process_context& context);
 

@@ -413,7 +413,7 @@ namespace sogen
         static emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name);
 
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
-                             bool initial_thread = false);
+                             bool initial_thread = false, uint64_t stack_commit_size = 0);
         void terminate_thread(emulator_thread& thread, NTSTATUS thread_exit_status);
 
         std::optional<uint16_t> find_atom(std::u16string_view name);
@@ -446,6 +446,7 @@ namespace sogen
         handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread) const;
 
         size_t get_live_thread_count() const;
+        void commit_thread_stacks_in_full() const;
 
         // WOW64 support flag - set during process setup based on executable architecture
         bool is_wow64_process{false};

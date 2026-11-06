@@ -94,6 +94,13 @@ namespace sogen
             return true;
         }
 
+        // Whether an access to a page faults whenever the page's protection denies it, also when the host page that
+        // holds it is larger and stays accessible for the pages beside it.
+        virtual bool supports_page_granular_protection() const
+        {
+            return true;
+        }
+
         virtual void flush_host_memory_cache(const void* /*host_pointer*/, size_t /*size*/)
         {
         }

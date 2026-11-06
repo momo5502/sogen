@@ -669,6 +669,7 @@ namespace sogen
         void yield_thread(vcpu_context& vcpu, bool alertable = false);
         bool perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock);
         bool perform_thread_switch(vcpu_context& vcpu);
+        void commit_thread_stacks_if_page_protection_was_lost();
         bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
         // Runs f with the kernel lock released, for host calls that can block for a long time (e.g. a GPU present)
@@ -756,6 +757,8 @@ namespace sogen
         uint32_t vcpu_count_{1};
         std::atomic_bool suspend_requested_{false};
         std::atomic_bool should_stop{false};
+        std::atomic_bool page_protection_check_due_{false};
+        bool thread_stacks_committed_in_full_{false};
 
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
