@@ -1522,57 +1522,61 @@ namespace sogen
             };
 
             const auto& wait = *this->await_io_completion;
-            if (!process.io_completions.get(wait.io_completion_handle))
+            auto* completion = process.io_completions.get(wait.io_completion_handle);
+            if (!completion)
             {
                 this->mark_as_ready(STATUS_INVALID_HANDLE);
                 return true;
             }
 
-            if (wait.type == io_completion_wait_type::remove_single)
+            // A packet queued while the thread waits is handed to it at once (io_completion_wait::insert), and signaled wait
+            // packets are queued every scheduler pass. The port keeps a packet only when no waiter could take it then, as
+            // when this one was suspended.
+            if (completion->queue.empty())
             {
-                io_completion_message message{};
-                if (io_completion_wait::dequeue_io_completion_message(win_emu, wait.io_completion_handle, message))
-                {
-                    emulator_object<emulator_pointer>{*this->memory_ptr, wait.key_context_ptr}.write_if_valid(message.key_context);
-                    emulator_object<emulator_pointer>{*this->memory_ptr, wait.apc_context_ptr}.write_if_valid(message.apc_context);
-                    emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>{*this->memory_ptr, wait.io_status_block_ptr}.write_if_valid(
-                        message.io_status_block);
-
-                    this->mark_as_ready(STATUS_SUCCESS);
-                    return true;
-                }
-
                 if (timeout_expired(wait) && !this->has_pending_alertable_apc())
                 {
-                    this->mark_as_ready(STATUS_TIMEOUT);
+                    // NtRemoveIoCompletionEx stores its count of 0 under try as well.
+                    const auto status =
+                        wait.type == io_completion_wait_type::remove_multiple
+                            ? io_completion_wait::write_entries(win_emu.memory, wait.completion_entries_ptr, wait.entries_removed_ptr, {})
+                            : STATUS_SUCCESS;
+                    this->mark_as_ready(status == STATUS_SUCCESS ? STATUS_TIMEOUT : status);
                     return true;
                 }
 
                 return false;
             }
 
+            // The thread's KeRemoveQueueEx takes what is queued before the thread is back in the port's wait list, so a packet
+            // that taking one queues (the next worker factory release) is not handed to this thread too. The kernel copies the
+            // packets out after taking them.
+            std::erase(completion->waiters, this->id);
+            if (wait.type == io_completion_wait_type::remove_single)
+            {
+                io_completion_message message{};
+                if (!io_completion_wait::dequeue_io_completion_message(win_emu, wait.io_completion_handle, message))
+                {
+                    return false;
+                }
+
+                this->mark_as_ready(io_completion_wait::write_message(win_emu.memory, wait.key_context_ptr, wait.apc_context_ptr,
+                                                                      wait.io_status_block_ptr, message));
+                return true;
+            }
+
             if (wait.type == io_completion_wait_type::remove_multiple)
             {
-                const auto removed = io_completion_wait::dequeue_io_completion_entries(
-                    win_emu, wait.io_completion_handle,
-                    emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>>{*this->memory_ptr, wait.completion_entries_ptr},
-                    wait.max_entries);
-
-                if (removed > 0)
+                const auto messages =
+                    io_completion_wait::dequeue_io_completion_entries(win_emu, wait.io_completion_handle, wait.max_entries);
+                if (messages.empty())
                 {
-                    emulator_object<ULONG>{*this->memory_ptr, wait.entries_removed_ptr}.write_if_valid(removed);
-                    this->mark_as_ready(STATUS_SUCCESS);
-                    return true;
+                    return false;
                 }
 
-                if (timeout_expired(wait) && !this->has_pending_alertable_apc())
-                {
-                    emulator_object<ULONG>{*this->memory_ptr, wait.entries_removed_ptr}.write_if_valid(0);
-                    this->mark_as_ready(STATUS_TIMEOUT);
-                    return true;
-                }
-
-                return false;
+                this->mark_as_ready(
+                    io_completion_wait::write_entries(win_emu.memory, wait.completion_entries_ptr, wait.entries_removed_ptr, messages));
+                return true;
             }
 
             this->mark_as_ready(STATUS_INVALID_PARAMETER);

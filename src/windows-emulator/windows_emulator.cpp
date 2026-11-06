@@ -13,6 +13,7 @@
 #include "exception_dispatch.hpp"
 #include "apiset/apiset.hpp"
 #include "syscall_dispatcher.hpp"
+#include "io_completion_wait.hpp"
 
 namespace sogen
 {
@@ -429,6 +430,9 @@ namespace sogen
 
                 terminated = kept;
             }
+
+            // Wait packets whose target got signaled go to their port, and so to a thread waiting there.
+            io_completion_wait::materialize_all_signaled_wait_packets(win_emu);
 
             auto& devices = win_emu.process.devices;
 
