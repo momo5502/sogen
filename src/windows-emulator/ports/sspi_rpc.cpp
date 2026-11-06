@@ -55,14 +55,37 @@ namespace sogen
             NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
                                 utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& reply_handles) override
             {
+                // On 19041-19045 sspicli calls SspirGetUserName as procedure 14, from 64-bit and 32-bit callers alike (15
+                // fetches the in-process dispatch table there).
+                const auto get_user_name_procedure = win_emu.version.is_build_within(19041, 19046) ? 14u : 15u;
+
                 if (writer.pointer_size() == utils::aligned_binary_writer::pointer_size_32)
                 {
+                    // The fallback answers SspirGetUserName in its 32-bit layout as procedure 15.
+                    auto procedure = procedure_id;
+                    if (this->bound_interface() == k_sspi_rpc_interface && get_user_name_procedure != 15)
+                    {
+                        if (procedure_id == 15)
+                        {
+                            return STATUS_NOT_SUPPORTED;
+                        }
+                        if (procedure_id == get_user_name_procedure)
+                        {
+                            procedure = 15;
+                        }
+                    }
+
                     auto fallback = create_lsa_policy_lookup_port();
-                    return dynamic_cast<rpc_port&>(*fallback).handle_rpc(win_emu, procedure_id, c, writer, reply_handles);
+                    return dynamic_cast<rpc_port&>(*fallback).handle_rpc(win_emu, procedure, c, writer, reply_handles);
                 }
                 if (this->bound_interface() != k_sspi_rpc_interface)
                 {
                     return STATUS_NOT_SUPPORTED;
+                }
+
+                if (procedure_id == get_user_name_procedure)
+                {
+                    return handle_get_user_name(win_emu, c, writer);
                 }
 
                 switch (procedure_id)
@@ -79,8 +102,6 @@ namespace sogen
                     return handle_process_security_context(win_emu, c, writer);
                 case 7:
                     return handle_delete_security_context(win_emu, c, writer);
-                case 15:
-                    return handle_get_user_name(win_emu, c, writer);
                 default:
                     return STATUS_NOT_SUPPORTED;
                 }
