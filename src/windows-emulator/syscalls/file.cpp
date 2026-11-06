@@ -2480,6 +2480,17 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
+            // An appending handle cannot also truncate, so an append-only overwrite empties the existing file first.
+            const bool overwrites =
+                create_disposition == FILE_SUPERSEDE || create_disposition == FILE_OVERWRITE || create_disposition == FILE_OVERWRITE_IF;
+            if (file_exists && overwrites && mode == u"a+b")
+            {
+                if (const auto truncation = file_sys.open(path, u"wb"); !truncation.file)
+                {
+                    return truncation.status;
+                }
+            }
+
             auto [io, status] = file_sys.open(path, mode);
             if (status != STATUS_SUCCESS)
             {
