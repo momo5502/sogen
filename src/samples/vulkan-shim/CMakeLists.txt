@@ -14,6 +14,10 @@ endif()
 
 add_library(vulkan-shim SHARED ${SRC_FILES})
 
+# Guests may already have an older msvcp140.dll loaded (games ship their own), which cannot lock the
+# constexpr-constructed std::mutex of newer toolsets.
+set_property(TARGET vulkan-shim PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(vulkan-shim PRIVATE gpu-bridge-protocol vulkan-headers)
