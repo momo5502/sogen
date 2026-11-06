@@ -1252,6 +1252,17 @@ namespace sogen
         }
     }
 
+    size_t process_context::handle_count() const
+    {
+        // Threads live in their store whether or not the guest holds a handle to them.
+        return this->processes.size() + this->managed_threads.size() + this->debug_objects.size() + this->events.size() +
+               this->files.size() + this->devices.size() + this->semaphores.size() + this->io_completions.size() +
+               this->wait_completion_packets.size() + this->worker_factories.size() + this->jobs.size() +
+               this->thread_state_changes.size() + this->registry_keys.size() + this->mutants.size() + this->timers.size() +
+               this->desktops.size() + this->window_stations.size() + this->ports.size() + this->sections.size() +
+               this->private_namespaces.size() + this->deferred_window_position_batches.size();
+    }
+
     emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id)
     {
         if (const auto cached = this->thread_handles_by_id.find(thread_id); cached != this->thread_handles_by_id.end())

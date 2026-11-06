@@ -20,6 +20,57 @@ namespace sogen
             constexpr USHORT executable_large_address_aware_image = 0x0022;
             constexpr ULONG process_create_flags_inherit_handles = 4;
 
+            struct process_io_counters
+            {
+                uint64_t read_operation_count;
+                uint64_t write_operation_count;
+                uint64_t other_operation_count;
+                uint64_t read_transfer_count;
+                uint64_t write_transfer_count;
+                uint64_t other_transfer_count;
+            };
+
+            static_assert(sizeof(process_io_counters) == 48);
+
+            struct process_handle_information
+            {
+                ULONG handle_count;
+                ULONG handle_count_high_watermark;
+            };
+
+            static_assert(sizeof(process_handle_information) == 8);
+
+            NTSTATUS probe_output_buffer(const syscall_context& c, const uint64_t buffer, const uint32_t length)
+            {
+                return is_writable_range(c.win_emu.memory, buffer, length) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
+            }
+
+            template <typename T, typename Fill>
+            NTSTATUS query_exact_size(const syscall_context& c, const uint64_t buffer, const uint32_t length,
+                                      const emulator_object<uint32_t> return_length, const Fill& fill)
+            {
+                if (length != sizeof(T))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                if (const auto status = probe_output_buffer(c, buffer, length); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                T value{};
+                fill(value);
+                c.emu.write_memory(buffer, &value, sizeof(value));
+
+                if (return_length)
+                {
+                    return_length.try_write(static_cast<uint32_t>(sizeof(T)));
+                }
+
+                return STATUS_SUCCESS;
+            }
+
             // The defaults of a process without a job: unlimited pools, page file and time. GlobalMemoryStatusEx caps the
             // available page file at PagefileLimit, so zero would report no memory at all.
             template <typename Traits>
@@ -557,7 +608,14 @@ namespace sogen
                     }
                 }
 
-                return STATUS_NOT_SUPPORTED;
+                auto* store = c.proc.get_handle_store(process_handle);
+                const auto is_object = c.proc.is_object_pseudo_handle(process_handle) || (store && store->get_object(process_handle));
+                if (!is_object)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                return process_handle.value.type == handle_types::process ? STATUS_NOT_SUPPORTED : STATUS_OBJECT_TYPE_MISMATCH;
             }
 
             const auto return_length_info = c.win_emu.memory.get_region_info(return_length.value());
@@ -630,6 +688,44 @@ namespace sogen
                                                        [](KERNEL_USER_TIMES& t) {
                                                            t = {}; //
                                                        });
+
+            case ProcessIoCounters:
+                return query_exact_size<process_io_counters>(c, process_information, process_information_length, return_length,
+                                                             [](process_io_counters&) {});
+
+            case ProcessHandleCount: {
+                const auto count = static_cast<ULONG>(c.proc.handle_count());
+
+                if (process_information_length == sizeof(process_handle_information))
+                {
+                    if (const auto status = probe_output_buffer(c, process_information, process_information_length);
+                        status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+
+                    // Windows reports the size of the count alone, although both fields are written.
+                    c.emu.write_memory<process_handle_information>(process_information,
+                                                                   {.handle_count = count, .handle_count_high_watermark = count});
+
+                    if (return_length)
+                    {
+                        return_length.try_write(static_cast<uint32_t>(sizeof(ULONG)));
+                    }
+
+                    return STATUS_SUCCESS;
+                }
+
+                return query_exact_size<ULONG>(c, process_information, process_information_length, return_length,
+                                               [&](ULONG& value) { value = count; });
+            }
+
+            case ProcessSessionInformation:
+                return query_exact_size<ULONG>(c, process_information, process_information_length, return_length,
+                                               [&](ULONG& session_id) { session_id = c.proc.peb64.read().SessionId; });
+
+            case ProcessBreakOnTermination:
+                return query_exact_size<ULONG>(c, process_information, process_information_length, return_length, [](ULONG&) {});
 
             case ProcessCookie:
                 return handle_query<uint32_t>(c.emu, process_information, process_information_length, return_length, [](uint32_t& cookie) {
