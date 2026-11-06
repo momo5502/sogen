@@ -7,17 +7,23 @@ namespace sogen
 {
     enum class posix_errno
     {
+        eacces,
         eagain,
         ebadf,
+        eexist,
         efault,
         eintr,
         einval,
         eio,
         eisdir,
         emfile,
+        enoent,
         enospc,
         enotconn,
+        enotdir,
+        eperm,
         epipe,
+        erofs,
         espipe,
     };
 

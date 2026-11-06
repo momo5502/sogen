@@ -234,6 +234,58 @@ namespace sogen
         EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_close, static_cast<uint64_t>(fd)), 0);
     }
 
+    TEST(LinuxFileSystemMappingTest, OpeningReadOnlyMappingForWriteFailsWithReadOnlyFileSystem)
+    {
+        constexpr int linux_o_WRONLY = 1;
+        constexpr int64_t linux_erofs = 30;
+
+        temp_tree temp{};
+        const auto mapped_host = temp.path() / "readonly";
+        std::filesystem::create_directories(mapped_host);
+        {
+            std::ofstream file(mapped_host / "file.txt", std::ios::binary);
+            file << "data";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), temp.path() / "root");
+        emu.log.disable_output(true);
+        emu.file_sys.add_path_mapping("/ro", mapped_host, true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/ro/file.txt");
+
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_WRONLY), -linux_erofs);
+        EXPECT_EQ(read_host_file(mapped_host / "file.txt"), "data");
+    }
+
+    TEST(LinuxFileDescriptorTest, ExclusiveCreateOfExistingFileFails)
+    {
+        constexpr int linux_o_WRONLY = 1;
+        constexpr int linux_o_CREAT = 0100;
+        constexpr int linux_o_EXCL = 0200;
+        constexpr int64_t linux_eexist = 17;
+        constexpr uint64_t file_mode = 0644;
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        {
+            std::ofstream file(emulation_root / "file.txt", std::ios::binary);
+            file << "data";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/file.txt");
+
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_WRONLY | linux_o_CREAT | linux_o_EXCL,
+                                 file_mode),
+                  -linux_eexist);
+        EXPECT_EQ(read_host_file(emulation_root / "file.txt"), "data");
+    }
+
     TEST(LinuxFileSystemMappingTest, ProcfsRelativeMapsAndCwdStayGuestLocal)
     {
         temp_tree temp{};
