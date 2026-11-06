@@ -437,7 +437,11 @@ namespace sogen
 
             bool executing_delayed_ioctl_{};
             bool connect_failed_{};
-            bool bound_{};
+            // The address the guest bound the socket to (for a listener, the one the host assigned, as a bind to port 0
+            // picks its port then) and the backlog it listens with. A load creates a new host socket, which takes both
+            // again, so a server the guest runs keeps its port; a connection's peer is gone.
+            std::optional<network::address> bound_address_{};
+            std::optional<int> listen_backlog_{};
             std::optional<ULONG> connect_data_sent_{};
             std::optional<afd_creation_data> creation_data{};
             std::optional<bool> require_poll_{};
@@ -813,10 +817,21 @@ namespace sogen
                 buffer.read_optional(this->timeout_);
                 buffer.read(this->non_blocking_);
                 buffer.read(this->connect_failed_);
-                buffer.read(this->bound_);
+                buffer.read_optional(this->bound_address_);
+                buffer.read_optional(this->listen_backlog_);
                 buffer.read_optional(this->connect_data_sent_);
                 buffer.read(this->shared_context_);
                 buffer.read_vector(this->pending_polls_);
+
+                if (this->bound_address_ && !this->s_->bind(*this->bound_address_))
+                {
+                    throw std::runtime_error("Failed to bind a restored socket to " + this->bound_address_->to_string());
+                }
+
+                if (this->listen_backlog_ && !this->s_->listen(*this->listen_backlog_))
+                {
+                    throw std::runtime_error("Failed to listen on a restored socket");
+                }
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override
@@ -828,7 +843,8 @@ namespace sogen
                 buffer.write_optional(this->timeout_);
                 buffer.write(this->non_blocking_);
                 buffer.write(this->connect_failed_);
-                buffer.write(this->bound_);
+                buffer.write_optional(this->bound_address_);
+                buffer.write_optional(this->listen_backlog_);
                 buffer.write_optional(this->connect_data_sent_);
                 buffer.write(this->shared_context_);
                 buffer.write_vector(this->pending_polls_);
@@ -951,7 +967,7 @@ namespace sogen
                     return STATUS_CONNECTION_ACTIVE;
                 }
 
-                if (!this->bound_ || this->s_->is_listening())
+                if (!this->bound_address_ || this->s_->is_listening())
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -1157,11 +1173,11 @@ namespace sogen
                     return STATUS_ADDRESS_ALREADY_ASSOCIATED;
                 }
 
-                this->bound_ = true;
+                this->bound_address_ = addr;
                 return STATUS_SUCCESS;
             }
 
-            NTSTATUS ioctl_listen(windows_emulator& win_emu, const io_device_context& c) const
+            NTSTATUS ioctl_listen(windows_emulator& win_emu, const io_device_context& c)
             {
                 if (!this->s_)
                 {
@@ -1175,9 +1191,16 @@ namespace sogen
 
                 const auto listen_info = win_emu.emu().read_memory<AFD_LISTEN_INFO>(c.input_buffer);
 
-                if (!this->s_->listen(static_cast<int>(listen_info.MaximumConnectionQueue)))
+                const auto backlog = static_cast<int>(listen_info.MaximumConnectionQueue);
+                if (!this->s_->listen(backlog))
                 {
                     return STATUS_INVALID_PARAMETER;
+                }
+
+                this->listen_backlog_ = backlog;
+                if (const auto local_address = this->s_->get_local_address())
+                {
+                    this->bound_address_ = *local_address;
                 }
 
                 return STATUS_SUCCESS;

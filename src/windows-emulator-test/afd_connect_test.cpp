@@ -1,5 +1,7 @@
 #include "emulation_test_utils.hpp"
 
+#include <network/tcp_client_socket.hpp>
+
 #include <array>
 #include <cstring>
 #include <optional>
@@ -13,6 +15,7 @@ namespace sogen::test
         constexpr ULONG ioctl_afd_bind = 0x12003;
         constexpr ULONG ioctl_afd_start_listen = 0x1200B;
         constexpr ULONG ioctl_afd_super_connect = 0x120C7;
+        constexpr ULONG ioctl_afd_get_address = 0x1202F;
         constexpr ULONG ioctl_afd_get_remote_address = 0x1203F;
         constexpr ULONG ioctl_afd_set_context = 0x12047;
 
@@ -255,18 +258,19 @@ namespace sogen::test
                 return this->emu->process.devices.get(this->endpoint)->execute_ioctl(*this->emu, request);
             }
 
-            NTSTATUS bind()
+            NTSTATUS bind(const guest_sockaddr_in& address = {.family = 2})
             {
                 std::array<std::byte, 20> info{};
-                const guest_sockaddr_in any{.family = 2};
-                memcpy(info.data() + 4, &any, sizeof(any));
+                memcpy(info.data() + 4, &address, sizeof(address));
                 this->emu->memory.write_memory(this->storage + input_offset, info.data(), info.size());
                 return this->ioctl(ioctl_afd_bind, this->storage + input_offset, static_cast<ULONG>(info.size()), 0, 0);
             }
 
-            NTSTATUS listen()
+            NTSTATUS listen(const ULONG backlog = 0)
             {
-                const std::array<std::byte, 12> info{};
+                // AFD_LISTEN_INFO: SanActive, MaximumConnectionQueue at 4, UseDelayedAcceptance.
+                std::array<std::byte, 12> info{};
+                memcpy(info.data() + 4, &backlog, sizeof(backlog));
                 this->emu->memory.write_memory(this->storage + input_offset, info.data(), info.size());
                 return this->ioctl(ioctl_afd_start_listen, this->storage + input_offset, static_cast<ULONG>(info.size()), 0, 0);
             }
@@ -497,6 +501,69 @@ namespace sogen::test
 
         EXPECT_EQ(STATUS_BUFFER_TOO_SMALL, this->query_remote_address(8));
         EXPECT_EQ(STATUS_BUFFER_TOO_SMALL, this->query_remote_address(0));
+    }
+
+    // A load gives every socket a new host socket. A listening one takes its address and backlog again, so a server the
+    // guest runs (Destiny 2's server listens on 127.0.0.1:30974) accepts connections after the load as before the save.
+    TEST_F(AfdConnectTest, ListeningSocketListensAgainAfterARestore)
+    {
+#ifdef __EMSCRIPTEN__
+        GTEST_SKIP() << "WebAssembly has no host sockets to listen on";
+#else
+        constexpr uint16_t restored_port = 28973;
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(loopback(restored_port)));
+        ASSERT_EQ(STATUS_SUCCESS, this->listen(4));
+
+        utils::buffer_serializer snapshot{};
+        this->emu->process.devices.get(this->endpoint)->serialize(snapshot);
+
+        // The saving run is gone before the load, and its host socket with it.
+        ASSERT_TRUE(this->emu->process.devices.erase(this->endpoint));
+
+        // The load uses host sockets, as a game run does. (The in-process network the fixture saves with keeps a closed
+        // listener's queue, so it would accept the connection without a restore.)
+        const auto host_sockets = network::create_socket_factory(network::network_mode::live);
+        utils::buffer_deserializer input{snapshot};
+        input.register_factory<socket_factory_wrapper>([&] { return socket_factory_wrapper{*host_sockets}; });
+        input.register_factory<memory_manager_wrapper>([&] { return memory_manager_wrapper{this->emu->memory}; });
+        io_device_container restored{};
+        restored.deserialize(input);
+
+        network::tcp_client_socket client{AF_INET};
+        EXPECT_TRUE(client.connect(network::address{"127.0.0.1", restored_port}));
+#endif
+    }
+
+    // A listener bound to port 0 tells its clients the port the host assigned, so a load listens on that port again.
+    TEST_F(AfdConnectTest, ListenerOnPortZeroListensOnItsAssignedPortAfterARestore)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(loopback(0)));
+        ASSERT_EQ(STATUS_SUCCESS, this->listen(4));
+        ASSERT_EQ(STATUS_SUCCESS,
+                  this->ioctl(ioctl_afd_get_address, 0, 0, this->storage + output_offset, static_cast<ULONG>(sizeof(guest_sockaddr_in))));
+        const auto assigned = this->emu->memory.read_memory<guest_sockaddr_in>(this->storage + output_offset);
+        ASSERT_NE(0, assigned.port);
+
+        utils::buffer_serializer snapshot{};
+        this->emu->process.devices.get(this->endpoint)->serialize(snapshot);
+        ASSERT_TRUE(this->emu->process.devices.erase(this->endpoint));
+
+        // A new in-process network, whose first ports go to sockets made before the load: the restored socket gets a port of
+        // its own past the assigned one, so only a socket that binds the assigned port again accepts there.
+        const auto sockets = network::create_static_socket_factory();
+        for (uint16_t port = 0; port < ntohs(assigned.port); ++port)
+        {
+            (void)sockets->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        }
+
+        utils::buffer_deserializer input{snapshot};
+        input.register_factory<socket_factory_wrapper>([&] { return socket_factory_wrapper{*sockets}; });
+        input.register_factory<memory_manager_wrapper>([&] { return memory_manager_wrapper{this->emu->memory}; });
+        io_device_container restored{};
+        restored.deserialize(input);
+
+        const auto client = sockets->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        EXPECT_TRUE(client->connect(network::address{"127.0.0.1", ntohs(assigned.port)}));
     }
 
     TEST_F(AfdConnectTest, RemoteAddressWithoutAPeerIsRejected)
