@@ -749,9 +749,12 @@ namespace sogen
         BOOL handle_NtUserZapActiveAndFocus(const syscall_context& c);
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL Ansi);
+        emulator_pointer completion_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
+                                                           BOOL Ansi);
         emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                       BOOL Ansi);
         uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
+        uint32_t completion_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
         uint64_t handle_NtUserGetAncestor(const syscall_context& c, hwnd child_hwnd, UINT flags);
         BOOL handle_NtUserIsTopLevelWindow(const syscall_context& c, hwnd window);
         BOOL handle_NtUserRedrawWindow(const syscall_context& c, hwnd hwnd, emulator_object<RECT> update_rect, uint64_t update_rgn,
@@ -2248,6 +2251,8 @@ namespace sogen
         add_callback(NtUserEndDeferWindowPosEx, deferred_window_position_state);
         add_callback(NtUserMessageCall, message_call_state);
         add_callback(NtUserGetComboBoxInfo, message_call_state);
+        add_callback(NtUserSetWindowLong, window_style_change_state);
+        add_callback(NtUserSetWindowLongPtr, window_style_change_state);
         add_callback(NtUserUpdateWindow, window_update_state);
         add_callback(NtUserGetMessage, get_message_hook_state);
         add_callback(NtUserPeekMessage, get_message_hook_state);

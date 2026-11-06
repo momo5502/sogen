@@ -262,6 +262,8 @@ namespace sogen
         NtUserPeekMessage,
         NtUserWaitMessage,
         NtUserMsgWaitForMultipleObjectsEx,
+        NtUserSetWindowLong,
+        NtUserSetWindowLongPtr,
     };
 
     struct callback_frame
