@@ -5,6 +5,7 @@
 #include "../procfs.hpp"
 
 #include <posix_descriptor_syscalls.hpp>
+#include <posix_io_syscalls.hpp>
 #include <posix_path_resolution.hpp>
 
 #include <algorithm>
@@ -47,64 +48,64 @@ namespace sogen
         constexpr int LINUX_O_TRUNC = 01000;
         constexpr int LINUX_O_APPEND = 02000;
         constexpr int LINUX_O_DIRECTORY = 0200000;
+        constexpr int LINUX_O_NONBLOCK = 04000;
         constexpr int LINUX_O_CLOEXEC = 02000000;
 
         // getrlimit reports RLIMIT_NOFILE as unlimited, so only the descriptor's int type bounds it.
         constexpr int LINUX_DESCRIPTOR_LIMIT = std::numeric_limits<int>::max();
 
-        int64_t host_read_fd(const int fd, void* buffer, const size_t count)
+        posix_io_context io_context(const linux_syscall_context& c)
         {
-#if defined(_WIN32)
-            constexpr auto max_count = static_cast<size_t>(std::numeric_limits<unsigned int>::max());
-            const auto request = static_cast<unsigned int>(std::min(count, max_count));
-            return static_cast<int64_t>(_read(fd, buffer, request));
-#else
-            return static_cast<int64_t>(::read(fd, buffer, count));
-#endif
+            return {
+                .fds = c.proc.fds,
+                .memory = c.emu_ref.memory,
+                .on_stdout = c.emu_ref.on_stdout,
+                .on_stderr = c.emu_ref.on_stderr,
+                .nonblock_flag = LINUX_O_NONBLOCK,
+            };
         }
 
-#if defined(_WIN32)
-        bool host_pipe_would_block(const int fd)
+        struct linux_iovec
         {
-            auto* const os_handle = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
-            if (os_handle == INVALID_HANDLE_VALUE)
+            uint64_t base;
+            uint64_t length;
+        };
+
+        template <typename Transfer>
+        posix_result transfer_io_vector(const linux_syscall_context& c, const uint64_t iov_addr, const int iovcnt, const Transfer& transfer)
+        {
+            constexpr int LINUX_UIO_MAXIOV = 1024;
+            if (iovcnt < 0 || iovcnt > LINUX_UIO_MAXIOV)
             {
-                errno = EBADF;
-                return false;
+                return posix_errno::einval;
             }
 
-            DWORD available = 0;
-            if (PeekNamedPipe(os_handle, nullptr, 0, nullptr, &available, nullptr) != 0)
+            uint64_t transferred = 0;
+            for (int i = 0; i < iovcnt; ++i)
             {
-                if (available == 0)
+                linux_iovec vector{};
+                const auto vector_addr = iov_addr + (static_cast<uint64_t>(i) * sizeof(vector));
+                if (!c.emu_ref.memory.is_readable_range(vector_addr, sizeof(vector)) ||
+                    !c.emu_ref.memory.try_read_memory(vector_addr, &vector, sizeof(vector)))
                 {
-                    errno = EAGAIN;
-                    return true;
+                    return posix_partial_transfer(transferred, posix_errno::efault);
                 }
 
-                return false;
+                const auto result = transfer(vector.base, vector.length);
+                if (const auto* error = std::get_if<posix_errno>(&result))
+                {
+                    return posix_partial_transfer(transferred, *error);
+                }
+
+                const auto count = std::get<uint64_t>(result);
+                transferred += count;
+                if (count < vector.length)
+                {
+                    break;
+                }
             }
 
-            const auto error = GetLastError();
-            if (error == ERROR_BROKEN_PIPE)
-            {
-                return false;
-            }
-
-            errno = EIO;
-            return false;
-        }
-#endif
-
-        int64_t host_write_fd(const int fd, const void* buffer, const size_t count)
-        {
-#if defined(_WIN32)
-            constexpr auto max_count = static_cast<size_t>(std::numeric_limits<unsigned int>::max());
-            const auto request = static_cast<unsigned int>(std::min(count, max_count));
-            return static_cast<int64_t>(_write(fd, buffer, request));
-#else
-            return static_cast<int64_t>(::write(fd, buffer, count));
-#endif
+            return transferred;
         }
 
         posix_fd make_memory_file_fd(std::string path, std::string content, const int flags)
@@ -134,13 +135,6 @@ namespace sogen
 
             const auto bytes_read = std::min(count, content.size() - offset);
             std::ranges::copy_n(content.begin() + static_cast<std::ptrdiff_t>(offset), static_cast<std::ptrdiff_t>(bytes_read), buffer);
-            return bytes_read;
-        }
-
-        size_t read_memory_file(posix_fd& fd, uint8_t* buffer, const size_t count)
-        {
-            const auto bytes_read = read_memory_file_at(fd, buffer, count, fd.memory_file->offset);
-            fd.memory_file->offset += bytes_read;
             return bytes_read;
         }
 
@@ -263,38 +257,6 @@ namespace sogen
         size_t align_up_8(const size_t value)
         {
             return (value + 7) & ~static_cast<size_t>(7);
-        }
-
-        int64_t map_host_errno_to_linux(const int host_errno)
-        {
-            switch (host_errno)
-            {
-            case EAGAIN:
-#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
-            case EWOULDBLOCK:
-#endif
-                return LINUX_EAGAIN;
-            case EINTR:
-                return LINUX_EINTR;
-            case EBADF:
-                return LINUX_EBADF;
-            case EINVAL:
-                return LINUX_EINVAL;
-            case EPIPE:
-                return LINUX_EPIPE;
-            case ENOENT:
-                return LINUX_ENOENT;
-            case EACCES:
-                return LINUX_EACCES;
-            case ENOSPC:
-                return LINUX_ENOSPC;
-            case EISDIR:
-                return LINUX_EISDIR;
-            case ENOTDIR:
-                return LINUX_ENOTDIR;
-            default:
-                return LINUX_EIO;
-            }
         }
 
         bool open_flags_mutate_file(const int flags)
@@ -634,185 +596,32 @@ namespace sogen
     {
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         const auto buf_addr = get_linux_syscall_argument(c.emu, 1);
-        const auto count = static_cast<size_t>(get_linux_syscall_argument(c.emu, 2));
+        const auto count = get_linux_syscall_argument(c.emu, 2);
 
-        auto* fd_entry = c.proc.fds.get(fd);
-        if (!fd_entry)
+        const auto* fd_entry = c.proc.fds.get(fd);
+        if (fd_entry && fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
         {
-            write_linux_syscall_result(c, -LINUX_EBADF);
+            write_linux_syscall_result(c, linux_socket_recv_guest_buffer(c, fd, buf_addr, static_cast<size_t>(count), 0));
             return;
         }
 
-        if (fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
-        {
-            write_linux_syscall_result(c, linux_socket_recv_guest_buffer(c, fd, buf_addr, count, 0));
-            return;
-        }
-
-        if (!fd_allows_read(*fd_entry))
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        if (fd_entry->host_path == "/dev/stdin")
-        {
-            // stdin: return 0 (EOF) for now
-            write_linux_syscall_result(c, 0);
-            return;
-        }
-
-        if (fd_entry->type == fd_type::memory_file)
-        {
-            if (!fd_entry->memory_file)
-            {
-                write_linux_syscall_result(c, -LINUX_EBADF);
-                return;
-            }
-
-            std::vector<uint8_t> buffer(count);
-            const auto bytes_read = read_memory_file(*fd_entry, buffer.data(), count);
-            if (bytes_read > 0)
-            {
-                c.emu.write_memory(buf_addr, buffer.data(), bytes_read);
-            }
-
-            write_linux_syscall_result(c, static_cast<int64_t>(bytes_read));
-            return;
-        }
-
-        if (!fd_entry->handle)
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        if (fd_entry->type == fd_type::directory)
-        {
-            write_linux_syscall_result(c, -LINUX_EISDIR);
-            return;
-        }
-
-        if (fd_entry->type == fd_type::pipe_write)
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        std::vector<uint8_t> buffer(count);
-        int64_t bytes_read = 0;
-
-        if (fd_entry->type == fd_type::pipe_read)
-        {
-            const auto host_fd = fileno(fd_entry->handle);
-#if defined(_WIN32)
-            constexpr int LINUX_O_NONBLOCK = 04000;
-            if ((fd_entry->flags & LINUX_O_NONBLOCK) != 0 && host_pipe_would_block(host_fd))
-            {
-                write_linux_syscall_result(c, -LINUX_EAGAIN);
-                return;
-            }
-#endif
-            errno = 0;
-            bytes_read = host_read_fd(host_fd, buffer.data(), count);
-            if (bytes_read < 0)
-            {
-                write_linux_syscall_result(c, -map_host_errno_to_linux(errno));
-                return;
-            }
-        }
-        else
-        {
-            const auto stdio_bytes = fread(buffer.data(), 1, count, fd_entry->handle);
-            bytes_read = static_cast<int64_t>(stdio_bytes);
-        }
-
-        if (bytes_read > 0)
-        {
-            c.emu.write_memory(buf_addr, buffer.data(), static_cast<size_t>(bytes_read));
-        }
-
-        write_linux_syscall_result(c, bytes_read);
+        write_linux_syscall_result(c, posix_read(io_context(c), fd, buf_addr, count));
     }
 
     void sys_write(const linux_syscall_context& c)
     {
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         const auto buf_addr = get_linux_syscall_argument(c.emu, 1);
-        const auto count = static_cast<size_t>(get_linux_syscall_argument(c.emu, 2));
+        const auto count = get_linux_syscall_argument(c.emu, 2);
 
-        auto* fd_entry = c.proc.fds.get(fd);
-        if (!fd_entry)
+        const auto* fd_entry = c.proc.fds.get(fd);
+        if (fd_entry && fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
         {
-            write_linux_syscall_result(c, -LINUX_EBADF);
+            write_linux_syscall_result(c, linux_socket_send_guest_buffer(c, fd, buf_addr, static_cast<size_t>(count), 0));
             return;
         }
 
-        if (fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
-        {
-            write_linux_syscall_result(c, linux_socket_send_guest_buffer(c, fd, buf_addr, count, 0));
-            return;
-        }
-
-        std::vector<uint8_t> buffer(count);
-        c.emu.read_memory(buf_addr, buffer.data(), count);
-
-        if (fd == 1 || fd == 2)
-        {
-            // stdout / stderr: invoke callback if set, otherwise write to host
-            const auto sv = std::string_view(reinterpret_cast<const char*>(buffer.data()), count);
-            auto& callback = (fd == 1) ? c.emu_ref.on_stdout : c.emu_ref.on_stderr;
-
-            if (callback)
-            {
-                callback(sv);
-            }
-            else
-            {
-                auto* target = (fd == 1) ? stdout : stderr;
-                fwrite(buffer.data(), 1, count, target);
-                fflush(target);
-            }
-
-            write_linux_syscall_result(c, static_cast<int64_t>(count));
-            return;
-        }
-
-        if (!fd_entry->handle)
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        if (fd_entry->type == fd_type::directory || fd_entry->type == fd_type::pipe_read)
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        if (fd_entry->type == fd_type::pipe_write)
-        {
-            const auto host_fd = fileno(fd_entry->handle);
-            errno = 0;
-            const auto written = host_write_fd(host_fd, buffer.data(), count);
-            if (written < 0)
-            {
-                write_linux_syscall_result(c, -map_host_errno_to_linux(errno));
-                return;
-            }
-
-            write_linux_syscall_result(c, written);
-            return;
-        }
-
-        if (fd_entry->read_only_mapping)
-        {
-            write_linux_syscall_result(c, -LINUX_EACCES);
-            return;
-        }
-
-        const auto written = fwrite(buffer.data(), 1, count, fd_entry->handle);
-        write_linux_syscall_result(c, static_cast<int64_t>(written));
+        write_linux_syscall_result(c, posix_write(io_context(c), fd, buf_addr, count));
     }
 
     void sys_open(const linux_syscall_context& c)
@@ -1278,7 +1087,7 @@ namespace sogen
         const auto iov_addr = get_linux_syscall_argument(c.emu, 1);
         const auto iovcnt = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
 
-        auto* fd_entry = c.proc.fds.get(fd);
+        const auto* fd_entry = c.proc.fds.get(fd);
         if (!fd_entry)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
@@ -1291,61 +1100,9 @@ namespace sogen
             return;
         }
 
-        if (fd_entry->read_only_mapping)
-        {
-            write_linux_syscall_result(c, -LINUX_EACCES);
-            return;
-        }
-
-        int64_t total_written = 0;
-
-        for (int i = 0; i < iovcnt; ++i)
-        {
-            const auto entry_addr = iov_addr + static_cast<uint64_t>(i) * 16;
-            uint64_t iov_base{};
-            uint64_t iov_len{};
-            c.emu.read_memory(entry_addr, &iov_base, 8);
-            c.emu.read_memory(entry_addr + 8, &iov_len, 8);
-
-            if (iov_len == 0)
-            {
-                continue;
-            }
-
-            std::vector<uint8_t> buffer(static_cast<size_t>(iov_len));
-            c.emu.read_memory(iov_base, buffer.data(), static_cast<size_t>(iov_len));
-
-            if (fd == 1 || fd == 2)
-            {
-                const auto sv = std::string_view(reinterpret_cast<const char*>(buffer.data()), static_cast<size_t>(iov_len));
-                auto& callback = (fd == 1) ? c.emu_ref.on_stdout : c.emu_ref.on_stderr;
-
-                if (callback)
-                {
-                    callback(sv);
-                }
-                else
-                {
-                    auto* target = (fd == 1) ? stdout : stderr;
-                    fwrite(buffer.data(), 1, static_cast<size_t>(iov_len), target);
-                    fflush(target);
-                }
-
-                total_written += static_cast<int64_t>(iov_len);
-            }
-            else if (fd_entry->handle)
-            {
-                const auto written = fwrite(buffer.data(), 1, static_cast<size_t>(iov_len), fd_entry->handle);
-                total_written += static_cast<int64_t>(written);
-            }
-            else
-            {
-                write_linux_syscall_result(c, -LINUX_EBADF);
-                return;
-            }
-        }
-
-        write_linux_syscall_result(c, total_written);
+        write_linux_syscall_result(c, transfer_io_vector(c, iov_addr, iovcnt, [&c, fd](const uint64_t base, const uint64_t length) {
+                                       return posix_write(io_context(c), fd, base, length);
+                                   }));
     }
 
     void sys_dup(const linux_syscall_context& c)
@@ -2418,7 +2175,7 @@ namespace sogen
         const auto iov_addr = get_linux_syscall_argument(c.emu, 1);
         const auto iovcnt = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
 
-        auto* fd_entry = c.proc.fds.get(fd);
+        const auto* fd_entry = c.proc.fds.get(fd);
         if (!fd_entry)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
@@ -2431,78 +2188,9 @@ namespace sogen
             return;
         }
 
-        if (!fd_allows_read(*fd_entry))
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        int64_t total_read = 0;
-
-        for (int i = 0; i < iovcnt; ++i)
-        {
-            const auto entry_addr = iov_addr + static_cast<uint64_t>(i) * 16;
-            uint64_t iov_base{};
-            uint64_t iov_len{};
-            c.emu.read_memory(entry_addr, &iov_base, 8);
-            c.emu.read_memory(entry_addr + 8, &iov_len, 8);
-
-            if (iov_len == 0)
-            {
-                continue;
-            }
-
-            if (fd_entry->host_path == "/dev/stdin")
-            {
-                // stdin: EOF
-                break;
-            }
-
-            if (fd_entry->type == fd_type::memory_file)
-            {
-                if (!fd_entry->memory_file)
-                {
-                    write_linux_syscall_result(c, -LINUX_EBADF);
-                    return;
-                }
-
-                std::vector<uint8_t> buffer(static_cast<size_t>(iov_len));
-                const auto bytes_read = read_memory_file(*fd_entry, buffer.data(), static_cast<size_t>(iov_len));
-                if (bytes_read > 0)
-                {
-                    c.emu.write_memory(iov_base, buffer.data(), bytes_read);
-                    total_read += static_cast<int64_t>(bytes_read);
-                }
-
-                if (bytes_read < iov_len)
-                {
-                    break;
-                }
-                continue;
-            }
-
-            if (!fd_entry->handle)
-            {
-                write_linux_syscall_result(c, -LINUX_EBADF);
-                return;
-            }
-
-            std::vector<uint8_t> buffer(static_cast<size_t>(iov_len));
-            const auto bytes_read = fread(buffer.data(), 1, static_cast<size_t>(iov_len), fd_entry->handle);
-
-            if (bytes_read > 0)
-            {
-                c.emu.write_memory(iov_base, buffer.data(), bytes_read);
-                total_read += static_cast<int64_t>(bytes_read);
-            }
-
-            if (bytes_read < iov_len)
-            {
-                break; // Short read — don't continue to next iov
-            }
-        }
-
-        write_linux_syscall_result(c, total_read);
+        write_linux_syscall_result(c, transfer_io_vector(c, iov_addr, iovcnt, [&c, fd](const uint64_t base, const uint64_t length) {
+                                       return posix_read(io_context(c), fd, base, length);
+                                   }));
     }
 
     void sys_faccessat(const linux_syscall_context& c)

@@ -85,12 +85,28 @@ namespace sogen
     {
         switch (error)
         {
+        case posix_errno::eagain:
+            return linux_errno::LINUX_EAGAIN;
         case posix_errno::ebadf:
             return linux_errno::LINUX_EBADF;
+        case posix_errno::efault:
+            return linux_errno::LINUX_EFAULT;
+        case posix_errno::eintr:
+            return linux_errno::LINUX_EINTR;
         case posix_errno::einval:
             return linux_errno::LINUX_EINVAL;
+        case posix_errno::eio:
+            return linux_errno::LINUX_EIO;
+        case posix_errno::eisdir:
+            return linux_errno::LINUX_EISDIR;
         case posix_errno::emfile:
             return linux_errno::LINUX_EMFILE;
+        case posix_errno::enospc:
+            return linux_errno::LINUX_ENOSPC;
+        case posix_errno::enotconn:
+            return linux_errno::LINUX_ENOTCONN;
+        case posix_errno::epipe:
+            return linux_errno::LINUX_EPIPE;
         case posix_errno::espipe:
             return linux_errno::LINUX_ESPIPE;
         }

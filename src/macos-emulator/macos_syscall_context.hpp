@@ -20,6 +20,7 @@ namespace sogen
         constexpr uint64_t MACOS_EPERM = 1;
         constexpr uint64_t MACOS_ENOENT = 2;
         constexpr uint64_t MACOS_ESRCH = 3;
+        constexpr uint64_t MACOS_EINTR = 4;
         constexpr uint64_t MACOS_EIO = 5;
         constexpr uint64_t MACOS_E2BIG = 7;
         constexpr uint64_t MACOS_ENOEXEC = 8;
@@ -35,6 +36,8 @@ namespace sogen
         constexpr uint64_t MACOS_EMFILE = 24;
         constexpr uint64_t MACOS_ENOTTY = 25;
         constexpr uint64_t MACOS_ESPIPE = 29;
+        constexpr uint64_t MACOS_EPIPE = 32;
+        constexpr uint64_t MACOS_EAGAIN = 35;
         constexpr uint64_t MACOS_ENOTSOCK = 38;
         constexpr uint64_t MACOS_EAFNOSUPPORT = 47;
         constexpr uint64_t MACOS_ENOTCONN = 57;
@@ -49,12 +52,28 @@ namespace sogen
     {
         switch (error)
         {
+        case posix_errno::eagain:
+            return macos_errno::MACOS_EAGAIN;
         case posix_errno::ebadf:
             return macos_errno::MACOS_EBADF;
+        case posix_errno::efault:
+            return macos_errno::MACOS_EFAULT;
+        case posix_errno::eintr:
+            return macos_errno::MACOS_EINTR;
         case posix_errno::einval:
             return macos_errno::MACOS_EINVAL;
+        case posix_errno::eio:
+            return macos_errno::MACOS_EIO;
+        case posix_errno::eisdir:
+            return macos_errno::MACOS_EISDIR;
         case posix_errno::emfile:
             return macos_errno::MACOS_EMFILE;
+        case posix_errno::enospc:
+            return macos_errno::MACOS_ENOSPC;
+        case posix_errno::enotconn:
+            return macos_errno::MACOS_ENOTCONN;
+        case posix_errno::epipe:
+            return macos_errno::MACOS_EPIPE;
         case posix_errno::espipe:
             return macos_errno::MACOS_ESPIPE;
         }
