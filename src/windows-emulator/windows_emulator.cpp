@@ -874,6 +874,7 @@ namespace sogen
         }
 
         this->memory.set_execute_implies_read(guest_architecture_of(*this->emu_) == windows_guest_architecture::x86_64);
+        this->thread_stacks_committed_in_full_ = !this->memory.supports_guarded_stack_growth();
 
         if (this->vcpu_count_ > 1 && !this->emu_->supports_multiple_vcpus())
         {
