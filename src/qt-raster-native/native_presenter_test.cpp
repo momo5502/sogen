@@ -226,7 +226,7 @@ namespace sogen::test
     TEST_F(NativeRasterTest, WheelAxesPreserveCoordinatesModifiersAndQtDirection)
     {
         this->event(WM_KEYDOWN, VK_CONTROL);
-        for (const int16_t delta : {120, -120})
+        for (const int32_t delta : {120, -120})
         {
             const auto wparam = uint64_t{static_cast<uint16_t>(delta)} << 16;
             const auto point = (uint64_t{34} << 16) | static_cast<uint16_t>(-12);
