@@ -43,30 +43,37 @@ namespace sogen::test
                 return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
             }
 
-            handle create_section()
+            handle create_section(const uint64_t size = section_size)
             {
                 const emulator_object<handle> output{this->emu->memory, this->storage};
                 const emulator_object<ULARGE_INTEGER> maximum_size{this->emu->memory, this->storage + 0x100};
-                maximum_size.write(ULARGE_INTEGER{.QuadPart = section_size});
+                maximum_size.write(ULARGE_INTEGER{.QuadPart = size});
 
                 EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateSection(this->context(), output, 0, {this->emu->memory}, maximum_size,
                                                                            PAGE_READWRITE, SEC_COMMIT, {}));
                 return output.read();
             }
 
-            uint64_t map_view(const handle section, const uint64_t offset = 0, const uint64_t size = 0)
+            NTSTATUS try_map_view(const handle section, uint64_t& address, const uint64_t offset = 0, const uint64_t size = 0)
             {
                 const emulator_object<uint64_t> base_address{this->emu->memory, this->storage + 0x200};
                 const emulator_object<EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T)> view_size{this->emu->memory,
                                                                                                       this->storage + 0x300};
                 const emulator_object<LARGE_INTEGER> section_offset{this->emu->memory, this->storage + 0x400};
-                base_address.write(0);
+                base_address.write(address);
                 view_size.write(size);
                 section_offset.write(LARGE_INTEGER{.QuadPart = static_cast<int64_t>(offset)});
 
-                EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtMapViewOfSection(this->context(), section, CURRENT_PROCESS, base_address, 0, 0,
-                                                                              section_offset, view_size, ViewUnmap, 0, PAGE_READWRITE));
-                return base_address.read();
+                const auto status = syscalls::handle_NtMapViewOfSection(this->context(), section, CURRENT_PROCESS, base_address, 0, 0,
+                                                                        section_offset, view_size, ViewUnmap, 0, PAGE_READWRITE);
+                address = base_address.read();
+                return status;
+            }
+
+            uint64_t map_view(const handle section, const uint64_t offset = 0, const uint64_t size = 0, uint64_t address = 0)
+            {
+                EXPECT_EQ(STATUS_SUCCESS, this->try_map_view(section, address, offset, size));
+                return address;
             }
 
             bool is_committed(const uint64_t address)
@@ -95,6 +102,31 @@ namespace sogen::test
 
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtUnmapViewOfSection(this->context(), CURRENT_PROCESS, view));
         EXPECT_FALSE(this->is_committed(view));
+    }
+
+    TEST_F(SectionViewLifetimeTest, ViewsLandWhereTheCallerPlacesThem)
+    {
+        if (!this->emu->memory.can_alias_host_memory_anywhere())
+        {
+            GTEST_SKIP() << "The backend cannot map host memory at a second address";
+        }
+
+        const auto section = this->create_section(ALLOCATION_GRANULARITY);
+        const auto base = this->emu->memory.find_free_allocation_base(2 * ALLOCATION_GRANULARITY);
+        ASSERT_NE(base, 0u);
+
+        // A ring buffer maps the section twice in a row, so writes past the end of the first view reach its start.
+        const auto first = this->map_view(section, 0, 0, base);
+        const auto mirror = this->map_view(section, 0, 0, base + ALLOCATION_GRANULARITY);
+        ASSERT_EQ(base, first);
+        ASSERT_EQ(base + ALLOCATION_GRANULARITY, mirror);
+
+        this->emu->memory.write_memory<uint32_t>(mirror, 0x600df00d);
+        EXPECT_EQ(0x600df00du, this->emu->memory.read_memory<uint32_t>(first));
+
+        // An unaligned address is rounded down to the taken range, and the view is refused rather than moved.
+        uint64_t taken = base + 0x1234;
+        EXPECT_EQ(STATUS_CONFLICTING_ADDRESSES, this->try_map_view(section, taken));
     }
 
     TEST_F(SectionViewLifetimeTest, BackingIsReleasedWithTheLastViewOnly)
