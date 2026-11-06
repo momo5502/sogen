@@ -1856,6 +1856,7 @@ namespace sogen::whp
                     this->syscall_hook_ = &entry;
                 }
 
+                this->update_rdtsc_exit();
                 return hook;
             }
 
@@ -1974,6 +1975,7 @@ namespace sogen::whp
                 }
 
                 this->instruction_hooks_.erase(hook);
+                this->update_rdtsc_exit();
                 this->basic_block_hooks_.erase(hook);
                 this->interrupt_hooks_.erase(hook);
                 this->memory_violation_hooks_.erase(hook);
@@ -2090,6 +2092,9 @@ namespace sogen::whp
 
             partition_handle partition_{};
             WHV_EXTENDED_VM_EXITS supported_exits_{};
+            WHV_EXTENDED_VM_EXITS enabled_exits_{};
+            // Whether RDTSC/RDTSCP exits can follow the hooks after setup; see update_rdtsc_exit().
+            bool rdtsc_exit_switchable_ = false;
             WHV_PROCESSOR_XSAVE_FEATURES supported_xsave_features_{};
             bool has_supported_xsave_features_ = false;
 
@@ -2165,7 +2170,7 @@ namespace sogen::whp
                 WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeProcessorCount, &processor_count,
                                                      sizeof(processor_count)));
 
-                WHV_EXTENDED_VM_EXITS enabled_exits{};
+                auto& enabled_exits = this->enabled_exits_;
                 enabled_exits.ExceptionExit = this->supported_exits_.ExceptionExit ? 1 : 0;
                 enabled_exits.X64CpuidExit = this->supported_exits_.X64CpuidExit ? 1 : 0;
                 enabled_exits.X64RdtscExit = this->supported_exits_.X64RdtscExit ? 1 : 0;
@@ -2187,6 +2192,41 @@ namespace sogen::whp
                 }
 
                 WHP_CHECK_HR(WHvSetupPartition(this->partition_));
+
+                // Without a hook the guest reads its TSC natively instead of through a VM exit per read; hooks turn the
+                // exits back on. Hosts that cannot change exits after setup keep trapping and serve the guest TSC.
+                if (enabled_exits.X64RdtscExit)
+                {
+                    auto without_rdtsc = enabled_exits;
+                    without_rdtsc.X64RdtscExit = 0;
+                    if (SUCCEEDED(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExtendedVmExits, &without_rdtsc,
+                                                          sizeof(without_rdtsc))))
+                    {
+                        enabled_exits = without_rdtsc;
+                        this->rdtsc_exit_switchable_ = true;
+                    }
+                }
+            }
+
+            void update_rdtsc_exit()
+            {
+                if (!this->rdtsc_exit_switchable_)
+                {
+                    return;
+                }
+
+                const bool wanted = std::ranges::any_of(this->instruction_hooks_, [](const auto& hook) {
+                    return hook.second.type == x86_hookable_instructions::rdtsc || hook.second.type == x86_hookable_instructions::rdtscp;
+                });
+                if (wanted == (this->enabled_exits_.X64RdtscExit != 0))
+                {
+                    return;
+                }
+
+                auto exits = this->enabled_exits_;
+                exits.X64RdtscExit = wanted ? 1 : 0;
+                WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExtendedVmExits, &exits, sizeof(exits)));
+                this->enabled_exits_ = exits;
             }
 
             void initialize_virtual_processor_state(whp_vcpu& vcpu)
