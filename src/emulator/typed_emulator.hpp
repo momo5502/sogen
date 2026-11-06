@@ -4,6 +4,7 @@
 #include "interface.hpp"
 #include "typed_cpu.hpp"
 
+#include <optional>
 #include <utility>
 
 namespace sogen
@@ -20,6 +21,12 @@ namespace sogen
         virtual bool supports_native_timestamp_counter() const
         {
             return false;
+        }
+
+        // The rate of the guest's native timestamp counter in Hz, when the backend knows it.
+        virtual std::optional<uint64_t> native_timestamp_counter_frequency() const
+        {
+            return std::nullopt;
         }
     };
 

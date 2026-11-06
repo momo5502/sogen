@@ -585,6 +585,17 @@ namespace sogen
             return this->elevated_;
         }
 
+        // The rate of the guest's own timestamp counter while the guest reads it natively, without RDTSC interception.
+        std::optional<uint64_t> native_timestamp_counter_frequency() const
+        {
+            if (this->intercept_rdtsc_ || !this->use_native_timestamp_counter_)
+            {
+                return std::nullopt;
+            }
+
+            return this->emu_->native_timestamp_counter_frequency();
+        }
+
         uint32_t vcpu_count() const
         {
             return this->vcpu_count_;
