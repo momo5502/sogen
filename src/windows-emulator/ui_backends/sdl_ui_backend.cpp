@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "surface_alpha.hpp"
 #include "window_geometry.hpp"
+#include "../keyboard_layout.hpp"
 #include "../vulkan_handle_utils.hpp"
 #include <platform/ui_backend.hpp>
 
@@ -833,9 +834,9 @@ namespace sogen
                             break;
                         }
 
-                        const auto modifiers = event.key.mod;
-                        if (event.key.key == SDLK_S && (modifiers & SDL_KMOD_CTRL) != 0 && (modifiers & SDL_KMOD_ALT) != 0 &&
-                            (modifiers & SDL_KMOD_SHIFT) != 0 && this->snapshot_request_sink_)
+                        const auto keymod = event.key.mod;
+                        if (event.key.key == SDLK_S && (keymod & SDL_KMOD_CTRL) != 0 && (keymod & SDL_KMOD_ALT) != 0 &&
+                            (keymod & SDL_KMOD_SHIFT) != 0 && this->snapshot_request_sink_)
                         {
                             if (!event.key.repeat)
                             {
@@ -879,8 +880,20 @@ namespace sogen
                         }
 
                         const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYDOWN : WM_KEYDOWN;
-
                         this->post_event(guest, message, vk, scan);
+
+                        if (message == WM_KEYDOWN)
+                        {
+                            const key_modifiers modifiers{.shift = (event.key.mod & SDL_KMOD_SHIFT) != 0,
+                                                          .control = (event.key.mod & SDL_KMOD_CTRL) != 0,
+                                                          .alt = (event.key.mod & SDL_KMOD_ALT) != 0,
+                                                          .caps_lock = (event.key.mod & SDL_KMOD_CAPS) != 0};
+                            const auto character = key_character(static_cast<uint32_t>(vk), modifiers);
+                            if (character != 0 && (character < 0x20 || character == 0x7f))
+                            {
+                                this->post_event(guest, WM_CHAR, character, scan);
+                            }
+                        }
                         break;
                     }
 

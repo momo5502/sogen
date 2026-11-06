@@ -3148,6 +3148,12 @@ namespace sogen
             return c.proc.cursor_show_count;
         }
 
+        NTSTATUS handle_NtUserHideCursorNoCapture()
+        {
+            // Mouse Vanish defaults to off and is not configurable in the emulated system.
+            return STATUS_SUCCESS;
+        }
+
         hcursor handle_NtUserGetCursor(const syscall_context& c)
         {
             return c.proc.current_cursor;
@@ -9327,7 +9333,8 @@ namespace sogen
             }
 
             const auto target_thread_id = thread_id == 0 ? c.vcpu.active_thread->id : thread_id;
-            if (c.proc.find_thread_by_id(target_thread_id) == nullptr)
+            const auto* target_thread = c.proc.find_thread_by_id(target_thread_id);
+            if (target_thread == nullptr)
             {
                 return FALSE;
             }
@@ -9355,7 +9362,7 @@ namespace sogen
             {
                 return FALSE;
             }
-            info = {.cbSize = sizeof(info), .hwndActive = active, .hwndFocus = active, .hwndCapture = capture};
+            info = {.cbSize = sizeof(info), .hwndActive = active, .hwndFocus = target_thread->focus_window, .hwndCapture = capture};
             c.emu.write_memory(info_address, info);
 
             return TRUE;

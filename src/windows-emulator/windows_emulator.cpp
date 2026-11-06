@@ -2584,7 +2584,7 @@ namespace sogen
         m.wParam = event.wParam;
         m.lParam = event.lParam;
 
-        if (event.injected && is_keyboard_message(event.message) && thread->focus_window != 0)
+        if ((is_keyboard_message(event.message) || is_character_message(event.message)) && thread->focus_window != 0)
         {
             if (const auto* focus = this->process.windows.get(thread->focus_window); focus && focus->thread_id == win->thread_id)
             {
