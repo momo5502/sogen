@@ -13,6 +13,7 @@
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
 #include "kernel_lock.hpp"
+#include "ui_event_router.hpp"
 #include "scheduler_clock.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
@@ -423,6 +424,9 @@ namespace sogen
             return *this->console_backend_;
         }
 
+        // Handlers run under the kernel lock, before guest input hooks, and must not reacquire it.
+        [[nodiscard]] ui_event_router::subscription subscribe_host_window_events(hwnd window, ui_backend::event_sink handler);
+
         void handle_ui_event(const ui_event& event);
         void handle_ui_event_locked(const ui_event& event);
         void update_key_state(const ui_event& event);
@@ -760,6 +764,7 @@ namespace sogen
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
         kernel_lock kernel_lock_{};
+        ui_event_router host_window_events_{};
         // Notified under the kernel lock whenever a thread's registers become saved or leave transit.
         std::condition_variable_any thread_registers_saved_{};
 
