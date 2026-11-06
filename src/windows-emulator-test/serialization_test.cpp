@@ -47,15 +47,21 @@ namespace sogen::test
         dump_and_expect_equal("ResettingEmulatorWorks", end_state1.get_buffer(), end_state2.get_buffer());
     }
 
+    // Each test keeps a single emulator alive at a time: backends that place guest memory at its host address can only
+    // have one per process.
+
     TEST(SerializationTest, SerializedDataIsReproducible)
     {
-        auto emu1 = create_sample_emulator();
-        emu1.start();
-
-        ASSERT_TERMINATED_SUCCESSFULLY(emu1);
-
         utils::buffer_serializer serializer1{};
-        emu1.serialize(serializer1);
+
+        {
+            auto emu1 = create_sample_emulator();
+            emu1.start();
+
+            ASSERT_TERMINATED_SUCCESSFULLY(emu1);
+
+            emu1.serialize(serializer1);
+        }
 
         utils::buffer_deserializer deserializer{serializer1};
 
@@ -70,13 +76,16 @@ namespace sogen::test
 
     TEST(SerializationTest, EmulationIsReproducible)
     {
-        auto emu1 = create_sample_emulator();
-        emu1.start();
-
-        ASSERT_TERMINATED_SUCCESSFULLY(emu1);
-
         utils::buffer_serializer serializer1{};
-        emu1.serialize(serializer1);
+
+        {
+            auto emu1 = create_sample_emulator();
+            emu1.start();
+
+            ASSERT_TERMINATED_SUCCESSFULLY(emu1);
+
+            emu1.serialize(serializer1);
+        }
 
         auto emu2 = create_sample_emulator();
         emu2.start();
@@ -91,11 +100,20 @@ namespace sogen::test
 
     TEST(SerializationTest, DeserializedEmulatorBehavesLikeSource)
     {
-        auto emu = create_sample_emulator();
-        emu.start(100);
-
         utils::buffer_serializer serializer{};
-        emu.serialize(serializer);
+        utils::buffer_serializer serializer1{};
+
+        {
+            auto emu = create_sample_emulator();
+            emu.start(100);
+
+            emu.serialize(serializer);
+
+            emu.start();
+            ASSERT_TERMINATED_SUCCESSFULLY(emu);
+
+            emu.serialize(serializer1);
+        }
 
         utils::buffer_deserializer deserializer{serializer};
 
@@ -105,13 +123,7 @@ namespace sogen::test
         new_emu.start();
         ASSERT_TERMINATED_SUCCESSFULLY(new_emu);
 
-        emu.start();
-        ASSERT_TERMINATED_SUCCESSFULLY(emu);
-
-        utils::buffer_serializer serializer1{};
         utils::buffer_serializer serializer2{};
-
-        emu.serialize(serializer1);
         new_emu.serialize(serializer2);
 
         dump_and_expect_equal("DeserializedEmulatorBehavesLikeSource", serializer1.get_buffer(), serializer2.get_buffer());

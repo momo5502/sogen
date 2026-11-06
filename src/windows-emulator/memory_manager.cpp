@@ -1161,6 +1161,7 @@ namespace sogen
         }
 
         this->reserved_regions_.clear();
+        this->memory_->release_guest_address_range(0, MAX_ALLOCATION_END_EXCL);
     }
 
     namespace

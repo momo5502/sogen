@@ -223,6 +223,23 @@ namespace sogen
         const auto valid_end = std::min(end, static_cast<uint64_t>(KUSD_SIZE));
         const auto real_size = valid_end - addr;
 
+        // Same ordering problem write_page describes: a copy writes LowPart before High1Time, so the new High2Time
+        // has to reach the destination first. It matters when the destination is a page a running vCPU reads.
+        const auto write_high2_time = [&](const size_t offset, const volatile KSYSTEM_TIME& time) {
+            const auto field = offset + offsetof(KSYSTEM_TIME, High2Time);
+            if (field < addr || field + sizeof(LONG) > valid_end)
+            {
+                return;
+            }
+
+            const LONG high2_time = time.High2Time;
+            memcpy(static_cast<uint8_t*>(data) + (field - addr), &high2_time, sizeof(high2_time));
+        };
+
+        write_high2_time(offsetof(KUSER_SHARED_DATA64, InterruptTime), this->kusd_.InterruptTime);
+        write_high2_time(offsetof(KUSER_SHARED_DATA64, SystemTime), this->kusd_.SystemTime);
+        write_high2_time(offsetof(KUSER_SHARED_DATA64, TickCount), this->kusd_.TickCount.TickCount);
+
         const auto* kusd_buffer = reinterpret_cast<uint8_t*>(&this->kusd_);
         memcpy(data, kusd_buffer + addr, static_cast<size_t>(real_size));
     }

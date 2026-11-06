@@ -8,10 +8,10 @@ namespace sogen::test
     TEST(EmulationTest, IntegerDivideErrorsReachTheInterruptHook)
     {
         auto machine = create_x86_64_emulator_from_environment();
-        constexpr uint64_t address = 0x10000;
         constexpr std::array<uint8_t, 2> code{0xF7, 0xF1};
         memory_manager memory{*machine};
-        ASSERT_TRUE(memory.allocate_memory(address, 0x1000, memory_permission::all));
+        const auto address = memory.allocate_memory(0x1000, memory_permission::all);
+        ASSERT_NE(address, 0u);
         machine->write_memory(address, code.data(), code.size());
         auto& cpu = machine->get_cpu(0);
         cpu.reg(x86_register::rip, address);
@@ -51,12 +51,16 @@ namespace sogen::test
 
     TEST(EmulationTest, CountedEmulationIsAccurate)
     {
-        auto emu = create_sample_emulator();
-        emu.start();
+        uint64_t executedInstructions{};
 
-        ASSERT_TERMINATED_SUCCESSFULLY(emu);
+        {
+            auto emu = create_sample_emulator();
+            emu.start();
 
-        const auto executedInstructions = emu.get_executed_instructions();
+            ASSERT_TERMINATED_SUCCESSFULLY(emu);
+
+            executedInstructions = emu.get_executed_instructions();
+        }
 
         auto new_emu = create_sample_emulator();
 
