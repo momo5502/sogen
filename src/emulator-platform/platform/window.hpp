@@ -355,6 +355,8 @@ namespace sogen
 #define WM_DWMNCRENDERINGCHANGED    0x031F
 #define WM_WINDOWPOSCHANGING        0x0046
 #define WM_WINDOWPOSCHANGED         0x0047
+#define WM_STYLECHANGING            0x007C
+#define WM_STYLECHANGED             0x007D
 #define WM_NCCREATE                 0x0081
 #define WM_NCDESTROY                0x0082
 #define WM_NCCALCSIZE               0x0083
