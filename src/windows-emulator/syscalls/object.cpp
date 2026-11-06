@@ -885,6 +885,7 @@ namespace sogen
             t.await_any = false;
             t.await_msg_mask = {};
             t.await_time = {};
+            t.await_time_absolute = false; // the timeout is milliseconds, an interval
 
             std::vector<handle> wait_handles{};
             wait_handles.reserve(count);
@@ -988,7 +989,9 @@ namespace sogen
 
             if (timeout.value() && !t.await_time.has_value())
             {
-                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
+                const auto due = timeout.read();
+                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), due);
+                t.await_time_absolute = utils::is_absolute_due_time(due);
             }
 
             return wait_or_yield(c, alertable);
@@ -1046,7 +1049,9 @@ namespace sogen
 
             if (timeout.value() && !t.await_time.has_value())
             {
-                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
+                const auto due = timeout.read();
+                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), due);
+                t.await_time_absolute = utils::is_absolute_due_time(due);
             }
 
             return wait_or_yield(c, alertable);
@@ -1068,7 +1073,9 @@ namespace sogen
 
             if (timeout.value() && !t.await_time.has_value())
             {
-                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
+                const auto due = timeout.read();
+                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), due);
+                t.await_time_absolute = utils::is_absolute_due_time(due);
             }
 
             return wait_or_yield(c, alertable);
