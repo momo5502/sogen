@@ -173,6 +173,7 @@ class GameSession extends ChangeNotifier {
           'workingDirectory': game.guestWorkingDirectory,
           'backend': 'fex',
           'liveNetwork': game.liveNetwork,
+          'maxDisplayMode': game.maxDisplayMode?.name ?? '',
           'resumeFile': resumeFile ?? '',
         }) ??
         false;
