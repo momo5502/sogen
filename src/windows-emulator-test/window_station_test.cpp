@@ -15,6 +15,7 @@ namespace sogen::syscalls
     BOOL handle_NtUserCloseDesktop(const syscall_context& c, handle desktop_handle);
     hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, DWORD flags, BOOL inherit, ACCESS_MASK desired_access);
     hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, ULONG thread_id);
+    emulator_pointer handle_NtUserMapDesktopObject(const syscall_context& c, handle handle);
     BOOL handle_NtUserGetObjectInformation(const syscall_context& c, handle object, int index, uint64_t information, DWORD length,
                                            emulator_object<DWORD> needed);
 }
@@ -42,6 +43,8 @@ namespace sogen::test
                     emulator_callbacks{}, std::move(interfaces));
 
                 this->storage = this->emu->memory.allocate_memory(0x2000, memory_permission::read_write);
+                const auto base = this->emu->memory.allocate_memory(0x10000, memory_permission::read_write);
+                this->emu->process.base_allocator = emulator_allocator{this->emu->memory, base, 0x10000};
                 const auto thread =
                     this->emu->process.threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true});
                 this->emu->vcpu(0).active_thread = this->emu->process.threads.get(thread);
@@ -101,6 +104,14 @@ namespace sogen::test
                 EXPECT_EQ(TRUE, syscalls::handle_NtUserGetObjectInformation(this->context(), make_handle(object), 1, this->storage + 0x1800,
                                                                             sizeof(user_object_flags), {this->emu->memory}));
                 return this->emu->memory.read_memory<user_object_flags>(this->storage + 0x1800);
+            }
+
+            BOOL receives_input(const uint64_t desktop_object)
+            {
+                constexpr int uoi_io = 6;
+                EXPECT_EQ(TRUE, syscalls::handle_NtUserGetObjectInformation(this->context(), make_handle(desktop_object), uoi_io,
+                                                                            this->storage + 0x1800, sizeof(BOOL), {this->emu->memory}));
+                return this->emu->memory.read_memory<BOOL>(this->storage + 0x1800);
             }
 
             std::u16string object_name(const uint64_t object)
@@ -211,7 +222,8 @@ namespace sogen::test
     }
 
     // Measured on Windows 11: every flag and access combination opens a new handle to the "Default" desktop, inheritable as
-    // requested, which closes without affecting the thread's desktop, whose own handle cannot be closed.
+    // requested, which closes without affecting the thread's desktop, whose own handle cannot be closed. UOI_IO is TRUE for a
+    // handle to the desktop that receives input.
     TEST_F(WindowStationTest, OpeningTheInputDesktopGivesANewHandleToTheDefaultDesktop)
     {
         constexpr ACCESS_MASK desktop_switchdesktop = 0x100;
@@ -226,6 +238,11 @@ namespace sogen::test
         EXPECT_EQ(u"Default", this->object_name(first));
         EXPECT_EQ(FALSE, this->object_flags(first).inherit);
         EXPECT_EQ(TRUE, this->object_flags(second).inherit);
+        EXPECT_EQ(TRUE, this->receives_input(first));
+
+        const auto mapped_through_opened_handle = syscalls::handle_NtUserMapDesktopObject(this->context(), make_handle(first));
+        EXPECT_NE(0u, mapped_through_opened_handle);
+        EXPECT_EQ(mapped_through_opened_handle, syscalls::handle_NtUserMapDesktopObject(this->context(), make_handle(thread_desktop)));
 
         EXPECT_EQ(TRUE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(first)));
         EXPECT_EQ(TRUE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(second)));

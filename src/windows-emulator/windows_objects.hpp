@@ -771,12 +771,16 @@ namespace sogen
         uint64_t mapped_object{};
         // Desktop names are scoped to a window station, so the same name in two stations is two desktops.
         uint64_t window_station{};
+        // Set on a further handle to an existing desktop, such as the one NtUserOpenInputDesktop returns. Windows gives each
+        // its own handle value and inherit flag, while the desktop and its state stay shared.
+        handle opened_desktop{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
             buffer.write(this->mapped_object);
             buffer.write(this->window_station);
+            buffer.write(this->opened_desktop);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -784,6 +788,7 @@ namespace sogen
             buffer.read(this->name);
             buffer.read(this->mapped_object);
             buffer.read(this->window_station);
+            buffer.read(this->opened_desktop);
         }
     };
 
