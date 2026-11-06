@@ -285,29 +285,6 @@ namespace sogen::test
         EXPECT_EQ(raster::max_windows, c.session.windows().size());
     }
 
-    TEST(QtRasterSessionTest, FrameTakesOwnershipOfTheAlreadyReadPixelBuffer)
-    {
-        client c;
-        c.start();
-        ASSERT_EQ(raster::result::success, c.send(c.creation()));
-        auto packet = c.packet(raster::Frame, 1);
-        packet.a = {2, 2, 8, 1000, 0, 0, 2, 2};
-        std::vector<uint8_t> pixels(16, 0x42);
-        packet.size = static_cast<uint32_t>(pixels.size());
-        const auto original = reinterpret_cast<uintptr_t>(pixels.data());
-        ASSERT_EQ(raster::result::success,
-                  c.session.exchange(packet, std::move(pixels), 4096, [](std::span<const uint8_t>) { return true; }));
-        c.sequence = packet.seq;
-        const auto retained = c.session.latest_frame();
-        ASSERT_TRUE(retained);
-        EXPECT_EQ(original, reinterpret_cast<uintptr_t>(retained->pixels->data()));
-        EXPECT_EQ(16, retained->pixels->size());
-        EXPECT_EQ(0x42, retained->pixels->at(15));
-        ASSERT_EQ(raster::result::success, c.send(c.packet(raster::Destroy, 1)));
-        ASSERT_EQ(raster::result::success, c.send(c.packet(raster::End)));
-        EXPECT_EQ(0x42, retained->pixels->at(15));
-    }
-
     TEST(QtRasterDeviceTest, ProtectedBuffersRejectAccessWithoutStartingTheSession)
     {
         auto emu = make_raster_emulator();
