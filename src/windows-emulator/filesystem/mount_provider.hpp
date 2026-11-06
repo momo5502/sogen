@@ -36,6 +36,17 @@ namespace sogen
 
         virtual std::optional<struct compat_stat> stat(const windows_path& path) const = 0;
         virtual std::vector<directory_entry> list(const windows_path& path) const = 0;
+
+        virtual std::vector<std::u16string> list_names(const windows_path& path) const
+        {
+            std::vector<std::u16string> names{};
+            for (auto& entry : this->list(path))
+            {
+                names.push_back(std::move(entry.name));
+            }
+            return names;
+        }
+
         virtual open_result open(const windows_path& path, const std::u16string& mode) = 0;
         virtual NTSTATUS create_directory(const windows_path& path) = 0;
         virtual NTSTATUS rename(const windows_path& from, const windows_path& to) = 0;

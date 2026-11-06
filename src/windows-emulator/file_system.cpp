@@ -253,6 +253,29 @@ namespace sogen
         return entries;
     }
 
+    std::vector<std::u16string> file_system::list_directory_names(const windows_path& path) const
+    {
+        std::vector<std::u16string> names{};
+        if (const auto resolved = this->resolve(path))
+        {
+            names = resolved->provider->list_names(resolved->relative);
+        }
+
+        const auto normalized = path.lexically_normal();
+        for (const auto& [mount_point, entry] : this->mounts_)
+        {
+            if (mount_point.depth() == 0 || mount_point.parent() != normalized || !entry.provider->stat({}))
+            {
+                continue;
+            }
+
+            auto name = mount_point.leaf();
+            std::erase_if(names, [&](const std::u16string& existing) { return utils::string::to_lower(existing) == name; });
+            names.push_back(std::move(name));
+        }
+        return names;
+    }
+
     bool file_system::is_writable(const windows_path& path) const
     {
         const auto resolved = this->resolve(path);

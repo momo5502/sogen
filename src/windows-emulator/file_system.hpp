@@ -44,6 +44,7 @@ namespace sogen
 
         std::optional<struct compat_stat> stat(const windows_path& path) const;
         std::vector<directory_entry> list_directory(const windows_path& path) const;
+        std::vector<std::u16string> list_directory_names(const windows_path& path) const;
         bool is_writable(const windows_path& path) const;
 
         open_result open(const windows_path& path, const std::u16string& mode);
