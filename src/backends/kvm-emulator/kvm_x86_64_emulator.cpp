@@ -90,6 +90,15 @@ namespace sogen::kvm
             }
         }
 
+        bool supports_clflushopt()
+        {
+            unsigned int eax{};
+            unsigned int ebx{};
+            unsigned int ecx{};
+            unsigned int edx{};
+            return __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx) && (ebx & bit_CLFLUSHOPT) != 0;
+        }
+
         // Evict the CPU cache for [base, base + size) and order the evictions before subsequent device access.
         void flush_cache_line_range(const void* base, size_t size)
         {
@@ -101,13 +110,7 @@ namespace sogen::kvm
             const auto first = reinterpret_cast<uintptr_t>(base) & ~(cache_line_size - 1);
             const auto last = reinterpret_cast<uintptr_t>(base) + size;
 
-            static const bool has_clflushopt = [] {
-                unsigned int eax{};
-                unsigned int ebx{};
-                unsigned int ecx{};
-                unsigned int edx{};
-                return __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx) && (ebx & bit_CLFLUSHOPT) != 0;
-            }();
+            static const bool has_clflushopt = supports_clflushopt();
             if (has_clflushopt)
             {
                 flush_cache_lines_clflushopt(first, last);
