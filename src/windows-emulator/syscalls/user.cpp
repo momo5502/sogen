@@ -3600,6 +3600,7 @@ namespace sogen
         constexpr uint32_t user_call_set_msg_box = 89;
         constexpr uint32_t user_call_release_dc = 0x39;
         constexpr uint32_t user_call_post_quit_message = 0x3B;
+        constexpr uint32_t user_call_get_cursor_pos = 0x7F;
 
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
         {
@@ -3681,6 +3682,23 @@ namespace sogen
             }
 
             c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallTwoParam(const syscall_context& c, const uint64_t param1, const uint64_t param2, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_get_cursor_pos)
+            {
+                // win32kfull!xxxGetCursorPos only accepts the logical (1) and per-monitor DPI (2) cursor modes.
+                if (param2 != 1 && param2 != 2)
+                {
+                    return FALSE;
+                }
+
+                return handle_NtUserGetCursorPos(c, param1);
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallTwoParam routine: 0x%X\n", routine);
             return 0;
         }
 
