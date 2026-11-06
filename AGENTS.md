@@ -82,3 +82,7 @@ perfectly good change; a change that sprinkles comments over otherwise readable 
 
 - Keep one concern per pull request. Unrelated fixes, refactors or optimizations go into their own PRs.
 - Make the title and description accurately describe the complete diff. Do not leave changes undocumented.
+- Keep PR descriptions and commit messages concise: say what changes and why, in a few sentences or short bullets,
+  at the length of a normal PR description.
+- Do not add a Test, Testing or Validation section, or lists of test runs and results. The changed files and touched
+  tests already show that.
