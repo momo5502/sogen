@@ -75,9 +75,9 @@ namespace sogen
             }
 
             const bool readable = mode.find(u'+') != std::u16string::npos;
-            auto* const handle =
-                CreateFileW(path.c_str(), GENERIC_WRITE | (readable ? GENERIC_READ : 0), FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                            CREATE_ALWAYS, attributes & kept_attributes, nullptr);
+            auto* const handle = CreateFileW(path.c_str(), GENERIC_WRITE | (readable ? GENERIC_READ : 0),
+                                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+                                             attributes & kept_attributes, nullptr);
             if (handle == INVALID_HANDLE_VALUE)
             {
                 return nullptr;
