@@ -397,5 +397,11 @@ namespace sogen
         }
 
         this->fds_ = std::move(restored);
+
+        this->epoll_descriptions_.clear();
+        for (const auto& file : files)
+        {
+            this->track_description(file);
+        }
     }
 } // namespace sogen

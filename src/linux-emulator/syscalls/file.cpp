@@ -287,8 +287,8 @@ namespace sogen
 
         void remove_from_epoll_entries(posix_fd_table& fds, const int fd)
         {
-            fds.for_each_file([fd](posix_fd& file) {
-                std::erase_if(file.epoll_entries, [fd](const posix_epoll_entry& entry) { return entry.fd == fd; });
+            fds.for_each_epoll_description([fd](posix_fd& epoll) {
+                std::erase_if(epoll.epoll_entries, [fd](const posix_epoll_entry& entry) { return entry.fd == fd; });
             });
         }
 

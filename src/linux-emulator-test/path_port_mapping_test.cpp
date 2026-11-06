@@ -441,6 +441,46 @@ namespace sogen
         EXPECT_EQ(ready_data, registered_data);
     }
 
+    TEST(LinuxFileDescriptorTest, DescriptorReusedAfterRestoreIsNotWatched)
+    {
+        constexpr uint32_t epollin = 0x1;
+        constexpr uint64_t epoll_ctl_add = 1;
+        constexpr auto event_address = guest_memory_base + 0x200;
+        constexpr auto ready_address = guest_memory_base + 0x300;
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        {
+            std::ofstream file(emulation_root / "file.txt", std::ios::binary);
+            file << "data";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/file.txt");
+
+        const auto file = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY);
+        ASSERT_GE(file, 0);
+        const auto epoll = invoke_syscall(emu, linux_syscalls::LINUX_SYS_epoll_create1);
+        ASSERT_GE(epoll, 0);
+        emu.memory.write_memory(event_address, &epollin, sizeof(epollin));
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_epoll_ctl, static_cast<uint64_t>(epoll), epoll_ctl_add,
+                                 static_cast<uint64_t>(file), event_address),
+                  0);
+
+        utils::buffer_serializer serializer{};
+        emu.process.fds.serialize(serializer);
+        utils::buffer_deserializer deserializer{serializer.get_buffer()};
+        emu.process.fds.deserialize(deserializer);
+
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_close, static_cast<uint64_t>(file)), 0);
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY), file);
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_epoll_wait, static_cast<uint64_t>(epoll), ready_address, 1), 0);
+    }
+
     TEST(LinuxSocketSyscallTest, SocketpairIsExplicitlyUnsupported)
     {
         temp_tree temp{};

@@ -6,7 +6,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <ranges>
 #include <serialization.hpp>
 #include <span>
 #include <string>
@@ -204,14 +203,14 @@ namespace sogen
         int allocate(posix_fd fd, const bool close_on_exec = false)
         {
             const int new_fd = this->find_lowest_available(0);
-            this->fds_.emplace(new_fd, descriptor{.file = std::make_shared<posix_fd>(std::move(fd)), .close_on_exec = close_on_exec});
+            this->fds_.emplace(new_fd, descriptor{.file = this->add_description(std::move(fd)), .close_on_exec = close_on_exec});
             return new_fd;
         }
 
         int allocate_at(const int target_fd, posix_fd fd, const bool close_on_exec = false)
         {
             this->fds_.insert_or_assign(target_fd,
-                                        descriptor{.file = std::make_shared<posix_fd>(std::move(fd)), .close_on_exec = close_on_exec});
+                                        descriptor{.file = this->add_description(std::move(fd)), .close_on_exec = close_on_exec});
             return target_fd;
         }
 
@@ -276,12 +275,14 @@ namespace sogen
             }
         }
 
+        // Visits each open epoll description once, however many descriptors refer to it.
         template <typename Visitor>
-        void for_each_file(const Visitor& visitor)
+        void for_each_epoll_description(const Visitor& visitor)
         {
-            for (const auto& entry : this->fds_ | std::views::values)
+            std::erase_if(this->epoll_descriptions_, [](const std::weak_ptr<posix_fd>& description) { return description.expired(); });
+            for (const auto& description : this->epoll_descriptions_)
             {
-                visitor(*entry.file);
+                visitor(*description.lock());
             }
         }
 
@@ -307,6 +308,24 @@ namespace sogen
         };
 
         std::map<int, descriptor> fds_{};
+
+        // Kept apart so that dropping a closed descriptor from the interest lists does not walk the whole table.
+        std::vector<std::weak_ptr<posix_fd>> epoll_descriptions_{};
+
+        std::shared_ptr<posix_fd> add_description(posix_fd fd)
+        {
+            auto description = std::make_shared<posix_fd>(std::move(fd));
+            this->track_description(description);
+            return description;
+        }
+
+        void track_description(const std::shared_ptr<posix_fd>& description)
+        {
+            if (description->type == fd_type::epoll)
+            {
+                this->epoll_descriptions_.push_back(description);
+            }
+        }
 
         static std::shared_ptr<posix_fd> make_standard_stream(std::string host_path, FILE* handle, const int flags)
         {
