@@ -554,6 +554,93 @@ namespace sogen
         EXPECT_EQ(read_host_file(emulation_root / "out.txt"), message);
     }
 
+    TEST(LinuxFileDescriptorTest, WriteFromInaccessibleBufferFailsWithBadAddress)
+    {
+        constexpr int64_t linux_efault = 14;
+        constexpr int linux_o_WRONLY = 1;
+        constexpr int linux_o_CREAT = 0100;
+        constexpr uint64_t file_mode = 0644;
+        constexpr auto guard_page = guest_memory_base + guest_memory_size;
+        constexpr auto iovec_address = guest_memory_base + 0x100;
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        ASSERT_TRUE(emu.memory.allocate_memory(guard_page, guest_memory_size, memory_permission::none));
+        write_guest_string(emu, guest_memory_base, "/out.txt");
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_WRONLY | linux_o_CREAT, file_mode);
+        ASSERT_GE(fd, 0);
+
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_write, static_cast<uint64_t>(fd), guard_page, 4), -linux_efault);
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_writev, static_cast<uint64_t>(fd), guard_page, 1), -linux_efault);
+
+        const std::array<uint64_t, 2> guarded_vector{guard_page, 4};
+        emu.memory.write_memory(iovec_address, guarded_vector.data(), sizeof(guarded_vector));
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_writev, static_cast<uint64_t>(fd), iovec_address, 1), -linux_efault);
+
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_close, static_cast<uint64_t>(fd)), 0);
+        EXPECT_TRUE(read_host_file(emulation_root / "out.txt").empty());
+    }
+
+    TEST(LinuxFileDescriptorTest, ReadAtEndOfFileIntoUnmappedBufferReturnsZero)
+    {
+        constexpr uint64_t unmapped_address = guest_memory_base + (guest_memory_size * 4);
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        {
+            std::ofstream file(emulation_root / "file.txt", std::ios::binary);
+            file << "AB";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/file.txt");
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY);
+        ASSERT_GE(fd, 0);
+        EXPECT_EQ(read_guest_file(emu, fd, 2), "AB");
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_read, static_cast<uint64_t>(fd), unmapped_address, 2), 0);
+    }
+
+    TEST(LinuxFileDescriptorTest, ReadIntoPartlyWritableBufferStopsAtItsEnd)
+    {
+        constexpr auto last_writable_bytes = guest_memory_base + guest_memory_size - 2;
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+        {
+            std::ofstream file(emulation_root / "file.txt", std::ios::binary);
+            file << "ABCD";
+        }
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base + guest_memory_size, guest_memory_size, memory_permission::read));
+        write_guest_string(emu, guest_memory_base, "/file.txt");
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY);
+        ASSERT_GE(fd, 0);
+
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_read, static_cast<uint64_t>(fd), last_writable_bytes, 4), 2);
+        std::array<char, 2> copied{};
+        emu.memory.read_memory(last_writable_bytes, copied.data(), copied.size());
+        EXPECT_EQ(std::string_view(copied.data(), copied.size()), "AB");
+        EXPECT_EQ(read_guest_file(emu, fd, 4), "CD");
+    }
+
     TEST(LinuxFileDescriptorTest, SeekingPipeFailsWithIllegalSeek)
     {
         constexpr int64_t linux_espipe = 29;

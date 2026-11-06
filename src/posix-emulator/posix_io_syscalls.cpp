@@ -172,31 +172,111 @@ namespace sogen
             return static_cast<uint64_t>(bytes_read);
         }
 
-        posix_result read_host_file(FILE* handle, const std::span<std::byte> chunk)
+        // A host error after some bytes moved is reported by the next call, as a kernel reports a short transfer first.
+        posix_result host_file_transfer_result(FILE* handle, const size_t transferred)
         {
-            const auto bytes_read = std::fread(chunk.data(), 1, chunk.size(), handle);
-            if (bytes_read < chunk.size() && std::ferror(handle))
+            if (!std::ferror(handle))
             {
-                std::clearerr(handle);
-                return posix_errno::eio;
+                return uint64_t{transferred};
             }
 
-            return uint64_t{bytes_read};
+            const auto host_errno = errno;
+            std::clearerr(handle);
+            if (transferred > 0)
+            {
+                return uint64_t{transferred};
+            }
+
+            return posix_errno_from_host(host_errno);
         }
 
-        posix_result read_chunk(posix_fd& file, const std::span<std::byte> chunk, const int nonblock_flag)
+        posix_result read_host_file(FILE* handle, const std::span<std::byte> chunk)
+        {
+            errno = 0;
+            const auto bytes_read = std::fread(chunk.data(), 1, chunk.size(), handle);
+            return host_file_transfer_result(handle, bytes_read);
+        }
+
+        posix_result read_seekable(posix_fd& file, const std::span<std::byte> chunk)
         {
             if (file.type == fd_type::memory_file)
             {
                 return uint64_t{read_memory_file(*file.memory_file, chunk)};
             }
 
-            if (is_host_stream(file))
+            return read_host_file(file.handle, chunk);
+        }
+
+        void unread_seekable(const posix_fd& file, const size_t count)
+        {
+            if (file.type == fd_type::memory_file)
             {
-                return read_host_stream(file, chunk, nonblock_flag);
+                file.memory_file->offset -= count;
+                return;
             }
 
-            return read_host_file(file.handle, chunk);
+            file.seek(-static_cast<int64_t>(count), SEEK_CUR);
+        }
+
+        posix_result copy_to_guest(const posix_io_context& context, const uint64_t destination, const std::span<const std::byte> data)
+        {
+            if (!data.empty() && !context.memory.try_write_memory(destination, data.data(), data.size()))
+            {
+                return posix_errno::efault;
+            }
+
+            return uint64_t{data.size()};
+        }
+
+        // A stream cannot take back what it delivered, so it is only asked for what the guest buffer can receive.
+        posix_result read_stream_chunk(const posix_io_context& context, const posix_fd& file, const uint64_t destination,
+                                       const std::span<std::byte> chunk)
+        {
+            const auto receivable = chunk.first(context.memory.writable_prefix_size(destination, chunk.size()));
+            if (receivable.empty())
+            {
+                return posix_errno::efault;
+            }
+
+            const auto result = read_host_stream(file, receivable, context.nonblock_flag);
+            if (std::holds_alternative<posix_errno>(result))
+            {
+                return result;
+            }
+
+            return copy_to_guest(context, destination, receivable.first(static_cast<size_t>(std::get<uint64_t>(result))));
+        }
+
+        // As a kernel does, a file is read first and whatever does not fit the guest buffer is left unread.
+        posix_result read_seekable_chunk(const posix_io_context& context, posix_fd& file, const uint64_t destination,
+                                         const std::span<std::byte> chunk)
+        {
+            const auto result = read_seekable(file, chunk);
+            if (std::holds_alternative<posix_errno>(result))
+            {
+                return result;
+            }
+
+            const auto bytes_read = static_cast<size_t>(std::get<uint64_t>(result));
+            const auto copied = context.memory.writable_prefix_size(destination, bytes_read);
+            if (copied < bytes_read)
+            {
+                unread_seekable(file, bytes_read - copied);
+            }
+
+            if (copied == 0 && bytes_read > 0)
+            {
+                return posix_errno::efault;
+            }
+
+            return copy_to_guest(context, destination, chunk.first(copied));
+        }
+
+        posix_result read_chunk(const posix_io_context& context, posix_fd& file, const uint64_t destination,
+                                const std::span<std::byte> chunk)
+        {
+            return is_host_stream(file) ? read_stream_chunk(context, file, destination, chunk)
+                                        : read_seekable_chunk(context, file, destination, chunk);
         }
 
         posix_result write_output_stream(const posix_io_context& context, FILE* stream, const std::span<const std::byte> chunk)
@@ -227,14 +307,9 @@ namespace sogen
 
         posix_result write_host_file(FILE* handle, const std::span<const std::byte> chunk)
         {
+            errno = 0;
             const auto written = std::fwrite(chunk.data(), 1, chunk.size(), handle);
-            if (written < chunk.size() && std::ferror(handle))
-            {
-                std::clearerr(handle);
-                return posix_errno::eio;
-            }
-
-            return uint64_t{written};
+            return host_file_transfer_result(handle, written);
         }
 
         posix_result write_chunk(const posix_io_context& context, const posix_fd& file, const std::span<const std::byte> chunk)
@@ -268,36 +343,22 @@ namespace sogen
 
         std::vector<std::byte> chunk(static_cast<size_t>(std::min<uint64_t>(size, TRANSFER_CHUNK_SIZE)));
         uint64_t transferred = 0;
-        do
+        while (transferred < size)
         {
-            const auto destination = buffer + transferred;
             const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(size - transferred, chunk.size()));
-
-            // A stream cannot give back what it delivered, so the destination must be writable before anything is
-            // taken from the host; XNU only consumes what it copies out.
-            if (!context.memory.is_writable_range(destination, chunk_size))
-            {
-                return posix_partial_transfer(transferred, posix_errno::efault);
-            }
-
-            const auto result = read_chunk(*file, std::span{chunk}.first(chunk_size), context.nonblock_flag);
+            const auto result = read_chunk(context, *file, buffer + transferred, std::span{chunk}.first(chunk_size));
             if (const auto* error = std::get_if<posix_errno>(&result))
             {
                 return posix_partial_transfer(transferred, *error);
             }
 
-            const auto bytes_read = static_cast<size_t>(std::get<uint64_t>(result));
-            if (!context.memory.try_write_memory(destination, chunk.data(), bytes_read))
-            {
-                return posix_partial_transfer(transferred, posix_errno::efault);
-            }
-
+            const auto bytes_read = std::get<uint64_t>(result);
             transferred += bytes_read;
             if (bytes_read < chunk_size || is_host_stream(*file))
             {
                 break;
             }
-        } while (transferred < size);
+        }
 
         return transferred;
     }
@@ -319,8 +380,9 @@ namespace sogen
         uint64_t transferred = 0;
         while (transferred < size)
         {
+            const auto source = buffer + transferred;
             const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(size - transferred, chunk.size()));
-            if (!context.memory.try_read_memory(buffer + transferred, chunk.data(), chunk_size))
+            if (!context.memory.is_readable_range(source, chunk_size) || !context.memory.try_read_memory(source, chunk.data(), chunk_size))
             {
                 return posix_partial_transfer(transferred, posix_errno::efault);
             }

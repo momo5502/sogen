@@ -84,7 +84,9 @@ namespace sogen
             for (int i = 0; i < iovcnt; ++i)
             {
                 linux_iovec vector{};
-                if (!c.emu_ref.memory.try_read_memory(iov_addr + (static_cast<uint64_t>(i) * sizeof(vector)), &vector, sizeof(vector)))
+                const auto vector_addr = iov_addr + (static_cast<uint64_t>(i) * sizeof(vector));
+                if (!c.emu_ref.memory.is_readable_range(vector_addr, sizeof(vector)) ||
+                    !c.emu_ref.memory.try_read_memory(vector_addr, &vector, sizeof(vector)))
                 {
                     return posix_partial_transfer(transferred, posix_errno::efault);
                 }
