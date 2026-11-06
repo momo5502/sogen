@@ -1058,9 +1058,11 @@ namespace sogen
 
         buffer.read(this->threads);
         this->thread_handles_by_id.clear();
+        this->terminated_thread_count = 0;
         for (const auto& [index, thread] : this->threads)
         {
             this->thread_handles_by_id[thread.id] = this->threads.make_handle(index);
+            this->terminated_thread_count += thread.is_terminated() ? 1 : 0;
         }
 
         active_thread = this->threads.get(buffer.read<uint64_t>());
@@ -1381,6 +1383,11 @@ namespace sogen
 
     void process_context::terminate_thread(emulator_thread& thread, const NTSTATUS thread_exit_status)
     {
+        if (!thread.is_terminated())
+        {
+            ++this->terminated_thread_count;
+        }
+
         thread.exit_status = thread_exit_status;
 
         for (auto& mutant : this->mutants | std::views::values)

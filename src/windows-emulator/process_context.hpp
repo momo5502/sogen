@@ -726,6 +726,8 @@ namespace sogen
         uint32_t initial_thread_id{8};
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
+        // Terminated threads that may still be in threads, the only ones the scheduler can delete.
+        size_t terminated_thread_count{0};
 
         // Handles delivered with the most recent ALPC reply message (NtAlpcSendWaitReceivePort). rpcrt4's
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
