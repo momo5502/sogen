@@ -2930,14 +2930,6 @@ namespace sogen
             return c.proc.cursor_show_count;
         }
 
-        hcursor handle_NtUserSetCursor(const syscall_context& c, const hcursor cursor)
-        {
-            // SetCursor(NULL) removes the cursor shape (hides it); a non-null handle restores it.
-            c.proc.cursor_shape_visible = cursor != 0;
-            apply_cursor_visibility(c);
-            return std::exchange(c.proc.current_cursor, cursor);
-        }
-
         hcursor handle_NtUserGetCursor(const syscall_context& c)
         {
             return c.proc.current_cursor;
@@ -3094,6 +3086,16 @@ namespace sogen
 
                 return handle.bits;
             }
+        }
+
+        hcursor handle_NtUserSetCursor(const syscall_context& c, const hcursor cursor)
+        {
+            const auto previous = std::exchange(c.proc.current_cursor, cursor);
+            c.win_emu.apply_cursor_shape();
+            // SetCursor(NULL) removes the cursor shape (hides it); a non-null handle restores it.
+            c.proc.cursor_shape_visible = cursor != 0;
+            apply_cursor_visibility(c);
+            return previous;
         }
 
         hicon handle_NtUserCreateEmptyCursorObject(const syscall_context& c)
