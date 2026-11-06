@@ -100,7 +100,7 @@ namespace sogen
 
 #ifndef OS_EMSCRIPTEN
         std::vector<std::string> create_managed_process_arguments(const analysis_options& options, const uint16_t port,
-                                                                  const std::string& token)
+                                                                  const std::string& token, const uint64_t child_id)
         {
             std::vector<std::string> arguments{"--managed-process-port", std::to_string(port), "--managed-process-token", token};
             if (options.trace_children)
@@ -118,7 +118,7 @@ namespace sogen
                 const auto add_output = [&](const std::string_view option, std::filesystem::path path) {
                     if (!path.empty())
                     {
-                        path.replace_filename(path.stem().string() + ".child-" + std::to_string(port) + path.extension().string());
+                        path.replace_filename(path.stem().string() + ".child-" + std::to_string(child_id) + path.extension().string());
                         arguments.emplace_back(option);
                         arguments.push_back(path.string());
                     }
@@ -765,6 +765,9 @@ namespace sogen
                 .auto_break_before_call = options.break_call,
             };
 
+#ifndef OS_EMSCRIPTEN
+            std::atomic<uint64_t> child_counter{};
+#endif
             std::unique_ptr<process_manager> manager{};
 
 #ifndef OS_EMSCRIPTEN
@@ -779,7 +782,7 @@ namespace sogen
             {
                 const auto child_executable = options.trace_children ? utils::get_current_executable_path() : get_sandbox_executable();
                 manager = std::make_unique<subprocess_process_manager>(child_executable, [&](const auto port, const auto& token) {
-                    return create_managed_process_arguments(options, port, token);
+                    return create_managed_process_arguments(options, port, token, ++child_counter);
                 });
             }
 #endif
