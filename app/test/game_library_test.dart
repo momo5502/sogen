@@ -52,6 +52,17 @@ void main() {
     expect(decoded.maxDisplayMode, isNull);
   });
 
+  test('a stored standard display mode reads as no cap, like the editor stores it', () {
+    final decoded = Game.fromJson({
+      'id': '1',
+      'name': 'Test',
+      'directory': '/sdcard/Test',
+      'executable': 'test.exe',
+      'maxDisplayMode': DisplayMode.standard.name,
+    });
+    expect(decoded.maxDisplayMode, isNull);
+  });
+
   test('a display mode fits a screen held in either orientation', () {
     const mode = DisplayMode(1600, 900);
     expect(mode.fitsOn(1920, 1200), isTrue);

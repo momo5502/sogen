@@ -44,10 +44,12 @@ class DisplayMode {
   /// The mode the display starts in when a game sets no maximum.
   static const standard = DisplayMode(1920, 1080);
 
+  /// The mode a stored name caps the display at, or null for no cap. The standard mode is no cap: the display starts
+  /// in it and offers every mode either way.
   static DisplayMode? fromName(Object? name) {
     for (final mode in all) {
       if (mode.name == name) {
-        return mode;
+        return mode == standard ? null : mode;
       }
     }
     return null;
