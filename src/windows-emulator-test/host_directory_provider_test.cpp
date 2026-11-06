@@ -98,5 +98,29 @@ namespace sogen::test
             EXPECT_EQ(provider.open(guest({u"escape", u"secret.txt"}), u"rb").status, STATUS_SUCCESS);
             EXPECT_EQ(names_in(provider), (std::set<std::u16string>{u"escape", u"inside.txt", u"secret.txt"}));
         }
+
+        TEST(HostDirectoryDeleteSharingTest, OpenStreamsDoNotBlockRenameOrRemove)
+        {
+            const auto root =
+                std::filesystem::temp_directory_path() /
+                ("sogen-host-delete-sharing-test-" + std::to_string(std::random_device{}()) + std::to_string(std::random_device{}()));
+            std::filesystem::create_directories(root);
+            host_directory_provider provider{root};
+
+            for (const auto* mode : {u"rb", u"r+b", u"w+b", u"ab"})
+            {
+                write_host_file(root / "source.bin", "data");
+                const auto opened = provider.open(guest({u"source.bin"}), mode);
+                ASSERT_EQ(STATUS_SUCCESS, opened.status);
+
+                EXPECT_EQ(STATUS_SUCCESS, provider.rename(guest({u"source.bin"}), guest({u"renamed.bin"})));
+                EXPECT_FALSE(std::filesystem::exists(root / "source.bin"));
+                EXPECT_EQ(STATUS_SUCCESS, provider.remove(guest({u"renamed.bin"})));
+                EXPECT_FALSE(std::filesystem::exists(root / "renamed.bin"));
+            }
+
+            std::error_code ec{};
+            std::filesystem::remove_all(root, ec);
+        }
     } // namespace
 } // namespace sogen::test

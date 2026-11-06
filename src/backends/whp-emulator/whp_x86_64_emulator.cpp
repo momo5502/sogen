@@ -1856,6 +1856,7 @@ namespace sogen::whp
                     this->syscall_hook_ = &entry;
                 }
 
+                this->update_rdtsc_exit();
                 return hook;
             }
 
@@ -1974,6 +1975,7 @@ namespace sogen::whp
                 }
 
                 this->instruction_hooks_.erase(hook);
+                this->update_rdtsc_exit();
                 this->basic_block_hooks_.erase(hook);
                 this->interrupt_hooks_.erase(hook);
                 this->memory_violation_hooks_.erase(hook);
@@ -2090,6 +2092,9 @@ namespace sogen::whp
 
             partition_handle partition_{};
             WHV_EXTENDED_VM_EXITS supported_exits_{};
+            WHV_EXTENDED_VM_EXITS enabled_exits_{};
+            // Whether RDTSC/RDTSCP exits can follow the hooks after setup; see update_rdtsc_exit().
+            bool rdtsc_exit_switchable_ = false;
             WHV_PROCESSOR_XSAVE_FEATURES supported_xsave_features_{};
             bool has_supported_xsave_features_ = false;
 
@@ -2130,6 +2135,8 @@ namespace sogen::whp
             std::unordered_map<uint64_t, patched_execution_breakpoint> patched_execution_breakpoints_{};
             std::unordered_map<uint64_t, mmio_region> mmio_regions_{};
             std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> mmio_read_grace_deadlines_{};
+            // Serializes MMIO page refreshes, from the region callback through publishing the copy.
+            std::mutex mmio_refresh_mutex_{};
             // Installed once during setup, before any vCPU runs, and read-only afterwards; the syscall
             // dispatch hot path deliberately reads it without taking partition_mutex_.
             instruction_hook_entry* syscall_hook_ = nullptr;
@@ -2165,7 +2172,7 @@ namespace sogen::whp
                 WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeProcessorCount, &processor_count,
                                                      sizeof(processor_count)));
 
-                WHV_EXTENDED_VM_EXITS enabled_exits{};
+                auto& enabled_exits = this->enabled_exits_;
                 enabled_exits.ExceptionExit = this->supported_exits_.ExceptionExit ? 1 : 0;
                 enabled_exits.X64CpuidExit = this->supported_exits_.X64CpuidExit ? 1 : 0;
                 enabled_exits.X64RdtscExit = this->supported_exits_.X64RdtscExit ? 1 : 0;
@@ -2187,6 +2194,41 @@ namespace sogen::whp
                 }
 
                 WHP_CHECK_HR(WHvSetupPartition(this->partition_));
+
+                // Without a hook the guest reads its TSC natively instead of through a VM exit per read; hooks turn the
+                // exits back on. Hosts that cannot change exits after setup keep trapping and serve the guest TSC.
+                if (enabled_exits.X64RdtscExit)
+                {
+                    auto without_rdtsc = enabled_exits;
+                    without_rdtsc.X64RdtscExit = 0;
+                    if (SUCCEEDED(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExtendedVmExits, &without_rdtsc,
+                                                          sizeof(without_rdtsc))))
+                    {
+                        enabled_exits = without_rdtsc;
+                        this->rdtsc_exit_switchable_ = true;
+                    }
+                }
+            }
+
+            void update_rdtsc_exit()
+            {
+                if (!this->rdtsc_exit_switchable_)
+                {
+                    return;
+                }
+
+                const bool wanted = std::ranges::any_of(this->instruction_hooks_, [](const auto& hook) {
+                    return hook.second.type == x86_hookable_instructions::rdtsc || hook.second.type == x86_hookable_instructions::rdtscp;
+                });
+                if (wanted == (this->enabled_exits_.X64RdtscExit != 0))
+                {
+                    return;
+                }
+
+                auto exits = this->enabled_exits_;
+                exits.X64RdtscExit = wanted ? 1 : 0;
+                WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExtendedVmExits, &exits, sizeof(exits)));
+                this->enabled_exits_ = exits;
             }
 
             void initialize_virtual_processor_state(whp_vcpu& vcpu)
@@ -4000,6 +4042,20 @@ namespace sogen::whp
                 {
                     const auto page_base = align_down_to_page(mmio_address);
                     const auto is_write = operation == memory_operation::write;
+
+                    // vCPUs that fault together must not publish out of order: an older copy published over a newer
+                    // one moves KUSD time backwards for every guest thread, which Windows never does.
+                    const std::scoped_lock refresh_lock(this->mmio_refresh_mutex_);
+
+                    if (!is_write)
+                    {
+                        std::shared_lock lock(this->partition_mutex_);
+                        const auto page_it = this->mapped_pages_.find(page_base);
+                        if (page_it != this->mapped_pages_.end() && page_it->second && is_readable(page_it->second->permissions))
+                        {
+                            return true; // another vCPU refreshed the page since this one faulted
+                        }
+                    }
 
                     // Refresh the page content through the region callback outside the lock, then
                     // publish it into the backing page under it.

@@ -95,7 +95,7 @@ namespace sogen
             uint64_t ss;
         };
 
-        void dispatch_exception_pointers(x86_64_cpu& emu, const uint64_t dispatcher,
+        void dispatch_exception_pointers(x86_64_cpu& emu, const emulator_thread& thread, const uint64_t dispatcher,
                                          const EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers)
         {
             constexpr auto mach_frame_size = 0x40;
@@ -117,6 +117,7 @@ namespace sogen
             std::vector<uint8_t> zero_memory{};
             zero_memory.resize(static_cast<size_t>(total_size), 0);
 
+            thread.grow_stack_for_frame(new_sp, initial_sp);
             emu.write_memory(new_sp, zero_memory.data(), zero_memory.size());
 
             const emulator_object<CONTEXT64> context_record_obj{emu, new_sp};
@@ -163,7 +164,8 @@ namespace sogen
         // as its RtlDispatchException(record, context) call sequence shows.
         constexpr uint64_t arm64_exception_record_offset = 0x3B0;
 
-        void dispatch_arm64_exception(windows_emulator& win_emu, arm64_cpu& cpu, const exception_record& record, const arm64_context& ctx)
+        void dispatch_arm64_exception(windows_emulator& win_emu, arm64_cpu& cpu, const emulator_thread& thread,
+                                      const exception_record& record, const arm64_context& ctx)
         {
             static_assert(sizeof(arm64_context) <= arm64_exception_record_offset);
 
@@ -173,6 +175,7 @@ namespace sogen
             const auto new_sp = align_down(initial_sp - allocation_size, 0x10);
 
             std::vector<uint8_t> zero_memory(static_cast<size_t>(initial_sp - new_sp), 0);
+            thread.grow_stack_for_frame(new_sp, initial_sp);
             cpu.write_memory(new_sp, zero_memory.data(), zero_memory.size());
             cpu.write_memory(new_sp, ctx);
 
@@ -313,7 +316,7 @@ namespace sogen
                 }
             }
 
-            dispatch_arm64_exception(win_emu, *arm64, record, ctx);
+            dispatch_arm64_exception(win_emu, *arm64, thread, record, ctx);
             return;
         }
 
@@ -406,7 +409,7 @@ namespace sogen
         EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
         pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);
         pointers.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&record);
-        dispatch_exception_pointers(cpu, win_emu.process.ki_user_exception_dispatcher, pointers);
+        dispatch_exception_pointers(cpu, thread, win_emu.process.ki_user_exception_dispatcher, pointers);
     }
 
     bool report_exception_to_debugger(windows_emulator& win_emu, vcpu_context& vcpu, const exception_record& record,
@@ -445,7 +448,7 @@ namespace sogen
         EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
         pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);
         pointers.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&record);
-        dispatch_exception_pointers(cpu, win_emu.process.ki_user_exception_dispatcher, pointers);
+        dispatch_exception_pointers(cpu, vcpu.thread(), win_emu.process.ki_user_exception_dispatcher, pointers);
     }
 
     void dispatch_exception_record(windows_emulator& win_emu, vcpu_context& vcpu, exception_record record, const arm64_context& ctx)
@@ -457,7 +460,7 @@ namespace sogen
 
         // The kernel builds the dispatcher frame below the raising context's stack, not the syscall's.
         cpu.reg(arm64_register::sp, ctx.Sp);
-        dispatch_arm64_exception(win_emu, cpu, record, ctx);
+        dispatch_arm64_exception(win_emu, cpu, vcpu.thread(), record, ctx);
     }
 
     void dispatch_access_violation(windows_emulator& win_emu, vcpu_context& vcpu, const uint64_t address, const memory_operation operation)
@@ -473,6 +476,15 @@ namespace sogen
                                        const memory_operation operation)
     {
         dispatch_exception(win_emu, vcpu, STATUS_GUARD_PAGE_VIOLATION,
+                           {
+                               map_violation_operation_to_parameter(operation),
+                               address,
+                           });
+    }
+
+    void dispatch_stack_overflow(windows_emulator& win_emu, vcpu_context& vcpu, const uint64_t address, const memory_operation operation)
+    {
+        dispatch_exception(win_emu, vcpu, STATUS_STACK_OVERFLOW,
                            {
                                map_violation_operation_to_parameter(operation),
                                address,

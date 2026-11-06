@@ -457,7 +457,8 @@ namespace sogen::test
         const auto teb = thread.teb64->read();
         EXPECT_EQ(teb.NtTib.Self, thread.teb64->value());
         EXPECT_EQ(teb.NtTib.StackBase, thread.stack_base + thread.stack_size);
-        EXPECT_EQ(teb.NtTib.StackLimit, thread.stack_base);
+        EXPECT_EQ(teb.DeallocationStack, thread.stack_base);
+        EXPECT_EQ(teb.NtTib.StackLimit, teb.NtTib.StackBase - 0x1000);
         EXPECT_EQ(teb.ProcessEnvironmentBlock, this->process_.peb64.value());
         thread.setup_if_necessary(*this->machine_, this->process_);
         ASSERT_TRUE(thread.setup_done);

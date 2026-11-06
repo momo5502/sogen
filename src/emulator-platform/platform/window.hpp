@@ -100,6 +100,40 @@ namespace sogen
         hbitmap hbmColor;
     };
 
+    struct EMU_CURSORDATA
+    {
+        pointer lpName;
+        pointer lpModName;
+        uint16_t rt;
+        uint16_t reserved_12[3];
+        DWORD flags;
+        int16_t xHotspot;
+        int16_t yHotspot;
+        hbitmap hbmMask;
+        hbitmap hbmColor;
+        uint8_t reserved_30[0x20];
+        DWORD bpp;
+        DWORD cx;
+        DWORD cy;
+    };
+
+    static_assert(offsetof(EMU_CURSORDATA, rt) == 0x10);
+    static_assert(offsetof(EMU_CURSORDATA, flags) == 0x18);
+    static_assert(offsetof(EMU_CURSORDATA, xHotspot) == 0x1C);
+    static_assert(offsetof(EMU_CURSORDATA, hbmMask) == 0x20);
+    static_assert(offsetof(EMU_CURSORDATA, hbmColor) == 0x28);
+    static_assert(offsetof(EMU_CURSORDATA, bpp) == 0x50);
+    static_assert(offsetof(EMU_CURSORDATA, cy) == 0x58);
+
+    struct EMU_CURSORFIND
+    {
+        hicon hcur;
+        DWORD rt;
+        DWORD cx;
+        DWORD cy;
+        DWORD bpp;
+    };
+
     struct EMU_CURSORINFO
     {
         DWORD cbSize;

@@ -1,9 +1,5 @@
 #pragma once
 
-#ifdef OS_WINDOWS
-#include <share.h>
-#endif
-
 #include <array>
 #include <string>
 #include <filesystem>
@@ -11,6 +7,12 @@
 
 #include "primitives.hpp"
 #include "traits.hpp"
+
+#ifdef OS_WINDOWS
+#include <fcntl.h>
+#include <io.h>
+#include <stdio.h>
+#endif
 
 namespace sogen
 {
@@ -519,14 +521,122 @@ namespace sogen
         return errno;
     }
 #else
+    namespace open_unicode_detail
+    {
+        inline DWORD access_rights(const std::u16string& mode)
+        {
+            const auto updates = mode.find(u'+') != std::u16string::npos;
+            const auto reads = mode.starts_with(u'r') || updates;
+            const auto writes = !mode.starts_with(u'r') || updates;
+
+            DWORD access = 0;
+            if (reads)
+            {
+                access |= GENERIC_READ;
+            }
+
+            if (writes)
+            {
+                access |= GENERIC_WRITE;
+            }
+
+            return access;
+        }
+
+        inline DWORD creation_disposition(const std::u16string& mode)
+        {
+            if (mode.starts_with(u'w'))
+            {
+                return CREATE_ALWAYS;
+            }
+
+            if (mode.starts_with(u'a'))
+            {
+                return OPEN_ALWAYS;
+            }
+
+            return OPEN_EXISTING;
+        }
+
+        inline int errno_from_system_error(const DWORD error)
+        {
+            constexpr DWORD first_access_denied_error = ERROR_WRITE_PROTECT;
+            constexpr DWORD last_access_denied_error = ERROR_SHARING_BUFFER_EXCEEDED;
+
+            switch (error)
+            {
+            case ERROR_FILE_NOT_FOUND:
+            case ERROR_PATH_NOT_FOUND:
+            case ERROR_INVALID_DRIVE:
+            case ERROR_BAD_PATHNAME:
+            case ERROR_FILENAME_EXCED_RANGE:
+            case ERROR_BAD_NETPATH:
+            case ERROR_BAD_NET_NAME:
+            case ERROR_NO_MORE_FILES:
+                return ENOENT;
+            case ERROR_TOO_MANY_OPEN_FILES:
+                return EMFILE;
+            case ERROR_FILE_EXISTS:
+            case ERROR_ALREADY_EXISTS:
+                return EEXIST;
+            case ERROR_DISK_FULL:
+                return ENOSPC;
+            case ERROR_NOT_ENOUGH_MEMORY:
+            case ERROR_OUTOFMEMORY:
+                return ENOMEM;
+            case ERROR_ACCESS_DENIED:
+            case ERROR_NETWORK_ACCESS_DENIED:
+            case ERROR_CANNOT_MAKE:
+            case ERROR_CURRENT_DIRECTORY:
+            case ERROR_FAIL_I24:
+            case ERROR_DRIVE_LOCKED:
+            case ERROR_SEEK_ON_DEVICE:
+            case ERROR_NOT_LOCKED:
+            case ERROR_LOCK_FAILED:
+                return EACCES;
+            default:
+                return error >= first_access_denied_error && error <= last_access_denied_error ? EACCES : EINVAL;
+            }
+        }
+    } // namespace open_unicode_detail
+
+    // The CRT stream functions cannot share DELETE access, and without it Windows refuses to delete or rename a file while
+    // another stream on it is open. The errno values follow what _wfsopen reports.
     inline int open_unicode(FILE** handle, const std::filesystem::path& fileName, const std::u16string& mode)
     {
-        *handle = _wfsopen(fileName.wstring().c_str(), u16_to_w(mode).c_str(), _SH_DENYNO);
-        if (*handle)
+        *handle = nullptr;
+
+        auto* const file =
+            CreateFileW(fileName.c_str(), open_unicode_detail::access_rights(mode), FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                        nullptr, open_unicode_detail::creation_disposition(mode), FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE)
         {
-            return 0;
+            return open_unicode_detail::errno_from_system_error(GetLastError());
         }
-        return errno ? errno : EACCES;
+
+        int flags = mode.find(u'b') != std::u16string::npos ? _O_BINARY : _O_TEXT;
+        if (mode.starts_with(u'a'))
+        {
+            flags |= _O_APPEND;
+        }
+
+        const auto descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(file), flags);
+        if (descriptor == -1)
+        {
+            const auto error = errno ? errno : EACCES;
+            CloseHandle(file);
+            return error;
+        }
+
+        *handle = _wfdopen(descriptor, u16_to_w(mode).c_str());
+        if (!*handle)
+        {
+            const auto error = errno ? errno : EACCES;
+            _close(descriptor);
+            return error;
+        }
+
+        return 0;
     }
 #endif
 } // namespace sogen

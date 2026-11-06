@@ -891,6 +891,7 @@ namespace sogen
         buffer.write(this->menus);
         buffer.write(this->timers);
         buffer.write(this->accelerator_tables);
+        buffer.write(this->cursor_icons);
         buffer.write(this->deferred_window_position_batches);
         buffer.write(this->registry_keys);
         buffer.write(this->private_namespaces);
@@ -915,6 +916,7 @@ namespace sogen
 
         buffer.write_vector(this->default_register_set);
         buffer.write(this->process_id);
+        buffer.write(this->parent_process_id);
         buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
@@ -1022,6 +1024,7 @@ namespace sogen
         buffer.read(this->menus);
         buffer.read(this->timers);
         buffer.read(this->accelerator_tables);
+        buffer.read(this->cursor_icons);
         buffer.read(this->deferred_window_position_batches);
         buffer.read(this->registry_keys);
         buffer.read(this->private_namespaces);
@@ -1046,6 +1049,7 @@ namespace sogen
 
         buffer.read_vector(this->default_register_set);
         buffer.read(this->process_id);
+        buffer.read(this->parent_process_id);
         buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
 
@@ -1056,9 +1060,11 @@ namespace sogen
 
         buffer.read(this->threads);
         this->thread_handles_by_id.clear();
+        this->terminated_thread_count = 0;
         for (const auto& [index, thread] : this->threads)
         {
             this->thread_handles_by_id[thread.id] = this->threads.make_handle(index);
+            this->terminated_thread_count += thread.is_terminated() ? 1 : 0;
         }
 
         active_thread = this->threads.get(buffer.read<uint64_t>());
@@ -1248,6 +1254,17 @@ namespace sogen
         }
     }
 
+    size_t process_context::handle_count() const
+    {
+        // Threads live in their store whether or not the guest holds a handle to them.
+        return this->processes.size() + this->managed_threads.size() + this->debug_objects.size() + this->events.size() +
+               this->files.size() + this->devices.size() + this->semaphores.size() + this->io_completions.size() +
+               this->wait_completion_packets.size() + this->worker_factories.size() + this->jobs.size() +
+               this->thread_state_changes.size() + this->registry_keys.size() + this->mutants.size() + this->timers.size() +
+               this->desktops.size() + this->window_stations.size() + this->ports.size() + this->sections.size() +
+               this->private_namespaces.size() + this->deferred_window_position_batches.size();
+    }
+
     emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id)
     {
         if (const auto cached = this->thread_handles_by_id.find(thread_id); cached != this->thread_handles_by_id.end())
@@ -1352,11 +1369,23 @@ namespace sogen
         return std::count_if(threads.begin(), threads.end(), [](auto& item) { return !item.second.is_terminated(); });
     }
 
+    void process_context::commit_thread_stacks_in_full() const
+    {
+        for (const auto& thread : this->threads | std::views::values)
+        {
+            if (!thread.is_terminated())
+            {
+                thread.commit_stacks_in_full();
+            }
+        }
+    }
+
     handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
-                                          const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
+                                          const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread,
+                                          const uint64_t stack_commit_size)
     {
         const uint32_t thread_id = this->initial_thread_id + this->spawned_thread_count++ * 4;
-        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
+        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread, stack_commit_size};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
 
@@ -1379,6 +1408,11 @@ namespace sogen
 
     void process_context::terminate_thread(emulator_thread& thread, const NTSTATUS thread_exit_status)
     {
+        if (!thread.is_terminated())
+        {
+            ++this->terminated_thread_count;
+        }
+
         thread.exit_status = thread_exit_status;
 
         for (auto& mutant : this->mutants | std::views::values)
