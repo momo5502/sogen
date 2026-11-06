@@ -97,6 +97,33 @@ namespace sogen::macos_test
             '/',  'd',  'a',  't',  'a',  '\0',       // path
         });
 
+        // A pipe whose write end is not where XNU returns it fails the write and exits instead of blocking on the read.
+        constexpr auto PIPE_ROUND_TRIP_CODE = std::to_array<uint8_t>({
+            0xBA, 0xFF, 0xFF, 0xFF, 0xFF, // mov edx, -1
+            0xB8, 0x2A, 0x00, 0x00, 0x02, // mov eax, 0x200002A (pipe)
+            0x0F, 0x05,                   // syscall
+            0x89, 0xC3,                   // mov ebx, eax (read end)
+            0x41, 0x89, 0xD4,             // mov r12d, edx (write end)
+            0xC6, 0x04, 0x24, 0x5A,       // mov byte [rsp], 'Z'
+            0x44, 0x89, 0xE7,             // mov edi, r12d
+            0x48, 0x89, 0xE6,             // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00, // mov edx, 1
+            0xB8, 0x04, 0x00, 0x00, 0x02, // mov eax, 0x2000004 (write)
+            0x0F, 0x05,                   // syscall
+            0x89, 0xC7,                   // mov edi, eax
+            0x83, 0xFF, 0x01,             // cmp edi, 1
+            0x75, 0x19,                   // jne exit
+            0xC6, 0x04, 0x24, 0x00,       // mov byte [rsp], 0
+            0x89, 0xDF,                   // mov edi, ebx
+            0x48, 0x89, 0xE6,             // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00, // mov edx, 1
+            0xB8, 0x03, 0x00, 0x00, 0x02, // mov eax, 0x2000003 (read)
+            0x0F, 0x05,                   // syscall
+            0x0F, 0xB6, 0x3C, 0x24,       // movzx edi, byte [rsp]
+            0xB8, 0x01, 0x00, 0x00, 0x02, // exit: mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                   // syscall
+        });
+
         constexpr auto OVERSIZED_WRITE_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02,                               // mov eax, 0x2000004 (write)
             0xBF, 0x01, 0x00, 0x00, 0x00,                               // mov edi, 1
@@ -546,6 +573,13 @@ namespace sogen::macos_test
         EXPECT_EQ(result.stderr_data, "hello\n");
         EXPECT_TRUE(result.stdout_data.empty());
         EXPECT_EQ(result.exit_status, 0);
+    }
+
+    TEST(MacosEmulationTest, ReturnsBothPipeEndsInRegisters)
+    {
+        const auto result = run_image(make_test_image(PIPE_ROUND_TRIP_CODE));
+
+        EXPECT_EQ(result.exit_status, 'Z');
     }
 
     TEST(MacosEmulationTest, FailsReadIntoUnwritableRangeWithoutConsumingInput)

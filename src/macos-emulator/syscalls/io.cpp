@@ -3,6 +3,7 @@
 
 #include <posix_descriptor_syscalls.hpp>
 #include <posix_io_syscalls.hpp>
+#include <posix_pipe.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -183,6 +184,21 @@ namespace sogen
         write_macos_syscall_result(c, posix_dup2(c.emu_ref.fds, fd, new_fd, MACOS_DESCRIPTOR_LIMIT));
     }
 
+    // XNU returns both ends in registers; libSystem's pipe() stores them into the caller's array.
+    void sys_pipe(const macos_syscall_context& c)
+    {
+        const auto result = posix_create_pipe(c.emu_ref.fds, 0, false);
+        if (const auto* error = std::get_if<posix_errno>(&result))
+        {
+            write_macos_syscall_error(c, macos_errno_of(*error));
+            return;
+        }
+
+        const auto& created = std::get<posix_pipe>(result);
+        write_macos_syscall_success(c, static_cast<uint64_t>(created.read_fd));
+        c.emu.reg(x86_register::rdx, static_cast<uint64_t>(created.write_fd));
+    }
+
     void sys_getdtablesize(const macos_syscall_context& c)
     {
         write_macos_syscall_success(c, MACOS_DESCRIPTOR_LIMIT);
@@ -296,9 +312,9 @@ namespace sogen
         write_macos_syscall_error(c, name ? macos_errno::MACOS_ENOENT : macos_errno::MACOS_EFAULT);
     }
 
-    // Close-on-exec is handled by the syscall layer for every descriptor. The standard streams then behave like
-    // pipes (XNU's pipe_ioctl) and files like vnodes (vn_ioctl): non-blocking, async and readable-byte queries
-    // succeed, and everything else is ENOTTY.
+    // Close-on-exec is handled by the syscall layer for every descriptor. Pipes and the standard streams then
+    // behave as XNU's pipe_ioctl and files as its vn_ioctl: non-blocking, async and readable-byte queries succeed,
+    // and everything else is ENOTTY.
     void sys_ioctl(const macos_syscall_context& c)
     {
         constexpr uint64_t fioclex = 0x20006601;
@@ -318,7 +334,7 @@ namespace sogen
             return;
         }
 
-        const auto is_pipe = file->is_standard_stream();
+        const auto is_pipe = file->is_standard_stream() || file->type == fd_type::pipe_read || file->type == fd_type::pipe_write;
         const auto is_file = file->type == fd_type::file && !is_pipe;
         if (request == fioclex || request == fionclex || ((is_pipe || is_file) && (request == fionbio || request == fioasync)))
         {
