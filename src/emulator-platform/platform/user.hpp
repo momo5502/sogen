@@ -359,6 +359,11 @@ namespace sogen
         uint8_t padding[0xFF]{};
     };
 
+    struct USER_CURSOR
+    {
+        uint8_t padding[0xFF]{};
+    };
+
     struct USER_MENU_ITEM
     {
         uint32_t type;

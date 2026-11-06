@@ -259,6 +259,61 @@ namespace sogen
         }
     };
 
+    struct cursor_icon : user_object<USER_CURSOR>
+    {
+        std::u16string module_name{};
+        std::u16string resource_name{};
+        uint16_t resource_id{};
+        uint16_t type{};
+        uint32_t flags{};
+        int16_t hotspot_x{};
+        int16_t hotspot_y{};
+        hbitmap mask{};
+        hbitmap color{};
+        uint32_t bpp{};
+        uint32_t width{};
+        uint32_t height{};
+
+        cursor_icon(memory_interface& memory)
+            : user_object(memory)
+        {
+        }
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            user_object::serialize_object(buffer);
+            buffer.write(this->module_name);
+            buffer.write(this->resource_name);
+            buffer.write(this->resource_id);
+            buffer.write(this->type);
+            buffer.write(this->flags);
+            buffer.write(this->hotspot_x);
+            buffer.write(this->hotspot_y);
+            buffer.write(this->mask);
+            buffer.write(this->color);
+            buffer.write(this->bpp);
+            buffer.write(this->width);
+            buffer.write(this->height);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            user_object::deserialize_object(buffer);
+            buffer.read(this->module_name);
+            buffer.read(this->resource_name);
+            buffer.read(this->resource_id);
+            buffer.read(this->type);
+            buffer.read(this->flags);
+            buffer.read(this->hotspot_x);
+            buffer.read(this->hotspot_y);
+            buffer.read(this->mask);
+            buffer.read(this->color);
+            buffer.read(this->bpp);
+            buffer.read(this->width);
+            buffer.read(this->height);
+        }
+    };
+
     // WC_DIALOG = MAKEINTATOM(0x8002); user32 creates dialogs and message boxes with this fixed
     // system atom, which the kernel reports as the class name "#32770". The atom value is constant
     // across Windows builds (unlike the builtin control-class atoms, which vary per build and are
