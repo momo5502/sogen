@@ -2157,10 +2157,7 @@ namespace sogen
             const auto path = filename.substr(unc_prefix.size());
 
             const std::set<std::u16string, std::less<>> devices{
-                u"Nsi",
-                u"MountPointManager",
-                u"SogenGpu",
-                u"SogenSteam",
+                u"Nsi", u"MountPointManager", u"SogenGpu", u"SogenSteam", u"SogenQtBridge",
             };
 
             if (devices.contains(path))
