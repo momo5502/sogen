@@ -3,6 +3,7 @@
 #include "std_include.hpp"
 #include "linux_syscall_utils.hpp"
 #include "linux_syscall_numbers.hpp"
+#include <posix_result.hpp>
 
 // Linux errno constants (with LINUX_ prefix to avoid clash with system <errno.h> macros)
 namespace sogen
@@ -78,6 +79,34 @@ namespace sogen
         constexpr int64_t LINUX_EHOSTUNREACH = 113;
         constexpr int64_t LINUX_EALREADY = 114;
         constexpr int64_t LINUX_EINPROGRESS = 115;
+    }
+
+    inline int64_t linux_errno_of(const posix_errno error)
+    {
+        switch (error)
+        {
+        case posix_errno::ebadf:
+            return linux_errno::LINUX_EBADF;
+        case posix_errno::einval:
+            return linux_errno::LINUX_EINVAL;
+        case posix_errno::emfile:
+            return linux_errno::LINUX_EMFILE;
+        case posix_errno::espipe:
+            return linux_errno::LINUX_ESPIPE;
+        }
+
+        return linux_errno::LINUX_EINVAL;
+    }
+
+    inline void write_linux_syscall_result(const linux_syscall_context& c, const posix_result& result)
+    {
+        if (const auto* error = std::get_if<posix_errno>(&result))
+        {
+            write_linux_syscall_result(c, -linux_errno_of(*error));
+            return;
+        }
+
+        write_linux_syscall_result(c, static_cast<int64_t>(std::get<uint64_t>(result)));
     }
 
     struct linux_syscall_handler_entry

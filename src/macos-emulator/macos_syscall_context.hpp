@@ -2,12 +2,14 @@
 
 #include <arch_emulator.hpp>
 #include <hook_interface.hpp>
+#include <posix_result.hpp>
 
 #include <array>
 #include <optional>
 #include <string>
 #include <cstddef>
 #include <cstdint>
+#include <variant>
 
 namespace sogen
 {
@@ -43,6 +45,23 @@ namespace sogen
         constexpr uint64_t MACOS_EBADMACHO = 88;
     }
 
+    inline uint64_t macos_errno_of(const posix_errno error)
+    {
+        switch (error)
+        {
+        case posix_errno::ebadf:
+            return macos_errno::MACOS_EBADF;
+        case posix_errno::einval:
+            return macos_errno::MACOS_EINVAL;
+        case posix_errno::emfile:
+            return macos_errno::MACOS_EMFILE;
+        case posix_errno::espipe:
+            return macos_errno::MACOS_ESPIPE;
+        }
+
+        return macos_errno::MACOS_EINVAL;
+    }
+
     namespace macos_kern_return
     {
         constexpr uint64_t KERN_SUCCESS = 0;
@@ -65,7 +84,7 @@ namespace sogen
     constexpr uint32_t GROUP_ID = 20;
 
     // RLIMIT_NOFILE's soft limit, which is also getdtablesize().
-    constexpr uint64_t MACOS_DESCRIPTOR_LIMIT = 256;
+    constexpr int MACOS_DESCRIPTOR_LIMIT = 256;
 
     // The wall-clock time the guest sees, fixed so runs are deterministic.
     constexpr int64_t MACOS_EPOCH_SECONDS = 1700000000;
@@ -131,5 +150,16 @@ namespace sogen
     inline void write_macos_syscall_error(const macos_syscall_context& c, const uint64_t error)
     {
         write_macos_syscall_result(c, error, true);
+    }
+
+    inline void write_macos_syscall_result(const macos_syscall_context& c, const posix_result& result)
+    {
+        if (const auto* error = std::get_if<posix_errno>(&result))
+        {
+            write_macos_syscall_error(c, macos_errno_of(*error));
+            return;
+        }
+
+        write_macos_syscall_success(c, std::get<uint64_t>(result));
     }
 }
