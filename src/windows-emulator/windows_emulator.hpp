@@ -822,6 +822,8 @@ namespace sogen
 
         void register_factories(utils::buffer_deserializer& buffer);
         void ensure_serialization_support() const;
+        void idle_secondary_vcpus();
+        void occupy_idle_first_vcpu(emulator_thread* preferred);
     };
 
 } // namespace sogen

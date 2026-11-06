@@ -1995,23 +1995,16 @@ namespace sogen::whp
                 this->memory_write_hooks_.erase(hook);
             }
 
+            // Only vCPU 0's registers: the emulator saves the threads the other vCPUs run into their thread objects first
+            // (windows_emulator::prepare_serialization), and a vCPU holds nothing between threads that its threads do not
+            // carry, since save_registers is what a thread switch moves.
             void serialize_state(utils::buffer_serializer& buffer, const bool) const override
             {
-                if (this->vcpus_.size() > 1)
-                {
-                    throw std::runtime_error("Multi-vCPU snapshots are not supported yet");
-                }
-
                 buffer.write_vector(this->vcpus_[0]->save_registers());
             }
 
             void deserialize_state(utils::buffer_deserializer& buffer, const bool) override
             {
-                if (this->vcpus_.size() > 1)
-                {
-                    throw std::runtime_error("Multi-vCPU snapshots are not supported yet");
-                }
-
                 this->vcpus_[0]->restore_registers(buffer.read_vector<std::byte>());
             }
 
