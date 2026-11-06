@@ -33,7 +33,20 @@ moves may coalesce; button and key transitions retain their order. Exhausting th
 reports an error instead of silently dropping a release. Focus loss releases held inputs.
 Host resize requests use the existing `WM_SIZE` path and preserve logical client coordinates.
 
-This stage targets a normal top-level calculator window. Popup/modal composition, tooltip
-focus policy, custom cursors, IME and arbitrary multi-window applications require further
-work. Existing active-session snapshot rejection remains in effect. Browser presentation
-is a separate adapter using the same Windows guest and wire protocol.
+Popup menus and tooltips are composited into their owner frame, clipped to that host's
+client area. Menus receive translated pointer and keyboard input; tooltips leave input
+with the owner. Hiding an overlay restores the base pixels and owner focus while the
+application remains active. Window-modal dialogs block their owner chain; application-modal
+dialogs block other top levels in the same session. Child hosts are retired before owners.
+Standard cursor shapes use the existing system-cursor interface, including hidden cursors.
+
+Deploy the matching `window-behavior.exe` example beside the calculator to exercise menus,
+a modal dialog, tooltips, text entry and the F6 shortcut through either backend. It emits
+`WINDOW_STATE` and `WINDOW_LAYOUT` JSON records for observing guest state and control bounds.
+The platform plugin retires transient children before an owner, preserving the device's
+strict destruction order even when the toolkit destroys the owner first.
+
+The wire layout remains version 2. Existing active-session snapshot rejection remains in
+effect. Overlay pixels outside their owner, native window-manager transient/minimize policy,
+custom cursor images, IME and general multi-window parity require further work. Browser
+presentation is a separate adapter using the same Windows guest and wire protocol.

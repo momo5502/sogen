@@ -41,6 +41,9 @@ namespace sogen::qt_raster
         bool raised{};
         bool focused{};
         int32_t cursor{};
+        uint32_t visibility_order{};
+        uint32_t stacking_order{};
+        uint32_t focus_order{};
         std::string title{};
         std::optional<frame> surface{};
     };

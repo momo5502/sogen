@@ -1,6 +1,6 @@
 #include "native_presenter.hpp"
-#include <emulation_test_utils.hpp>
 #include <devices/qt_raster.hpp>
+#include <emulation_test_utils.hpp>
 
 namespace sogen::test
 {
@@ -17,6 +17,10 @@ namespace sogen::test
             size_t creations{};
             size_t destructions{};
             size_t geometry_changes{};
+            std::vector<hwnd> activations{};
+            std::vector<hwnd> destroyed{};
+            std::optional<uint32_t> cursor{};
+            bool cursor_visible{true};
 
             void set_event_sink(event_sink value) override
             {
@@ -35,6 +39,7 @@ namespace sogen::test
 
             void destroy_window(const hwnd value) override
             {
+                this->destroyed.push_back(value);
                 this->windows.erase(value);
                 this->pixels.erase(value);
                 ++this->destructions;
@@ -44,6 +49,26 @@ namespace sogen::test
             {
                 this->windows.at(value).rect = rect;
                 ++this->geometry_changes;
+            }
+
+            void activate_window(const hwnd value) override
+            {
+                this->activations.push_back(value);
+            }
+
+            void set_window_enabled(const hwnd value, const bool enabled) override
+            {
+                this->windows.at(value).enabled = enabled;
+            }
+
+            void set_system_cursor(const uint32_t idc) override
+            {
+                this->cursor = idc;
+            }
+
+            void set_cursor_visibility(const bool visible) override
+            {
+                this->cursor_visible = visible;
             }
 
             void set_window_title(const hwnd value, const std::u16string_view text) override
@@ -89,9 +114,14 @@ namespace sogen::test
 
             void send(const wire::Op op, const std::array<int32_t, 8>& args = {}, const std::string_view data = {})
             {
+                this->send_to(1, op, args, data);
+            }
+
+            void send_to(const uint32_t id, const wire::Op op, const std::array<int32_t, 8>& args = {}, const std::string_view data = {})
+            {
                 wire::Packet packet{};
                 packet.op = op;
-                packet.id = op == wire::Hello || op == wire::End || op == wire::Poll ? 0 : 1;
+                packet.id = op == wire::Hello || op == wire::End || op == wire::Poll ? 0 : id;
                 packet.seq = ++this->sequence;
                 packet.session = op == wire::Hello ? 0 : this->session->identity();
                 packet.a = args;
@@ -127,6 +157,42 @@ namespace sogen::test
                 this->emu->handle_ui_event({.window = this->host, .message = message, .wParam = wparam, .lParam = lparam});
             }
 
+            void show_window(const uint32_t id, const int32_t type, const int32_t modality = 0, const uint32_t parent = 1,
+                             const std::string_view title = "Overlay")
+            {
+                this->send_to(id, wire::Create, {11, 21, 2, 2, type, modality, static_cast<int32_t>(parent), 1000}, title);
+                this->send_to(id, wire::Visible, {1, modality});
+            }
+
+            void frame(const uint32_t id, const int32_t width, const int32_t height, const std::array<uint8_t, 4>& color)
+            {
+                std::string bytes;
+                for (int32_t pixel = 0; pixel < width * height; ++pixel)
+                {
+                    bytes.append(reinterpret_cast<const char*>(color.data()), color.size());
+                }
+                this->send_to(id, wire::Frame, {width, height, width * 4, 1000, 0, 0, width, height}, bytes);
+            }
+
+            hwnd named_host(const std::u16string_view name) const
+            {
+                for (const auto& [handle, value] : this->ui->windows)
+                {
+                    if (value.title == name)
+                    {
+                        return handle;
+                    }
+                }
+                throw std::runtime_error("Missing host window");
+            }
+
+            void focus_owner()
+            {
+                this->event(WM_SETFOCUS);
+                this->update();
+                ASSERT_EQ(wire::Focus, this->poll().first.op);
+            }
+
             std::unique_ptr<windows_emulator> emu{};
             recording_ui* ui{};
             wire::session* session{};
@@ -135,7 +201,7 @@ namespace sogen::test
             hwnd host{};
             uint32_t sequence{};
         };
-    }
+    } // namespace
 
     TEST_F(NativeRasterTest, GuestPixelsAndWindowMetadataReachTheHost)
     {
@@ -391,4 +457,249 @@ namespace sogen::test
         EXPECT_EQ(this->ui->creations, this->ui->destructions);
     }
 
-}
+    TEST_F(NativeRasterTest, AMenuCompositesIntoItsOwnerAndReceivesTranslatedInput)
+    {
+        this->send(wire::Geometry, {10, 20, 4, 4});
+        this->frame(1, 4, 4, {10, 20, 30, 255});
+        this->show_window(2, 9);
+        this->frame(2, 2, 2, {20, 40, 60, 128});
+        this->update();
+        EXPECT_EQ(1u, this->ui->windows.size());
+        std::vector<uint8_t> expected;
+        for (size_t pixel = 0; pixel < 16; ++pixel)
+        {
+            expected.insert(expected.end(), {10, 20, 30, 255});
+        }
+        for (const size_t pixel : {5u, 6u, 9u, 10u})
+        {
+            const std::array<uint8_t, 4> blended{25, 50, 75, 255};
+            std::copy(blended.begin(), blended.end(), expected.begin() + pixel * 4);
+        }
+        EXPECT_EQ(expected, this->ui->pixels.at(this->host));
+        this->event(WM_LBUTTONDOWN, 0, (uint64_t{2} << 16) | 2);
+        this->event(WM_KEYDOWN, VK_ESCAPE);
+        this->update();
+        const auto mouse = this->poll().first;
+        EXPECT_EQ(wire::Mouse, mouse.op);
+        EXPECT_EQ(2u, mouse.id);
+        EXPECT_EQ(1, mouse.a[0]);
+        EXPECT_EQ(1, mouse.a[1]);
+        const auto key = this->poll();
+        EXPECT_EQ(wire::Key, key.first.op);
+        EXPECT_EQ(2u, key.first.id);
+        EXPECT_EQ(0x01000000, key.first.a[1]);
+    }
+
+    TEST_F(NativeRasterTest, HidingAMenuRestoresTheBaseFrameAndOwnerFocus)
+    {
+        this->focus_owner();
+        this->frame(1, 2, 2, {10, 20, 30, 255});
+        this->show_window(2, 9);
+        this->send_to(2, wire::Focus, {1});
+        this->frame(2, 2, 2, {50, 60, 70, 255});
+        this->update();
+        this->ui->activations.clear();
+        this->send_to(2, wire::Visible, {0});
+        this->update();
+        EXPECT_EQ((std::vector<uint8_t>{10, 20, 30, 255, 10, 20, 30, 255, 10, 20, 30, 255, 10, 20, 30, 255}),
+                  this->ui->pixels.at(this->host));
+        const auto focus = this->poll().first;
+        EXPECT_EQ(wire::Focus, focus.op);
+        EXPECT_EQ(1u, focus.id);
+        EXPECT_EQ(1, focus.a[0]);
+        EXPECT_EQ((std::vector<hwnd>{this->host}), this->ui->activations);
+        this->send_to(2, wire::Destroy);
+        this->update();
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+    }
+
+    TEST_F(NativeRasterTest, TooltipsDoNotOwnHostFocusOrInterceptOwnerClicks)
+    {
+        this->focus_owner();
+        this->show_window(2, 13);
+        this->send_to(2, wire::Focus, {1});
+        this->update();
+        ASSERT_EQ(1u, this->ui->windows.size());
+        this->event(WM_LBUTTONDOWN);
+        this->event(WM_LBUTTONUP);
+        this->update();
+        EXPECT_EQ(1u, this->poll().first.id);
+        EXPECT_EQ(1u, this->poll().first.id);
+        this->send_to(2, wire::Visible, {0});
+        this->update();
+        EXPECT_EQ(wire::Focus, this->poll().first.op);
+        this->event(WM_KEYDOWN, 0x75);
+        this->event(WM_KEYUP, 0x75);
+        this->update();
+        const auto key = this->poll().first;
+        EXPECT_EQ(1u, key.id);
+        EXPECT_EQ(0x01000035, key.a[1]);
+        EXPECT_EQ(7, this->poll().first.a[0]);
+    }
+
+    TEST_F(NativeRasterTest, DismissingATooltipAfterDeactivationDoesNotStealFocusBack)
+    {
+        this->focus_owner();
+        this->show_window(2, 13);
+        this->send_to(2, wire::Focus, {1});
+        this->update();
+        this->event(WM_KILLFOCUS);
+        this->update();
+        ASSERT_EQ(wire::Focus, this->poll().first.op);
+        this->ui->activations.clear();
+        this->send_to(2, wire::Visible, {0});
+        this->update();
+        EXPECT_TRUE(this->ui->activations.empty());
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+    }
+
+    TEST_F(NativeRasterTest, WindowModalityBlocksTheOwnerAndKeepsUnrelatedWindowsUsable)
+    {
+        this->show_window(2, 1, 0, 0, "Other");
+        this->show_window(3, 3, 1, 1, "Modal");
+        this->send_to(3, wire::Focus, {1});
+        this->update();
+        const auto other = this->named_host(u"Other");
+        const auto modal = this->named_host(u"Modal");
+        EXPECT_EQ(this->host, this->ui->windows.at(modal).owner);
+        EXPECT_FALSE(this->ui->windows.at(this->host).enabled);
+        EXPECT_TRUE(this->ui->windows.at(other).enabled);
+        this->event(WM_LBUTTONDOWN);
+        this->update();
+        const auto focus = this->poll().first;
+        EXPECT_EQ(wire::Focus, focus.op);
+        EXPECT_EQ(3u, focus.id);
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+        this->event(WM_KEYDOWN, '7');
+        this->event(WM_CHAR, '7');
+        this->event(WM_KEYUP, '7');
+        this->update();
+        const auto press = this->poll();
+        EXPECT_EQ(3u, press.first.id);
+        EXPECT_EQ("7", press.second);
+        EXPECT_EQ(3u, this->poll().first.id);
+        this->emu->handle_ui_event({.window = other, .message = WM_LBUTTONDOWN});
+        this->update();
+        const auto mouse = this->poll().first;
+        EXPECT_EQ(wire::Mouse, mouse.op);
+        EXPECT_EQ(2u, mouse.id);
+    }
+
+    TEST_F(NativeRasterTest, ApplicationModalityBlocksPeersAndClosingItRestoresTheOwner)
+    {
+        this->show_window(2, 1, 0, 0, "Other");
+        this->show_window(3, 3, 2, 1, "Modal");
+        this->send_to(3, wire::Focus, {1});
+        this->update();
+        const auto other = this->named_host(u"Other");
+        const auto modal = this->named_host(u"Modal");
+        EXPECT_FALSE(this->ui->windows.at(other).enabled);
+        this->emu->handle_ui_event({.window = other, .message = WM_CLOSE});
+        this->update();
+        EXPECT_EQ(wire::Empty, this->poll().first.op);
+        this->emu->handle_ui_event({.window = modal, .message = WM_SETFOCUS});
+        this->update();
+        ASSERT_EQ(wire::Focus, this->poll().first.op);
+        this->ui->activations.clear();
+        this->send_to(3, wire::Destroy);
+        this->update();
+        EXPECT_TRUE(this->ui->windows.at(this->host).enabled);
+        EXPECT_TRUE(this->ui->windows.at(other).enabled);
+        const auto focus = this->poll().first;
+        EXPECT_EQ(wire::Focus, focus.op);
+        EXPECT_EQ(1u, focus.id);
+        ASSERT_FALSE(this->ui->activations.empty());
+        EXPECT_EQ(this->host, this->ui->activations.back());
+    }
+
+    TEST_F(NativeRasterTest, TheNewestModalRemainsUsableWhenAnotherModalIsOpen)
+    {
+        this->show_window(2, 3, 2, 1, "Older");
+        this->show_window(3, 3, 2, 1, "Newer");
+        this->update();
+        EXPECT_FALSE(this->ui->windows.at(this->named_host(u"Older")).enabled);
+        EXPECT_TRUE(this->ui->windows.at(this->named_host(u"Newer")).enabled);
+    }
+
+    TEST_F(NativeRasterTest, DeviceTeardownDestroysTransientHostWindowsBeforeTheirOwner)
+    {
+        this->show_window(2, 3, 0, 1, "Owned");
+        this->update();
+        const auto child = this->named_host(u"Owned");
+        this->emu->process.devices.erase(this->device);
+        this->update();
+        EXPECT_EQ((std::vector<hwnd>{child, this->host}), this->ui->destroyed);
+        EXPECT_TRUE(this->ui->windows.empty());
+    }
+
+    TEST_F(NativeRasterTest, RaisingAndLoweringMenusChangesTheirPixelsAndInputTarget)
+    {
+        this->send(wire::Geometry, {10, 20, 2, 2});
+        this->frame(1, 2, 2, {0, 0, 0, 255});
+        for (const uint32_t id : {2u, 3u})
+        {
+            this->show_window(id, 9);
+            this->send_to(id, wire::Geometry, {10, 20, 2, 2});
+        }
+        this->frame(2, 2, 2, {10, 0, 0, 255});
+        this->frame(3, 2, 2, {20, 0, 0, 255});
+        this->update();
+        EXPECT_EQ(20, this->ui->pixels.at(this->host)[0]);
+        this->send_to(3, wire::Raise, {0});
+        this->update();
+        EXPECT_EQ(10, this->ui->pixels.at(this->host)[0]);
+        this->event(WM_KEYDOWN, VK_ESCAPE);
+        this->event(WM_KEYUP, VK_ESCAPE);
+        this->update();
+        EXPECT_EQ(2u, this->poll().first.id);
+        this->poll();
+        this->send_to(3, wire::Raise, {1});
+        this->update();
+        EXPECT_EQ(20, this->ui->pixels.at(this->host)[0]);
+        this->event(WM_KEYDOWN, VK_ESCAPE);
+        this->update();
+        EXPECT_EQ(3u, this->poll().first.id);
+    }
+
+    TEST_F(NativeRasterTest, OverlayCompositionClipsAndMapsLogicalCoordinatesToPixels)
+    {
+        this->send(wire::Geometry, {10, 20, 2, 2});
+        this->frame(1, 4, 4, {10, 20, 30, 255});
+        this->show_window(2, 9);
+        this->frame(2, 2, 2, {20, 40, 60, 128});
+        this->update();
+        auto pixels = this->ui->pixels.at(this->host);
+        ASSERT_EQ(64u, pixels.size());
+        EXPECT_EQ(10, pixels[0]);
+        EXPECT_EQ(25, pixels[10 * 4]);
+        EXPECT_EQ(50, pixels[10 * 4 + 1]);
+        EXPECT_EQ(75, pixels[15 * 4 + 2]);
+        EXPECT_EQ(255, pixels[15 * 4 + 3]);
+        this->send_to(2, wire::Geometry, {9, 19, 2, 2});
+        this->update();
+        pixels = this->ui->pixels.at(this->host);
+        EXPECT_EQ(25, pixels[0]);
+        EXPECT_EQ(10, pixels[15 * 4]);
+    }
+
+    TEST_F(NativeRasterTest, HostCursorRequestsFollowTheActiveMenuAndBlankVisibility)
+    {
+        this->send(wire::Cursor, {4});
+        this->event(WM_MOUSEMOVE);
+        this->update();
+        EXPECT_EQ(32513u, this->ui->cursor);
+        EXPECT_TRUE(this->ui->cursor_visible);
+        this->show_window(2, 9);
+        this->send_to(2, wire::Cursor, {13});
+        this->update();
+        EXPECT_EQ(32649u, this->ui->cursor);
+        this->send_to(2, wire::Cursor, {10});
+        this->update();
+        EXPECT_FALSE(this->ui->cursor_visible);
+        this->send_to(2, wire::Visible, {0});
+        this->update();
+        EXPECT_EQ(32513u, this->ui->cursor);
+        EXPECT_TRUE(this->ui->cursor_visible);
+    }
+
+} // namespace sogen::test

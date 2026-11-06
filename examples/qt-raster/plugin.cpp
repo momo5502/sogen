@@ -25,6 +25,8 @@ namespace
     uint64_t session = 0;
     std::recursive_mutex exchange_mutex;
     QHash<uint32_t, QWindow*> windows;
+    class Window;
+    QHash<uint32_t, Window*> platform_windows;
     qreal scale = 1;
     QRect screenGeometry(0, 0, 1280, 900);
 
@@ -87,6 +89,11 @@ namespace
         if (args.size() > qb::Packet{}.a.size())
         {
             qFatal("BRIDGE_ARGUMENT_LIMIT");
+        }
+        const std::lock_guard lock(exchange_mutex);
+        if (op != qb::Create && !windows.contains(id))
+        {
+            return;
         }
         qb::Packet p;
         p.op = op;
@@ -152,12 +159,35 @@ namespace
     class Window : public QPlatformWindow
     {
         uint32_t id_;
+        uint32_t parent_{};
         bool visible_ = false;
+
+        void destroy()
+        {
+            const std::lock_guard lock(exchange_mutex);
+            if (!id_)
+            {
+                return;
+            }
+            for (auto* child : platform_windows.values())
+            {
+                if (child->parent_ == id_)
+                {
+                    child->destroy();
+                }
+            }
+            send(qb::Destroy, id_);
+            platform_windows.remove(id_);
+            windows.remove(id_);
+            id_ = 0;
+            visible_ = false;
+        }
 
       public:
         explicit Window(QWindow* w)
             : QPlatformWindow(w)
         {
+            const std::lock_guard lock(exchange_mutex);
             static uint32_t next = 1;
             if (!next)
             {
@@ -166,15 +196,16 @@ namespace
             id_ = next++;
             windows.insert(id_, w);
             const auto g = windowGeometry();
-            const uint32_t parent = w->transientParent() ? uint32_t(w->transientParent()->winId()) : 0;
-            send(qb::Create, id_, {g.x(), g.y(), g.width(), g.height(), int(w->type()), int(w->modality()), int(parent), int(scale * 1000)},
+            parent_ = w->transientParent() ? uint32_t(w->transientParent()->winId()) : 0;
+            platform_windows.insert(id_, this);
+            send(qb::Create, id_,
+                 {g.x(), g.y(), g.width(), g.height(), int(w->type()), int(w->modality()), int(parent_), int(scale * 1000)},
                  w->title().toUtf8());
         }
 
         ~Window() override
         {
-            send(qb::Destroy, id_);
-            windows.remove(id_);
+            this->destroy();
         }
 
         WId winId() const override

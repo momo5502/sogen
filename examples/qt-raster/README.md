@@ -2,8 +2,9 @@
 
 This optional platform plugin lets a 64-bit guest send software-rendered widget
 windows through `\\.\SogenQtBridge`. The emulator owns copied frames and a bounded
-input queue. It requires no host GUI toolkit SDK. This first stage has a headless
-probe; native display and browser presentation are separate work.
+input queue. It requires no host GUI toolkit SDK. A headless probe checks frames and input; the optional
+native presenter is described in `docs/qt-raster-native.md`. Browser presentation remains
+a separate adapter.
 
 The example uses the private platform interfaces from guest SDK version 6.8.3.
 Build the plugin against exactly the SDK used by the calculator and runtime DLLs.
@@ -100,5 +101,5 @@ lock. A future presenter must use the same synchronization contract.
 
 The plugin supports raster widgets, timers, fonts and basic input dispatch. It
 does not implement socket notifiers, GPU rendering, clipboard, input methods or
-drag and drop. It advertises no GPU rendering capability. Native presentation,
-modal/popup policy and browser transport are intentionally separate stages.
+drag and drop. It advertises no GPU rendering capability. Window presentation and modal/popup input policy live in the optional native presenter,
+separately from this plugin and the raster endpoint. Browser transport remains separate.

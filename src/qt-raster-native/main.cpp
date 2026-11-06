@@ -57,6 +57,11 @@ namespace sogen
                 this->backend->set_window_visible(window, visible);
             }
 
+            void activate_window(const hwnd window) override
+            {
+                this->backend->activate_window(window);
+            }
+
             void set_window_enabled(const hwnd window, const bool enabled) override
             {
                 this->backend->set_window_enabled(window, enabled);
@@ -95,6 +100,11 @@ namespace sogen
             void* vulkan_get_instance_proc_addr() override
             {
                 return this->backend->vulkan_get_instance_proc_addr();
+            }
+
+            void set_system_cursor(const uint32_t idc) override
+            {
+                this->backend->set_system_cursor(idc);
             }
 
             void set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y) override

@@ -177,6 +177,12 @@ namespace sogen::qt_raster
             commit = [entry, packet] {
                 entry->second.visible = packet.a[0] != 0;
                 entry->second.modality = packet.a[1];
+                entry->second.visibility_order = packet.seq;
+                if (entry->second.visible)
+                {
+                    entry->second.raised = true;
+                    entry->second.stacking_order = packet.seq;
+                }
             };
             break;
         case Title:
@@ -191,14 +197,20 @@ namespace sogen::qt_raster
             {
                 return result::invalid_parameter;
             }
-            commit = [entry, packet] { entry->second.raised = packet.a[0] != 0; };
+            commit = [entry, packet] {
+                entry->second.raised = packet.a[0] != 0;
+                entry->second.stacking_order = packet.seq;
+            };
             break;
         case Focus:
             if (packet.a[0] != 0 && packet.a[0] != 1)
             {
                 return result::invalid_parameter;
             }
-            commit = [entry, packet] { entry->second.focused = packet.a[0] != 0; };
+            commit = [entry, packet] {
+                entry->second.focused = packet.a[0] != 0;
+                entry->second.focus_order = packet.seq;
+            };
             break;
         case Cursor:
             if (packet.a[0] < 0 || packet.a[0] > 24)
