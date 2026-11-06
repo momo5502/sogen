@@ -2,6 +2,7 @@
 #include "../macos_emulator.hpp"
 
 #include <posix_descriptor_syscalls.hpp>
+#include <posix_io_syscalls.hpp>
 
 #include <algorithm>
 #include <cstddef>
@@ -20,6 +21,7 @@ namespace sogen
         constexpr uint64_t MACOS_O_RDONLY = 0x0;
         constexpr uint64_t MACOS_O_RDWR = 0x2;
         constexpr uint64_t MACOS_O_DIRECTORY = 0x100000;
+        constexpr int MACOS_O_NONBLOCK = 0x4;
 
         constexpr uint64_t MACOS_F_DUPFD = 0;
         constexpr uint64_t MACOS_F_GETFD = 1;
@@ -30,25 +32,15 @@ namespace sogen
         constexpr uint64_t MACOS_F_GETPATH = 50;
         constexpr size_t MACOS_MAXPATHLEN = 1024;
 
-        constexpr uint64_t WRITE_CHUNK_SIZE = 0x10000;
-        constexpr uint64_t READ_CHUNK_SIZE = 0x10000;
-
-        void write_standard_stream(macos_emulator& emu, FILE* stream, const std::string_view data)
+        posix_io_context io_context(macos_emulator& emu)
         {
-            const auto& callback = stream == stdout ? emu.on_stdout : emu.on_stderr;
-            if (callback)
-            {
-                callback(data);
-                return;
-            }
-
-            fwrite(data.data(), 1, data.size(), stream);
-            fflush(stream);
-        }
-
-        bool is_output_stream(const posix_fd& file)
-        {
-            return file.handle == stdout || file.handle == stderr;
+            return {
+                .fds = emu.fds,
+                .memory = emu.memory,
+                .on_stdout = emu.on_stdout,
+                .on_stderr = emu.on_stderr,
+                .nonblock_flag = MACOS_O_NONBLOCK,
+            };
         }
 
         std::optional<int> open_for_reading(posix_fd_table& fds, std::string guest_path, const std::filesystem::path& host_path)
@@ -105,37 +97,7 @@ namespace sogen
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         const auto buffer = get_macos_syscall_argument(c.emu, 1);
         const auto size = get_macos_syscall_argument(c.emu, 2);
-
-        const auto* file = c.emu_ref.fds.get(fd);
-        if (file == nullptr || !is_output_stream(*file))
-        {
-            // Files are only ever opened read-only and sockets never connect, so XNU would fail the write either way.
-            const auto is_socket = file != nullptr && file->type == fd_type::socket;
-            write_macos_syscall_error(c, is_socket ? macos_errno::MACOS_ENOTCONN : macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        std::vector<char> chunk(static_cast<size_t>(std::min(size, WRITE_CHUNK_SIZE)));
-        uint64_t written = 0;
-        while (written < size)
-        {
-            const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(size - written, chunk.size()));
-            if (!c.emu.try_read_memory(buffer + written, chunk.data(), chunk_size))
-            {
-                break;
-            }
-
-            write_standard_stream(c.emu_ref, file->handle, std::string_view{chunk.data(), chunk_size});
-            written += chunk_size;
-        }
-
-        if (written == 0 && size != 0)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-            return;
-        }
-
-        write_macos_syscall_success(c, written);
+        write_macos_syscall_result(c, posix_write(io_context(c.emu_ref), fd, buffer, size));
     }
 
     void sys_read(const macos_syscall_context& c)
@@ -143,43 +105,7 @@ namespace sogen
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         const auto buffer = get_macos_syscall_argument(c.emu, 1);
         const auto size = get_macos_syscall_argument(c.emu, 2);
-
-        const auto* file = c.emu_ref.fds.get(fd);
-        if (file == nullptr || is_output_stream(*file))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        if (file->type == fd_type::directory || file->type == fd_type::socket)
-        {
-            write_macos_syscall_error(c, file->type == fd_type::directory ? macos_errno::MACOS_EISDIR : macos_errno::MACOS_ENOTCONN);
-            return;
-        }
-
-        // A stream cannot give back what it delivered, so the whole destination must be writable before anything
-        // is taken from the host; XNU only consumes what it copies out.
-        std::vector<std::byte> data(static_cast<size_t>(std::min(size, READ_CHUNK_SIZE)));
-        if (!c.emu_ref.memory.is_writable_range(buffer, data.size()))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-            return;
-        }
-
-        const auto bytes_read = file->read(data);
-        if (!bytes_read)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EIO);
-            return;
-        }
-
-        if (!c.emu.try_write_memory(buffer, data.data(), *bytes_read))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-            return;
-        }
-
-        write_macos_syscall_success(c, *bytes_read);
+        write_macos_syscall_result(c, posix_read(io_context(c.emu_ref), fd, buffer, size));
     }
 
     void sys_lseek(const macos_syscall_context& c)

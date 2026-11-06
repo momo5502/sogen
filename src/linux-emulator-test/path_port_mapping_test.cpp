@@ -56,7 +56,7 @@ namespace sogen
         constexpr size_t guest_memory_size = 0x1000;
         constexpr int linux_o_RDONLY = 0;
         constexpr int linux_o_DIRECTORY = 0200000;
-        constexpr int64_t linux_eacces = 13;
+        constexpr int64_t linux_ebadf = 9;
         constexpr int linux_af_unix = 1;
         constexpr int linux_af_inet = 2;
         constexpr int linux_sock_stream = 1;
@@ -223,7 +223,7 @@ namespace sogen
         EXPECT_EQ(std::string(read_buffer.data(), read_buffer.size()), "data");
 
         write_guest_string(emu, buffer_addr, "XX");
-        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_write, static_cast<uint64_t>(fd), buffer_addr, 2), -linux_eacces);
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_write, static_cast<uint64_t>(fd), buffer_addr, 2), -linux_ebadf);
         EXPECT_EQ(read_host_file(host_file), "data");
 
         EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_close, static_cast<uint64_t>(fd)), 0);
@@ -515,6 +515,43 @@ namespace sogen
 
         EXPECT_EQ(first_pass.size(), 3);
         EXPECT_EQ(second_pass, first_pass);
+    }
+
+    TEST(LinuxFileDescriptorTest, WriteToStandardOutputFollowsRedirectedDescriptor)
+    {
+        constexpr int linux_o_WRONLY = 1;
+        constexpr int linux_o_CREAT = 0100;
+        constexpr uint64_t file_mode = 0644;
+        constexpr uint64_t standard_output = 1;
+        constexpr std::string_view message = "redirected";
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root);
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        std::string captured_stdout{};
+        emu.on_stdout = [&captured_stdout](const std::string_view data) { captured_stdout.append(data); };
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+
+        constexpr auto message_address = guest_memory_base + 0x100;
+        write_guest_string(emu, guest_memory_base, "/out.txt");
+        write_guest_string(emu, message_address, message);
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_WRONLY | linux_o_CREAT, file_mode);
+        ASSERT_GE(fd, 0);
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_dup2, static_cast<uint64_t>(fd), standard_output),
+                  static_cast<int64_t>(standard_output));
+
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_write, standard_output, message_address, message.size()),
+                  static_cast<int64_t>(message.size()));
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_close, static_cast<uint64_t>(fd)), 0);
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_close, standard_output), 0);
+
+        EXPECT_TRUE(captured_stdout.empty());
+        EXPECT_EQ(read_host_file(emulation_root / "out.txt"), message);
     }
 
     TEST(LinuxFileDescriptorTest, SeekingPipeFailsWithIllegalSeek)
