@@ -432,6 +432,7 @@ namespace sogen
         void update_key_state(const ui_event& event);
         ui_event resolve_injected_event(const ui_event& event) const;
         void apply_cursor_capture();
+        void apply_cursor_shape();
         void set_foreground_window(hwnd window);
 
         // The highest address the process's own code can reach: 32-bit code only reaches the low 2GB unless the
