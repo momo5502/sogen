@@ -320,6 +320,12 @@ namespace sogen
         this->initial_thread_id = app_settings.thread_id;
         this->processes.get(GUEST_PROCESS_HANDLE)->id = this->process_id;
 
+        const auto initial_mode = win_emu.max_display_mode().value_or(default_display_mode);
+        this->display_width = initial_mode.width;
+        this->display_height = initial_mode.height;
+        this->registry_display_width = initial_mode.width;
+        this->registry_display_height = initial_mode.height;
+
         auto& emu = win_emu.emu();
         const auto& version = win_emu.version;
         const auto& fake_env = win_emu.fake_env;
