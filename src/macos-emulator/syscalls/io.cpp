@@ -1,8 +1,9 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
+#include <posix_descriptor_syscalls.hpp>
+
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdio>
 #include <filesystem>
@@ -25,7 +26,6 @@ namespace sogen
         constexpr uint64_t MACOS_F_SETFD = 2;
         constexpr uint64_t MACOS_F_GETFL = 3;
         constexpr uint64_t MACOS_F_DUPFD_CLOEXEC = 67;
-        constexpr uint64_t MACOS_FD_CLOEXEC = 1;
         constexpr uint64_t MACOS_F_NOCACHE = 48;
         constexpr uint64_t MACOS_F_GETPATH = 50;
         constexpr size_t MACOS_MAXPATHLEN = 1024;
@@ -66,26 +66,6 @@ namespace sogen
             file.handle = handle;
             file.flags = static_cast<int>(MACOS_O_RDONLY);
             return fds.allocate(std::move(file));
-        }
-
-        void duplicate_descriptor(const macos_syscall_context& c, const int fd, const uint64_t minimum_fd, const bool close_on_exec)
-        {
-            if (minimum_fd >= MACOS_DESCRIPTOR_LIMIT)
-            {
-                write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
-                return;
-            }
-
-            const auto new_fd = c.emu_ref.fds.dup_fd(fd, static_cast<int>(minimum_fd));
-            if (new_fd < 0 || static_cast<uint64_t>(new_fd) >= MACOS_DESCRIPTOR_LIMIT)
-            {
-                c.emu_ref.fds.close(new_fd);
-                write_macos_syscall_error(c, new_fd < 0 ? macos_errno::MACOS_EBADF : macos_errno::MACOS_EMFILE);
-                return;
-            }
-
-            c.emu_ref.fds.set_close_on_exec(new_fd, close_on_exec);
-            write_macos_syscall_success(c, static_cast<uint64_t>(new_fd));
         }
 
         std::optional<int32_t> readable_bytes(const posix_fd& file)
@@ -204,46 +184,10 @@ namespace sogen
 
     void sys_lseek(const macos_syscall_context& c)
     {
-        constexpr std::array host_origins{SEEK_SET, SEEK_CUR, SEEK_END};
-
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         const auto offset = static_cast<int64_t>(get_macos_syscall_argument(c.emu, 1));
-        const auto whence = get_macos_syscall_argument(c.emu, 2);
-
-        const auto* file = c.emu_ref.fds.get(fd);
-        if (file == nullptr)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        if (file->type == fd_type::directory)
-        {
-            c.emu_ref.log.error("Unhandled lseek on directory %d\n", fd);
-            c.emu_ref.stop();
-            return;
-        }
-
-        if (file->type != fd_type::file || file->is_standard_stream())
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ESPIPE);
-            return;
-        }
-
-        if (whence >= host_origins.size())
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
-            return;
-        }
-
-        const auto position = file->seek(offset, host_origins.at(static_cast<size_t>(whence)));
-        if (!position)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
-            return;
-        }
-
-        write_macos_syscall_success(c, *position);
+        const auto whence = static_cast<uint32_t>(get_macos_syscall_argument(c.emu, 2));
+        write_macos_syscall_result(c, posix_lseek(c.emu_ref.fds, fd, offset, whence));
     }
 
     void sys_open(const macos_syscall_context& c)
@@ -302,27 +246,15 @@ namespace sogen
 
     void sys_dup(const macos_syscall_context& c)
     {
-        duplicate_descriptor(c, static_cast<int>(get_macos_syscall_argument(c.emu, 0)), 0, false);
+        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        write_macos_syscall_result(c, posix_dup(c.emu_ref.fds, fd, 0, false, MACOS_DESCRIPTOR_LIMIT));
     }
 
     void sys_dup2(const macos_syscall_context& c)
     {
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         const auto new_fd = static_cast<int>(get_macos_syscall_argument(c.emu, 1));
-
-        if (c.emu_ref.fds.get(fd) == nullptr || new_fd < 0 || static_cast<uint64_t>(new_fd) >= MACOS_DESCRIPTOR_LIMIT)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        if (c.emu_ref.fds.dup2_fd(fd, new_fd) < 0)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EMFILE);
-            return;
-        }
-
-        write_macos_syscall_success(c, static_cast<uint64_t>(new_fd));
+        write_macos_syscall_result(c, posix_dup2(c.emu_ref.fds, fd, new_fd, MACOS_DESCRIPTOR_LIMIT));
     }
 
     void sys_getdtablesize(const macos_syscall_context& c)
@@ -333,13 +265,7 @@ namespace sogen
     void sys_close(const macos_syscall_context& c)
     {
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
-        if (!c.emu_ref.fds.close(fd))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        write_macos_syscall_success(c, 0);
+        write_macos_syscall_result(c, posix_close(c.emu_ref.fds, fd));
     }
 
     void sys_fcntl(const macos_syscall_context& c)
@@ -362,17 +288,17 @@ namespace sogen
         {
         case MACOS_F_DUPFD:
         case MACOS_F_DUPFD_CLOEXEC:
-            duplicate_descriptor(c, fd, argument, command == MACOS_F_DUPFD_CLOEXEC);
+            write_macos_syscall_result(
+                c, posix_dup(c.emu_ref.fds, fd, static_cast<int>(argument), command == MACOS_F_DUPFD_CLOEXEC, MACOS_DESCRIPTOR_LIMIT));
             return;
         case MACOS_F_GETFD:
-            write_macos_syscall_success(c, c.emu_ref.fds.is_close_on_exec(fd) ? MACOS_FD_CLOEXEC : 0);
+            write_macos_syscall_result(c, posix_get_descriptor_flags(c.emu_ref.fds, fd));
             return;
         case MACOS_F_SETFD:
-            c.emu_ref.fds.set_close_on_exec(fd, (argument & MACOS_FD_CLOEXEC) != 0);
-            write_macos_syscall_success(c, 0);
+            write_macos_syscall_result(c, posix_set_descriptor_flags(c.emu_ref.fds, fd, argument));
             return;
         case MACOS_F_GETFL:
-            write_macos_syscall_success(c, static_cast<uint64_t>(file->flags));
+            write_macos_syscall_result(c, posix_get_status_flags(c.emu_ref.fds, fd));
             return;
         // XNU's F_GETPATH and F_NOCACHE only apply to vnodes; pipes and sockets get EBADF.
         case MACOS_F_NOCACHE:

@@ -481,6 +481,63 @@ namespace sogen
         EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_epoll_wait, static_cast<uint64_t>(epoll), ready_address, 1), 0);
     }
 
+    TEST(LinuxFileDescriptorTest, SeekingDirectoryToStartRestartsListing)
+    {
+        constexpr uint64_t seek_set = 0;
+
+        temp_tree temp{};
+        const auto emulation_root = temp.path() / "root";
+        std::filesystem::create_directories(emulation_root / "dir");
+        std::ofstream(emulation_root / "dir" / "a").close();
+
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), emulation_root);
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        write_guest_string(emu, guest_memory_base, "/dir");
+
+        const auto fd = invoke_syscall(emu, linux_syscalls::LINUX_SYS_open, guest_memory_base, linux_o_RDONLY | linux_o_DIRECTORY);
+        ASSERT_GE(fd, 0);
+
+        std::vector<std::string> first_pass{};
+        while (auto name = read_guest_directory_entry(emu, fd))
+        {
+            first_pass.push_back(std::move(*name));
+        }
+
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_lseek, static_cast<uint64_t>(fd), 0, seek_set), 0);
+
+        std::vector<std::string> second_pass{};
+        while (auto name = read_guest_directory_entry(emu, fd))
+        {
+            second_pass.push_back(std::move(*name));
+        }
+
+        EXPECT_EQ(first_pass.size(), 3);
+        EXPECT_EQ(second_pass, first_pass);
+    }
+
+    TEST(LinuxFileDescriptorTest, SeekingPipeFailsWithIllegalSeek)
+    {
+        constexpr int64_t linux_espipe = 29;
+        constexpr uint64_t seek_cur = 1;
+
+        temp_tree temp{};
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), temp.path() / "root");
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_pipe, guest_memory_base), 0);
+        std::array<int32_t, 2> descriptors{};
+        emu.memory.read_memory(guest_memory_base, descriptors.data(), sizeof(descriptors));
+
+        for (const auto descriptor : descriptors)
+        {
+            EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_lseek, static_cast<uint64_t>(descriptor), 0, seek_cur), -linux_espipe);
+        }
+    }
+
     TEST(LinuxSocketSyscallTest, SocketpairIsExplicitlyUnsupported)
     {
         temp_tree temp{};
