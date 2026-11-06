@@ -9,6 +9,8 @@ namespace sogen::test
     {
         constexpr std::array<uint8_t, 16> mmdevice_interface_20348{0x1f, 0x17, 0xbe, 0xa3, 0x25, 0xa5, 0xa3, 0x47,
                                                                    0xb7, 0x5a, 0x93, 0xda, 0x9d, 0x64, 0x5d, 0x1c};
+        constexpr std::array<uint8_t, 16> mmdevice_interface_19041{0x79, 0xbd, 0x71, 0x8b, 0xbb, 0xcc, 0xab, 0x47,
+                                                                   0xba, 0x09, 0x97, 0xca, 0x52, 0xc8, 0x1d, 0xa9};
         constexpr std::array<uint8_t, 16> audio_client_interface_20348{0x41, 0xc1, 0xb2, 0x98, 0xa2, 0xec, 0x19, 0x49,
                                                                        0x98, 0xb4, 0xa1, 0x98, 0x0d, 0x00, 0xd2, 0x34};
         constexpr std::array<uint8_t, 16> audio_client_interface_26100{0x11, 0xd1, 0x74, 0xd5, 0x26, 0x61, 0xd7, 0x49,
@@ -167,6 +169,53 @@ namespace sogen::test
                 return false;
             }
         };
+
+        // The default endpoint comes from the registry: this fixture loads the root's hives, marks every render endpoint
+        // already there as not present and adds one active endpoint, so that one is the default.
+        class AudioEndpointTest : public AudioServiceTest
+        {
+          protected:
+            static constexpr std::string_view endpoint_id = "{0.0.0.00000000}.{5c0f26a6-6c26-4cbb-9a8d-1a2b3c4d5e6f}";
+
+            AudioEndpointTest()
+            {
+                this->load_registry = true;
+            }
+
+            void SetUp() override
+            {
+                AudioServiceTest::SetUp();
+
+                constexpr uint32_t reg_dword = 4;
+                constexpr uint32_t device_state_active = 1;
+                constexpr uint32_t device_state_not_present = 4;
+                auto& registry = this->emu->registry;
+                const auto set_state = [&](const registry_key& key, const uint32_t state) {
+                    registry.set_value(key, "DeviceState", reg_dword, std::as_bytes(std::span{&state, 1}));
+                };
+
+                const std::filesystem::path render =
+                    R"(\Registry\Machine\Software\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render)";
+                const auto render_key = registry.create_key(render);
+                ASSERT_TRUE(render_key.has_value());
+                for (size_t index = 0;; ++index)
+                {
+                    const auto name = registry.get_sub_key_name(*render_key, index);
+                    if (!name)
+                    {
+                        break;
+                    }
+                    if (const auto existing = registry.get_key(utils::path_key{render / std::string{*name}}))
+                    {
+                        set_state(*existing, device_state_not_present);
+                    }
+                }
+
+                const auto endpoint_key = registry.create_key(render / std::string{endpoint_id});
+                ASSERT_TRUE(endpoint_key.has_value());
+                set_state(*endpoint_key, device_state_active);
+            }
+        };
     }
 
     TEST_F(AudioServiceTest, ServesServer2022EndpointEnumerator)
@@ -177,6 +226,53 @@ namespace sogen::test
         ASSERT_TRUE(reply.payload.has_value());
         EXPECT_EQ(0u, read<uint64_t>(*reply.payload, reply_header_size));
         EXPECT_EQ(0u, trailing_hresult(*reply.payload));
+    }
+
+    // AudiosrvGetDefaultAudioEndpoint (opnum 25) on the 19041 interface, decoded as 19041's mmdevapi unmarshals it (procedure
+    // 25 of its NDR64 and NDR20 formats, PDB names). The request carries EDataFlow and ERole as 32-bit values in NDR64 and as
+    // FC_ENUM16 in NDR20. The reply is a unique pointer to a conformant wide string, with 64-bit or 32-bit referent and
+    // counts, then the [out] int and the HRESULT. audiosrv's s_rtgGetDefaultAudioEndpoint sets that int to
+    // DynamicAudioEndpointManager's flag for a default routed to the calling process alone, false for an ordinary process.
+    // The interface's other opnums stay refused.
+    TEST_F(AudioEndpointTest, Windows10DefaultEndpointReplyHasItsLayout)
+    {
+        const std::u16string expected_id(endpoint_id.begin(), endpoint_id.end());
+        for (const size_t width : {size_t{8}, size_t{4}})
+        {
+            const std::vector<uint8_t> render_console(width == 8 ? 8 : 4);
+            this->bind(u"\\RPC Control\\Audiosrv", mmdevice_interface_19041, width);
+            const auto reply = this->call(25, render_console);
+            ASSERT_EQ(STATUS_SUCCESS, reply.status) << width;
+            ASSERT_TRUE(reply.payload.has_value());
+            const auto& payload = *reply.payload;
+
+            size_t offset = reply_header_size;
+            const auto next = [&] {
+                const uint64_t value = width == 8 ? read<uint64_t>(payload, offset) : read<uint32_t>(payload, offset);
+                offset += width;
+                return value;
+            };
+
+            EXPECT_NE(0u, next()) << width; // unique pointer referent
+            const auto max_count = next();
+            const auto string_offset = next();
+            const auto actual_count = next();
+            EXPECT_EQ(expected_id.size() + 1, max_count) << width;
+            EXPECT_EQ(0u, string_offset) << width;
+            ASSERT_EQ(expected_id.size() + 1, actual_count) << width;
+            ASSERT_LE(offset + (actual_count * sizeof(char16_t)), payload.size());
+
+            std::u16string id(static_cast<size_t>(actual_count), u'\0');
+            std::memcpy(id.data(), payload.data() + offset, id.size() * sizeof(char16_t));
+            EXPECT_EQ(expected_id + u'\0', id) << width;
+            offset = (offset + (id.size() * sizeof(char16_t)) + 3) & ~size_t{3};
+
+            EXPECT_EQ(0u, read<uint32_t>(payload, offset)) << width;     // not routed to this process alone
+            EXPECT_EQ(0u, read<uint32_t>(payload, offset + 4)) << width; // S_OK
+            EXPECT_EQ(offset + 8, payload.size()) << width;
+
+            EXPECT_EQ(STATUS_NOT_SUPPORTED, this->call(0, {}).status) << width;
+        }
     }
 
     TEST_F(AudioServiceTest, ReadsServer2022IsFormatSupportedFormat)
