@@ -33,7 +33,8 @@ namespace sogen
         : file_sys_(&file_sys),
           path_(path.lexically_normal()),
           mode_(std::move(mode)),
-          io_(std::move(io))
+          io_(std::move(io)),
+          state_(file_sys.open_file_state(path_))
     {
     }
 
@@ -58,6 +59,8 @@ namespace sogen
             this->io_ = std::move(obj.io_);
             this->rename_target_ = std::exchange(obj.rename_target_, std::nullopt);
             this->delete_on_close_ = std::exchange(obj.delete_on_close_, false);
+            this->state_ = std::move(obj.state_);
+            this->posix_owner_ = std::exchange(obj.posix_owner_, 0);
         }
 
         return *this;
@@ -113,12 +116,40 @@ namespace sogen
         this->delete_on_close_ = delete_on_close;
     }
 
+    void guest_file::mark_delete_pending(const bool posix_semantics)
+    {
+        if (this->state_)
+        {
+            this->posix_owner_ = this->state_->mark_delete_pending(posix_semantics);
+        }
+    }
+
+    void guest_file::cancel_delete()
+    {
+        if (this->state_)
+        {
+            this->state_->cancel_delete();
+        }
+    }
+
+    bool guest_file::is_delete_pending() const
+    {
+        return this->state_ && this->state_->delete_pending;
+    }
+
+    bool guest_file::owns_posix_unlink() const
+    {
+        return this->state_ && this->posix_owner_ != 0 && this->state_->posix_owner == this->posix_owner_;
+    }
+
     void guest_file::serialize(utils::buffer_serializer& buffer) const
     {
         buffer.write(this->path_);
         buffer.write(this->mode_);
         buffer.write_optional(this->rename_target_);
         buffer.write(this->delete_on_close_);
+        buffer.write(this->is_delete_pending());
+        buffer.write(this->owns_posix_unlink());
 
         const auto has_io = this->io_ != nullptr;
         buffer.write(has_io);
@@ -134,6 +165,8 @@ namespace sogen
         this->io_.reset();
         this->rename_target_.reset();
         this->delete_on_close_ = false;
+        this->state_.reset();
+        this->posix_owner_ = 0;
 
         this->file_sys_ = &buffer.read<file_system_wrapper>().get();
 
@@ -145,6 +178,21 @@ namespace sogen
         if (this->delete_on_close_)
         {
             validate_writable_after_restore(*this->file_sys_, this->path_, "with delete-on-close set");
+        }
+
+        const auto delete_pending = buffer.read<bool>();
+        const auto owns_posix_unlink = buffer.read<bool>();
+
+        this->state_ = this->file_sys_->open_file_state(this->path_);
+
+        if (delete_pending)
+        {
+            validate_writable_after_restore(*this->file_sys_, this->path_, "with a pending delete");
+
+            if (owns_posix_unlink || !this->state_->delete_pending)
+            {
+                this->mark_delete_pending(owns_posix_unlink);
+            }
         }
 
         if (this->rename_target_)
@@ -186,7 +234,10 @@ namespace sogen
 
         if (this->file_sys_)
         {
-            if (this->delete_on_close_)
+            const auto unlink = this->file_sys_->close_file_state(this->path_, this->state_, this->posix_owner_);
+            this->state_.reset();
+
+            if (this->delete_on_close_ || unlink)
             {
                 (void)this->file_sys_->remove(this->path_);
             }
@@ -198,6 +249,7 @@ namespace sogen
 
         this->rename_target_.reset();
         this->delete_on_close_ = false;
+        this->posix_owner_ = 0;
     }
 
 } // namespace sogen

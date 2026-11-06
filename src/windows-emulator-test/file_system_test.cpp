@@ -372,6 +372,40 @@ namespace sogen::test
         EXPECT_EQ(contents, read_host_file(this->root / "c" / "new.bin"));
     }
 
+    TEST_F(FileSystemTest, SnapshotRestoreKeepsDeletePendingAndItsPosixOwner)
+    {
+        file_system saved_fs{this->root, filesystem_mode::read_write};
+        file_system restored_fs{this->root, filesystem_mode::read_write};
+        const windows_path path{'c', {u"x.txt"}};
+
+        utils::buffer_serializer serializer{};
+
+        {
+            guest_file setter{saved_fs, path, u"rb", saved_fs.open(path, u"rb").file};
+            const guest_file other{saved_fs, path, u"rb", saved_fs.open(path, u"rb").file};
+            setter.mark_delete_pending(true);
+
+            serializer.write(setter);
+            serializer.write(other);
+            setter.cancel_delete();
+        }
+
+        utils::buffer_deserializer deserializer{serializer};
+        deserializer.register_factory<file_system_wrapper>([&] { return file_system_wrapper{restored_fs}; });
+
+        guest_file restored_setter{};
+        guest_file restored_other{};
+        deserializer.read(restored_setter);
+        deserializer.read(restored_other);
+
+        EXPECT_TRUE(restored_other.is_delete_pending());
+        EXPECT_TRUE(restored_fs.is_delete_pending(path));
+
+        restored_setter = {};
+        EXPECT_FALSE(std::filesystem::exists(this->root / "c" / "x.txt"));
+        EXPECT_FALSE(restored_fs.is_delete_pending(path));
+    }
+
     TEST_F(FileSystemTest, SnapshotRestoreRequiresWritableMountForPendingWrites)
     {
         file_system saved_fs{this->root, filesystem_mode::read_write};
