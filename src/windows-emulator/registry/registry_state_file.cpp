@@ -125,7 +125,7 @@ namespace sogen
             void close_checked()
             {
 #ifdef OS_WINDOWS
-                const auto file = std::exchange(this->value, INVALID_HANDLE_VALUE);
+                auto* const file = std::exchange(this->value, INVALID_HANDLE_VALUE);
                 if (!CloseHandle(file))
 #else
                 const auto file = std::exchange(this->value, -1);
