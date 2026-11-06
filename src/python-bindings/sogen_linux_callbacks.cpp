@@ -31,7 +31,6 @@ namespace sogen::py
             linux_callback_slot{.name = "syscall", .member = &linux_callback_registry::syscall_cb},
             linux_callback_slot{.name = "memory_violate", .member = &linux_callback_registry::memory_violate_cb},
             linux_callback_slot{.name = "signal", .member = &linux_callback_registry::signal_cb},
-            linux_callback_slot{.name = "exception", .member = &linux_callback_registry::signal_cb},
             linux_callback_slot{.name = "memory_allocate", .member = &linux_callback_registry::memory_allocate_cb},
             linux_callback_slot{.name = "memory_protect", .member = &linux_callback_registry::memory_protect_cb},
             linux_callback_slot{.name = "memory_release", .member = &linux_callback_registry::memory_release_cb},
@@ -44,7 +43,11 @@ namespace sogen::py
 
     nb::object linux_callback_registry::* linux_callback_registry::slot_for(const std::string_view name)
     {
-        const auto key = name.starts_with("on_") ? name.substr(3) : name;
+        auto key = name.starts_with("on_") ? name.substr(3) : name;
+        if (key == "exception")
+        {
+            key = "signal";
+        }
         for (const auto& slot : linux_callback_slots)
         {
             if (slot.name == key)
@@ -125,7 +128,7 @@ namespace sogen::py
             }
 
             nb::gil_scoped_acquire gil{};
-            this->module_load_cb(module);
+            this->module_load_cb(copy_linux_module(module));
         });
         this->thread_create_observer_id = this->emu->on_thread_create.add([this](linux_thread& thread) {
             if (this->thread_create_cb.is_none())
@@ -227,7 +230,7 @@ namespace sogen::py
         {
             for (auto& [_, module] : this->emu->mod_manager.get_modules())
             {
-                this->module_load_cb(module);
+                this->module_load_cb(copy_linux_module(module));
             }
         }
     }
@@ -235,5 +238,24 @@ namespace sogen::py
     void linux_callback_registry::clear(const std::string_view name)
     {
         set(name, nb::none());
+    }
+
+    int linux_callback_registry::traverse(visitproc visit, void* arg) const
+    {
+        for (const auto& slot : linux_callback_slots)
+        {
+            Py_VISIT((this->*slot.member).ptr());
+        }
+        return 0;
+    }
+
+    void linux_callback_registry::clear_references()
+    {
+        std::array<nb::object, linux_callback_slots.size()> released{};
+        for (size_t i = 0; i < linux_callback_slots.size(); ++i)
+        {
+            released[i] = std::exchange(this->*linux_callback_slots[i].member, nb::none());
+        }
+        this->refresh_memory_violate_observer();
     }
 }
