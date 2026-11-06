@@ -683,6 +683,27 @@ namespace sogen
 #endif
     }
 
+    TEST(LinuxFileDescriptorTest, PipeIntoReadOnlyArrayFailsAndReleasesBothEnds)
+    {
+        constexpr int64_t linux_efault = 14;
+        constexpr auto read_only_page = guest_memory_base + guest_memory_size;
+
+        temp_tree temp{};
+        auto backend = create_x86_64_emulator();
+        linux_emulator emu(std::move(backend), temp.path() / "root");
+        emu.log.disable_output(true);
+        ASSERT_TRUE(emu.memory.allocate_memory(guest_memory_base, guest_memory_size, memory_permission::read_write));
+        ASSERT_TRUE(emu.memory.allocate_memory(read_only_page, guest_memory_size, memory_permission::read));
+
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_pipe, read_only_page), -linux_efault);
+        EXPECT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_pipe2, read_only_page, 0), -linux_efault);
+
+        ASSERT_EQ(invoke_syscall(emu, linux_syscalls::LINUX_SYS_pipe, guest_memory_base), 0);
+        std::array<int32_t, 2> descriptors{};
+        emu.memory.read_memory(guest_memory_base, descriptors.data(), sizeof(descriptors));
+        EXPECT_EQ(descriptors, (std::array<int32_t, 2>{3, 4}));
+    }
+
     TEST(LinuxFileDescriptorTest, SeekingPipeFailsWithIllegalSeek)
     {
         constexpr int64_t linux_espipe = 29;

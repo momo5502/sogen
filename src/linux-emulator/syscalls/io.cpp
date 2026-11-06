@@ -2,6 +2,8 @@
 #include "../linux_emulator.hpp"
 #include "../linux_syscall_dispatcher.hpp"
 
+#include <posix_pipe.hpp>
+
 #include <array>
 #include <algorithm>
 #include <fcntl.h>
@@ -33,55 +35,30 @@ namespace sogen
         constexpr int16_t POLLOUT = 0x0004;
         constexpr int16_t POLLNVAL = 0x0020;
 
-        int host_create_pipe(std::array<int, 2>& pipefd)
+        void create_pipe(const linux_syscall_context& c, const uint64_t pipefd_addr, const int flags)
         {
-#if defined(_WIN32)
-            return _pipe(pipefd.data(), 4096, _O_BINARY);
-#else
-            return ::pipe(pipefd.data());
-#endif
-        }
+            constexpr int LINUX_O_CLOEXEC = 02000000;
+            constexpr int LINUX_O_NONBLOCK = 04000;
 
-        int host_close(const int fd)
-        {
-#if defined(_WIN32)
-            return _close(fd);
-#else
-            return ::close(fd);
-#endif
-        }
-
-        void apply_pipe2_host_flags(const std::array<int, 2>& pipefd, const bool nonblock, const bool cloexec)
-        {
-#if defined(_WIN32)
-            (void)pipefd;
-            (void)nonblock;
-            (void)cloexec;
-#else
-            if (nonblock)
+            const auto result = posix_create_pipe(c.proc.fds, flags & LINUX_O_NONBLOCK, (flags & LINUX_O_CLOEXEC) != 0);
+            if (const auto* error = std::get_if<posix_errno>(&result))
             {
-                for (const int fd : pipefd)
-                {
-                    const auto current = fcntl(fd, F_GETFL, 0);
-                    if (current >= 0)
-                    {
-                        (void)fcntl(fd, F_SETFL, current | O_NONBLOCK);
-                    }
-                }
+                write_linux_syscall_result(c, -linux_errno_of(*error));
+                return;
             }
 
-            if (cloexec)
+            const auto& created = std::get<posix_pipe>(result);
+            const std::array<int32_t, 2> descriptors{created.read_fd, created.write_fd};
+            if (!c.emu_ref.memory.is_writable_range(pipefd_addr, sizeof(descriptors)) ||
+                !c.emu_ref.memory.try_write_memory(pipefd_addr, descriptors.data(), sizeof(descriptors)))
             {
-                for (const int fd : pipefd)
-                {
-                    const auto current = fcntl(fd, F_GETFD, 0);
-                    if (current >= 0)
-                    {
-                        (void)fcntl(fd, F_SETFD, current | FD_CLOEXEC);
-                    }
-                }
+                c.proc.fds.close(created.read_fd);
+                c.proc.fds.close(created.write_fd);
+                write_linux_syscall_result(c, -LINUX_EFAULT);
+                return;
             }
-#endif
+
+            write_linux_syscall_result(c, 0);
         }
 
         bool host_file_has_remaining_data(FILE* handle)
@@ -216,129 +193,12 @@ namespace sogen
 
     void sys_pipe(const linux_syscall_context& c)
     {
-        const auto pipefd_addr = get_linux_syscall_argument(c.emu, 0);
-
-        std::array<int, 2> host_pipe{-1, -1};
-        if (host_create_pipe(host_pipe) != 0)
-        {
-            write_linux_syscall_result(c, -LINUX_EMFILE);
-            return;
-        }
-
-        auto* read_stream = fdopen(host_pipe.at(0), "rb");
-        auto* write_stream = fdopen(host_pipe.at(1), "wb");
-
-        if (!read_stream || !write_stream)
-        {
-            if (read_stream)
-            {
-                fclose(read_stream);
-            }
-            else if (host_pipe.at(0) >= 0)
-            {
-                host_close(host_pipe.at(0));
-            }
-
-            if (write_stream)
-            {
-                fclose(write_stream);
-            }
-            else if (host_pipe.at(1) >= 0)
-            {
-                host_close(host_pipe.at(1));
-            }
-
-            write_linux_syscall_result(c, -LINUX_EMFILE);
-            return;
-        }
-
-        setvbuf(read_stream, nullptr, _IONBF, 0);
-        setvbuf(write_stream, nullptr, _IONBF, 0);
-
-        posix_fd read_end{};
-        read_end.type = fd_type::pipe_read;
-        read_end.handle = read_stream;
-
-        posix_fd write_end{};
-        write_end.type = fd_type::pipe_write;
-        write_end.handle = write_stream;
-
-        const auto read_fd = c.proc.fds.allocate(std::move(read_end));
-        const auto write_fd = c.proc.fds.allocate(std::move(write_end));
-
-        const std::array<int32_t, 2> fds{read_fd, write_fd};
-        c.emu.write_memory(pipefd_addr, fds.data(), sizeof(int32_t) * fds.size());
-
-        write_linux_syscall_result(c, 0);
+        create_pipe(c, get_linux_syscall_argument(c.emu, 0), 0);
     }
 
     void sys_pipe2(const linux_syscall_context& c)
     {
-        const auto pipefd_addr = get_linux_syscall_argument(c.emu, 0);
-        const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 1));
-
-        constexpr int LINUX_O_CLOEXEC = 02000000;
-        constexpr int LINUX_O_NONBLOCK = 04000;
-
-        std::array<int, 2> host_pipe{-1, -1};
-        if (host_create_pipe(host_pipe) != 0)
-        {
-            write_linux_syscall_result(c, -LINUX_EMFILE);
-            return;
-        }
-
-        const bool nonblock = (flags & LINUX_O_NONBLOCK) != 0;
-        const bool cloexec = (flags & LINUX_O_CLOEXEC) != 0;
-
-        apply_pipe2_host_flags(host_pipe, nonblock, cloexec);
-
-        auto* read_stream = fdopen(host_pipe.at(0), "rb");
-        auto* write_stream = fdopen(host_pipe.at(1), "wb");
-
-        if (!read_stream || !write_stream)
-        {
-            if (read_stream)
-            {
-                fclose(read_stream);
-            }
-            else if (host_pipe.at(0) >= 0)
-            {
-                host_close(host_pipe.at(0));
-            }
-
-            if (write_stream)
-            {
-                fclose(write_stream);
-            }
-            else if (host_pipe.at(1) >= 0)
-            {
-                host_close(host_pipe.at(1));
-            }
-
-            write_linux_syscall_result(c, -LINUX_EMFILE);
-            return;
-        }
-
-        setvbuf(read_stream, nullptr, _IONBF, 0);
-        setvbuf(write_stream, nullptr, _IONBF, 0);
-
-        posix_fd read_end{};
-        read_end.type = fd_type::pipe_read;
-        read_end.handle = read_stream;
-        read_end.flags = flags & LINUX_O_NONBLOCK;
-
-        posix_fd write_end{};
-        write_end.type = fd_type::pipe_write;
-        write_end.handle = write_stream;
-        write_end.flags = flags & LINUX_O_NONBLOCK;
-
-        const auto read_fd = c.proc.fds.allocate(std::move(read_end), cloexec);
-        const auto write_fd = c.proc.fds.allocate(std::move(write_end), cloexec);
-
-        const std::array<int32_t, 2> fds{read_fd, write_fd};
-        c.emu.write_memory(pipefd_addr, fds.data(), sizeof(int32_t) * fds.size());
-
-        write_linux_syscall_result(c, 0);
+        create_pipe(c, get_linux_syscall_argument(c.emu, 0), static_cast<int>(get_linux_syscall_argument(c.emu, 1)));
     }
 
     void sys_eventfd(const linux_syscall_context& c)

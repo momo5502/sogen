@@ -48,6 +48,7 @@ namespace sogen
         constexpr uint64_t MACOS_SYS_access = 33;
         constexpr uint64_t MACOS_SYS_getppid = 39;
         constexpr uint64_t MACOS_SYS_dup = 41;
+        constexpr uint64_t MACOS_SYS_pipe = 42;
         constexpr uint64_t MACOS_SYS_getegid = 43;
         constexpr uint64_t MACOS_SYS_sigaction = 46;
         constexpr uint64_t MACOS_SYS_getgid = 47;
@@ -123,6 +124,7 @@ namespace sogen
         this->register_unix_handler(MACOS_SYS_access, sys_access, "access");
         this->register_unix_handler(MACOS_SYS_getppid, sys_getppid, "getppid");
         this->register_unix_handler(MACOS_SYS_dup, sys_dup, "dup");
+        this->register_unix_handler(MACOS_SYS_pipe, sys_pipe, "pipe");
         this->register_unix_handler(MACOS_SYS_getegid, sys_getegid, "getegid");
         this->register_unix_handler(MACOS_SYS_sigaction, sys_sigaction, "sigaction");
         this->register_unix_handler(MACOS_SYS_getgid, sys_getgid, "getgid");

@@ -1,4 +1,5 @@
 #include "posix_io_syscalls.hpp"
+#include "posix_pipe.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -10,7 +11,6 @@
 #include <vector>
 
 #if defined(_WIN32)
-#include <utils/win.hpp>
 #include <io.h>
 #else
 #include <unistd.h>
@@ -80,16 +80,6 @@ namespace sogen
 #endif
         }
 
-#if defined(_WIN32)
-        // Anonymous pipes on Windows cannot be made non-blocking, so an empty pipe has to be detected before reading.
-        bool is_empty_host_pipe(const int descriptor)
-        {
-            auto* const handle = reinterpret_cast<HANDLE>(_get_osfhandle(descriptor));
-            DWORD available = 0;
-            return handle != INVALID_HANDLE_VALUE && PeekNamedPipe(handle, nullptr, 0, nullptr, &available, nullptr) != 0 && available == 0;
-        }
-#endif
-
         bool is_output_stream(const posix_fd& file)
         {
             return file.handle == stdout || file.handle == stderr;
@@ -152,9 +142,9 @@ namespace sogen
 
         posix_result read_host_stream(const posix_fd& file, const std::span<std::byte> chunk, const int nonblock_flag)
         {
-            const auto descriptor = host_descriptor(file.handle);
 #if defined(_WIN32)
-            if (file.type == fd_type::pipe_read && (file.flags & nonblock_flag) != 0 && is_empty_host_pipe(descriptor))
+            // Anonymous pipes on Windows cannot be made non-blocking, so an empty pipe has to be detected before reading.
+            if (file.type == fd_type::pipe_read && (file.flags & nonblock_flag) != 0 && posix_pipe_queued_bytes(file) == 0)
             {
                 return posix_errno::eagain;
             }
@@ -163,7 +153,7 @@ namespace sogen
 #endif
 
             errno = 0;
-            const auto bytes_read = read_host_descriptor(descriptor, chunk);
+            const auto bytes_read = read_host_descriptor(host_descriptor(file.handle), chunk);
             if (bytes_read < 0)
             {
                 return posix_errno_from_host(errno);
