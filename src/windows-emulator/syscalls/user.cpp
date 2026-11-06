@@ -9057,6 +9057,12 @@ namespace sogen
             return TRUE;
         }
 
+        uint64_t handle_NtUserQueryInputContext(const syscall_context& c, uint64_t, uint32_t)
+        {
+            set_guest_last_error(c, 6);
+            return 0;
+        }
+
         BOOL handle_NtUserDisableThreadIme()
         {
             return TRUE;

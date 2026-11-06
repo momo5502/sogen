@@ -858,6 +858,7 @@ namespace sogen
         BOOL handle_NtUserGetGUIThreadInfo(const syscall_context& c, uint32_t thread_id, emulator_pointer info);
         BOOL handle_NtUserSetWinEventHook();
         BOOL handle_NtUserUnhookWinEvent();
+        uint64_t handle_NtUserQueryInputContext(const syscall_context& c, uint64_t input_context, uint32_t query_type);
         BOOL handle_NtUserDisableThreadIme();
         BOOL handle_NtUserGetPointerDevices();
         BOOL handle_NtUserHwndQueryRedirectionInfo();
@@ -2234,6 +2235,7 @@ namespace sogen
         add_handler(NtUserChangeWindowMessageFilter);
         add_handler(NtUserSetWinEventHook);
         add_handler(NtUserUnhookWinEvent);
+        add_handler(NtUserQueryInputContext);
         add_handler(NtUserDisableThreadIme);
         add_handler(NtUserGetPointerDevices);
         add_handler(NtUserHwndQueryRedirectionInfo);

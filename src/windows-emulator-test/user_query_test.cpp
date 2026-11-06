@@ -6,6 +6,7 @@ namespace sogen::syscalls
     NTSTATUS handle_NtGdiInit(const syscall_context& c);
     uint64_t handle_NtGdiCreatePen(const syscall_context& c, uint32_t style, uint32_t width, uint32_t color);
     uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
+    uint64_t handle_NtUserQueryInputContext(const syscall_context& c, uint64_t input_context, uint32_t query_type);
     DWORD handle_NtUserGetGuiResources(const syscall_context& c, handle process, DWORD flags);
     BOOL handle_NtUserGetWindowDisplayAffinity(const syscall_context& c, hwnd window, emulator_object<DWORD> affinity);
     BOOL handle_NtUserShowOwnedPopups(const syscall_context& c, hwnd owner, BOOL show);
@@ -116,6 +117,20 @@ namespace sogen::test
             windows_emulator emu = create_sample_emulator();
             uint64_t storage{};
         };
+    }
+
+    TEST_F(UserQueryTest, InputContextQueryRejectsNullAndNonInputContextHandles)
+    {
+        const auto window = this->create_top_level_window();
+        for (const auto input_context : {uint64_t{0}, uint64_t{0x12345678}, window})
+        {
+            for (const auto query : {0u, 1u, 2u, 3u, 4u, 99u})
+            {
+                this->set_last_error(untouched_error);
+                EXPECT_EQ(0u, syscalls::handle_NtUserQueryInputContext(this->context(), input_context, query));
+                EXPECT_EQ(6u, this->last_error());
+            }
+        }
     }
 
     TEST_F(UserQueryTest, GuiResourcesRejectUnknownFlagsAndNonProcessHandles)
