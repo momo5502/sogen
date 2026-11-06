@@ -76,6 +76,7 @@ namespace sogen::test
 
             void check_restoration(bool snapshot)
             {
+                this->emu->vcpu(0).set_active_thread(&this->thread());
                 this->emu->process.kusd.setup(this->emu->version, {}, std::nullopt);
                 size_t calls{};
                 auto subscription = this->emu->subscribe_host_window_events(host_window, [&](const ui_event&) { ++calls; });
