@@ -2157,6 +2157,20 @@ namespace sogen
         this->apply_cursor_capture();
     }
 
+    ui_event_router::subscription windows_emulator::subscribe_host_window_events(const hwnd window, ui_backend::event_sink handler)
+    {
+        std::unique_lock lock(this->kernel_lock_, std::defer_lock);
+        if (!this->kernel_lock_.is_held_by_current_thread())
+        {
+            lock.lock();
+        }
+        if (this->process.windows.get(window))
+        {
+            throw std::invalid_argument("Guest windows use the guest event queue");
+        }
+        return this->host_window_events_.subscribe(window, std::move(handler));
+    }
+
     void windows_emulator::handle_ui_event(const ui_event& event)
     {
         const std::scoped_lock lock(this->kernel_lock_);
@@ -2166,6 +2180,11 @@ namespace sogen
     void windows_emulator::handle_ui_event_locked(const ui_event& event)
     {
         this->kernel_lock_.assert_held();
+
+        if (this->host_window_events_.dispatch(event))
+        {
+            return;
+        }
 
         const auto hook_id = low_level_hook_id(event.message);
         auto& pending = this->process.pending_low_level_input;
@@ -3112,6 +3131,7 @@ namespace sogen
         this->version.deserialize(buffer);
         this->registry.deserialize_runtime_state(buffer);
 
+        this->host_window_events_.clear();
         this->process.prepare_for_state_restore(*this);
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
@@ -3239,6 +3259,7 @@ namespace sogen
         this->version.deserialize(buffer);
         this->registry.deserialize_runtime_state(buffer);
 
+        this->host_window_events_.clear();
         this->process.prepare_for_state_restore(*this);
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
