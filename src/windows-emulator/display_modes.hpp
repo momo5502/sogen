@@ -54,9 +54,8 @@ namespace sogen
         }
 
         const auto parse_number = [](const std::string_view part, uint32_t& value) {
-            const auto* end = part.data() + part.size();
-            const auto result = std::from_chars(part.data(), end, value);
-            return result.ec == std::errc{} && result.ptr == end;
+            const auto [end, error] = std::from_chars(part.data(), part.data() + part.size(), value);
+            return error == std::errc{} && end == part.data() + part.size();
         };
 
         display_mode mode{};
