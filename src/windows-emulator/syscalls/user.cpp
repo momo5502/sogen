@@ -426,6 +426,26 @@ namespace sogen
             return RECT{.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height};
         }
 
+        uint32_t filter_supported_window_style_change(const window& win, const int index, const uint32_t new_style)
+        {
+            if (index == GWL_EXSTYLE)
+            {
+                constexpr uint32_t frame_mask =
+                    WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_TOOLWINDOW | WS_EX_CONTEXTHELP;
+                return (new_style & ~frame_mask) | (win.ex_style & frame_mask);
+            }
+
+            uint32_t preserved_mask = WS_CHILD | WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_HSCROLL | WS_VSCROLL;
+            if ((win.style & WS_CHILD) == 0)
+            {
+                // Child controls use these bits for WS_GROUP and WS_TABSTOP.
+                preserved_mask |= WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+            }
+
+            // TODO: Support frame refresh and child/top-level transitions before allowing these bits to change.
+            return (new_style & ~preserved_mask) | (win.style & preserved_mask);
+        }
+
         ui_insets get_host_ui_client_insets(const window& win)
         {
             const auto insets = win.nonclient_insets();
@@ -6161,12 +6181,6 @@ namespace sogen
                 return 0;
             }
 
-            if ((win->style & WS_CHILD) == 0)
-            {
-                // TODO: Support top-level style changes together with cached non-client geometry and frame refresh.
-                return 0;
-            }
-
             window_style_change_state state{};
             state.old_style = nIndex == GWL_STYLE ? win->style : win->ex_style;
             state.style_alloc = c.emu.push_stack(STYLESTRUCT{state.old_style, new_style});
@@ -6265,7 +6279,9 @@ namespace sogen
                 return win ? old_style : 0;
             }
 
-            const auto styles = c.emu.read_memory<STYLESTRUCT>(state.style_alloc.address());
+            auto styles = c.emu.read_memory<STYLESTRUCT>(state.style_alloc.address());
+            styles.styleNew = filter_supported_window_style_change(*win, nIndex, styles.styleNew);
+            c.emu.write_memory(state.style_alloc.address(), styles);
             if (nIndex == GWL_STYLE)
             {
                 win->style = styles.styleNew;

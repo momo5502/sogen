@@ -277,6 +277,8 @@ namespace sogen
 #define WS_CLIPCHILDREN             0x02000000L
 #define WS_MAXIMIZE                 0x01000000L
 #define WS_CAPTION                  0x00C00000L
+#define WS_VSCROLL                  0x00200000L
+#define WS_HSCROLL                  0x00100000L
 #define WS_BORDER                   0x00800000L
 #define WS_DLGFRAME                 0x00400000L
 #define WS_SYSMENU                  0x00080000L
@@ -284,9 +286,12 @@ namespace sogen
 #define WS_MINIMIZEBOX              0x00020000L
 #define WS_MAXIMIZEBOX              0x00010000L
 
+#define WS_EX_DLGMODALFRAME         0x00000001L
 #define WS_EX_NOPARENTNOTIFY        0x00000004L
 #define WS_EX_TRANSPARENT           0x00000020L
 #define WS_EX_TOOLWINDOW            0x00000080L
+#define WS_EX_WINDOWEDGE            0x00000100L
+#define WS_EX_STATICEDGE            0x00020000L
 #define WS_EX_CONTEXTHELP           0x00000400L
 #define WS_EX_LAYERED               0x00080000L
 #define WS_EX_CLIENTEDGE            0x00000200L
