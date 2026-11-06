@@ -6,6 +6,7 @@
 
 #include <posix_descriptor_syscalls.hpp>
 #include <posix_io_syscalls.hpp>
+#include <posix_open.hpp>
 #include <posix_path_resolution.hpp>
 
 #include <algorithm>
@@ -45,6 +46,7 @@ namespace sogen
         constexpr int LINUX_O_WRONLY = 1;
         constexpr int LINUX_O_RDWR = 2;
         constexpr int LINUX_O_CREAT = 0100;
+        constexpr int LINUX_O_EXCL = 0200;
         constexpr int LINUX_O_TRUNC = 01000;
         constexpr int LINUX_O_APPEND = 02000;
         constexpr int LINUX_O_DIRECTORY = 0200000;
@@ -346,6 +348,70 @@ namespace sogen
             return c.emu_ref.file_sys.translate_relative_to(fd_entry->host_path, guest_path);
         }
 
+        void open_at(const linux_syscall_context& c, const int dirfd, const uint64_t path_addr, const int flags, const uint32_t mode)
+        {
+            const auto guest_path = read_string<char>(c.emu, path_addr);
+            if (guest_path.empty())
+            {
+                write_linux_syscall_result(c, -LINUX_ENOENT);
+                return;
+            }
+
+            int64_t resolve_error{};
+            auto resolved_guest = resolve_guest_path_name_at(c, dirfd, guest_path, resolve_error);
+            if (!resolved_guest.has_value())
+            {
+                write_linux_syscall_result(c, -resolve_error);
+                return;
+            }
+
+            // Intercept procfs paths after guest-path resolution so dirfd/cwd-relative
+            // opens are handled by the emulator, not the host /proc filesystem.
+            if (procfs::is_procfs_path(*resolved_guest))
+            {
+                if (open_flags_mutate_file(flags))
+                {
+                    write_linux_syscall_result(c, -LINUX_EACCES);
+                    return;
+                }
+
+                auto content = procfs::generate_content(c.emu_ref, *resolved_guest);
+                if (!content)
+                {
+                    write_linux_syscall_result(c, -LINUX_ENOENT);
+                    return;
+                }
+
+                auto new_fd = make_memory_file_fd(*resolved_guest, std::move(*content), flags);
+
+                const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
+                write_linux_syscall_result(c, fd_num);
+                return;
+            }
+
+            const auto access = posix_access_mode_from_flags(flags);
+            if (!access)
+            {
+                write_linux_syscall_result(c, -LINUX_EINVAL);
+                return;
+            }
+
+            const posix_open_request request{
+                .guest_path = std::move(*resolved_guest),
+                .access = *access,
+                .create = (flags & LINUX_O_CREAT) != 0,
+                .exclusive = (flags & LINUX_O_EXCL) != 0,
+                .truncate = (flags & LINUX_O_TRUNC) != 0,
+                .append = (flags & LINUX_O_APPEND) != 0,
+                .directory = (flags & LINUX_O_DIRECTORY) != 0,
+                .close_on_exec = (flags & LINUX_O_CLOEXEC) != 0,
+                .creation_mode = mode,
+                .guest_flags = flags,
+            };
+
+            write_linux_syscall_result(c, posix_open(c.proc.fds, c.emu_ref.file_sys, request));
+        }
+
 #pragma pack(push, 1)
 
         struct linux_dirent64_header
@@ -357,140 +423,6 @@ namespace sogen
         };
 
 #pragma pack(pop)
-
-        const char* translate_open_mode(const int flags, const bool file_existed)
-        {
-            const auto access = flags & 3;
-
-            if (flags & LINUX_O_APPEND)
-            {
-                return (access == LINUX_O_RDWR) ? "a+b" : "ab";
-            }
-
-            if ((flags & LINUX_O_TRUNC) || ((flags & LINUX_O_CREAT) && !file_existed))
-            {
-                return (access == LINUX_O_RDWR) ? "w+b" : "wb";
-            }
-
-            switch (access)
-            {
-            case LINUX_O_WRONLY:
-                return "wb";
-            case LINUX_O_RDWR:
-                return "r+b";
-            default:
-                return "rb";
-            }
-        }
-
-        FILE* open_host_file(const std::filesystem::path& host_path, const int flags)
-        {
-            const auto path_str = host_path.string();
-            const auto access = flags & 3;
-            const auto file_existed = std::filesystem::exists(host_path);
-
-#if defined(_WIN32)
-            int host_flags = _O_BINARY;
-            DWORD desired_access = 0;
-            switch (access)
-            {
-            case LINUX_O_WRONLY:
-                desired_access = GENERIC_WRITE;
-                host_flags |= _O_WRONLY;
-                break;
-            case LINUX_O_RDWR:
-                desired_access = GENERIC_READ | GENERIC_WRITE;
-                host_flags |= _O_RDWR;
-                break;
-            default:
-                desired_access = GENERIC_READ;
-                host_flags |= _O_RDONLY;
-                break;
-            }
-
-            if (flags & LINUX_O_APPEND)
-            {
-                host_flags |= _O_APPEND;
-            }
-
-            DWORD creation_disposition = OPEN_EXISTING;
-            if ((flags & LINUX_O_CREAT) && (flags & LINUX_O_TRUNC))
-            {
-                creation_disposition = CREATE_ALWAYS;
-            }
-            else if (flags & LINUX_O_CREAT)
-            {
-                creation_disposition = OPEN_ALWAYS;
-            }
-            else if (flags & LINUX_O_TRUNC)
-            {
-                creation_disposition = TRUNCATE_EXISTING;
-            }
-
-            auto* const host_handle = CreateFileA(path_str.c_str(), desired_access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                                                  nullptr, creation_disposition, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (host_handle == INVALID_HANDLE_VALUE)
-            {
-                return nullptr;
-            }
-
-            const auto host_fd = _open_osfhandle(reinterpret_cast<intptr_t>(host_handle), host_flags);
-            if (host_fd < 0)
-            {
-                CloseHandle(host_handle);
-                return nullptr;
-            }
-
-            auto* handle = _fdopen(host_fd, translate_open_mode(flags, file_existed));
-#else
-            int host_flags = 0;
-            switch (access)
-            {
-            case LINUX_O_WRONLY:
-                host_flags |= O_WRONLY;
-                break;
-            case LINUX_O_RDWR:
-                host_flags |= O_RDWR;
-                break;
-            default:
-                host_flags |= O_RDONLY;
-                break;
-            }
-
-            if (flags & LINUX_O_CREAT)
-            {
-                host_flags |= O_CREAT;
-            }
-            if (flags & LINUX_O_TRUNC)
-            {
-                host_flags |= O_TRUNC;
-            }
-            if (flags & LINUX_O_APPEND)
-            {
-                host_flags |= O_APPEND;
-            }
-
-            const auto host_fd = open(path_str.c_str(), host_flags, 0666);
-            if (host_fd < 0)
-            {
-                return nullptr;
-            }
-
-            auto* handle = fdopen(host_fd, translate_open_mode(flags, file_existed));
-#endif
-            if (!handle)
-            {
-#if defined(_WIN32)
-                _close(host_fd);
-#else
-                close(host_fd);
-#endif
-                return nullptr;
-            }
-
-            setvbuf(handle, nullptr, _IONBF, 0);
-            return handle;
-        }
 
         void fill_linux_stat_from_host(linux_stat& ls, const struct stat& host_stat)
         {
@@ -626,103 +558,8 @@ namespace sogen
 
     void sys_open(const linux_syscall_context& c)
     {
-        const auto path_addr = get_linux_syscall_argument(c.emu, 0);
-        const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 1));
-        // mode is arg 2, unused for now
-
-        const auto guest_path = read_string<char>(c.emu, path_addr);
-
-        int64_t resolve_error{};
-        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
-        if (!resolved_guest.has_value())
-        {
-            write_linux_syscall_result(c, -resolve_error);
-            return;
-        }
-
-        // Intercept procfs paths after guest-path resolution so cwd-relative
-        // opens from /proc/self never escape to the host /proc filesystem.
-        if (procfs::is_procfs_path(*resolved_guest))
-        {
-            if (open_flags_mutate_file(flags))
-            {
-                write_linux_syscall_result(c, -LINUX_EACCES);
-                return;
-            }
-
-            auto content = procfs::generate_content(c.emu_ref, *resolved_guest);
-            if (!content)
-            {
-                write_linux_syscall_result(c, -LINUX_ENOENT);
-                return;
-            }
-
-            auto new_fd = make_memory_file_fd(*resolved_guest, std::move(*content), flags);
-
-            const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
-            write_linux_syscall_result(c, fd_num);
-            return;
-        }
-
-        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
-        if (!resolved.has_value())
-        {
-            write_linux_syscall_result(c, -resolve_error);
-            return;
-        }
-
-        const auto read_only_mapping = c.emu_ref.file_sys.is_read_only_guest_path(*resolved_guest);
-        if (read_only_mapping && open_flags_mutate_file(flags))
-        {
-            write_linux_syscall_result(c, -LINUX_EACCES);
-            return;
-        }
-
-        const auto& host_path = *resolved;
-        if (flags & LINUX_O_DIRECTORY)
-        {
-            if (!std::filesystem::exists(host_path))
-            {
-                write_linux_syscall_result(c, -LINUX_ENOENT);
-                return;
-            }
-
-            if (!std::filesystem::is_directory(host_path))
-            {
-                write_linux_syscall_result(c, -LINUX_ENOTDIR);
-                return;
-            }
-
-            posix_fd new_fd{};
-            new_fd.type = fd_type::directory;
-            new_fd.host_path = host_path.string();
-            new_fd.guest_path = resolved_guest.value_or(std::string{});
-            new_fd.flags = flags;
-            new_fd.read_only_mapping = read_only_mapping;
-            new_fd.directory_listing = list_directory(host_path);
-
-            const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
-            write_linux_syscall_result(c, fd_num);
-            return;
-        }
-
-        auto* handle = open_host_file(host_path, flags);
-        if (!handle)
-        {
-            write_linux_syscall_result(c, -LINUX_ENOENT);
-            return;
-        }
-
-        posix_fd new_fd{};
-        new_fd.type = fd_type::file;
-        new_fd.host_path = host_path.string();
-        new_fd.guest_path = resolved_guest.value_or(std::string{});
-        new_fd.handle = handle;
-        new_fd.flags = flags;
-        new_fd.read_only_mapping = read_only_mapping;
-
-        const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
-        write_linux_syscall_result(c, fd_num);
+        open_at(c, LINUX_AT_FDCWD, get_linux_syscall_argument(c.emu, 0), static_cast<int>(get_linux_syscall_argument(c.emu, 1)),
+                static_cast<uint32_t>(get_linux_syscall_argument(c.emu, 2)));
     }
 
     void sys_close(const linux_syscall_context& c)
@@ -819,104 +656,8 @@ namespace sogen
 
     void sys_openat(const linux_syscall_context& c)
     {
-        const auto dirfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
-        const auto path_addr = get_linux_syscall_argument(c.emu, 1);
-        const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
-        // mode is arg 3
-
-        const auto guest_path = read_string<char>(c.emu, path_addr);
-
-        int64_t resolve_error{};
-        auto resolved_guest = resolve_guest_path_name_at(c, dirfd, guest_path, resolve_error);
-        if (!resolved_guest.has_value())
-        {
-            write_linux_syscall_result(c, -resolve_error);
-            return;
-        }
-
-        // Intercept procfs paths after guest-path resolution so dirfd/cwd-relative
-        // opens are handled by the emulator, not the host /proc filesystem.
-        if (procfs::is_procfs_path(*resolved_guest))
-        {
-            if (open_flags_mutate_file(flags))
-            {
-                write_linux_syscall_result(c, -LINUX_EACCES);
-                return;
-            }
-
-            auto content = procfs::generate_content(c.emu_ref, *resolved_guest);
-            if (!content)
-            {
-                write_linux_syscall_result(c, -LINUX_ENOENT);
-                return;
-            }
-
-            auto new_fd = make_memory_file_fd(*resolved_guest, std::move(*content), flags);
-
-            const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
-            write_linux_syscall_result(c, fd_num);
-            return;
-        }
-
-        auto resolved = resolve_guest_path_at(c, dirfd, guest_path, resolve_error);
-        if (!resolved.has_value())
-        {
-            write_linux_syscall_result(c, -resolve_error);
-            return;
-        }
-
-        const auto& host_path = *resolved;
-        const auto read_only_mapping = c.emu_ref.file_sys.is_read_only_guest_path(*resolved_guest);
-        if (read_only_mapping && open_flags_mutate_file(flags))
-        {
-            write_linux_syscall_result(c, -LINUX_EACCES);
-            return;
-        }
-
-        if (flags & LINUX_O_DIRECTORY)
-        {
-            if (!std::filesystem::exists(host_path))
-            {
-                write_linux_syscall_result(c, -LINUX_ENOENT);
-                return;
-            }
-
-            if (!std::filesystem::is_directory(host_path))
-            {
-                write_linux_syscall_result(c, -LINUX_ENOTDIR);
-                return;
-            }
-
-            posix_fd new_fd{};
-            new_fd.type = fd_type::directory;
-            new_fd.host_path = host_path.string();
-            new_fd.guest_path = resolved_guest.value_or(std::string{});
-            new_fd.flags = flags;
-            new_fd.read_only_mapping = read_only_mapping;
-            new_fd.directory_listing = list_directory(host_path);
-
-            const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
-            write_linux_syscall_result(c, fd_num);
-            return;
-        }
-
-        auto* handle = open_host_file(host_path, flags);
-        if (!handle)
-        {
-            write_linux_syscall_result(c, -LINUX_ENOENT);
-            return;
-        }
-
-        posix_fd new_fd{};
-        new_fd.type = fd_type::file;
-        new_fd.host_path = host_path.string();
-        new_fd.guest_path = resolved_guest.value_or(std::string{});
-        new_fd.handle = handle;
-        new_fd.flags = flags;
-        new_fd.read_only_mapping = read_only_mapping;
-
-        const auto fd_num = c.proc.fds.allocate(std::move(new_fd), (flags & LINUX_O_CLOEXEC) != 0);
-        write_linux_syscall_result(c, fd_num);
+        open_at(c, static_cast<int>(get_linux_syscall_argument(c.emu, 0)), get_linux_syscall_argument(c.emu, 1),
+                static_cast<int>(get_linux_syscall_argument(c.emu, 2)), static_cast<uint32_t>(get_linux_syscall_argument(c.emu, 3)));
     }
 
     void sys_stat(const linux_syscall_context& c)

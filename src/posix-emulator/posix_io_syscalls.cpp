@@ -1,4 +1,5 @@
 #include "posix_io_syscalls.hpp"
+#include "posix_host_error.hpp"
 #include "posix_pipe.hpp"
 
 #include <algorithm>
@@ -26,30 +27,6 @@ namespace sogen
         constexpr int ACCESS_WRITE_ONLY = 0x1;
 
         constexpr size_t TRANSFER_CHUNK_SIZE = 0x10000;
-
-        posix_errno posix_errno_from_host(const int host_errno)
-        {
-            switch (host_errno)
-            {
-            case EAGAIN:
-#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
-            case EWOULDBLOCK:
-#endif
-                return posix_errno::eagain;
-            case EINTR:
-                return posix_errno::eintr;
-            case EBADF:
-                return posix_errno::ebadf;
-            case EINVAL:
-                return posix_errno::einval;
-            case EPIPE:
-                return posix_errno::epipe;
-            case ENOSPC:
-                return posix_errno::enospc;
-            default:
-                return posix_errno::eio;
-            }
-        }
 
         int host_descriptor(FILE* handle)
         {

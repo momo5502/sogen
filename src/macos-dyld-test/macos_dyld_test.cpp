@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -196,6 +197,36 @@ namespace sogen::macos_dyld_test
         std::filesystem::remove_all(listed_directory);
 
         EXPECT_EQ(result.stdout_data, "[alpha]\n[beta]\n");
+        EXPECT_EQ(result.exit_status, 0);
+    }
+
+    TEST(MacosDyldTest, RedirectsBashOutputIntoWritableMapping)
+    {
+        const auto root = get_emulation_root();
+        if (!root)
+        {
+            GTEST_SKIP() << "MACOS_EMULATOR_ROOT is not set";
+        }
+
+        const auto output_directory = std::filesystem::path{::testing::TempDir()} / "macos-dyld-test-bash-redirect";
+        std::filesystem::remove_all(output_directory);
+        std::filesystem::create_directories(output_directory);
+
+        const auto result =
+            run_root_binary(*root, "/bin/bash",
+                            {"/bin/bash", "-c",
+                             "echo first > /out/file && echo second >> /out/file && echo hidden > /dev/null && "
+                             "while read line; do echo \"<$line>\"; done < /out/file; echo denied > /bin/file || echo refused"},
+                            [&](macos_emulator& emu) { emu.file_system.add_path_mapping("/out", output_directory, false); });
+
+        std::ifstream written{output_directory / "file"};
+        const std::string content{std::istreambuf_iterator<char>{written}, std::istreambuf_iterator<char>{}};
+        written.close();
+        std::filesystem::remove_all(output_directory);
+
+        EXPECT_EQ(result.stdout_data, "<first>\n<second>\nrefused\n");
+        EXPECT_EQ(content, "first\nsecond\n");
+        EXPECT_FALSE(std::filesystem::exists(*root / "bin" / "file"));
         EXPECT_EQ(result.exit_status, 0);
     }
 }

@@ -3,6 +3,7 @@
 
 #include <posix_descriptor_syscalls.hpp>
 #include <posix_io_syscalls.hpp>
+#include <posix_open.hpp>
 #include <posix_pipe.hpp>
 
 #include <algorithm>
@@ -18,11 +19,18 @@ namespace sogen
 {
     namespace
     {
-        constexpr uint64_t MACOS_O_ACCMODE = 0x3;
-        constexpr uint64_t MACOS_O_RDONLY = 0x0;
-        constexpr uint64_t MACOS_O_RDWR = 0x2;
-        constexpr uint64_t MACOS_O_DIRECTORY = 0x100000;
+        constexpr int MACOS_O_ACCMODE = 0x3;
+        constexpr int MACOS_O_RDWR = 0x2;
         constexpr int MACOS_O_NONBLOCK = 0x4;
+        constexpr int MACOS_O_APPEND = 0x8;
+        constexpr int MACOS_O_CREAT = 0x200;
+        constexpr int MACOS_O_TRUNC = 0x400;
+        constexpr int MACOS_O_EXCL = 0x800;
+        constexpr int MACOS_O_DIRECTORY = 0x100000;
+        constexpr int MACOS_O_CLOEXEC = 0x1000000;
+
+        // What F_GETFL reports back: the access mode and the status flags, without the flags that only act on open.
+        constexpr int MACOS_DESCRIPTOR_STATUS_FLAGS = MACOS_O_ACCMODE | MACOS_O_NONBLOCK | MACOS_O_APPEND;
 
         constexpr uint64_t MACOS_F_DUPFD = 0;
         constexpr uint64_t MACOS_F_GETFD = 1;
@@ -42,23 +50,6 @@ namespace sogen
                 .on_stderr = emu.on_stderr,
                 .nonblock_flag = MACOS_O_NONBLOCK,
             };
-        }
-
-        std::optional<int> open_for_reading(posix_fd_table& fds, std::string guest_path, const std::filesystem::path& host_path)
-        {
-            auto* handle = open_host_file(host_path, "rb");
-            if (handle == nullptr)
-            {
-                return std::nullopt;
-            }
-
-            posix_fd file{};
-            file.type = fd_type::file;
-            file.host_path = utf8_path_string(host_path);
-            file.guest_path = std::move(guest_path);
-            file.handle = handle;
-            file.flags = static_cast<int>(MACOS_O_RDONLY);
-            return fds.allocate(std::move(file));
         }
 
         std::optional<uint64_t> readable_bytes(const posix_fd& file)
@@ -91,21 +82,11 @@ namespace sogen
             return readable_bytes(file);
         }
 
-        int open_directory(posix_fd_table& fds, std::string guest_path, const std::filesystem::path& host_path)
-        {
-            posix_fd directory{};
-            directory.type = fd_type::directory;
-            directory.host_path = utf8_path_string(host_path);
-            directory.guest_path = std::move(guest_path);
-            directory.flags = static_cast<int>(MACOS_O_RDONLY);
-            return fds.allocate(std::move(directory));
-        }
-
         int open_socket(posix_fd_table& fds)
         {
             posix_fd socket{};
             socket.type = fd_type::socket;
-            socket.flags = static_cast<int>(MACOS_O_RDWR);
+            socket.flags = MACOS_O_RDWR;
             return fds.allocate(std::move(socket));
         }
     }
@@ -137,11 +118,19 @@ namespace sogen
     void sys_open(const macos_syscall_context& c)
     {
         const auto requested_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
-        const auto flags = get_macos_syscall_argument(c.emu, 1);
+        const auto flags = static_cast<int>(get_macos_syscall_argument(c.emu, 1));
+        const auto mode = static_cast<uint32_t>(get_macos_syscall_argument(c.emu, 2));
 
         if (!requested_path)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        const auto access = posix_access_mode_from_flags(flags);
+        if (!access)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
             return;
         }
 
@@ -151,41 +140,24 @@ namespace sogen
             return;
         }
 
-        const auto guest_path = c.emu_ref.resolve_guest_path(*requested_path);
-        if ((flags & MACOS_O_ACCMODE) != MACOS_O_RDONLY)
-        {
-            c.emu_ref.log.log("open(%s, 0x%llx) -> EROFS\n", guest_path.c_str(), static_cast<unsigned long long>(flags));
-            write_macos_syscall_error(c, macos_errno::MACOS_EROFS);
-            return;
-        }
+        const posix_open_request request{
+            .guest_path = c.emu_ref.resolve_guest_path(*requested_path),
+            .access = *access,
+            .create = (flags & MACOS_O_CREAT) != 0,
+            .exclusive = (flags & MACOS_O_EXCL) != 0,
+            .truncate = (flags & MACOS_O_TRUNC) != 0,
+            .append = (flags & MACOS_O_APPEND) != 0,
+            .directory = (flags & MACOS_O_DIRECTORY) != 0,
+            .close_on_exec = (flags & MACOS_O_CLOEXEC) != 0,
+            .creation_mode = mode,
+            .guest_flags = flags & MACOS_DESCRIPTOR_STATUS_FLAGS,
+        };
 
-        const auto host_path = c.emu_ref.file_system.translate(guest_path);
-        const auto is_directory = std::filesystem::is_directory(host_path);
-        if ((flags & MACOS_O_DIRECTORY) && !is_directory && std::filesystem::exists(host_path))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOTDIR);
-            return;
-        }
-
-        std::optional<int> fd{};
-        if (is_directory)
-        {
-            fd = open_directory(c.emu_ref.fds, guest_path, host_path);
-        }
-        else if (std::filesystem::is_regular_file(host_path))
-        {
-            fd = open_for_reading(c.emu_ref.fds, guest_path, host_path);
-        }
-
-        c.emu_ref.log.log("open(%s, 0x%llx) -> %d\n", guest_path.c_str(), static_cast<unsigned long long>(flags), fd.value_or(-1));
-
-        if (!fd)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-            return;
-        }
-
-        write_macos_syscall_success(c, static_cast<uint64_t>(*fd));
+        const auto result = posix_open(c.emu_ref.fds, c.emu_ref.file_system, request);
+        const auto* fd = std::get_if<uint64_t>(&result);
+        c.emu_ref.log.log("open(%s, 0x%x) -> %lld\n", request.guest_path.c_str(), static_cast<unsigned>(flags),
+                          fd != nullptr ? static_cast<long long>(*fd) : -1LL);
+        write_macos_syscall_result(c, result);
     }
 
     void sys_dup(const macos_syscall_context& c)
