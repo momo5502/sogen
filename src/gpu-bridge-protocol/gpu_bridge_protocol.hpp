@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 42;
+    inline constexpr uint32_t protocol_version = 43;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -211,6 +211,9 @@ namespace sogen::gpu_bridge
         // order in one round trip: descriptor_updates_prefix, updates_bytes of update_descriptor_sets_request blobs, then
         // the allocate_descriptor_sets_request with its arrays. Answers as allocate_descriptor_sets does.
         allocate_descriptor_sets_with_updates = 0x8AB,
+        // vkGetDeviceImageMemoryRequirements: what get_image_memory_requirements would answer for the image a
+        // create_image_request makes, without making it. Takes a create_image_request, answers a memory_requirements_response.
+        get_device_image_memory_requirements = 0x8AC,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -327,6 +330,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_update_descriptor_sets_batch = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets_batch));
     inline constexpr uint32_t ioctl_allocate_descriptor_sets_with_updates =
         make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets_with_updates));
+    inline constexpr uint32_t ioctl_get_device_image_memory_requirements =
+        make_ioctl(static_cast<uint32_t>(command::get_device_image_memory_requirements));
     inline constexpr uint32_t ioctl_create_sampler = make_ioctl(static_cast<uint32_t>(command::create_sampler));
     inline constexpr uint32_t ioctl_destroy_sampler = make_ioctl(static_cast<uint32_t>(command::destroy_sampler));
     inline constexpr uint32_t ioctl_enumerate_device_extension_properties =

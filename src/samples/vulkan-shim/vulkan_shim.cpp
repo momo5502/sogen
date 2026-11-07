@@ -502,6 +502,26 @@ namespace
             return VK_IMAGE_ASPECT_COLOR_BIT;
         }
     }
+
+    // The bridge's form of an image create-info, shared by vkCreateImage and vkGetDeviceImageMemoryRequirements so the
+    // host measures exactly the image vkCreateImage would make.
+    gb::create_image_request image_create_request(const VkDevice device, const VkImageCreateInfo& info)
+    {
+        gb::create_image_request request{};
+        request.device = to_object_id(device);
+        request.format = static_cast<uint32_t>(info.format);
+        request.width = info.extent.width;
+        request.height = info.extent.height;
+        request.usage = info.usage;
+        request.tiling = static_cast<uint32_t>(info.tiling);
+        request.samples = static_cast<uint32_t>(info.samples);
+        request.image_type = static_cast<uint32_t>(info.imageType);
+        request.depth = info.extent.depth;
+        request.mip_levels = info.mipLevels;
+        request.array_layers = info.arrayLayers;
+        request.flags = info.flags;
+        return request;
+    }
 }
 
 extern "C"
@@ -2568,19 +2588,7 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice device, const VkImageCreateInfo* pCreateInfo,
                                                                        const VkAllocationCallbacks*, VkImage* pImage)
     {
-        gb::create_image_request request{};
-        request.device = to_object_id(device);
-        request.format = static_cast<uint32_t>(pCreateInfo->format);
-        request.width = pCreateInfo->extent.width;
-        request.height = pCreateInfo->extent.height;
-        request.usage = pCreateInfo->usage;
-        request.tiling = static_cast<uint32_t>(pCreateInfo->tiling);
-        request.samples = static_cast<uint32_t>(pCreateInfo->samples);
-        request.image_type = static_cast<uint32_t>(pCreateInfo->imageType);
-        request.depth = pCreateInfo->extent.depth;
-        request.mip_levels = pCreateInfo->mipLevels;
-        request.array_layers = pCreateInfo->arrayLayers;
-        request.flags = pCreateInfo->flags;
+        const auto request = image_create_request(device, *pCreateInfo);
 
         gb::create_image_response response{};
         if (!bridge_call(gb::ioctl_create_image, &request, sizeof(request), &response, sizeof(response)))
@@ -2687,9 +2695,9 @@ extern "C"
         vkGetImageMemoryRequirements(device, pInfo->image, &pMemoryRequirements->memoryRequirements);
     }
 
-    // Vulkan 1.3 (maintenance4) lets callers query memory requirements without a live object. The bridge
-    // has no equivalent query, so probe a throwaway object created from the supplied create-info. DXVK's
-    // memory allocator relies on these during device construction.
+    // Vulkan 1.3 (maintenance4) lets callers query memory requirements without a live object. The bridge has no buffer
+    // equivalent, so probe a throwaway buffer created from the supplied create-info. DXVK's memory allocator relies on
+    // these during device construction.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceBufferMemoryRequirements(VkDevice device,
                                                                                          const VkDeviceBufferMemoryRequirements* pInfo,
                                                                                          VkMemoryRequirements2* pMemoryRequirements)
@@ -2707,6 +2715,7 @@ extern "C"
         vkDestroyBuffer(device, buffer, nullptr);
     }
 
+    // Answered by the host driver's vkGetDeviceImageMemoryRequirements for the image vkCreateImage would make.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageMemoryRequirements(VkDevice device,
                                                                                         const VkDeviceImageMemoryRequirements* pInfo,
                                                                                         VkMemoryRequirements2* pMemoryRequirements)
@@ -2715,18 +2724,24 @@ extern "C"
         {
             return;
         }
-        VkImage image = VK_NULL_HANDLE;
-        if (vkCreateImage(device, pInfo->pCreateInfo, nullptr, &image) != VK_SUCCESS)
+        auto& requirements = pMemoryRequirements->memoryRequirements;
+        requirements = {};
+
+        const auto request = image_create_request(device, *pInfo->pCreateInfo);
+        gb::memory_requirements_response response{};
+        if (!bridge_call(gb::ioctl_get_device_image_memory_requirements, &request, sizeof(request), &response, sizeof(response)))
         {
             return;
         }
-        vkGetImageMemoryRequirements(device, image, &pMemoryRequirements->memoryRequirements);
-        vkDestroyImage(device, image, nullptr);
+
+        requirements.size = response.size;
+        requirements.alignment = response.alignment;
+        requirements.memoryTypeBits = response.memory_type_bits;
     }
 
     // VK_KHR_maintenance5 / core 1.4: query an image's subresource layout straight from its create-info,
-    // with no live VkImage. The bridge has no such query, so probe a throwaway image (same approach as
-    // vkGetDeviceImageMemoryRequirements above). DXVK calls this during resource setup.
+    // with no live VkImage. The bridge has no such query, so probe a throwaway image (as
+    // vkGetDeviceBufferMemoryRequirements does with a buffer). DXVK calls this during resource setup.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageSubresourceLayoutKHR(VkDevice device,
                                                                                           const VkDeviceImageSubresourceInfo* pInfo,
                                                                                           VkSubresourceLayout2* pLayout)
