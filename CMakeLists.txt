@@ -56,6 +56,19 @@ if(SOGEN_ENABLE_REFLECTION)
   add_compile_definitions(SOGEN_ENABLE_REFLECTION=1)
 endif()
 
+option(SOGEN_ENABLE_SCCACHE "Cache compilations with sccache when it is installed" ON)
+if(SOGEN_ENABLE_SCCACHE AND NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+  find_program(SCCACHE_PROGRAM sccache)
+  if(SCCACHE_PROGRAM)
+    message(STATUS "Caching compilations with ${SCCACHE_PROGRAM}")
+    set(CMAKE_C_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
+    # sccache cannot cache MSVC objects that write their debug info into a shared PDB (/Zi, which Ninja pairs with /FS).
+    # Embedding it in each object (/Z7) keeps them cacheable; the linker still produces the PDB.
+    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+  endif()
+endif()
+
 ##########################################
 
 # FEX-Emu backend (x86/x86-64 -> AArch64). FEX only JITs to ARM64, so the backend is restricted to
