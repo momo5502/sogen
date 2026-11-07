@@ -460,6 +460,12 @@ namespace sogen
             return RECT{.left = 0, .top = 0, .right = win.client_width(), .bottom = win.client_height()};
         }
 
+        RECT get_screen_window_rect(const syscall_context& c, const window& win)
+        {
+            const auto origin = c.proc.window_screen_origin(win);
+            return RECT{.left = origin.x, .top = origin.y, .right = origin.x + win.width, .bottom = origin.y + win.height};
+        }
+
         RECT get_window_rect(const window& win)
         {
             return RECT{.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height};
@@ -499,7 +505,7 @@ namespace sogen
             win.y = y;
             win.width = width;
             win.height = height;
-            win.sync_guest_rects();
+            c.proc.sync_guest_window_rects(win);
 
             if (win.host_surface_window)
             {
@@ -2950,7 +2956,7 @@ namespace sogen
                     return FALSE;
                 }
 
-                const auto rect = get_window_rect(*win);
+                const auto rect = get_screen_window_rect(c, *win);
                 c.emu.write_memory(pv_data, &rect, sizeof(rect));
                 return TRUE;
             }
@@ -4296,16 +4302,6 @@ namespace sogen
                 guest_win.ptrBase = win.guest.value();
                 guest_win.dwExStyle = ex_style;
                 guest_win.dwStyle = style;
-                guest_win.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
-                // The client rect is the window minus its non-client frame (see window::nonclient_insets). The
-                // guest reads rcClient client-side to size its render target/backbuffer, so seeding it with the
-                // outer rect here makes a framed window render too large and rescale (softening the frame).
-                guest_win.rcClient = {
-                    .left = win.client_x(),
-                    .top = win.client_y(),
-                    .right = win.client_x() + win.client_width(),
-                    .bottom = win.client_y() + win.client_height(),
-                };
                 if (parent_win && has_child_parent)
                 {
                     guest_win.spwndParent = parent_win->guest.value();
@@ -4348,6 +4344,7 @@ namespace sogen
                     guest_win.pExtraBytes = c.win_emu.memory.allocate_memory(extra_size, memory_permission::read_write);
                 }
             });
+            c.proc.sync_guest_window_rects(win);
             write_guest_window_text(c, win, win.name);
 
             if (has_child_parent && parent_win && parent_win->guest.value() != 0)
@@ -5907,7 +5904,7 @@ namespace sogen
                 return FALSE;
             }
 
-            rect.write(get_window_rect(*win));
+            rect.write(get_screen_window_rect(c, *win));
             return TRUE;
         }
 
@@ -5916,6 +5913,7 @@ namespace sogen
         void update_window_relationship(const syscall_context& c, window& win, const bool was_surface_root)
         {
             const bool surface_root = c.proc.is_surface_root(win);
+            c.proc.sync_guest_window_rects(win);
             if (was_surface_root && !surface_root)
             {
                 c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win.handle));
@@ -6597,6 +6595,7 @@ namespace sogen
                 win->ex_style = styles.styleNew;
                 win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwExStyle = styles.styleNew; });
             }
+            c.proc.sync_guest_window_rects(*win);
 
             state.style_applied = true;
             const auto address = state.style_alloc.address();

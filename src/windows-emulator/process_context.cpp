@@ -1335,6 +1335,52 @@ namespace sogen
         return !child_style || win.parent_handle == 0 || win.parent_handle == this->default_desktop_window_handle.bits;
     }
 
+    POINT process_context::window_screen_origin(const window& win) const
+    {
+        POINT origin{.x = win.x, .y = win.y};
+        const auto* current = &win;
+        for (size_t depth = 0; depth < this->windows.size() && !this->is_surface_root(*current); ++depth)
+        {
+            const auto* parent = this->windows.get(current->parent_handle);
+            if (!parent)
+            {
+                break;
+            }
+
+            origin.x += parent->client_x();
+            origin.y += parent->client_y();
+            current = parent;
+        }
+        return origin;
+    }
+
+    void process_context::sync_guest_window_rects(window& win)
+    {
+        win.sync_guest_rects(this->window_screen_origin(win));
+
+        const auto descends_from_win = [&](const window& candidate) {
+            const auto* current = &candidate;
+            for (size_t depth = 0; current && depth < this->windows.size(); ++depth)
+            {
+                if (current->parent_handle == win.handle)
+                {
+                    return true;
+                }
+                current = this->windows.get(current->parent_handle);
+            }
+            return false;
+        };
+
+        for (auto& [index, candidate] : this->windows)
+        {
+            (void)index;
+            if (&candidate != &win && descends_from_win(candidate))
+            {
+                candidate.sync_guest_rects(this->window_screen_origin(candidate));
+            }
+        }
+    }
+
     bool process_context::is_window_effectively_visible(const hwnd window) const
     {
         const auto* current = this->windows.get(window);
