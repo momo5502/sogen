@@ -129,6 +129,11 @@ namespace sogen
             return ::recv(this->socket_.get_socket(), reinterpret_cast<char*>(data.data()), static_cast<send_size>(data.size()), 0);
         }
 
+        sent_size socket_wrapper::peek(std::span<std::byte> data)
+        {
+            return ::recv(this->socket_.get_socket(), reinterpret_cast<char*>(data.data()), static_cast<send_size>(data.size()), MSG_PEEK);
+        }
+
         sent_size socket_wrapper::recvfrom(address& source, std::span<std::byte> data)
         {
             auto source_length = source.get_max_size();

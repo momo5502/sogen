@@ -286,6 +286,28 @@ namespace sogen
                         return static_cast<sent_size>(data.size());
                     }
 
+                    sent_size peek(std::span<std::byte> data) override
+                    {
+                        if (!this->pipe)
+                        {
+                            this->error = SERR(ENOTCONN);
+                            return -1;
+                        }
+                        const auto& q = this->is_server_side ? this->pipe->client_to_server : this->pipe->server_to_client;
+                        const bool peer_closed = this->is_server_side ? this->pipe->client_closed : this->pipe->server_closed;
+
+                        if (q.empty())
+                        {
+                            this->error = peer_closed ? 0 : SERR(EWOULDBLOCK);
+                            return peer_closed ? 0 : -1;
+                        }
+
+                        const size_t n = std::min(data.size(), q.size());
+                        std::copy_n(q.begin(), n, data.begin());
+                        this->error = 0;
+                        return static_cast<sent_size>(n);
+                    }
+
                     sent_size recv(std::span<std::byte> data) override
                     {
                         if (!this->pipe)
