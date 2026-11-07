@@ -1095,7 +1095,7 @@ namespace sogen
                 }
             }
 #endif
-            guest_exited = success && win_emu->process.exit_status.has_value();
+            guest_exited = win_emu->process.exit_status.has_value();
             return success;
         }
 
