@@ -749,7 +749,8 @@ namespace sogen
 
         // Swaps the registers of the outgoing thread on a vCPU for the incoming one. With more than one vCPU the
         // hypercalls run with the kernel lock released: they only touch this vCPU, but cost tens of microseconds and
-        // would otherwise serialize every other vCPU behind each thread switch. Both threads are marked as in transit
+        // would otherwise serialize every other vCPU behind each thread switch. That includes pointing the vCPU's GDTR
+        // at its own GDT and writing the incoming thread's pending wait status. Both threads are marked as in transit
         // meanwhile. Requires the kernel lock, and incoming must already be the vCPU's active thread.
         void transfer_thread_registers(vcpu_context& vcpu, emulator_thread* outgoing, emulator_thread& incoming);
 

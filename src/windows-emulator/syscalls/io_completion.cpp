@@ -13,6 +13,7 @@ namespace sogen
             {
                 io_completion_wait::release_handle_reference(c.proc, wait_packet.io_completion_handle);
                 io_completion_wait::release_handle_reference(c.proc, wait_packet.target_object_handle);
+                wait_packet.target_object = nullptr;
                 wait_packet.associated = false;
             }
         }

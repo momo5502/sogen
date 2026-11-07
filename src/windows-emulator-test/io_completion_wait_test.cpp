@@ -670,4 +670,90 @@ namespace sogen::test
         EXPECT_FALSE(waiter.await_io_completion.has_value());
         EXPECT_EQ(0x33u, this->key(0).read());
     }
+
+    namespace
+    {
+        // One wait packet on the fixture's port that moves between two notification events (they stay signaled once set,
+        // so a packet still checking its old target would fire as soon as it is associated again).
+        class WaitPacketTargetTest : public IoCompletionWaiterTest
+        {
+          protected:
+            void SetUp() override
+            {
+                IoCompletionWaiterTest::SetUp();
+                this->first = this->emu->process.events.store(event{});
+                this->second = this->emu->process.events.store(event{});
+                this->packet = this->emu->process.wait_completion_packets.store(wait_completion_packet{});
+                this->already_signaled = emulator_object<BOOLEAN>{this->emu->memory, this->storage + 0xF00};
+                this->caller = &this->new_thread();
+            }
+
+            NTSTATUS associate(const handle target)
+            {
+                return syscalls::handle_NtAssociateWaitCompletionPacket(this->context_of(*this->caller), this->packet, this->port, target,
+                                                                        0x33, 0x44, STATUS_SUCCESS, 0, *this->already_signaled);
+            }
+
+            void set(const handle target)
+            {
+                this->emu->process.events.get(target)->set_signaled(true);
+            }
+
+            size_t queued()
+            {
+                io_completion_wait::materialize_all_signaled_wait_packets(*this->emu);
+                return this->completion().queue.size();
+            }
+
+            handle first{};
+            handle second{};
+            handle packet{};
+            std::optional<emulator_object<BOOLEAN>> already_signaled{};
+            emulator_thread* caller{};
+        };
+    }
+
+    TEST_F(WaitPacketTargetTest, PacketAssociatedAgainAfterItsCompletionWatchesTheNewTarget)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->associate(this->first));
+        this->set(this->first);
+        ASSERT_EQ(1u, this->queued());
+        io_completion_message message{};
+        ASSERT_TRUE(io_completion_wait::dequeue_io_completion_message(*this->emu, this->port, message));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->associate(this->second));
+        EXPECT_FALSE(this->already_signaled->read());
+        EXPECT_EQ(0u, this->queued());
+        this->set(this->second);
+        EXPECT_EQ(1u, this->queued());
+    }
+
+    TEST_F(WaitPacketTargetTest, PacketAssociatedAgainAfterACancelWatchesTheNewTarget)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->associate(this->first));
+        ASSERT_EQ(0u, this->queued());
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelWaitCompletionPacket(this->context_of(*this->caller), this->packet, FALSE));
+        this->set(this->first);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->associate(this->second));
+        EXPECT_FALSE(this->already_signaled->read());
+        EXPECT_EQ(0u, this->queued());
+        this->set(this->second);
+        EXPECT_EQ(1u, this->queued());
+    }
+
+    TEST_F(WaitPacketTargetTest, PacketWhoseTargetIsDestroyedReadsItAsGone)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->associate(this->first));
+        ASSERT_EQ(0u, this->queued());
+
+        // The event's own reference and the association's go, so it is destroyed while the packet is armed.
+        auto& events = this->emu->process.events;
+        ASSERT_TRUE(events.erase(this->first));
+        ASSERT_TRUE(events.erase(this->first));
+        ASSERT_EQ(nullptr, events.get(this->first));
+
+        EXPECT_EQ(0u, this->queued());
+        EXPECT_EQ(nullptr, this->emu->process.wait_completion_packets.get(this->packet)->target_object);
+    }
 }

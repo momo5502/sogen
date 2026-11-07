@@ -1578,6 +1578,10 @@ namespace sogen
         std::u16string name{};
         handle io_completion_handle{};
         handle target_object_handle{};
+        // The target's object as last looked up, valid while its store's generation is still target_generation. Not
+        // serialized; a restored packet looks it up again.
+        ref_counted_object* target_object{};
+        uint64_t target_generation{};
         uint64_t key_context{};
         uint64_t apc_context{};
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> io_status_block{};
@@ -1642,6 +1646,7 @@ namespace sogen
         uint32_t pending_release_count{};
         bool release_pending{};
         std::vector<handle> worker_threads{};
+        uint32_t pending_worker_count{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -1671,6 +1676,7 @@ namespace sogen
             buffer.write(this->pending_release_count);
             buffer.write(this->release_pending);
             buffer.write_vector(this->worker_threads);
+            buffer.write(this->pending_worker_count);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1701,6 +1707,7 @@ namespace sogen
             buffer.read(this->pending_release_count);
             buffer.read(this->release_pending);
             buffer.read_vector(this->worker_threads);
+            buffer.read(this->pending_worker_count);
         }
     };
 

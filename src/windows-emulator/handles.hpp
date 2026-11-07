@@ -333,6 +333,13 @@ namespace sogen
             return this->store_.size();
         }
 
+        // Advances whenever an object of this store is destroyed or the store is rebuilt. Map entries never move, so a
+        // pointer to one of its objects stays valid while the generation is unchanged.
+        uint64_t generation() const
+        {
+            return this->generation_;
+        }
+
         // Every duplicate is a handle value of its own, as on Windows, referring to the same object.
         std::optional<handle> duplicate(const handle h) override
         {
@@ -442,6 +449,7 @@ namespace sogen
             }
             std::erase_if(this->aliases_, [&](const auto& alias) { return alias.second == index; });
             auto new_iter = this->store_.erase(entry);
+            ++this->generation_;
             return {new_iter, true};
         }
 
@@ -501,6 +509,7 @@ namespace sogen
             buffer.read_map(this->store_);
             buffer.read_map(this->aliases_);
             buffer.read_map(this->alias_attributes_);
+            ++this->generation_;
         }
 
         value_map::iterator find(const T& value)
@@ -610,6 +619,7 @@ namespace sogen
         // Duplicated handle values, mapped to the index their object is stored under.
         std::map<index_type, index_type> aliases_{};
         std::map<index_type, handle_attributes> alias_attributes_{};
+        uint64_t generation_{};
     };
 
     template <handle_types::type Type, typename T>
