@@ -175,6 +175,7 @@ namespace sogen
         std::unique_ptr<console_backend> console{};
         // Mounted after emulator_settings::mounts, for sources that are not a host directory.
         std::vector<provider_mount> mounts{};
+        std::vector<device_registration> devices{};
     };
 
     // Per-vCPU scheduler state: the guest thread a virtual CPU is currently executing
@@ -258,6 +259,7 @@ namespace sogen
         debug_port debugger_{};
         bool debugger_saw_process_{};
         std::unique_ptr<console_backend> console_backend_{};
+        const device_registry device_registry_;
         bool setup_completed_{false};
 
         // Host threads owned by the process, such as audio streams, signal the guest through these, so they have to
@@ -293,6 +295,11 @@ namespace sogen
         windows_emulator& operator=(const windows_emulator&) = delete;
 
         ~windows_emulator();
+
+        const device_registry& device_factories() const
+        {
+            return this->device_registry_;
+        }
 
         guest_machine& emu()
         {

@@ -2,7 +2,9 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 #include <arch_emulator.hpp>
 #include <serialization.hpp>
 
@@ -255,6 +257,37 @@ namespace sogen
 
     bool is_device_supported(std::u16string_view device);
 
+    using device_open_validator = NTSTATUS (*)(const device_creation_context& context);
+
+    struct device_registration
+    {
+        std::u16string name{};
+        device_factory factory{};
+        bool dos_alias{};
+        device_open_validator validate_open{};
+        std::shared_ptr<void> lifetime{};
+    };
+
+    class device_registry
+    {
+      public:
+        struct entry
+        {
+            device_factory factory{};
+            bool dos_alias{};
+            device_open_validator validate_open{};
+            std::shared_ptr<void> lifetime{};
+            bool external{};
+        };
+
+        explicit device_registry(std::vector<device_registration> registrations = {});
+        const entry* find(std::u16string_view name) const;
+        bool is_dos_alias(std::u16string_view name) const;
+
+      private:
+        std::map<std::u16string, entry, std::less<>> entries_{};
+    };
+
     struct device_completion_association
     {
         handle completion_port{};
@@ -272,13 +305,7 @@ namespace sogen
       public:
         io_device_container() = default;
 
-        io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data)
-            : is_32_bit_(needs_32_bit_devices(win_emu)),
-              device_name_(std::move(device))
-        {
-            this->setup();
-            this->file_->device->create(win_emu, data);
-        }
+        io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data);
 
         ACCESS_MASK granted_access{GENERIC_ALL};
 
@@ -335,19 +362,16 @@ namespace sogen
 
         struct file_state
         {
+            std::shared_ptr<void> provider{};
             std::unique_ptr<io_device> device{};
+            bool external{};
             std::optional<device_completion_association> completion_association{};
             ULONG completion_notification_flags{};
+
+            void create(const device_registry::entry& registration, const device_creation_context& context);
         };
 
         std::shared_ptr<file_state> file_{};
-
-        void setup()
-        {
-            const device_creation_context context{.is_32_bit = this->is_32_bit_};
-            this->file_ = std::make_shared<file_state>();
-            this->file_->device = create_device(this->device_name_, context);
-        }
 
         void assert_validity() const
         {

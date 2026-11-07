@@ -38,6 +38,7 @@ if(SOGEN_BUILD_STATIC)
 endif()
 
 if(_SOGEN_BUILD_STANDALONE_TARGETS)
+  add_subdirectory("${PROJECT_SOURCE_DIR}/examples/device-provider" "${PROJECT_BINARY_DIR}/examples/device-provider")
   add_subdirectory(ui-cursor-diagnostic)
   add_subdirectory(windows-analyzer)
   add_subdirectory(linux-analyzer)
