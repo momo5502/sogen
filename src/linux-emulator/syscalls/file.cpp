@@ -5,6 +5,7 @@
 #include "../procfs.hpp"
 
 #include <posix_descriptor_syscalls.hpp>
+#include <posix_directory.hpp>
 #include <posix_io_syscalls.hpp>
 #include <posix_open.hpp>
 #include <posix_path_resolution.hpp>
@@ -136,83 +137,6 @@ namespace sogen
             const auto bytes_read = std::min(count, content.size() - offset);
             std::ranges::copy_n(content.begin() + static_cast<std::ptrdiff_t>(offset), static_cast<std::ptrdiff_t>(bytes_read), buffer);
             return bytes_read;
-        }
-
-        uint8_t file_type_to_d_type(const std::filesystem::file_type type)
-        {
-            // Linux DT_* values
-            constexpr uint8_t DT_UNKNOWN = 0;
-            constexpr uint8_t DT_FIFO = 1;
-            constexpr uint8_t DT_CHR = 2;
-            constexpr uint8_t DT_DIR = 4;
-            constexpr uint8_t DT_BLK = 6;
-            constexpr uint8_t DT_REG = 8;
-            constexpr uint8_t DT_LNK = 10;
-            constexpr uint8_t DT_SOCK = 12;
-
-            switch (type)
-            {
-            case std::filesystem::file_type::directory:
-                return DT_DIR;
-            case std::filesystem::file_type::regular:
-                return DT_REG;
-            case std::filesystem::file_type::symlink:
-                return DT_LNK;
-            case std::filesystem::file_type::block:
-                return DT_BLK;
-            case std::filesystem::file_type::character:
-                return DT_CHR;
-            case std::filesystem::file_type::fifo:
-                return DT_FIFO;
-            case std::filesystem::file_type::socket:
-                return DT_SOCK;
-            default:
-                return DT_UNKNOWN;
-            }
-        }
-
-        uint64_t get_inode_for_path(const std::filesystem::path& path)
-        {
-            const auto status = posix_stat_host_path(path, false);
-            const auto* file_status = std::get_if<posix_file_status>(&status);
-            return file_status ? file_status->inode : 0;
-        }
-
-        std::vector<posix_directory_entry> list_directory(const std::filesystem::path& dir_path)
-        {
-            std::vector<posix_directory_entry> entries{};
-
-            // Include "." and ".." first to match Linux behavior.
-            entries.push_back(
-                {.inode = get_inode_for_path(dir_path), .type = file_type_to_d_type(std::filesystem::file_type::directory), .name = "."});
-
-            const auto parent = dir_path.parent_path().empty() ? dir_path : dir_path.parent_path();
-            entries.push_back(
-                {.inode = get_inode_for_path(parent), .type = file_type_to_d_type(std::filesystem::file_type::directory), .name = ".."});
-
-            std::error_code ec{};
-            for (const auto& de : std::filesystem::directory_iterator(dir_path, ec))
-            {
-                if (ec)
-                {
-                    break;
-                }
-
-                const auto& p = de.path();
-                const auto type = de.symlink_status(ec).type();
-                if (ec)
-                {
-                    ec.clear();
-                }
-
-                posix_directory_entry entry{};
-                entry.inode = get_inode_for_path(p);
-                entry.type = file_type_to_d_type(type);
-                entry.name = p.filename().string();
-                entries.push_back(std::move(entry));
-            }
-
-            return entries;
         }
 
         size_t align_up_8(const size_t value)
@@ -408,6 +332,22 @@ namespace sogen
         };
 
 #pragma pack(pop)
+
+        std::vector<std::byte> pack_linux_dirent64(const posix_directory_entry& entry, const uint64_t next_position)
+        {
+            const auto record_length = align_up_8(sizeof(linux_dirent64_header) + entry.name.size() + 1);
+
+            linux_dirent64_header header{};
+            header.d_ino = entry.inode;
+            header.d_off = static_cast<int64_t>(next_position);
+            header.d_reclen = static_cast<uint16_t>(record_length);
+            header.d_type = entry.type;
+
+            std::vector<std::byte> record(record_length);
+            memcpy(record.data(), &header, sizeof(header));
+            memcpy(record.data() + sizeof(header), entry.name.data(), entry.name.size());
+            return record;
+        }
 
         linux_stat to_linux_stat(const posix_file_status& status)
         {
@@ -939,7 +879,7 @@ namespace sogen
     {
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         const auto dirp_addr = get_linux_syscall_argument(c.emu, 1);
-        const auto count = static_cast<size_t>(get_linux_syscall_argument(c.emu, 2));
+        const auto count = get_linux_syscall_argument(c.emu, 2);
 
         auto* fd_entry = c.proc.fds.get(fd);
         if (!fd_entry)
@@ -954,49 +894,22 @@ namespace sogen
             return;
         }
 
-        if (!fd_entry->directory_listing)
+        const auto result = posix_read_directory(*fd_entry, count, pack_linux_dirent64);
+        if (const auto* error = std::get_if<posix_errno>(&result))
         {
-            fd_entry->directory_listing = list_directory(fd_entry->host_path);
+            write_linux_syscall_result(c, *error);
+            return;
         }
 
-        const auto& entries = *fd_entry->directory_listing;
-        auto& offset = fd_entry->directory_position;
-
-        size_t written = 0;
-
-        while (offset < entries.size())
+        const auto& records = std::get<posix_directory_records>(result);
+        if (!c.emu.try_write_memory(dirp_addr, records.data.data(), records.data.size()))
         {
-            const auto& entry = entries.at(static_cast<size_t>(offset));
-            const auto name_bytes = entry.name.size() + 1; // include trailing NUL
-            const auto reclen = align_up_8(sizeof(linux_dirent64_header) + name_bytes);
-
-            if (written + reclen > count)
-            {
-                if (written == 0)
-                {
-                    write_linux_syscall_result(c, -LINUX_EINVAL);
-                    return;
-                }
-                break;
-            }
-
-            linux_dirent64_header hdr{};
-            hdr.d_ino = entry.inode;
-            hdr.d_off = static_cast<int64_t>(offset) + 1;
-            hdr.d_reclen = static_cast<uint16_t>(reclen);
-            hdr.d_type = entry.type;
-
-            std::vector<uint8_t> record(reclen, 0);
-            memcpy(record.data(), &hdr, sizeof(hdr));
-            std::ranges::copy(entry.name, reinterpret_cast<char*>(record.data() + sizeof(hdr)));
-
-            c.emu.write_memory(dirp_addr + written, record.data(), record.size());
-
-            written += reclen;
-            ++offset;
+            write_linux_syscall_result(c, -LINUX_EFAULT);
+            return;
         }
 
-        write_linux_syscall_result(c, static_cast<int64_t>(written));
+        fd_entry->directory_position = records.end_position;
+        write_linux_syscall_result(c, static_cast<int64_t>(records.data.size()));
     }
 
     void sys_fsync(const linux_syscall_context& c)
