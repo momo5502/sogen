@@ -648,8 +648,10 @@ namespace sogen
 
     void registry_manager::deserialize_runtime_state(utils::buffer_deserializer& buffer)
     {
-        buffer.read_map(this->overlay_values_);
-        buffer.read_map(this->key_generations_);
+        auto values = buffer.read_map<decltype(this->overlay_values_)>();
+        auto generations = buffer.read_map<decltype(this->key_generations_)>();
+        this->overlay_values_ = std::move(values);
+        this->key_generations_ = std::move(generations);
     }
 
     registry_manager::hive_map::iterator registry_manager::find_hive(const utils::path_key& key)

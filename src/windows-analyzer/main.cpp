@@ -10,6 +10,7 @@
 #include <minidump_loader.hpp>
 #include <scoped_hook.hpp>
 #include <registry/registry_file.hpp>
+#include <registry/registry_state_file.hpp>
 
 #include "object_watching.hpp"
 #include <snapshot.hpp>
@@ -83,6 +84,7 @@ namespace sogen
             uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::vector<std::filesystem::path> registry_files{};
+            std::filesystem::path registry_state{};
             std::filesystem::path emulation_root{};
             std::filesystem::path working_directory{};
             uint16_t managed_process_port{};
@@ -739,11 +741,30 @@ namespace sogen
                 });
             }
 #endif
+            std::unique_ptr<registry_state_file> registry_state{};
+            if (!options.registry_state.empty())
+            {
+                if (!options.dump.empty() || !options.minidump_path.empty())
+                {
+                    throw std::runtime_error("Registry state cannot be combined with a snapshot or minidump");
+                }
+#ifndef OS_EMSCRIPTEN
+                if (options.managed_process)
+                {
+                    throw std::runtime_error("Registry state belongs to the primary analyzer process");
+                }
+#endif
+                registry_state = std::make_unique<registry_state_file>(options.registry_state);
+            }
             const auto concise_logging = options.concise_logging;
             const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager.get()});
             if (options.network == network::network_mode::live)
             {
                 win_emu->log.warn("Network mode is live: the guest can use the host network\n");
+            }
+            if (registry_state)
+            {
+                registry_state->load(win_emu->registry);
             }
             apply_registry_files(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
@@ -1006,6 +1027,10 @@ namespace sogen
             }
 
             const auto success = run_emulation(context, options);
+            if (registry_state && win_emu->process.exit_status.has_value())
+            {
+                registry_state->save(win_emu->registry);
+            }
 #ifndef OS_EMSCRIPTEN
             if (options.managed_process && win_emu->process.exit_status)
             {
@@ -1097,6 +1122,9 @@ namespace sogen
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
+#ifndef OS_EMSCRIPTEN
+            app.add_option("--registry-state", options.registry_state, "Load registry overlay state and save it after the guest exits");
+#endif
             app.add_option("--reg-file", options.registry_files, "Import registry values from a .reg file")
                 ->type_name("FILE")
                 ->expected(1)
