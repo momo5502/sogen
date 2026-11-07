@@ -80,7 +80,6 @@ namespace sogen
             constexpr uint32_t k_stock_default_gui_font_index = 0x11;
             constexpr uint32_t k_stock_dc_brush_index = 0x12;
             constexpr uint32_t k_stock_dc_pen_index = 0x13;
-            constexpr uint32_t k_default_gui_font_data_index = 0x07;
             constexpr uint32_t k_user_client_drawing_brush_index = USER_NUM_SYSCOLORS;
             static_assert(k_user_client_drawing_brush_index < USER_SERVERINFO_BRUSH_SLOT_COUNT,
                           "client drawing brush index must be inside server info brush table");
@@ -399,12 +398,32 @@ namespace sogen
 
             uint64_t read_gdi_object_slot(const syscall_context& c, const uint32_t index)
             {
-                if (index >= 0x20)
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects)>)
                 {
                     return 0;
                 }
 
-                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, Objects) + (sizeof(uint64_t) * index));
+                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, StockObjects) + (sizeof(uint64_t) * index));
+            }
+
+            uint64_t read_gdi_object96_slot(const syscall_context& c, const uint32_t index)
+            {
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects96)>)
+                {
+                    return 0;
+                }
+
+                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, StockObjects96) + (sizeof(uint64_t) * index));
+            }
+
+            uint64_t read_gdi_dpi_fonts_slot(const syscall_context& c, const uint32_t index)
+            {
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::DpiDepDefaultGuiFonts)>)
+                {
+                    return 0;
+                }
+
+                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, DpiDepDefaultGuiFonts) + (sizeof(uint64_t) * index));
             }
 
             // The stock objects, the memory DC default bitmap among them, and the system color brushes belong to the
@@ -417,9 +436,25 @@ namespace sogen
                     return true;
                 }
 
-                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::Objects)>; ++index)
+                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects)>; ++index)
                 {
                     if (predicate(static_cast<uint32_t>(read_gdi_object_slot(c, index))))
+                    {
+                        return true;
+                    }
+                }
+
+                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects96)>; ++index)
+                {
+                    if (predicate(static_cast<uint32_t>(read_gdi_object96_slot(c, index))))
+                    {
+                        return true;
+                    }
+                }
+
+                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::DpiDepDefaultGuiFonts)>; ++index)
+                {
+                    if (predicate(static_cast<uint32_t>(read_gdi_dpi_fonts_slot(c, index))))
                     {
                         return true;
                     }
@@ -437,7 +472,7 @@ namespace sogen
 
             bool write_gdi_object_slot(const syscall_context& c, const uint32_t index, const uint64_t value)
             {
-                if (index >= 0x20)
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects)>)
                 {
                     return false;
                 }
@@ -448,24 +483,14 @@ namespace sogen
                     return false;
                 }
 
-                const auto slot = table + offsetof(GDI_SHARED_MEMORY64, Objects) + (sizeof(uint64_t) * index);
+                const auto slot = table + offsetof(GDI_SHARED_MEMORY64, StockObjects) + (sizeof(uint64_t) * index);
                 c.emu.write_memory(slot, &value, sizeof(value));
                 return true;
             }
 
-            uint64_t read_gdi_data_slot(const syscall_context& c, const uint32_t index)
+            bool write_gdi_object96_slot(const syscall_context& c, const uint32_t index, const uint64_t value)
             {
-                if (index >= 0x200)
-                {
-                    return 0;
-                }
-
-                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, Data) + (sizeof(uint64_t) * index));
-            }
-
-            bool write_gdi_data_slot(const syscall_context& c, const uint32_t index, const uint64_t value)
-            {
-                if (index >= 0x200)
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects96)>)
                 {
                     return false;
                 }
@@ -476,7 +501,7 @@ namespace sogen
                     return false;
                 }
 
-                const auto slot = table + offsetof(GDI_SHARED_MEMORY64, Data) + (sizeof(uint64_t) * index);
+                const auto slot = table + offsetof(GDI_SHARED_MEMORY64, StockObjects96) + (sizeof(uint64_t) * index);
                 c.emu.write_memory(slot, &value, sizeof(value));
                 return true;
             }
@@ -2104,16 +2129,16 @@ namespace sogen
 
                     if (seed.mirror_to_default_gui_slot)
                     {
-                        write_gdi_data_slot(c, k_default_gui_font_data_index, handle64);
+                        write_gdi_object96_slot(c, k_stock_default_gui_font_index, handle64);
                     }
                 }
 
-                if (read_gdi_data_slot(c, k_default_gui_font_data_index) == 0)
+                if (read_gdi_object96_slot(c, k_stock_default_gui_font_index) == 0)
                 {
                     const auto default_gui_font = read_gdi_object_slot(c, k_stock_default_gui_font_index);
                     if (default_gui_font != 0)
                     {
-                        write_gdi_data_slot(c, k_default_gui_font_data_index, default_gui_font);
+                        write_gdi_object96_slot(c, k_stock_default_gui_font_index, default_gui_font);
                     }
                 }
 

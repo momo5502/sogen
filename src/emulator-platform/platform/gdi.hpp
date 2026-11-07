@@ -212,7 +212,9 @@ namespace sogen
 
     static_assert(sizeof(GDI_HANDLE_ENTRY32) == 0x10);
 
-#define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
+#define GDI_MAX_HANDLE_COUNT    0x10000
+#define GDI_STOCK_OBJECTS_COUNT 22
+#define GDI_DEFDPI_FONTS_COUNT  16
 
     // What NtUserGetGuiResources takes. These describe the guest's ABI, so they have names of their own rather than
     // the SDK's GR_*: WinUser.h spells GR_GLOBAL as a HANDLE and defines it only for WINVER >= 0x0601.
@@ -226,15 +228,61 @@ namespace sogen
 #define CBM_INIT 0x04
 #endif
 
+    struct DEVCAPS
+    {
+        ULONG ulVersion;
+        ULONG ulTechnology;
+        ULONG ulHorzSizeM;
+        ULONG ulVertSizeM;
+        ULONG ulHorzSize;
+        ULONG ulVertSize;
+        ULONG ulHorzRes;
+        ULONG ulVertRes;
+        ULONG ulBitsPixel;
+        ULONG ulPlanes;
+        ULONG ulNumPens;
+        ULONG ulNumFonts;
+        ULONG ulNumColors;
+        ULONG ulRasterCaps;
+        ULONG ulAspectX;
+        ULONG ulAspectY;
+        ULONG ulAspectXY;
+        ULONG ulLogPixelsX;
+        ULONG ulLogPixelsY;
+        ULONG ulSizePalette;
+        ULONG ulColorRes;
+        ULONG ulPhysicalWidth;
+        ULONG ulPhysicalHeight;
+        ULONG ulPhysicalOffsetX;
+        ULONG ulPhysicalOffsetY;
+        ULONG ulTextCaps;
+        ULONG ulVRefresh;
+        ULONG ulDesktopHorzRes;
+        ULONG ulDesktopVertRes;
+        ULONG ulBltAlignment;
+        ULONG ulPanningHorzRes;
+        ULONG ulPanningVertRes;
+        ULONG xPanningAlignment;
+        ULONG yPanningAlignment;
+        ULONG ulShadeBlend;
+        ULONG ulColorMgmtCaps;
+    };
+
     struct GDI_SHARED_MEMORY64
     {
         GDI_HANDLE_ENTRY64 Handles[GDI_MAX_HANDLE_COUNT];
-        char pad[0xC8];
-        uint64_t Objects[0x20];
-        uint64_t Data[0x200]; // ?
+        DEVCAPS GdiDevCaps;
+        uint64_t Unknown1[4];
+        uint64_t StockObjects[GDI_STOCK_OBJECTS_COUNT];   // for system dpi
+        uint64_t StockObjects96[GDI_STOCK_OBJECTS_COUNT]; // for standard dpi = 96
+        // DpiDepDefaultGuiFonts is for DEFAULT_GUI_FONT stock object, but for dpi values
+        // other than the system or standard; the index depends on the dpi value:
+        // dpi = 120 + 24 * index, 0 <= index < 16
+        uint64_t DpiDepDefaultGuiFonts[GDI_DEFDPI_FONTS_COUNT];
+        uint64_t Unknown2;
     };
 
-    static_assert(offsetof(GDI_SHARED_MEMORY64, Objects) == 0x1800B0);
+    static_assert(offsetof(GDI_SHARED_MEMORY64, StockObjects) == 0x1800B0);
 
     struct EMU_D3DKMT_ADAPTERINFO
     {

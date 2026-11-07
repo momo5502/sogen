@@ -117,8 +117,8 @@ namespace sogen::test
             uint32_t stock_object(const uint32_t index)
             {
                 const auto table = this->emu.process.peb64.read().GdiSharedHandleTable;
-                return static_cast<uint32_t>(
-                    this->emu.memory.read_memory<uint64_t>(table + offsetof(GDI_SHARED_MEMORY64, Objects) + (index * sizeof(uint64_t))));
+                return static_cast<uint32_t>(this->emu.memory.read_memory<uint64_t>(table + offsetof(GDI_SHARED_MEMORY64, StockObjects) +
+                                                                                    (index * sizeof(uint64_t))));
             }
 
             hdc create_dc()
