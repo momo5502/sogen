@@ -1106,7 +1106,7 @@ namespace sogen
         void present_existing_guest_window_surface(const syscall_context& c, const window& painted_window)
         {
             const window* top_level = &painted_window;
-            while (top_level && (top_level->style & WS_CHILD) != 0)
+            while (top_level && !c.proc.is_surface_root(*top_level))
             {
                 top_level = top_level->parent_handle != 0 ? c.proc.windows.get(top_level->parent_handle) : nullptr;
             }
@@ -5911,6 +5911,28 @@ namespace sogen
             return TRUE;
         }
 
+        // A window that stops being a surface root draws into its new root's surface from now on, so its own surface is
+        // dropped; either way it repaints where it now appears.
+        void update_window_relationship(const syscall_context& c, window& win, const bool was_surface_root)
+        {
+            const bool surface_root = c.proc.is_surface_root(win);
+            if (was_surface_root && !surface_root)
+            {
+                c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win.handle));
+            }
+
+            if (win.host_surface_window)
+            {
+                c.win_emu.ui().set_window_relationship(win.handle, surface_root ? 0 : win.parent_handle,
+                                                       surface_root ? win.owner_handle : 0, surface_root);
+            }
+
+            if ((win.style & WS_VISIBLE) != 0)
+            {
+                invalidate_window(c, win, std::nullopt, true, child_redraw_scope::all);
+            }
+        }
+
         hwnd handle_NtUserSetParent(const syscall_context& c, const hwnd hwnd_child, const hwnd hwnd_new_parent)
         {
             auto* child = c.proc.windows.get(hwnd_child);
@@ -6037,6 +6059,7 @@ namespace sogen
                 child->owner_handle = previous_parent->handle;
             }
 
+            const bool was_surface_root = c.proc.is_surface_root(*child);
             child->parent_handle = effective_parent->handle;
             child->guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.spwndParent = effective_parent->guest.value();
@@ -6045,6 +6068,7 @@ namespace sogen
             });
 
             append_to_parent();
+            update_window_relationship(c, *child, was_surface_root);
 
             return old_parent;
         }

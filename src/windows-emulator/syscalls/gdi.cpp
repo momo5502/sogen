@@ -963,7 +963,7 @@ namespace sogen
                 // Walk up to the owning top-level window, accumulating each child's client-area offset.
                 int32_t off_x = 0;
                 int32_t off_y = 0;
-                while (win && (win->style & WS_CHILD) != 0)
+                while (win && !c.proc.is_surface_root(*win))
                 {
                     off_x += win->client_x();
                     off_y += win->client_y();
@@ -1064,7 +1064,7 @@ namespace sogen
                                        .right = origin.x + win->client_width(),
                                        .bottom = origin.y + win->client_height()});
 
-                    const auto* parent = (win->style & WS_CHILD) != 0 ? c.proc.windows.get(win->parent_handle) : nullptr;
+                    const auto* parent = c.proc.is_surface_root(*win) ? nullptr : c.proc.windows.get(win->parent_handle);
                     if (!parent)
                     {
                         break;

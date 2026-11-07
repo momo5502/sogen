@@ -620,6 +620,22 @@ namespace sogen::android
         }
     }
 
+    // The host only shows windows that were top-level when they were created, so a promoted window is recorded but not drawn.
+    void android_ui_backend::set_window_relationship(const hwnd window, const hwnd parent, const hwnd owner, const bool top_level)
+    {
+        const std::lock_guard lock{this->mutex_};
+
+        const auto it = this->windows_.find(window);
+        if (it == this->windows_.end())
+        {
+            return;
+        }
+
+        it->second.desc.parent = parent;
+        it->second.desc.owner = owner;
+        it->second.desc.top_level = top_level;
+    }
+
     void android_ui_backend::set_window_title(const hwnd window, const std::u16string_view title)
     {
         {

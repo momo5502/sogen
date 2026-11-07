@@ -143,6 +143,26 @@ namespace sogen
             // clang-format on
         }
 
+        void post_ui_relationship_message(const hwnd window, const hwnd parent, const hwnd owner, const bool top_level)
+        {
+            if (!has_web_ui_bridge())
+            {
+                return;
+            }
+            // clang-format off
+            EM_ASM({
+                postMessage({
+                    type: 'sogen_ui',
+                    command: 'set_relationship',
+                    hwnd: Number($0 >>> 0),
+                    parent: Number($1 >>> 0),
+                    owner: Number($2 >>> 0),
+                    top_level: Boolean($3),
+                });
+            }, static_cast<uint32_t>(window), static_cast<uint32_t>(parent), static_cast<uint32_t>(owner), top_level ? 1 : 0);
+            // clang-format on
+        }
+
         void post_ui_create_window(const ui_window_desc& desc)
         {
             if (!has_web_ui_bridge())
@@ -296,6 +316,11 @@ namespace sogen
             void set_window_rect(const hwnd window, const RECT& rect) override
             {
                 post_ui_rect_message("set_rect", window, rect);
+            }
+
+            void set_window_relationship(const hwnd window, const hwnd parent, const hwnd owner, const bool top_level) override
+            {
+                post_ui_relationship_message(window, parent, owner, top_level);
             }
 
             void set_window_visible(const hwnd window, const bool visible) override
