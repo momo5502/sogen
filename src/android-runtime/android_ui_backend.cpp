@@ -32,6 +32,13 @@ namespace sogen::android
             return (static_cast<uint64_t>(static_cast<uint32_t>(y) & 0xFFFFu) << 16) | (static_cast<uint32_t>(x) & 0xFFFFu);
         }
 
+        // SetParent promotes a WS_CHILD window under the desktop to a popup of the window that opened it, such as a combo
+        // box's list. The host cannot show such a window, so it is neither handed to the host nor activated.
+        bool is_host_window(const ui_window_desc& desc)
+        {
+            return desc.top_level && ((desc.style & WS_CHILD) == 0 || (desc.style & WS_POPUP) != 0);
+        }
+
         int32_t client_width(const ui_window_desc& desc)
         {
             return std::max<int32_t>(1, (desc.rect.right - desc.rect.left) - desc.client_insets.left - desc.client_insets.right);
@@ -478,7 +485,7 @@ namespace sogen::android
             const std::lock_guard lock{this->mutex_};
 
             this->windows_[desc.handle].desc = desc;
-            if (!desc.top_level)
+            if (!is_host_window(desc))
             {
                 return;
             }
@@ -509,7 +516,7 @@ namespace sogen::android
                 return;
             }
 
-            top_level = it->second.desc.top_level;
+            top_level = is_host_window(it->second.desc);
             if (it->second.surface)
             {
                 ANativeWindow_release(it->second.surface);
@@ -556,7 +563,7 @@ namespace sogen::android
             it->second.desc.rect = rect;
             desc = it->second.desc;
 
-            if (!desc.top_level || (client_width(desc) == previous_width && client_height(desc) == previous_height))
+            if (!is_host_window(desc) || (client_width(desc) == previous_width && client_height(desc) == previous_height))
             {
                 return;
             }
@@ -602,7 +609,7 @@ namespace sogen::android
             }
 
             it->second.desc.visible = visible;
-            if (!it->second.desc.top_level)
+            if (!is_host_window(it->second.desc))
             {
                 return;
             }
@@ -620,7 +627,6 @@ namespace sogen::android
         }
     }
 
-    // The host only shows windows that were top-level when they were created, so a promoted window is recorded but not drawn.
     void android_ui_backend::set_window_relationship(const hwnd window, const hwnd parent, const hwnd owner, const bool top_level)
     {
         const std::lock_guard lock{this->mutex_};
@@ -648,7 +654,7 @@ namespace sogen::android
             }
 
             it->second.desc.title = title;
-            if (!it->second.desc.top_level)
+            if (!is_host_window(it->second.desc))
             {
                 return;
             }

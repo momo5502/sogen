@@ -775,7 +775,7 @@ export function attachSogenUiHost(
         window.visible = !!message.visible;
         window.enabled = message.enabled ?? true;
         window.topLevel = message.top_level ?? true;
-        if (window.topLevel && window.visible) {
+        if (window.topLevel && window.visible && !isPromotedChild(window)) {
           focusedWindow = hwnd;
         }
         break;
@@ -854,7 +854,7 @@ export function attachSogenUiHost(
     if (focusWindow && focusWindow !== window.hwnd) {
       focusedWindow = focusWindow;
       raiseWindow(focusWindow);
-    } else {
+    } else if (!isPromotedChild(window)) {
       focusedWindow = window.hwnd;
     }
     raiseWindow(window.hwnd);
