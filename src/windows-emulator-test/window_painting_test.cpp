@@ -2,6 +2,8 @@
 #include <syscall_utils.hpp>
 
 #include <initializer_list>
+#include <optional>
+#include <tuple>
 
 namespace sogen::syscalls
 {
@@ -72,6 +74,30 @@ namespace sogen::test
                 return syscalls::handle_NtUserGetUpdateRect(this->context(), window, {this->emu.memory}, FALSE) != FALSE;
             }
 
+            std::optional<std::tuple<LONG, LONG, LONG, LONG>> update_rect(const hwnd window)
+            {
+                const auto rect = this->guest_rect({});
+                if (syscalls::handle_NtUserGetUpdateRect(this->context(), window, rect, FALSE) == FALSE)
+                {
+                    return std::nullopt;
+                }
+                const auto value = rect.read();
+                return std::tuple{value.left, value.top, value.right, value.bottom};
+            }
+
+            void invalidate_all(const std::initializer_list<hwnd> windows)
+            {
+                for (const auto window : windows)
+                {
+                    syscalls::handle_NtUserInvalidateRect(this->context(), window, {this->emu.memory}, FALSE);
+                }
+            }
+
+            void redraw(const hwnd window, const UINT flags)
+            {
+                syscalls::handle_NtUserRedrawWindow(this->context(), window, {this->emu.memory}, 0, flags);
+            }
+
             emulator_object<RECT> guest_rect(const RECT& rect)
             {
                 if (this->rect_storage == 0)
@@ -132,5 +158,74 @@ namespace sogen::test
 
         EXPECT_FALSE(this->needs_repaint(left));
         EXPECT_TRUE(this->needs_repaint(right));
+    }
+
+    // RedrawWindow and InvalidateRect reach the children of a window without WS_CLIPCHILDREN, recursively until a window with
+    // WS_CLIPCHILDREN; RDW_ALLCHILDREN and RDW_NOCHILDREN override that, and RDW_VALIDATE follows the same rule.
+    TEST_F(WindowPaintingTest, InvalidatingAParentInvalidatesThePartOfEachChildItCovers)
+    {
+        const auto top_level = this->create_window(0, WS_POPUP | WS_VISIBLE, {.left = 0, .top = 0, .right = 40, .bottom = 30});
+        const auto covered = this->create_window(top_level, WS_CHILD | WS_VISIBLE, {.left = 10, .top = 10, .right = 30, .bottom = 30});
+        const auto grandchild = this->create_window(covered, WS_CHILD | WS_VISIBLE, {.left = 0, .top = 0, .right = 5, .bottom = 5});
+        const auto outside = this->create_window(top_level, WS_CHILD | WS_VISIBLE, {.left = 30, .top = 0, .right = 40, .bottom = 10});
+
+        syscalls::handle_NtUserInvalidateRect(this->context(), top_level,
+                                              this->guest_rect({.left = 0, .top = 0, .right = 20, .bottom = 20}), FALSE);
+
+        EXPECT_EQ(std::tuple(0, 0, 10, 10), this->update_rect(covered));
+        EXPECT_EQ(std::tuple(0, 0, 5, 5), this->update_rect(grandchild));
+        EXPECT_FALSE(this->update_rect(outside));
+    }
+
+    TEST_F(WindowPaintingTest, InvalidationStopsAtAWindowWithClipChildren)
+    {
+        const auto top_level = this->create_window(0, WS_POPUP | WS_VISIBLE, {.left = 0, .top = 0, .right = 40, .bottom = 30});
+        const auto clipping =
+            this->create_window(top_level, WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN, {.left = 0, .top = 0, .right = 20, .bottom = 20});
+        const auto grandchild = this->create_window(clipping, WS_CHILD | WS_VISIBLE, {.left = 0, .top = 0, .right = 5, .bottom = 5});
+
+        this->invalidate_all({top_level});
+
+        EXPECT_TRUE(this->needs_repaint(clipping));
+        EXPECT_FALSE(this->needs_repaint(grandchild));
+    }
+
+    TEST_F(WindowPaintingTest, AllChildrenReachesPastClipChildrenAndNoChildrenStopsAtTheWindow)
+    {
+        const auto top_level =
+            this->create_window(0, WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN, {.left = 0, .top = 0, .right = 40, .bottom = 30});
+        const auto child = this->create_window(top_level, WS_CHILD | WS_VISIBLE, {.left = 0, .top = 0, .right = 20, .bottom = 20});
+        const auto other_top_level = this->create_window(0, WS_POPUP | WS_VISIBLE, {.left = 0, .top = 0, .right = 40, .bottom = 30});
+        const auto other_child =
+            this->create_window(other_top_level, WS_CHILD | WS_VISIBLE, {.left = 0, .top = 0, .right = 20, .bottom = 20});
+
+        this->redraw(top_level, RDW_INVALIDATE | RDW_ALLCHILDREN);
+        this->redraw(other_top_level, RDW_INVALIDATE | RDW_NOCHILDREN);
+
+        EXPECT_TRUE(this->needs_repaint(child));
+        EXPECT_TRUE(this->needs_repaint(other_top_level));
+        EXPECT_FALSE(this->needs_repaint(other_child));
+    }
+
+    TEST_F(WindowPaintingTest, ValidatingFollowsTheSameChildRule)
+    {
+        const auto top_level =
+            this->create_window(0, WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN, {.left = 0, .top = 0, .right = 40, .bottom = 30});
+        const auto child = this->create_window(top_level, WS_CHILD | WS_VISIBLE, {.left = 0, .top = 0, .right = 20, .bottom = 20});
+        const auto other_top_level = this->create_window(0, WS_POPUP | WS_VISIBLE, {.left = 0, .top = 0, .right = 40, .bottom = 30});
+        const auto other_child =
+            this->create_window(other_top_level, WS_CHILD | WS_VISIBLE, {.left = 0, .top = 0, .right = 20, .bottom = 20});
+
+        this->invalidate_all({top_level, child, other_top_level, other_child});
+        this->redraw(top_level, RDW_VALIDATE);
+        this->redraw(other_top_level, RDW_VALIDATE | RDW_NOCHILDREN);
+
+        EXPECT_FALSE(this->needs_repaint(top_level));
+        EXPECT_TRUE(this->needs_repaint(child));
+        EXPECT_FALSE(this->needs_repaint(other_top_level));
+        EXPECT_TRUE(this->needs_repaint(other_child));
+
+        this->redraw(top_level, RDW_VALIDATE | RDW_ALLCHILDREN);
+        EXPECT_FALSE(this->needs_repaint(child));
     }
 }

@@ -1,11 +1,12 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
-#include <algorithm>
+#include <posix_directory.hpp>
+#include <posix_path_syscalls.hpp>
+
 #include <array>
 #include <cstddef>
 #include <cstring>
-#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -61,86 +62,50 @@ namespace sogen
             uint32_t vnode_type{};
         };
 
-        uint32_t vnode_type(const std::filesystem::directory_entry& entry)
+        uint32_t vnode_type(const uint8_t directory_entry_type)
         {
-            std::error_code ec{};
-            switch (entry.symlink_status(ec).type())
+            switch (directory_entry_type)
             {
-            case std::filesystem::file_type::regular:
+            case POSIX_DT_REG:
                 return VREG;
-            case std::filesystem::file_type::directory:
+            case POSIX_DT_DIR:
                 return VDIR;
-            case std::filesystem::file_type::symlink:
+            case POSIX_DT_LNK:
                 return VLNK;
             default:
                 return VNON;
             }
         }
 
-        directory_entry make_dot_entry(macos_emulator& emu, const posix_fd& directory, std::string name)
-        {
-            const auto guest_path = posix_file_system::resolve_guest_path_string(directory.guest_path, name);
-            return {.name = std::move(name), .file_id = emu.file_ids.id_for(guest_path).object_id, .vnode_type = VDIR};
-        }
-
-        bool is_dot_entry(const directory_entry& entry)
+        bool is_dot_entry(const posix_directory_entry& entry)
         {
             return entry.name == "." || entry.name == "..";
         }
 
-        // Entries come in readdir order, "." and ".." first; getattrlistbulk skips those two, like XNU's.
-        std::vector<directory_entry> list_directory(macos_emulator& emu, const posix_fd& directory)
+        uint64_t file_id(macos_emulator& emu, const posix_fd& directory, const posix_directory_entry& entry)
         {
-            std::vector<directory_entry> entries{};
-            std::error_code ec{};
-            for (const auto& entry : std::filesystem::directory_iterator(path_from_utf8(directory.host_path), ec))
-            {
-                auto name = utf8_path_string(entry.path().filename());
-                const auto guest_path = posix_file_system::resolve_guest_path_string(directory.guest_path, name);
-                entries.push_back(
-                    {.name = std::move(name), .file_id = emu.file_ids.id_for(guest_path).object_id, .vnode_type = vnode_type(entry)});
-            }
-
-            std::ranges::sort(entries, {}, &directory_entry::name);
-            entries.insert(entries.begin(), {make_dot_entry(emu, directory, "."), make_dot_entry(emu, directory, "..")});
-            return entries;
+            return emu.file_ids.id_for(posix_file_system::resolve_guest_path_string(directory.guest_path, entry.name)).object_id;
         }
 
-        uint8_t dirent_type(const uint32_t type)
+        directory_entry to_directory_entry(macos_emulator& emu, const posix_fd& directory, const posix_directory_entry& entry)
         {
-            constexpr uint8_t dt_unknown = 0;
-            constexpr uint8_t dt_dir = 4;
-            constexpr uint8_t dt_reg = 8;
-            constexpr uint8_t dt_lnk = 10;
-
-            switch (type)
-            {
-            case VREG:
-                return dt_reg;
-            case VDIR:
-                return dt_dir;
-            case VLNK:
-                return dt_lnk;
-            default:
-                return dt_unknown;
-            }
+            return {.name = entry.name, .file_id = file_id(emu, directory, entry), .vnode_type = vnode_type(entry.type)};
         }
 
         // struct direntry (sys/dirent.h with 64-bit inodes), cut after the name as XNU's DIRENT64_LEN does.
-        std::vector<std::byte> pack_dirent(const directory_entry& entry, const uint64_t next_position)
+        std::vector<std::byte> pack_dirent(const uint64_t file_id, const posix_directory_entry& entry, const uint64_t next_position)
         {
             constexpr size_t name_offset = 21;
 
             const auto name_length = static_cast<uint16_t>(entry.name.size());
             const auto record_length = static_cast<uint16_t>((name_length + 32) & ~7);
-            const auto type = dirent_type(entry.vnode_type);
 
             std::vector<std::byte> record(record_length);
-            std::memcpy(record.data(), &entry.file_id, sizeof(entry.file_id));
+            std::memcpy(record.data(), &file_id, sizeof(file_id));
             std::memcpy(record.data() + 8, &next_position, sizeof(next_position));
             std::memcpy(record.data() + 16, &record_length, sizeof(record_length));
             std::memcpy(record.data() + 18, &name_length, sizeof(name_length));
-            std::memcpy(record.data() + 20, &type, sizeof(type));
+            std::memcpy(record.data() + 20, &entry.type, sizeof(entry.type));
             std::memcpy(record.data() + name_offset, entry.name.data(), entry.name.size());
             return record;
         }
@@ -258,48 +223,21 @@ namespace sogen
 
     void sys_fchdir(const macos_syscall_context& c)
     {
-        const auto* directory = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
-        if (directory == nullptr)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        if (directory->type != fd_type::directory)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOTDIR);
-            return;
-        }
-
-        c.emu_ref.working_directory = directory->guest_path;
-        write_macos_syscall_success(c, 0);
+        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        write_macos_syscall_result(c, posix_fchdir(c.emu_ref.fds, fd, c.emu_ref.working_directory));
     }
 
     void sys_chdir(const macos_syscall_context& c)
     {
-        const auto requested_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
-        if (!requested_path)
+        auto guest_path = read_guest_path_argument(c, 0);
+        if (const auto* error = std::get_if<posix_errno>(&guest_path))
         {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            write_macos_syscall_result(c, *error);
             return;
         }
 
-        const auto guest_path = c.emu_ref.resolve_guest_path(*requested_path);
-        const auto host_path = c.emu_ref.file_system.translate(guest_path);
-        if (requested_path->empty() || !std::filesystem::exists(host_path))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-            return;
-        }
-
-        if (!std::filesystem::is_directory(host_path))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOTDIR);
-            return;
-        }
-
-        c.emu_ref.working_directory = guest_path;
-        write_macos_syscall_success(c, 0);
+        auto& emu = c.emu_ref;
+        write_macos_syscall_result(c, posix_chdir(emu.file_system, emu.working_directory, std::get<std::string>(std::move(guest_path))));
     }
 
     void sys_getattrlistbulk(const macos_syscall_context& c)
@@ -345,7 +283,7 @@ namespace sogen
         }
 
         const auto pack_invalid = (options & FSOPT_PACK_INVAL_ATTRS) != 0;
-        const auto entries = list_directory(c.emu_ref, *directory);
+        const auto& entries = posix_directory_listing(*directory);
 
         std::vector<std::byte> packed{};
         uint64_t returned = 0;
@@ -358,7 +296,7 @@ namespace sogen
                 continue;
             }
 
-            const auto record = pack_bulk_entry(entry, requested, pack_invalid);
+            const auto record = pack_bulk_entry(to_directory_entry(c.emu_ref, *directory, entry), requested, pack_invalid);
             if (packed.size() + record.size() > buffer_size)
             {
                 break;
@@ -413,30 +351,21 @@ namespace sogen
 
         const auto is_extended = buffer_size >= extended_buffer_size;
         const auto entries_size = is_extended ? buffer_size - sizeof(end_of_directory) : buffer_size;
-        const auto entries = list_directory(c.emu_ref, *directory);
+        const auto pack = [&](const posix_directory_entry& entry, const uint64_t next_position) {
+            return pack_dirent(file_id(c.emu_ref, *directory, entry), entry, next_position);
+        };
 
-        std::vector<std::byte> packed{};
-        auto position = directory->directory_position;
-        for (; position < entries.size(); ++position)
+        const auto result = posix_read_directory(*directory, entries_size, pack);
+        if (const auto* error = std::get_if<posix_errno>(&result))
         {
-            const auto record = pack_dirent(entries.at(static_cast<size_t>(position)), position + 1);
-            if (packed.size() + record.size() > entries_size)
-            {
-                break;
-            }
-
-            packed.insert(packed.end(), record.begin(), record.end());
-        }
-
-        if (packed.empty() && position < entries.size())
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            write_macos_syscall_result(c, *error);
             return;
         }
 
+        const auto& records = std::get<posix_directory_records>(result);
         const auto start_position = directory->directory_position;
-        const auto flags = position == entries.size() ? end_of_directory : 0;
-        if (!c.emu.try_write_memory(buffer, packed.data(), packed.size()) ||
+        const auto flags = records.reached_end ? end_of_directory : 0;
+        if (!c.emu.try_write_memory(buffer, records.data.data(), records.data.size()) ||
             !c.emu.try_write_memory(position_pointer, &start_position, sizeof(start_position)) ||
             (is_extended && !c.emu.try_write_memory(buffer + buffer_size - sizeof(flags), &flags, sizeof(flags))))
         {
@@ -445,8 +374,8 @@ namespace sogen
         }
 
         c.emu_ref.log.log("getdirentries64(%d, %s) -> %llu entries\n", fd, directory->guest_path.c_str(),
-                          static_cast<unsigned long long>(position - start_position));
-        directory->directory_position = position;
-        write_macos_syscall_success(c, packed.size());
+                          static_cast<unsigned long long>(records.end_position - start_position));
+        directory->directory_position = records.end_position;
+        write_macos_syscall_success(c, records.data.size());
     }
 }

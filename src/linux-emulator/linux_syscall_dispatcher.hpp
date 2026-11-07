@@ -105,14 +105,20 @@ namespace sogen
             return linux_errno::LINUX_EISDIR;
         case posix_errno::emfile:
             return linux_errno::LINUX_EMFILE;
+        case posix_errno::enodev:
+            return linux_errno::LINUX_ENODEV;
         case posix_errno::enoent:
             return linux_errno::LINUX_ENOENT;
+        case posix_errno::enomem:
+            return linux_errno::LINUX_ENOMEM;
         case posix_errno::enospc:
             return linux_errno::LINUX_ENOSPC;
         case posix_errno::enotconn:
             return linux_errno::LINUX_ENOTCONN;
         case posix_errno::enotdir:
             return linux_errno::LINUX_ENOTDIR;
+        case posix_errno::enotty:
+            return linux_errno::LINUX_ENOTTY;
         case posix_errno::eperm:
             return linux_errno::LINUX_EPERM;
         case posix_errno::epipe:

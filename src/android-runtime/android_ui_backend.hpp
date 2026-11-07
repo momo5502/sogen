@@ -79,6 +79,7 @@ namespace sogen::android
         void set_window_rect(hwnd window, const RECT& rect) override;
         void set_window_visible(hwnd window, bool visible) override;
         void set_window_title(hwnd window, std::u16string_view title) override;
+        void set_window_relationship(hwnd window, hwnd parent, hwnd owner, bool top_level) override;
         void present_surface(hwnd window, const ui_surface_desc& surface) override;
         void set_cursor_position(hwnd window, int32_t screen_x, int32_t screen_y) override;
         void set_cursor_clip(hwnd window, const std::optional<ui_rect>& screen_rect, bool relative) override;

@@ -54,10 +54,11 @@ namespace sogen
 
             constexpr uint32_t k_gdi_dc_attr_hbrush_offset = 0xA0;
             constexpr uint32_t k_gdi_dc_attr_hpen_offset = 0xA8;
-            constexpr uint32_t k_gdi_dc_attr_dc_brush_color_offset = 0xC4;   // SetDCBrushColor
-            constexpr uint32_t k_gdi_dc_attr_dc_pen_color_offset = 0xCC;     // SetDCPenColor
-            constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0x20; // DC_ATTR.crBackgroundClr (SetBkColor)
-            constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0x28;       // DC_ATTR.crForegroundClr (SetTextColor)
+            constexpr uint32_t k_gdi_dc_attr_dc_brush_color_offset = 0xC4; // SetDCBrushColor
+            constexpr uint32_t k_gdi_dc_attr_dc_pen_color_offset = 0xCC;   // SetDCPenColor
+            constexpr uint32_t k_gdi_dc_attr_realized_background_color_offset = 0xB0;
+            constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0xB4; // SetBkColor/GetBkColor
+            constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0xBC;       // SetTextColor/GetTextColor
             constexpr uint32_t k_gdi_dc_attr_rop2_offset = 0xD4;             // DC_ATTR.jROP2 (SetROP2)
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
             constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
@@ -76,10 +77,10 @@ namespace sogen
             constexpr uint32_t k_stock_black_pen_index = 0x07;
             constexpr uint32_t k_stock_null_pen_index = 0x08;
             constexpr uint32_t k_stock_system_font_index = 0x0D;
+            constexpr uint32_t k_stock_default_palette = 0x0F;
             constexpr uint32_t k_stock_default_gui_font_index = 0x11;
             constexpr uint32_t k_stock_dc_brush_index = 0x12;
             constexpr uint32_t k_stock_dc_pen_index = 0x13;
-            constexpr uint32_t k_default_gui_font_data_index = 0x07;
             constexpr uint32_t k_user_client_drawing_brush_index = USER_NUM_SYSCOLORS;
             static_assert(k_user_client_drawing_brush_index < USER_SERVERINFO_BRUSH_SLOT_COUNT,
                           "client drawing brush index must be inside server info brush table");
@@ -398,12 +399,32 @@ namespace sogen
 
             uint64_t read_gdi_object_slot(const syscall_context& c, const uint32_t index)
             {
-                if (index >= 0x20)
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects)>)
                 {
                     return 0;
                 }
 
-                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, Objects) + (sizeof(uint64_t) * index));
+                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, StockObjects) + (sizeof(uint64_t) * index));
+            }
+
+            uint64_t read_gdi_object96_slot(const syscall_context& c, const uint32_t index)
+            {
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects96)>)
+                {
+                    return 0;
+                }
+
+                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, StockObjects96) + (sizeof(uint64_t) * index));
+            }
+
+            uint64_t read_gdi_dpi_fonts_slot(const syscall_context& c, const uint32_t index)
+            {
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::DpiDepDefaultGuiFonts)>)
+                {
+                    return 0;
+                }
+
+                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, DpiDepDefaultGuiFonts) + (sizeof(uint64_t) * index));
             }
 
             // The stock objects, the memory DC default bitmap among them, and the system color brushes belong to the
@@ -416,9 +437,25 @@ namespace sogen
                     return true;
                 }
 
-                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::Objects)>; ++index)
+                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects)>; ++index)
                 {
                     if (predicate(static_cast<uint32_t>(read_gdi_object_slot(c, index))))
+                    {
+                        return true;
+                    }
+                }
+
+                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects96)>; ++index)
+                {
+                    if (predicate(static_cast<uint32_t>(read_gdi_object96_slot(c, index))))
+                    {
+                        return true;
+                    }
+                }
+
+                for (uint32_t index = 0; index < std::extent_v<decltype(GDI_SHARED_MEMORY64::DpiDepDefaultGuiFonts)>; ++index)
+                {
+                    if (predicate(static_cast<uint32_t>(read_gdi_dpi_fonts_slot(c, index))))
                     {
                         return true;
                     }
@@ -436,7 +473,7 @@ namespace sogen
 
             bool write_gdi_object_slot(const syscall_context& c, const uint32_t index, const uint64_t value)
             {
-                if (index >= 0x20)
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects)>)
                 {
                     return false;
                 }
@@ -447,24 +484,14 @@ namespace sogen
                     return false;
                 }
 
-                const auto slot = table + offsetof(GDI_SHARED_MEMORY64, Objects) + (sizeof(uint64_t) * index);
+                const auto slot = table + offsetof(GDI_SHARED_MEMORY64, StockObjects) + (sizeof(uint64_t) * index);
                 c.emu.write_memory(slot, &value, sizeof(value));
                 return true;
             }
 
-            uint64_t read_gdi_data_slot(const syscall_context& c, const uint32_t index)
+            bool write_gdi_object96_slot(const syscall_context& c, const uint32_t index, const uint64_t value)
             {
-                if (index >= 0x200)
-                {
-                    return 0;
-                }
-
-                return read_gdi_shared_value(c, offsetof(GDI_SHARED_MEMORY64, Data) + (sizeof(uint64_t) * index));
-            }
-
-            bool write_gdi_data_slot(const syscall_context& c, const uint32_t index, const uint64_t value)
-            {
-                if (index >= 0x200)
+                if (index >= std::extent_v<decltype(GDI_SHARED_MEMORY64::StockObjects96)>)
                 {
                     return false;
                 }
@@ -475,7 +502,7 @@ namespace sogen
                     return false;
                 }
 
-                const auto slot = table + offsetof(GDI_SHARED_MEMORY64, Data) + (sizeof(uint64_t) * index);
+                const auto slot = table + offsetof(GDI_SHARED_MEMORY64, StockObjects96) + (sizeof(uint64_t) * index);
                 c.emu.write_memory(slot, &value, sizeof(value));
                 return true;
             }
@@ -962,7 +989,7 @@ namespace sogen
                 // Walk up to the owning top-level window, accumulating each child's client-area offset.
                 int32_t off_x = 0;
                 int32_t off_y = 0;
-                while (win && (win->style & WS_CHILD) != 0)
+                while (win && !c.proc.is_surface_root(*win))
                 {
                     off_x += win->client_x();
                     off_y += win->client_y();
@@ -1063,7 +1090,7 @@ namespace sogen
                                        .right = origin.x + win->client_width(),
                                        .bottom = origin.y + win->client_height()});
 
-                    const auto* parent = (win->style & WS_CHILD) != 0 ? c.proc.windows.get(win->parent_handle) : nullptr;
+                    const auto* parent = c.proc.is_surface_root(*win) ? nullptr : c.proc.windows.get(win->parent_handle);
                     if (!parent)
                     {
                         break;
@@ -1958,7 +1985,30 @@ namespace sogen
                     bool mirror_to_default_gui_slot;
                 };
 
-                constexpr std::array<stock_seed, 13> seeds = {
+                constexpr std::array<EMU_PALETTEENTRY, 20> default_palette_entries = {
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x00, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x80, .peGreen = 0x00, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x80, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x80, .peGreen = 0x80, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x00, .peBlue = 0x80, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x80, .peGreen = 0x00, .peBlue = 0x80, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x80, .peBlue = 0x80, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xC0, .peGreen = 0xC0, .peBlue = 0xC0, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xC0, .peGreen = 0xDC, .peBlue = 0xC0, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xA6, .peGreen = 0xCA, .peBlue = 0xF0, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0xFB, .peBlue = 0xF0, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xA0, .peGreen = 0xA0, .peBlue = 0xA4, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x80, .peGreen = 0x80, .peBlue = 0x80, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0x00, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0xFF, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0xFF, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x00, .peBlue = 0xFF, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0x00, .peBlue = 0xFF, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0xFF, .peBlue = 0xFF, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0xFF, .peBlue = 0xFF, .peFlags = 0x00},
+                };
+
+                constexpr std::array<stock_seed, 14> seeds = {
                     stock_seed{
                         .index = k_stock_white_brush_index,
                         .type = k_gdi_brush_type,
@@ -2020,6 +2070,12 @@ namespace sogen
                         .mirror_to_default_gui_slot = false,
                     },
                     stock_seed{
+                        .index = k_stock_default_palette,
+                        .type = k_gdi_palette_type,
+                        .attr_size = k_gdi_palette_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
                         .index = k_stock_default_gui_font_index,
                         .type = k_gdi_font_type,
                         .attr_size = k_gdi_font_attr_size,
@@ -2067,19 +2123,23 @@ namespace sogen
                     {
                         c.proc.gdi_fonts[handle] = stock_font_logfont(seed.index);
                     }
+                    else if (seed.type == k_gdi_palette_type)
+                    {
+                        c.proc.gdi_palettes[handle].assign(default_palette_entries.begin(), default_palette_entries.end());
+                    }
 
                     if (seed.mirror_to_default_gui_slot)
                     {
-                        write_gdi_data_slot(c, k_default_gui_font_data_index, handle64);
+                        write_gdi_object96_slot(c, k_stock_default_gui_font_index, handle64);
                     }
                 }
 
-                if (read_gdi_data_slot(c, k_default_gui_font_data_index) == 0)
+                if (read_gdi_object96_slot(c, k_stock_default_gui_font_index) == 0)
                 {
                     const auto default_gui_font = read_gdi_object_slot(c, k_stock_default_gui_font_index);
                     if (default_gui_font != 0)
                     {
-                        write_gdi_data_slot(c, k_default_gui_font_data_index, default_gui_font);
+                        write_gdi_object96_slot(c, k_stock_default_gui_font_index, default_gui_font);
                     }
                 }
 
@@ -2094,6 +2154,10 @@ namespace sogen
 
                 constexpr uint32_t white = 0x00FFFFFFu;
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_dc_brush_color_offset, &white, sizeof(white));
+
+                // A new DC draws opaque text on white; gdi32 batches text with the realized background color.
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_background_color_offset, &white, sizeof(white));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_realized_background_color_offset, &white, sizeof(white));
 
                 const std::array<std::pair<uint32_t, uint32_t>, 3> default_objects{{
                     {k_stock_system_font_index, k_gdi_dc_attr_font_offset},
@@ -3006,6 +3070,14 @@ namespace sogen
 
             it->second.selected_bitmap = default_bitmap;
             return dc;
+        }
+
+        bool is_gdi_brush(const syscall_context& c, const uint64_t handle)
+        {
+            GDI_HANDLE_ENTRY64 entry{};
+            uint64_t entry_address = 0;
+            return handle != 0 && read_gdi_entry_for_handle(c, static_cast<uint32_t>(handle), entry, entry_address) &&
+                   gdi_object_type(entry) == k_gdi_brush_type;
         }
 
         hdc create_gdi_window_dc(const syscall_context& c, const hwnd window)

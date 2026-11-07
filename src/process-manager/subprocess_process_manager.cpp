@@ -433,6 +433,7 @@ namespace sogen
         std::optional<int> host_exit_status{};
         bool host_failure{};
         std::atomic_bool kill_requested{};
+        std::atomic_bool resumed{};
 
         std::optional<ProcessProtocol::MessageT> receive_response(const ProcessProtocol::MessagePayload expected,
                                                                   const std::chrono::steady_clock::time_point deadline)
@@ -1124,7 +1125,40 @@ namespace sogen
         {
             return process_error::communication_failure;
         }
-        return decode_error(response->payload.AsResumeProcessResponse()->error);
+
+        const auto error = decode_error(response->payload.AsResumeProcessResponse()->error);
+        if (error == process_error::none)
+        {
+            entry->resumed = true;
+        }
+        return error;
+    }
+
+    // A child that was never resumed cannot run without this process, so only resumed children are waited for; the
+    // destructor still ends the others.
+    void subprocess_process_manager::wait_for_processes()
+    {
+        std::vector<std::shared_ptr<process_entry>> processes{};
+        {
+            const std::scoped_lock lock(this->mutex_);
+            this->stopping_ = true;
+            for (const auto& [handle, process] : this->processes_)
+            {
+                (void)handle;
+                if (process->resumed)
+                {
+                    processes.push_back(process);
+                }
+            }
+        }
+
+        for (const auto& process : processes)
+        {
+            if (process->output_thread.joinable())
+            {
+                process->output_thread.join();
+            }
+        }
     }
 
     process_memory_result subprocess_process_manager::allocate_memory(const managed_process process, const uint64_t address,
@@ -1509,6 +1543,22 @@ namespace sogen
         if (!entry)
         {
             return {.error = process_error::invalid_process};
+        }
+
+        {
+            const std::scoped_lock lock(entry->state_mutex);
+            if (entry->exit)
+            {
+                return {.status = entry->exit};
+            }
+        }
+
+        // The child reports its guest's exit before its host process waits for its own children, so the guest process is
+        // signaled as soon as the report arrives, not when the host process ends.
+        if (std::unique_lock control(entry->control_mutex, std::try_to_lock); control.owns_lock() && entry->control.is_ready(true))
+        {
+            (void)entry->receive_response(ProcessProtocol::MessagePayload_ProcessExited,
+                                          std::chrono::steady_clock::now() + exit_notification_timeout);
         }
 
         bool host_exited{};
