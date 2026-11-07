@@ -1,19 +1,13 @@
 #include "posix_path_syscalls.hpp"
+#include "posix_stat.hpp"
 
-#include <filesystem>
-#include <system_error>
 #include <utility>
 
 namespace sogen
 {
     namespace
     {
-        bool has_any_execute_permission(const std::filesystem::perms permissions)
-        {
-            constexpr auto any_execute =
-                std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
-            return (permissions & any_execute) != std::filesystem::perms::none;
-        }
+        constexpr uint32_t ANY_EXECUTE_PERMISSION = 0111;
     }
 
     posix_errno posix_errno_of(const posix_path_error error)
@@ -42,14 +36,13 @@ namespace sogen
 
     posix_result posix_chdir(const posix_file_system& file_system, std::string& working_directory, std::string guest_path)
     {
-        std::error_code ec{};
-        const auto status = std::filesystem::status(file_system.translate(guest_path), ec);
-        if (!std::filesystem::exists(status))
+        const auto status = posix_stat_path(file_system, guest_path, true);
+        if (const auto* error = std::get_if<posix_errno>(&status))
         {
-            return posix_errno::enoent;
+            return *error;
         }
 
-        if (!std::filesystem::is_directory(status))
+        if (std::get<posix_file_status>(status).file_type() != POSIX_S_IFDIR)
         {
             return posix_errno::enotdir;
         }
@@ -82,11 +75,10 @@ namespace sogen
 
     posix_result posix_access(const posix_file_system& file_system, const std::string& guest_path, const uint64_t mode)
     {
-        std::error_code ec{};
-        const auto status = std::filesystem::status(file_system.translate(guest_path), ec);
-        if (!std::filesystem::exists(status))
+        const auto status = posix_stat_path(file_system, guest_path, true);
+        if (const auto* error = std::get_if<posix_errno>(&status))
         {
-            return posix_errno::enoent;
+            return *error;
         }
 
         if ((mode & POSIX_W_OK) && file_system.is_read_only_guest_path(guest_path))
@@ -94,7 +86,7 @@ namespace sogen
             return posix_errno::erofs;
         }
 
-        if ((mode & POSIX_X_OK) && !has_any_execute_permission(status.permissions()))
+        if ((mode & POSIX_X_OK) && (std::get<posix_file_status>(status).mode & ANY_EXECUTE_PERMISSION) == 0)
         {
             return posix_errno::eacces;
         }

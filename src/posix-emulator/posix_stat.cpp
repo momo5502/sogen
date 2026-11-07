@@ -2,6 +2,7 @@
 #include "posix_host_error.hpp"
 
 #include <cerrno>
+#include <system_error>
 #include <sys/stat.h>
 
 #if defined(_WIN32)
@@ -49,6 +50,26 @@ namespace sogen
 
             CloseHandle(handle);
         }
+
+        // The C runtime grants execute permission only to .exe, .com, .bat and .cmd files, which would leave guest
+        // executables unrunnable; std::filesystem derives the permissions from the read-only attribute alone.
+        void apply_permissions(const std::filesystem::path& path, posix_file_status& status)
+        {
+            std::error_code ec{};
+            const auto permissions = std::filesystem::status(path, ec).permissions();
+            if (ec || permissions == std::filesystem::perms::unknown)
+            {
+                return;
+            }
+
+            status.mode = status.file_type() | (static_cast<uint32_t>(permissions) & POSIX_PERMISSION_BITS);
+        }
+
+        void apply_host_details(const std::filesystem::path& path, posix_file_status& status)
+        {
+            apply_file_id(path, status);
+            apply_permissions(path, status);
+        }
 #else
         using host_stat = struct stat;
 
@@ -62,7 +83,7 @@ namespace sogen
             return {.seconds = time.tv_sec, .nanoseconds = time.tv_nsec};
         }
 
-        void apply_file_id(const std::filesystem::path& /*path*/, posix_file_status& /*status*/)
+        void apply_host_details(const std::filesystem::path& /*path*/, posix_file_status& /*status*/)
         {
         }
 #endif
@@ -109,7 +130,7 @@ namespace sogen
         }
 
         auto status = to_file_status(host);
-        apply_file_id(host_path, status);
+        apply_host_details(host_path, status);
         return status;
     }
 
