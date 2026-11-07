@@ -5,6 +5,7 @@
 #include "pseudo_terminal.hpp"
 
 #include <frame_pacer.hpp>
+#include <display_modes.hpp>
 #include <filesystem/directory_mount.hpp>
 #include <filesystem/document_broker.hpp>
 
@@ -54,6 +55,7 @@ namespace sogen::android
         std::string working_directory{};
         std::string backend{};
         bool live_network{};
+        std::optional<display_mode> max_display_mode{};
         std::filesystem::path sandbox_executable{};
         vulkan_driver vulkan{};
         // Where a suspend without a destination saves the process.
