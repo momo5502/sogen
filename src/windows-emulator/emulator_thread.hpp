@@ -454,7 +454,9 @@ namespace sogen
         // When set, the thread is parked until this host-side predicate returns true. Used by the GPU
         // bridge to wait on a Vulkan semaphore cooperatively (other guest threads run while the GPU works)
         // instead of blocking the single VP. Polled by is_thread_ready and completed via
-        // mark_as_ready(STATUS_SUCCESS). Not serialized: the only user (GPU bridge) is not snapshotable.
+        // mark_as_ready(STATUS_SUCCESS). Idle vCPUs poll it once a millisecond unless woken, so whatever makes it
+        // true calls windows_emulator::credit_idle_wakeup. Not serialized: the only user (GPU bridge) is not
+        // snapshotable.
         std::function<bool()> await_host_condition{};
 
         bool apc_alertable{false};

@@ -1458,16 +1458,18 @@ namespace sogen
                 }
 
                 // Infinite wait, not yet signaled: blocking would freeze the single VP and every guest thread.
-                // Park on a semaphore-polling predicate instead, so the scheduler runs other threads and wakes
-                // this one when the GPU signals.
+                // A host thread waits in the driver instead, and wakes an idle vCPU to run this one again once the
+                // GPU signals. The kernel lock stays free meanwhile.
                 const auto out_status = write_output(win_emu, context, gpu_bridge::result_response{.vk_result = vk_success, .reserved = 0});
                 if (out_status != STATUS_SUCCESS)
                 {
                     return out_status;
                 }
 
-                context.thread().await_host_condition = [this, &win_emu, context, device, flags, entries = std::move(entries), count]() {
-                    const int32_t result = this->vulkan_.wait_semaphores(device, flags, entries.data(), count, 0);
+                const auto wait =
+                    this->vulkan_.wait_semaphores_async(device, flags, entries.data(), count, [&win_emu] { win_emu.credit_idle_wakeup(); });
+                context.thread().await_host_condition = [this, &win_emu, context, wait]() {
+                    const int32_t result = wait->load(std::memory_order_acquire);
                     if (result == vk_timeout)
                     {
                         return false;

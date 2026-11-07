@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -189,6 +190,12 @@ namespace sogen
         int32_t get_semaphore_counter_value(uint64_t device, uint64_t semaphore, uint64_t& out_value);
         int32_t signal_semaphore(uint64_t device, uint64_t semaphore, uint64_t value);
         int32_t wait_semaphores(uint64_t device, uint32_t flags, const void* entries, uint32_t count, uint64_t timeout);
+        // Waits as wait_semaphores does with no timeout, but on a host thread, so the caller's locks stay free while the
+        // GPU works. The result reads VK_TIMEOUT until the wait ends; on_done runs on that thread once it is in.
+        // Destroying the device or a waited semaphore ends the wait first, with VK_ERROR_INITIALIZATION_FAILED, as
+        // wait_semaphores reports objects that are gone.
+        std::shared_ptr<const std::atomic<int32_t>> wait_semaphores_async(uint64_t device, uint32_t flags, const void* entries,
+                                                                          uint32_t count, std::function<void()> on_done);
         uint64_t get_buffer_device_address(uint64_t device, uint64_t buffer);
 
         // Non-blocking: returns VK_SUCCESS if signaled, VK_NOT_READY otherwise. Never waits.
