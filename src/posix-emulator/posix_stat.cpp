@@ -19,7 +19,7 @@ namespace sogen
         constexpr uint32_t ANONYMOUS_INODE_PERMISSIONS = 0600;
 
 #if defined(_WIN32)
-        using host_stat = struct _stat64;
+        using host_stat = struct ::_stat64;
 
         int stat_host(const std::filesystem::path& path, host_stat& status, bool /*follow_symlinks*/)
         {
