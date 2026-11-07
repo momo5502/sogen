@@ -126,7 +126,6 @@ namespace sogen
         }
 
         size_t read_at(uint64_t position, std::span<std::byte> buffer) const;
-        std::optional<size_t> read(std::span<std::byte> buffer) const;
         std::optional<uint64_t> seek(int64_t offset, int origin) const;
 
         ~posix_fd()

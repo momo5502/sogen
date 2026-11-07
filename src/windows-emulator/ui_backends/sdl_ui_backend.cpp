@@ -705,6 +705,8 @@ namespace sogen
 
             void reset() override
             {
+                ++this->cursor_generation_;
+                this->clear_system_cursors();
                 for (auto& [guest, state] : this->windows_)
                 {
                     (void)guest;
@@ -1401,6 +1403,83 @@ namespace sogen
                 });
             }
 
+            void set_system_cursor(const uint32_t idc) override
+            {
+                const std::lock_guard lock(this->command_mutex_);
+                const auto generation = this->cursor_generation_.load();
+                this->commands_.emplace_back([this, idc, generation] {
+                    if (generation != this->cursor_generation_.load())
+                    {
+                        return;
+                    }
+                    if (!this->ensure_initialized())
+                    {
+                        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Cannot initialize video for system cursor: %s", SDL_GetError());
+                        return;
+                    }
+                    SDL_SystemCursor id{SDL_SYSTEM_CURSOR_DEFAULT};
+                    switch (idc)
+                    {
+                    case 32513:
+                        id = SDL_SYSTEM_CURSOR_TEXT;
+                        break;
+                    case 32514:
+                        id = SDL_SYSTEM_CURSOR_WAIT;
+                        break;
+                    case 32515:
+                        id = SDL_SYSTEM_CURSOR_CROSSHAIR;
+                        break;
+                    case 32642:
+                        id = SDL_SYSTEM_CURSOR_NWSE_RESIZE;
+                        break;
+                    case 32643:
+                        id = SDL_SYSTEM_CURSOR_NESW_RESIZE;
+                        break;
+                    case 32644:
+                        id = SDL_SYSTEM_CURSOR_EW_RESIZE;
+                        break;
+                    case 32645:
+                        id = SDL_SYSTEM_CURSOR_NS_RESIZE;
+                        break;
+                    case 32646:
+                        id = SDL_SYSTEM_CURSOR_MOVE;
+                        break;
+                    case 32648:
+                        id = SDL_SYSTEM_CURSOR_NOT_ALLOWED;
+                        break;
+                    case 32649:
+                        id = SDL_SYSTEM_CURSOR_POINTER;
+                        break;
+                    case 32650:
+                        id = SDL_SYSTEM_CURSOR_PROGRESS;
+                        break;
+                    default:
+                        break;
+                    }
+                    const auto [entry, inserted] = this->system_cursors_.try_emplace(id);
+                    if (inserted)
+                    {
+                        entry->second.reset(SDL_CreateSystemCursor(id));
+                        if (!entry->second)
+                        {
+                            SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Cannot create system cursor: %s", SDL_GetError());
+                        }
+                    }
+                    if (auto* cursor = entry->second.get(); cursor)
+                    {
+                        if (SDL_SetCursor(cursor))
+                        {
+                            return;
+                        }
+                        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Cannot select system cursor: %s", SDL_GetError());
+                    }
+                    if (auto* fallback = SDL_GetDefaultCursor())
+                    {
+                        SDL_SetCursor(fallback);
+                    }
+                });
+            }
+
             void set_cursor_visibility(const bool visible) override
             {
                 this->queue_or_run([visible] {
@@ -1417,6 +1496,28 @@ namespace sogen
             }
 
           private:
+            struct cursor_deleter
+            {
+                void operator()(SDL_Cursor* cursor) const
+                {
+                    SDL_DestroyCursor(cursor);
+                }
+            };
+
+            void clear_system_cursors()
+            {
+                if (this->system_cursors_.empty())
+                {
+                    return;
+                }
+                assert(this->ui_thread_known_ && this->ui_thread_id_ == std::this_thread::get_id());
+                if (auto* cursor = SDL_GetDefaultCursor())
+                {
+                    SDL_SetCursor(cursor);
+                }
+                this->system_cursors_.clear();
+            }
+
             // SDL windows are thread-affine. Operations from vCPU workers are queued to the UI thread;
             // the synchronous variant is reserved for Vulkan setup that must return a native handle.
             void queue_or_run(std::function<void()> task)
@@ -1983,6 +2084,8 @@ namespace sogen
                 SDL_SetWindowRelativeMouseMode(target, this->cursor_capture_.relative);
             }
 
+            std::map<SDL_SystemCursor, std::unique_ptr<SDL_Cursor, cursor_deleter>> system_cursors_{};
+            std::atomic<uint64_t> cursor_generation_{};
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
             std::array<std::chrono::steady_clock::time_point, SDL_SCANCODE_COUNT> key_down_since_{};
             std::vector<pending_key_release> pending_key_releases_{};

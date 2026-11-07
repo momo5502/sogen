@@ -1,5 +1,6 @@
 #pragma once
 #include "section_view_manager.hpp"
+#include "display_modes.hpp"
 #include "arch/windows_abi.hpp"
 
 #include "emulator_utils.hpp"
@@ -674,12 +675,10 @@ namespace sogen
         handle default_monitor_handle{};
         handle default_desktop_window_handle{};
 
-        static constexpr uint32_t default_display_width = 1920;
-        static constexpr uint32_t default_display_height = 1080;
-        uint32_t display_width{default_display_width};
-        uint32_t display_height{default_display_height};
-        uint32_t registry_display_width{default_display_width};
-        uint32_t registry_display_height{default_display_height};
+        uint32_t display_width{default_display_mode.width};
+        uint32_t display_height{default_display_mode.height};
+        uint32_t registry_display_width{default_display_mode.width};
+        uint32_t registry_display_height{default_display_mode.height};
 
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
         void set_mouse_capture(hwnd window);

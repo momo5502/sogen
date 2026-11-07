@@ -866,6 +866,7 @@ namespace sogen
           intercept_kusd_(settings.intercept_kusd),
           spoof_gpu_features_(settings.spoof_gpu_features),
           elevated_(settings.elevated),
+          max_display_mode_(settings.max_display_mode),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
     {
         if (this->vcpu_count_ == 0)
@@ -874,6 +875,11 @@ namespace sogen
         }
 
         this->memory.set_execute_implies_read(guest_architecture_of(*this->emu_) == windows_guest_architecture::x86_64);
+
+        if (this->max_display_mode_ && std::ranges::find(display_modes, *this->max_display_mode_) == display_modes.end())
+        {
+            throw std::invalid_argument("The maximum display mode must be one of the display's modes");
+        }
 
         if (this->vcpu_count_ > 1 && !this->emu_->supports_multiple_vcpus())
         {
@@ -3133,6 +3139,7 @@ namespace sogen
         this->process.restore_after_state_restore(*this);
         // A state saved while vCPU 0 was idle, without prepare_serialization, has no running thread.
         this->occupy_idle_first_vcpu(nullptr);
+        this->apply_cursor_shape();
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
         this->release_held_input();
@@ -3177,6 +3184,26 @@ namespace sogen
         }
         const auto* executable = this->mod_manager.executable;
         return (executable && (executable->characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE)) ? 0xFFFEFFFF : 0x7FFEFFFF;
+    }
+
+    void windows_emulator::apply_cursor_shape()
+    {
+        if (this->process.current_cursor == 0)
+        {
+            return;
+        }
+        uint32_t idc = 32512;
+        const auto* cursor = this->process.cursor_icons.get(this->process.current_cursor);
+        if (cursor && cursor->type == 1 && cursor->resource_name.empty() &&
+            utils::string::equals_ignore_case(cursor->module_name, std::u16string{u"USER32"}) &&
+            ((cursor->resource_id >= 32512 && cursor->resource_id <= 32516) ||
+             (cursor->resource_id >= 32642 && cursor->resource_id <= 32646) ||
+             (cursor->resource_id >= 32648 && cursor->resource_id <= 32652) || cursor->resource_id == 32671 ||
+             cursor->resource_id == 32672))
+        {
+            idc = cursor->resource_id;
+        }
+        this->ui().set_system_cursor(idc);
     }
 
     // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while
@@ -3257,6 +3284,7 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->apply_cursor_shape();
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
     }
