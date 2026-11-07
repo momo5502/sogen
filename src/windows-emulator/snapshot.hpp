@@ -35,13 +35,15 @@ namespace sogen
         };
 
         // Saves the running emulator when asked to from any thread. A process that presents frames is stopped after its
-        // next present, or where it is if none comes within two seconds. A failed save keeps the process running.
+        // next present, or where it is if none comes within two seconds. A failed save keeps the process running, and so
+        // does a successful one when the controller was made to keep it running.
         class controller
         {
           public:
             using outcome_callback = std::function<void(const snapshot_outcome& outcome)>;
 
-            controller(windows_emulator& win_emu, std::string configuration, std::filesystem::path directory, outcome_callback on_outcome);
+            controller(windows_emulator& win_emu, std::string configuration, std::filesystem::path directory, outcome_callback on_outcome,
+                       bool keep_running = false);
             ~controller();
 
             controller(const controller&) = delete;
@@ -53,7 +55,8 @@ namespace sogen
             bool request(std::filesystem::path destination = {});
             void stop();
 
-            // Runs the emulator until the process exits, is stopped, or was saved, which returns true.
+            // Runs the emulator until the process exits, is stopped, or was saved, which returns true. A controller that keeps
+            // the process running goes on after each save and returns once the process exits or is stopped.
             bool run();
 
           private:
@@ -64,6 +67,7 @@ namespace sogen
             std::string configuration_{};
             std::filesystem::path directory_{};
             outcome_callback on_outcome_{};
+            bool keep_running_{};
 
             std::mutex mutex_{};
             std::condition_variable changed_{};

@@ -72,6 +72,7 @@ namespace sogen
 #endif
             std::optional<uint64_t> break_call{};
             std::filesystem::path dump{};
+            std::filesystem::path snapshot_directory{"snapshots"};
             std::filesystem::path minidump_path{};
             std::filesystem::path report_path{};
             std::filesystem::path stdout_path{};
@@ -418,6 +419,60 @@ namespace sogen
             }
         }
 
+#ifndef OS_EMSCRIPTEN
+        // Runs the process until it exits or is interrupted. Ctrl+Alt+Shift+S in its window saves it to the directory
+        // meanwhile, and it keeps running.
+        void run_with_snapshot_hotkey(windows_emulator& win_emu, const std::filesystem::path& directory,
+                                      const std::atomic_uint32_t& signals_received)
+        {
+            snapshot::controller snapshots{win_emu,
+                                           {},
+                                           directory,
+                                           [&](const snapshot::snapshot_outcome& outcome) {
+                                               if (outcome.error.empty())
+                                               {
+                                                   win_emu.log.force_print(color::green, "Saved the process to %s\n",
+                                                                           outcome.path.string().c_str());
+                                               }
+                                               else
+                                               {
+                                                   win_emu.log.error("Saving the process failed: %s\n", outcome.error.c_str());
+                                               }
+                                           },
+                                           true};
+            win_emu.ui().set_snapshot_request_sink([&] { snapshots.request(); });
+            const auto snapshot_sink_guard = utils::finally([&] { win_emu.ui().set_snapshot_request_sink({}); });
+
+            // The interrupt handler only stops the emulator, which does not end a run between two saves, and it cannot take
+            // the controller's locks: this thread stops the controller for it.
+            std::mutex mutex{};
+            std::condition_variable changed{};
+            bool watching = true;
+            std::thread watcher([&] {
+                std::unique_lock lock(mutex);
+                while (watching)
+                {
+                    changed.wait_for(lock, std::chrono::milliseconds(50));
+                    if (signals_received > 0)
+                    {
+                        snapshots.stop();
+                        return;
+                    }
+                }
+            });
+            const auto watcher_guard = utils::finally([&] {
+                {
+                    const std::scoped_lock lock(mutex);
+                    watching = false;
+                }
+                changed.notify_all();
+                watcher.join();
+            });
+
+            snapshots.run();
+        }
+#endif
+
         bool run_emulation(const analysis_context& c, const analysis_options& options)
         {
             auto& win_emu = *c.win_emu;
@@ -485,7 +540,11 @@ namespace sogen
                         debugger::enter_breakpoint(win_emu, win_emu.mod_manager.executable->entry_point);
                     }
 #endif
+#ifdef OS_EMSCRIPTEN
                     win_emu.start();
+#else
+                    run_with_snapshot_hotkey(win_emu, options.snapshot_directory, signals_received);
+#endif
                 }
 
                 if (signals_received > 0)
@@ -1114,6 +1173,10 @@ namespace sogen
             app.add_option("--managed-process-port", options.managed_process_port)->group("");
             app.add_option("--managed-process-token", options.managed_process_token)->group("");
             app.add_option("-a,--snapshot", options.dump, "Load snapshot dump from path");
+#ifndef OS_EMSCRIPTEN
+            app.add_option("--snapshot-dir", options.snapshot_directory, "Where Ctrl+Alt+Shift+S saves the process, which keeps running")
+                ->capture_default_str();
+#endif
             app.add_option("--minidump", options.minidump_path, "Load minidump from path");
             app.add_option("--report", options.report_path, "Write machine-readable analysis events to a file");
             app.add_option("--report-format", options.report_format, "Report format (supported: jsonl)")->capture_default_str();
