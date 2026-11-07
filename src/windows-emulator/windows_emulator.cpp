@@ -76,6 +76,19 @@ namespace sogen
             int y{};
         };
 
+        // Static controls without SS_NOTIFY and group boxes answer WM_NCHITTEST with HTTRANSPARENT, so the mouse reaches
+        // the window beneath them: dialogs handle clicks on image statics, and controls inside a group box get theirs.
+        bool is_transparent_to_mouse(const window& win)
+        {
+            constexpr uint32_t ss_notify = 0x100;
+            constexpr uint32_t bs_type_mask = 0xF;
+            constexpr uint32_t bs_groupbox = 0x7;
+
+            const auto class_name = normalize_builtin_window_class_name(win.class_name);
+            return (class_name == u"Static" && (win.style & ss_notify) == 0) ||
+                   (class_name == u"Button" && (win.style & bs_type_mask) == bs_groupbox);
+        }
+
         std::optional<child_hit_test_result> find_child_window_at(const process_context& process, const hwnd parent, const int x,
                                                                   const int y)
         {
@@ -83,7 +96,8 @@ namespace sogen
             for (const auto& [index, child] : process.windows)
             {
                 (void)index;
-                if (child.parent_handle != parent || (child.style & WS_VISIBLE) == 0 || (child.style & WS_DISABLED) != 0)
+                if (child.parent_handle != parent || (child.style & WS_VISIBLE) == 0 || (child.style & WS_DISABLED) != 0 ||
+                    is_transparent_to_mouse(child))
                 {
                     continue;
                 }

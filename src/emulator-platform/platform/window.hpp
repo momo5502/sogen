@@ -559,6 +559,8 @@ namespace sogen
 #define RDW_VALIDATE                0x0008
 #define RDW_NOINTERNALPAINT         0x0010
 #define RDW_NOERASE                 0x0020
+#define RDW_NOCHILDREN              0x0040
+#define RDW_ALLCHILDREN             0x0080
 #define RDW_UPDATENOW               0x0100
 #define RDW_ERASENOW                0x0200
 
