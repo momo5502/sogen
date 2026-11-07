@@ -8,6 +8,7 @@
 #include <posix_io_syscalls.hpp>
 #include <posix_open.hpp>
 #include <posix_path_resolution.hpp>
+#include <posix_path_syscalls.hpp>
 
 #include <algorithm>
 #include <cerrno>
@@ -348,6 +349,32 @@ namespace sogen
             return c.emu_ref.file_sys.translate_relative_to(fd_entry->host_path, guest_path);
         }
 
+        std::variant<std::string, posix_errno> resolve_path_argument(const linux_syscall_context& c, const int dirfd,
+                                                                     const uint64_t path_addr)
+        {
+            const auto directory_fd = dirfd == LINUX_AT_FDCWD ? std::nullopt : std::optional{dirfd};
+            return posix_resolve_path_at(c.proc.fds, c.proc.current_working_directory, directory_fd, read_string<char>(c.emu, path_addr));
+        }
+
+        void access_at(const linux_syscall_context& c, const int dirfd, const uint64_t path_addr, const uint64_t mode)
+        {
+            const auto resolved = resolve_path_argument(c, dirfd, path_addr);
+            if (const auto* error = std::get_if<posix_errno>(&resolved))
+            {
+                write_linux_syscall_result(c, *error);
+                return;
+            }
+
+            const auto& guest_path = std::get<std::string>(resolved);
+            if (procfs::is_procfs_path(guest_path) || procfs::is_procfs_symlink(guest_path))
+            {
+                write_linux_syscall_result(c, 0);
+                return;
+            }
+
+            write_linux_syscall_result(c, posix_access(c.emu_ref.file_sys, guest_path, mode));
+        }
+
         void open_at(const linux_syscall_context& c, const int dirfd, const uint64_t path_addr, const int flags, const uint32_t mode)
         {
             const auto guest_path = read_string<char>(c.emu, path_addr);
@@ -621,37 +648,7 @@ namespace sogen
 
     void sys_access(const linux_syscall_context& c)
     {
-        const auto path_addr = get_linux_syscall_argument(c.emu, 0);
-        // mode is arg 1, unused for now
-
-        const auto guest_path = read_string<char>(c.emu, path_addr);
-
-        int64_t resolve_error{};
-        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
-
-        // Intercept procfs paths after resolving relative names against guest cwd.
-        if (resolved_guest.has_value() && (procfs::is_procfs_path(*resolved_guest) || procfs::is_procfs_symlink(*resolved_guest)))
-        {
-            write_linux_syscall_result(c, 0);
-            return;
-        }
-
-        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
-        if (!resolved.has_value())
-        {
-            write_linux_syscall_result(c, -resolve_error);
-            return;
-        }
-        const auto& host_path = *resolved;
-
-        if (std::filesystem::exists(host_path))
-        {
-            write_linux_syscall_result(c, 0);
-        }
-        else
-        {
-            write_linux_syscall_result(c, -LINUX_ENOENT);
-        }
+        access_at(c, LINUX_AT_FDCWD, get_linux_syscall_argument(c.emu, 0), get_linux_syscall_argument(c.emu, 1));
     }
 
     void sys_openat(const linux_syscall_context& c)
@@ -947,21 +944,18 @@ namespace sogen
 
     void sys_chdir(const linux_syscall_context& c)
     {
-        const auto path_addr = get_linux_syscall_argument(c.emu, 0);
-        const auto guest_path = read_string<char>(c.emu, path_addr);
-
-        int64_t resolve_error{};
-        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
-        if (!resolved_guest.has_value())
+        auto resolved = resolve_path_argument(c, LINUX_AT_FDCWD, get_linux_syscall_argument(c.emu, 0));
+        if (const auto* error = std::get_if<posix_errno>(&resolved))
         {
-            write_linux_syscall_result(c, -resolve_error);
+            write_linux_syscall_result(c, *error);
             return;
         }
 
-        if (procfs::is_procfs_path(*resolved_guest))
+        auto& guest_path = std::get<std::string>(resolved);
+        if (procfs::is_procfs_path(guest_path))
         {
             linux_stat ls{};
-            if (!procfs::stat_procfs(c.emu_ref, *resolved_guest, ls))
+            if (!procfs::stat_procfs(c.emu_ref, guest_path, ls))
             {
                 write_linux_syscall_result(c, -LINUX_ENOENT);
                 return;
@@ -972,55 +966,18 @@ namespace sogen
                 return;
             }
 
-            c.proc.current_working_directory = std::move(*resolved_guest);
+            c.proc.current_working_directory = std::move(guest_path);
             write_linux_syscall_result(c, 0);
             return;
         }
 
-        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
-        if (!resolved.has_value())
-        {
-            write_linux_syscall_result(c, -resolve_error);
-            return;
-        }
-
-        if (!std::filesystem::exists(*resolved))
-        {
-            write_linux_syscall_result(c, -LINUX_ENOENT);
-            return;
-        }
-        if (!std::filesystem::is_directory(*resolved))
-        {
-            write_linux_syscall_result(c, -LINUX_ENOTDIR);
-            return;
-        }
-
-        c.proc.current_working_directory = std::move(*resolved_guest);
-        write_linux_syscall_result(c, 0);
+        write_linux_syscall_result(c, posix_chdir(c.emu_ref.file_sys, c.proc.current_working_directory, std::move(guest_path)));
     }
 
     void sys_fchdir(const linux_syscall_context& c)
     {
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
-        auto* fd_entry = c.proc.fds.get(fd);
-        if (!fd_entry)
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-        if (fd_entry->type != fd_type::directory)
-        {
-            write_linux_syscall_result(c, -LINUX_ENOTDIR);
-            return;
-        }
-        if (fd_entry->guest_path.empty())
-        {
-            write_linux_syscall_result(c, -LINUX_EBADF);
-            return;
-        }
-
-        c.proc.current_working_directory = posix_file_system::normalize_guest_path_string(fd_entry->guest_path);
-        write_linux_syscall_result(c, 0);
+        write_linux_syscall_result(c, posix_fchdir(c.proc.fds, fd, c.proc.current_working_directory));
     }
 
     void sys_readlink(const linux_syscall_context& c)
@@ -1936,40 +1893,8 @@ namespace sogen
 
     void sys_faccessat(const linux_syscall_context& c)
     {
-        // faccessat(int dirfd, const char *pathname, int mode, int flags)
-        const auto dirfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
-        const auto path_addr = get_linux_syscall_argument(c.emu, 1);
-        // mode is arg 2, flags is arg 3
-
-        const auto guest_path = read_string<char>(c.emu, path_addr);
-
-        int64_t resolve_error{};
-        auto resolved_guest = resolve_guest_path_name_at(c, dirfd, guest_path, resolve_error);
-
-        // Intercept procfs paths after guest-path resolution.
-        if (resolved_guest.has_value() && (procfs::is_procfs_path(*resolved_guest) || procfs::is_procfs_symlink(*resolved_guest)))
-        {
-            write_linux_syscall_result(c, 0);
-            return;
-        }
-
-        auto resolved = resolve_guest_path_at(c, dirfd, guest_path, resolve_error);
-        if (!resolved.has_value())
-        {
-            write_linux_syscall_result(c, -resolve_error);
-            return;
-        }
-
-        const auto& host_path = *resolved;
-
-        if (std::filesystem::exists(host_path))
-        {
-            write_linux_syscall_result(c, 0);
-        }
-        else
-        {
-            write_linux_syscall_result(c, -LINUX_ENOENT);
-        }
+        access_at(c, static_cast<int>(get_linux_syscall_argument(c.emu, 0)), get_linux_syscall_argument(c.emu, 1),
+                  get_linux_syscall_argument(c.emu, 2));
     }
 
     void sys_statfs(const linux_syscall_context& c)

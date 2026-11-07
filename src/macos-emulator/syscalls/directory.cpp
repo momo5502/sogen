@@ -1,6 +1,8 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
+#include <posix_path_syscalls.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -258,48 +260,21 @@ namespace sogen
 
     void sys_fchdir(const macos_syscall_context& c)
     {
-        const auto* directory = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
-        if (directory == nullptr)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        if (directory->type != fd_type::directory)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOTDIR);
-            return;
-        }
-
-        c.emu_ref.working_directory = directory->guest_path;
-        write_macos_syscall_success(c, 0);
+        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        write_macos_syscall_result(c, posix_fchdir(c.emu_ref.fds, fd, c.emu_ref.working_directory));
     }
 
     void sys_chdir(const macos_syscall_context& c)
     {
-        const auto requested_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
-        if (!requested_path)
+        auto guest_path = read_guest_path_argument(c, 0);
+        if (const auto* error = std::get_if<posix_errno>(&guest_path))
         {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            write_macos_syscall_result(c, *error);
             return;
         }
 
-        const auto guest_path = c.emu_ref.resolve_guest_path(*requested_path);
-        const auto host_path = c.emu_ref.file_system.translate(guest_path);
-        if (requested_path->empty() || !std::filesystem::exists(host_path))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-            return;
-        }
-
-        if (!std::filesystem::is_directory(host_path))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOTDIR);
-            return;
-        }
-
-        c.emu_ref.working_directory = guest_path;
-        write_macos_syscall_success(c, 0);
+        auto& emu = c.emu_ref;
+        write_macos_syscall_result(c, posix_chdir(emu.file_system, emu.working_directory, std::get<std::string>(std::move(guest_path))));
     }
 
     void sys_getattrlistbulk(const macos_syscall_context& c)

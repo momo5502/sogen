@@ -2,6 +2,7 @@
 #include "../macos_emulator.hpp"
 
 #include <posix_path_resolution.hpp>
+#include <posix_path_syscalls.hpp>
 
 #include <array>
 #include <cstddef>
@@ -220,44 +221,18 @@ namespace sogen
 
     void sys_access(const macos_syscall_context& c)
     {
-        constexpr uint64_t x_ok = 0x1;
-        constexpr uint64_t w_ok = 0x2;
+        const auto guest_path = read_guest_path_argument(c, 0);
+        if (const auto* error = std::get_if<posix_errno>(&guest_path))
+        {
+            write_macos_syscall_result(c, *error);
+            return;
+        }
 
-        const auto guest_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
+        const auto& path = std::get<std::string>(guest_path);
         const auto mode = get_macos_syscall_argument(c.emu, 1);
-        if (!guest_path)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-            return;
-        }
-
-        if (guest_path->empty())
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-            return;
-        }
-
-        const auto result = stat_host_path(c.emu_ref, *guest_path, true);
-        c.emu_ref.log.log("access(%s, %llu)%s\n", guest_path->c_str(), static_cast<unsigned long long>(mode), result ? "" : " -> ENOENT");
-
-        if (!result)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-            return;
-        }
-
-        if ((mode & w_ok) && c.emu_ref.file_system.is_read_only_guest_path(c.emu_ref.resolve_guest_path(*guest_path)))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EROFS);
-            return;
-        }
-
-        if ((mode & x_ok) && (result->st_mode & 0111) == 0)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EACCES);
-            return;
-        }
-
-        write_macos_syscall_success(c, 0);
+        const auto result = posix_access(c.emu_ref.file_system, path, mode);
+        c.emu_ref.log.log("access(%s, %llu)%s\n", path.c_str(), static_cast<unsigned long long>(mode),
+                          std::holds_alternative<posix_errno>(result) ? " -> error" : "");
+        write_macos_syscall_result(c, result);
     }
 }
