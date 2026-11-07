@@ -93,7 +93,6 @@ namespace sogen
             uint16_t managed_process_port{};
             std::string managed_process_token{};
             managed_process_connection* managed_process{};
-            uint32_t child_wait_seconds{10};
             filesystem_mode root_mode{default_root_mode};
             std::vector<mount_spec> mounts{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
@@ -1095,23 +1094,6 @@ namespace sogen
                     throw std::runtime_error("Reporting managed process exit failed");
                 }
             }
-
-            // There is no manager unless the run uses the backend that spawns child processes.
-            if (manager && manager->running_process_count() != 0)
-            {
-                const auto running = manager->running_process_count();
-                win_emu->log.print(color::gray, "Waiting up to %us for %zu child process(es) to exit\n", options.child_wait_seconds,
-                                   running);
-
-                // A sample that leaves a watchdog, a persistence helper or a service behind must not keep the run
-                // from finishing, so what is still there afterwards is terminated.
-                if (!manager->wait_for_processes(std::chrono::seconds(options.child_wait_seconds)))
-                {
-                    win_emu->log.print(color::gray, "Terminating %zu child process(es) that did not exit\n",
-                                       manager->running_process_count());
-                    manager->terminate_running_processes(STATUS_UNSUCCESSFUL);
-                }
-            }
 #endif
             guest_exited = win_emu->process.exit_status.has_value();
             return success;
@@ -1213,10 +1195,6 @@ namespace sogen
             app.add_option("--network", network_name, "Guest network access: offline (no host network) or live")
                 ->capture_default_str()
                 ->check(CLI::IsMember({"offline", "live"}));
-
-            app.add_option("--child-wait", options.child_wait_seconds,
-                           "Seconds to wait for child processes to exit before terminating them")
-                ->capture_default_str();
 
             std::string backend_name{};
             app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm, fex or hvf (overrides env)")

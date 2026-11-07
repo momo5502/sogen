@@ -377,24 +377,6 @@ namespace sogen
             return {.error = process_error::unavailable};
         }
 
-        // Child processes outlive their parent on Windows, so the host keeps them running until they exit on their own.
-        virtual size_t running_process_count() const
-        {
-            return 0;
-        }
-
-        // Waits at most timeout for the children to exit on their own. False when some are still running, which the
-        // caller answers by terminating them: an analysis run must not hang on a watchdog or a service a sample left
-        // behind.
-        virtual bool wait_for_processes(std::chrono::milliseconds /*timeout*/)
-        {
-            return true;
-        }
-
-        virtual void terminate_running_processes(uint64_t /*exit_code*/)
-        {
-        }
-
         virtual process_thread_context_result get_thread_context(managed_process /*process*/, uint32_t /*thread_id*/, bool /*wow64*/)
         {
             return {.error = process_error::unavailable};
