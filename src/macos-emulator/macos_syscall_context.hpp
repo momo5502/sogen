@@ -73,14 +73,20 @@ namespace sogen
             return macos_errno::MACOS_EISDIR;
         case posix_errno::emfile:
             return macos_errno::MACOS_EMFILE;
+        case posix_errno::enodev:
+            return macos_errno::MACOS_ENODEV;
         case posix_errno::enoent:
             return macos_errno::MACOS_ENOENT;
+        case posix_errno::enomem:
+            return macos_errno::MACOS_ENOMEM;
         case posix_errno::enospc:
             return macos_errno::MACOS_ENOSPC;
         case posix_errno::enotconn:
             return macos_errno::MACOS_ENOTCONN;
         case posix_errno::enotdir:
             return macos_errno::MACOS_ENOTDIR;
+        case posix_errno::enotty:
+            return macos_errno::MACOS_ENOTTY;
         case posix_errno::eperm:
             return macos_errno::MACOS_EPERM;
         case posix_errno::epipe:

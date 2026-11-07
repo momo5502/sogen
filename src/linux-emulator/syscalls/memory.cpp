@@ -3,6 +3,7 @@
 #include "../linux_syscall_dispatcher.hpp"
 
 #include <address_utils.hpp>
+#include <posix_memory_syscalls.hpp>
 
 namespace sogen
 {
@@ -11,203 +12,58 @@ namespace sogen
 
     namespace
     {
-        constexpr int PROT_READ = 1;
-        constexpr int PROT_WRITE = 2;
-        constexpr int PROT_EXEC = 4;
-
         constexpr int MAP_FIXED = 0x10;
         constexpr int MAP_FIXED_NOREPLACE = 0x100000;
         constexpr int MAP_ANONYMOUS = 0x20;
 
-        memory_permission prot_to_permission(const int prot)
+        posix_map_placement map_placement(const int flags)
         {
-            memory_permission perm = memory_permission::none;
-
-            if (prot & PROT_READ)
+            if (flags & MAP_FIXED_NOREPLACE)
             {
-                perm = perm | memory_permission::read;
-            }
-            if (prot & PROT_WRITE)
-            {
-                perm = perm | memory_permission::write;
-            }
-            if (prot & PROT_EXEC)
-            {
-                perm = perm | memory_permission::exec;
+                return posix_map_placement::fixed_noreplace;
             }
 
-            return perm;
+            return (flags & MAP_FIXED) ? posix_map_placement::fixed : posix_map_placement::hint;
         }
     }
 
     void sys_mmap(const linux_syscall_context& c)
     {
-        const auto addr = get_linux_syscall_argument(c.emu, 0);
-        const auto length = static_cast<size_t>(get_linux_syscall_argument(c.emu, 1));
-        const auto prot = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
         const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 3));
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 4));
-        const auto offset = get_linux_syscall_argument(c.emu, 5);
+        const posix_map_request request{
+            .address = get_linux_syscall_argument(c.emu, 0),
+            .length = get_linux_syscall_argument(c.emu, 1),
+            .protection = get_linux_syscall_argument(c.emu, 2),
+            .placement = map_placement(flags),
+            .fd = (flags & MAP_ANONYMOUS) ? std::nullopt : std::optional{fd},
+            .offset = get_linux_syscall_argument(c.emu, 5),
+        };
 
-        if (length == 0)
+        const auto result = posix_mmap(c.emu_ref.memory, c.proc.fds, request, posix_errno::enomem);
+        const auto* address = std::get_if<uint64_t>(&result);
+        const auto* file = request.fd ? c.proc.fds.get(*request.fd) : nullptr;
+        if (address && file && !file->host_path.empty() && (request.protection & POSIX_PROT_EXEC))
         {
-            write_linux_syscall_result(c, -LINUX_EINVAL);
-            return;
+            c.emu_ref.mod_manager.record_runtime_module_mapping(file->host_path, *address, request.offset);
         }
 
-        const auto aligned_length = static_cast<size_t>(page_align_up(length));
-        const auto perms = prot_to_permission(prot);
-        const bool is_anonymous = (flags & MAP_ANONYMOUS) != 0;
-
-        auto& memory = c.emu_ref.memory;
-        uint64_t mapped_addr = 0;
-        const posix_fd* mapped_fd_entry = nullptr;
-
-        if (flags & MAP_FIXED_NOREPLACE)
-        {
-            if (addr == 0 || page_align_down(addr) != addr)
-            {
-                write_linux_syscall_result(c, -LINUX_EINVAL);
-                return;
-            }
-
-            const auto aligned_addr = addr;
-
-            // Do not replace existing mappings; fail with EEXIST if occupied.
-            if (memory.overlaps_mapped_region(aligned_addr, aligned_length))
-            {
-                write_linux_syscall_result(c, -LINUX_EEXIST);
-                return;
-            }
-
-            if (!memory.allocate_memory(aligned_addr, aligned_length, memory_permission::read_write))
-            {
-                write_linux_syscall_result(c, -LINUX_ENOMEM);
-                return;
-            }
-
-            mapped_addr = aligned_addr;
-        }
-        else if (flags & MAP_FIXED)
-        {
-            if (addr == 0)
-            {
-                write_linux_syscall_result(c, -LINUX_EINVAL);
-                return;
-            }
-
-            const auto aligned_addr = page_align_down(addr);
-
-            // Release any existing mapping in the range first
-            memory.release_memory(aligned_addr, aligned_length);
-
-            // Allocate as read-write initially so we can write file data
-            if (!memory.allocate_memory(aligned_addr, aligned_length, memory_permission::read_write))
-            {
-                write_linux_syscall_result(c, -LINUX_ENOMEM);
-                return;
-            }
-
-            mapped_addr = aligned_addr;
-        }
-        else
-        {
-            // Find a free region — allocate as read-write initially so we can write file data
-            mapped_addr = memory.allocate_memory(aligned_length, memory_permission::read_write, addr ? addr : 0);
-            if (!mapped_addr)
-            {
-                write_linux_syscall_result(c, -LINUX_ENOMEM);
-                return;
-            }
-        }
-
-        // If file-backed, read data from the fd into the mapped region
-        if (!is_anonymous)
-        {
-            auto* fd_entry = c.proc.fds.get(fd);
-            if (!fd_entry || !fd_entry->handle)
-            {
-                // Can't read from this fd — unmap and fail
-                memory.release_memory(mapped_addr, aligned_length);
-                write_linux_syscall_result(c, -LINUX_EBADF);
-                return;
-            }
-
-            mapped_fd_entry = fd_entry;
-
-            // Read min(length, file_remaining) bytes — don't read beyond the file
-            const auto bytes_to_read = length; // length (not aligned_length) — the rest is zero-fill
-            std::vector<std::byte> buffer(bytes_to_read);
-            const auto bytes_read = fd_entry->read_at(offset, buffer);
-
-            if (bytes_read > 0)
-            {
-                c.emu.write_memory(mapped_addr, buffer.data(), bytes_read);
-            }
-            // Remaining bytes (up to aligned_length) are already zero from fresh allocation
-        }
-
-        // Now set the actual requested permissions
-        if (perms != memory_permission::read_write)
-        {
-            memory.protect_memory(mapped_addr, aligned_length, perms);
-        }
-
-        if (mapped_fd_entry && !mapped_fd_entry->host_path.empty() && (prot & PROT_EXEC))
-        {
-            c.emu_ref.mod_manager.record_runtime_module_mapping(mapped_fd_entry->host_path, mapped_addr, offset);
-        }
-
-        write_linux_syscall_result(c, static_cast<int64_t>(mapped_addr));
+        write_linux_syscall_result(c, result);
     }
 
     void sys_mprotect(const linux_syscall_context& c)
     {
         const auto addr = get_linux_syscall_argument(c.emu, 0);
-        const auto length = static_cast<size_t>(get_linux_syscall_argument(c.emu, 1));
-        const auto prot = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
-
-        if (length == 0 || page_align_down(addr) != addr)
-        {
-            write_linux_syscall_result(c, -LINUX_EINVAL);
-            return;
-        }
-
-        const auto aligned_length = static_cast<size_t>(page_align_up(length));
-
-        const auto perms = prot_to_permission(prot);
-
-        if (c.emu_ref.memory.protect_memory(addr, aligned_length, perms))
-        {
-            write_linux_syscall_result(c, 0);
-        }
-        else
-        {
-            write_linux_syscall_result(c, -LINUX_ENOMEM);
-        }
+        const auto length = get_linux_syscall_argument(c.emu, 1);
+        const auto prot = get_linux_syscall_argument(c.emu, 2);
+        write_linux_syscall_result(c, posix_mprotect(c.emu_ref.memory, addr, length, prot, posix_errno::enomem));
     }
 
     void sys_munmap(const linux_syscall_context& c)
     {
         const auto addr = get_linux_syscall_argument(c.emu, 0);
-        const auto length = static_cast<size_t>(get_linux_syscall_argument(c.emu, 1));
-
-        if (length == 0 || page_align_down(addr) != addr)
-        {
-            write_linux_syscall_result(c, -LINUX_EINVAL);
-            return;
-        }
-
-        const auto aligned_length = static_cast<size_t>(page_align_up(length));
-
-        if (c.emu_ref.memory.release_memory(addr, aligned_length))
-        {
-            write_linux_syscall_result(c, 0);
-        }
-        else
-        {
-            write_linux_syscall_result(c, -LINUX_EINVAL);
-        }
+        const auto length = get_linux_syscall_argument(c.emu, 1);
+        write_linux_syscall_result(c, posix_munmap(c.emu_ref.memory, addr, length));
     }
 
     void sys_brk(const linux_syscall_context& c)

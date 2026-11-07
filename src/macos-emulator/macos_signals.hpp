@@ -1,5 +1,7 @@
 #pragma once
 
+#include <posix_signals.hpp>
+
 #include <array>
 #include <cstdint>
 
@@ -8,10 +10,11 @@ namespace sogen
     constexpr int MACOS_NSIG = 32;
     constexpr int MACOS_SIGKILL = 9;
     constexpr int MACOS_SIGSTOP = 17;
+    constexpr posix_signal_numbers MACOS_SIGNAL_NUMBERS{.highest = MACOS_NSIG - 1, .kill = MACOS_SIGKILL, .stop = MACOS_SIGSTOP};
     constexpr uint64_t MACOS_SIG_DFL = 0;
     constexpr uint64_t MACOS_SIG_IGN = 1;
-    constexpr int32_t MACOS_SS_ONSTACK = 1;
     constexpr int32_t MACOS_SS_DISABLE = 4;
+    constexpr posix_signal_stack MACOS_DISABLED_SIGNAL_STACK{.flags = MACOS_SS_DISABLE};
 
     struct macos_signal_action
     {
@@ -20,19 +23,12 @@ namespace sogen
         int32_t flags{};
     };
 
-    struct macos_signal_stack
-    {
-        uint64_t base{};
-        uint64_t size{};
-        int32_t flags{MACOS_SS_DISABLE};
-    };
-
     // Signals are never delivered in the emulator, so the dispositions only need to read back what was set.
     struct macos_signal_state
     {
         uint32_t mask{};
         std::array<macos_signal_action, MACOS_NSIG> actions{};
-        macos_signal_stack stack{};
+        posix_signal_stack stack{MACOS_DISABLED_SIGNAL_STACK};
 
         // XNU's execsigs: caught signals revert to their default action, ignored ones stay ignored, the mask is kept and
         // the alternate stack is dropped.
@@ -46,7 +42,7 @@ namespace sogen
                 }
             }
 
-            this->stack = {};
+            this->stack = MACOS_DISABLED_SIGNAL_STACK;
         }
     };
 }

@@ -2,9 +2,11 @@
 
 #include "std_include.hpp"
 #include <arch_emulator.hpp>
+#include <posix_signals.hpp>
 
 namespace sogen
 {
+    constexpr int32_t LINUX_SS_DISABLE = 2;
 
     struct linux_saved_registers
     {
@@ -51,6 +53,7 @@ namespace sogen
         uint64_t robust_list_head{};
 
         uint64_t signal_mask{};
+        posix_signal_stack signal_stack{.flags = LINUX_SS_DISABLE};
 
         bool terminated{};
         int exit_code{};
