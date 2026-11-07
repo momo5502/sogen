@@ -211,7 +211,8 @@ extern "C"
         JNIEnv* env, jobject /*self*/, const jlong handle, jstring root, jstring application, jobjectArray arguments,
         jobjectArray environment, jstring root_layer, jobjectArray directory_mounts, jobjectArray document_trees, jstring working_directory,
         jstring backend, const jboolean live_network, jstring max_display_mode, jstring sandbox_executable, jstring vulkan_hook_directory,
-        jstring vulkan_driver_directory, jstring vulkan_driver_name, jstring snapshot_directory, jstring resume_file)
+        jstring vulkan_driver_directory, jstring vulkan_driver_name, jstring snapshot_directory, jstring resume_file,
+        jobjectArray registry_files, jstring registry_state)
     {
         sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -231,11 +232,13 @@ extern "C"
                 },
             .snapshot_directory = to_string(*env, snapshot_directory),
             .resume_file = to_string(*env, resume_file),
+            .registry_state = to_string(*env, registry_state),
         };
 
         try
         {
             config.directory_mounts = to_directory_mounts(*env, directory_mounts);
+            std::ranges::move(to_strings(*env, registry_files), std::back_inserter(config.registry_files));
             config.document_trees = to_document_trees(*env, document_trees);
             if (const auto mode_name = to_string(*env, max_display_mode); !mode_name.empty())
             {

@@ -62,6 +62,10 @@ namespace sogen::android
         std::filesystem::path snapshot_directory{};
         // A saved process to continue instead of starting the application.
         std::filesystem::path resume_file{};
+        // Registry values imported into a fresh session over the saved registry state.
+        std::vector<std::filesystem::path> registry_files{};
+        // Where the guest's registry changes are kept between sessions; empty keeps none.
+        std::filesystem::path registry_state{};
     };
 
     class session final : public ui_host

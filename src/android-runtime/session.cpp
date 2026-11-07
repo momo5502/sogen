@@ -7,6 +7,8 @@
 #include <backend_selection.hpp>
 #include <filesystem/document_mount.hpp>
 #include <filesystem/layered_provider.hpp>
+#include <registry/registry_file.hpp>
+#include <registry/registry_state_file.hpp>
 #include <snapshot.hpp>
 #include <subprocess_process_manager.hpp>
 #include <windows_emulator.hpp>
@@ -285,9 +287,22 @@ namespace sogen::android
             }
 
             const auto configuration = describe_configuration(config);
+            const auto registry_state =
+                config.registry_state.empty() ? nullptr : std::make_unique<registry_state_file>(config.registry_state);
             if (!config.resume_file.empty())
             {
                 snapshot::load_emulator_snapshot(win_emu, config.resume_file, configuration);
+            }
+            else
+            {
+                if (registry_state)
+                {
+                    registry_state->load(win_emu.registry);
+                }
+                for (const auto& file : config.registry_files)
+                {
+                    import_registry_file(win_emu.registry, file);
+                }
             }
 
             snapshot::controller snapshots{win_emu, configuration, config.snapshot_directory,
@@ -321,6 +336,10 @@ namespace sogen::android
             }
 
             const auto exit_status = win_emu.process.exit_status;
+            if (registry_state && exit_status)
+            {
+                registry_state->save(win_emu.registry);
+            }
             return exit_status ? static_cast<int>(*exit_status) : 1;
         }
         catch (const std::exception& e)

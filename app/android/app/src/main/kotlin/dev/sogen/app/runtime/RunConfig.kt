@@ -25,6 +25,10 @@ data class RunConfig(
     val snapshotDirectory: String = "",
     /** A saved process to continue instead of starting [application]. */
     val resumeFile: String = "",
+    /** Registry files imported into a fresh session over [registryState]. */
+    val registryFiles: List<String> = emptyList(),
+    /** Where the guest's registry changes are kept between sessions, or empty to keep none. */
+    val registryState: String = "",
 ) {
     fun toBundle(): Bundle = Bundle().apply {
         putString(KEY_ROOT, emulationRoot)
@@ -41,6 +45,8 @@ data class RunConfig(
         putString(KEY_MAX_DISPLAY_MODE, maxDisplayMode)
         putString(KEY_SNAPSHOT_DIRECTORY, snapshotDirectory)
         putString(KEY_RESUME_FILE, resumeFile)
+        putStringArrayList(KEY_REGISTRY_FILES, ArrayList(registryFiles))
+        putString(KEY_REGISTRY_STATE, registryState)
     }
 
     companion object {
@@ -58,6 +64,8 @@ data class RunConfig(
         private const val KEY_MAX_DISPLAY_MODE = "maxDisplayMode"
         private const val KEY_SNAPSHOT_DIRECTORY = "snapshotDirectory"
         private const val KEY_RESUME_FILE = "resumeFile"
+        private const val KEY_REGISTRY_FILES = "registryFiles"
+        private const val KEY_REGISTRY_STATE = "registryState"
 
         fun fromBundle(bundle: Bundle) = RunConfig(
             emulationRoot = bundle.getString(KEY_ROOT).orEmpty(),
@@ -74,6 +82,8 @@ data class RunConfig(
             maxDisplayMode = bundle.getString(KEY_MAX_DISPLAY_MODE).orEmpty(),
             snapshotDirectory = bundle.getString(KEY_SNAPSHOT_DIRECTORY).orEmpty(),
             resumeFile = bundle.getString(KEY_RESUME_FILE).orEmpty(),
+            registryFiles = bundle.getStringArrayList(KEY_REGISTRY_FILES).orEmpty(),
+            registryState = bundle.getString(KEY_REGISTRY_STATE).orEmpty(),
         )
 
         private fun pairs(flat: List<String>?): Map<String, String> =

@@ -175,6 +175,7 @@ class GameSession extends ChangeNotifier {
           'liveNetwork': game.liveNetwork,
           'maxDisplayMode': game.maxDisplayMode?.name ?? '',
           'resumeFile': resumeFile ?? '',
+          'registryState': (await registryStateFile(game)).path,
         }) ??
         false;
 

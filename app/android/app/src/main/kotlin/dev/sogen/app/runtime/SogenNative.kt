@@ -64,6 +64,8 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkan.driverName,
         config.snapshotDirectory,
         config.resumeFile,
+        config.registryFiles.toTypedArray(),
+        config.registryState,
     )
 
     fun stop() = nativeStop(handle)
@@ -111,6 +113,8 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkanDriverName: String,
         snapshotDirectory: String,
         resumeFile: String,
+        registryFiles: Array<String>,
+        registryState: String,
     ): Int
 
     private external fun nativeStop(handle: Long)
