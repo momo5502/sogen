@@ -67,7 +67,8 @@ class SessionController(
         call { game?.session?.stop() }
     }
 
-    fun suspend(destination: String) = call { game?.session?.suspend(destination) }
+    /** Saves the newest running process, which is the one the player sees: a launcher's game outlives the launcher. */
+    fun suspend(destination: String) = call { foreground?.session?.suspend(destination) }
 
     fun consoleInput(data: ByteArray) = call { game?.session?.consoleInput(data) }
 
@@ -102,7 +103,11 @@ class SessionController(
     fun setStatsInterval(milliseconds: Int) {
         statsInterval = milliseconds
         call { game?.session?.setStatsInterval(milliseconds) }
+        children.values.forEach { child -> call { child.session?.setStatsInterval(milliseconds) } }
     }
+
+    private val foreground: HostedProcess?
+        get() = children.values.maxByOrNull { it.id } ?: game
 
     /**
      * One guest process and the service process it runs in. Its windows are known to Flutter by an id that combines the
@@ -135,8 +140,8 @@ class SessionController(
                         remote.start(config.toBundle(), callback)
                         if (parent == null) {
                             consoleSize?.let { (columns, rows) -> remote.consoleResize(columns, rows) }
-                            remote.setStatsInterval(statsInterval)
                         }
+                        remote.setStatsInterval(statsInterval)
                         remote.setFrameLimit(frameLimit)
                         // The service creates the session synchronously in start, and a stopped session exits as soon
                         // as it runs, reporting its exit code as usual.
@@ -281,6 +286,9 @@ class SessionController(
             }
 
             override fun onStats(frames: Long, worstPresentIntervalNs: Long, residentBytes: Long) = post {
+                if (this@HostedProcess !== foreground) {
+                    return@post
+                }
                 emit(
                     mapOf(
                         "event" to "stats",
