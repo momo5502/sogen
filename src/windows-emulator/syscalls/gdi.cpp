@@ -76,6 +76,7 @@ namespace sogen
             constexpr uint32_t k_stock_black_pen_index = 0x07;
             constexpr uint32_t k_stock_null_pen_index = 0x08;
             constexpr uint32_t k_stock_system_font_index = 0x0D;
+            constexpr uint32_t k_stock_default_palette = 0x0F;
             constexpr uint32_t k_stock_default_gui_font_index = 0x11;
             constexpr uint32_t k_stock_dc_brush_index = 0x12;
             constexpr uint32_t k_stock_dc_pen_index = 0x13;
@@ -1958,7 +1959,30 @@ namespace sogen
                     bool mirror_to_default_gui_slot;
                 };
 
-                constexpr std::array<stock_seed, 13> seeds = {
+                constexpr std::array<EMU_PALETTEENTRY, 20> default_palette_entries = {
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x00, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x80, .peGreen = 0x00, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x80, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x80, .peGreen = 0x80, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x00, .peBlue = 0x80, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x80, .peGreen = 0x00, .peBlue = 0x80, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x80, .peBlue = 0x80, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xC0, .peGreen = 0xC0, .peBlue = 0xC0, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xC0, .peGreen = 0xDC, .peBlue = 0xC0, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xA6, .peGreen = 0xCA, .peBlue = 0xF0, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0xFB, .peBlue = 0xF0, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xA0, .peGreen = 0xA0, .peBlue = 0xA4, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x80, .peGreen = 0x80, .peBlue = 0x80, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0x00, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0xFF, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0xFF, .peBlue = 0x00, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0x00, .peBlue = 0xFF, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0x00, .peBlue = 0xFF, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0x00, .peGreen = 0xFF, .peBlue = 0xFF, .peFlags = 0x00},
+                    EMU_PALETTEENTRY{.peRed = 0xFF, .peGreen = 0xFF, .peBlue = 0xFF, .peFlags = 0x00},
+                };
+
+                constexpr std::array<stock_seed, 14> seeds = {
                     stock_seed{
                         .index = k_stock_white_brush_index,
                         .type = k_gdi_brush_type,
@@ -2020,6 +2044,12 @@ namespace sogen
                         .mirror_to_default_gui_slot = false,
                     },
                     stock_seed{
+                        .index = k_stock_default_palette,
+                        .type = k_gdi_palette_type,
+                        .attr_size = k_gdi_palette_attr_size,
+                        .mirror_to_default_gui_slot = false,
+                    },
+                    stock_seed{
                         .index = k_stock_default_gui_font_index,
                         .type = k_gdi_font_type,
                         .attr_size = k_gdi_font_attr_size,
@@ -2066,6 +2096,10 @@ namespace sogen
                     else if (seed.type == k_gdi_font_type)
                     {
                         c.proc.gdi_fonts[handle] = stock_font_logfont(seed.index);
+                    }
+                    else if (seed.type == k_gdi_palette_type)
+                    {
+                        c.proc.gdi_palettes[handle].assign(default_palette_entries.begin(), default_palette_entries.end());
                     }
 
                     if (seed.mirror_to_default_gui_slot)
