@@ -257,9 +257,10 @@ namespace sogen
     // PE32 Mapping Strategy Implementation
     mapped_module pe32_mapping_strategy::map_from_data(memory_manager& memory, const std::span<const std::byte> data,
                                                        std::filesystem::path identity, windows_path module_path,
-                                                       const uint64_t relocation_base)
+                                                       const uint64_t relocation_base, const uint64_t highest_address)
     {
-        return map_module_from_data<std::uint32_t>(memory, data, std::move(identity), std::move(module_path), relocation_base);
+        return map_module_from_data<std::uint32_t>(memory, data, std::move(identity), std::move(module_path), relocation_base,
+                                                   highest_address);
     }
 
     mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -271,9 +272,10 @@ namespace sogen
     // PE64 Mapping Strategy Implementation
     mapped_module pe64_mapping_strategy::map_from_data(memory_manager& memory, const std::span<const std::byte> data,
                                                        std::filesystem::path identity, windows_path module_path,
-                                                       const uint64_t relocation_base)
+                                                       const uint64_t relocation_base, const uint64_t highest_address)
     {
-        return map_module_from_data<std::uint64_t>(memory, data, std::move(identity), std::move(module_path), relocation_base);
+        return map_module_from_data<std::uint64_t>(memory, data, std::move(identity), std::move(module_path), relocation_base,
+                                                   highest_address);
     }
 
     mapped_module pe64_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -618,7 +620,7 @@ namespace sogen
     }
 
     mapped_module* module_manager::map_module(windows_path file, const logger& logger, const bool is_static, bool allow_duplicate,
-                                              const uint64_t relocation_base)
+                                              const uint64_t relocation_base, const uint64_t highest_address)
     {
         if (utils::string::to_lower(file.leaf()) == u"win32u.dll")
         {
@@ -633,6 +635,10 @@ namespace sogen
             {
                 if (mod.path == identity)
                 {
+                    if (highest_address && (mod.image_base > highest_address || mod.size_of_image - 1 > highest_address - mod.image_base))
+                    {
+                        return nullptr;
+                    }
                     return &mod;
                 }
             }
@@ -651,7 +657,7 @@ namespace sogen
             detection_result,
             [&]() {
                 auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-                return strategy.map_from_data(*this->memory_, data, std::move(identity), std::move(file), relocation_base);
+                return strategy.map_from_data(*this->memory_, data, std::move(identity), std::move(file), relocation_base, highest_address);
             },
             logger, is_static);
     }

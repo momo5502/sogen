@@ -687,7 +687,7 @@ namespace sogen
 
     template <typename T>
     mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file,
-                                       windows_path module_path, const uint64_t relocation_base)
+                                       windows_path module_path, const uint64_t relocation_base, const uint64_t highest_address)
     {
         mapped_module binary{};
         binary.path = std::move(file);
@@ -710,11 +710,14 @@ namespace sogen
 
         const bool force_wow64cpu_32bit_va = must_map_module_below_4gb(binary.name, nt_headers.FileHeader.Machine);
         constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
+        const bool is_32bit = (nt_headers.FileHeader.Machine == PEMachineType::I386);
+        const auto architecture_limit = is_32bit || force_wow64cpu_32bit_va ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
+        const auto address_limit = std::min(highest_address ? highest_address : MAX_ALLOCATION_ADDRESS, architecture_limit);
 
         if (force_wow64cpu_32bit_va && binary.image_base > below_4gb_ceiling)
         {
             binary.image_base = memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image),
-                                                                      DEFAULT_ALLOCATION_ADDRESS_32BIT, below_4gb_ceiling);
+                                                                      DEFAULT_ALLOCATION_ADDRESS_32BIT, address_limit);
         }
 
         // Store PE header fields
@@ -726,7 +729,6 @@ namespace sogen
         binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
         binary.size_of_heap_commit = optional_header.SizeOfHeapCommit;
 
-        const bool is_32bit = (nt_headers.FileHeader.Machine == PEMachineType::I386);
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
         const auto is_relocatable = is_dll || has_dynamic_base;
@@ -737,13 +739,15 @@ namespace sogen
         if (!relocation_base && !force_wow64cpu_32bit_va && (is_32bit || is_x64) && is_dll && has_dynamic_base && has_relocations)
         {
             const uint64_t image_arena_start = is_32bit ? 0x70000000ULL : 0x00007FF000000000ULL;
-            const uint64_t image_arena_end = is_32bit ? 0x7FFDFFFFULL : MAX_ALLOCATION_ADDRESS;
+            const uint64_t image_arena_end = std::min(is_32bit ? 0x7FFDFFFFULL : MAX_ALLOCATION_ADDRESS, address_limit);
             binary.image_base =
                 memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image), image_arena_start, image_arena_end);
         }
 
-        if (!binary.image_base || !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
-                                                                  relocation_base ? relocation_base : binary.image_base))
+        const bool preferred_fits = binary.image_base && binary.size_of_image && binary.image_base <= address_limit &&
+                                    binary.size_of_image - 1 <= address_limit - binary.image_base;
+        if (!preferred_fits || !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                               relocation_base ? relocation_base : binary.image_base))
         {
             if (!is_relocatable && relocation_base == 0)
             {
@@ -753,9 +757,8 @@ namespace sogen
             // The ceiling is explicit because an unbounded search can pick a base above 4 GB for a
             // 32-bit module once the low arena fills; WOW64 pointer marshaling then truncates it to 32
             // bits, aliasing the module onto whatever unrelated allocation sits at the truncated address.
-            const bool needs_below_4gb = force_wow64cpu_32bit_va || is_32bit;
+            const bool needs_below_4gb = address_limit < DEFAULT_ALLOCATION_ADDRESS_64BIT;
             const uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
-            const uint64_t highest_address = needs_below_4gb ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
             const auto image_size = static_cast<size_t>(binary.size_of_image);
 
             // The preferred base was taken, so relocate. On backends sharing the address space with the
@@ -768,7 +771,7 @@ namespace sogen
             bool mapped = false;
             for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)
             {
-                binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, highest_address);
+                binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, address_limit);
                 if (!binary.image_base)
                 {
                     break;
@@ -887,10 +890,10 @@ namespace sogen
 
     template mapped_module map_module_from_data<std::uint32_t>(memory_manager& memory, const std::span<const std::byte> data,
                                                                std::filesystem::path file, windows_path module_path,
-                                                               uint64_t relocation_base);
+                                                               uint64_t relocation_base, uint64_t highest_address);
     template mapped_module map_module_from_data<std::uint64_t>(memory_manager& memory, const std::span<const std::byte> data,
                                                                std::filesystem::path file, windows_path module_path,
-                                                               uint64_t relocation_base);
+                                                               uint64_t relocation_base, uint64_t highest_address);
 
     template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                                                  windows_path module_path);

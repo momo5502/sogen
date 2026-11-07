@@ -47,7 +47,7 @@ namespace sogen
       public:
         virtual ~module_mapping_strategy() = default;
         virtual mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
-                                            windows_path module_path, uint64_t relocation_base) = 0;
+                                            windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0) = 0;
         virtual mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                               windows_path module_path) = 0;
     };
@@ -56,7 +56,7 @@ namespace sogen
     {
       public:
         mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
-                                    windows_path module_path, uint64_t relocation_base) override;
+                                    windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0) override;
         mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                       windows_path module_path) override;
     };
@@ -65,7 +65,7 @@ namespace sogen
     {
       public:
         mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
-                                    windows_path module_path, uint64_t relocation_base) override;
+                                    windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0) override;
         mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                       windows_path module_path) override;
     };
@@ -110,7 +110,7 @@ namespace sogen
 
         std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
         mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false,
-                                  uint64_t relocation_base = 0);
+                                  uint64_t relocation_base = 0, uint64_t highest_address = 0);
         mapped_module* map_module_or_throw(const windows_path& file, const logger& logger, bool is_static = false,
                                            bool allow_duplicate = false);
         static std::filesystem::path module_identity(const windows_path& path);

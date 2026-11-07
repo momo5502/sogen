@@ -104,9 +104,9 @@ namespace sogen::test
             }
 
             mapped_module map(const std::vector<std::byte>& data, const uint64_t relocation_base = 0,
-                              const windows_path& path = windows_path{"C:\\test.dll"})
+                              const windows_path& path = windows_path{"C:\\test.dll"}, const uint64_t highest_address = 0)
             {
-                return map_module_from_data<Pointer>(this->memory_, data, "test.dll", path, relocation_base);
+                return map_module_from_data<Pointer>(this->memory_, data, "test.dll", path, relocation_base, highest_address);
             }
 
             void expect_relocations(const mapped_module& module, const uint64_t relocation_base)
@@ -330,6 +330,48 @@ namespace sogen::test
         EXPECT_NE(this->preferred_base, original.image_base);
         EXPECT_EQ(this->preferred_base, secondary.image_base);
         this->expect_relocations(secondary, original.image_base);
+    }
+
+    TYPED_TEST(ModuleRelocationTest, DynamicDllPlacementRespectsTheAddressCeiling)
+    {
+        constexpr uint64_t limit = 0x1FFFFFFF;
+        constexpr TypeParam file_base = 0x10000000;
+        auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+        constexpr auto header_offset =
+            k_nt_offset + offsetof(PENTHeaders_t<TypeParam>, OptionalHeader) + offsetof(PEOptionalHeader_t<TypeParam>, ImageBase);
+        poke(data, header_offset, file_base);
+        poke(data, 0x220, static_cast<TypeParam>(file_base + this->target_rva));
+        const auto module = this->map(data, 0, windows_path{"C:\\test.dll"}, limit);
+        EXPECT_LE(module.image_base + module.size_of_image - 1, limit);
+        this->expect_relocations(module, module.image_base);
+    }
+
+    TYPED_TEST(ModuleRelocationTest, AConstrainedSecondaryViewKeepsTheOriginalRelocationBase)
+    {
+        constexpr uint64_t limit = 0x0FFFFFFF;
+        const auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+        const auto original = this->map(data);
+        const auto secondary = this->map(data, original.image_base, windows_path{"C:\\test.dll"}, limit);
+        EXPECT_GT(original.image_base, limit);
+        EXPECT_LE(secondary.image_base + secondary.size_of_image - 1, limit);
+        this->expect_relocations(secondary, original.image_base);
+    }
+
+    TYPED_TEST(ModuleRelocationTest, TheWholeImageMustFitBelowTheAddressCeiling)
+    {
+        const auto data = this->image();
+        const auto limit = this->preferred_base + 0x1000;
+        const auto module = this->map(data, 0, windows_path{"C:\\test.dll"}, limit);
+        EXPECT_NE(this->preferred_base, module.image_base);
+        EXPECT_LE(module.image_base + module.size_of_image - 1, limit);
+        this->expect_relocations(module, module.image_base);
+    }
+
+    TYPED_TEST(ModuleRelocationTest, AnImpossibleAddressCeilingDoesNotLeaveAnImageMapped)
+    {
+        const auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+        EXPECT_THROW(this->map(data, 0, windows_path{"C:\\test.dll"}, 0xFFFF), std::runtime_error);
+        EXPECT_FALSE(this->memory_.get_region_info(this->preferred_base).is_reserved);
     }
 
     using ModuleRelocation32Test = ModuleRelocationTest<uint32_t>;

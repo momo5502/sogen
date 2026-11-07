@@ -565,8 +565,9 @@ namespace sogen
                     }
                 }
 
-                const auto* binary =
-                    c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log, false, true, relocation_base);
+                const auto highest_address = highest_address_for_zero_bits(base_address.read() ? 0 : zero_bits);
+                const auto* binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log, false, true, relocation_base,
+                                                                      highest_address);
                 if (!binary)
                 {
                     return STATUS_FILE_INVALID;
