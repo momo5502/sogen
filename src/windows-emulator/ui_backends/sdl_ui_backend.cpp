@@ -1322,6 +1322,8 @@ namespace sogen
                     if (!top_level && state->window)
                     {
                         this->destroy_host(*state);
+                        state->popup_surface = {};
+                        state->popup_pixels = {};
                     }
                     else if (is_promoted_child(state->desc) && !state->window)
                     {
