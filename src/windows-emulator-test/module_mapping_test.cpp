@@ -332,7 +332,51 @@ namespace sogen::test
         this->expect_relocations(secondary, original.image_base);
     }
 
+    using ModuleRelocation32Test = ModuleRelocationTest<uint32_t>;
     using ModuleRelocation64Test = ModuleRelocationTest<uint64_t>;
+
+    TEST_F(ModuleRelocation32Test, HighAndLowRelocationsAreAppliedWhenDynamicDllsMove)
+    {
+        auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+        poke(data, 0x220, uint16_t{0x1001});
+        poke(data, 0x222, uint16_t{0x5678});
+        poke(data, 0xA08, static_cast<uint16_t>((IMAGE_REL_BASED_HIGH << 12) | 0x20));
+        poke(data, 0xA0A, static_cast<uint16_t>((IMAGE_REL_BASED_LOW << 12) | 0x22));
+        const auto module = this->map(data);
+        EXPECT_NE(preferred_base, module.image_base);
+        EXPECT_EQ((module.image_base >> 16) + 1, this->memory_.read_memory<uint16_t>(module.image_base + 0x1020));
+        EXPECT_EQ(0x5678u, this->memory_.read_memory<uint16_t>(module.image_base + 0x1022));
+    }
+
+    TEST_F(ModuleRelocation32Test, HighAdjConsumesItsSignedAddendBeforeTheNextRelocation)
+    {
+        for (const auto relocation_base : {uint64_t{0}, uint64_t{0x01000000}})
+        {
+            SCOPED_TRACE(relocation_base);
+            auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE, IMAGE_FILE_DLL, 16);
+            poke(data, 0x220, uint16_t{0x1000});
+            poke(data, 0x224, uint32_t{preferred_base + target_rva});
+            poke(data, 0xA04, uint32_t{16});
+            poke(data, 0xA08, static_cast<uint16_t>((IMAGE_REL_BASED_HIGHADJ << 12) | 0x20));
+            poke(data, 0xA0A, uint16_t{0xF123});
+            poke(data, 0xA0C, static_cast<uint16_t>((IMAGE_REL_BASED_HIGHLOW << 12) | 0x24));
+            poke(data, 0xA0E, uint16_t{IMAGE_REL_BASED_ABSOLUTE});
+            const auto module = this->map(data, relocation_base);
+            const auto target_base = relocation_base ? relocation_base : module.image_base;
+            EXPECT_EQ(target_base >> 16, this->memory_.read_memory<uint16_t>(module.image_base + 0x1020));
+            EXPECT_EQ(target_base + target_rva, this->memory_.read_memory<uint32_t>(module.image_base + 0x1024));
+            ASSERT_TRUE(unmap_module(this->memory_, module));
+        }
+    }
+
+    TEST_F(ModuleRelocation32Test, HighAdjWithoutAnAddendFailsAndReleasesTheImage)
+    {
+        auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+        poke(data, 0xA08, uint16_t{IMAGE_REL_BASED_ABSOLUTE});
+        poke(data, 0xA0A, static_cast<uint16_t>((IMAGE_REL_BASED_HIGHADJ << 12) | 0x20));
+        EXPECT_THROW(this->map(data, 0x50000000), std::runtime_error);
+        EXPECT_FALSE(this->memory_.get_region_info(preferred_base).is_reserved);
+    }
 
     TEST_F(ModuleRelocation64Test, DynamicWow64CpuRemainsReachableFrom32BitCode)
     {

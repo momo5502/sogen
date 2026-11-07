@@ -371,8 +371,9 @@ namespace sogen
             uint64_t max_end = 0;
             bool has_fixup = false;
 
-            for (const auto entry : entries)
+            for (size_t index = 0; index < entries.size(); ++index)
             {
+                const auto entry = entries[index];
                 const int type = entry >> 12;
                 const auto offset = static_cast<uint16_t>(entry & 0xfff);
                 const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
@@ -382,6 +383,16 @@ namespace sogen
                 {
                 case IMAGE_REL_BASED_ABSOLUTE:
                     continue;
+                case IMAGE_REL_BASED_HIGHADJ:
+                    if (++index >= entries.size())
+                    {
+                        throw std::runtime_error("Missing HIGHADJ relocation addend");
+                    }
+                    [[fallthrough]];
+                case IMAGE_REL_BASED_HIGH:
+                case IMAGE_REL_BASED_LOW:
+                    width = sizeof(WORD);
+                    break;
                 case IMAGE_REL_BASED_HIGHLOW:
                     width = sizeof(DWORD);
                     break;
@@ -415,8 +426,9 @@ namespace sogen
 
             const utils::safe_buffer_accessor<std::byte> block{block_buffer};
 
-            for (const auto entry : entries)
+            for (size_t index = 0; index < entries.size(); ++index)
             {
+                const auto entry = entries[index];
                 const int type = entry >> 12;
                 const auto offset = static_cast<uint16_t>(entry & 0xfff);
                 const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
@@ -426,6 +438,23 @@ namespace sogen
                 {
                 case IMAGE_REL_BASED_ABSOLUTE:
                     break;
+
+                case IMAGE_REL_BASED_HIGH:
+                    apply_relocation<WORD>(block, local_offset, delta >> 16);
+                    break;
+
+                case IMAGE_REL_BASED_LOW:
+                    apply_relocation<WORD>(block, local_offset, delta);
+                    break;
+
+                case IMAGE_REL_BASED_HIGHADJ: {
+                    const auto high = block.as<WORD>(local_offset);
+                    const auto low = static_cast<int16_t>(entries[++index]);
+                    const uint32_t adjusted =
+                        (static_cast<uint32_t>(high.get()) << 16) + static_cast<uint32_t>(low) + static_cast<uint32_t>(delta) + 0x8000u;
+                    high.set(static_cast<WORD>(adjusted >> 16));
+                    break;
+                }
 
                 case IMAGE_REL_BASED_HIGHLOW:
                     apply_relocation<DWORD>(block, local_offset, delta);
