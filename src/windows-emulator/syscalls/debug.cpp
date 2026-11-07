@@ -252,7 +252,9 @@ namespace sogen
             t.await_debug_event = pending_debug_event_wait{.debug_object = debug_handle, .state_change = state_change};
             if (timeout)
             {
-                t.await_debug_event->timeout = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
+                const auto due = timeout.read();
+                t.await_debug_event->timeout = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), due);
+                t.await_debug_event->timeout_absolute = utils::is_absolute_due_time(due);
             }
 
             c.win_emu.yield_thread(c.vcpu, alertable != FALSE);

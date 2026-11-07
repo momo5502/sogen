@@ -125,6 +125,12 @@ namespace sogen
         bool intercept_rdtsc{true};
         bool intercept_kusd{true};
 
+        // Whether snapshots keep the guest's time: its steady time (interrupt time, tick count, waits and timers) and
+        // timestamp counter stand still while the process is saved, written or loaded, and continue from the save. A
+        // game that times out without its server wants that; a guest that talks to the outside world wants the host's
+        // time, the default.
+        bool keep_guest_time_across_snapshots{false};
+
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
 
@@ -334,6 +340,38 @@ namespace sogen
         {
             return *this->clock_;
         }
+
+        // The guest's clocks at one moment, which a snapshot keeps so the process goes on from there.
+        struct guest_time
+        {
+            utils::clock::steady_time_point steady{};
+            utils::clock::system_time_point system{};
+            uint64_t timestamp_counter{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->steady.time_since_epoch().count());
+                buffer.write(this->system.time_since_epoch().count());
+                buffer.write(this->timestamp_counter);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                this->steady =
+                    utils::clock::steady_time_point{utils::clock::steady_duration{buffer.read<utils::clock::steady_duration::rep>()}};
+                this->system =
+                    utils::clock::system_time_point{utils::clock::system_duration{buffer.read<utils::clock::system_duration::rep>()}};
+                buffer.read(this->timestamp_counter);
+            }
+        };
+
+        guest_time current_guest_time() const;
+
+        // With keep_guest_time_across_snapshots, the guest's steady time (interrupt time, tick count, timeouts) and its
+        // timestamp counter go on from a saved point: the time a snapshot took to write or to load stays out of what the
+        // guest sees. System time stays the host's, and deadlines the guest gave as system times move with it. Without
+        // the option the guest's clocks stay the host's.
+        void continue_time_at(const guest_time& time);
 
         network::network_mode network_mode() const
         {
@@ -776,6 +814,7 @@ namespace sogen
         bool instruction_precision_{true};
         bool intercept_rdtsc_{true};
         bool intercept_kusd_{true};
+        bool keep_guest_time_across_snapshots_{false};
         bool spoof_gpu_features_{false};
         bool elevated_{false};
         std::optional<display_mode> max_display_mode_{};

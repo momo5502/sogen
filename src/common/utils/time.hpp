@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <optional>
 
 #include <platform/platform.hpp>
 #if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
@@ -108,6 +109,30 @@ namespace sogen
         std::chrono::steady_clock::time_point convert_delay_interval_to_time_point(clock& c, LARGE_INTEGER delay_interval,
                                                                                    LARGE_INTEGER infinite_value = {
                                                                                        .LowPart = 0, .HighPart = -2147483648});
+
+        // A positive guest due time is an absolute system time (100 ns units since 1601); zero or a negative one is an
+        // interval.
+        inline bool is_absolute_due_time(const LARGE_INTEGER due)
+        {
+            return due.QuadPart > 0;
+        }
+
+        // Moves a deadline the guest gave as an absolute system time by system_time_ahead, the system time that went on
+        // while steady time did not: earlier when it went forward, later (at most to max, never) when it went back, as
+        // Windows moves absolute timers when the system time changes. Interval deadlines and the infinite ones (min and
+        // max) stay.
+        inline void follow_system_time(std::optional<std::chrono::steady_clock::time_point>& deadline, const bool absolute,
+                                       const std::chrono::steady_clock::duration system_time_ahead)
+        {
+            using time_point = std::chrono::steady_clock::time_point;
+            if (!absolute || !deadline || *deadline == time_point::min() || *deadline == time_point::max())
+            {
+                return;
+            }
+
+            const auto past_max = system_time_ahead < time_point::duration::zero() && *deadline > time_point::max() + system_time_ahead;
+            *deadline = past_max ? time_point::max() : *deadline - system_time_ahead;
+        }
 
         KSYSTEM_TIME convert_to_ksystem_time(const std::chrono::system_clock::time_point& tp);
         void convert_to_ksystem_time(volatile KSYSTEM_TIME* dest, const std::chrono::system_clock::time_point& tp);
