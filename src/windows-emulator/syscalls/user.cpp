@@ -1892,6 +1892,7 @@ namespace sogen
         uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
                                           emulator_pointer bits);
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
+        bool is_gdi_brush(const syscall_context& c, uint64_t handle);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         uint32_t count_process_gdi_objects(const syscall_context& c);
         bool set_gdi_region_rect(const syscall_context& c, handle region, const RECT& rect);
@@ -2190,43 +2191,90 @@ namespace sogen
         }
 
         // Controls ask for their brush with a WM_CTLCOLOR* message, which is WM_CTLCOLORMSGBOX plus the CTLCOLOR_* type.
+        constexpr uint32_t k_wm_ctlcolormsgbox = 0x132;
+        constexpr uint32_t k_wm_ctlcolorstatic = 0x138;
+
+        bool is_control_color_message(const uint32_t message)
+        {
+            return message >= k_wm_ctlcolormsgbox && message <= k_wm_ctlcolorstatic;
+        }
+
         uint64_t control_message_brush(const syscall_context& c, const uint32_t message)
         {
-            constexpr uint32_t wm_ctlcolormsgbox = 0x132;
-            constexpr uint32_t wm_ctlcolorstatic = 0x138;
-            if (message < wm_ctlcolormsgbox || message > wm_ctlcolorstatic)
+            return is_control_color_message(message) ? system_control_brush(c, message - k_wm_ctlcolormsgbox) : 0;
+        }
+
+        // The parent picks a control's brush by answering the WM_CTLCOLOR* message, with the DC in wParam and the control in
+        // lParam; only a parent that returns no brush leaves the control with the system one.
+        bool ask_parent_for_control_brush(const syscall_context& c, const callback_id id, const hwnd parent, const hwnd window,
+                                          const hdc dc, const uint32_t message)
+        {
+            const auto* parent_window = c.proc.windows.get(parent);
+            if (!is_control_color_message(message) || !parent_window || parent_window->wnd_proc == 0 ||
+                parent_window->thread_id != c.thread().id)
+            {
+                return false;
+            }
+
+            dispatch_window_message(c, id, nullptr, *parent_window, message, dc, window);
+            return true;
+        }
+
+        uint64_t answered_control_brush(const syscall_context& c, const uint32_t message)
+        {
+            const auto brush = c.get_callback_result<uint64_t>();
+            return is_gdi_brush(c, brush) ? brush : control_message_brush(c, message);
+        }
+
+        // A child control asks its parent; a top-level window answers for itself.
+        hwnd control_brush_parent(const syscall_context& c, const hwnd window)
+        {
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
             {
                 return 0;
             }
-
-            return system_control_brush(c, message - wm_ctlcolormsgbox);
+            return (win->style & WS_CHILD) != 0 && win->parent_handle != 0 ? win->parent_handle : window;
         }
 
-        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, const hwnd /*window*/, const hdc /*dc*/, const uint32_t message)
+        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, const hwnd window, const hdc dc, const uint32_t message)
         {
+            if (ask_parent_for_control_brush(c, callback_id::NtUserGetControlBrush, control_brush_parent(c, window), window, dc, message))
+            {
+                return {};
+            }
             return control_message_brush(c, message);
         }
 
-        uint64_t handle_NtUserGetControlColor(const syscall_context& c, const hwnd /*parent*/, const hwnd /*window*/, const hdc /*dc*/,
+        uint64_t completion_NtUserGetControlBrush(const syscall_context& c, const hwnd /*window*/, const hdc /*dc*/, const uint32_t message)
+        {
+            return answered_control_brush(c, message);
+        }
+
+        uint64_t handle_NtUserGetControlColor(const syscall_context& c, const hwnd parent, const hwnd window, const hdc dc,
                                               const uint32_t message)
         {
+            if (ask_parent_for_control_brush(c, callback_id::NtUserGetControlColor, parent, window, dc, message))
+            {
+                return {};
+            }
             return control_message_brush(c, message);
         }
 
-        BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc,
-                                     const hbrush brush)
+        uint64_t completion_NtUserGetControlColor(const syscall_context& c, const hwnd /*parent*/, const hwnd /*window*/, const hdc /*dc*/,
+                                                  const uint32_t message)
         {
-            auto* win = c.proc.windows.get(window);
-            if (dc == 0 || !win || (parent_window != 0 && !c.proc.windows.get(parent_window)))
+            return answered_control_brush(c, message);
+        }
+
+        constexpr hbrush k_ctlcolor_max = 7;
+
+        BOOL fill_window_client(const syscall_context& c, const hwnd window, const hdc dc, const uint64_t control_brush)
+        {
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
             {
                 return FALSE;
-            }
-
-            constexpr hbrush ctlcolor_max = 7;
-            uint64_t control_brush = brush;
-            if (control_brush < ctlcolor_max)
-            {
-                control_brush = system_control_brush(c, static_cast<uint32_t>(brush));
             }
 
             constexpr DWORD patcopy = 0x00F00021;
@@ -2236,6 +2284,34 @@ namespace sogen
                                                    client_rect.bottom - client_rect.top, patcopy);
             handle_NtGdiSelectBrushLocal(c, dc, static_cast<uint32_t>(previous_brush), 0);
             return result;
+        }
+
+        // A CTLCOLOR_* index instead of a brush fills with the brush the parent picks for that kind of control.
+        BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc,
+                                     const hbrush brush)
+        {
+            if (dc == 0 || !c.proc.windows.get(window) || (parent_window != 0 && !c.proc.windows.get(parent_window)))
+            {
+                return FALSE;
+            }
+
+            if (brush >= k_ctlcolor_max)
+            {
+                return fill_window_client(c, window, dc, brush);
+            }
+
+            const auto message = k_wm_ctlcolormsgbox + static_cast<uint32_t>(brush);
+            if (ask_parent_for_control_brush(c, callback_id::NtUserFillWindow, parent_window, window, dc, message))
+            {
+                return {};
+            }
+            return fill_window_client(c, window, dc, control_message_brush(c, message));
+        }
+
+        BOOL completion_NtUserFillWindow(const syscall_context& c, const hwnd /*parent_window*/, const hwnd window, const hdc dc,
+                                         const hbrush brush)
+        {
+            return fill_window_client(c, window, dc, answered_control_brush(c, k_wm_ctlcolormsgbox + static_cast<uint32_t>(brush)));
         }
 
         BOOL handle_NtUserReleaseDC(const syscall_context& c, const hdc dc)
@@ -6338,6 +6414,25 @@ namespace sogen
             return state.previous;
         }
 
+        // A window cannot take the focus while it or any window up to its top-level window is disabled or minimized.
+        bool can_take_focus(const syscall_context& c, const window& target)
+        {
+            const auto* current = &target;
+            for (size_t depth = 0; current && depth < c.proc.windows.size(); ++depth)
+            {
+                if ((current->style & (WS_DISABLED | WS_MINIMIZE)) != 0)
+                {
+                    return false;
+                }
+                if (c.proc.is_surface_root(*current))
+                {
+                    return true;
+                }
+                current = c.proc.windows.get(current->parent_handle);
+            }
+            return true;
+        }
+
         hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
         {
             auto& thread = c.thread();
@@ -6354,7 +6449,7 @@ namespace sogen
                     set_guest_last_error(c, 5); // ERROR_ACCESS_DENIED
                     return 0;
                 }
-                if ((target->style & WS_DISABLED) != 0)
+                if (!can_take_focus(c, *target))
                 {
                     set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
                     return 0;

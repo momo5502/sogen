@@ -565,6 +565,9 @@ namespace sogen
         hwnd handle_NtUserWindowFromDC(const syscall_context& c, hdc dc);
         uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t message);
         uint64_t handle_NtUserGetControlColor(const syscall_context& c, hwnd parent, hwnd window, hdc dc, uint32_t message);
+        uint64_t completion_NtUserGetControlColor(const syscall_context& c, hwnd parent, hwnd window, hdc dc, uint32_t message);
+        uint64_t completion_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t message);
+        BOOL completion_NtUserFillWindow(const syscall_context& c, hwnd parent_window, hwnd window, hdc dc, hbrush brush);
         BOOL handle_NtUserFillWindow(const syscall_context& c, hwnd parent_window, hwnd window, hdc dc, hbrush brush);
         BOOL handle_NtUserReleaseDC(const syscall_context& c, hdc dc);
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
@@ -2280,6 +2283,9 @@ namespace sogen
         add_callback(NtUserSetWindowLongPtr, window_style_change_state);
         add_callback(NtUserUpdateWindow, window_update_state);
         add_callback(NtUserSetFocus, focus_change_state);
+        add_stateless_callback(NtUserGetControlBrush);
+        add_stateless_callback(NtUserGetControlColor);
+        add_stateless_callback(NtUserFillWindow);
         add_callback(NtUserGetMessage, get_message_hook_state);
         add_callback(NtUserPeekMessage, get_message_hook_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);

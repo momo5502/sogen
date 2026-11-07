@@ -269,6 +269,9 @@ namespace sogen
         NtUserSetWindowLong,
         NtUserSetWindowLongPtr,
         NtUserSetFocus,
+        NtUserGetControlBrush,
+        NtUserGetControlColor,
+        NtUserFillWindow,
     };
 
     struct callback_frame

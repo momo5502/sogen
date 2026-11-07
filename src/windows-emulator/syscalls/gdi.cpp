@@ -3013,6 +3013,14 @@ namespace sogen
             return dc;
         }
 
+        bool is_gdi_brush(const syscall_context& c, const uint64_t handle)
+        {
+            GDI_HANDLE_ENTRY64 entry{};
+            uint64_t entry_address = 0;
+            return handle != 0 && read_gdi_entry_for_handle(c, static_cast<uint32_t>(handle), entry, entry_address) &&
+                   gdi_object_type(entry) == k_gdi_brush_type;
+        }
+
         hdc create_gdi_window_dc(const syscall_context& c, const hwnd window)
         {
             uint64_t dc_attr = 0;
