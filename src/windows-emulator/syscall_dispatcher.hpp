@@ -430,7 +430,8 @@ namespace sogen
         void dispatch(windows_emulator& win_emu, vcpu_context& vcpu);
         static void dispatch_callback(windows_emulator& win_emu, std::string& syscall_name);
         dispatch_result dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
-                                            completion_state* completion_state, const user_callback_result& callback_result);
+                                            completion_state* completion_state, const user_callback_result& callback_result,
+                                            uint64_t trap_stack_pointer);
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);

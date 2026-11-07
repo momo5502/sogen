@@ -521,14 +521,21 @@ namespace sogen
 
             auto& emu = vcpu.x64_cpu();
 
+            // KiInitializeUserApc's frame. KiUserApcDispatcher's unwind data reads the interrupted RIP and RSP from the
+            // machine frame, which sits right under the interrupted stack.
             struct
             {
                 CONTEXT64 context{};
                 CONTEXT_EX context_ex{};
                 KCONTINUE_ARGUMENT continue_argument{};
+                uint64_t padding{};
+                std::array<uint64_t, 4> callback_data{};
+                MACHINE_FRAME machine_frame{};
             } stack_layout;
 
+            constexpr auto machine_frame_offset = offsetof(decltype(stack_layout), machine_frame);
             static_assert(offsetof(decltype(stack_layout), continue_argument) == 0x4F0);
+            static_assert(machine_frame_offset == 0x530);
 
             stack_layout.context.P1Home = next_apx.apc_argument1;
             stack_layout.context.P2Home = next_apx.apc_argument2;
@@ -541,11 +548,16 @@ namespace sogen
             ctx.ContextFlags = CONTEXT64_ALL;
             cpu_context::save(emu, ctx);
 
+            stack_layout.machine_frame.Rip = ctx.Rip;
+            stack_layout.machine_frame.Rsp = ctx.Rsp;
+
             const auto initial_sp = emu.reg(x86_register::rsp);
-            const auto new_sp = align_down(initial_sp - sizeof(stack_layout), 0x100);
+            const auto new_sp = align_down(initial_sp - sizeof(MACHINE_FRAME), 0x10) - machine_frame_offset;
 
             thread.grow_stack_for_frame(new_sp, initial_sp);
-            emu.write_memory(new_sp, stack_layout);
+
+            // The layout's tail padding would reach past the machine frame into the interrupted stack.
+            emu.write_memory(new_sp, &stack_layout, machine_frame_offset + sizeof(MACHINE_FRAME));
 
             emu.reg(x86_register::rsp, new_sp);
             emu.reg(x86_register::rip, win_emu.process.ki_user_apc_dispatcher);
