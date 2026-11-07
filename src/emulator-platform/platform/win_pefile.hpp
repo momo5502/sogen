@@ -67,6 +67,7 @@
 #define IMAGE_DLLCHARACTERISTICS_NX_COMPAT    0x0100
 #define IMAGE_FILE_RELOCS_STRIPPED            0x0001
 #define IMAGE_FILE_LARGE_ADDRESS_AWARE        0x0020
+#define IMAGE_FILE_32BIT_MACHINE              0x0100
 #define IMAGE_FILE_DLL                        0x2000
 
 #ifndef OS_WINDOWS
