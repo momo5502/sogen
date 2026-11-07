@@ -43,14 +43,17 @@ namespace sogen
 
         emulator_thread& thread() const;
 
-        // An OVERLAPPED whose hEvent has the low-order bit set tells the I/O manager not to queue a
-        // completion packet; the caller is notified through the event instead. libuv depends on this
-        // under UV_HANDLE_EMULATE_IOCP, where it pairs the tagged event with
-        // RegisterWaitForSingleObject. Queue the packet anyway and the loop sees one completion more
-        // than it armed, which trips "assert(handle->reqs_pending > 0)" in uv__process_pipe_read_req.
+        // Windows queues no completion packet for a request without an ApcContext, which is how
+        // synchronous Win32 calls reach a handle bound to a port (mswsock's internal AFD requests on a
+        // thread-pool socket, for one). An OVERLAPPED whose hEvent has the low-order bit set tells the
+        // I/O manager not to queue a completion packet either; the caller is notified through the
+        // event instead. libuv depends on this under UV_HANDLE_EMULATE_IOCP, where it pairs the tagged
+        // event with RegisterWaitForSingleObject. Queue the packet anyway and the loop sees one
+        // completion more than it armed, which trips "assert(handle->reqs_pending > 0)" in
+        // uv__process_pipe_read_req.
         bool suppresses_completion_packet() const
         {
-            return (this->event.bits & 1) != 0;
+            return !this->apc_context || (this->event.bits & 1) != 0;
         }
 
         io_device_context(memory_interface& emu)
@@ -258,6 +261,12 @@ namespace sogen
         uint64_t key{};
     };
 
+    NTSTATUS associate_completion_port(process_context& process, const emulator_thread* active_thread,
+                                       std::optional<device_completion_association>& association, handle completion_port, uint64_t key);
+    NTSTATUS replace_completion_port(process_context& process, const emulator_thread* active_thread,
+                                     std::optional<device_completion_association>& association, handle completion_port, uint64_t key);
+    void release_completion_association(process_context& process, std::optional<device_completion_association>& association);
+
     class io_device_container : public io_device
     {
       public:
@@ -291,6 +300,8 @@ namespace sogen
         bool has_pending_io(uint32_t issuing_thread_id) const override;
         NTSTATUS set_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
                                             uint64_t key);
+        NTSTATUS replace_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
+                                                uint64_t key);
         void set_completion_notification_flags(ULONG flags);
         void release_references(process_context& process) override;
 

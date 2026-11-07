@@ -58,6 +58,11 @@ namespace sogen
             return res;
         }
 
+        std::vector<address> socket_factory::get_local_addresses(const int family)
+        {
+            return address::get_local_addresses(family);
+        }
+
         std::unique_ptr<socket_factory> create_socket_factory(const network_mode mode)
         {
             if (mode == network_mode::live)

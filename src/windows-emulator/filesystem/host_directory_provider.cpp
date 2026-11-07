@@ -25,6 +25,15 @@
 #include <unistd.h>
 #endif
 
+#ifdef OS_WINDOWS
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <algorithm>
+#include <climits>
+#include <sys/resource.h>
+#endif
+
 namespace sogen
 {
 
@@ -52,9 +61,85 @@ namespace sogen
                 return STATUS_ACCESS_DENIED;
             case EISDIR:
                 return STATUS_FILE_IS_A_DIRECTORY;
+            case EMFILE:
+            case ENFILE:
+                return STATUS_TOO_MANY_OPENED_FILES;
             default:
                 return STATUS_NOT_SUPPORTED;
             }
+        }
+
+#ifdef OS_WINDOWS
+        // Windows only re-creates an existing hidden or system file when the new file keeps those attributes, which is
+        // how an NT caller overwrites it. The guest does not see host attributes, so it cannot ask for them itself.
+        FILE* recreate_keeping_attributes(const std::filesystem::path& path, const std::u16string& mode)
+        {
+            constexpr DWORD kept_attributes = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM;
+            const auto attributes = GetFileAttributesW(path.c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & kept_attributes) == 0)
+            {
+                return nullptr;
+            }
+
+            const bool readable = mode.find(u'+') != std::u16string::npos;
+            auto* const handle = CreateFileW(path.c_str(), GENERIC_WRITE | (readable ? GENERIC_READ : 0),
+                                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+                                             attributes & kept_attributes, nullptr);
+            if (handle == INVALID_HANDLE_VALUE)
+            {
+                return nullptr;
+            }
+
+            const auto descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(handle), _O_BINARY | (readable ? _O_RDWR : _O_WRONLY));
+            if (descriptor == -1)
+            {
+                CloseHandle(handle);
+                return nullptr;
+            }
+
+            auto* file = _wfdopen(descriptor, u16_to_w(mode).c_str());
+            if (!file)
+            {
+                _close(descriptor);
+            }
+
+            return file;
+        }
+#endif
+
+        // Every open guest file holds a host stream, and the C runtime starts with 512 of them. Windows gives a process
+        // millions of handles, so raise the host limit as far as it goes (Destiny 2 keeps over 2,000 packages open).
+        void raise_open_file_limit()
+        {
+            static const bool raised = [] {
+#ifdef OS_WINDOWS
+                // The UCRT allows 8192 streams; msvcrt.dll, which MinGW builds use, rejects more than 2048.
+                return _setmaxstdio(8192) != -1 || _setmaxstdio(2048) != -1;
+#else
+                rlimit limit{};
+                if (getrlimit(RLIMIT_NOFILE, &limit) != 0)
+                {
+                    return false;
+                }
+
+                // The hard limit can be RLIM_INFINITY, as it normally is on macOS, where setrlimit(2) also rejects a soft
+                // limit above OPEN_MAX (its man page says to use min(OPEN_MAX, rlim_max)). Elsewhere an infinite target is
+                // clamped to Linux's default fs.nr_open.
+                constexpr rlim_t finite_target = rlim_t{1} << 20;
+                auto target = limit.rlim_max == RLIM_INFINITY ? finite_target : limit.rlim_max;
+#ifdef __APPLE__
+                target = std::min<rlim_t>(target, OPEN_MAX);
+#endif
+                if (limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur >= target)
+                {
+                    return true;
+                }
+
+                limit.rlim_cur = target;
+                return setrlimit(RLIMIT_NOFILE, &limit) == 0;
+#endif
+            }();
+            (void)raised;
         }
 
         std::optional<std::filesystem::path> find_entry_ignoring_case(const std::filesystem::path& directory,
@@ -319,6 +404,7 @@ namespace sogen
           links_(links),
           lookup_ignores_case_(host_lookup_ignores_case(this->target_))
     {
+        raise_open_file_limit();
     }
 
     bool host_directory_provider::avoids_links(const std::filesystem::path& root, const std::filesystem::path& host_path)
@@ -500,6 +586,33 @@ namespace sogen
         return entries;
     }
 
+    std::vector<std::u16string> host_directory_provider::list_names(const windows_path& path) const
+    {
+        std::vector<std::u16string> names{};
+        const auto host_path = this->get_host_path(path);
+        if (!host_path)
+        {
+            return names;
+        }
+
+        std::error_code ec{};
+        for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
+        {
+            if (this->links_ == host_links::refuse)
+            {
+                std::error_code status_error{};
+                const auto status = file.symlink_status(status_error);
+                if (status_error || !std::filesystem::exists(status) || is_link(status))
+                {
+                    continue;
+                }
+            }
+
+            names.push_back(file.path().filename().u16string());
+        }
+        return names;
+    }
+
     open_result host_directory_provider::open(const windows_path& path, const std::u16string& mode)
     {
         const auto host_path = this->get_host_path(path);
@@ -510,6 +623,12 @@ namespace sogen
 
         FILE* file{};
         const auto error = open_unicode(&file, *host_path, mode);
+#ifdef OS_WINDOWS
+        if (!file && error == EACCES && mode.starts_with(u'w'))
+        {
+            file = recreate_keeping_attributes(*host_path, mode);
+        }
+#endif
         if (!file)
         {
             return {.status = map_open_error(error)};

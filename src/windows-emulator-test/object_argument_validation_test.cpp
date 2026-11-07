@@ -4,9 +4,8 @@
 namespace sogen::syscalls
 {
     NTSTATUS handle_NtRaiseHardError(const syscall_context& c, NTSTATUS error_status, ULONG number_of_parameters,
-                                     emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> unicode_string_parameter_mask,
-                                     uint64_t parameters, HARDERROR_RESPONSE_OPTION valid_response_option,
-                                     emulator_object<HARDERROR_RESPONSE> response);
+                                     ULONG unicode_string_parameter_mask, uint64_t parameters,
+                                     HARDERROR_RESPONSE_OPTION valid_response_option, emulator_object<HARDERROR_RESPONSE> response);
     NTSTATUS handle_NtQueryObject(const syscall_context& c, handle handle, OBJECT_INFORMATION_CLASS object_information_class,
                                   emulator_pointer object_information, ULONG object_information_length,
                                   emulator_object<ULONG> return_length);
@@ -93,12 +92,37 @@ namespace sogen::test
         {
             const auto response = this->untouched_slot(0);
             const emulator_object<HARDERROR_RESPONSE> response_object{this->emu->memory, response.value()};
-            EXPECT_EQ(STATUS_INVALID_PARAMETER_2, syscalls::handle_NtRaiseHardError(this->context(), 0x40000000, count, {this->emu->memory},
-                                                                                    0, OptionOk, response_object))
+            EXPECT_EQ(STATUS_INVALID_PARAMETER_2,
+                      syscalls::handle_NtRaiseHardError(this->context(), 0x40000000, count, 0, 0, OptionOk, response_object))
                 << count;
             EXPECT_EQ(untouched, response.read()) << count;
             EXPECT_FALSE(this->emu->process.exit_status.has_value()) << count;
         }
+    }
+
+    TEST_F(ObjectArgumentValidationTest, RaiseHardErrorIgnoresMalformedStringParameters)
+    {
+        constexpr NTSTATUS dll_not_found = static_cast<NTSTATUS>(0xC0000135);
+        const auto strings = this->storage + 0x100;
+        const auto parameters = this->storage + 0x200;
+        const auto unreadable = uint64_t{0x10};
+
+        const std::array malformed{
+            UNICODE_STRING<EmulatorTraits<Emu64>>{.Length = 8, .MaximumLength = 4, .Buffer = this->storage + 0x300},
+            UNICODE_STRING<EmulatorTraits<Emu64>>{.Length = 3, .MaximumLength = 8, .Buffer = this->storage + 0x300},
+            UNICODE_STRING<EmulatorTraits<Emu64>>{.Length = 8, .MaximumLength = 8, .Buffer = unreadable},
+        };
+        this->emu->memory.write_memory(strings, malformed.data(), sizeof(malformed));
+
+        const std::array<uint64_t, 4> values{strings, strings + sizeof(malformed[0]), strings + (2 * sizeof(malformed[0])), unreadable};
+        this->emu->memory.write_memory(parameters, values.data(), sizeof(values));
+
+        const auto response = this->untouched_slot(0);
+        const emulator_object<HARDERROR_RESPONSE> response_object{this->emu->memory, response.value()};
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtRaiseHardError(this->context(), dll_not_found, static_cast<ULONG>(values.size()), 0xF,
+                                                                    parameters, OptionOk, response_object));
+        EXPECT_EQ(static_cast<ULONG>(ResponseAbort), response.read());
+        EXPECT_EQ(dll_not_found, this->emu->process.exit_status);
     }
 
     TEST_F(ObjectArgumentValidationTest, QueryObjectBasicInformationRequiresTheExactLength)

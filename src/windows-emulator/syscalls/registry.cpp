@@ -174,6 +174,13 @@ namespace sogen
         NTSTATUS handle_NtQueryKey(const syscall_context& c, const handle key_handle, const KEY_INFORMATION_CLASS key_information_class,
                                    const uint64_t key_information, const ULONG length, const emulator_object<ULONG> result_length)
         {
+            // Windows refuses an out-of-range key or value query class with STATUS_INVALID_PARAMETER, before the handle.
+            if (static_cast<uint32_t>(key_information_class) >= MaxKeyInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtQueryKey info class: 0x%X\n", static_cast<uint32_t>(key_information_class));
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto* key = c.proc.registry_keys.get(key_handle);
             if (!key)
             {
@@ -369,6 +376,12 @@ namespace sogen
                                         const KEY_VALUE_INFORMATION_CLASS key_value_information_class, const uint64_t key_value_information,
                                         const ULONG length, const emulator_object<ULONG> result_length)
         {
+            if (static_cast<uint32_t>(key_value_information_class) >= MaxKeyValueInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtQueryValueKey info class: 0x%X\n", static_cast<uint32_t>(key_value_information_class));
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto* key = c.proc.registry_keys.get(key_handle);
             if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
@@ -854,6 +867,12 @@ namespace sogen
                                             const KEY_SET_INFORMATION_CLASS key_information_class, const uint64_t key_information,
                                             const ULONG length)
         {
+            if (static_cast<uint32_t>(key_information_class) >= MaxKeySetInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtSetInformationKey info class: 0x%X\n", static_cast<uint32_t>(key_information_class));
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             auto* key = c.proc.registry_keys.get(key_handle);
             if (!key)
             {
@@ -884,6 +903,12 @@ namespace sogen
                                        const KEY_INFORMATION_CLASS key_information_class, const uint64_t key_information,
                                        const ULONG length, const emulator_object<ULONG> result_length)
         {
+            if (static_cast<uint32_t>(key_information_class) >= MaxKeyInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtEnumerateKey info class: 0x%X\n", static_cast<uint32_t>(key_information_class));
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto* key = c.proc.registry_keys.get(key_handle);
             if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
@@ -941,6 +966,13 @@ namespace sogen
                                             const uint64_t key_value_information, const ULONG length,
                                             const emulator_object<ULONG> result_length)
         {
+            if (static_cast<uint32_t>(key_value_information_class) >= MaxKeyValueInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtEnumerateValueKey info class: 0x%X\n",
+                                    static_cast<uint32_t>(key_value_information_class));
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto* key = c.proc.registry_keys.get(key_handle);
             if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {

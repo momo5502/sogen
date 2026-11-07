@@ -47,6 +47,8 @@ dependencies:
   crypto: ^3.0.6
   flutter_svg: ^2.3.2
   simple_icons: ^16.23.0
+  pointycastle: ^4.0.0
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:

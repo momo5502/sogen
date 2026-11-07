@@ -41,6 +41,12 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|density|uiMode"
             android:theme="@style/NormalTheme" />
 
+        <activity
+            android:name=".EpicSignInActivity"
+            android:exported="false"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|density|uiMode"
+            android:theme="@style/NormalTheme" />
+
         <service
             android:name=".download.DownloadService"
             android:exported="false"

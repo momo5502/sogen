@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -22,6 +23,52 @@ enum ScreenOrientation {
 
   static ScreenOrientation fromName(String? name) =>
       values.firstWhere((orientation) => orientation.name == name, orElse: () => sensor);
+}
+
+/// A mode of the emulated display. The emulator only accepts the modes in display_modes.hpp, which [all] lists.
+@immutable
+class DisplayMode {
+  const DisplayMode(this.width, this.height);
+
+  static const all = [
+    DisplayMode(640, 480),
+    DisplayMode(800, 600),
+    DisplayMode(1024, 768),
+    DisplayMode(1280, 720),
+    DisplayMode(1280, 1024),
+    DisplayMode(1600, 900),
+    DisplayMode(1680, 1050),
+    DisplayMode(1920, 1080),
+  ];
+
+  /// The mode the display starts in when a game sets no maximum.
+  static const standard = DisplayMode(1920, 1080);
+
+  /// The mode a stored name caps the display at, or null for no cap. The standard mode is no cap: the display starts
+  /// in it and offers every mode either way.
+  static DisplayMode? fromName(Object? name) {
+    for (final mode in all) {
+      if (mode.name == name) {
+        return mode == standard ? null : mode;
+      }
+    }
+    return null;
+  }
+
+  final int width;
+  final int height;
+
+  String get name => '${width}x$height';
+
+  /// Whether the mode fits on a screen of the given size in pixels, in either orientation.
+  bool fitsOn(int screenWidth, int screenHeight) =>
+      width <= max(screenWidth, screenHeight) && height <= min(screenWidth, screenHeight);
+
+  @override
+  bool operator ==(Object other) => other is DisplayMode && other.width == width && other.height == height;
+
+  @override
+  int get hashCode => Object.hash(width, height);
 }
 
 @immutable
@@ -170,6 +217,7 @@ class Game {
     this.environment = const {},
     this.liveNetwork = false,
     this.console = false,
+    this.maxDisplayMode,
     this.settings = const GameSettings(),
     this.workingDirectory,
     this.source,
@@ -185,6 +233,7 @@ class Game {
     environment: (json['environment'] as Map<String, dynamic>? ?? const {}).cast<String, String>(),
     liveNetwork: json['liveNetwork'] as bool? ?? false,
     console: json['console'] as bool? ?? false,
+    maxDisplayMode: DisplayMode.fromName(json['maxDisplayMode']),
     settings: GameSettings.fromJson(json['settings'] as Map<String, dynamic>? ?? const {}),
     workingDirectory: json['workingDirectory'] as String?,
     source: GameSource.fromJson(json['source']),
@@ -207,6 +256,10 @@ class Game {
 
   /// Command-line programs show a terminal instead of a window.
   final bool console;
+
+  /// The largest display mode the game sees, or null for [DisplayMode.standard]. Games that size their rendering by
+  /// the display draw fewer pixels below it.
+  final DisplayMode? maxDisplayMode;
 
   final GameSettings settings;
 
@@ -244,6 +297,7 @@ class Game {
     workingDirectory: workingDirectory,
     source: source,
     icon: icon,
+    maxDisplayMode: maxDisplayMode,
     id: id,
     name: name ?? this.name,
     directory: directory ?? this.directory,
@@ -264,6 +318,7 @@ class Game {
     'environment': environment,
     'liveNetwork': liveNetwork,
     'console': console,
+    'maxDisplayMode': ?maxDisplayMode?.name,
     'settings': settings.toJson(),
     'workingDirectory': ?workingDirectory,
     'source': ?source?.toJson(),
@@ -297,6 +352,30 @@ String? installIdOf(String directory) {
 Future<Directory> installedGamesDirectory() async {
   final support = await getApplicationSupportDirectory();
   return Directory(p.join(support.path, 'games'));
+}
+
+/// The `.exe` files in [directory] and in its folders up to [maxDepth] levels down, as paths relative to it.
+Future<List<String>> findExecutablesIn(Directory directory, {required int maxDepth}) async {
+  final executables = <String>[];
+  final pending = [(directory, '', 0)];
+  try {
+    while (pending.isNotEmpty) {
+      final (folder, prefix, depth) = pending.removeAt(0);
+      await for (final entity in folder.list(followLinks: false)) {
+        final path = '$prefix${p.basename(entity.path)}';
+        if (entity is Directory) {
+          if (depth < maxDepth) {
+            pending.add((entity, '$path/', depth + 1));
+          }
+        } else if (entity is File && path.toLowerCase().endsWith('.exe')) {
+          executables.add(path);
+        }
+      }
+    }
+  } on FileSystemException {
+    // An unreadable folder offers what was found before it.
+  }
+  return executables;
 }
 
 /// A readable form of a folder URI, e.g. `Games/Skyrim` for the tree of `primary:Games/Skyrim`.

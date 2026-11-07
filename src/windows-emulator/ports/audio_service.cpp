@@ -18,16 +18,23 @@ namespace sogen
         // interface the client bound to. Windows changes their UUIDs between builds while keeping the versions.
         //   {923F85B3-BBEE-4EDF-8059-F569FA64A027} v1.6 = MMDevice enumeration (mmdevapi), 10.0.26100.
         //   {A3BE171F-A525-47A3-B75A-93DA9D645D1C} v1.6 = the same interface in 10.0.20348.
+        //   {8B71BD79-CCBB-47AB-BA09-97CA52C81DA9} v1.6 = the same interface in 10.0.19041, where mmdevapi's
+        //                                               AudiosrvGetDefaultAudioEndpoint is opnum 25 as well.
         //   {D574D111-6126-49D7-9B86-4DE6B650D4FC} v2.8 = "AudioClientRpc" / IAudioClient streaming (audioses), 10.0.26100.
         //   {98B2C141-ECA2-4919-98B4-A1980D00D234} v2.8 = the same interface in 10.0.20348.
+        //   {5F935276-1C7B-46F5-AC77-077759001D2B} v2.8 = the same interface in 10.0.19041.
         constexpr std::array<uint8_t, 16> k_iface_mmdevice_enum = {0xb3, 0x85, 0x3f, 0x92, 0xee, 0xbb, 0xdf, 0x4e,
                                                                    0x80, 0x59, 0xf5, 0x69, 0xfa, 0x64, 0xa0, 0x27};
         constexpr std::array<uint8_t, 16> k_iface_mmdevice_enum_20348 = {0x1f, 0x17, 0xbe, 0xa3, 0x25, 0xa5, 0xa3, 0x47,
                                                                          0xb7, 0x5a, 0x93, 0xda, 0x9d, 0x64, 0x5d, 0x1c};
+        constexpr std::array<uint8_t, 16> k_iface_mmdevice_enum_19041 = {0x79, 0xbd, 0x71, 0x8b, 0xbb, 0xcc, 0xab, 0x47,
+                                                                         0xba, 0x09, 0x97, 0xca, 0x52, 0xc8, 0x1d, 0xa9};
         constexpr std::array<uint8_t, 16> k_iface_audio_client = {0x11, 0xd1, 0x74, 0xd5, 0x26, 0x61, 0xd7, 0x49,
                                                                   0x9b, 0x86, 0x4d, 0xe6, 0xb6, 0x50, 0xd4, 0xfc};
         constexpr std::array<uint8_t, 16> k_iface_audio_client_20348 = {0x41, 0xc1, 0xb2, 0x98, 0xa2, 0xec, 0x19, 0x49,
                                                                         0x98, 0xb4, 0xa1, 0x98, 0x0d, 0x00, 0xd2, 0x34};
+        constexpr std::array<uint8_t, 16> k_iface_audio_client_19041 = {0x76, 0x52, 0x93, 0x5f, 0x7b, 0x1c, 0xf5, 0x46,
+                                                                        0xac, 0x77, 0x07, 0x77, 0x59, 0x00, 0x1d, 0x2b};
 
         constexpr uint32_t k_audio_opnum_mmdev_get_blob = 0;        // MMDevice enumeration: [out] serialized blob, no [in]
         constexpr uint32_t k_audio_opnum_get_default_endpoint = 25; // MMDevice enumeration
@@ -251,9 +258,10 @@ namespace sogen
             uint32_t derive_stream_category_opnum{};
             request_format_offsets is_format_supported_format_offsets{};
             bool control_data_v1{};
+            bool stream_has_extra_i64{};
         };
 
-        constexpr std::array<audio_client_interface, 2> k_audio_client_interfaces{{
+        constexpr std::array<audio_client_interface, 3> k_audio_client_interfaces{{
             {.id = k_iface_audio_client,
              .get_session_state_opnum = 27,
              .destroy_session_opnum = 55,
@@ -266,6 +274,15 @@ namespace sogen
              .derive_stream_category_opnum = 120,
              .is_format_supported_format_offsets = {.ndr32 = 284, .ndr64 = 312},
              .control_data_v1 = false},
+            // 10.0.19041 audioses: the same opnums and VadServerSettings wire as 10.0.20348 and the same ControlData, but a
+            // SYSTEM_AUDIO_STREAM with one more i64.
+            {.id = k_iface_audio_client_19041,
+             .get_session_state_opnum = 26,
+             .destroy_session_opnum = 54,
+             .derive_stream_category_opnum = 120,
+             .is_format_supported_format_offsets = {.ndr32 = 284, .ndr64 = 312},
+             .control_data_v1 = false,
+             .stream_has_extra_i64 = true},
         }};
 
         const audio_client_interface* find_audio_client_interface(const std::array<uint8_t, 16>& id)
@@ -869,7 +886,7 @@ namespace sogen
                     case k_audio_opnum_get_audio_session:
                         return handle_get_audio_session(writer);
                     case k_audio_opnum_create_stream:
-                        return handle_create_stream(win_emu, c, writer, reply_handles, client->control_data_v1);
+                        return handle_create_stream(win_emu, c, writer, reply_handles, *client);
                     case k_audio_opnum_start_stream:
                         this->bind_render_event(win_emu, c);
                         return handle_post_create(writer);
@@ -882,7 +899,15 @@ namespace sogen
                     }
                 }
 
-                if (iface != k_iface_mmdevice_enum && iface != k_iface_mmdevice_enum_20348)
+                if (iface != k_iface_mmdevice_enum && iface != k_iface_mmdevice_enum_20348 && iface != k_iface_mmdevice_enum_19041)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                // On the 19041 interface only AudiosrvGetDefaultAudioEndpoint is known to match: its mmdevapi stub calls opnum
+                // 25 as (EDataFlow, ERole, [out] LPWSTR*, [out] int*), as 20348's does. The other opnums stay unanswered
+                // there until their 19041 layouts are checked.
+                if (iface == k_iface_mmdevice_enum_19041 && procedure_id != k_audio_opnum_get_default_endpoint)
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
@@ -1222,8 +1247,9 @@ namespace sogen
             // attribute. We back it with a pagefile section the guest can map and attach its handle. The wire
             // below was captured from a live Windows audio service (tools/alpc_capture.py).
             NTSTATUS handle_create_stream(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer& writer,
-                                          std::vector<alpc_reply_handle>& reply_handles, const bool control_data_v1)
+                                          std::vector<alpc_reply_handle>& reply_handles, const audio_client_interface& client)
             {
+                const auto control_data_v1 = client.control_data_v1;
                 const auto id = read_stream_id(win_emu, c);
                 const auto entry = id ? this->streams_.find(*id) : this->streams_.end();
                 if (entry == this->streams_.end() || !entry->second.format)
@@ -1386,7 +1412,27 @@ namespace sogen
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 };
                 std::memcpy(&system_audio_stream[0x10], &buffer_bytes, sizeof(buffer_bytes));
-                writer.write(system_audio_stream.data(), system_audio_stream.size(), 1);
+                if (!client.stream_has_extra_i64)
+                {
+                    writer.write(system_audio_stream.data(), system_audio_stream.size(), 1);
+                    return STATUS_SUCCESS;
+                }
+
+                // 10.0.19041's SYSTEM_AUDIO_STREAM, decoded from its audioses NDR64 format, keeps the fields up to +0x30, then
+                // has a third i64, so the three event unions (selector 0, no event), the two u32s before the memory union and
+                // that union (selector 1, the render section's handle index at +0x60) all sit 8 bytes later. The struct alone
+                // fills 0x78 bytes of wire, and the HRESULT follows it.
+                constexpr size_t section_union_offset = 0x58;
+                constexpr size_t section_handle_offset = 0x60;
+                constexpr size_t wire_size = 0x78;
+                std::array<uint8_t, wire_size + sizeof(uint32_t)> stream_v19041{};
+                std::memcpy(stream_v19041.data(), system_audio_stream.data(), 0x30);
+                const uint32_t memory_blob_section = 1;
+                const uint64_t section_handle_index = 1;
+                std::memcpy(&stream_v19041[section_union_offset], &memory_blob_section, sizeof(memory_blob_section));
+                std::memcpy(&stream_v19041[section_union_offset + 4], &memory_blob_section, sizeof(memory_blob_section));
+                std::memcpy(&stream_v19041[section_handle_offset], &section_handle_index, sizeof(section_handle_index));
+                writer.write(stream_v19041.data(), stream_v19041.size(), 1);
                 return STATUS_SUCCESS;
             }
 

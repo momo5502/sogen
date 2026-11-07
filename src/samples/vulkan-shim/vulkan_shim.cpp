@@ -343,6 +343,40 @@ namespace
         bridge_call(gb::ioctl_update_descriptor_sets_batch, batch.data(), static_cast<DWORD>(batch.size()), &response, sizeof(response));
     }
 
+    // Sends a call that never blocks with the pending descriptor updates in front of it (`with_updates`), so the host
+    // applies them and runs the call in one round trip instead of two. The lock is held across the IOCTL for the same
+    // ordering reason as in flush_descriptor_updates, which is why a call that can wait must not use this.
+    bool bridge_call_after_descriptor_updates(uint32_t with_updates, uint32_t code, const void* in, DWORD in_len, void* out, DWORD out_len)
+    {
+        std::unique_lock<std::mutex> lock(g_pending_descriptor_updates_mutex);
+        if (g_pending_descriptor_updates.empty())
+        {
+            lock.unlock();
+            return bridge_call(code, in, in_len, out, out_len);
+        }
+
+        const HANDLE handle = bridge();
+        if (handle == INVALID_HANDLE_VALUE)
+        {
+            return false;
+        }
+
+        const gb::descriptor_updates_prefix prefix{.updates_bytes = static_cast<uint32_t>(g_pending_descriptor_updates.size()),
+                                                   .reserved = 0};
+        std::vector<uint8_t> message(sizeof(prefix) + g_pending_descriptor_updates.size() + in_len);
+        std::memcpy(message.data(), &prefix, sizeof(prefix));
+        std::memcpy(message.data() + sizeof(prefix), g_pending_descriptor_updates.data(), g_pending_descriptor_updates.size());
+        if (in_len != 0)
+        {
+            std::memcpy(message.data() + sizeof(prefix) + g_pending_descriptor_updates.size(), in, in_len);
+        }
+        g_pending_descriptor_updates.clear();
+
+        DWORD returned = 0;
+        return DeviceIoControl(handle, with_updates, message.data(), static_cast<DWORD>(message.size()), out, out_len, &returned,
+                               nullptr) != FALSE;
+    }
+
     void record_command(gb::object_id command_buffer, gb::command command, const void* payload, size_t size)
     {
         auto& stream = command_streams()[command_buffer];
@@ -5158,8 +5192,9 @@ extern "C"
         }
 
         std::vector<uint8_t> out(sizeof(gb::allocate_descriptor_sets_response) + static_cast<size_t>(count) * sizeof(gb::object_id));
-        if (!bridge_call(gb::ioctl_allocate_descriptor_sets, message.data(), static_cast<DWORD>(message.size()), out.data(),
-                         static_cast<DWORD>(out.size())))
+        if (!bridge_call_after_descriptor_updates(gb::ioctl_allocate_descriptor_sets_with_updates, gb::ioctl_allocate_descriptor_sets,
+                                                  message.data(), static_cast<DWORD>(message.size()), out.data(),
+                                                  static_cast<DWORD>(out.size())))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }

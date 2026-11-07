@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 
 import '../ads.dart';
-import '../gog/gog_account.dart';
 import '../settings.dart';
+import '../store/store_account.dart';
 import '../support.dart';
 import '../theme.dart';
 
 class SettingsTab extends StatefulWidget {
-  const SettingsTab({super.key, required this.settings, required this.gog, this.onRedownloadRoot});
+  const SettingsTab({super.key, required this.settings, required this.accounts, this.onRedownloadRoot});
 
   final AppSettings settings;
-  final GogAccount gog;
+  final List<StoreSignIn> accounts;
 
   /// Downloads the emulation root again; null while it is not installed or an install is running.
   final VoidCallback? onRedownloadRoot;
@@ -30,11 +30,11 @@ class _SettingsTabState extends State<SettingsTab> {
     await widget.settings.setShowAds(show);
   }
 
-  Future<void> _signOutOfGog() async {
+  Future<void> _signOut(StoreSignIn account) async {
     final signOut = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Sign out of GOG?'),
+        title: Text('Sign out of ${account.service.name}?'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sign out')),
@@ -43,7 +43,7 @@ class _SettingsTabState extends State<SettingsTab> {
     );
 
     if (signOut == true) {
-      await widget.gog.signOut();
+      await account.signOut();
     }
   }
 
@@ -69,7 +69,7 @@ class _SettingsTabState extends State<SettingsTab> {
     final subtitleStyle = theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400);
 
     return ListenableBuilder(
-      listenable: Listenable.merge([widget.settings, widget.gog]),
+      listenable: Listenable.merge([widget.settings, ...widget.accounts]),
       builder: (context, _) => ListView(
         padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
         children: [
@@ -104,13 +104,14 @@ class _SettingsTabState extends State<SettingsTab> {
             subtitle: Text('Join the Sogen Discord', style: subtitleStyle),
             onTap: () => openDiscord(context),
           ),
-          if (widget.gog.isSignedIn)
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Sign out of GOG'),
-              subtitle: Text('Sogen forgets your GOG account', style: subtitleStyle),
-              onTap: _signOutOfGog,
-            ),
+          for (final account in widget.accounts)
+            if (account.isSignedIn)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Sign out of ${account.service.name}'),
+                subtitle: Text('Sogen forgets your ${account.service.name} account', style: subtitleStyle),
+                onTap: () => _signOut(account),
+              ),
         ],
       ),
     );

@@ -195,6 +195,24 @@ namespace sogen
             return name;
         }
 
+        // user32 answers GetClassLongPtr from the class object, never through a syscall, so it has to carry the
+        // registered values.
+        void publish_class_to_guest(memory_manager& memory, const process_context::class_entry& entry)
+        {
+            emulator_object<USER_CLASS>{memory, entry.guest_obj_addr}.access([&](USER_CLASS& cls) {
+                cls.atom = entry.atom;
+                cls.style = entry.wnd_class.style;
+                cls.cbclsExtra = static_cast<uint32_t>(entry.wnd_class.cbClsExtra);
+                cls.lpszClientAnsiMenuName = entry.menu_name.pszClientAnsiMenuName;
+                cls.lpszClientUnicodeMenuName = entry.menu_name.pwszClientUnicodeMenuName;
+                cls.lpfnWndProc = entry.wnd_class.lpfnWndProc;
+                cls.hIconSm = entry.wnd_class.hIconSm;
+                cls.hModule = entry.wnd_class.hInstance;
+                cls.hbrBackground = entry.wnd_class.hbrBackground;
+                cls.cbwndExtra = static_cast<uint32_t>(entry.wnd_class.cbWndExtra);
+            });
+        }
+
         bool is_builtin_window_class_name(const std::u16string_view class_name)
         {
             const auto normalized = normalize_builtin_window_class_name(class_name);
@@ -222,6 +240,16 @@ namespace sogen
             }
 
             return 0;
+        }
+
+        uint16_t builtin_window_class_atom(process_context& proc, const std::u16string_view normalized_name)
+        {
+            if (normalized_name == builtin_dialog_class_name)
+            {
+                return builtin_dialog_class_atom;
+            }
+
+            return proc.add_or_find_atom(std::u16string{normalized_name});
         }
 
         process_context::class_entry* ensure_builtin_window_class(const syscall_context& c, const std::u16string_view class_name)
@@ -319,7 +347,8 @@ namespace sogen
             wnd_class.lpfnWndProc = wnd_proc;
             wnd_class.cbWndExtra = wnd_extra;
 
-            const auto entry = process_context::class_entry{cls_ptr, wnd_class, {}};
+            const auto entry = process_context::class_entry{cls_ptr, wnd_class, {}, builtin_window_class_atom(c.proc, normalized_name)};
+            publish_class_to_guest(c.win_emu.memory, entry);
             c.proc.classes.insert_or_assign(std::u16string{normalized_name}, entry);
             c.proc.classes.insert_or_assign(std::u16string{class_name}, entry);
             return &c.proc.classes.find(class_name)->second;
@@ -405,6 +434,26 @@ namespace sogen
         RECT get_window_rect(const window& win)
         {
             return RECT{.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height};
+        }
+
+        uint32_t filter_supported_window_style_change(const window& win, const int index, const uint32_t new_style)
+        {
+            if (index == GWL_EXSTYLE)
+            {
+                constexpr uint32_t frame_mask =
+                    WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_TOOLWINDOW | WS_EX_CONTEXTHELP;
+                return (new_style & ~frame_mask) | (win.ex_style & frame_mask);
+            }
+
+            uint32_t preserved_mask = WS_CHILD | WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_HSCROLL | WS_VSCROLL;
+            if ((win.style & WS_CHILD) == 0)
+            {
+                // Child controls use these bits for WS_GROUP and WS_TABSTOP.
+                preserved_mask |= WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+            }
+
+            // TODO: Support frame refresh and child/top-level transitions before allowing these bits to change.
+            return (new_style & ~preserved_mask) | (win.style & preserved_mask);
         }
 
         ui_insets get_host_ui_client_insets(const window& win)
@@ -779,15 +828,14 @@ namespace sogen
             return c.win_emu.memory.try_write_memory(result_info, &result, sizeof(result));
         }
 
-        uint64_t copy_def_window_text(const syscall_context& c, const window& win, const uint64_t character_count, const uint64_t buffer,
-                                      const bool ansi)
+        uint64_t copy_text_to_buffer(const syscall_context& c, const std::u16string_view text, const uint64_t character_count,
+                                     const uint64_t buffer, const bool ansi)
         {
             if (character_count == 0 || buffer == 0)
             {
                 return 0;
             }
 
-            const auto text = read_guest_window_text(c, win);
             if (ansi)
             {
                 const auto narrow = u16_to_cp1252(text);
@@ -820,6 +868,12 @@ namespace sogen
             }
 
             return copy_count;
+        }
+
+        uint64_t copy_def_window_text(const syscall_context& c, const window& win, const uint64_t character_count, const uint64_t buffer,
+                                      const bool ansi)
+        {
+            return copy_text_to_buffer(c, read_guest_window_text(c, win), character_count, buffer, ansi);
         }
 
         uint64_t handle_default_window_proc_message(const syscall_context& c, window& win, const UINT msg, const uint64_t w_param,
@@ -1004,7 +1058,7 @@ namespace sogen
         }
 
         void dispatch_cbt_create_window(const syscall_context& c, window_create_state&& state, const window& win,
-                                        const user_thread_hook& hook)
+                                        const user_thread_hook& hook, const pointer window_name, const pointer class_name)
         {
             fn_hk_in_lp_cbt_create_struct_message args{};
             args.pwnd = win.guest.value();
@@ -1014,6 +1068,8 @@ namespace sogen
             args.xpfnProc = hook.proc;
             args.ansi = hook.ansi ? TRUE : FALSE;
             c.emu.read_memory(state.create_struct_alloc.address(), &args.cs, sizeof(args.cs));
+            args.cs.lpszName = window_name;
+            args.cs.lpszClass = class_name;
 
             dispatch_user_callback(c, callback_id::NtUserCreateWindowEx, k_fn_hk_in_lp_cbt_create_struct_callback_id, std::move(state),
                                    args);
@@ -1387,6 +1443,73 @@ namespace sogen
             return read_unicode_string(c.emu, uc_string, index);
         }
 
+        struct class_argument
+        {
+            std::u16string name{};
+            std::optional<uint16_t> atom{};
+        };
+
+        class_argument read_class_argument(const syscall_context& c,
+                                           const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name)
+        {
+            if (!class_name)
+            {
+                return {};
+            }
+
+            if (class_name.value() <= std::numeric_limits<uint16_t>::max())
+            {
+                return {.name = {}, .atom = static_cast<uint16_t>(class_name.value())};
+            }
+
+            if (const auto string = class_name.read();
+                string.Length == 0 && string.Buffer != 0 && string.Buffer <= std::numeric_limits<uint16_t>::max())
+            {
+                return {.name = {}, .atom = static_cast<uint16_t>(string.Buffer)};
+            }
+
+            return {.name = read_unicode_string(c.emu, class_name), .atom = std::nullopt};
+        }
+
+        process_context::class_entry* find_class_by_atom(const syscall_context& c, const uint16_t atom)
+        {
+            for (auto& entry : c.proc.classes | std::views::values)
+            {
+                if (entry.atom == atom)
+                {
+                    return &entry;
+                }
+            }
+
+            return nullptr;
+        }
+
+        process_context::class_entry* find_registered_class(const syscall_context& c, const class_argument& cls)
+        {
+            if (cls.atom)
+            {
+                return find_class_by_atom(c, *cls.atom);
+            }
+
+            const auto it = c.proc.classes.find(cls.name);
+            return it != c.proc.classes.end() ? &it->second : nullptr;
+        }
+
+        process_context::class_entry* find_class(const syscall_context& c, const class_argument& cls)
+        {
+            if (!cls.atom)
+            {
+                return ensure_builtin_window_class(c, cls.name);
+            }
+
+            if (*cls.atom == builtin_dialog_class_atom)
+            {
+                return ensure_builtin_window_class(c, builtin_dialog_class_name);
+            }
+
+            return find_class_by_atom(c, *cls.atom);
+        }
+
         std::u16string read_large_string_or_atom(const syscall_context& c, const emulator_object<LARGE_STRING> str_obj,
                                                  const size_t index = 0)
         {
@@ -1401,6 +1524,47 @@ namespace sogen
             }
 
             return read_large_string(str_obj, index);
+        }
+
+        std::optional<uint64_t> convert_create_struct_text(const syscall_context& c, const emulator_object<LARGE_STRING> text,
+                                                           const bool ansi)
+        {
+            if (!text || text.value() <= std::numeric_limits<uint16_t>::max())
+            {
+                return std::nullopt;
+            }
+
+            const auto str = text.read();
+            if (str.Buffer == 0 || (str.bAnsi != 0) == ansi)
+            {
+                return std::nullopt;
+            }
+
+            const auto decoded = read_large_string(text);
+            const auto write = [&](const void* data, const size_t size) {
+                const auto address =
+                    c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(size)), memory_permission::read_write);
+                c.win_emu.memory.write_memory(address, data, size);
+                return address;
+            };
+
+            if (ansi)
+            {
+                const auto narrow = u16_to_cp1252(decoded);
+                return write(narrow.c_str(), narrow.size() + 1);
+            }
+
+            return write(decoded.c_str(), (decoded.size() + 1) * sizeof(char16_t));
+        }
+
+        void release_converted_create_struct_text(const syscall_context& c, window_create_state& state)
+        {
+            for (const auto address : state.converted_create_struct_text)
+            {
+                c.win_emu.memory.release_memory(address, 0);
+            }
+
+            state.converted_create_struct_text.clear();
         }
 
         std::u16string read_def_set_text_string(const syscall_context& c, const emulator_object<LARGE_STRING> text)
@@ -1835,6 +1999,25 @@ namespace sogen
             return 1;
         }
 
+        handle default_desktop(const syscall_context& c)
+        {
+            if (c.proc.default_desktop.bits == 0)
+            {
+                desktop desk{};
+                desk.name = u"Default";
+                desk.window_station = interactive_window_station;
+                c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
+            }
+
+            return c.proc.default_desktop;
+        }
+
+        handle resolve_desktop(const syscall_context& c, const handle desktop_handle)
+        {
+            const auto* desk = c.proc.desktops.get(desktop_handle);
+            return desk && desk->opened_desktop.bits != 0 ? desk->opened_desktop : desktop_handle;
+        }
+
         hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, const ULONG thread_id)
         {
             emulator_thread* target = nullptr;
@@ -1861,15 +2044,7 @@ namespace sogen
 
             if (target->win32k_desktop.bits == 0)
             {
-                if (c.proc.default_desktop.bits == 0)
-                {
-                    desktop desk{};
-                    desk.name = u"Default";
-                    desk.window_station = interactive_window_station;
-                    c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
-                }
-
-                target->win32k_desktop = c.proc.default_desktop;
+                target->win32k_desktop = default_desktop(c);
             }
 
             return target->win32k_desktop.bits;
@@ -1988,10 +2163,38 @@ namespace sogen
             return TRUE;
         }
 
-        // Games use raw input (RAWINPUTDEVICE with usUsagePage=1/usUsage=2, the generic mouse) for in-game
-        // mouse-look: instead of consuming WM_MOUSEMOVE they register here and read relative deltas from the
-        // WM_INPUT messages we then synthesize. Record the target window so handle_ui_event knows to deliver
-        // raw input; a RIDEV_REMOVE entry for the mouse unregisters it.
+        // A registration replaces an earlier one of the same usage page and usage, and RIDEV_REMOVE drops it. They are kept in
+        // the order NtUserGetRegisteredRawInputDevices reports them in.
+        void register_raw_input_device(std::vector<process_context::raw_input_registration>& registrations, const RAWINPUTDEVICE32& device)
+        {
+            const auto position = std::ranges::lower_bound(registrations, std::pair{device.usUsagePage, device.usUsage}, {},
+                                                           [](const process_context::raw_input_registration& registration) {
+                                                               return std::pair{registration.usage_page, registration.usage};
+                                                           });
+            const bool exists =
+                position != registrations.end() && position->usage_page == device.usUsagePage && position->usage == device.usUsage;
+
+            if ((device.dwFlags & RIDEV_REMOVE) != 0)
+            {
+                if (exists)
+                {
+                    registrations.erase(position);
+                }
+                return;
+            }
+
+            const process_context::raw_input_registration registration{
+                .usage_page = device.usUsagePage, .usage = device.usUsage, .flags = device.dwFlags, .target = device.hwndTarget};
+            if (exists)
+            {
+                *position = registration;
+            }
+            else
+            {
+                registrations.insert(position, registration);
+            }
+        }
+
         BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, const emulator_pointer devices, const uint32_t device_count,
                                                   const uint32_t size)
         {
@@ -2008,32 +2211,83 @@ namespace sogen
                     return FALSE;
                 }
 
-                constexpr uint16_t hid_usage_page_generic = 0x01;
-                constexpr uint16_t hid_usage_generic_mouse = 0x02;
-                constexpr uint16_t hid_usage_generic_keyboard = 0x06;
-                if (device.usUsagePage != hid_usage_page_generic ||
-                    (device.usUsage != hid_usage_generic_mouse && device.usUsage != hid_usage_generic_keyboard))
-                {
-                    continue;
-                }
-
-                // hwndTarget == 0 is the valid "follow keyboard focus" mode; keep it as-is and resolve the
-                // destination at delivery time rather than freezing whatever window is foreground right now
-                // (registration often happens at startup before any window has become foreground).
-                const bool remove = (device.dwFlags & RIDEV_REMOVE) != 0;
-                if (device.usUsage == hid_usage_generic_mouse)
-                {
-                    c.proc.raw_mouse_registered = !remove;
-                    c.proc.raw_mouse_target = remove ? hwnd{} : device.hwndTarget;
-                }
-                else
-                {
-                    c.proc.raw_keyboard_registered = !remove;
-                    c.proc.raw_keyboard_target = remove ? hwnd{} : device.hwndTarget;
-                }
+                register_raw_input_device(c.proc.raw_input_registrations, device);
             }
 
             return TRUE;
+        }
+
+        bool write_registered_device_count(const syscall_context& c, const emulator_pointer device_count, const uint32_t count)
+        {
+            return is_writable_range(c.win_emu.memory, device_count, sizeof(count)) &&
+                   c.win_emu.memory.try_write_memory(device_count, &count, sizeof(count));
+        }
+
+        // On success the registrations are written in the order of usage page and usage, and the count stays as given, so only
+        // the failing paths need it writable. The whole buffer the count names must be writable, even when it is too small.
+        uint32_t handle_NtUserGetRegisteredRawInputDevices(const syscall_context& c, const emulator_pointer devices,
+                                                           const emulator_pointer device_count, const uint32_t size)
+        {
+            constexpr auto failed = static_cast<uint32_t>(-1);
+            constexpr DWORD error_invalid_parameter = 87;
+            constexpr DWORD error_insufficient_buffer = 122;
+            constexpr DWORD error_noaccess = 998;
+
+            if (size != sizeof(RAWINPUTDEVICE64))
+            {
+                set_guest_last_error(c, error_invalid_parameter);
+                return failed;
+            }
+
+            uint32_t capacity{};
+            if (!c.win_emu.memory.try_read_memory(device_count, &capacity, sizeof(capacity)))
+            {
+                set_guest_last_error(c, error_noaccess);
+                return failed;
+            }
+
+            const auto& registrations = c.proc.raw_input_registrations;
+            const auto needed = static_cast<uint32_t>(registrations.size());
+            if (devices == 0)
+            {
+                if (!write_registered_device_count(c, device_count, needed))
+                {
+                    set_guest_last_error(c, error_noaccess);
+                    return failed;
+                }
+                return 0;
+            }
+
+            if (capacity == 0)
+            {
+                set_guest_last_error(c, error_invalid_parameter);
+                return failed;
+            }
+
+            if (!is_writable_range(c.win_emu.memory, devices, static_cast<uint64_t>(capacity) * sizeof(RAWINPUTDEVICE64)))
+            {
+                set_guest_last_error(c, error_noaccess);
+                return failed;
+            }
+
+            if (capacity < needed)
+            {
+                const bool reported = write_registered_device_count(c, device_count, needed);
+                set_guest_last_error(c, reported ? error_insufficient_buffer : error_noaccess);
+                return failed;
+            }
+
+            for (uint32_t i = 0; i < needed; ++i)
+            {
+                const auto& registration = registrations[i];
+                const RAWINPUTDEVICE64 device{.usUsagePage = registration.usage_page,
+                                              .usUsage = registration.usage,
+                                              .dwFlags = registration.flags,
+                                              .hwndTarget = registration.target};
+                c.win_emu.memory.write_memory(devices + (static_cast<uint64_t>(i) * sizeof(device)), &device, sizeof(device));
+            }
+
+            return needed;
         }
 
         ULONG handle_NtUserGetRawInputDeviceList(const syscall_context& c, const emulator_pointer devices,
@@ -2650,10 +2904,38 @@ namespace sogen
         // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
         // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. GetKeyState reports the
         // high down bit and the low toggle bit; GetAsyncKeyState instead returns the low pressed-since-last-query bit.
+        //
+        // Like win32k, every NtUserGetKeyState also refreshes the caller's CLIENTINFO key cache (dwKeyCache at
+        // +0x70, then two bits a key, down and toggled, for the keys below 0x20), from which user32!GetKeyState
+        // answers those keys without a syscall until the next key change (process_context::key_state_changed).
         uint32_t handle_NtUserGetKeyState(const syscall_context& c, const int32_t virtual_key)
         {
-            const auto state = c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF];
-            return ((state & 0x80) ? 0x8000u : 0u) | (state & 0x01);
+            if (static_cast<uint32_t>(virtual_key) >= 0x100)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
+            constexpr uint64_t client_info_key_cache = 0x70;
+
+            struct
+            {
+                uint32_t generation;
+                std::array<uint8_t, 8> states;
+            } cache{};
+
+            cache.generation = c.win_emu.memory.read_memory<uint32_t>(c.proc.user_handles.get_server_info().value() +
+                                                                      offsetof(USER_SERVERINFO, keyStateGeneration));
+            for (uint32_t key = 0; key < 0x20; ++key)
+            {
+                const auto bits = ((c.proc.key_state[key] & 0x80) ? 1u : 0u) | ((c.proc.key_state[key] & 0x01) ? 2u : 0u);
+                cache.states[key >> 2] |= static_cast<uint8_t>(bits << (2 * (key & 3)));
+            }
+            c.win_emu.memory.write_memory(c.vcpu.active_thread->teb64->value() + offsetof(TEB64, Win32ClientInfo) + client_info_key_cache,
+                                          &cache, sizeof(cache));
+
+            const auto state = c.proc.key_state[static_cast<uint32_t>(virtual_key)];
+            return ((state & 0x80) ? 0xFF80u : 0u) | (state & 0x01);
         }
 
         uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, const int32_t virtual_key)
@@ -2686,22 +2968,177 @@ namespace sogen
             return c.proc.cursor_show_count;
         }
 
-        hcursor handle_NtUserSetCursor(const syscall_context& c, const hcursor cursor)
-        {
-            // SetCursor(NULL) removes the cursor shape (hides it); a non-null handle restores it.
-            c.proc.cursor_shape_visible = cursor != 0;
-            apply_cursor_visibility(c);
-            return std::exchange(c.proc.current_cursor, cursor);
-        }
-
         hcursor handle_NtUserGetCursor(const syscall_context& c)
         {
             return c.proc.current_cursor;
         }
 
-        hicon handle_NtUserCreateEmptyCursorObject()
+        namespace
         {
-            return make_pseudo_handle(0x100, handle_types::reserved).bits;
+            constexpr uint16_t k_cursor_type_cursor = 1;
+            constexpr uint16_t k_cursor_type_icon = 3;
+            constexpr uint16_t k_oic_sample = 32512;
+            constexpr uint16_t k_oic_shield = 32518;
+            constexpr uint16_t k_ocr_normal = 32512;
+            constexpr uint16_t k_ocr_up = 32516;
+            constexpr uint16_t k_idc_sizenwse = 32642;
+            constexpr uint16_t k_idc_sizeall = 32646;
+            constexpr uint16_t k_idc_no = 32648;
+            constexpr uint16_t k_idc_last_system = 32652;
+            constexpr uint16_t k_idc_pin = 32671;
+            constexpr uint16_t k_idc_person = 32672;
+            constexpr uint32_t k_cursorf_lrshared = 0x4;
+            constexpr DWORD k_error_invalid_cursor_handle = 1402;
+            constexpr uint32_t k_stock_cursor_size = 32;
+            constexpr std::u16string_view k_stock_cursor_module = u"USER32";
+
+            struct cursor_resource
+            {
+                std::u16string name{};
+                uint16_t id{};
+            };
+
+            std::u16string read_cursor_string(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> string)
+            {
+                if (!string || string.read().Length == 0)
+                {
+                    return {};
+                }
+
+                return read_unicode_string(c.emu, string);
+            }
+
+            cursor_resource read_cursor_resource(const syscall_context& c,
+                                                 const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> resource)
+            {
+                if (resource)
+                {
+                    const auto string = resource.read();
+                    if (string.Length == 0 && string.Buffer <= std::numeric_limits<uint16_t>::max())
+                    {
+                        return {.name = {}, .id = static_cast<uint16_t>(string.Buffer)};
+                    }
+                }
+
+                return {.name = read_cursor_string(c, resource), .id = 0};
+            }
+
+            uint64_t copy_cursor_bitmap(const syscall_context& c, const hbitmap source, const uint32_t max_rows)
+            {
+                const auto source_it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(source));
+                if (source_it == c.proc.gdi_bitmap_surfaces.end())
+                {
+                    return 0;
+                }
+
+                const auto width = source_it->second.width;
+                const auto height = std::min(source_it->second.height, max_rows);
+                const auto bits_pixel = source_it->second.guest_bpp;
+
+                const auto copy = handle_NtGdiCreateBitmap(c, width, height, 1, bits_pixel, 0);
+                const auto copy_it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(copy));
+                if (copy_it == c.proc.gdi_bitmap_surfaces.end())
+                {
+                    return 0;
+                }
+
+                const auto& pixels = source_it->second.pixels;
+                const auto count = std::min(pixels.size(), static_cast<size_t>(width) * height);
+                copy_it->second.pixels.assign(pixels.begin(), pixels.begin() + static_cast<std::ptrdiff_t>(count));
+                return copy;
+            }
+
+            uint16_t cursor_name_length(const UNICODE_STRING<EmulatorTraits<Emu64>>& string, const std::u16string& name)
+            {
+                return static_cast<uint16_t>(std::min<size_t>(name.size(), string.MaximumLength > 0 ? string.MaximumLength - 1 : 0));
+            }
+
+            bool is_cursor_name_writable(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> target,
+                                         const std::u16string& name)
+            {
+                if (!target)
+                {
+                    return true;
+                }
+
+                const auto string = target.read();
+                if (string.MaximumLength == 0)
+                {
+                    return true;
+                }
+
+                return is_writable_range(c.win_emu.memory, string.Buffer, (cursor_name_length(string, name) + 1) * sizeof(char16_t));
+            }
+
+            // Length and MaximumLength count characters here: user32 sizes its WCHAR buffers with them.
+            void write_cursor_name(const syscall_context& c, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> target,
+                                   const std::u16string& name)
+            {
+                if (!target)
+                {
+                    return;
+                }
+
+                auto string = target.read();
+                const auto length = cursor_name_length(string, name);
+                if (string.MaximumLength > 0)
+                {
+                    c.emu.write_memory(string.Buffer, name.data(), length * sizeof(char16_t));
+                    c.emu.write_memory(string.Buffer + length * sizeof(char16_t), u"\0", sizeof(char16_t));
+                }
+
+                string.Length = length;
+                target.write(string);
+            }
+
+            bool is_system_resource_id(const uint16_t type, const uint16_t id)
+            {
+                if (type == k_cursor_type_icon)
+                {
+                    return id >= k_oic_sample && id <= k_oic_shield;
+                }
+
+                return type == k_cursor_type_cursor &&
+                       ((id >= k_ocr_normal && id <= k_ocr_up) || (id >= k_idc_sizenwse && id <= k_idc_sizeall) ||
+                        (id >= k_idc_no && id <= k_idc_last_system) || id == k_idc_pin || id == k_idc_person);
+            }
+
+            hicon create_stock_cursor(const syscall_context& c, const uint16_t type, cursor_resource resource)
+            {
+                auto [handle, cursor] = c.proc.cursor_icons.create(c.win_emu.memory);
+                cursor.module_name = k_stock_cursor_module;
+                cursor.resource_name = std::move(resource.name);
+                cursor.resource_id = resource.id;
+                cursor.type = type;
+                cursor.flags = k_cursorf_lrshared;
+                cursor.bpp = 32;
+                cursor.width = k_stock_cursor_size;
+                cursor.height = 2 * k_stock_cursor_size;
+                cursor.mask = handle_NtGdiCreateBitmap(c, cursor.width, cursor.height, 1, 1, 0);
+                cursor.color = handle_NtGdiCreateBitmap(c, cursor.width, k_stock_cursor_size, 1, 32, 0);
+                if (cursor.type == k_cursor_type_icon)
+                {
+                    cursor.hotspot_x = k_stock_cursor_size / 2;
+                    cursor.hotspot_y = k_stock_cursor_size / 2;
+                }
+
+                return handle.bits;
+            }
+        }
+
+        hcursor handle_NtUserSetCursor(const syscall_context& c, const hcursor cursor)
+        {
+            const auto previous = std::exchange(c.proc.current_cursor, cursor);
+            c.win_emu.apply_cursor_shape();
+            // SetCursor(NULL) removes the cursor shape (hides it); a non-null handle restores it.
+            c.proc.cursor_shape_visible = cursor != 0;
+            apply_cursor_visibility(c);
+            return previous;
+        }
+
+        hicon handle_NtUserCreateEmptyCursorObject(const syscall_context& c)
+        {
+            return c.proc.cursor_icons.create(c.win_emu.memory).first.bits;
         }
 
         BOOL handle_NtUserSetCursorIconData()
@@ -2709,8 +3146,32 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserSetCursorIconDataEx()
+        BOOL handle_NtUserSetCursorIconDataEx(const syscall_context& c, const hicon icon,
+                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> module_name,
+                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> resource,
+                                              const emulator_object<EMU_CURSORDATA> data, const int /*thread_cursor_size*/)
         {
+            auto* cursor = c.proc.cursor_icons.get(icon);
+            if (!cursor || !data)
+            {
+                return FALSE;
+            }
+
+            const auto cursor_data = data.read();
+            auto resource_key = read_cursor_resource(c, resource);
+
+            cursor->module_name = read_cursor_string(c, module_name);
+            cursor->resource_name = std::move(resource_key.name);
+            cursor->resource_id = resource_key.id;
+            cursor->type = cursor_data.rt;
+            cursor->flags = cursor_data.flags;
+            cursor->hotspot_x = cursor_data.xHotspot;
+            cursor->hotspot_y = cursor_data.yHotspot;
+            cursor->mask = cursor_data.hbmMask;
+            cursor->color = cursor_data.hbmColor;
+            cursor->bpp = cursor_data.bpp;
+            cursor->width = cursor_data.cx;
+            cursor->height = cursor_data.cy;
             return TRUE;
         }
 
@@ -2719,14 +3180,65 @@ namespace sogen
             return TRUE;
         }
 
-        hicon handle_NtUserFindExistingCursorIcon()
+        hicon handle_NtUserFindExistingCursorIcon(const syscall_context& c,
+                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> module_name,
+                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> resource,
+                                                  const emulator_object<EMU_CURSORFIND> find)
         {
-            return make_pseudo_handle(0x100, handle_types::reserved).bits;
+            if (!find)
+            {
+                return 0;
+            }
+
+            const auto wanted = find.read();
+            const auto wanted_type = static_cast<uint16_t>(wanted.rt);
+            const auto wanted_module = read_cursor_string(c, module_name);
+            const auto wanted_resource = read_cursor_resource(c, resource);
+
+            for (const auto& [index, cursor] : c.proc.cursor_icons)
+            {
+                if ((cursor.flags & k_cursorf_lrshared) != 0 && cursor.type == wanted_type &&
+                    utils::string::equals_ignore_case(cursor.module_name, wanted_module) && cursor.resource_id == wanted_resource.id &&
+                    utils::string::equals_ignore_case(cursor.resource_name, wanted_resource.name) &&
+                    (wanted.cx == 0 || wanted.cx == cursor.width) && (wanted.cy == 0 || wanted.cy * 2 == cursor.height))
+                {
+                    return c.proc.cursor_icons.make_handle(index).bits;
+                }
+            }
+
+            if (wanted.cx == 0 && wanted.cy == 0 &&
+                utils::string::equals_ignore_case(wanted_module, std::u16string{k_stock_cursor_module}) && wanted_resource.name.empty() &&
+                is_system_resource_id(wanted_type, wanted_resource.id))
+            {
+                return create_stock_cursor(c, wanted_type, wanted_resource);
+            }
+
+            return 0;
         }
 
-        BOOL handle_NtUserDestroyCursor(const syscall_context&, const hicon icon, const DWORD /*flags*/)
+        BOOL handle_NtUserDestroyCursor(const syscall_context& c, const hicon icon, const DWORD /*flags*/)
         {
-            return icon != 0 ? TRUE : FALSE;
+            const auto* cursor = c.proc.cursor_icons.get(icon);
+            if (!cursor)
+            {
+                set_guest_last_error(c, k_error_invalid_cursor_handle);
+                return FALSE;
+            }
+
+            if ((cursor->flags & k_cursorf_lrshared) != 0)
+            {
+                return TRUE;
+            }
+
+            for (const auto bitmap : {cursor->mask, cursor->color})
+            {
+                if (bitmap != 0)
+                {
+                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(bitmap));
+                }
+            }
+
+            return c.proc.cursor_icons.erase(icon) ? TRUE : FALSE;
         }
 
         hicon handle_NtUserGetCursorFrameInfo(const syscall_context&, const hicon icon, const UINT /*frame*/,
@@ -2742,66 +3254,76 @@ namespace sogen
             return icon;
         }
 
-        BOOL handle_NtUserGetIconSize(const syscall_context&, const hicon icon, const UINT /*frame*/, const emulator_object<int> cx,
+        BOOL handle_NtUserGetIconSize(const syscall_context& c, const hicon icon, const UINT /*frame*/, const emulator_object<int> cx,
                                       const emulator_object<int> cy)
         {
-            if (icon == 0 || !cx || !cy)
+            const auto* cursor = c.proc.cursor_icons.get(icon);
+            if (!cursor || !cx || !cy)
             {
                 return FALSE;
             }
 
-            cx.write(32);
-            cy.write(64);
+            cx.write(static_cast<int>(cursor->width));
+            cy.write(static_cast<int>(cursor->height));
             return TRUE;
         }
 
         BOOL handle_NtUserGetIconInfo(const syscall_context& c, const hicon icon, const emulator_object<EMU_ICONINFO> icon_info,
                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> inst_name,
                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> res_name,
-                                      const emulator_object<uint32_t> bpp, const BOOL /*internal*/)
+                                      const emulator_object<uint32_t> bpp, const BOOL internal)
         {
-            if (icon == 0 || !icon_info)
+            const auto* cursor = c.proc.cursor_icons.get(icon);
+            if (!cursor || !icon_info)
             {
-                set_guest_last_error(c, 1414); // ERROR_INVALID_CURSOR_HANDLE
+                set_guest_last_error(c, k_error_invalid_cursor_handle);
                 return FALSE;
             }
 
-            const auto mask = handle_NtGdiCreateBitmap(c, 32, 32, 1, 1, 0);
-            const auto color = handle_NtGdiCreateBitmap(c, 32, 32, 1, 32, 0);
-            if (mask == 0 || color == 0)
+            if (!is_cursor_name_writable(c, inst_name, cursor->module_name) ||
+                (!(res_name && cursor->resource_name.empty()) && !is_cursor_name_writable(c, res_name, cursor->resource_name)))
             {
-                if (mask != 0)
+                return FALSE;
+            }
+
+            const auto mask_rows = cursor->color != 0 && !internal ? cursor->height / 2 : cursor->height;
+            const auto mask = copy_cursor_bitmap(c, cursor->mask, mask_rows);
+            const auto color = cursor->color != 0 ? copy_cursor_bitmap(c, cursor->color, cursor->height) : 0;
+            if (mask == 0 || (cursor->color != 0 && color == 0))
+            {
+                for (const auto bitmap : {mask, color})
                 {
-                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(mask));
-                }
-                if (color != 0)
-                {
-                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(color));
+                    if (bitmap != 0)
+                    {
+                        handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(bitmap));
+                    }
                 }
                 return FALSE;
             }
 
-            const EMU_ICONINFO info{
-                .fIcon = TRUE,
-                .xHotspot = 16,
-                .yHotspot = 16,
+            icon_info.write(EMU_ICONINFO{
+                .fIcon = cursor->type == k_cursor_type_icon,
+                .xHotspot = static_cast<DWORD>(cursor->hotspot_x),
+                .yHotspot = static_cast<DWORD>(cursor->hotspot_y),
                 .hbmMask = mask,
                 .hbmColor = color,
-            };
-            icon_info.write(info);
+            });
 
-            const auto clear_name = [&](const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>& name) {
-                if (name)
-                {
-                    auto value = name.read();
-                    value.Length = 0;
-                    name.write(value);
-                }
-            };
-            clear_name(inst_name);
-            clear_name(res_name);
+            write_cursor_name(c, inst_name, cursor->module_name);
 
-            bpp.write_if_valid(32);
+            if (res_name && cursor->resource_name.empty())
+            {
+                auto string = res_name.read();
+                string.Length = 0;
+                string.Buffer = cursor->resource_id;
+                res_name.write(string);
+            }
+            else
+            {
+                write_cursor_name(c, res_name, cursor->resource_name);
+            }
+
+            bpp.write_if_valid(cursor->bpp);
             return TRUE;
         }
 
@@ -2823,9 +3345,15 @@ namespace sogen
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> window_name)
         {
-            const auto want_class = class_name ? read_unicode_string_or_atom(c, class_name) : std::u16string{};
+            const auto cls = read_class_argument(c, class_name);
+            if (cls.atom && !find_class_by_atom(c, *cls.atom))
+            {
+                return 0;
+            }
+
+            const auto want_class = cls.atom ? resolve_atom_name(c, *cls.atom) : cls.name;
             const auto want_name = window_name ? read_unicode_string(c.emu, window_name) : std::u16string{};
-            const bool filter_class = class_name && !want_class.empty();
+            const bool filter_class = !want_class.empty();
             const bool filter_name = window_name && !want_name.empty();
 
             bool seen_child_after = child_after == 0;
@@ -2998,7 +3526,8 @@ namespace sogen
         {
             for (const auto& [index, desk] : c.proc.desktops)
             {
-                if (desk.window_station == window_station && utils::string::equals_ignore_case(std::u16string_view{desk.name}, name))
+                if (desk.opened_desktop.bits == 0 && desk.window_station == window_station &&
+                    utils::string::equals_ignore_case(std::u16string_view{desk.name}, name))
                 {
                     return c.proc.desktops.make_handle(index).bits;
                 }
@@ -3123,6 +3652,24 @@ namespace sogen
             return c.proc.desktops.store(std::move(desk)).bits;
         }
 
+        hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, const DWORD /*flags*/, const BOOL inherit,
+                                            const ACCESS_MASK /*desired_access*/)
+        {
+            const auto input_desktop_handle = default_desktop(c);
+            const auto* input_desktop = c.proc.desktops.get(input_desktop_handle);
+            if (!input_desktop)
+            {
+                return 0;
+            }
+
+            desktop desk{};
+            desk.name = input_desktop->name;
+            desk.window_station = input_desktop->window_station;
+            desk.opened_desktop = input_desktop_handle;
+            desk.inherit = inherit != FALSE;
+            return c.proc.desktops.store(std::move(desk)).bits;
+        }
+
         BOOL handle_NtUserCloseDesktop(const syscall_context& c, const handle desktop_handle)
         {
             // A desktop that threads are using cannot be closed.
@@ -3138,10 +3685,12 @@ namespace sogen
         // versions use different numbers, so the table is gated by guest build below.
         constexpr uint32_t user_call_set_dialog_pointer = 99;
         constexpr uint32_t user_call_set_dialog_system_menu = 111;
+        constexpr uint32_t user_call_set_foreground_window = 112;
         constexpr uint32_t user_call_update_window = 115;
         constexpr uint32_t user_call_set_msg_box = 89;
         constexpr uint32_t user_call_release_dc = 0x39;
         constexpr uint32_t user_call_post_quit_message = 0x3B;
+        constexpr uint32_t user_call_get_cursor_pos = 0x7F;
 
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
         {
@@ -3158,6 +3707,18 @@ namespace sogen
             return 0;
         }
 
+        BOOL set_foreground_window(const syscall_context& c, const hwnd hwnd)
+        {
+            if (!c.proc.windows.get(hwnd))
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            c.win_emu.set_foreground_window(hwnd);
+            return TRUE;
+        }
+
         BOOL handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
         {
             if (c.win_emu.version.is_build_within(19041, 19046))
@@ -3165,6 +3726,12 @@ namespace sogen
                 if (routine == user_call_set_dialog_system_menu)
                 {
                     return handle_NtUserSetDialogSystemMenu(c, hwnd);
+                }
+
+                if (routine == user_call_set_foreground_window)
+                {
+                    // user32!SetForegroundWindow is dispatched through NtUserCallHwndLock(112) on Win10.
+                    return set_foreground_window(c, hwnd);
                 }
 
                 if (routine == user_call_update_window)
@@ -3208,11 +3775,28 @@ namespace sogen
             return 0;
         }
 
+        uint64_t handle_NtUserCallTwoParam(const syscall_context& c, const uint64_t param1, const uint64_t param2, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_get_cursor_pos)
+            {
+                // win32kfull!xxxGetCursorPos only accepts the logical (1) and per-monitor DPI (2) cursor modes.
+                if (param2 != 1 && param2 != 2)
+                {
+                    return FALSE;
+                }
+
+                return handle_NtUserGetCursorPos(c, param1);
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallTwoParam routine: 0x%X\n", routine);
+            return 0;
+        }
+
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
                                                  const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name,
-                                                 const DWORD /*function_id*/, const DWORD /*flags*/, const emulator_pointer /*wow*/)
+                                                 const DWORD function_id, const DWORD flags, const emulator_pointer /*wow*/)
         {
             if (!wnd_class_ex)
             {
@@ -3220,13 +3804,51 @@ namespace sogen
                 return 0;
             }
 
+            // win32kfull's InternalRegisterClassEx sizes the class object as 0x58 + cbClsExtra in 32 bits, and a size that wraps
+            // fails with ERROR_INVALID_PARAMETER. The object comes from the desktop heap, 20 MB on an interactive desktop
+            // (SharedSection's second value), and the class name's atom is only added once it is allocated. An object the
+            // heap cannot hold, from a more negative or a large positive extra, fails the registration without an error.
+            // ponytail: the whole heap bounds one object; what the desktop's other objects already use is not counted.
+            constexpr uint32_t desktop_heap_size = 20480 * 1024;
+            constexpr auto class_object_size = static_cast<uint32_t>(process_context::user_class_extra_offset);
+            const auto wnd_class = wnd_class_ex.read();
+            const auto class_size = class_object_size + static_cast<uint32_t>(wnd_class.cbClsExtra);
+            if (class_size < class_object_size)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
             const auto class_name_str = read_unicode_string(c.emu, class_name);
+            const auto cls_ptr =
+                class_size <= desktop_heap_size
+                    ? process_context::allocate_user_class(c.win_emu.memory, class_name_str, static_cast<uint32_t>(wnd_class.cbClsExtra))
+                    : 0;
+            if (!cls_ptr)
+            {
+                return 0;
+            }
+
             const auto index = c.proc.add_or_find_atom(class_name_str);
 
-            const auto cls_ptr = process_context::allocate_user_class(c.win_emu.memory, class_name_str);
+            const auto menu_name = class_menu_name.read();
+            const auto entry = process_context::class_entry{cls_ptr, wnd_class, menu_name, index, (flags & CSF_ANSIPROC) != 0};
+            publish_class_to_guest(c.win_emu.memory, entry);
 
-            const auto wnd_class = wnd_class_ex.read();
-            const auto entry = process_context::class_entry{cls_ptr, wnd_class, class_menu_name.read()};
+            // win32kfull takes the menu name from pusMenuName, not from the WNDCLASSEX, and marks only a non-empty string,
+            // with -1; user32's GetClassLongPtr(GCLP_MENUNAME) then returns its client copy of the name.
+            UNICODE_STRING<EmulatorTraits<Emu64>> menu_string{};
+            char16_t menu_first_char{};
+            const auto has_menu_string = c.win_emu.memory.try_read_memory(menu_name.pusMenuName, &menu_string, sizeof(menu_string)) &&
+                                         (menu_string.Buffer >> 16) != 0 &&
+                                         c.win_emu.memory.try_read_memory(menu_string.Buffer, &menu_first_char, sizeof(menu_first_char)) &&
+                                         menu_first_char != 0;
+            emulator_object<USER_CLASS>{c.win_emu.memory, cls_ptr}.access([&](USER_CLASS& cls) {
+                cls.fnid = static_cast<uint16_t>(function_id);
+                // RegisterClassExWOW passes the CSF_* flags user32 computed; CSF_ANSIPROC marks an ANSI class procedure.
+                cls.CSF_flags = static_cast<uint16_t>(flags);
+                cls.lpszMenuName = has_menu_string ? ~0ull : 0;
+            });
 
             if (c.win_emu.callbacks.on_generic_activity)
             {
@@ -3248,55 +3870,60 @@ namespace sogen
                                           const emulator_pointer /*instance*/,
                                           const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name)
         {
-            const auto cls_name = read_unicode_string_or_atom(c, class_name);
-
-            if (const auto it = c.proc.classes.find(cls_name); it != c.proc.classes.end())
+            const auto cls = read_class_argument(c, class_name);
+            const auto* entry = find_registered_class(c, cls);
+            if (!entry)
             {
-                if (class_menu_name)
+                if (cls.atom)
                 {
-                    class_menu_name.write(it->second.menu_name);
-                }
-
-                c.win_emu.memory.release_memory(it->second.guest_obj_addr, 0);
-                c.proc.classes.erase(it);
-            }
-
-            return c.proc.delete_atom(cls_name);
-        }
-
-        BOOL handle_NtUserGetClassInfoEx(const syscall_context& c, const hinstance /*instance*/,
-                                         const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
-                                         const emulator_object<EMU_WNDCLASSEX> wnd_class_ex, const emulator_pointer /*menu_name*/,
-                                         const BOOL /*ansi*/)
-        {
-            std::u16string name_str = read_unicode_string_or_atom(c, class_name);
-
-            auto it = c.proc.classes.find(name_str);
-            if (it == c.proc.classes.end())
-            {
-                if (const auto* builtin = ensure_builtin_window_class(c, name_str))
-                {
-                    it = c.proc.classes.find(name_str);
-                    (void)builtin;
-                }
-            }
-
-            if (it == c.proc.classes.end())
-            {
-                if (c.win_emu.callbacks.on_generic_activity)
-                {
-                    c.win_emu.callbacks.on_generic_activity("GetClassInfoEx missing class '" + u16_to_u8(name_str) + "'");
+                    set_guest_last_error(c, 1411); // ERROR_CLASS_DOES_NOT_EXIST
                 }
 
                 return FALSE;
             }
 
-            if (wnd_class_ex)
+            if (class_menu_name)
             {
-                wnd_class_ex.write(it->second.wnd_class);
+                class_menu_name.write(entry->menu_name);
             }
 
+            const auto guest_obj_addr = entry->guest_obj_addr;
+            const auto atom = entry->atom;
+            c.win_emu.memory.release_memory(guest_obj_addr, 0);
+            std::erase_if(c.proc.classes, [&](const auto& item) { return item.second.guest_obj_addr == guest_obj_addr; });
+            c.proc.delete_atom(atom);
             return TRUE;
+        }
+
+        uint16_t handle_NtUserGetClassInfoEx(const syscall_context& c, const hinstance /*instance*/,
+                                             const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
+                                             const emulator_object<EMU_WNDCLASSEX> wnd_class_ex, const emulator_pointer /*menu_name*/,
+                                             const BOOL /*ansi*/)
+        {
+            const auto cls = read_class_argument(c, class_name);
+            const auto* entry = find_class(c, cls);
+            if (!entry)
+            {
+                if (cls.atom)
+                {
+                    set_guest_last_error(c, 1411); // ERROR_CLASS_DOES_NOT_EXIST
+                }
+
+                if (c.win_emu.callbacks.on_generic_activity)
+                {
+                    const auto shown_name = cls.atom ? make_atom_class_name(*cls.atom) : cls.name;
+                    c.win_emu.callbacks.on_generic_activity("GetClassInfoEx missing class '" + u16_to_u8(shown_name) + "'");
+                }
+
+                return 0;
+            }
+
+            if (wnd_class_ex)
+            {
+                wnd_class_ex.write(entry->wnd_class);
+            }
+
+            return entry->atom;
         }
 
         int handle_NtUserGetClassName(const syscall_context& c, const hwnd win_hwnd, const BOOL /*real*/,
@@ -3539,7 +4166,7 @@ namespace sogen
             const auto normalized_class = normalize_builtin_window_class_name(cls_name);
             // Builtin controls use the wide (apfnClientW) wndproc (expect UTF-16); app classes keep
             // their registered proc. Drives the WM_SETTEXT re-encoding so a wide proc never gets ANSI.
-            win.unicode_proc = is_builtin_window_class_name(normalized_class);
+            win.unicode_proc = is_builtin_window_class_name(normalized_class) || !cls_it->second.ansi_proc;
             const auto skip_create_messages = false;
             if (normalized_class == u"Button" || normalized_class == u"Static")
             {
@@ -3595,6 +4222,10 @@ namespace sogen
                 }
                 guest_win.spwndOwner = parent_win && has_owner ? parent_win->guest.value() : 0;
                 guest_win.lpfnWndProc = win.wnd_proc;
+                if (!win.unicode_proc)
+                {
+                    guest_win.bFlags |= USER_WINDOW_ANSI_WINDOW_PROC;
+                }
                 guest_win.pcls = class_obj_addr;
                 guest_win.hrgnUpdate = !is_message_only ? k_hrgn_window : 0;
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
@@ -3746,6 +4377,20 @@ namespace sogen
             cs.lpszClass =
                 class_name && class_name.value() > std::numeric_limits<uint16_t>::max() ? class_name.read().Buffer : class_name.value();
             cs.dwExStyle = ex_style;
+            const auto creator_name = cs.lpszName;
+            const auto creator_class = cs.lpszClass;
+            const auto text_in_encoding = [&](const emulator_object<LARGE_STRING> text, const pointer creator_text, const bool ansi) {
+                const auto converted = convert_create_struct_text(c, text, ansi);
+                if (!converted)
+                {
+                    return creator_text;
+                }
+
+                state.converted_create_struct_text.push_back(*converted);
+                return static_cast<pointer>(*converted);
+            };
+            cs.lpszName = text_in_encoding(window_name, creator_name, !win.unicode_proc);
+            cs.lpszClass = text_in_encoding(class_name, creator_class, !win.unicode_proc);
             state.create_struct_alloc = c.emu.push_stack(cs);
 
             RECT wr{};
@@ -3801,8 +4446,10 @@ namespace sogen
 
             if (const auto& hook = c.thread().cbt_hook)
             {
+                const auto hook_name = text_in_encoding(window_name, creator_name, hook->ansi);
+                const auto hook_class = text_in_encoding(class_name, creator_class, hook->ansi);
                 state.phase = window_create_phase::cbt_create;
-                dispatch_cbt_create_window(c, std::move(state), win, *hook);
+                dispatch_cbt_create_window(c, std::move(state), win, *hook, hook_name, hook_class);
                 return {};
             }
 
@@ -3829,6 +4476,7 @@ namespace sogen
                 c.emu.pop_stack(s.min_max_info_alloc);
                 c.emu.pop_stack(s.window_rect_alloc);
                 c.emu.pop_stack(s.create_struct_alloc);
+                release_converted_create_struct_text(c, s);
             };
 
             if (!win)
@@ -3905,6 +4553,7 @@ namespace sogen
             c.emu.pop_stack(s.min_max_info_alloc);
             c.emu.pop_stack(s.window_rect_alloc);
             c.emu.pop_stack(s.create_struct_alloc);
+            release_converted_create_struct_text(c, s);
 
             return s.handle;
         }
@@ -4203,6 +4852,7 @@ namespace sogen
 
             uint64_t dispatch_l_param = l_param;
             uint64_t scratch_text = 0;
+            const bool caller_unicode = ansi == FALSE;
 
             if (msg == WM_SETTEXT)
             {
@@ -4222,7 +4872,6 @@ namespace sogen
                 // Deliver the text in the target proc's encoding (caller's is `ansi`, proc's is
                 // unicode_proc): when they differ, re-encode into a scratch guest buffer so a wide proc
                 // never reads ANSI as UTF-16. Freed in completion_NtUserMessageCall.
-                const bool caller_unicode = ansi == FALSE;
                 if (l_param != 0 && caller_unicode != win->unicode_proc)
                 {
                     if (win->unicode_proc)
@@ -4244,6 +4893,16 @@ namespace sogen
                     dispatch_l_param = scratch_text;
                 }
             }
+            else if (msg == WM_GETTEXT && l_param != 0 && w_param != 0 && caller_unicode != win->unicode_proc)
+            {
+                const auto proc_char_size = win->unicode_proc ? sizeof(char16_t) : sizeof(char);
+                const auto bytes = (w_param + 1) * proc_char_size;
+                scratch_text = c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(bytes)), memory_permission::read_write);
+                if (scratch_text != 0)
+                {
+                    dispatch_l_param = scratch_text;
+                }
+            }
 
             message_call_state state{};
             state.window = hwnd;
@@ -4253,8 +4912,8 @@ namespace sogen
             return {};
         }
 
-        uint64_t completion_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t /*w_param*/,
-                                              const uint64_t /*l_param*/, const uint64_t result_info, const DWORD type, const BOOL /*ansi*/)
+        uint64_t completion_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t w_param,
+                                              const uint64_t l_param, const uint64_t result_info, const DWORD type, const BOOL ansi)
         {
             auto& state = c.get_completion_state<message_call_state>();
 
@@ -4268,9 +4927,20 @@ namespace sogen
                 return write_message_call_result(c, result_info, 0) ? TRUE : FALSE;
             }
 
+            std::optional<uint64_t> converted_text_length{};
             if (state.scratch_text != 0)
             {
+                if (state.message == WM_GETTEXT)
+                {
+                    const auto capacity = static_cast<size_t>(std::min<uint64_t>(w_param, std::numeric_limits<size_t>::max()));
+                    auto text = ansi ? read_string<char16_t>(c.win_emu.memory, state.scratch_text, capacity)
+                                     : cp1252_to_u16(read_string<char>(c.win_emu.memory, state.scratch_text, capacity));
+                    text.erase(std::min(text.find(u'\0'), text.size()));
+                    converted_text_length = copy_text_to_buffer(c, text, w_param, l_param, ansi != FALSE);
+                }
+
                 c.win_emu.memory.release_memory(state.scratch_text, 0);
+                state.scratch_text = 0;
             }
             if (state.message == WM_PAINT)
             {
@@ -4316,7 +4986,7 @@ namespace sogen
                 return TRUE;
             }
 
-            return c.get_callback_result<uint64_t>();
+            return converted_text_length.value_or(c.get_callback_result<uint64_t>());
         }
 
         bool read_combo_box_info(const syscall_context& c, const emulator_pointer combo_box_info, const size_t required_size,
@@ -4876,25 +5546,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        struct display_mode
-        {
-            uint32_t width;
-            uint32_t height;
-        };
-
-        // The single virtual display advertises a list of common modes so callers (e.g. DXVK's mode enumeration, which
-        // the game uses to validate available resolutions) see real entries.
-        constexpr std::array<display_mode, 8> k_display_modes = {{
-            {.width = 640, .height = 480},
-            {.width = 800, .height = 600},
-            {.width = 1024, .height = 768},
-            {.width = 1280, .height = 720},
-            {.width = 1280, .height = 1024},
-            {.width = 1600, .height = 900},
-            {.width = 1680, .height = 1050},
-            {.width = 1920, .height = 1080},
-        }};
-
         constexpr uint32_t k_display_bits_per_pixel = 32;
         constexpr uint32_t k_display_frequency = 60;
 
@@ -4942,10 +5593,17 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (mode_num < k_display_modes.size())
+            auto offered = display_modes | std::views::filter([&](const display_mode& mode) {
+                               return mode.fits_within(c.win_emu.max_display_mode()); //
+                           });
+            DWORD index = 0;
+            for (const auto& mode : offered)
             {
-                fill_mode(k_display_modes[mode_num].width, k_display_modes[mode_num].height);
-                return STATUS_SUCCESS;
+                if (index++ == mode_num)
+                {
+                    fill_mode(mode.width, mode.height);
+                    return STATUS_SUCCESS;
+                }
             }
 
             return STATUS_UNSUCCESSFUL;
@@ -4991,8 +5649,8 @@ namespace sogen
                 }
             }
 
-            if (std::ranges::none_of(k_display_modes,
-                                     [&](const display_mode& mode) { return mode.width == width && mode.height == height; }))
+            const display_mode requested{.width = width, .height = height};
+            if (!requested.fits_within(c.win_emu.max_display_mode()) || std::ranges::find(display_modes, requested) == display_modes.end())
             {
                 return disp_change_badmode;
             }
@@ -5104,7 +5762,7 @@ namespace sogen
         {
             if (handle.value.type == handle_types::desktop && !handle.value.is_pseudo)
             {
-                auto* desktop = c.proc.desktops.get(handle);
+                auto* desktop = c.proc.desktops.get(resolve_desktop(c, handle));
                 if (!desktop)
                 {
                     return 0;
@@ -5601,16 +6259,57 @@ namespace sogen
                 cls.hIconSm = dwNewLong;
                 break;
             default:
-                // GCL_CBCLSEXTRA / GCL_CBWNDEXTRA / GCLP_MENUNAME / positive class-extra offsets: not modeled.
+                // A positive index addresses the class's extra bytes. win32kfull's xxxSetClassLongPtr fails one whose 8 bytes
+                // do not fit in cbClsExtra with ERROR_INVALID_INDEX, and otherwise swaps the value in place.
+                if (nIndex >= 0)
+                {
+                    const auto offset = static_cast<uint32_t>(nIndex);
+                    if (offset + 8 < offset || offset + 8 > static_cast<uint32_t>(cls.cbClsExtra))
+                    {
+                        set_guest_last_error(c, 1413); // ERROR_INVALID_INDEX
+                        return 0;
+                    }
+
+                    const auto address = entry->second.guest_obj_addr + process_context::user_class_extra_offset + offset;
+                    old_value = c.win_emu.memory.read_memory<uint64_t>(address);
+                    c.win_emu.memory.write_memory(address, uint64_t{dwNewLong});
+                    return old_value;
+                }
+
+                // GCL_CBCLSEXTRA / GCL_CBWNDEXTRA / GCLP_MENUNAME: not modeled.
                 break;
             }
 
+            publish_class_to_guest(c.win_emu.memory, entry->second);
             return old_value;
+        }
+
+        emulator_pointer begin_window_style_change(const syscall_context& c, const handle hWnd, const int nIndex, const uint32_t new_style,
+                                                   const callback_id callback)
+        {
+            const auto* win = c.proc.windows.get(hWnd);
+            if (!win)
+            {
+                return 0;
+            }
+
+            window_style_change_state state{};
+            state.old_style = nIndex == GWL_STYLE ? win->style : win->ex_style;
+            state.style_alloc = c.emu.push_stack(STYLESTRUCT{.styleOld = state.old_style, .styleNew = new_style});
+            const auto address = state.style_alloc.address();
+            dispatch_window_message(c, callback, std::move(state), *win, WM_STYLECHANGING,
+                                    static_cast<uint64_t>(static_cast<int64_t>(nIndex)), address);
+            return 0;
         }
 
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL /*Ansi*/)
         {
+            if (nIndex == GWL_STYLE || nIndex == GWL_EXSTYLE)
+            {
+                return begin_window_style_change(c, hWnd, nIndex, static_cast<uint32_t>(dwNewLong), callback_id::NtUserSetWindowLongPtr);
+            }
+
             auto* win = c.proc.windows.get(hWnd);
             if (!win)
             {
@@ -5671,12 +6370,6 @@ namespace sogen
                         win->wnd_proc = dwNewLong;
                         break;
 
-                    case GWL_STYLE:
-                    case GWL_EXSTYLE:
-                        // TODO: Support runtime GWL_STYLE/GWL_EXSTYLE changes together with
-                        // WM_STYLECHANGING/WM_STYLECHANGED and non-client frame recalculation.
-                        break;
-
                     default:
                         break;
                     }
@@ -5686,10 +6379,60 @@ namespace sogen
             return oldValue;
         }
 
+        emulator_pointer complete_window_style_change(const syscall_context& c, const handle hWnd, const int nIndex,
+                                                      const callback_id callback)
+        {
+            auto& state = c.get_completion_state<window_style_change_state>();
+            const auto old_style = state.old_style;
+            auto* win = c.proc.windows.get(hWnd);
+            if (!win || state.style_applied)
+            {
+                c.emu.pop_stack(state.style_alloc);
+                return win ? old_style : 0;
+            }
+
+            auto styles = c.emu.read_memory<STYLESTRUCT>(state.style_alloc.address());
+            styles.styleNew = filter_supported_window_style_change(*win, nIndex, styles.styleNew);
+            c.emu.write_memory(state.style_alloc.address(), styles);
+            if (nIndex == GWL_STYLE)
+            {
+                win->style = styles.styleNew;
+                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = styles.styleNew; });
+            }
+            else
+            {
+                win->ex_style = styles.styleNew;
+                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwExStyle = styles.styleNew; });
+            }
+
+            state.style_applied = true;
+            const auto address = state.style_alloc.address();
+            dispatch_window_message(c, callback, std::move(state), *win, WM_STYLECHANGED,
+                                    static_cast<uint64_t>(static_cast<int64_t>(nIndex)), address);
+            return 0;
+        }
+
+        emulator_pointer completion_NtUserSetWindowLongPtr(const syscall_context& c, const handle hWnd, const int nIndex,
+                                                           const emulator_pointer /*dwNewLong*/, const BOOL /*Ansi*/)
+        {
+            return complete_window_style_change(c, hWnd, nIndex, callback_id::NtUserSetWindowLongPtr);
+        }
+
         uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi)
         {
+            if (nIndex == GWL_STYLE || nIndex == GWL_EXSTYLE)
+            {
+                return static_cast<uint32_t>(begin_window_style_change(c, hWnd, nIndex, dwNewLong, callback_id::NtUserSetWindowLong));
+            }
+
             const auto oldValue = handle_NtUserSetWindowLongPtr(c, hWnd, nIndex, static_cast<emulator_pointer>(dwNewLong), Ansi);
             return static_cast<uint32_t>(oldValue);
+        }
+
+        uint32_t completion_NtUserSetWindowLong(const syscall_context& c, const handle hWnd, const int nIndex, const uint32_t /*dwNewLong*/,
+                                                const BOOL /*Ansi*/)
+        {
+            return static_cast<uint32_t>(complete_window_style_change(c, hWnd, nIndex, callback_id::NtUserSetWindowLong));
         }
 
         uint64_t handle_NtUserGetAncestor(const syscall_context& c, const hwnd child_hwnd, const UINT flags)
@@ -6011,7 +6754,13 @@ namespace sogen
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
         {
             const auto name = c.proc.get_atom_name(atom);
-            if (!name || !atom_name)
+            if (!name)
+            {
+                set_guest_last_error(c, 6); // ERROR_INVALID_HANDLE
+                return 0;
+            }
+
+            if (!atom_name)
             {
                 return 0;
             }
@@ -6074,59 +6823,108 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtUserQueryDisplayConfig(const syscall_context& c, const UINT32 /*flags*/,
+        NTSTATUS handle_NtUserQueryDisplayConfig(const syscall_context& c, const UINT32 flags,
                                                  const emulator_object<UINT32> num_path_array_elements, const emulator_pointer path_array,
                                                  const emulator_object<UINT32> current_topology_id, const emulator_pointer /*reserved*/)
         {
-            if (!num_path_array_elements)
+            constexpr UINT32 qdc_database_current = 0x4;
+
+            // One of QDC_ALL_PATHS, QDC_ONLY_ACTIVE_PATHS or QDC_DATABASE_CURRENT, plus QDC_VIRTUAL_MODE_AWARE and QDC_INCLUDE_HMD,
+            // and on Windows 11 QDC_VIRTUAL_REFRESH_RATE_AWARE, which its SDK adds: win32kbase rejects any other bit (19041
+            // outside 0x37, 26100 outside 0x77).
+            const auto valid_flags = c.win_emu.version.is_build_after_or_equal(22000) ? 0x77U : 0x37U;
+            const auto query = flags & 0x7;
+            if ((flags & ~valid_flags) != 0 || (query != 0x1 && query != 0x2 && query != qdc_database_current))
             {
                 return STATUS_INVALID_PARAMETER;
             }
 
+            // On 19041-19045 DISPLAYCONFIG_PATH_INFO_INTERNAL is 200 bytes: user32 allocates and win32kbase probes and
+            // copies 200 bytes per path. The fields written below keep their offsets there; only the struct is shorter.
+            const bool windows_10_2004 = c.win_emu.version.is_build_within(19041, 19046);
+            const uint64_t path_size = windows_10_2004 ? 200 : 216;
+
+            // win32kbase probes every caller buffer before it writes any of them: the element count, then the whole
+            // declared path array (ProbeForWrite of count * path size, ULONG-aligned outside WoW64), then the topology id.
+            // Its exception handler sets the last error from the fault and fails the call with STATUS_INVALID_PARAMETER
+            // (19041 and 26100).
+            const auto probe_failed = [&] {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS, for a misaligned buffer as for an inaccessible one
+                return STATUS_INVALID_PARAMETER;
+            };
+
+            if (!is_writable_range(c.win_emu.memory, num_path_array_elements.value(), sizeof(UINT32)))
+            {
+                return probe_failed();
+            }
+
             const auto num_paths = num_path_array_elements.read();
+            if (num_paths == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (path_array % (c.proc.is_wow64_process ? 1 : sizeof(ULONG)) != 0 ||
+                !is_writable_range(c.win_emu.memory, path_array, path_size * num_paths))
+            {
+                return probe_failed();
+            }
+
+            // Only the current database query reports a topology, and the other queries must not ask for one.
+            const bool database_current = query == qdc_database_current;
+            if (database_current)
+            {
+                if (current_topology_id.value() % sizeof(UINT32) != 0 ||
+                    !is_writable_range(c.win_emu.memory, current_topology_id.value(), sizeof(UINT32)))
+                {
+                    return probe_failed();
+                }
+            }
+            else if (current_topology_id)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
 
             num_path_array_elements.write(1);
 
-            if (current_topology_id)
+            if (database_current)
             {
                 current_topology_id.write(0x1); // DISPLAYCONFIG_TOPOLOGY_INTERNAL
             }
 
-            if (path_array && num_paths >= 1)
+            struct EMU_CCD_PATH_INFO
             {
-                struct EMU_CCD_PATH_INFO
-                {
-                    UINT64 flags;
-                    UINT64 padding1;
-                    LUID adapterId;
-                    UINT32 sourceId;
-                    UINT32 targetId;
-                    EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO targetSignalInfo;
-                    UINT32 outputTechnology;
-                    UINT8 padding2[40]; // NOLINT
-                    UINT32 sourceWidth;
-                    UINT32 sourceHeight;
-                    UINT8 padding3[84]; // NOLINT
-                } internal_path{};
+                UINT64 flags;
+                UINT64 padding1;
+                LUID adapterId;
+                UINT32 sourceId;
+                UINT32 targetId;
+                EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO targetSignalInfo;
+                UINT32 outputTechnology;
+                UINT8 padding2[40]; // NOLINT
+                UINT32 sourceWidth;
+                UINT32 sourceHeight;
+                UINT8 padding3[84]; // NOLINT
+            } internal_path{};
 
-                internal_path.flags = 0x2000000000020003ULL;
-                internal_path.adapterId = {.LowPart = 0x1000, .HighPart = 0};
-                internal_path.sourceId = 0;
-                internal_path.targetId = 0;
-                internal_path.targetSignalInfo.pixelRate = 148500000;
-                internal_path.targetSignalInfo.hSyncFreq = {.Numerator = 67500, .Denominator = 1};
-                internal_path.targetSignalInfo.vSyncFreq = {.Numerator = 60, .Denominator = 1};
-                internal_path.targetSignalInfo.activeSize = {.cx = c.proc.display_width, .cy = c.proc.display_height};
-                internal_path.targetSignalInfo.totalSize = {.cx = 2200, .cy = 1125};
-                internal_path.targetSignalInfo.scanLineOrdering = 1; // PROGRESSIVE
-                internal_path.targetSignalInfo.u.videoStandard = 0;
-                internal_path.outputTechnology = 5; // HDMI
-                internal_path.padding2[17] = 1;
-                internal_path.sourceWidth = c.proc.display_width;
-                internal_path.sourceHeight = c.proc.display_height;
+            internal_path.flags = 0x2000000000020003ULL;
+            internal_path.adapterId = {.LowPart = 0x1000, .HighPart = 0};
+            internal_path.sourceId = 0;
+            internal_path.targetId = 0;
+            internal_path.targetSignalInfo.pixelRate = 148500000;
+            internal_path.targetSignalInfo.hSyncFreq = {.Numerator = 67500, .Denominator = 1};
+            internal_path.targetSignalInfo.vSyncFreq = {.Numerator = 60, .Denominator = 1};
+            internal_path.targetSignalInfo.activeSize = {.cx = c.proc.display_width, .cy = c.proc.display_height};
+            internal_path.targetSignalInfo.totalSize = {.cx = 2200, .cy = 1125};
+            internal_path.targetSignalInfo.scanLineOrdering = 1; // PROGRESSIVE
+            internal_path.targetSignalInfo.u.videoStandard = 0;
+            internal_path.outputTechnology = 5; // HDMI
+            internal_path.padding2[17] = 1;
+            internal_path.sourceWidth = c.proc.display_width;
+            internal_path.sourceHeight = c.proc.display_height;
 
-                c.emu.write_memory(path_array, &internal_path, sizeof(internal_path));
-            }
+            static_assert(sizeof(internal_path) == 216);
+            c.emu.write_memory(path_array, &internal_path, static_cast<size_t>(path_size));
 
             return STATUS_SUCCESS;
         }
@@ -6870,7 +7668,7 @@ namespace sogen
                 {
                     return fail(error_invalid_parameter);
                 }
-                const BOOL receives_input = object == c.proc.default_desktop;
+                const BOOL receives_input = resolve_desktop(c, object) == c.proc.default_desktop;
                 return write(&receives_input, sizeof(receives_input));
             }
             default:
@@ -6964,8 +7762,8 @@ namespace sogen
 
             const auto counts_this_process = process.bits == gui_resources_global_process || c.proc.is_current_process_handle(process);
             const auto* other_process = counts_this_process ? nullptr : c.proc.processes.get(process);
-            const auto is_other_process =
-                !counts_this_process && (process == STEAM_PROCESS_HANDLE || (other_process != nullptr && other_process->process));
+            const auto is_other_process = !counts_this_process && (process == STEAM_PROCESS_HANDLE || process == PARENT_PROCESS_HANDLE ||
+                                                                   (other_process != nullptr && other_process->process));
 
             if (flags > gui_resources_userobjects_peak || (!counts_this_process && !is_other_process))
             {
@@ -7088,6 +7886,136 @@ namespace sogen
             placement.rcNormalPosition = get_window_rect(*win);
 
             if (!c.win_emu.memory.try_write_memory(placement_address, &placement, sizeof(placement)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
+        int32_t get_system_metric(const syscall_context& c, const size_t index)
+        {
+            return c.proc.user_handles.get_server_info().read().systemMetrics[index];
+        }
+
+        RECT get_title_bar_rect(const syscall_context& c, const window& win)
+        {
+            constexpr size_t sm_cycaption = 4;
+            constexpr size_t sm_cxsize = 30;
+            constexpr size_t sm_cysmcaption = 51;
+
+            if ((win.style & WS_CAPTION) != WS_CAPTION)
+            {
+                return {};
+            }
+
+            const auto insets = win.nonclient_insets();
+            auto rect = get_window_rect(win);
+            rect.left += insets.left;
+            rect.top += insets.top;
+            rect.right -= insets.right;
+
+            const bool tool_window = (win.ex_style & WS_EX_TOOLWINDOW) != 0;
+            rect.bottom = rect.top + get_system_metric(c, tool_window ? sm_cysmcaption : sm_cycaption);
+
+            if (!tool_window && (win.style & WS_SYSMENU) != 0)
+            {
+                rect.left += get_system_metric(c, sm_cxsize);
+            }
+
+            return rect;
+        }
+
+        std::array<DWORD, 6> get_title_bar_states(const syscall_context& c, const window& win)
+        {
+            constexpr DWORD state_unavailable = 0x1;
+            constexpr DWORD state_invisible = 0x8000;
+            constexpr DWORD state_focusable = 0x100000;
+            constexpr uint32_t cs_noclose = 0x200;
+
+            enum class title_bar_element : size_t
+            {
+                title_bar,
+                reserved,
+                minimize_button,
+                maximize_button,
+                help_button,
+                close_button,
+            };
+
+            std::array<DWORD, 6> states{};
+            const auto state = [&states](const title_bar_element element) -> DWORD& { return states[static_cast<size_t>(element)]; };
+            state(title_bar_element::title_bar) = state_focusable;
+
+            if ((win.style & WS_CAPTION) != WS_CAPTION)
+            {
+                state(title_bar_element::title_bar) |= state_invisible;
+                return states;
+            }
+
+            state(title_bar_element::reserved) = state_invisible;
+
+            if ((win.style & WS_SYSMENU) == 0)
+            {
+                std::fill(states.begin() + static_cast<size_t>(title_bar_element::minimize_button), states.end(), state_invisible);
+                return states;
+            }
+
+            if ((win.style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) == 0)
+            {
+                state(title_bar_element::minimize_button) = state_invisible;
+                state(title_bar_element::maximize_button) = state_invisible;
+            }
+            else
+            {
+                state(title_bar_element::minimize_button) = (win.style & WS_MINIMIZEBOX) == 0 ? state_unavailable : 0;
+                state(title_bar_element::maximize_button) = (win.style & WS_MAXIMIZEBOX) == 0 ? state_unavailable : 0;
+            }
+
+            if ((win.ex_style & WS_EX_CONTEXTHELP) == 0)
+            {
+                state(title_bar_element::help_button) = state_invisible;
+            }
+
+            const auto window_class = c.proc.classes.find(win.class_name);
+            if (window_class != c.proc.classes.end() && (window_class->second.wnd_class.style & cs_noclose) != 0)
+            {
+                state(title_bar_element::close_button) = state_unavailable;
+            }
+
+            return states;
+        }
+
+        BOOL handle_NtUserGetTitleBarInfo(const syscall_context& c, const hwnd window_handle, const emulator_pointer info_address)
+        {
+            const auto* win = c.proc.windows.get(window_handle);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            DWORD requested_size{};
+            if (info_address == 0 || !c.win_emu.memory.try_read_memory(info_address, &requested_size, sizeof(requested_size)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return FALSE;
+            }
+
+            if (requested_size != sizeof(EMU_TITLEBARINFO))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return FALSE;
+            }
+
+            EMU_TITLEBARINFO info{};
+            info.cbSize = requested_size;
+            info.rcTitleBar = get_title_bar_rect(c, *win);
+            const auto states = get_title_bar_states(c, *win);
+            std::ranges::copy(states, std::begin(info.rgstate));
+
+            if (!c.win_emu.memory.try_write_memory(info_address, &info, sizeof(info)))
             {
                 set_guest_last_error(c, 998); // ERROR_NOACCESS
                 return FALSE;
@@ -7880,6 +8808,7 @@ namespace sogen
                         proc.async_key_state[virtual_key] = 1;
                     }
                     proc.key_state[virtual_key] = down ? 0x80 : 0;
+                    proc.key_state_changed();
                     return;
                 }
 

@@ -41,6 +41,16 @@ namespace sogen
             constexpr uint32_t k_gdi_font_attr_size = 0x40;
             constexpr uint32_t k_gdi_region_attr_size = 0x20;
 
+            constexpr uint32_t k_max_palette_entries = 0xFFFF;
+            constexpr uint64_t k_log_palette_entries_offset = 0x04;
+            constexpr uint32_t k_palette_object_size = sizeof(uint16_t);
+            constexpr uint8_t k_palette_entry_reserved = 0x01;
+            constexpr uint32_t k_clr_invalid = 0xFFFFFFFF;
+
+            constexpr uint32_t k_gdi_pal_animate = 0;
+            constexpr uint32_t k_gdi_pal_set_entries = 1;
+            constexpr uint32_t k_gdi_pal_get_entries = 2;
+
             constexpr uint32_t k_gdi_dc_attr_hbrush_offset = 0xA0;
             constexpr uint32_t k_gdi_dc_attr_hpen_offset = 0xA8;
             constexpr uint32_t k_gdi_dc_attr_dc_brush_color_offset = 0xC4;   // SetDCBrushColor
@@ -114,6 +124,7 @@ namespace sogen
             constexpr uint32_t k_gdi_default_cookie = STATUS_WAIT_1;
 
             constexpr int16_t k_gdi_batch_cmd_text_out = 2;
+            constexpr int16_t k_gdi_batch_cmd_text_out_rect = 3;
             constexpr int16_t k_gdi_batch_cmd_poly_pat_blt = 1;
             constexpr int16_t k_gdi_batch_cmd_delete_object = 7;
             constexpr int16_t k_gdi_batch_cmd_delete_region = 8;
@@ -209,6 +220,19 @@ namespace sogen
                     std::array<ULONG, 1> buffer;
                 };
             };
+
+            struct gdi_batch_text_out_rect
+            {
+                gdi_batch_header header{};
+                COLORREF background{};
+                UINT options{};
+                RECT rect{};
+                POINTL viewport_org{};
+                ULONG background_ul{};
+            };
+
+            static_assert(offsetof(gdi_batch_text_out_rect, rect) == 0x0C);
+            static_assert(sizeof(gdi_batch_text_out_rect) == 0x28);
 
             struct gdi_batch_pat_rect
             {
@@ -330,13 +354,20 @@ namespace sogen
                     return 0;
                 }
 
+                if (c.proc.is_wow64_process && pointer > std::numeric_limits<uint32_t>::max())
+                {
+                    return 0;
+                }
+
+                // Windows 10 2004-22H2 stores UserPointer as it is: gdi32's GdiGetEntry copies the entry (x64 and WoW64)
+                // and gdi32full uses the pointer directly (SelectObjectImpl reads the DC_ATTR through it).
+                if (c.win_emu.version.is_build_within(19041, 19046))
+                {
+                    return pointer;
+                }
+
                 if (c.proc.is_wow64_process)
                 {
-                    if (pointer > std::numeric_limits<uint32_t>::max())
-                    {
-                        return 0;
-                    }
-
                     // wow64 gdi32full decodes low 32 bits: ror.d(encoded, 32 - (cookie & 0x1f)) ^ cookie
                     const auto pointer32 = static_cast<uint32_t>(pointer);
                     const auto cookie32 = static_cast<uint32_t>(cookie);
@@ -1465,12 +1496,16 @@ namespace sogen
                 return selected != 0 && selected == static_cast<uint32_t>(read_gdi_object_slot(c, stock_index));
             }
 
-            void fill_rect(gdi_bitmap_surface& surface, const int left, const int top, const int right, const int bottom,
+            void fill_rect(gdi_bitmap_surface& surface, const int64_t left, const int64_t top, const int64_t right, const int64_t bottom,
                            const uint32_t color)
             {
-                for (int y = top; y < bottom; ++y)
+                const auto x_begin = static_cast<int>(std::clamp<int64_t>(left, 0, surface.width));
+                const auto x_end = static_cast<int>(std::clamp<int64_t>(right, 0, surface.width));
+                const auto y_begin = static_cast<int>(std::clamp<int64_t>(top, 0, surface.height));
+                const auto y_end = static_cast<int>(std::clamp<int64_t>(bottom, 0, surface.height));
+                for (int y = y_begin; y < y_end; ++y)
                 {
-                    for (int x = left; x < right; ++x)
+                    for (int x = x_begin; x < x_end; ++x)
                     {
                         set_surface_pixel(surface, x, y, color);
                     }
@@ -1635,6 +1670,20 @@ namespace sogen
                             draw_text(*surface, top_left.x, top_left.y, std::u16string_view(text, text_out->count),
                                       colorref_to_bgra(text_out->foreground),
                                       has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr, advances);
+                        }
+                    }
+                    else if (surface && header->cmd == k_gdi_batch_cmd_text_out_rect &&
+                             static_cast<size_t>(header->size) >= sizeof(gdi_batch_text_out_rect))
+                    {
+                        const auto* text_out_rect = reinterpret_cast<const gdi_batch_text_out_rect*>(header);
+                        if ((text_out_rect->options & ETO_OPAQUE) != 0)
+                        {
+                            const int64_t shift_x = static_cast<int64_t>(text_out_rect->viewport_org.x) + origin_x;
+                            const int64_t shift_y = static_cast<int64_t>(text_out_rect->viewport_org.y) + origin_y;
+                            const auto& rect = text_out_rect->rect;
+                            fill_rect(*surface, std::min(rect.left, rect.right) + shift_x, std::min(rect.top, rect.bottom) + shift_y,
+                                      std::max(rect.left, rect.right) + shift_x, std::max(rect.top, rect.bottom) + shift_y,
+                                      colorref_to_bgra(text_out_rect->background));
                         }
                     }
                     else if (surface && header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
@@ -2073,10 +2122,69 @@ namespace sogen
                 }
             }
 
+            std::span<EMU_PALETTEENTRY> palette_range(std::vector<EMU_PALETTEENTRY>& palette, const uint16_t start, const uint16_t count)
+            {
+                if (start >= palette.size())
+                {
+                    return {};
+                }
+
+                return std::span{palette}.subspan(start, std::min<size_t>(count, palette.size() - start));
+            }
+
+            LONG read_palette_entries(const syscall_context& c, std::vector<EMU_PALETTEENTRY>& palette, const uint16_t start,
+                                      const uint16_t count, const emulator_pointer entries)
+            {
+                const auto range = palette_range(palette, start, count);
+                if (!c.win_emu.memory.try_write_memory(entries, range.data(), range.size_bytes()))
+                {
+                    return 0;
+                }
+
+                return static_cast<LONG>(range.size());
+            }
+
+            // AnimatePalette only replaces the entries that were created with PC_RESERVED.
+            LONG write_palette_entries(const syscall_context& c, std::vector<EMU_PALETTEENTRY>& palette, const uint16_t start,
+                                       const uint16_t count, const emulator_pointer entries, const bool reserved_only)
+            {
+                const auto range = palette_range(palette, start, count);
+                std::vector<EMU_PALETTEENTRY> source(range.size());
+                if (!c.win_emu.memory.try_read_memory(entries, source.data(), source.size() * sizeof(EMU_PALETTEENTRY)))
+                {
+                    return 0;
+                }
+
+                for (size_t i = 0; i < range.size(); ++i)
+                {
+                    if (!reserved_only || (range[i].peFlags & k_palette_entry_reserved) != 0)
+                    {
+                        range[i] = source[i];
+                    }
+                }
+
+                return static_cast<LONG>(range.size());
+            }
+
+            uint32_t find_nearest_palette_index(const std::vector<EMU_PALETTEENTRY>& palette, const COLORREF color)
+            {
+                const auto distance = [color](const EMU_PALETTEENTRY& entry) {
+                    const auto red = static_cast<int32_t>(entry.peRed) - static_cast<int32_t>(color & 0xFF);
+                    const auto green = static_cast<int32_t>(entry.peGreen) - static_cast<int32_t>((color >> 8) & 0xFF);
+                    const auto blue = static_cast<int32_t>(entry.peBlue) - static_cast<int32_t>((color >> 16) & 0xFF);
+                    return red * red + green * green + blue * blue;
+                };
+
+                const auto nearest = std::ranges::min_element(palette, {}, distance);
+                return static_cast<uint32_t>(std::distance(palette.begin(), nearest));
+            }
+
             uint32_t get_gdi_object_size(const uint8_t type)
             {
                 switch (type)
                 {
+                case k_gdi_palette_type:
+                    return k_palette_object_size;
                 case k_gdi_brush_type:
                     return k_logbrush_size;
                 case k_gdi_pen_type:
@@ -2654,9 +2762,27 @@ namespace sogen
             return handle;
         }
 
-        uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c)
+        uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c, const emulator_pointer log_palette, const uint32_t entry_count)
         {
-            return allocate_gdi_object(c, k_gdi_palette_type, k_gdi_palette_attr_size);
+            if (entry_count == 0 || entry_count > k_max_palette_entries)
+            {
+                return 0;
+            }
+
+            std::vector<EMU_PALETTEENTRY> entries(entry_count);
+            if (!c.win_emu.memory.try_read_memory(log_palette + k_log_palette_entries_offset, entries.data(),
+                                                  entries.size() * sizeof(EMU_PALETTEENTRY)))
+            {
+                return 0;
+            }
+
+            const auto palette = allocate_gdi_object(c, k_gdi_palette_type, k_gdi_palette_attr_size);
+            if (palette != 0)
+            {
+                c.proc.gdi_palettes[palette] = std::move(entries);
+            }
+
+            return palette;
         }
 
         uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c)
@@ -2664,9 +2790,38 @@ namespace sogen
             return allocate_gdi_object(c, k_gdi_palette_type, k_gdi_palette_attr_size);
         }
 
-        NTSTATUS handle_NtGdiDoPalette()
+        LONG handle_NtGdiDoPalette(const syscall_context& c, const handle object, const uint16_t start, const uint16_t count,
+                                   const emulator_pointer entries, const uint32_t function, const BOOL /*inbound*/)
         {
-            return STATUS_SUCCESS;
+            const auto palette = c.proc.gdi_palettes.find(static_cast<uint32_t>(object.bits));
+            if (palette == c.proc.gdi_palettes.end())
+            {
+                return 0;
+            }
+
+            switch (function)
+            {
+            case k_gdi_pal_get_entries:
+                return entries == 0 ? static_cast<LONG>(palette->second.size())
+                                    : read_palette_entries(c, palette->second, start, count, entries);
+            case k_gdi_pal_set_entries:
+                return write_palette_entries(c, palette->second, start, count, entries, false);
+            case k_gdi_pal_animate:
+                return write_palette_entries(c, palette->second, start, count, entries, true) != 0 ? TRUE : FALSE;
+            default:
+                return 0;
+            }
+        }
+
+        uint32_t handle_NtGdiGetNearestPaletteIndex(const syscall_context& c, const handle palette, const COLORREF color)
+        {
+            const auto it = c.proc.gdi_palettes.find(static_cast<uint32_t>(palette.bits));
+            if (it == c.proc.gdi_palettes.end())
+            {
+                return k_clr_invalid;
+            }
+
+            return find_nearest_palette_index(it->second, color);
         }
 
         uint32_t count_process_gdi_objects(const syscall_context& c)
@@ -3388,6 +3543,7 @@ namespace sogen
             c.proc.gdi_bitmap_surfaces.erase(handle_value);
             c.proc.gdi_fonts.erase(handle_value);
             c.proc.gdi_regions.erase(handle_value);
+            c.proc.gdi_palettes.erase(handle_value);
             return 1;
         }
 
@@ -3429,6 +3585,80 @@ namespace sogen
         uint64_t handle_NtGdiSelectFont(const syscall_context&, const hdc dc, const uint64_t font)
         {
             return dc != 0 ? font : 0;
+        }
+
+        BOOL handle_NtGdiFillRgn(const syscall_context& c, const hdc dc, const handle region, const hbrush brush)
+        {
+            uint64_t dc_attr = 0;
+            if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            {
+                return FALSE;
+            }
+
+            (void)handle_NtGdiFlush(c);
+
+            const auto rects = read_gdi_region(c, static_cast<uint32_t>(region.bits));
+            if (!rects)
+            {
+                return FALSE;
+            }
+            if (rects->empty())
+            {
+                return TRUE;
+            }
+
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            uint32_t present_handle = 0;
+            auto* surface = resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
+            if (!surface)
+            {
+                return TRUE;
+            }
+
+            const auto is_visible = [&](const RECT& rect) {
+                return static_cast<int64_t>(rect.left) + origin_x < surface->width &&
+                       static_cast<int64_t>(rect.top) + origin_y < surface->height && static_cast<int64_t>(rect.right) + origin_x > 0 &&
+                       static_cast<int64_t>(rect.bottom) + origin_y > 0;
+            };
+            if (!std::ranges::any_of(*rects, is_visible))
+            {
+                return TRUE;
+            }
+
+            const auto brush_handle = static_cast<uint32_t>(brush);
+            GDI_HANDLE_ENTRY64 brush_entry{};
+            uint64_t entry_address = 0;
+            if (!read_gdi_entry_for_handle(c, brush_handle, brush_entry, entry_address) || brush_entry.Type != k_gdi_brush_type)
+            {
+                return FALSE;
+            }
+
+            auto color = get_brush_color_in_dc(c, dc, brush_handle);
+            if (gdi_object_type(brush_entry) != k_gdi_brush_type)
+            {
+                if (brush_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_null_pen_index)))
+                {
+                    return FALSE;
+                }
+                color = brush_handle == static_cast<uint32_t>(read_gdi_object_slot(c, k_stock_dc_pen_index))
+                            ? read_dc_attr_colorref(c, dc_attr + k_gdi_dc_attr_dc_pen_color_offset)
+                            : read_dc_attr_colorref(c, brush_entry.Object + sizeof(uint32_t));
+            }
+            if (!color)
+            {
+                return FALSE;
+            }
+
+            const auto rop2 = static_cast<uint8_t>(((get_dc_rop2(c, dc) - 1u) & 0xFu) + 1u);
+            for (const auto& rect : *rects)
+            {
+                fill_rect_rop2(*surface, static_cast<int64_t>(rect.left) + origin_x, static_cast<int64_t>(rect.top) + origin_y,
+                               static_cast<int64_t>(rect.right) + origin_x, static_cast<int64_t>(rect.bottom) + origin_y, *color, rop2);
+            }
+
+            present_win_surface(c, present_handle, surface);
+            return TRUE;
         }
 
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, const handle bitmap)
@@ -3515,7 +3745,13 @@ namespace sogen
 
             std::vector<uint8_t> object_data(object_size, 0);
 
-            if (object_type == k_gdi_bitmap_type)
+            if (object_type == k_gdi_palette_type)
+            {
+                const auto palette = c.proc.gdi_palettes.find(handle_value);
+                const auto entry_count = static_cast<uint16_t>(palette == c.proc.gdi_palettes.end() ? 0 : palette->second.size());
+                std::memcpy(object_data.data(), &entry_count, sizeof(entry_count));
+            }
+            else if (object_type == k_gdi_bitmap_type)
             {
                 const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(handle_value);
                 if (bmp_it != c.proc.gdi_bitmap_surfaces.end())

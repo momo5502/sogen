@@ -4,41 +4,51 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../game_library.dart';
-import '../gog/gog_account.dart';
-import '../gog/gog_cdn.dart';
-import '../gog/gog_installer.dart';
-import '../gog/gog_planner.dart';
-import '../gog/gog_http.dart';
-import '../gog/gog_library.dart';
+import '../store/cover_cache.dart';
+import '../store/store_account.dart';
+import '../store/store_catalog.dart';
+import '../store/store_game.dart';
+import '../store/store_http.dart';
+import '../store/store_installer.dart';
 import '../theme.dart';
+import '../widgets/game_row.dart';
 import '../widgets/sogen_widgets.dart';
 
-/// Signing in to GOG, and the Windows games the account owns.
-class GogTab extends StatefulWidget {
-  const GogTab({
+/// Signing in to a store, and the Windows games the account owns there.
+class StoreTab extends StatefulWidget {
+  const StoreTab({
     super.key,
     required this.account,
-    required this.content,
+    required this.catalog,
     required this.installer,
     required this.library,
     required this.canInstall,
+    required this.color,
+    required this.covers,
+    required this.commands,
   });
 
-  final GogAccount account;
-  final GogContent content;
-  final GogInstaller installer;
+  final StoreSignIn account;
+  final StoreCatalog catalog;
+  final StoreInstaller installer;
   final GameLibrary library;
 
   /// Whether the emulation root is installed, without which there is nothing to run a downloaded game with.
   final bool canInstall;
 
+  /// The accent the signed-out card shows the store in.
+  final Color color;
+
+  final CoverCache covers;
+
+  /// How the installed games of the store start, change and go.
+  final GameCommands commands;
+
   @override
-  State<GogTab> createState() => _GogTabState();
+  State<StoreTab> createState() => _StoreTabState();
 }
 
-class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
-  late final GogLibrary _library = GogLibrary(widget.account);
-  late final GogPlanner _planner = GogPlanner(widget.content);
+class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin {
   final _preparing = <String>{};
   Future<List<StoreGame>>? _games;
   bool _signingIn = false;
@@ -56,7 +66,6 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
   @override
   void dispose() {
     widget.account.removeListener(_onAccountChanged);
-    _library.close();
     super.dispose();
   }
 
@@ -70,7 +79,7 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
     setState(() => _signingIn = true);
     try {
       await widget.account.signIn();
-    } on GogException catch (e) {
+    } on StoreException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
       }
@@ -83,7 +92,7 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
 
   void _showError(Object error) {
     if (mounted) {
-      final message = error is GogException ? error.message : 'Something went wrong.';
+      final message = error is StoreException ? error.message : 'Something went wrong.';
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     }
   }
@@ -91,19 +100,18 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
   Future<void> _download(StoreGame game) async {
     setState(() => _preparing.add(game.productId));
     try {
-      final release = await _planner.release(game.productId);
-      final language = await _chooseLanguage(game, release.languages);
-      if (language == null) {
+      final chosen = await widget.catalog.plan(game, (languages) => _chooseLanguage(game, languages));
+      if (chosen == null) {
         return;
       }
 
-      final planned = await _planner.plan(release, language);
+      final (planned, language) = chosen;
       final metered = await widget.installer.isMetered();
       if (metered && !await _confirmMeteredDownload(game, planned.plan.downloadBytes)) {
         return;
       }
 
-      await widget.installer.install(game, release, planned, language: language, allowMetered: metered);
+      await widget.installer.install(game, planned, language: language, allowMetered: metered);
     } catch (error) {
       _showError(error);
     } finally {
@@ -115,7 +123,7 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
 
   Future<String?> _chooseLanguage(StoreGame game, List<String> languages) async {
     if (languages.isEmpty) {
-      throw const GogException('GOG lists no language for this game.');
+      throw StoreException('${widget.catalog.name} lists no language for this game.');
     }
     if (languages.length == 1) {
       return languages.single;
@@ -142,7 +150,7 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
       if (metered && !await _confirmMeteredDownload(game, remaining)) {
         return;
       }
-      await widget.installer.resume(game.productId, allowMetered: metered);
+      await widget.installer.resume(game.store, game.productId, allowMetered: metered);
     } catch (error) {
       _showError(error);
     }
@@ -176,25 +184,35 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
       ),
     );
     if (cancel == true) {
-      await widget.installer.cancel(game.productId).catchError(_showError);
+      await widget.installer.cancel(game.store, game.productId).catchError(_showError);
     }
   }
 
-  Widget _row(StoreGame game) {
-    final installed = widget.library.games.any(
-      (entry) => entry.source?.store == GogLibrary.store && entry.source?.productId == game.productId,
-    );
-    final download = widget.installer.downloads[game.productId];
+  Widget _art(StoreGame game, int index) {
+    final image = game.imageUrl;
+    return GameArt(source: image == null ? null : StoreArt(image, widget.covers), color: placeholderColor(index));
+  }
 
-    if (installed) {
-      return _GameRow(
-        game: game,
-        trailing: const Pill(label: 'Installed'),
+  Widget _row(StoreGame game, int index) {
+    final installed = widget.library.games
+        .where((entry) => entry.source?.store == game.store && entry.source?.productId == game.productId)
+        .firstOrNull;
+    final download = widget.installer.download(game.store, game.productId);
+
+    if (installed != null) {
+      return GameRow(
+        art: _art(game, index),
+        title: game.title,
+        onTap: widget.commands.tap(installed),
+        onLongPress: widget.commands.menu(installed),
+        dimmed: widget.commands.isBusy(installed),
+        trailing: widget.commands.actions(installed),
       );
     }
     if (download != null) {
-      return _GameRow(
-        game: game,
+      return GameRow(
+        art: _art(game, index),
+        title: game.title,
         status: _DownloadStatusLine(download: download),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -207,7 +225,7 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
               )
             else if (download.status != DownloadStatus.complete)
               IconButton(
-                icon: const Icon(LucideIcons.play),
+                icon: const Icon(LucideIcons.download),
                 tooltip: 'Resume',
                 onPressed: widget.installer.isBusy || !widget.canInstall ? null : () => _resume(game, download),
               ),
@@ -219,8 +237,9 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
     }
 
     final preparing = _preparing.contains(game.productId);
-    return _GameRow(
-      game: game,
+    return GameRow(
+      art: _art(game, index),
+      title: game.title,
       trailing: preparing
           ? const Padding(
               padding: EdgeInsets.all(12),
@@ -238,7 +257,7 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
 
   void _reload() {
     setState(() {
-      _games = _library.games();
+      _games = widget.catalog.games();
     });
   }
 
@@ -250,11 +269,17 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
       listenable: widget.account,
       builder: (context, _) {
         if (!widget.account.isSignedIn) {
-          return _SignedOut(signingIn: _signingIn, onSignIn: _signIn);
+          return _SignedOut(
+            name: widget.catalog.name,
+            description: widget.catalog.signInDescription,
+            color: widget.color,
+            signingIn: _signingIn,
+            onSignIn: _signIn,
+          );
         }
 
         return FutureBuilder(
-          future: _games ??= _library.games(),
+          future: _games ??= widget.catalog.games(),
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
               return const Center(
@@ -266,12 +291,13 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
               final error = snapshot.error;
               return CenteredMessage(
                 icon: LucideIcons.cloudOff,
-                text: error is GogException ? error.message : 'Could not load your GOG library.',
+                text: error is StoreException ? error.message : 'Could not load your ${widget.catalog.name} library.',
                 action: PrimaryButton(label: 'Try again', icon: LucideIcons.refreshCw, onPressed: _reload),
               );
             }
 
             return _OwnedGames(
+              name: widget.catalog.name,
               games: snapshot.requireData,
               listenable: Listenable.merge([widget.installer, widget.library]),
               rowBuilder: _row,
@@ -290,8 +316,17 @@ class _GogTabState extends State<GogTab> with AutomaticKeepAliveClientMixin {
 }
 
 class _SignedOut extends StatelessWidget {
-  const _SignedOut({required this.signingIn, required this.onSignIn});
+  const _SignedOut({
+    required this.name,
+    required this.description,
+    required this.color,
+    required this.signingIn,
+    required this.onSignIn,
+  });
 
+  final String name;
+  final String description;
+  final Color color;
   final bool signingIn;
   final VoidCallback onSignIn;
 
@@ -308,17 +343,20 @@ class _SignedOut extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                IconTile(icon: LucideIcons.library, color: SogenColors.accents[6]),
+                IconTile(icon: LucideIcons.library, color: color),
                 const SizedBox(height: 16),
-                Text('GOG', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                Text(name, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 Text(
-                  'Sign in to see the Windows games you own on GOG. You sign in on GOG\'s own page, so Sogen '
-                  'never sees your password.',
+                  description,
                   style: theme.textTheme.bodyMedium?.copyWith(color: SogenColors.neutral300, height: 1.5),
                 ),
                 const SizedBox(height: 20),
-                PrimaryButton(label: 'Sign in to GOG', icon: LucideIcons.logIn, onPressed: signingIn ? null : onSignIn),
+                PrimaryButton(
+                  label: 'Sign in to $name',
+                  icon: LucideIcons.logIn,
+                  onPressed: signingIn ? null : onSignIn,
+                ),
               ],
             ),
           ),
@@ -330,6 +368,7 @@ class _SignedOut extends StatelessWidget {
 
 class _OwnedGames extends StatelessWidget {
   const _OwnedGames({
+    required this.name,
     required this.games,
     required this.listenable,
     required this.rowBuilder,
@@ -338,9 +377,10 @@ class _OwnedGames extends StatelessWidget {
     required this.onRefresh,
   });
 
+  final String name;
   final List<StoreGame> games;
   final Listenable listenable;
-  final Widget Function(StoreGame game) rowBuilder;
+  final Widget Function(StoreGame game, int index) rowBuilder;
   final String search;
   final ValueChanged<String> onSearch;
   final RefreshCallback onRefresh;
@@ -351,9 +391,9 @@ class _OwnedGames extends StatelessWidget {
       return RefreshIndicator(
         onRefresh: onRefresh,
         child: ListView(
-          children: const [
-            SizedBox(height: 96),
-            CenteredMessage(icon: LucideIcons.library, text: 'Your GOG account owns no Windows games.'),
+          children: [
+            const SizedBox(height: 96),
+            CenteredMessage(icon: LucideIcons.library, text: 'Your $name account owns no Windows games.'),
           ],
         ),
       );
@@ -372,9 +412,9 @@ class _OwnedGames extends StatelessWidget {
             sliver: SliverToBoxAdapter(
               child: TextField(
                 onChanged: onSearch,
-                decoration: const InputDecoration(
-                  hintText: 'Search your GOG games',
-                  prefixIcon: Icon(LucideIcons.search, size: 18),
+                decoration: InputDecoration(
+                  hintText: 'Search your $name games',
+                  prefixIcon: const Icon(LucideIcons.search, size: 18),
                 ),
               ),
             ),
@@ -385,60 +425,10 @@ class _OwnedGames extends StatelessWidget {
               itemCount: matches.length,
               separatorBuilder: (_, _) => const SizedBox(height: 12),
               itemBuilder: (context, index) =>
-                  ListenableBuilder(listenable: listenable, builder: (context, _) => rowBuilder(matches[index])),
+                  ListenableBuilder(listenable: listenable, builder: (context, _) => rowBuilder(matches[index], index)),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _GameRow extends StatelessWidget {
-  const _GameRow({required this.game, this.trailing, this.status});
-
-  final StoreGame game;
-  final Widget? trailing;
-  final Widget? status;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final image = game.imageUrl;
-
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: SizedBox(
-                width: 96,
-                height: 54,
-                child: image == null
-                    ? const ColoredBox(color: SogenColors.neutral900)
-                    : Image.network(
-                        image.toString(),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => const ColoredBox(color: SogenColors.neutral900),
-                      ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(game.title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                  if (status != null) ...[const SizedBox(height: 8), status!],
-                ],
-              ),
-            ),
-            if (trailing != null) ...[const SizedBox(width: 8), trailing!],
-          ],
-        ),
       ),
     );
   }
@@ -475,7 +465,13 @@ class _DownloadStatusLine extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        Text(text, style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400)),
+        Text(
+          text,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+        ),
       ],
     );
   }
@@ -535,7 +531,7 @@ String formatBytes(int bytes) {
   return '${value.toStringAsFixed(unit == 0 ? 0 : 1)} ${units[unit]}';
 }
 
-/// The languages GOG offers, by their English names; codes Sogen does not know are shown as they are.
+/// The languages a store offers, by their English names; codes Sogen does not know are shown as they are.
 String languageName(String code) => _languageNames[code] ?? code;
 
 const _languageNames = {

@@ -136,6 +136,8 @@ namespace sogen
                 auto* file = c.proc.files.get(h);
                 if (file && file->ref_count == 1)
                 {
+                    release_completion_association(c.proc, file->completion_association);
+
                     for (auto it = c.proc.file_locks.begin(); it != c.proc.file_locks.end();)
                     {
                         auto& locks = it->second.locks;
@@ -305,6 +307,12 @@ namespace sogen
                                       const OBJECT_INFORMATION_CLASS object_information_class, const emulator_pointer object_information,
                                       const ULONG object_information_length, const emulator_object<ULONG> return_length)
         {
+            if (static_cast<uint32_t>(object_information_class) >= MaxObjectInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtQueryObject info class: 0x%X\n", static_cast<uint32_t>(object_information_class));
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle, c.vcpu.active_thread);
 
             if (object_information_class == ObjectNameInformation)
@@ -461,7 +469,8 @@ namespace sogen
                     break;
                 }
                 case handle_types::process: {
-                    if (!c.proc.processes.get(effective_handle))
+                    if (effective_handle != STEAM_PROCESS_HANDLE && effective_handle != PARENT_PROCESS_HANDLE &&
+                        !c.proc.processes.get(effective_handle))
                     {
                         return STATUS_INVALID_HANDLE;
                     }
@@ -772,7 +781,8 @@ namespace sogen
             }
             case handle_types::process:
                 // The synthetic Steam process never signals, so a liveness wait times out ("alive").
-                return (h == STEAM_PROCESS_HANDLE || c.proc.processes.get(h)) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+                return (h == STEAM_PROCESS_HANDLE || h == PARENT_PROCESS_HANDLE || c.proc.processes.get(h)) ? STATUS_SUCCESS
+                                                                                                            : STATUS_INVALID_HANDLE;
 
             case handle_types::managed_thread:
                 return validate_handle_in_store(c.proc.managed_threads);

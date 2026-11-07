@@ -253,6 +253,29 @@ namespace sogen
         return entries;
     }
 
+    std::vector<std::u16string> file_system::list_directory_names(const windows_path& path) const
+    {
+        std::vector<std::u16string> names{};
+        if (const auto resolved = this->resolve(path))
+        {
+            names = resolved->provider->list_names(resolved->relative);
+        }
+
+        const auto normalized = path.lexically_normal();
+        for (const auto& [mount_point, entry] : this->mounts_)
+        {
+            if (mount_point.depth() == 0 || mount_point.parent() != normalized || !entry.provider->stat({}))
+            {
+                continue;
+            }
+
+            auto name = mount_point.leaf();
+            std::erase_if(names, [&](const std::u16string& existing) { return utils::string::to_lower(existing) == name; });
+            names.push_back(std::move(name));
+        }
+        return names;
+    }
+
     bool file_system::is_writable(const windows_path& path) const
     {
         const auto resolved = this->resolve(path);
@@ -376,6 +399,69 @@ namespace sogen
         }
 
         return resolved->provider->remove(resolved->relative);
+    }
+
+    std::shared_ptr<file_state> file_system::open_file_state(const windows_path& path)
+    {
+        auto& slot = this->open_files_[path.lexically_normal()];
+
+        auto state = slot.lock();
+        if (!state)
+        {
+            state = std::make_shared<file_state>();
+            slot = state;
+        }
+
+        return state;
+    }
+
+    bool file_system::is_delete_pending(const windows_path& path) const
+    {
+        // Windows fails every open, create and query below a delete-pending directory, even of a missing child.
+        for (auto current = path.lexically_normal();; current = current.parent())
+        {
+            const auto entry = this->open_files_.find(current);
+            if (entry != this->open_files_.end())
+            {
+                const auto state = entry->second.lock();
+                if (state && state->delete_pending)
+                {
+                    return true;
+                }
+            }
+
+            if (current.depth() == 0)
+            {
+                return false;
+            }
+        }
+    }
+
+    bool file_system::close_file_state(const windows_path& path, const std::shared_ptr<file_state>& state, const uint64_t posix_owner)
+    {
+        if (!state)
+        {
+            return false;
+        }
+
+        const auto last_handle = state.use_count() == 1;
+        const auto unlink = state->delete_pending && (last_handle || (posix_owner != 0 && state->posix_owner == posix_owner));
+
+        if (unlink)
+        {
+            state->cancel_delete();
+        }
+
+        if (last_handle || unlink)
+        {
+            const auto entry = this->open_files_.find(path);
+            if (entry != this->open_files_.end() && (entry->second.expired() || entry->second.lock() == state))
+            {
+                this->open_files_.erase(entry);
+            }
+        }
+
+        return unlink;
     }
 
     bool file_system::read_file(const windows_path& path, std::vector<std::byte>* data) const

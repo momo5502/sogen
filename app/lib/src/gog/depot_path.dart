@@ -1,3 +1,4 @@
+import '../store/store_http.dart';
 import 'gog_http.dart';
 
 /// A path from a GOG manifest, checked to stay inside the game folder on Windows: the guest sees the folder as a
@@ -6,10 +7,10 @@ class DepotPath {
   DepotPath._(this.segments);
 
   /// Accepts `/` and `\` as separators, as GOG's own manifests use both.
-  factory DepotPath.parse(String raw) {
+  factory DepotPath.parse(String raw, {StoreService service = gogService}) {
     final segments = raw.split(RegExp(r'[\\/]'));
     if (raw.isEmpty || raw.length > _maxLength || segments.length > _maxDepth || !segments.every(_isPlainName)) {
-      throw GogException('GOG listed a file Sogen cannot install safely: ${_printable(raw)}');
+      throw service.error('${service.name} listed a file Sogen cannot install safely: ${_printable(raw)}');
     }
 
     return DepotPath._(List.unmodifiable(segments));
@@ -59,4 +60,30 @@ class DepotPath {
 
   @override
   String toString() => relative;
+}
+
+/// Windows compares names without case, so a folder named in two spellings is one folder in the guest. Every path is
+/// spelled with the folder spelling seen first, so that the device, which tells case apart, holds one folder too.
+class FolderSpellings {
+  FolderSpellings(this._service);
+
+  final StoreService _service;
+  final _spellings = <String, String>{};
+
+  /// The folders seen so far, by the key paths below them are compared with.
+  Set<String> get keys => _spellings.keys.toSet();
+
+  /// The spelling of a folder seen before, if any.
+  String? spellingOf(String folderKey) => _spellings[folderKey];
+
+  DepotPath spell(DepotPath path, {bool isFolder = false}) {
+    final segments = [...path.segments];
+    final folders = isFolder ? segments.length + 1 : segments.length;
+    for (var end = 1; end < folders; end++) {
+      final folder = segments.sublist(0, end).join('/');
+      final spelling = _spellings.putIfAbsent(folder.toLowerCase(), () => folder);
+      segments.replaceRange(0, end, spelling.split('/'));
+    }
+    return DepotPath.parse(segments.join('/'), service: _service);
+  }
 }

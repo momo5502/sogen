@@ -50,6 +50,7 @@ namespace sogen
                                    const arm64_context& ctx);
     void dispatch_access_violation(windows_emulator& win_emu, vcpu_context& vcpu, uint64_t address, memory_operation operation);
     void dispatch_guard_page_violation(windows_emulator& win_emu, vcpu_context& vcpu, uint64_t address, memory_operation operation);
+    void dispatch_stack_overflow(windows_emulator& win_emu, vcpu_context& vcpu, uint64_t address, memory_operation operation);
     void dispatch_illegal_instruction_violation(windows_emulator& win_emu, vcpu_context& vcpu);
     void dispatch_integer_division_by_zero(windows_emulator& win_emu, vcpu_context& vcpu);
     void dispatch_single_step(windows_emulator& win_emu, vcpu_context& vcpu);

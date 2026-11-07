@@ -29,7 +29,7 @@ class HttpChunkFetcherTest {
             },
         )
 
-        assertThrows(MeteredNetworkException::class.java) { fetcher.fetch(ChunkSource.GAME, "ab".repeat(16), 10) }
+        assertThrows(MeteredNetworkException::class.java) { fetcher.fetch(ChunkSource.GAME, "/ab/ab/${"ab".repeat(16)}", 10) }
         assertEquals(1, attempts.size)
     }
 
@@ -44,7 +44,7 @@ class HttpChunkFetcherTest {
             ByteArray(10)
         })
 
-        fetcher.fetch(ChunkSource.GAME, "ab".repeat(16), 10)
+        fetcher.fetch(ChunkSource.GAME, "/ab/ab/${"ab".repeat(16)}", 10)
         assertEquals(listOf("https://cdn.example/store/ab/ab/${"ab".repeat(16)}"), attempts.map { it.toString() }.distinct())
         assertEquals(2, attempts.size)
     }

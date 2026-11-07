@@ -320,6 +320,12 @@ namespace sogen
         this->initial_thread_id = app_settings.thread_id;
         this->processes.get(GUEST_PROCESS_HANDLE)->id = this->process_id;
 
+        const auto initial_mode = win_emu.max_display_mode().value_or(default_display_mode);
+        this->display_width = initial_mode.width;
+        this->display_height = initial_mode.height;
+        this->registry_display_width = initial_mode.width;
+        this->registry_display_height = initial_mode.height;
+
         auto& emu = win_emu.emu();
         const auto& version = win_emu.version;
         const auto& fake_env = win_emu.fake_env;
@@ -334,7 +340,7 @@ namespace sogen
             this->gdt_base = setup_gdt(win_emu.x64_emu(), win_emu.memory);
         }
 
-        this->kusd.setup(version, fake_env);
+        this->kusd.setup(version, fake_env, win_emu.native_timestamp_counter_frequency());
 
         if (auto* arm64 = dynamic_cast<arm64_cpu*>(&emu.get_guest_cpu(0)))
         {
@@ -591,6 +597,7 @@ namespace sogen
         this->gdi_bitmap_surfaces.clear();
         this->gdi_fonts.clear();
         this->gdi_regions.clear();
+        this->gdi_palettes.clear();
         this->gdi_window_surfaces.clear();
         this->dxgk = {};
         this->etw_notification_event.reset();
@@ -766,12 +773,21 @@ namespace sogen
         }
     }
 
-    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name)
+    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name,
+                                                          const uint32_t class_extra)
     {
+        // The zeroed extra bytes start at user_class_extra_offset, inside USER_CLASS's padding for small ones; the ANSI name
+        // comes after both.
         const auto ansi_class_name = u16_to_cp1252(class_name);
-        const auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS) + ansi_class_name.size() + 1));
+        const auto name_offset = std::max<uint64_t>(sizeof(USER_CLASS), user_class_extra_offset + class_extra);
+        const auto cls_size = static_cast<size_t>(page_align_up(name_offset + ansi_class_name.size() + 1));
         const auto cls_ptr = memory.allocate_memory(cls_size, memory_permission::read);
-        const auto ansi_class_name_ptr = cls_ptr + sizeof(USER_CLASS);
+        if (!cls_ptr)
+        {
+            return 0;
+        }
+
+        const auto ansi_class_name_ptr = cls_ptr + name_offset;
 
         memory.write_memory(ansi_class_name_ptr, ansi_class_name.c_str(), ansi_class_name.size() + 1);
 
@@ -785,6 +801,11 @@ namespace sogen
     {
         this->mouse_capture_window = window;
         this->user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) { server_info.captureCount = window != 0 ? 1 : 0; });
+    }
+
+    void process_context::key_state_changed() const
+    {
+        this->user_handles.get_server_info().access([](USER_SERVERINFO& server_info) { ++server_info.keyStateGeneration; });
     }
 
     void process_context::release_mouse_capture(const hwnd window)
@@ -835,6 +856,7 @@ namespace sogen
         buffer.write_map(this->gdi_bitmap_surfaces);
         buffer.write_map(this->gdi_fonts);
         buffer.write_map(this->gdi_regions);
+        buffer.write_map(this->gdi_palettes);
         buffer.write_map(this->gdi_window_surfaces);
         buffer.write(this->dxgk);
         buffer.write_optional(this->etw_notification_event);
@@ -849,10 +871,7 @@ namespace sogen
         buffer.write(this->cursor_shape_visible);
         buffer.write(this->key_state);
         buffer.write(this->async_key_state);
-        buffer.write(this->raw_mouse_registered);
-        buffer.write(this->raw_mouse_target);
-        buffer.write(this->raw_keyboard_registered);
-        buffer.write(this->raw_keyboard_target);
+        buffer.write_vector(this->raw_input_registrations);
         buffer.write_vector(this->pending_low_level_input);
         buffer.write(this->next_low_level_input_id);
         buffer.write(this->next_hook_handle);
@@ -862,6 +881,8 @@ namespace sogen
         buffer.write_map(this->audio_render_events_by_stream);
         buffer.write_map(this->pending_audio_render_events);
         buffer.write(this->next_audio_stream_id);
+        buffer.write_map(this->wnf_states);
+        buffer.write_map(this->service_status_state_names);
 
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
@@ -892,6 +913,7 @@ namespace sogen
         buffer.write(this->menus);
         buffer.write(this->timers);
         buffer.write(this->accelerator_tables);
+        buffer.write(this->cursor_icons);
         buffer.write(this->deferred_window_position_batches);
         buffer.write(this->registry_keys);
         buffer.write(this->private_namespaces);
@@ -916,6 +938,7 @@ namespace sogen
 
         buffer.write_vector(this->default_register_set);
         buffer.write(this->process_id);
+        buffer.write(this->parent_process_id);
         buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
@@ -968,6 +991,7 @@ namespace sogen
         buffer.read_map(this->gdi_bitmap_surfaces);
         buffer.read_map(this->gdi_fonts);
         buffer.read_map(this->gdi_regions);
+        buffer.read_map(this->gdi_palettes);
         buffer.read_map(this->gdi_window_surfaces);
         buffer.read(this->dxgk);
         buffer.read_optional(this->etw_notification_event);
@@ -982,10 +1006,7 @@ namespace sogen
         buffer.read(this->cursor_shape_visible);
         buffer.read(this->key_state);
         buffer.read(this->async_key_state);
-        buffer.read(this->raw_mouse_registered);
-        buffer.read(this->raw_mouse_target);
-        buffer.read(this->raw_keyboard_registered);
-        buffer.read(this->raw_keyboard_target);
+        buffer.read_vector(this->raw_input_registrations);
         buffer.read_vector(this->pending_low_level_input);
         buffer.read(this->next_low_level_input_id);
         buffer.read(this->next_hook_handle);
@@ -995,6 +1016,8 @@ namespace sogen
         buffer.read_map(this->audio_render_events_by_stream);
         buffer.read_map(this->pending_audio_render_events);
         buffer.read(this->next_audio_stream_id);
+        buffer.read_map(this->wnf_states);
+        buffer.read_map(this->service_status_state_names);
 
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);
@@ -1025,6 +1048,7 @@ namespace sogen
         buffer.read(this->menus);
         buffer.read(this->timers);
         buffer.read(this->accelerator_tables);
+        buffer.read(this->cursor_icons);
         buffer.read(this->deferred_window_position_batches);
         buffer.read(this->registry_keys);
         buffer.read(this->private_namespaces);
@@ -1049,6 +1073,7 @@ namespace sogen
 
         buffer.read_vector(this->default_register_set);
         buffer.read(this->process_id);
+        buffer.read(this->parent_process_id);
         buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
 
@@ -1059,9 +1084,11 @@ namespace sogen
 
         buffer.read(this->threads);
         this->thread_handles_by_id.clear();
+        this->terminated_thread_count = 0;
         for (const auto& [index, thread] : this->threads)
         {
             this->thread_handles_by_id[thread.id] = this->threads.make_handle(index);
+            this->terminated_thread_count += thread.is_terminated() ? 1 : 0;
         }
 
         active_thread = this->threads.get(buffer.read<uint64_t>());
@@ -1251,6 +1278,17 @@ namespace sogen
         }
     }
 
+    size_t process_context::handle_count() const
+    {
+        // Threads live in their store whether or not the guest holds a handle to them.
+        return this->processes.size() + this->managed_threads.size() + this->debug_objects.size() + this->events.size() +
+               this->files.size() + this->devices.size() + this->semaphores.size() + this->io_completions.size() +
+               this->wait_completion_packets.size() + this->worker_factories.size() + this->jobs.size() +
+               this->thread_state_changes.size() + this->registry_keys.size() + this->mutants.size() + this->timers.size() +
+               this->desktops.size() + this->window_stations.size() + this->ports.size() + this->sections.size() +
+               this->private_namespaces.size() + this->deferred_window_position_batches.size();
+    }
+
     emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id)
     {
         if (const auto cached = this->thread_handles_by_id.find(thread_id); cached != this->thread_handles_by_id.end())
@@ -1355,11 +1393,23 @@ namespace sogen
         return std::count_if(threads.begin(), threads.end(), [](auto& item) { return !item.second.is_terminated(); });
     }
 
+    void process_context::commit_thread_stacks_in_full() const
+    {
+        for (const auto& thread : this->threads | std::views::values)
+        {
+            if (!thread.is_terminated())
+            {
+                thread.commit_stacks_in_full();
+            }
+        }
+    }
+
     handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
-                                          const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
+                                          const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread,
+                                          const uint64_t stack_commit_size)
     {
         const uint32_t thread_id = this->initial_thread_id + this->spawned_thread_count++ * 4;
-        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
+        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread, stack_commit_size};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
 
@@ -1382,6 +1432,11 @@ namespace sogen
 
     void process_context::terminate_thread(emulator_thread& thread, const NTSTATUS thread_exit_status)
     {
+        if (!thread.is_terminated())
+        {
+            ++this->terminated_thread_count;
+        }
+
         thread.exit_status = thread_exit_status;
 
         for (auto& mutant : this->mutants | std::views::values)
@@ -1689,6 +1744,29 @@ namespace sogen
         {
             knowndlls64_sections[lname] = section;
         }
+    }
+
+    const process_context::raw_input_registration* process_context::find_raw_input_registration(const uint16_t usage_page,
+                                                                                                const uint16_t usage) const
+    {
+        const auto registration = std::ranges::find_if(this->raw_input_registrations, [&](const raw_input_registration& entry) {
+            return entry.usage_page == usage_page && entry.usage == usage;
+        });
+        return registration == this->raw_input_registrations.end() ? nullptr : &*registration;
+    }
+
+    const process_context::raw_input_registration* process_context::raw_mouse_registration() const
+    {
+        constexpr uint16_t hid_usage_page_generic = 0x01;
+        constexpr uint16_t hid_usage_generic_mouse = 0x02;
+        return this->find_raw_input_registration(hid_usage_page_generic, hid_usage_generic_mouse);
+    }
+
+    const process_context::raw_input_registration* process_context::raw_keyboard_registration() const
+    {
+        constexpr uint16_t hid_usage_page_generic = 0x01;
+        constexpr uint16_t hid_usage_generic_keyboard = 0x06;
+        return this->find_raw_input_registration(hid_usage_page_generic, hid_usage_generic_keyboard);
     }
 
 } // namespace sogen

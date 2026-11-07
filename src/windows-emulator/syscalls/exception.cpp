@@ -9,9 +9,57 @@ namespace sogen
 
     namespace syscalls
     {
+        namespace
+        {
+            std::optional<std::u16string> try_read_hard_error_string(const syscall_context& c, const uint64_t address)
+            {
+                UNICODE_STRING<EmulatorTraits<Emu64>> string{};
+                if (!c.emu.try_read_memory(address, &string, sizeof(string)) || string.Length % sizeof(char16_t) != 0 ||
+                    string.Length > string.MaximumLength)
+                {
+                    return std::nullopt;
+                }
+
+                std::u16string text(string.Length / sizeof(char16_t), u'\0');
+                if (!text.empty() && !c.emu.try_read_memory(string.Buffer, text.data(), string.Length))
+                {
+                    return std::nullopt;
+                }
+
+                return text;
+            }
+
+            void log_hard_error(const syscall_context& c, const NTSTATUS error_status, const ULONG number_of_parameters,
+                                const ULONG unicode_string_parameter_mask, const uint64_t parameters)
+            {
+                c.win_emu.log.error("Hard error 0x%08X\n", static_cast<uint32_t>(error_status));
+
+                std::array<uint64_t, MAXIMUM_HARDERROR_PARAMETERS> values{};
+                if (!c.emu.try_read_memory(parameters, values.data(), number_of_parameters * sizeof(uint64_t)))
+                {
+                    return;
+                }
+
+                for (ULONG i = 0; i < number_of_parameters; ++i)
+                {
+                    const auto is_string = (unicode_string_parameter_mask & (1u << i)) != 0;
+                    const auto text = is_string ? try_read_hard_error_string(c, values.at(i)) : std::nullopt;
+                    if (text)
+                    {
+                        c.win_emu.log.error("  Parameter %u: %s\n", static_cast<unsigned int>(i), u16_to_u8(*text).c_str());
+                    }
+                    else
+                    {
+                        c.win_emu.log.error("  Parameter %u: 0x%llX\n", static_cast<unsigned int>(i),
+                                            static_cast<unsigned long long>(values.at(i)));
+                    }
+                }
+            }
+        }
+
         NTSTATUS handle_NtRaiseHardError(const syscall_context& c, const NTSTATUS error_status, const ULONG number_of_parameters,
-                                         const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*unicode_string_parameter_mask*/,
-                                         const uint64_t parameters, const HARDERROR_RESPONSE_OPTION /*valid_response_option*/,
+                                         const ULONG unicode_string_parameter_mask, const uint64_t parameters,
+                                         const HARDERROR_RESPONSE_OPTION /*valid_response_option*/,
                                          const emulator_object<HARDERROR_RESPONSE> response)
         {
             if (number_of_parameters > MAXIMUM_HARDERROR_PARAMETERS)
@@ -24,24 +72,7 @@ namespace sogen
                 response.try_write(ResponseAbort);
             }
 
-            if (error_status & STATUS_SERVICE_NOTIFICATION && number_of_parameters >= 3)
-            {
-                std::array<uint64_t, 3> params = {0, 0, 0};
-
-                try
-                {
-                    if (c.emu.try_read_memory(parameters, &params, sizeof(params)))
-                    {
-                        const auto message =
-                            read_unicode_string(c.emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, params[0]});
-                        c.win_emu.log.error("Error Message: %s\n", u16_to_u8(message).c_str());
-                    }
-                }
-                catch (...)
-                {
-                    // ignore
-                }
-            }
+            log_hard_error(c, error_status, number_of_parameters, unicode_string_parameter_mask, parameters);
 
             c.proc.exit_status = error_status;
             c.win_emu.callbacks.on_exception();

@@ -376,27 +376,38 @@ namespace sogen
         return make_region_info(start, region);
     }
 
+    bool posix_memory_manager::is_readable_range(const uint64_t address, const size_t size) const
+    {
+        return this->accessible_prefix_size(address, size, is_readable) == size;
+    }
+
     bool posix_memory_manager::is_writable_range(const uint64_t address, const size_t size) const
     {
-        if (address > std::numeric_limits<uint64_t>::max() - size)
-        {
-            return false;
-        }
+        return this->writable_prefix_size(address, size) == size;
+    }
 
-        const auto end = address + size;
+    size_t posix_memory_manager::writable_prefix_size(const uint64_t address, const size_t size) const
+    {
+        return this->accessible_prefix_size(address, size, is_writable);
+    }
+
+    size_t posix_memory_manager::accessible_prefix_size(const uint64_t address, const size_t size,
+                                                        bool (*is_accessible)(memory_permission)) const
+    {
+        const auto end = address > std::numeric_limits<uint64_t>::max() - size ? std::numeric_limits<uint64_t>::max() : address + size;
         auto current = address;
         while (current < end)
         {
             const auto region = this->get_region_info(current);
-            if (!region || !is_writable(region->permissions))
+            if (!region || !is_accessible(region->permissions))
             {
-                return false;
+                break;
             }
 
             current = region->start + region->length;
         }
 
-        return true;
+        return static_cast<size_t>(std::min(current, end) - address);
     }
 
     posix_memory_stats posix_memory_manager::compute_memory_stats() const

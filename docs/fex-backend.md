@@ -149,13 +149,17 @@ no-access pages stops the other vCPUs once so they arm the new watchpoints.
 - **Linux tracked memory has a flush window.** The cache flush that brings a stale tracked chunk up to
   date needs the chunk readable, so another vCPU can read its old cache lines between the protection
   change and the flush.
-- **Misaligned `LDAR`/`STLR` emulated for host code can tear.** The fallback in
-  `handle_misaligned_atomic_fault` keeps the half-barrier ordering but copies the value with plain
-  loads and stores, which another vCPU can observe torn.
 - **The backed `KUSER_SHARED_DATA` refresh races guest readers.** Inside a WoW64 process's low window
   the page is backed by host memory that every vCPU refreshes before it enters the guest and after a
   syscall, while other vCPUs' guest code may be reading it. The copy does not follow the kernel's
   `KSYSTEM_TIME` write order.
+
+A misaligned `LDAR`/`STLR` that faults goes to FEXCore's `HandleUnalignedAccess`, which backpatches
+translated code and emulates host code with naturally aligned atomics. Neither keeps an access that
+crosses a 16-byte boundary whole, so another vCPU can observe it torn even where x86 keeps it whole
+inside one cache line: FEAT_LSE2 makes an unaligned access single-copy atomic only within an aligned
+16-byte block, and ARM64 has no wider single-copy-atomic access to cacheable memory. Without
+FEAT_LSE2, as on many Android cores, an unaligned access is not single-copy atomic at all.
 
 ## Fixes found during bring-up and review
 

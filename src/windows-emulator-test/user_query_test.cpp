@@ -10,6 +10,12 @@ namespace sogen::syscalls
     BOOL handle_NtUserGetWindowDisplayAffinity(const syscall_context& c, hwnd window, emulator_object<DWORD> affinity);
     BOOL handle_NtUserShowOwnedPopups(const syscall_context& c, hwnd owner, BOOL show);
     BOOL handle_NtUserGetCurrentInputMessageSource(const syscall_context& c, emulator_pointer source);
+    BOOL handle_NtUserGetTitleBarInfo(const syscall_context& c, hwnd window_handle, emulator_pointer info_address);
+    BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
+    uint32_t handle_NtUserGetRegisteredRawInputDevices(const syscall_context& c, emulator_pointer devices, emulator_pointer device_count,
+                                                       uint32_t size);
+    uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
+    uint32_t handle_NtUserSendInput(const syscall_context& c, uint32_t input_count, emulator_pointer inputs, int32_t input_size);
 }
 
 namespace sogen::test
@@ -18,6 +24,7 @@ namespace sogen::test
     {
         constexpr DWORD untouched_error = 0xDEAD;
         constexpr DWORD untouched_value = 0xAAAAAAAA;
+        constexpr uint32_t k_overlapped_window = WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 
         class UserQueryTest : public testing::Test
         {
@@ -76,6 +83,36 @@ namespace sogen::test
                 return this->emu.memory.read_memory<DWORD>(this->storage);
             }
 
+            BOOL title_bar_info(const hwnd window, const DWORD size)
+            {
+                EMU_TITLEBARINFO info{};
+                info.cbSize = size;
+                this->emu.memory.write_memory(this->storage, info);
+                return syscalls::handle_NtUserGetTitleBarInfo(this->context(), window, this->storage);
+            }
+
+            EMU_TITLEBARINFO read_title_bar_info()
+            {
+                return this->emu.memory.read_memory<EMU_TITLEBARINFO>(this->storage);
+            }
+
+            // CLIENTINFO.dwKeyCache and the two-bit states after it, as user32!GetKeyState reads them.
+            std::pair<uint32_t, std::array<uint8_t, 8>> client_key_cache()
+            {
+                const auto address = this->emu.vcpu(0).active_thread->teb64->value() + offsetof(TEB64, Win32ClientInfo) + 0x70;
+                return {this->emu.memory.read_memory<uint32_t>(address), this->emu.memory.read_memory<std::array<uint8_t, 8>>(address + 4)};
+            }
+
+            uint32_t key_state_generation() const
+            {
+                return this->emu.process.user_handles.get_server_info().read().keyStateGeneration;
+            }
+
+            uint32_t key_state(const int32_t virtual_key)
+            {
+                return syscalls::handle_NtUserGetKeyState(this->context(), virtual_key);
+            }
+
             windows_emulator emu = create_sample_emulator();
             uint64_t storage{};
         };
@@ -119,7 +156,7 @@ namespace sogen::test
         child.process.value = 1;
         const auto child_handle = this->emu.process.processes.store(std::move(child));
 
-        for (const auto other_process : {child_handle, handle{STEAM_PROCESS_HANDLE}})
+        for (const auto other_process : {child_handle, handle{STEAM_PROCESS_HANDLE}, handle{PARENT_PROCESS_HANDLE}})
         {
             for (const DWORD flags : {0u, 1u, 2u, 3u, 4u})
             {
@@ -240,5 +277,268 @@ namespace sogen::test
 
         EXPECT_EQ(FALSE, syscalls::handle_NtUserGetCurrentInputMessageSource(this->context(), 0x1234));
         EXPECT_EQ(998u, this->last_error());
+    }
+
+    TEST_F(UserQueryTest, TitleBarInfoRejectsAWrongSizeAndAnInvalidWindow)
+    {
+        const auto window = this->create_top_level_window(0, k_overlapped_window);
+
+        EXPECT_EQ(FALSE, this->title_bar_info(window, sizeof(EMU_TITLEBARINFO) + 4));
+        EXPECT_EQ(87u, this->last_error());
+
+        this->set_last_error(untouched_error);
+        EXPECT_EQ(FALSE, this->title_bar_info(0x12345, sizeof(EMU_TITLEBARINFO)));
+        EXPECT_EQ(1400u, this->last_error());
+    }
+
+    // The states were measured on Windows 11 for windows with the same styles.
+    TEST_F(UserQueryTest, TitleBarStatesFollowTheWindowStyle)
+    {
+        struct style_case
+        {
+            uint32_t style;
+            uint32_t ex_style;
+            std::array<DWORD, 6> states;
+        };
+
+        const std::array cases{
+            style_case{k_overlapped_window, 0, {0x100000, 0x8000, 0, 0, 0x8000, 0}},
+            style_case{WS_CAPTION | WS_SYSMENU, 0, {0x100000, 0x8000, 0x8000, 0x8000, 0x8000, 0}},
+            style_case{WS_CAPTION, 0, {0x100000, 0x8000, 0x8000, 0x8000, 0x8000, 0x8000}},
+            style_case{WS_POPUP, 0, {0x108000, 0, 0, 0, 0, 0}},
+            style_case{k_overlapped_window, WS_EX_TOOLWINDOW, {0x100000, 0x8000, 0, 0, 0x8000, 0}},
+            style_case{WS_CAPTION | WS_SYSMENU, WS_EX_CONTEXTHELP, {0x100000, 0x8000, 0x8000, 0x8000, 0, 0}},
+        };
+
+        for (const auto& [style, ex_style, states] : cases)
+        {
+            const auto window = this->create_top_level_window(0, style);
+            this->emu.process.windows.get(window)->ex_style = ex_style;
+
+            ASSERT_EQ(TRUE, this->title_bar_info(window, sizeof(EMU_TITLEBARINFO))) << std::hex << style;
+            const auto info = this->read_title_bar_info();
+            EXPECT_EQ(states, std::to_array(info.rgstate)) << std::hex << style << " " << ex_style;
+        }
+    }
+
+    TEST_F(UserQueryTest, TitleBarOfAWindowWithoutCaptionIsEmpty)
+    {
+        const auto window = this->create_top_level_window(0, WS_POPUP);
+        auto* win = this->emu.process.windows.get(window);
+        win->x = 100;
+        win->y = 100;
+        win->width = 400;
+        win->height = 300;
+
+        ASSERT_EQ(TRUE, this->title_bar_info(window, sizeof(EMU_TITLEBARINFO)));
+        const auto rect = this->read_title_bar_info().rcTitleBar;
+        EXPECT_EQ(0, rect.left);
+        EXPECT_EQ(0, rect.top);
+        EXPECT_EQ(0, rect.right);
+        EXPECT_EQ(0, rect.bottom);
+    }
+
+    // The results were measured on Windows 11 with GetRegisteredRawInputDevices in a 64-bit process, whose calls go to the
+    // syscall unchanged.
+    TEST_F(UserQueryTest, RegisteredRawInputDevicesFollowTheWindowsSemantics)
+    {
+        constexpr uint32_t k_ridev_nolegacy = 0x30;
+        constexpr uint64_t count_address_offset = 0x800;
+        constexpr uint32_t device_size = sizeof(RAWINPUTDEVICE64);
+        constexpr auto failed = static_cast<uint32_t>(-1);
+        const auto window = this->create_top_level_window(0, k_overlapped_window);
+        const uint64_t count_address = this->storage + count_address_offset;
+
+        const auto registered = [&](const emulator_pointer devices, const uint32_t capacity, const uint32_t size) {
+            this->emu.memory.write_memory(count_address, capacity);
+            this->set_last_error(untouched_error);
+            return syscalls::handle_NtUserGetRegisteredRawInputDevices(this->context(), devices, count_address, size);
+        };
+        const auto count = [&] { return this->emu.memory.read_memory<uint32_t>(count_address); };
+        const auto register_devices = [&](const std::vector<RAWINPUTDEVICE64>& devices) {
+            this->emu.memory.write_memory(this->storage, devices.data(), devices.size() * sizeof(RAWINPUTDEVICE64));
+            return syscalls::handle_NtUserRegisterRawInputDevices(this->context(), this->storage, static_cast<uint32_t>(devices.size()),
+                                                                  device_size);
+        };
+
+        EXPECT_EQ(0u, registered(0, 5, device_size));
+        EXPECT_EQ(0u, count());
+        EXPECT_EQ(failed, registered(this->storage, 0, device_size));
+        EXPECT_EQ(87u, this->last_error());
+
+        ASSERT_EQ(TRUE, register_devices({{.usUsagePage = 1, .usUsage = 6, .dwFlags = k_ridev_nolegacy, .hwndTarget = window},
+                                          {.usUsagePage = 1, .usUsage = 2, .dwFlags = 0, .hwndTarget = 0},
+                                          {.usUsagePage = 1, .usUsage = 5, .dwFlags = RIDEV_INPUTSINK, .hwndTarget = window}}));
+
+        EXPECT_EQ(0u, registered(0, 0, device_size));
+        EXPECT_EQ(3u, count());
+        EXPECT_EQ(failed, registered(this->storage, 2, device_size));
+        EXPECT_EQ(3u, count());
+        EXPECT_EQ(122u, this->last_error());
+        EXPECT_EQ(failed, registered(this->storage, 8, device_size + 4));
+        EXPECT_EQ(8u, count());
+        EXPECT_EQ(87u, this->last_error());
+
+        const uint64_t untouched_device = 0xAAAAAAAAAAAAAAAAULL;
+        this->emu.memory.write_memory(this->storage + (3 * device_size), untouched_device);
+        ASSERT_EQ(3u, registered(this->storage, 8, device_size));
+        EXPECT_EQ(8u, count());
+        const auto device = [&](const uint32_t index) {
+            return this->emu.memory.read_memory<RAWINPUTDEVICE64>(this->storage + (index * device_size));
+        };
+        EXPECT_EQ(2, device(0).usUsage);
+        EXPECT_EQ(0u, device(0).dwFlags);
+        EXPECT_EQ(0u, device(0).hwndTarget);
+        EXPECT_EQ(5, device(1).usUsage);
+        EXPECT_EQ(static_cast<uint32_t>(RIDEV_INPUTSINK), device(1).dwFlags);
+        EXPECT_EQ(window, device(1).hwndTarget);
+        EXPECT_EQ(6, device(2).usUsage);
+        EXPECT_EQ(k_ridev_nolegacy, device(2).dwFlags);
+        EXPECT_EQ(untouched_device, this->emu.memory.read_memory<uint64_t>(this->storage + (3 * device_size)));
+
+        ASSERT_EQ(TRUE, register_devices({{.usUsagePage = 1, .usUsage = 2, .dwFlags = RIDEV_INPUTSINK, .hwndTarget = window},
+                                          {.usUsagePage = 1, .usUsage = 6, .dwFlags = RIDEV_REMOVE, .hwndTarget = 0}}));
+        ASSERT_EQ(2u, registered(this->storage, 8, device_size));
+        EXPECT_EQ(2, device(0).usUsage);
+        EXPECT_EQ(static_cast<uint32_t>(RIDEV_INPUTSINK), device(0).dwFlags);
+        EXPECT_EQ(window, device(0).hwndTarget);
+        EXPECT_EQ(5, device(1).usUsage);
+    }
+
+    // Measured on Windows 11 like the test above: the count only has to be writable when it is written, which a successful call
+    // does not do, and the whole buffer the count names must be writable before anything is written into it.
+    TEST_F(UserQueryTest, RegisteredRawInputDevicesNeedWritableOutput)
+    {
+        constexpr uint32_t device_size = sizeof(RAWINPUTDEVICE64);
+        constexpr auto failed = static_cast<uint32_t>(-1);
+        constexpr DWORD error_noaccess = 998;
+
+        const std::array registrations{RAWINPUTDEVICE64{.usUsagePage = 1, .usUsage = 2, .dwFlags = 0, .hwndTarget = 0},
+                                       RAWINPUTDEVICE64{.usUsagePage = 1, .usUsage = 6, .dwFlags = 0, .hwndTarget = 0}};
+        this->emu.memory.write_memory(this->storage, registrations.data(), sizeof(registrations));
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserRegisterRawInputDevices(this->context(), this->storage, 2, device_size));
+
+        const auto writable = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto read_only = this->emu.memory.allocate_memory(0x1000, memory_permission::read);
+        const auto registered = [&](const emulator_pointer devices, const emulator_pointer count, const uint32_t capacity) {
+            this->emu.memory.write_memory(count, capacity);
+            this->set_last_error(untouched_error);
+            return syscalls::handle_NtUserGetRegisteredRawInputDevices(this->context(), devices, count, device_size);
+        };
+        const auto count_at = [&](const emulator_pointer count) { return this->emu.memory.read_memory<uint32_t>(count); };
+
+        EXPECT_EQ(failed, registered(0, read_only, 0));
+        EXPECT_EQ(error_noaccess, this->last_error());
+        EXPECT_EQ(0u, count_at(read_only));
+
+        EXPECT_EQ(failed, registered(writable, read_only, 1));
+        EXPECT_EQ(error_noaccess, this->last_error());
+        EXPECT_EQ(1u, count_at(read_only));
+
+        EXPECT_EQ(2u, registered(writable, read_only, 8));
+        EXPECT_EQ(8u, count_at(read_only));
+
+        const auto count = this->storage + 0x800;
+        for (const uint32_t capacity : {1u, 8u})
+        {
+            EXPECT_EQ(failed, registered(read_only, count, capacity));
+            EXPECT_EQ(error_noaccess, this->last_error());
+            EXPECT_EQ(capacity, count_at(count));
+        }
+
+        const auto pages = this->emu.memory.allocate_memory(0x2000, memory_permission::read_write);
+        ASSERT_TRUE(this->emu.memory.protect_memory(pages + 0x1000, 0x1000, memory_permission::read));
+        const auto ending_before_read_only = pages + 0x1000 - (2 * device_size);
+        const std::array<uint8_t, 2 * device_size> untouched{};
+        this->emu.memory.write_memory(ending_before_read_only, untouched.data(), untouched.size());
+        EXPECT_EQ(failed, registered(ending_before_read_only, count, 8));
+        EXPECT_EQ(error_noaccess, this->last_error());
+        EXPECT_EQ(0, this->emu.memory.read_memory<RAWINPUTDEVICE64>(ending_before_read_only).usUsage);
+    }
+
+    TEST_F(UserQueryTest, KeyStateRefreshesTheCallersKeyCacheOfTheKeysBelowSpace)
+    {
+        // A new thread's empty cache never passes for current.
+        EXPECT_EQ(0u, this->client_key_cache().first);
+        EXPECT_NE(0u, this->key_state_generation());
+
+        auto& keys = this->emu.process.key_state;
+        keys[VK_LBUTTON] = 0x80;
+        keys[VK_SHIFT] = 0x80;
+        keys[VK_CAPITAL] = 0x01;
+        keys['A'] = 0x80;
+
+        EXPECT_EQ(0xFF80u, this->key_state('A'));
+        EXPECT_EQ(0xFF80u, this->key_state(VK_SHIFT));
+        EXPECT_EQ(1u, this->key_state(VK_CAPITAL));
+        EXPECT_EQ(0u, this->key_state(VK_ESCAPE));
+
+        const auto [generation, states] = this->client_key_cache();
+        EXPECT_EQ(this->key_state_generation(), generation);
+        EXPECT_EQ(0x04, states[VK_LBUTTON >> 2]); // VK_LBUTTON's down bit
+        EXPECT_EQ(0x01, states[VK_SHIFT >> 2]);   // VK_SHIFT's down bit
+        EXPECT_EQ(0x02, states[VK_CAPITAL >> 2]); // VK_CAPITAL's toggled bit
+        EXPECT_EQ(0x00, states[VK_ESCAPE >> 2]);
+    }
+
+    TEST_F(UserQueryTest, KeyChangeOutdatesTheKeyCacheUntilTheNextKeyStateQuery)
+    {
+        (void)this->key_state('A');
+        const auto stamped = this->client_key_cache().first;
+
+        this->emu.process.key_state[VK_CONTROL] = 0x80;
+        this->emu.process.key_state_changed();
+        EXPECT_NE(stamped, this->key_state_generation());
+
+        (void)this->key_state('A');
+        const auto [generation, states] = this->client_key_cache();
+        EXPECT_EQ(this->key_state_generation(), generation);
+        EXPECT_EQ(0x04, states[VK_CONTROL >> 2]); // VK_CONTROL's down bit
+    }
+
+    // SendInput with no window in the foreground changes the key state without a message to deliver; the cache of the
+    // keys below 0x20 must stop passing for current all the same.
+    TEST_F(UserQueryTest, KeyInjectedWithoutAWindowOutdatesTheKeyCache)
+    {
+        // Nothing to receive the input: no foreground window and no visible top-level one, the desktop window included.
+        this->emu.process.foreground_window = 0;
+        for (auto& [index, window] : this->emu.process.windows)
+        {
+            window.style &= ~static_cast<uint32_t>(WS_VISIBLE);
+        }
+
+        (void)this->key_state('A');
+        const auto stamped = this->client_key_cache().first;
+
+        // INPUT{INPUT_KEYBOARD, KEYBDINPUT{wVk = VK_SHIFT}}, 40 bytes on x64.
+        this->emu.memory.set_memory(this->storage, 0, 40);
+        this->emu.memory.write_memory(this->storage, uint32_t{1});
+        this->emu.memory.write_memory(this->storage + 8, uint16_t{VK_SHIFT});
+        ASSERT_EQ(1u, syscalls::handle_NtUserSendInput(this->context(), 1, this->storage, 40));
+        EXPECT_NE(stamped, this->key_state_generation());
+
+        EXPECT_EQ(0xFF80u, this->key_state(VK_SHIFT));
+        EXPECT_EQ(0x01, this->client_key_cache().second[VK_SHIFT >> 2]); // VK_SHIFT's down bit
+    }
+
+    // Continuing a saved process releases what was held when it was saved. The cache and the generation come back with
+    // guest memory, so the release must outdate the cache too.
+    TEST_F(UserQueryTest, ReleasingHeldInputOutdatesTheKeyCache)
+    {
+        this->emu.process.key_state[VK_LBUTTON] = 0x80;
+        (void)this->key_state('A');
+        const auto [stamped, states] = this->client_key_cache();
+        ASSERT_EQ(0x04, states[VK_LBUTTON >> 2]); // VK_LBUTTON's down bit
+
+        this->emu.release_held_input();
+        EXPECT_NE(stamped, this->key_state_generation());
+        EXPECT_EQ(0u, this->key_state(VK_LBUTTON));
+        EXPECT_EQ(0x00, this->client_key_cache().second[VK_LBUTTON >> 2]);
+    }
+
+    TEST_F(UserQueryTest, KeyStateOfAKeyPastTheLastFailsWithInvalidParameter)
+    {
+        EXPECT_EQ(0u, this->key_state(0x100));
+        EXPECT_EQ(87u, this->last_error()); // ERROR_INVALID_PARAMETER
     }
 }

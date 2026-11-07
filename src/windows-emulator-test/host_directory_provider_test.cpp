@@ -69,6 +69,9 @@ namespace sogen::test
                     names.insert(entry.name);
                 }
 
+                const auto listed_names = provider.list_names(guest({}));
+                EXPECT_EQ(names, (std::set<std::u16string>{listed_names.begin(), listed_names.end()}));
+
                 return names;
             }
 
@@ -97,6 +100,52 @@ namespace sogen::test
 
             EXPECT_EQ(provider.open(guest({u"escape", u"secret.txt"}), u"rb").status, STATUS_SUCCESS);
             EXPECT_EQ(names_in(provider), (std::set<std::u16string>{u"escape", u"inside.txt", u"secret.txt"}));
+        }
+
+        TEST(HostDirectoryDeleteSharingTest, OpenStreamsDoNotBlockRenameOrRemove)
+        {
+            const auto root =
+                std::filesystem::temp_directory_path() /
+                ("sogen-host-delete-sharing-test-" + std::to_string(std::random_device{}()) + std::to_string(std::random_device{}()));
+            std::filesystem::create_directories(root);
+            host_directory_provider provider{root};
+
+            for (const auto* mode : {u"rb", u"r+b", u"w+b", u"ab"})
+            {
+                write_host_file(root / "source.bin", "data");
+                const auto opened = provider.open(guest({u"source.bin"}), mode);
+                ASSERT_EQ(STATUS_SUCCESS, opened.status);
+
+                EXPECT_EQ(STATUS_SUCCESS, provider.rename(guest({u"source.bin"}), guest({u"renamed.bin"})));
+                EXPECT_FALSE(std::filesystem::exists(root / "source.bin"));
+                EXPECT_EQ(STATUS_SUCCESS, provider.remove(guest({u"renamed.bin"})));
+                EXPECT_FALSE(std::filesystem::exists(root / "renamed.bin"));
+            }
+
+            std::error_code ec{};
+            std::filesystem::remove_all(root, ec);
+        }
+
+        TEST(HostDirectoryProviderTest, KeepsThousandsOfFilesOpen)
+        {
+            const auto root =
+                std::filesystem::temp_directory_path() /
+                ("sogen-host-provider-test-" + std::to_string(std::random_device{}()) + std::to_string(std::random_device{}()));
+            write_host_file(root / "package.pkg", "data");
+
+            {
+                host_directory_provider provider{root};
+                std::vector<std::unique_ptr<i_file>> handles{};
+                for (size_t i = 0; i < 2000; ++i)
+                {
+                    auto result = provider.open(guest({u"package.pkg"}), u"rb");
+                    ASSERT_EQ(result.status, STATUS_SUCCESS) << "open " << i;
+                    handles.push_back(std::move(result.file));
+                }
+            }
+
+            std::error_code ec{};
+            std::filesystem::remove_all(root, ec);
         }
     } // namespace
 } // namespace sogen::test

@@ -236,7 +236,15 @@ class DownloadService : Service() {
                     throw MeteredNetworkException()
                 }
             })
-            TransferEngine(staging, plan, fetcher, isStopped = { job.stopRequested }, mayUseNetwork = mayUseNetwork) { written, total ->
+            val depotKeys = CdnEndpoint.readDepotKeys(File(staging, LINKS_FILE))
+            TransferEngine(
+                staging,
+                plan,
+                fetcher,
+                depotKeys = depotKeys,
+                isStopped = { job.stopRequested },
+                mayUseNetwork = mayUseNetwork,
+            ) { written, total ->
                 state = state.copy(written = written, total = total)
                 Downloads.publish(state)
                 notifyProgress(state)

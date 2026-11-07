@@ -178,7 +178,8 @@ namespace sogen
                         (void)reader.read<connect_process_info>();
                     }
                     const auto process_flags = reader.read<uint32_t>();
-                    const auto architecture = reader.read<uint16_t>();
+                    // On 19041-19045 Connect has no process architecture parameter.
+                    const auto architecture = win_emu.version.is_build_within(19041, 19046) ? uint16_t{} : reader.read<uint16_t>();
                     const auto reserve_count = reader.read<uint32_t>();
                     if (reserve_count > maximum_reserved_ids)
                     {

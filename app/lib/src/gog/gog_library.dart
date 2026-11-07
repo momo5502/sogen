@@ -2,19 +2,9 @@ import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
+import '../store/store_game.dart';
 import 'gog_account.dart';
 import 'gog_http.dart';
-
-/// A game the user owns in a store. [productId] names the product in that store and stays the same across its
-/// builds and languages, which are chosen when installing.
-class StoreGame {
-  const StoreGame({required this.store, required this.productId, required this.title, this.imageUrl});
-
-  final String store;
-  final String productId;
-  final String title;
-  final Uri? imageUrl;
-}
 
 /// The Windows games of the signed-in GOG account.
 class GogLibrary {

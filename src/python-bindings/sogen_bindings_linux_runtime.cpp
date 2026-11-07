@@ -12,11 +12,13 @@ namespace sogen::py
     namespace
     {
         template <auto Member>
-        void bind_linux_callback_property(nb::class_<linux_callback_registry>& c, const char* name, const char* slot_name)
+        void bind_linux_callback_property(nb::class_<owned_view<linux_callback_registry>>& c, const char* name, const char* slot_name)
         {
             c.def_prop_rw(
-                name, [](linux_callback_registry& self) { return self.*Member; },
-                [slot_name](linux_callback_registry& self, nb::object callback) { self.set(slot_name, std::move(callback)); },
+                name, [](const owned_view<linux_callback_registry>& self) { return self.get().*Member; },
+                [slot_name](const owned_view<linux_callback_registry>& self, nb::object callback) {
+                    self.get().set(slot_name, std::move(callback));
+                },
                 nb::arg("callback").none());
         }
     }
@@ -34,10 +36,11 @@ namespace sogen::py
             },
             nb::arg("params") = nb::none(), nb::arg("restype") = nb::none());
 
-        nb::class_<linux_symbol_hook_registry>(m, "SymbolHooks")
-            .def("__setitem__", &linux_symbol_hook_registry::set_item, nb::arg("key"), nb::arg("callback").none())
-            .def("__delitem__", &linux_symbol_hook_registry::del_item)
-            .def("clear", &linux_symbol_hook_registry::clear);
+        nb::class_<owned_view<linux_symbol_hook_registry>>(
+            m, "SymbolHooks", nb::type_slots{owner_gc_slots<owned_view<linux_symbol_hook_registry>>.data()}, nb::is_weak_referenceable())
+            .def("__setitem__", view_method(&linux_symbol_hook_registry::set_item), nb::arg("key"), nb::arg("callback").none())
+            .def("__delitem__", view_method(&linux_symbol_hook_registry::del_item))
+            .def("clear", view_method(&linux_symbol_hook_registry::clear));
 
         nb::class_<linux_exported_symbol>(m, "ExportedSymbol")
             .def_prop_ro("name", [](const linux_exported_symbol& self) { return self.name; })
@@ -50,29 +53,24 @@ namespace sogen::py
             .def_prop_ro("length", [](const linux_mapped_section& self) { return self.length; })
             .def_prop_ro("permissions", [](const linux_mapped_section& self) { return self.permissions; });
 
-        nb::class_<linux_mapped_module>(m, "LinuxMappedModule")
-            .def_prop_ro("name", [](const linux_mapped_module& self) { return self.name; })
-            .def_prop_ro("path", [](const linux_mapped_module& self) { return self.path; })
-            .def_prop_ro("image_base", [](const linux_mapped_module& self) { return self.image_base; })
-            .def_prop_ro("size_of_image", [](const linux_mapped_module& self) { return self.size_of_image; })
-            .def_prop_ro("entry_point", [](const linux_mapped_module& self) { return self.entry_point; })
-            .def_prop_ro(
-                "exports", [](const linux_mapped_module& self) -> const std::vector<linux_exported_symbol>& { return self.exports; },
-                nb::rv_policy::reference_internal)
-            .def_prop_ro(
-                "needed_libraries",
-                [](const linux_mapped_module& self) -> const std::vector<std::string>& { return self.needed_libraries; },
-                nb::rv_policy::reference_internal)
-            .def_prop_ro(
-                "sections", [](const linux_mapped_module& self) -> const std::vector<linux_mapped_section>& { return self.sections; },
-                nb::rv_policy::reference_internal)
-            .def_prop_ro("rpath", [](const linux_mapped_module& self) { return self.rpath; })
-            .def_prop_ro("runpath", [](const linux_mapped_module& self) { return self.runpath; });
+        nb::class_<owned_view<linux_mapped_module>>(
+            m, "LinuxMappedModule", nb::type_slots{owner_gc_slots<owned_view<linux_mapped_module>>.data()}, nb::is_weak_referenceable())
+            .def_prop_ro("name", [](const owned_view<linux_mapped_module>& self) { return self.get().name; })
+            .def_prop_ro("path", [](const owned_view<linux_mapped_module>& self) { return self.get().path; })
+            .def_prop_ro("image_base", [](const owned_view<linux_mapped_module>& self) { return self.get().image_base; })
+            .def_prop_ro("size_of_image", [](const owned_view<linux_mapped_module>& self) { return self.get().size_of_image; })
+            .def_prop_ro("entry_point", [](const owned_view<linux_mapped_module>& self) { return self.get().entry_point; })
+            .def_prop_ro("exports", [](const owned_view<linux_mapped_module>& self) { return self.get().exports; })
+            .def_prop_ro("needed_libraries", [](const owned_view<linux_mapped_module>& self) { return self.get().needed_libraries; })
+            .def_prop_ro("sections", [](const owned_view<linux_mapped_module>& self) { return self.get().sections; })
+            .def_prop_ro("rpath", [](const owned_view<linux_mapped_module>& self) { return self.get().rpath; })
+            .def_prop_ro("runpath", [](const owned_view<linux_mapped_module>& self) { return self.get().runpath; });
 
         nb::class_<linux_symbol_call_info>(m, "LinuxSymbolCall")
-            .def_prop_ro(
-                "module", [](const linux_symbol_call_info& self) -> linux_mapped_module& { return *self.module; },
-                nb::rv_policy::reference_internal)
+            .def_prop_ro("module",
+                         [](const linux_symbol_call_info& self) {
+                             return owned_view<linux_mapped_module>{.value = self.module.get(), .storage = self.module};
+                         })
             .def_prop_ro("name", [](const linux_symbol_call_info& self) { return self.name; })
             .def_prop_ro("address", [](const linux_symbol_call_info& self) { return self.address; })
             .def_prop_ro("return_address", [](const linux_symbol_call_info& self) { return self.return_address; })
@@ -82,20 +80,21 @@ namespace sogen::py
 
         nb::setattr(m, "Hook", nb::module_::import_("sogen.windows").attr("Hook"));
 
-        nb::class_<linux_hook_registry>(m, "Hooks")
-            .def("memory_execution", &linux_hook_registry::memory_execution)
-            .def("memory_execution_at", &linux_hook_registry::memory_execution_at)
-            .def("memory_read", &linux_hook_registry::memory_read)
-            .def("memory_write", &linux_hook_registry::memory_write)
-            .def("instruction", &linux_hook_registry::instruction)
-            .def("interrupt", &linux_hook_registry::interrupt)
-            .def("memory_violation", &linux_hook_registry::memory_violation)
-            .def("basic_block", &linux_hook_registry::basic_block)
-            .def_prop_ro(
-                "symbols", [](linux_hook_registry& self) -> linux_symbol_hook_registry& { return *self.symbols; },
-                nb::rv_policy::reference_internal);
+        nb::class_<owned_view<linux_hook_registry>>(m, "Hooks", nb::type_slots{owner_gc_slots<owned_view<linux_hook_registry>>.data()},
+                                                    nb::is_weak_referenceable())
+            .def("memory_execution", view_method(&linux_hook_registry::memory_execution))
+            .def("memory_execution_at", view_method(&linux_hook_registry::memory_execution_at))
+            .def("memory_read", view_method(&linux_hook_registry::memory_read))
+            .def("memory_write", view_method(&linux_hook_registry::memory_write))
+            .def("instruction", view_method(&linux_hook_registry::instruction))
+            .def("interrupt", view_method(&linux_hook_registry::interrupt))
+            .def("memory_violation", view_method(&linux_hook_registry::memory_violation))
+            .def("basic_block", view_method(&linux_hook_registry::basic_block))
+            .def_prop_ro("symbols",
+                         [](const owned_view<linux_hook_registry>& self) { return make_linux_view(*self.get().symbols, self.owner); });
 
-        auto callbacks_class = nb::class_<linux_callback_registry>(m, "Callbacks");
+        auto callbacks_class = nb::class_<owned_view<linux_callback_registry>>(
+            m, "Callbacks", nb::type_slots{owner_gc_slots<owned_view<linux_callback_registry>>.data()}, nb::is_weak_referenceable());
         bind_linux_callback_property<&linux_callback_registry::stdout_cb>(callbacks_class, "on_stdout", "stdout");
         bind_linux_callback_property<&linux_callback_registry::stderr_cb>(callbacks_class, "on_stderr", "stderr");
         bind_linux_callback_property<&linux_callback_registry::syscall_cb>(callbacks_class, "on_syscall", "syscall");
@@ -111,9 +110,9 @@ namespace sogen::py
         bind_linux_callback_property<&linux_callback_registry::thread_terminated_cb>(callbacks_class, "on_thread_terminated",
                                                                                      "thread_terminated");
         bind_linux_callback_property<&linux_callback_registry::thread_switch_cb>(callbacks_class, "on_thread_switch", "thread_switch");
-        callbacks_class.def("set", &linux_callback_registry::set)
-            .def("clear", &linux_callback_registry::clear)
-            .def("__repr__", [](const linux_callback_registry&) {
+        callbacks_class.def("set", view_method(&linux_callback_registry::set))
+            .def("clear", view_method(&linux_callback_registry::clear))
+            .def("__repr__", [](const owned_view<linux_callback_registry>&) {
                 return "<sogen.linux.Callbacks on_signal/on_exception share the same signal callback slot>";
             });
 
@@ -123,7 +122,7 @@ namespace sogen::py
             .value("sleeping", thread_wait_state::sleeping)
             .export_values();
 
-        nb::class_<sogen_linux_thread>(m, "Thread")
+        nb::class_<sogen_linux_thread>(m, "Thread", nb::type_slots{owner_gc_slots<sogen_linux_thread>.data()})
             .def_prop_ro("tid", [](const sogen_linux_thread& self) { return self.view().tid; })
             .def_prop_ro("stack_base", [](const sogen_linux_thread& self) { return self.view().stack_base; })
             .def_prop_ro("stack_size", [](const sogen_linux_thread& self) { return self.view().stack_size; })
@@ -137,7 +136,7 @@ namespace sogen::py
             .def_prop_ro("exit_code", [](const sogen_linux_thread& self) { return self.view().exit_code; })
             .def_prop_ro("executed_instructions", [](const sogen_linux_thread& self) { return self.view().executed_instructions; });
 
-        nb::class_<sogen_linux_process_context>(m, "ProcessContext")
+        nb::class_<sogen_linux_process_context>(m, "ProcessContext", nb::type_slots{owner_gc_slots<sogen_linux_process_context>.data()})
             .def_prop_ro("exit_status",
                          [](const sogen_linux_process_context& self) -> nb::object {
                              if (!self.exit_status().has_value())
@@ -168,52 +167,56 @@ namespace sogen::py
             .def_prop_ro("initial_permissions", [](const posix_memory_region_info& self) { return self.initial_permissions; })
             .def_prop_ro("kind", [](const posix_memory_region_info& self) { return self.kind; });
 
-        nb::class_<posix_memory_manager>(m, "MemoryManager")
-            .def("read_memory",
-                 [](const posix_memory_manager& self, uint64_t address, size_t size) { return read_memory_bytes(self, address, size); })
-            .def("write_memory",
-                 [](posix_memory_manager& self, uint64_t address, const nb::bytes& buffer) { write_memory_bytes(self, address, buffer); })
+        nb::class_<owned_view<posix_memory_manager>>(
+            m, "MemoryManager", nb::type_slots{owner_gc_slots<owned_view<posix_memory_manager>>.data()}, nb::is_weak_referenceable())
+            .def("read_memory", [](const owned_view<posix_memory_manager>& self, uint64_t address,
+                                   size_t size) { return read_memory_bytes(self.get(), address, size); })
+            .def("write_memory", [](const owned_view<posix_memory_manager>& self, uint64_t address,
+                                    const nb::bytes& buffer) { write_memory_bytes(self.get(), address, buffer); })
             .def("allocate_memory",
-                 static_cast<uint64_t (posix_memory_manager::*)(size_t, memory_permission, uint64_t)>(
-                     &posix_memory_manager::allocate_memory),
+                 view_method(static_cast<uint64_t (posix_memory_manager::*)(size_t, memory_permission, uint64_t)>(
+                     &posix_memory_manager::allocate_memory)),
                  nb::arg("size"), nb::arg("permissions"), nb::arg("start") = 0)
             .def("allocate_memory_at",
-                 static_cast<bool (posix_memory_manager::*)(uint64_t, size_t, memory_permission)>(&posix_memory_manager::allocate_memory),
+                 view_method(static_cast<bool (posix_memory_manager::*)(uint64_t, size_t, memory_permission)>(
+                     &posix_memory_manager::allocate_memory)),
                  nb::arg("address"), nb::arg("size"), nb::arg("permissions"))
-            .def("protect_memory", &posix_memory_manager::protect_memory)
-            .def("release_memory", &posix_memory_manager::release_memory)
-            .def("find_free_allocation_base", &posix_memory_manager::find_free_allocation_base, nb::arg("size"), nb::arg("start") = 0)
-            .def("get_region_info", &posix_memory_manager::get_region_info)
-            .def("get_mapped_regions", &posix_memory_manager::get_mapped_region_infos)
+            .def("protect_memory", view_method(&posix_memory_manager::protect_memory))
+            .def("release_memory", view_method(&posix_memory_manager::release_memory))
+            .def("find_free_allocation_base", view_method(&posix_memory_manager::find_free_allocation_base), nb::arg("size"),
+                 nb::arg("start") = 0)
+            .def("get_region_info", view_method(&posix_memory_manager::get_region_info))
+            .def("get_mapped_regions", view_method(&posix_memory_manager::get_mapped_region_infos))
             .def("compute_memory_stats",
-                 [](const posix_memory_manager& self) {
-                     const auto stats = self.compute_memory_stats();
+                 [](const owned_view<posix_memory_manager>& self) {
+                     const auto stats = self.get().compute_memory_stats();
                      nb::dict result{};
                      set_dict_item(result, "region_count", stats.region_count);
                      set_dict_item(result, "mapped_bytes", stats.mapped_bytes);
                      set_dict_item(result, "executable_bytes", stats.executable_bytes);
                      return result;
                  })
-            .def_prop_ro("mapped_regions", &posix_memory_manager::get_mapped_region_infos)
-            .def_prop_rw("mmap_base", &posix_memory_manager::get_mmap_base, &posix_memory_manager::set_mmap_base);
+            .def_prop_ro("mapped_regions", view_method(&posix_memory_manager::get_mapped_region_infos))
+            .def_prop_rw("mmap_base", view_method(&posix_memory_manager::get_mmap_base), view_method(&posix_memory_manager::set_mmap_base));
 
-        nb::class_<linux_debug_facade>(m, "Debug")
-            .def("set_breakpoint", &linux_debug_facade::set_breakpoint)
-            .def("clear_breakpoint", &linux_debug_facade::clear_breakpoint)
-            .def("list_breakpoints", &linux_debug_facade::list_breakpoints)
-            .def("step_into", &linux_debug_facade::step_into)
-            .def("step_over", &linux_debug_facade::step_over)
-            .def("step_out", &linux_debug_facade::step_out)
-            .def("run_to", &linux_debug_facade::run_to)
-            .def("continue_execution", &linux_debug_facade::continue_execution)
-            .def("pause", &linux_debug_facade::pause)
-            .def("registers", &linux_debug_facade::registers)
-            .def("modules", &linux_debug_facade::modules)
-            .def("threads", &linux_debug_facade::threads)
-            .def("disassemble", &linux_debug_facade::disassemble)
-            .def("call_stack", &linux_debug_facade::call_stack);
+        nb::class_<owned_view<linux_debug_facade>>(m, "Debug", nb::type_slots{owner_gc_slots<owned_view<linux_debug_facade>>.data()},
+                                                   nb::is_weak_referenceable())
+            .def("set_breakpoint", view_method(&linux_debug_facade::set_breakpoint))
+            .def("clear_breakpoint", view_method(&linux_debug_facade::clear_breakpoint))
+            .def("list_breakpoints", view_method(&linux_debug_facade::list_breakpoints))
+            .def("step_into", view_method(&linux_debug_facade::step_into))
+            .def("step_over", view_method(&linux_debug_facade::step_over))
+            .def("step_out", view_method(&linux_debug_facade::step_out))
+            .def("run_to", view_method(&linux_debug_facade::run_to))
+            .def("continue_execution", view_method(&linux_debug_facade::continue_execution))
+            .def("pause", view_method(&linux_debug_facade::pause))
+            .def("registers", view_method(&linux_debug_facade::registers))
+            .def("modules", view_method(&linux_debug_facade::modules))
+            .def("threads", view_method(&linux_debug_facade::threads))
+            .def("disassemble", view_method(&linux_debug_facade::disassemble))
+            .def("call_stack", view_method(&linux_debug_facade::call_stack));
 
-        nb::class_<sogen_linux_emulator>(m, "Emulator")
+        nb::class_<sogen_linux_emulator>(m, "Emulator", nb::type_slots{linux_emulator_gc_slots.data()})
             .def("start", &sogen_linux_emulator::start, nb::arg("count") = 0, nb::call_guard<nb::gil_scoped_release>())
             .def("stop", &sogen_linux_emulator::stop)
             .def("save_snapshot", &sogen_linux_emulator::save_snapshot)
@@ -224,8 +227,16 @@ namespace sogen::py
             .def("write_memory", &sogen_linux_emulator::write_memory)
             .def("read_register", &sogen_linux_emulator::read_register)
             .def("write_register", &sogen_linux_emulator::write_register)
-            .def("find_module_by_address", &sogen_linux_emulator::find_module_by_address, nb::rv_policy::reference_internal)
-            .def("find_module_by_name", &sogen_linux_emulator::find_module_by_name, nb::rv_policy::reference_internal)
+            .def("find_module_by_address",
+                 [](sogen_linux_emulator& self, uint64_t address) -> nb::object {
+                     auto* module = self.find_module_by_address(address);
+                     return module ? make_linux_view(*module, nb::find(&self)) : nb::none();
+                 })
+            .def("find_module_by_name",
+                 [](sogen_linux_emulator& self, std::string_view name) -> nb::object {
+                     auto* module = self.find_module_by_name(name);
+                     return module ? make_linux_view(*module, nb::find(&self)) : nb::none();
+                 })
             .def("activate_thread", &sogen_linux_emulator::activate_thread)
             .def("perform_thread_switch", &sogen_linux_emulator::perform_thread_switch)
             .def("yield_thread", &sogen_linux_emulator::yield_thread)
@@ -242,7 +253,7 @@ namespace sogen::py
             .def_prop_ro("last_stop_reason_code", &sogen_linux_emulator::last_stop_reason_code)
             .def_prop_ro("last_stop_detail", &sogen_linux_emulator::last_stop_detail)
             .def_prop_ro("process", &sogen_linux_emulator::process, nb::rv_policy::reference_internal)
-            .def_prop_ro("memory", &sogen_linux_emulator::memory, nb::rv_policy::reference_internal)
+            .def_prop_ro("memory", [](sogen_linux_emulator& self) { return make_linux_view(self.memory(), nb::find(&self)); })
             .def_prop_ro("modules", &sogen_linux_emulator::modules)
             .def_prop_ro("current_thread", &sogen_linux_emulator::current_thread)
             .def_prop_ro("current_thread_id",
@@ -254,21 +265,17 @@ namespace sogen::py
                              }
                              return nb::int_(*tid);
                          })
-            .def_prop_ro(
-                "callbacks",
-                [](sogen_linux_emulator& self) -> linux_callback_registry& {
-                    const auto owner = nb::find(&self);
-                    if (owner.is_valid())
-                    {
-                        self.callbacks->owner = owner.ptr();
-                    }
-                    return *self.callbacks;
-                },
-                nb::rv_policy::reference_internal)
-            .def_prop_ro(
-                "hooks", [](sogen_linux_emulator& self) -> linux_hook_registry& { return *self.hooks; }, nb::rv_policy::reference_internal)
-            .def_prop_ro(
-                "debug", [](sogen_linux_emulator& self) -> linux_debug_facade& { return *self.debug; }, nb::rv_policy::reference_internal);
+            .def_prop_ro("callbacks",
+                         [](sogen_linux_emulator& self) {
+                             const auto owner = nb::find(&self);
+                             if (owner.is_valid())
+                             {
+                                 self.callbacks->owner = owner.ptr();
+                             }
+                             return make_linux_view(*self.callbacks, owner);
+                         })
+            .def_prop_ro("hooks", [](sogen_linux_emulator& self) { return make_linux_view(*self.hooks, nb::find(&self)); })
+            .def_prop_ro("debug", [](sogen_linux_emulator& self) { return make_linux_view(*self.debug, nb::find(&self)); });
 
         nb::setattr(m, "LinuxEmulator", m.attr("Emulator"));
 

@@ -95,6 +95,9 @@ namespace sogen::network
 
         static std::vector<address> resolve_multiple(const std::string& hostname);
 
+        // The unicast addresses of the given host family on the host's network interfaces that are up, without loopback.
+        static std::vector<address> get_local_addresses(int family);
+
       private:
         union
         {

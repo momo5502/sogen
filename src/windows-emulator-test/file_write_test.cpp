@@ -22,6 +22,9 @@ namespace sogen::syscalls
                                uint64_t apc_context, emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                emulator_object<LARGE_INTEGER> byte_offset, emulator_object<LARGE_INTEGER> length, ULONG key,
                                BOOLEAN fail_immediately, BOOLEAN exclusive_lock);
+    NTSTATUS handle_NtSetInformationFile(const syscall_context& c, handle file_handle,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, uint64_t file_information,
+                                         ULONG length, FILE_INFORMATION_CLASS info_class);
 }
 
 namespace sogen::test
@@ -90,6 +93,49 @@ namespace sogen::test
         std::ifstream written{directory / "offsets.bin", std::ios::binary};
         const std::string contents{std::istreambuf_iterator<char>(written), {}};
         EXPECT_EQ(std::string("AAAA\0\0\0\0BBBB", 12), contents);
+    }
+
+    // The guest does not see host attributes, so overwriting a file that is hidden on a Windows host must work like overwriting any
+    // other file, whichever access the overwriting handle has.
+    TEST(FileWriteTest, OverwritingAnExistingFileEmptiesIt)
+    {
+        const auto directory = create_test_directory();
+        const auto cleanup = utils::finally([&] {
+            std::error_code error{};
+            std::filesystem::remove_all(directory, error);
+        });
+
+        constexpr std::array accesses{GENERIC_READ | GENERIC_WRITE, static_cast<ACCESS_MASK>(FILE_WRITE_DATA),
+                                      static_cast<ACCESS_MASK>(FILE_APPEND_DATA)};
+        for (const auto access : accesses)
+        {
+            SCOPED_TRACE(access);
+            const auto host_path = directory / "marker";
+            std::filesystem::remove(host_path);
+            std::ofstream{host_path, std::ios::binary} << "previous contents";
+#ifdef _WIN32
+            ASSERT_TRUE(SetFileAttributesW(host_path.c_str(), FILE_ATTRIBUTE_HIDDEN));
+#endif
+
+            auto emu = create_empty_emulator();
+            emu.file_sys.map(windows_path{'x', {}}, directory, filesystem_mode::read_write);
+            const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+            const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+            const auto file_handle = create_guest_file(emu, context, storage, u"\\??\\x:\\marker", access);
+
+            const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> status{emu.memory, storage + 0x10};
+            emu.memory.write_memory(storage + 0x100, "1234", 4);
+            ASSERT_EQ(STATUS_SUCCESS,
+                      syscalls::handle_NtWriteFile(context, file_handle, 0, 0, 0, status, storage + 0x100, 4, {emu.memory}, {emu.memory}));
+            emu.process.files.erase(file_handle);
+
+            std::ifstream written{host_path, std::ios::binary};
+            const std::string contents{std::istreambuf_iterator<char>(written), {}};
+            EXPECT_EQ("1234", contents);
+#ifdef _WIN32
+            EXPECT_NE(0u, GetFileAttributesW(host_path.c_str()) & FILE_ATTRIBUTE_HIDDEN);
+#endif
+        }
     }
 
     TEST(FileWriteTest, LocksFarPastTheEndOfTheFileAreGranted)
@@ -165,5 +211,88 @@ namespace sogen::test
                 EXPECT_EQ(expected, std::string(reinterpret_cast<const char*>(actual.data()), actual.size()));
             }
         }
+    }
+
+    TEST(FileWriteTest, OverlappedReadsOnAFileBoundToACompletionPortPostPackets)
+    {
+        const auto directory = create_test_directory();
+        const auto cleanup = utils::finally([&] {
+            std::error_code error{};
+            std::filesystem::remove_all(directory, error);
+        });
+        std::ofstream{directory / "data.bin", std::ios::binary} << std::string(0x1000, 'x');
+
+        auto emu = create_empty_emulator();
+        emu.file_sys.map(windows_path{'x', {}}, directory, filesystem_mode::read_write);
+        const auto path = windows_path{'x', {u"data.bin"}};
+        file overlapped{};
+        overlapped.handle = guest_file{emu.file_sys, path, u"rb", emu.file_sys.open(path, u"rb").file};
+        ASSERT_TRUE(overlapped.handle);
+        const auto file_handle = emu.process.files.store(std::move(overlapped));
+        const auto port_handle = emu.process.io_completions.store(io_completion{});
+
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> status{emu.memory, storage};
+        const emulator_object<LARGE_INTEGER> offset{emu.memory, storage + 0x20};
+        const auto set_completion = [&](const FILE_INFORMATION_CLASS info_class, const handle port, const uint64_t key) {
+            emu.memory.write_memory(storage + 0x40, port);
+            emu.memory.write_memory(storage + 0x48, key);
+            return syscalls::handle_NtSetInformationFile(context, file_handle, status, storage + 0x40, 16, info_class);
+        };
+        const auto read = [&](const uint64_t apc_routine, const uint64_t apc_context, const LONGLONG position) {
+            offset.write(LARGE_INTEGER{.QuadPart = position});
+            return syscalls::handle_NtReadFile(context, file_handle, 0, apc_routine, apc_context, status, storage + 0x100, 16, offset,
+                                               {emu.memory});
+        };
+        const auto next_packet = [&]() -> std::optional<io_completion_message> {
+            io_completion_message message{};
+            if (!emu.process.io_completions.get(port_handle)->dequeue(message))
+            {
+                return std::nullopt;
+            }
+            return message;
+        };
+
+        ASSERT_EQ(STATUS_SUCCESS, set_completion(FileCompletionInformation, port_handle, 0x3001));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, set_completion(FileCompletionInformation, port_handle, 0x3002));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, read(0x1234, 0xA0, 0x10));
+        EXPECT_FALSE(next_packet());
+
+        struct case_row
+        {
+            LONGLONG position;
+            uint64_t apc_context;
+            std::optional<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> packet;
+        };
+
+        const std::array<case_row, 3> cases{{
+            {.position = 0x10,
+             .apc_context = 0xA0,
+             .packet = IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_SUCCESS, .Information = 16}},
+            {.position = 0x1000,
+             .apc_context = 0xA1,
+             .packet = IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_END_OF_FILE, .Information = 0}},
+            {.position = 0x30, .apc_context = 0, .packet = std::nullopt},
+        }};
+        for (const auto& row : cases)
+        {
+            SCOPED_TRACE(row.position);
+            EXPECT_EQ(STATUS_PENDING, read(0, row.apc_context, row.position));
+            const auto packet = next_packet();
+            ASSERT_EQ(row.packet.has_value(), packet.has_value());
+            if (packet)
+            {
+                EXPECT_EQ(0x3001u, packet->key_context);
+                EXPECT_EQ(row.apc_context, packet->apc_context);
+                EXPECT_EQ(row.packet->Status, packet->io_status_block.Status);
+                EXPECT_EQ(row.packet->Information, packet->io_status_block.Information);
+            }
+        }
+
+        ASSERT_EQ(STATUS_SUCCESS, set_completion(FileReplaceCompletionInformation, {}, 0));
+        read(0, 0xA2, 0x10);
+        EXPECT_FALSE(next_packet());
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, set_completion(FileReplaceCompletionInformation, {}, 0));
     }
 }

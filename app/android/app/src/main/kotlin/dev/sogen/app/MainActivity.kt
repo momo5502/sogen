@@ -29,7 +29,7 @@ class MainActivity : FlutterActivity() {
     private var events: EventChannel.EventSink? = null
     private lateinit var session: SessionController
     private var folderPick: MethodChannel.Result? = null
-    private var gogSignIn: MethodChannel.Result? = null
+    private var storeSignIn: MethodChannel.Result? = null
     private val secrets by lazy { SecretStore(this) }
     private val secretChanges = Executors.newSingleThreadExecutor()
     private var downloadListener: ((DownloadState) -> Unit)? = null
@@ -127,9 +127,21 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(messenger, "dev.sogen.app/gog").setMethodCallHandler { call, result ->
             when (call.method) {
-                "signIn" -> signInToGog(call.argument<String>("url").orEmpty(), result)
+                "signIn" -> signIn(GogSignInActivity::class.java, call.argument<String>("url").orEmpty(), result)
                 "forgetLogin" -> {
                     GogSignInActivity.forgetLogin()
+                    result.success(null)
+                }
+
+                else -> result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, "dev.sogen.app/epic").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "signIn" -> signIn(EpicSignInActivity::class.java, call.argument<String>("url").orEmpty(), result)
+                "forgetLogin" -> {
+                    EpicSignInActivity.forgetLogin()
                     result.success(null)
                 }
 
@@ -203,6 +215,7 @@ class MainActivity : FlutterActivity() {
         workingDirectory = call.argument<String>("workingDirectory").orEmpty(),
         backend = call.argument<String>("backend").orEmpty(),
         liveNetwork = call.argument<Boolean>("liveNetwork") == true,
+        maxDisplayMode = call.argument<String>("maxDisplayMode").orEmpty(),
         snapshotDirectory = File(filesDir, "snapshots").path,
         resumeFile = call.argument<String>("resumeFile").orEmpty(),
     )
@@ -307,27 +320,24 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /** Completes with the URL GOG redirected to after signing in, or null when the user went back. */
-    private fun signInToGog(url: String, result: MethodChannel.Result) {
-        if (gogSignIn != null) {
-            result.error("busy", "A GOG sign-in is already open", null)
+    /** Completes with what the store's sign-in ended on, or null when the user went back. */
+    private fun signIn(activity: Class<out StoreSignInActivity>, url: String, result: MethodChannel.Result) {
+        if (storeSignIn != null) {
+            result.error("busy", "A sign-in is already open", null)
             return
         }
 
-        gogSignIn = result
+        storeSignIn = result
         @Suppress("DEPRECATION")
-        startActivityForResult(
-            Intent(this, GogSignInActivity::class.java).putExtra(GogSignInActivity.EXTRA_URL, url),
-            GOG_SIGN_IN_REQUEST,
-        )
+        startActivityForResult(Intent(this, activity).putExtra(StoreSignInActivity.EXTRA_URL, url), STORE_SIGN_IN_REQUEST)
     }
 
     @Deprecated("FlutterActivity is not a ComponentActivity, so it has no activity result API")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == GOG_SIGN_IN_REQUEST) {
-            val result = gogSignIn ?: return
-            gogSignIn = null
-            result.success(data?.getStringExtra(GogSignInActivity.EXTRA_REDIRECT)?.takeIf { resultCode == RESULT_OK })
+        if (requestCode == STORE_SIGN_IN_REQUEST) {
+            val result = storeSignIn ?: return
+            storeSignIn = null
+            result.success(data?.getStringExtra(StoreSignInActivity.EXTRA_RESULT)?.takeIf { resultCode == RESULT_OK })
             return
         }
 
@@ -394,7 +404,7 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val TAG = "MainActivity"
         const val PICK_FOLDER_REQUEST = 1
-        const val GOG_SIGN_IN_REQUEST = 2
+        const val STORE_SIGN_IN_REQUEST = 2
         const val NOTIFICATION_PERMISSION_REQUEST = 3
 
         val systemKeys = setOf(KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE)
