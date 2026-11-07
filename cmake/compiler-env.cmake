@@ -339,11 +339,12 @@ endif()
 ##########################################
 
 if(MSVC)
+  set(sogen_msvc_runtime "$<GENEX_EVAL:$<TARGET_PROPERTY:MSVC_RUNTIME_LIBRARY>>")
   add_link_options(
-    $<$<NOT:$<STREQUAL:${CMAKE_MSVC_RUNTIME_LIBRARY},MultiThreaded>>:/NODEFAULTLIB:libcmt.lib>
-    $<$<NOT:$<STREQUAL:${CMAKE_MSVC_RUNTIME_LIBRARY},MultiThreadedDLL>>:/NODEFAULTLIB:msvcrt.lib>
-    $<$<NOT:$<STREQUAL:${CMAKE_MSVC_RUNTIME_LIBRARY},MultiThreadedDebug>>:/NODEFAULTLIB:libcmtd.lib>
-    $<$<NOT:$<STREQUAL:${CMAKE_MSVC_RUNTIME_LIBRARY},MultiThreadedDebugDLL>>:/NODEFAULTLIB:msvcrtd.lib>
+    $<$<AND:$<BOOL:${sogen_msvc_runtime}>,$<NOT:$<STREQUAL:${sogen_msvc_runtime},MultiThreaded>>>:/NODEFAULTLIB:libcmt.lib>
+    $<$<AND:$<BOOL:${sogen_msvc_runtime}>,$<NOT:$<STREQUAL:${sogen_msvc_runtime},MultiThreadedDLL>>>:/NODEFAULTLIB:msvcrt.lib>
+    $<$<AND:$<BOOL:${sogen_msvc_runtime}>,$<NOT:$<STREQUAL:${sogen_msvc_runtime},MultiThreadedDebug>>>:/NODEFAULTLIB:libcmtd.lib>
+    $<$<AND:$<BOOL:${sogen_msvc_runtime}>,$<NOT:$<STREQUAL:${sogen_msvc_runtime},MultiThreadedDebugDLL>>>:/NODEFAULTLIB:msvcrtd.lib>
   )
 endif()
 

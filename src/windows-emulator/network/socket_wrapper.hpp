@@ -35,6 +35,7 @@ namespace sogen
 
             sent_size recv(std::span<std::byte> data) override;
             sent_size recvfrom(address& source, std::span<std::byte> data) override;
+            sent_size peek(std::span<std::byte> data) override;
 
             const socket& get() const
             {
@@ -43,6 +44,7 @@ namespace sogen
 
           private:
             socket socket_{};
+            bool listening_{};
         };
     }
 

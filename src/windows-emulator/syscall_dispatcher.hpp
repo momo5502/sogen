@@ -117,6 +117,7 @@ namespace sogen
         emulator_stack_allocation min_max_info_alloc{};
         emulator_stack_allocation window_rect_alloc{};
         emulator_stack_allocation create_struct_alloc{};
+        std::vector<uint64_t> converted_create_struct_text{};
         std::vector<qmsg> message_queue{};
         window_show_data show_data{};
 
@@ -130,6 +131,7 @@ namespace sogen
             buffer.write(this->min_max_info_alloc);
             buffer.write(this->window_rect_alloc);
             buffer.write(this->create_struct_alloc);
+            buffer.write_vector(this->converted_create_struct_text);
             buffer.write_vector(this->message_queue);
             this->show_data.serialize(buffer);
         }
@@ -143,6 +145,7 @@ namespace sogen
             buffer.read(this->min_max_info_alloc);
             buffer.read(this->window_rect_alloc);
             buffer.read(this->create_struct_alloc);
+            buffer.read_vector(this->converted_create_struct_text);
             buffer.read_vector(this->message_queue);
             this->show_data.deserialize(buffer);
         }
@@ -300,6 +303,28 @@ namespace sogen
             buffer.read_vector(this->positions);
             buffer.read(this->next_position);
             buffer.read(this->current_window);
+        }
+    };
+
+    struct window_style_change_state : completion_state
+    {
+        emulator_stack_allocation style_alloc{};
+        uint32_t old_style{};
+        bool style_applied{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->style_alloc);
+            buffer.write(this->old_style);
+            buffer.write(this->style_applied);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->style_alloc);
+            buffer.read(this->old_style);
+            buffer.read(this->style_applied);
         }
     };
 

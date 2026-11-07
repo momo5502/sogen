@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #if defined(_WIN32)
 #include <io.h>
@@ -31,6 +32,35 @@ namespace sogen
         eventfd,
         directory,
         epoll,
+    };
+
+    // The type holds a DT_* value, which Linux and the BSDs number alike.
+    struct posix_directory_entry
+    {
+        uint64_t inode{};
+        uint8_t type{};
+        std::string name{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->inode);
+            buffer.write(this->type);
+            buffer.write(this->name);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->inode);
+            buffer.read(this->type);
+            buffer.read(this->name);
+        }
+    };
+
+    struct posix_epoll_entry
+    {
+        int fd{};
+        uint32_t events{};
+        uint64_t data{};
     };
 
     struct posix_memory_fd
@@ -84,6 +114,8 @@ namespace sogen
         std::shared_ptr<posix_memory_fd> memory_file{};
         int flags{};
         uint64_t directory_position{};
+        std::optional<std::vector<posix_directory_entry>> directory_listing{};
+        std::vector<posix_epoll_entry> epoll_entries{};
         bool read_only_mapping{};
 
         std::shared_ptr<posix_socket_state> socket_state{};
@@ -94,7 +126,6 @@ namespace sogen
         }
 
         size_t read_at(uint64_t position, std::span<std::byte> buffer) const;
-        std::optional<size_t> read(std::span<std::byte> buffer) const;
         std::optional<uint64_t> seek(int64_t offset, int origin) const;
 
         ~posix_fd()
@@ -115,6 +146,8 @@ namespace sogen
               memory_file(std::move(other.memory_file)),
               flags(other.flags),
               directory_position(other.directory_position),
+              directory_listing(std::move(other.directory_listing)),
+              epoll_entries(std::move(other.epoll_entries)),
               read_only_mapping(other.read_only_mapping),
               socket_state(std::move(other.socket_state))
         {
@@ -132,6 +165,8 @@ namespace sogen
                 memory_file = std::move(other.memory_file);
                 flags = other.flags;
                 directory_position = other.directory_position;
+                directory_listing = std::move(other.directory_listing);
+                epoll_entries = std::move(other.epoll_entries);
                 read_only_mapping = other.read_only_mapping;
                 socket_state = std::move(other.socket_state);
             }
@@ -167,14 +202,14 @@ namespace sogen
         int allocate(posix_fd fd, const bool close_on_exec = false)
         {
             const int new_fd = this->find_lowest_available(0);
-            this->fds_.emplace(new_fd, descriptor{.file = std::make_shared<posix_fd>(std::move(fd)), .close_on_exec = close_on_exec});
+            this->fds_.emplace(new_fd, descriptor{.file = this->add_description(std::move(fd)), .close_on_exec = close_on_exec});
             return new_fd;
         }
 
         int allocate_at(const int target_fd, posix_fd fd, const bool close_on_exec = false)
         {
             this->fds_.insert_or_assign(target_fd,
-                                        descriptor{.file = std::make_shared<posix_fd>(std::move(fd)), .close_on_exec = close_on_exec});
+                                        descriptor{.file = this->add_description(std::move(fd)), .close_on_exec = close_on_exec});
             return target_fd;
         }
 
@@ -239,6 +274,17 @@ namespace sogen
             }
         }
 
+        // Visits each open epoll description once, however many descriptors refer to it.
+        template <typename Visitor>
+        void for_each_epoll_description(const Visitor& visitor)
+        {
+            std::erase_if(this->epoll_descriptions_, [](const std::weak_ptr<posix_fd>& description) { return description.expired(); });
+            for (const auto& description : this->epoll_descriptions_)
+            {
+                visitor(*description.lock());
+            }
+        }
+
         void close_descriptors_on_exec()
         {
             std::erase_if(this->fds_, [](const auto& entry) { return entry.second.close_on_exec; });
@@ -261,6 +307,24 @@ namespace sogen
         };
 
         std::map<int, descriptor> fds_{};
+
+        // Kept apart so that dropping a closed descriptor from the interest lists does not walk the whole table.
+        std::vector<std::weak_ptr<posix_fd>> epoll_descriptions_{};
+
+        std::shared_ptr<posix_fd> add_description(posix_fd fd)
+        {
+            auto description = std::make_shared<posix_fd>(std::move(fd));
+            this->track_description(description);
+            return description;
+        }
+
+        void track_description(const std::shared_ptr<posix_fd>& description)
+        {
+            if (description->type == fd_type::epoll)
+            {
+                this->epoll_descriptions_.push_back(description);
+            }
+        }
 
         static std::shared_ptr<posix_fd> make_standard_stream(std::string host_path, FILE* handle, const int flags)
         {

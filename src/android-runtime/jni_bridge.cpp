@@ -144,6 +144,23 @@ namespace
         return result;
     }
 
+    std::vector<sogen::directory_mount> to_directory_mounts(JNIEnv& env, const jobjectArray values)
+    {
+        const auto strings = to_strings(env, values);
+        if (strings.size() % sogen::directory_mount::argument_count != 0)
+        {
+            throw std::runtime_error("Inconsistent directory mounts");
+        }
+
+        std::vector<sogen::directory_mount> result{};
+        for (size_t i = 0; i < strings.size(); i += sogen::directory_mount::argument_count)
+        {
+            result.push_back(sogen::directory_mount::from_arguments(std::span(strings).subspan(i, sogen::directory_mount::argument_count)));
+        }
+
+        return result;
+    }
+
     std::vector<sogen::android::document_tree> to_document_trees(JNIEnv& env, const jobjectArray trees)
     {
         std::vector<sogen::android::document_tree> result{};
@@ -192,16 +209,16 @@ extern "C"
 
     JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(
         JNIEnv* env, jobject /*self*/, const jlong handle, jstring root, jstring application, jobjectArray arguments,
-        jobjectArray environment, jobjectArray path_mappings, jobjectArray document_trees, jstring working_directory, jstring backend,
-        const jboolean live_network, jstring sandbox_executable, jstring vulkan_hook_directory, jstring vulkan_driver_directory,
-        jstring vulkan_driver_name, jstring snapshot_directory, jstring resume_file)
+        jobjectArray environment, jstring root_layer, jobjectArray directory_mounts, jobjectArray document_trees, jstring working_directory,
+        jstring backend, const jboolean live_network, jstring max_display_mode, jstring sandbox_executable, jstring vulkan_hook_directory,
+        jstring vulkan_driver_directory, jstring vulkan_driver_name, jstring snapshot_directory, jstring resume_file)
     {
         sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
             .application = to_string(*env, application),
             .arguments = to_strings(*env, arguments),
             .environment = to_pairs<std::string>(*env, environment),
-            .path_mappings = to_pairs<std::filesystem::path>(*env, path_mappings),
+            .root_layer = to_string(*env, root_layer),
             .working_directory = to_string(*env, working_directory),
             .backend = to_string(*env, backend),
             .live_network = live_network == JNI_TRUE,
@@ -218,7 +235,16 @@ extern "C"
 
         try
         {
+            config.directory_mounts = to_directory_mounts(*env, directory_mounts);
             config.document_trees = to_document_trees(*env, document_trees);
+            if (const auto mode_name = to_string(*env, max_display_mode); !mode_name.empty())
+            {
+                config.max_display_mode = sogen::parse_display_mode(mode_name);
+                if (!config.max_display_mode)
+                {
+                    throw std::invalid_argument("Not one of the display's modes: " + mode_name);
+                }
+            }
         }
         catch (const std::exception& e)
         {

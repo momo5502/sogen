@@ -675,6 +675,7 @@ namespace sogen
                 bool has_surface{};
                 bool translucent{};
                 std::vector<uint32_t> blended_pixels{};
+                std::optional<std::pair<int, int>> placed_position{};
             };
 
             struct pending_key_release
@@ -704,6 +705,8 @@ namespace sogen
 
             void reset() override
             {
+                ++this->cursor_generation_;
+                this->clear_system_cursors();
                 for (auto& [guest, state] : this->windows_)
                 {
                     (void)guest;
@@ -788,7 +791,8 @@ namespace sogen
 
                     // A host window sits where its guest window's frame is, so a user move moves the guest window.
                     case SDL_EVENT_WINDOW_MOVED:
-                        if (const auto guest = this->resolve_guest(event.window.windowID); guest != 0)
+                        if (const auto guest = this->resolve_guest(event.window.windowID);
+                            guest != 0 && !this->consume_own_placement(guest, event.window.data1, event.window.data2))
                         {
                             const auto position = (static_cast<uint64_t>(static_cast<uint16_t>(event.window.data2)) << 16) |
                                                   static_cast<uint16_t>(event.window.data1);
@@ -1132,9 +1136,9 @@ namespace sogen
                     return;
                 }
 
-                finish_host_window(window, desc.rect.left, desc.rect.top, flags);
-
                 auto& state = this->windows_[desc.handle];
+                place_host_window(window, state.placed_position, [&] { finish_host_window(window, desc.rect.left, desc.rect.top, flags); });
+
                 state.desc = desc;
                 state.window = window;
                 state.renderer = renderer;
@@ -1192,13 +1196,35 @@ namespace sogen
                 return SDL_CreateWindow(title.c_str(), width, height, flags);
             }
 
+            // A guest window at the top of its screen would put the host title bar above the display, where it cannot be
+            // grabbed. The frame of a host window with a title bar is kept inside the display's usable area, a little below
+            // its top edge. A borderless one (a guest window without a full WS_CAPTION) has no title bar to keep reachable
+            // and stays where the guest put it.
+            static void set_host_window_position(SDL_Window* window, int x, int y)
+            {
+                constexpr int top_margin = 20;
+                const SDL_Point point{.x = x, .y = y};
+                SDL_Rect usable{};
+                int border_top{};
+                int border_left{};
+                if ((SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) == 0 &&
+                    SDL_GetDisplayUsableBounds(SDL_GetDisplayForPoint(&point), &usable) &&
+                    SDL_GetWindowBordersSize(window, &border_top, &border_left, nullptr, nullptr))
+                {
+                    x = std::max(x, usable.x + border_left);
+                    y = std::max(y, usable.y + top_margin + border_top);
+                }
+
+                SDL_SetWindowPosition(window, x, y);
+            }
+
             static void finish_host_window(SDL_Window* window, const int x, const int y, const Uint64 flags)
             {
 #ifdef _WIN32
                 apply_application_icon(window);
 #endif
 
-                SDL_SetWindowPosition(window, x, y);
+                set_host_window_position(window, x, y);
                 SDL_StartTextInput(window);
                 if ((flags & SDL_WINDOW_HIDDEN) == 0)
                 {
@@ -1225,7 +1251,7 @@ namespace sogen
                     return false;
                 }
 
-                finish_host_window(window, x, y, flags);
+                place_host_window(window, state.placed_position, [&] { finish_host_window(window, x, y, flags); });
 
                 SDL_StopTextInput(old_window);
                 this->guest_by_window_id_.erase(SDL_GetWindowID(old_window));
@@ -1280,9 +1306,11 @@ namespace sogen
                         if (state->desc.top_level)
                         {
                             const auto& insets = state->desc.client_insets;
-                            SDL_SetWindowPosition(state->window, rect.left, rect.top);
-                            SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
-                                              std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
+                            place_host_window(state->window, state->placed_position, [&] {
+                                set_host_window_position(state->window, rect.left, rect.top);
+                                SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
+                                                  std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
+                            });
                         }
                         this->redraw_related(window);
                         this->apply_cursor_capture();
@@ -1300,7 +1328,7 @@ namespace sogen
                         {
                             if (visible)
                             {
-                                SDL_ShowWindow(state->window);
+                                place_host_window(state->window, state->placed_position, [&] { SDL_ShowWindow(state->window); });
                                 apply_x11_focus_fallback(state->window);
                             }
                             else
@@ -1397,6 +1425,83 @@ namespace sogen
                 });
             }
 
+            void set_system_cursor(const uint32_t idc) override
+            {
+                const std::lock_guard lock(this->command_mutex_);
+                const auto generation = this->cursor_generation_.load();
+                this->commands_.emplace_back([this, idc, generation] {
+                    if (generation != this->cursor_generation_.load())
+                    {
+                        return;
+                    }
+                    if (!this->ensure_initialized())
+                    {
+                        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Cannot initialize video for system cursor: %s", SDL_GetError());
+                        return;
+                    }
+                    SDL_SystemCursor id{SDL_SYSTEM_CURSOR_DEFAULT};
+                    switch (idc)
+                    {
+                    case 32513:
+                        id = SDL_SYSTEM_CURSOR_TEXT;
+                        break;
+                    case 32514:
+                        id = SDL_SYSTEM_CURSOR_WAIT;
+                        break;
+                    case 32515:
+                        id = SDL_SYSTEM_CURSOR_CROSSHAIR;
+                        break;
+                    case 32642:
+                        id = SDL_SYSTEM_CURSOR_NWSE_RESIZE;
+                        break;
+                    case 32643:
+                        id = SDL_SYSTEM_CURSOR_NESW_RESIZE;
+                        break;
+                    case 32644:
+                        id = SDL_SYSTEM_CURSOR_EW_RESIZE;
+                        break;
+                    case 32645:
+                        id = SDL_SYSTEM_CURSOR_NS_RESIZE;
+                        break;
+                    case 32646:
+                        id = SDL_SYSTEM_CURSOR_MOVE;
+                        break;
+                    case 32648:
+                        id = SDL_SYSTEM_CURSOR_NOT_ALLOWED;
+                        break;
+                    case 32649:
+                        id = SDL_SYSTEM_CURSOR_POINTER;
+                        break;
+                    case 32650:
+                        id = SDL_SYSTEM_CURSOR_PROGRESS;
+                        break;
+                    default:
+                        break;
+                    }
+                    const auto [entry, inserted] = this->system_cursors_.try_emplace(id);
+                    if (inserted)
+                    {
+                        entry->second.reset(SDL_CreateSystemCursor(id));
+                        if (!entry->second)
+                        {
+                            SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Cannot create system cursor: %s", SDL_GetError());
+                        }
+                    }
+                    if (auto* cursor = entry->second.get(); cursor)
+                    {
+                        if (SDL_SetCursor(cursor))
+                        {
+                            return;
+                        }
+                        SDL_LogWarn(SDL_LOG_CATEGORY_VIDEO, "Cannot select system cursor: %s", SDL_GetError());
+                    }
+                    if (auto* fallback = SDL_GetDefaultCursor())
+                    {
+                        SDL_SetCursor(fallback);
+                    }
+                });
+            }
+
             void set_cursor_visibility(const bool visible) override
             {
                 this->queue_or_run([visible] {
@@ -1413,6 +1518,28 @@ namespace sogen
             }
 
           private:
+            struct cursor_deleter
+            {
+                void operator()(SDL_Cursor* cursor) const
+                {
+                    SDL_DestroyCursor(cursor);
+                }
+            };
+
+            void clear_system_cursors()
+            {
+                if (this->system_cursors_.empty())
+                {
+                    return;
+                }
+                assert(this->ui_thread_known_ && this->ui_thread_id_ == std::this_thread::get_id());
+                if (auto* cursor = SDL_GetDefaultCursor())
+                {
+                    SDL_SetCursor(cursor);
+                }
+                this->system_cursors_.clear();
+            }
+
             // SDL windows are thread-affine. Operations from vCPU workers are queued to the UI thread;
             // the synchronous variant is reserved for Vulkan setup that must return a native handle.
             void queue_or_run(std::function<void()> task)
@@ -1854,6 +1981,34 @@ namespace sogen
                 }
             }
 
+            // The host may put a window elsewhere than asked while placing or showing it (macOS keeps a titled window
+            // below the menu bar) and reports that as a move. Windows would have kept the guest's position, so that
+            // move is the answer to the guest's own request, not a user or window manager move to follow.
+            template <typename Placement>
+            static void place_host_window(SDL_Window* window, std::optional<std::pair<int, int>>& placed_position,
+                                          const Placement& placement)
+            {
+                const auto before = host_window_position(window);
+                placement();
+                if (const auto after = host_window_position(window); after != before)
+                {
+                    placed_position = after;
+                }
+            }
+
+            static std::pair<int, int> host_window_position(SDL_Window* window)
+            {
+                std::pair<int, int> position{};
+                SDL_GetWindowPosition(window, &position.first, &position.second);
+                return position;
+            }
+
+            bool consume_own_placement(const hwnd window, const int x, const int y)
+            {
+                auto* state = this->resolve_window(window);
+                return state && std::exchange(state->placed_position, std::nullopt) == std::pair{x, y};
+            }
+
             // The user moved the host window, so the frame origin this backend converts screen coordinates against has
             // to follow, without calling SDL_SetWindowPosition again. A screen-space cursor clip is re-applied so it
             // stays where it is on screen instead of travelling with the window.
@@ -1951,6 +2106,8 @@ namespace sogen
                 SDL_SetWindowRelativeMouseMode(target, this->cursor_capture_.relative);
             }
 
+            std::map<SDL_SystemCursor, std::unique_ptr<SDL_Cursor, cursor_deleter>> system_cursors_{};
+            std::atomic<uint64_t> cursor_generation_{};
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
             std::array<std::chrono::steady_clock::time_point, SDL_SCANCODE_COUNT> key_down_since_{};
             std::vector<pending_key_release> pending_key_releases_{};

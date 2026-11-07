@@ -47,6 +47,74 @@ namespace sogen
                 return name;
             }
 
+            // Windows copies only whole characters and zeroes an odd trailing byte instead of writing half a character.
+            void write_truncated_name(const syscall_context& c, const uint64_t address, const std::u16string_view name,
+                                      const size_t available_size)
+            {
+                const auto whole_characters_size = available_size & ~size_t{1};
+                if (whole_characters_size > 0)
+                {
+                    c.emu.write_memory(address, name.data(), whole_characters_size);
+                }
+
+                if (available_size != whole_characters_size)
+                {
+                    c.emu.set_memory(address + whole_characters_size, 0, 1);
+                }
+            }
+
+            NTSTATUS write_key_node_information(const syscall_context& c, const uint64_t key_information, const ULONG length,
+                                                const emulator_object<ULONG> result_length, const std::u16string_view name,
+                                                const std::span<const std::byte> class_name)
+            {
+                constexpr auto header_size = offsetof(KEY_NODE_INFORMATION, Name);
+                const auto name_size = name.size() * sizeof(char16_t);
+                const auto name_end = header_size + name_size;
+                const auto class_offset = static_cast<size_t>(align_up(name_end, sizeof(ULONG)));
+                const auto required_size = class_name.empty() ? name_end : class_offset + class_name.size();
+                result_length.write(static_cast<ULONG>(required_size));
+
+                if (header_size > length)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                KEY_NODE_INFORMATION info{};
+                info.ClassOffset = class_name.empty() ? 0xFFFFFFFFu : static_cast<ULONG>(class_offset);
+                info.ClassLength = static_cast<ULONG>(class_name.size());
+                info.NameLength = static_cast<ULONG>(name_size);
+                c.emu.write_memory(key_information, &info, header_size);
+
+                if (name_end > length)
+                {
+                    write_truncated_name(c, key_information + header_size, name, length - header_size);
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                if (!name.empty())
+                {
+                    c.emu.write_memory(key_information + header_size, name.data(), name_size);
+                }
+
+                if (class_name.empty())
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                if (const auto padding_size = std::min<size_t>(class_offset, length) - name_end; padding_size > 0)
+                {
+                    c.emu.set_memory(key_information + name_end, 0, padding_size);
+                }
+
+                if (length > class_offset)
+                {
+                    c.emu.write_memory(key_information + class_offset, class_name.data(),
+                                       std::min<size_t>(class_name.size(), length - class_offset));
+                }
+
+                return required_size > length ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;
+            }
+
             NTSTATUS validate_key(const syscall_context& c, const registry_key* key)
             {
                 if (!key)
@@ -106,6 +174,13 @@ namespace sogen
         NTSTATUS handle_NtQueryKey(const syscall_context& c, const handle key_handle, const KEY_INFORMATION_CLASS key_information_class,
                                    const uint64_t key_information, const ULONG length, const emulator_object<ULONG> result_length)
         {
+            // Windows refuses an out-of-range key or value query class with STATUS_INVALID_PARAMETER, before the handle.
+            if (static_cast<uint32_t>(key_information_class) >= MaxKeyInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtQueryKey info class: 0x%X\n", static_cast<uint32_t>(key_information_class));
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto* key = c.proc.registry_keys.get(key_handle);
             if (!key)
             {
@@ -170,6 +245,12 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (key_information_class == KeyNodeInformation)
+            {
+                return write_key_node_information(c, key_information, length, result_length, get_key_name(c.win_emu, *key),
+                                                  c.win_emu.registry.get_class_name(*key));
+            }
+
             if (key_information_class == KeyNameInformation)
             {
                 auto key_name = (key->hive.get() / key->path.get()).u16string();
@@ -203,25 +284,36 @@ namespace sogen
 
             if (key_information_class == KeyFullInformation)
             {
-                constexpr auto required_size = offsetof(KEY_FULL_INFORMATION, Class);
+                constexpr auto header_size = offsetof(KEY_FULL_INFORMATION, Class);
+                const auto class_name = c.win_emu.registry.get_class_name(*key);
+                const auto required_size = header_size + class_name.size();
                 result_length.write(static_cast<ULONG>(required_size));
 
-                if (required_size > length)
+                if (header_size > length)
                 {
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
                 KEY_FULL_INFORMATION info{};
                 const auto [max_sub_key_name_length, max_value_name_length, max_value_data_length] = get_maximum_lengths();
-                info.ClassOffset = 0xFFFFFFFFu;
+                info.ClassOffset = class_name.empty() ? 0xFFFFFFFFu : static_cast<ULONG>(header_size);
+                info.ClassLength = static_cast<ULONG>(class_name.size());
+                info.MaxClassLength = c.win_emu.registry.get_max_sub_key_class_length(*key);
                 info.SubKeys = static_cast<ULONG>(c.win_emu.registry.get_sub_key_count(*key));
                 info.Values = static_cast<ULONG>(c.win_emu.registry.get_value_count(*key));
                 info.MaxNameLength = max_sub_key_name_length;
                 info.MaxValueNameLength = max_value_name_length;
                 info.MaxValueDataLength = max_value_data_length;
 
-                c.emu.write_memory(key_information, &info, required_size);
-                return STATUS_SUCCESS;
+                c.emu.write_memory(key_information, &info, header_size);
+
+                const auto written_class_size = std::min(class_name.size(), static_cast<size_t>(length) - header_size);
+                if (written_class_size > 0)
+                {
+                    c.emu.write_memory(key_information + header_size, class_name.data(), written_class_size);
+                }
+
+                return required_size > length ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;
             }
 
             if (key_information_class == KeyCachedInformation)
@@ -284,6 +376,12 @@ namespace sogen
                                         const KEY_VALUE_INFORMATION_CLASS key_value_information_class, const uint64_t key_value_information,
                                         const ULONG length, const emulator_object<ULONG> result_length)
         {
+            if (static_cast<uint32_t>(key_value_information_class) >= MaxKeyValueInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtQueryValueKey info class: 0x%X\n", static_cast<uint32_t>(key_value_information_class));
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto* key = c.proc.registry_keys.get(key_handle);
             if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
@@ -769,6 +867,12 @@ namespace sogen
                                             const KEY_SET_INFORMATION_CLASS key_information_class, const uint64_t key_information,
                                             const ULONG length)
         {
+            if (static_cast<uint32_t>(key_information_class) >= MaxKeySetInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtSetInformationKey info class: 0x%X\n", static_cast<uint32_t>(key_information_class));
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             auto* key = c.proc.registry_keys.get(key_handle);
             if (!key)
             {
@@ -799,6 +903,12 @@ namespace sogen
                                        const KEY_INFORMATION_CLASS key_information_class, const uint64_t key_information,
                                        const ULONG length, const emulator_object<ULONG> result_length)
         {
+            if (static_cast<uint32_t>(key_information_class) >= MaxKeyInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtEnumerateKey info class: 0x%X\n", static_cast<uint32_t>(key_information_class));
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto* key = c.proc.registry_keys.get(key_handle);
             if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {
@@ -842,33 +952,9 @@ namespace sogen
 
             if (key_information_class == KeyNodeInformation)
             {
-                constexpr auto base_size = offsetof(KEY_NODE_INFORMATION, Name);
-                const auto name_size = subkey_name_u16.size() * 2;
-                constexpr auto class_size = 0; // TODO: Class Name
-                const auto required_size = base_size + name_size + class_size;
-                result_length.write(static_cast<ULONG>(required_size));
-
-                KEY_NODE_INFORMATION info{};
-                info.LastWriteTime.QuadPart = 0;
-                info.TitleIndex = 0;
-                info.ClassOffset = static_cast<ULONG>(base_size + name_size);
-                info.ClassLength = static_cast<ULONG>(class_size);
-                info.NameLength = static_cast<ULONG>(name_size);
-
-                if (base_size <= length)
-                {
-                    c.emu.write_memory(key_information, &info, base_size);
-                }
-
-                if (required_size > length)
-                {
-                    return STATUS_BUFFER_OVERFLOW;
-                }
-
-                c.emu.write_memory(key_information + base_size, subkey_name_u16.data(), name_size);
-                // TODO: Write Class Name
-
-                return STATUS_SUCCESS;
+                const auto sub_key = c.win_emu.registry.get_key(utils::path_key{key->hive.get() / key->path.get() / subkey_name_u16});
+                const auto class_name = sub_key ? c.win_emu.registry.get_class_name(*sub_key) : std::vector<std::byte>{};
+                return write_key_node_information(c, key_information, length, result_length, subkey_name_u16, class_name);
             }
 
             c.win_emu.log.warn("Unsupported registry enumeration class: %X\n", key_information_class);
@@ -880,6 +966,13 @@ namespace sogen
                                             const uint64_t key_value_information, const ULONG length,
                                             const emulator_object<ULONG> result_length)
         {
+            if (static_cast<uint32_t>(key_value_information_class) >= MaxKeyValueInfoClass)
+            {
+                c.win_emu.log.error("Unsupported NtEnumerateValueKey info class: 0x%X\n",
+                                    static_cast<uint32_t>(key_value_information_class));
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto* key = c.proc.registry_keys.get(key_handle);
             if (const auto status = validate_key(c, key); status != STATUS_SUCCESS)
             {

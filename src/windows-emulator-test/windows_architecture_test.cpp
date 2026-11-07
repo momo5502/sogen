@@ -372,6 +372,44 @@ namespace sogen::test
         }
     }
 
+    TYPED_TEST(WindowsArchitectureTest, AlternatingModuleLookupsFindEachModuleAndNotOneUnmapped)
+    {
+        const auto image = make_test_image<uint64_t>(TypeParam::pe_machine);
+        constexpr std::array paths{"C:\\lookup0.dll", "C:\\lookup1.dll", "C:\\lookup2.dll",
+                                   "C:\\lookup3.dll", "C:\\lookup4.dll", "C:\\lookup5.dll"};
+        std::vector<uint64_t> bases{};
+        for (const auto* path : paths)
+        {
+            const auto base = image_base + bases.size() * 0x10000;
+            ASSERT_TRUE(this->memory_.allocate_memory(base, image.size(), memory_permission::read_write));
+            this->memory_.write_memory(base, image.data(), image.size());
+            const auto* mod = this->modules_.map_memory_module(base, image.size(), windows_path{path}, this->log_);
+            ASSERT_NE(mod, nullptr);
+            ASSERT_EQ(mod->image_base, base);
+            bases.push_back(base);
+        }
+
+        for (int round = 0; round < 3; ++round)
+        {
+            for (const auto base : bases)
+            {
+                const auto* found = this->modules_.find_by_address(base + 0x1234);
+                ASSERT_NE(found, nullptr);
+                EXPECT_EQ(found->image_base, base);
+                EXPECT_EQ(this->modules_.find_by_address(base + 0x8000), nullptr);
+            }
+        }
+
+        ASSERT_TRUE(this->modules_.unmap(bases[2]));
+        EXPECT_EQ(this->modules_.find_by_address(bases[2] + 0x1234), nullptr);
+        for (const auto base : {bases[1], bases[3], bases[5]})
+        {
+            const auto* found = this->modules_.find_by_address(base + 0x1234);
+            ASSERT_NE(found, nullptr);
+            EXPECT_EQ(found->image_base, base);
+        }
+    }
+
     TYPED_TEST(WindowsArchitectureTest, ModuleSnapshotsRejectArchitectureMismatchBeforeMutation)
     {
         utils::buffer_serializer serializer{};
@@ -457,7 +495,8 @@ namespace sogen::test
         const auto teb = thread.teb64->read();
         EXPECT_EQ(teb.NtTib.Self, thread.teb64->value());
         EXPECT_EQ(teb.NtTib.StackBase, thread.stack_base + thread.stack_size);
-        EXPECT_EQ(teb.NtTib.StackLimit, thread.stack_base);
+        EXPECT_EQ(teb.DeallocationStack, thread.stack_base);
+        EXPECT_EQ(teb.NtTib.StackLimit, teb.NtTib.StackBase - 0x1000);
         EXPECT_EQ(teb.ProcessEnvironmentBlock, this->process_.peb64.value());
         thread.setup_if_necessary(*this->machine_, this->process_);
         ASSERT_TRUE(thread.setup_done);

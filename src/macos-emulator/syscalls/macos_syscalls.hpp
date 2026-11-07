@@ -41,6 +41,7 @@ namespace sogen
     void sys_close(const macos_syscall_context& c);
     void sys_dup(const macos_syscall_context& c);
     void sys_dup2(const macos_syscall_context& c);
+    void sys_pipe(const macos_syscall_context& c);
     void sys_getdtablesize(const macos_syscall_context& c);
     void sys_fcntl(const macos_syscall_context& c);
     void sys_fsgetpath(const macos_syscall_context& c);

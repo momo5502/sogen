@@ -5,6 +5,8 @@
 #include "pseudo_terminal.hpp"
 
 #include <frame_pacer.hpp>
+#include <display_modes.hpp>
+#include <filesystem/directory_mount.hpp>
 #include <filesystem/document_broker.hpp>
 
 #include <jni.h>
@@ -46,11 +48,14 @@ namespace sogen::android
         std::string application{};
         std::vector<std::string> arguments{};
         std::vector<std::pair<std::string, std::string>> environment{};
-        std::vector<std::pair<std::string, std::filesystem::path>> path_mappings{};
+        // Where the game's changes to the emulation root are kept. The root itself is never written.
+        std::filesystem::path root_layer{};
+        std::vector<directory_mount> directory_mounts{};
         std::vector<document_tree> document_trees{};
         std::string working_directory{};
         std::string backend{};
         bool live_network{};
+        std::optional<display_mode> max_display_mode{};
         std::filesystem::path sandbox_executable{};
         vulkan_driver vulkan{};
         // Where a suspend without a destination saves the process.

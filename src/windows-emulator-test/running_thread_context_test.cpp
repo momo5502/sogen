@@ -8,6 +8,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <functional>
 #include <future>
 #include <map>
 #include <memory>
@@ -37,6 +38,7 @@ namespace sogen::test
         constexpr uint64_t second_rax = 0x2001;
         constexpr uint64_t written_rax = 0x3001;
         constexpr uint64_t untouched_rax = 0x4001;
+        constexpr uint64_t live_rbx = 0x7001;
         constexpr uint64_t thread_ip = 0x10000;
         constexpr uint32_t reserved_eax = 0x5001;
         constexpr uint32_t written_eax = 0x6001;
@@ -142,6 +144,9 @@ namespace sogen::test
         class second_vcpu final : public register_file_cpu<x86_64_cpu>
         {
           public:
+            // Runs at the start of every register save of this vCPU.
+            std::function<void()> on_save{};
+
             explicit second_vcpu(memory_interface& memory)
                 : memory_(&memory)
             {
@@ -150,6 +155,16 @@ namespace sogen::test
             size_t index() const override
             {
                 return 1;
+            }
+
+            std::vector<std::byte> save_registers() const override
+            {
+                if (this->on_save)
+                {
+                    this->on_save();
+                }
+
+                return register_file_cpu::save_registers();
             }
 
             memory_interface& memory() override
@@ -389,6 +404,9 @@ namespace sogen::test
           protected:
             void SetUp() override
             {
+#if defined(OS_EMSCRIPTEN) && !defined(__EMSCRIPTEN_PTHREADS__)
+                GTEST_SKIP() << "Requires host threads";
+#endif
                 auto cpu = std::make_unique<two_vcpu_machine>();
                 this->machine = cpu.get();
                 emulator_interfaces interfaces{};
@@ -869,6 +887,29 @@ namespace sogen::test
         EXPECT_EQ(nullptr, this->emu->synchronize([&] { return vcpu.active_thread; }));
     }
 
+    TEST_F(RunningThreadContextTest, ExitedThreadKeptByItsHandleThroughAPassIsDeletedOnceClosedAndUnloaded)
+    {
+        this->emu->dispatch_on_cpu(this->emu->vcpu(0).cpu,
+                                   [&] { syscalls::handle_NtTerminateThread(this->context(0), this->second, STATUS_SUCCESS); });
+        auto first_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(this->emu->vcpu(0)); });
+        ASSERT_EQ(std::future_status::ready, first_vcpu.wait_for(std::chrono::seconds(10)));
+        ASSERT_TRUE(first_vcpu.get());
+        ASSERT_TRUE(this->thread_exists(this->second));
+
+        const auto exists_after_close = this->emu->dispatch_on_cpu(this->emu->vcpu(0).cpu, [&] {
+            syscalls::handle_NtClose(this->context(0), this->second);
+            return this->emu->process.threads.get(this->second) != nullptr;
+        });
+        ASSERT_TRUE(exists_after_close);
+
+        auto& vcpu = this->emu->vcpu(1);
+        auto second_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
+        const auto _ = utils::finally([&] { this->emu->stop(); });
+
+        EXPECT_TRUE(this->wait_for_deletion(this->second));
+        EXPECT_EQ(nullptr, this->emu->synchronize([&] { return vcpu.active_thread; }));
+    }
+
     TEST_F(RunningThreadContextTest, CallerTerminatedAndClosedDuringItsAccessIsDeletedOnlyAfterIt)
     {
         const auto buffer = this->context_buffer(0, CONTEXT64_ALL);
@@ -911,6 +952,76 @@ namespace sogen::test
         const auto _ = utils::finally([&] { this->emu->stop(); });
 
         EXPECT_TRUE(this->wait_for_deletion(transferred));
+    }
+
+    TEST_F(RunningThreadContextTest, IdleVcpuSavesTheThreadItDropsWithTheKernelLockReleased)
+    {
+        auto& vcpu = this->emu->vcpu(1);
+        auto& dropped = this->thread(this->second);
+        this->emu->synchronize([&] { dropped.waiting_for_alert = true; });
+        std::atomic_bool saving{false};
+        std::atomic_bool released{false};
+        this->machine->second().on_save = [&] {
+            saving = true;
+            this->wait_until(released);
+        };
+
+        auto second_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
+        this->wait_until(saving);
+        auto observed = std::async(std::launch::async, [&] {
+            return this->emu->synchronize([&] { return dropped.registers_in_transit && !vcpu.active_thread; });
+        });
+        const auto _ = utils::finally([&] {
+            released = true;
+            this->emu->stop();
+        });
+
+        ASSERT_EQ(std::future_status::ready, observed.wait_for(std::chrono::seconds(2)));
+        EXPECT_TRUE(observed.get());
+        EXPECT_FALSE(this->emu->activate_thread(this->emu->vcpu(0), 12));
+
+        released = true;
+        while (this->emu->synchronize([&] { return dropped.registers_in_transit; }))
+        {
+            std::this_thread::yield();
+        }
+
+        EXPECT_EQ(second_rax, this->saved_register(this->second, x86_register::rax));
+        this->emu->stop();
+        EXPECT_FALSE(second_vcpu.get());
+    }
+
+    TEST_F(RunningThreadContextTest, ThreadReadiedWhileItsIdleVcpuSavesItRunsAgain)
+    {
+        auto& vcpu = this->emu->vcpu(1);
+        auto& dropped = this->thread(this->second);
+        this->emu->synchronize([&] {
+            dropped.waiting_for_alert = true;
+            vcpu.x64_cpu().reg(x86_register::rbx, live_rbx);
+        });
+        std::atomic_bool saving{false};
+        std::atomic_bool released{false};
+        this->machine->second().on_save = [&] {
+            saving = true;
+            this->wait_until(released);
+        };
+
+        auto second_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
+        this->wait_until(saving);
+        auto alert = std::async(std::launch::async, [&] { this->emu->synchronize([&] { dropped.alerted = true; }); });
+        const auto _ = utils::finally([&] {
+            released = true;
+            this->emu->stop();
+        });
+
+        ASSERT_EQ(std::future_status::ready, alert.wait_for(std::chrono::seconds(2)));
+        released = true;
+
+        ASSERT_EQ(std::future_status::ready, second_vcpu.wait_for(std::chrono::seconds(2)));
+        EXPECT_TRUE(second_vcpu.get());
+        EXPECT_EQ(&dropped, vcpu.active_thread);
+        EXPECT_EQ(static_cast<uint64_t>(STATUS_ALERTED), this->rax(1));
+        EXPECT_EQ(live_rbx, vcpu.x64_cpu().reg(x86_register::rbx));
     }
 
     TEST_F(RunningThreadContextTest, GetDoesNotWaitForAThreadInAnUnlockedHostWait)
@@ -1125,6 +1236,86 @@ namespace sogen::test
         auto first_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
         const auto _ = utils::finally([&] { this->emu->stop(); });
         EXPECT_TRUE(this->wait_for_deletion(this->first));
+    }
+
+    // A snapshot keeps one running thread, vCPU 0's. Taking it puts the thread vCPU 1 runs back into its thread object with
+    // its live registers; restored, vCPU 1 starts idle and picks that thread up where it was.
+    TEST_F(RunningThreadContextTest, SnapshotKeepsTheLiveRegistersOfTheThreadOnEveryVcpu)
+    {
+        utils::buffer_serializer refused{};
+        EXPECT_THROW(this->emu->serialize(refused), std::runtime_error);
+
+        utils::buffer_serializer state{};
+        this->emu->synchronize([&] {
+            this->emu->prepare_serialization();
+            this->emu->serialize(state);
+        });
+        EXPECT_EQ(nullptr, this->emu->vcpu(1).active_thread);
+
+        utils::buffer_deserializer deserializer{state};
+        this->emu->synchronize([&] { this->emu->deserialize(deserializer); });
+        EXPECT_EQ(&this->thread(this->first), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(first_rax, this->rax(0));
+        EXPECT_EQ(nullptr, this->emu->vcpu(1).active_thread);
+
+        ASSERT_TRUE(this->emu->activate_thread(this->emu->vcpu(1), 12));
+        EXPECT_EQ(second_rax, this->rax(1));
+        EXPECT_EQ(thread_ip, this->rip(1));
+    }
+
+    // vCPU 0 can be idle when a process with several vCPUs stops. The snapshot then keeps the thread vCPU 1 was running
+    // as vCPU 0's, with its live registers, so the restored process has a running thread to continue.
+    TEST_F(RunningThreadContextTest, SnapshotOfAnIdleFirstVcpuKeepsTheThreadAnotherVcpuRan)
+    {
+        utils::buffer_serializer state{};
+        this->emu->synchronize([&] {
+            auto& vcpu = this->emu->vcpu(0);
+            vcpu.active_thread->save(vcpu.cpu); // what a vCPU does when it drops its thread for lack of work
+            vcpu.set_active_thread(nullptr);
+            vcpu.x64_cpu().reg(x86_register::rax, stale_rax);
+
+            this->emu->prepare_serialization();
+            this->emu->serialize(state);
+        });
+        EXPECT_EQ(&this->thread(this->second), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(second_rax, this->rax(0));
+        EXPECT_EQ(nullptr, this->emu->vcpu(1).active_thread);
+
+        utils::buffer_deserializer deserializer{state};
+        this->emu->synchronize([&] { this->emu->deserialize(deserializer); });
+        EXPECT_EQ(&this->thread(this->second), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(second_rax, this->rax(0));
+        EXPECT_EQ(thread_ip, this->rip(0));
+
+        ASSERT_TRUE(this->emu->activate_thread(this->emu->vcpu(1), 8));
+        EXPECT_EQ(first_rax, this->rax(1));
+    }
+
+    // With every vCPU idle, vCPU 0 keeps the first thread that has not ended, with its saved registers; a state saved
+    // without a running thread gets that thread when it is restored.
+    TEST_F(RunningThreadContextTest, SnapshotOfIdleVcpusKeepsTheFirstLiveThread)
+    {
+        utils::buffer_serializer state{};
+        this->emu->synchronize([&] {
+            for (const size_t index : {size_t{0}, size_t{1}})
+            {
+                auto& vcpu = this->emu->vcpu(index);
+                vcpu.active_thread->save(vcpu.cpu);
+                vcpu.set_active_thread(nullptr);
+                vcpu.x64_cpu().reg(x86_register::rax, stale_rax);
+            }
+
+            this->emu->serialize(state);
+            this->emu->prepare_serialization();
+        });
+        EXPECT_EQ(&this->thread(this->first), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(first_rax, this->rax(0));
+        EXPECT_EQ(nullptr, this->emu->vcpu(1).active_thread);
+
+        utils::buffer_deserializer deserializer{state};
+        this->emu->synchronize([&] { this->emu->deserialize(deserializer); });
+        EXPECT_EQ(&this->thread(this->first), this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(first_rax, this->rax(0));
     }
 
     TEST_F(RunningThreadContextTest, FailedReloadAfterAnUnlockedHostCallReachesTheCaller)

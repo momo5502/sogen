@@ -13,6 +13,9 @@ namespace sogen::syscalls
     BOOL handle_NtUserSetProcessWindowStation(const syscall_context& c, handle station);
     BOOL handle_NtUserCloseWindowStation(const syscall_context& c, handle station);
     BOOL handle_NtUserCloseDesktop(const syscall_context& c, handle desktop_handle);
+    hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, DWORD flags, BOOL inherit, ACCESS_MASK desired_access);
+    hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, ULONG thread_id);
+    emulator_pointer handle_NtUserMapDesktopObject(const syscall_context& c, handle handle);
     BOOL handle_NtUserGetObjectInformation(const syscall_context& c, handle object, int index, uint64_t information, DWORD length,
                                            emulator_object<DWORD> needed);
 }
@@ -40,6 +43,8 @@ namespace sogen::test
                     emulator_callbacks{}, std::move(interfaces));
 
                 this->storage = this->emu->memory.allocate_memory(0x2000, memory_permission::read_write);
+                const auto base = this->emu->memory.allocate_memory(0x10000, memory_permission::read_write);
+                this->emu->process.base_allocator = emulator_allocator{this->emu->memory, base, 0x10000};
                 const auto thread =
                     this->emu->process.threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true});
                 this->emu->vcpu(0).active_thread = this->emu->process.threads.get(thread);
@@ -87,18 +92,36 @@ namespace sogen::test
                 return this->emu->vcpu(0).active_thread->teb64->read().LastErrorValue;
             }
 
-            DWORD object_flags(const uint64_t object)
+            struct user_object_flags
             {
-                struct user_object_flags
-                {
-                    BOOL inherit;
-                    BOOL reserved;
-                    DWORD flags;
-                };
+                BOOL inherit;
+                BOOL reserved;
+                DWORD flags;
+            };
 
+            user_object_flags object_flags(const uint64_t object)
+            {
                 EXPECT_EQ(TRUE, syscalls::handle_NtUserGetObjectInformation(this->context(), make_handle(object), 1, this->storage + 0x1800,
                                                                             sizeof(user_object_flags), {this->emu->memory}));
-                return this->emu->memory.read_memory<user_object_flags>(this->storage + 0x1800).flags;
+                return this->emu->memory.read_memory<user_object_flags>(this->storage + 0x1800);
+            }
+
+            BOOL receives_input(const uint64_t desktop_object)
+            {
+                constexpr int uoi_io = 6;
+                EXPECT_EQ(TRUE, syscalls::handle_NtUserGetObjectInformation(this->context(), make_handle(desktop_object), uoi_io,
+                                                                            this->storage + 0x1800, sizeof(BOOL), {this->emu->memory}));
+                return this->emu->memory.read_memory<BOOL>(this->storage + 0x1800);
+            }
+
+            std::u16string object_name(const uint64_t object)
+            {
+                constexpr int uoi_name = 2;
+                std::array<char16_t, 64> name{};
+                EXPECT_EQ(TRUE, syscalls::handle_NtUserGetObjectInformation(this->context(), make_handle(object), uoi_name,
+                                                                            this->storage + 0x1800, sizeof(name), {this->emu->memory}));
+                this->emu->memory.read_memory(this->storage + 0x1800, name.data(), sizeof(name));
+                return name.data();
             }
 
             std::unique_ptr<windows_emulator> emu{};
@@ -191,10 +214,39 @@ namespace sogen::test
 
     TEST_F(WindowStationTest, OnlyTheInteractiveStationIsVisible)
     {
-        EXPECT_EQ(wsf_visible, this->object_flags(interactive_window_station));
+        EXPECT_EQ(wsf_visible, this->object_flags(interactive_window_station).flags);
 
         const auto created = this->create_station(u"Sandbox");
         ASSERT_NE(0u, created);
-        EXPECT_EQ(0u, this->object_flags(created));
+        EXPECT_EQ(0u, this->object_flags(created).flags);
+    }
+
+    // Measured on Windows 11: every flag and access combination opens a new handle to the "Default" desktop, inheritable as
+    // requested, which closes without affecting the thread's desktop, whose own handle cannot be closed. UOI_IO is TRUE for a
+    // handle to the desktop that receives input.
+    TEST_F(WindowStationTest, OpeningTheInputDesktopGivesANewHandleToTheDefaultDesktop)
+    {
+        constexpr ACCESS_MASK desktop_switchdesktop = 0x100;
+        const auto thread_desktop = syscalls::handle_NtUserGetThreadDesktop(this->context(), 0);
+
+        const auto first = syscalls::handle_NtUserOpenInputDesktop(this->context(), 0, FALSE, desktop_switchdesktop);
+        const auto second = syscalls::handle_NtUserOpenInputDesktop(this->context(), 1, TRUE, GENERIC_ALL);
+        ASSERT_NE(0u, first);
+        ASSERT_NE(0u, second);
+        EXPECT_NE(thread_desktop, first);
+        EXPECT_NE(first, second);
+        EXPECT_EQ(u"Default", this->object_name(first));
+        EXPECT_EQ(FALSE, this->object_flags(first).inherit);
+        EXPECT_EQ(TRUE, this->object_flags(second).inherit);
+        EXPECT_EQ(TRUE, this->receives_input(first));
+
+        const auto mapped_through_opened_handle = syscalls::handle_NtUserMapDesktopObject(this->context(), make_handle(first));
+        EXPECT_NE(0u, mapped_through_opened_handle);
+        EXPECT_EQ(mapped_through_opened_handle, syscalls::handle_NtUserMapDesktopObject(this->context(), make_handle(thread_desktop)));
+
+        EXPECT_EQ(TRUE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(first)));
+        EXPECT_EQ(TRUE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(second)));
+        EXPECT_EQ(FALSE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(thread_desktop)));
+        EXPECT_EQ(thread_desktop, syscalls::handle_NtUserGetThreadDesktop(this->context(), 0));
     }
 }

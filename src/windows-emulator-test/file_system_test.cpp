@@ -170,6 +170,9 @@ namespace sogen::test
         }
 
         EXPECT_EQ((std::map<std::u16string, bool>{{u"mnt", true}, {u"windows", false}, {u"x.txt", false}}), entries);
+        auto names = fs.list_directory_names(windows_path{'c', {}});
+        std::ranges::sort(names);
+        EXPECT_EQ((std::vector<std::u16string>{u"mnt", u"windows", u"x.txt"}), names);
     }
 
     TEST_F(FileSystemTest, RenameAcrossMountsCopiesFile)
@@ -243,6 +246,40 @@ namespace sogen::test
         EXPECT_TRUE(fs.open(writable, u"wb").file);
         EXPECT_EQ(STATUS_SUCCESS, fs.create_directory(windows_path{'c', {u"mnt", u"dir"}}));
         EXPECT_EQ(STATUS_SUCCESS, fs.remove(writable));
+    }
+
+    TEST_F(FileSystemTest, CopyOnWriteRootKeepsChangesInItsLayerAcrossInstances)
+    {
+        const auto layer = this->root / "layer";
+        write_host_file(this->root / "c" / "deleted.txt", "deleted");
+
+        const windows_path modified{'c', {u"x.txt"}};
+        const windows_path deleted{'c', {u"deleted.txt"}};
+        constexpr std::string_view contents = "changed";
+
+        {
+            file_system fs{this->root, filesystem_mode::copy_on_write, layer};
+            guest_file file{fs, modified, u"wb", fs.open(modified, u"wb").file};
+            ASSERT_TRUE(file);
+            ASSERT_EQ(contents.size(), file.write(std::as_bytes(std::span(contents))));
+            ASSERT_TRUE(file.flush());
+            ASSERT_EQ(STATUS_SUCCESS, fs.remove(deleted));
+        }
+
+        file_system fs{this->root, filesystem_mode::copy_on_write, layer};
+        EXPECT_EQ(contents, read_guest_file(guest_file{fs, modified, u"rb", fs.open_read(modified).file}, 16));
+        EXPECT_FALSE(fs.stat(deleted));
+
+        EXPECT_EQ("root", read_host_file(this->root / "c" / "x.txt"));
+        EXPECT_EQ("deleted", read_host_file(this->root / "c" / "deleted.txt"));
+        EXPECT_EQ(contents, read_host_file(layer / "c" / "upper" / "x.txt"));
+    }
+
+    TEST_F(FileSystemTest, RootLayerRequiresCopyOnWriteRoot)
+    {
+        EXPECT_THROW(file_system(this->root, filesystem_mode::copy_on_write), std::runtime_error);
+        EXPECT_THROW(file_system({}, filesystem_mode::copy_on_write, this->root / "layer"), std::runtime_error);
+        EXPECT_THROW(file_system(this->root, filesystem_mode::read_write, this->root / "layer"), std::runtime_error);
     }
 
     TEST_F(FileSystemTest, CreatedEntriesKeepTheGuestSpelling)
@@ -336,6 +373,40 @@ namespace sogen::test
         EXPECT_EQ(4, restored.tell());
         EXPECT_EQ("shot", read_guest_file(restored, 16));
         EXPECT_EQ(contents, read_host_file(this->root / "c" / "new.bin"));
+    }
+
+    TEST_F(FileSystemTest, SnapshotRestoreKeepsDeletePendingAndItsPosixOwner)
+    {
+        file_system saved_fs{this->root, filesystem_mode::read_write};
+        file_system restored_fs{this->root, filesystem_mode::read_write};
+        const windows_path path{'c', {u"x.txt"}};
+
+        utils::buffer_serializer serializer{};
+
+        {
+            guest_file setter{saved_fs, path, u"rb", saved_fs.open(path, u"rb").file};
+            const guest_file other{saved_fs, path, u"rb", saved_fs.open(path, u"rb").file};
+            setter.mark_delete_pending(true);
+
+            serializer.write(setter);
+            serializer.write(other);
+            setter.cancel_delete();
+        }
+
+        utils::buffer_deserializer deserializer{serializer};
+        deserializer.register_factory<file_system_wrapper>([&] { return file_system_wrapper{restored_fs}; });
+
+        guest_file restored_setter{};
+        guest_file restored_other{};
+        deserializer.read(restored_setter);
+        deserializer.read(restored_other);
+
+        EXPECT_TRUE(restored_other.is_delete_pending());
+        EXPECT_TRUE(restored_fs.is_delete_pending(path));
+
+        restored_setter = {};
+        EXPECT_FALSE(std::filesystem::exists(this->root / "c" / "x.txt"));
+        EXPECT_FALSE(restored_fs.is_delete_pending(path));
     }
 
     TEST_F(FileSystemTest, SnapshotRestoreRequiresWritableMountForPendingWrites)

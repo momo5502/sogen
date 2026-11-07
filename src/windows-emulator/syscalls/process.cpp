@@ -10,11 +10,66 @@ namespace sogen
 
     namespace syscalls
     {
+        NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
+                                                uint64_t zero_bits, emulator_object<uint64_t> bytes_to_allocate, uint32_t allocation_type,
+                                                uint32_t page_protection);
+
         namespace
         {
             constexpr ULONG windows_cui_subsystem = 3;
             constexpr USHORT executable_large_address_aware_image = 0x0022;
             constexpr ULONG process_create_flags_inherit_handles = 4;
+
+            struct process_io_counters
+            {
+                uint64_t read_operation_count;
+                uint64_t write_operation_count;
+                uint64_t other_operation_count;
+                uint64_t read_transfer_count;
+                uint64_t write_transfer_count;
+                uint64_t other_transfer_count;
+            };
+
+            static_assert(sizeof(process_io_counters) == 48);
+
+            struct process_handle_information
+            {
+                ULONG handle_count;
+                ULONG handle_count_high_watermark;
+            };
+
+            static_assert(sizeof(process_handle_information) == 8);
+
+            NTSTATUS probe_output_buffer(const syscall_context& c, const uint64_t buffer, const uint32_t length)
+            {
+                return is_writable_range(c.win_emu.memory, buffer, length) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
+            }
+
+            template <typename T, typename Fill>
+            NTSTATUS query_exact_size(const syscall_context& c, const uint64_t buffer, const uint32_t length,
+                                      const emulator_object<uint32_t> return_length, const Fill& fill)
+            {
+                if (length != sizeof(T))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                if (const auto status = probe_output_buffer(c, buffer, length); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                T value{};
+                fill(value);
+                c.emu.write_memory(buffer, &value, sizeof(value));
+
+                if (return_length)
+                {
+                    return_length.try_write(static_cast<uint32_t>(sizeof(T)));
+                }
+
+                return STATUS_SUCCESS;
+            }
 
             // The defaults of a process without a job: unlimited pools, page file and time. GlobalMemoryStatusEx caps the
             // available page file at PagefileLimit, so zero would report no memory at all.
@@ -134,6 +189,46 @@ namespace sogen
             {
                 return exit.kind == process_exit_kind::runtime_failure ? STATUS_UNSUCCESSFUL : static_cast<NTSTATUS>(exit.code);
             }
+
+            NTSTATUS reserve_thread_stack(const syscall_context& c, const handle process_handle, const uint64_t allocation_address)
+            {
+                const emulator_object<PROCESS_STACK_ALLOCATION_INFORMATION> allocation{c.emu, allocation_address};
+                const auto requested = allocation.read();
+                const emulator_object<uint64_t> stack_base{c.emu,
+                                                           allocation_address + offsetof(PROCESS_STACK_ALLOCATION_INFORMATION, StackBase)};
+                const emulator_object<uint64_t> reserve_size{c.emu, allocation_address +
+                                                                        offsetof(PROCESS_STACK_ALLOCATION_INFORMATION, ReserveSize)};
+
+                stack_base.write(0);
+                const auto status = handle_NtAllocateVirtualMemory(c, process_handle, stack_base, requested.ZeroBits, reserve_size,
+                                                                   MEM_RESERVE, PAGE_READWRITE);
+
+                // Windows reports only the stack base and leaves the requested size as the caller passed it.
+                reserve_size.write(requested.ReserveSize);
+                return status;
+            }
+
+            NTSTATUS allocate_thread_stack(const syscall_context& c, const handle process_handle, const uint64_t information,
+                                           const uint32_t length)
+            {
+                if (length == sizeof(PROCESS_STACK_ALLOCATION_INFORMATION))
+                {
+                    return reserve_thread_stack(c, process_handle, information);
+                }
+
+                if (length != sizeof(PROCESS_STACK_ALLOCATION_INFORMATION_EX))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const auto extended = c.emu.read_memory<PROCESS_STACK_ALLOCATION_INFORMATION_EX>(information);
+                if (extended.PreferredNode != 0 || extended.Reserved0 != 0 || extended.Reserved1 != 0 || extended.Reserved2 != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                return reserve_thread_stack(c, process_handle, information + offsetof(PROCESS_STACK_ALLOCATION_INFORMATION_EX, AllocInfo));
+            }
         }
 
         NTSTATUS handle_NtCreateUserProcess(const syscall_context& c, const emulator_object<handle> process_handle,
@@ -182,6 +277,12 @@ namespace sogen
 
             process_create_request request{};
             request.command_line = u16_to_u8(original_command_line);
+            request.parent_process_id = c.proc.process_id;
+            utils::buffer_serializer registry_state{};
+            c.win_emu.registry.serialize_runtime_state(registry_state);
+            const auto& bytes = registry_state.get_buffer();
+            request.registry_state.assign(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                          reinterpret_cast<const uint8_t*>(bytes.data()) + bytes.size());
             const windows_path application_path{read_unicode_string(c.emu, parameters.ImagePathName)};
             request.application = u16_to_u8(application_path.u16string());
             request.working_directory =
@@ -506,41 +607,49 @@ namespace sogen
                     }
                 }
 
-                // The synthetic Steam process: report it as alive so a guest steam_api's GetExitCodeProcess
-                // liveness check succeeds. Only ProcessBasicInformation is meaningful; any other class is
-                // rejected cleanly rather than falling through to the default (which stops the emulator).
-                if (process_handle == STEAM_PROCESS_HANDLE)
+                // Both handles are synthetic and report an active process; Steam's guest API relies on this for
+                // its GetExitCodeProcess liveness check. Only ProcessBasicInformation is supported, as falling
+                // through to the default for other classes would stop the emulator.
+                if (process_handle == STEAM_PROCESS_HANDLE || process_handle == PARENT_PROCESS_HANDLE)
                 {
                     if (info_class != ProcessBasicInformation)
                     {
                         return STATUS_NOT_SUPPORTED;
                     }
 
-                    const auto init_steam_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
+                    const auto init_external_process_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                         basic_info = {};
                         basic_info.ExitStatus = STATUS_PENDING; // STILL_ACTIVE
-                        basic_info.UniqueProcessId = STEAM_FAKE_PROCESS_ID;
+                        basic_info.UniqueProcessId =
+                            process_handle == PARENT_PROCESS_HANDLE ? c.proc.parent_process_id : STEAM_FAKE_PROCESS_ID;
                     };
 
                     switch (process_information_length)
                     {
                     case sizeof(PROCESS_BASIC_INFORMATION64):
                         return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length,
-                                                                         return_length, init_steam_info);
+                                                                         return_length, init_external_process_info);
                     case sizeof(PROCESS_EXTENDED_BASIC_INFORMATION):
                         return handle_query<PROCESS_EXTENDED_BASIC_INFORMATION>(c.emu, process_information, process_information_length,
                                                                                 return_length,
                                                                                 [&](PROCESS_EXTENDED_BASIC_INFORMATION& ext) {
                                                                                     ext = {};
                                                                                     ext.Size = sizeof(PROCESS_EXTENDED_BASIC_INFORMATION);
-                                                                                    init_steam_info(ext.BasicInfo);
+                                                                                    init_external_process_info(ext.BasicInfo);
                                                                                 });
                     default:
                         return STATUS_INFO_LENGTH_MISMATCH;
                     }
                 }
 
-                return STATUS_NOT_SUPPORTED;
+                auto* store = c.proc.get_handle_store(process_handle);
+                const auto is_object = c.proc.is_object_pseudo_handle(process_handle) || (store && store->get_object(process_handle));
+                if (!is_object)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                return process_handle.value.type == handle_types::process ? STATUS_NOT_SUPPORTED : STATUS_OBJECT_TYPE_MISMATCH;
             }
 
             const auto return_length_info = c.win_emu.memory.get_region_info(return_length.value());
@@ -619,6 +728,44 @@ namespace sogen
                     c.emu, process_information, process_information_length, return_length, [&](PROCESS_CYCLE_TIME_INFORMATION& info) {
                         info = {.AccumulatedCycles = c.proc.get_accumulated_cycles(), .CurrentCycleCount = 0};
                     });
+
+            case ProcessIoCounters:
+                return query_exact_size<process_io_counters>(c, process_information, process_information_length, return_length,
+                                                             [](process_io_counters&) {});
+
+            case ProcessHandleCount: {
+                const auto count = static_cast<ULONG>(c.proc.handle_count());
+
+                if (process_information_length == sizeof(process_handle_information))
+                {
+                    if (const auto status = probe_output_buffer(c, process_information, process_information_length);
+                        status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+
+                    // Windows reports the size of the count alone, although both fields are written.
+                    c.emu.write_memory<process_handle_information>(process_information,
+                                                                   {.handle_count = count, .handle_count_high_watermark = count});
+
+                    if (return_length)
+                    {
+                        return_length.try_write(static_cast<uint32_t>(sizeof(ULONG)));
+                    }
+
+                    return STATUS_SUCCESS;
+                }
+
+                return query_exact_size<ULONG>(c, process_information, process_information_length, return_length,
+                                               [&](ULONG& value) { value = count; });
+            }
+
+            case ProcessSessionInformation:
+                return query_exact_size<ULONG>(c, process_information, process_information_length, return_length,
+                                               [&](ULONG& session_id) { session_id = c.proc.peb64.read().SessionId; });
+
+            case ProcessBreakOnTermination:
+                return query_exact_size<ULONG>(c, process_information, process_information_length, return_length, [](ULONG&) {});
 
             case ProcessCookie:
                 return handle_query<uint32_t>(c.emu, process_information, process_information_length, return_length, [](uint32_t& cookie) {
@@ -745,6 +892,7 @@ namespace sogen
                         c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                     basic_info.AffinityMask = processor_count >= 64 ? ~0ull : ((1ull << processor_count) - 1);
                     basic_info.UniqueProcessId = c.proc.process_id;
+                    basic_info.InheritedFromUniqueProcessId = c.proc.parent_process_id;
                 };
 
                 switch (process_information_length)
@@ -1119,6 +1267,11 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (info_class == ProcessThreadStackAllocation)
+            {
+                return allocate_thread_stack(c, process_handle, process_information, process_information_length);
+            }
+
             c.win_emu.log.error("Unsupported info process class: 0x%X\n", info_class);
             c.emu.stop();
 
@@ -1156,6 +1309,12 @@ namespace sogen
                     process_handle.write(*opened);
                     return STATUS_SUCCESS;
                 }
+            }
+
+            if (c.proc.parent_process_id != 0 && id.UniqueProcess == c.proc.parent_process_id)
+            {
+                process_handle.write(PARENT_PROCESS_HANDLE);
+                return STATUS_SUCCESS;
             }
 
             // The one synthetic external process we vouch for: the Steam client. A guest steam_api reads

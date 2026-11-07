@@ -17,13 +17,21 @@ namespace sogen
         std::vector<std::byte> data{};
     };
 
+    struct hive_key_class
+    {
+        int offset{-1};
+        uint16_t length{};
+        uint32_t max_sub_key_class_length{};
+    };
+
     class hive_key
     {
       public:
-        hive_key(const int subkey_block_offset, const int value_count, const int value_offsets)
+        hive_key(const int subkey_block_offset, const int value_count, const int value_offsets, const hive_key_class& key_class)
             : subkey_block_offset_(subkey_block_offset),
               value_count_(value_count),
-              value_offsets_(value_offsets)
+              value_offsets_(value_offsets),
+              class_(key_class)
         {
         }
 
@@ -66,6 +74,13 @@ namespace sogen
         const hive_value* get_value(std::ifstream& file, std::string_view name);
         const hive_value* get_value(std::ifstream& file, size_t index);
 
+        std::vector<std::byte> get_class_name(std::ifstream& file) const;
+
+        uint32_t get_max_sub_key_class_length() const
+        {
+            return this->class_.max_sub_key_class_length;
+        }
+
         size_t get_sub_key_count(std::ifstream& file)
         {
             this->parse(file);
@@ -95,6 +110,7 @@ namespace sogen
         const int subkey_block_offset_{};
         const int value_count_{};
         const int value_offsets_{};
+        const hive_key_class class_{};
 
         void parse_subkey_list(std::ifstream& file, int32_t block_offset, bool allow_root_index);
         void parse(std::ifstream& file);

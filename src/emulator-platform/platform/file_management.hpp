@@ -14,6 +14,7 @@
 
 #define FILE_DEVICE_SECURE_OPEN  0x00000100
 
+#define OBJ_PROTECT_CLOSE        0x00000001
 #define OBJ_INHERIT              0x00000002
 
 #define FILE_SUPERSEDE           0x00000000

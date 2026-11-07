@@ -31,13 +31,21 @@ namespace sogen
         FILE* file_{};
     };
 
+    // Whether host symlinks below the target are followed, or treated as absent so that every access stays inside it.
+    enum class host_links
+    {
+        follow,
+        refuse,
+    };
+
     class host_directory_provider final : public mount_provider
     {
       public:
-        explicit host_directory_provider(std::filesystem::path target);
+        explicit host_directory_provider(std::filesystem::path target, host_links links = host_links::follow);
 
         std::optional<struct compat_stat> stat(const windows_path& path) const override;
         std::vector<directory_entry> list(const windows_path& path) const override;
+        std::vector<std::u16string> list_names(const windows_path& path) const override;
         open_result open(const windows_path& path, const std::u16string& mode) override;
         NTSTATUS create_directory(const windows_path& path) override;
         NTSTATUS rename(const windows_path& from, const windows_path& to) override;
@@ -45,8 +53,10 @@ namespace sogen
 
       private:
         std::optional<std::filesystem::path> get_host_path(const windows_path& path) const override;
+        static bool avoids_links(const std::filesystem::path& root, const std::filesystem::path& host_path);
 
         std::filesystem::path target_{};
+        host_links links_{};
         bool lookup_ignores_case_{};
     };
 

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:xterm/xterm.dart';
 
 import 'game_library.dart';
@@ -147,25 +149,31 @@ class GameSession extends ChangeNotifier {
     }
 
     if (!game.hasFolderAccess) {
-      error = 'Sogen cannot read this game folder anymore. Edit the game and choose its folder again.';
-      _addOutput(error!, _errorColor);
-      state = SessionState.exited;
-      notifyListeners();
-      return true;
+      return _failStart('Sogen cannot read this game folder anymore. Edit the game and choose its folder again.');
+    }
+
+    final installId = installIdOf(game.directory);
+    final installed = installId == null ? null : Directory(p.join((await installedGamesDirectory()).path, installId));
+    // Backups leave installed games out, so a restored library can list games whose files are gone.
+    if (installed != null && !installed.existsSync()) {
+      return _failStart('The files of this game are missing. Remove the game and install it again.');
     }
 
     final layers = await layerDirectory(game);
+    final mount = {guestGameDirectory: installed?.path ?? game.directory};
     final started =
         await _methods.invokeMethod<bool>('start', {
           'emulationRoot': emulationRoot,
           'application': game.guestExecutable,
           'arguments': game.arguments,
           'environment': game.environment,
-          'documentMounts': {guestGameDirectory: game.directory},
+          if (installId == null) 'documentMounts': mount else 'directoryMounts': mount,
           'layerDirectory': layers.path,
+          'rootLayerDirectory': (await rootLayerDirectory(game)).path,
           'workingDirectory': game.guestWorkingDirectory,
           'backend': 'fex',
           'liveNetwork': game.liveNetwork,
+          'maxDisplayMode': game.maxDisplayMode?.name ?? '',
           'resumeFile': resumeFile ?? '',
         }) ??
         false;
@@ -287,6 +295,14 @@ class GameSession extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  bool _failStart(String message) {
+    error = message;
+    _addOutput(message, _errorColor);
+    state = SessionState.exited;
+    notifyListeners();
+    return true;
   }
 
   void _addOutput(String text, int color) {

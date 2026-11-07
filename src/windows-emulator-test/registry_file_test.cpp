@@ -226,6 +226,22 @@ namespace sogen::test
             }
         }
 
+        constexpr std::byte untouched_byte{0xAA};
+        constexpr std::u16string_view profile_class = u"ProfileClass";
+
+        constexpr uint32_t profile_class_size = static_cast<uint32_t>(profile_class.size() * sizeof(char16_t));
+
+        void write_key_class(std::vector<std::byte>& data, const size_t key_offset, const uint32_t class_offset,
+                             const std::u16string_view key_class)
+        {
+            write_uint32(data, key_offset + 52, class_offset);
+            write_uint16(data, key_offset + 78, static_cast<uint16_t>(key_class.size() * sizeof(char16_t)));
+            for (size_t i = 0; i < key_class.size(); ++i)
+            {
+                write_uint16(data, hive_data_offset + class_offset + 4 + (i * 2), static_cast<uint16_t>(key_class[i]));
+            }
+        }
+
         std::vector<std::byte> create_software_hive()
         {
             std::vector<std::byte> data(hive_data_offset + 0x1800);
@@ -245,6 +261,8 @@ namespace sogen::test
             write_key(data, hive_data_offset + 0x1000, "ProfileList", 0x1200);
             write_subkey_list(data, 0x1200, 0x1300);
             write_key(data, hive_data_offset + 0x1300, "Profile", 0);
+            write_key_class(data, hive_data_offset + 0x1300, 0x1700, profile_class);
+            write_uint32(data, hive_data_offset + 0x1000 + 60, profile_class_size);
 
             constexpr std::array<uint32_t, 2> profile_list_values{0x1500, 0x1680};
             write_value_list(data, hive_data_offset + 0x1000, 0x1480, profile_list_values);
@@ -492,6 +510,36 @@ namespace sogen::test
                 return syscalls::handle_NtQueryKey(this->context(), key_handle, information_class, buffer, 0x100, result_length);
             }
 
+            template <typename Call>
+            NTSTATUS capture_output(const ULONG length, std::vector<std::byte>& output, ULONG& result_length, const Call& call)
+            {
+                const auto buffer = this->allocator->reserve(0x100, 8);
+                output.assign(0x100, untouched_byte);
+                this->emu->memory.write_memory(buffer, output.data(), output.size());
+
+                const auto result_length_output = this->allocator->reserve<ULONG>();
+                const auto status = call(buffer, length, result_length_output);
+                this->emu->memory.read_memory(buffer, output.data(), output.size());
+                result_length = result_length_output.read();
+                return status;
+            }
+
+            NTSTATUS query_information(const handle key_handle, const KEY_INFORMATION_CLASS information_class, const ULONG length,
+                                       std::vector<std::byte>& output, ULONG& result_length)
+            {
+                return this->capture_output(length, output, result_length, [&](const uint64_t buffer, const ULONG size, const auto result) {
+                    return syscalls::handle_NtQueryKey(this->context(), key_handle, information_class, buffer, size, result);
+                });
+            }
+
+            NTSTATUS enumerate_node(const handle key_handle, const ULONG index, const ULONG length, std::vector<std::byte>& output,
+                                    ULONG& result_length)
+            {
+                return this->capture_output(length, output, result_length, [&](const uint64_t buffer, const ULONG size, const auto result) {
+                    return syscalls::handle_NtEnumerateKey(this->context(), key_handle, index, KeyNodeInformation, buffer, size, result);
+                });
+            }
+
             NTSTATUS query_multiple_values(const handle key_handle, const std::u16string_view name)
             {
                 KEY_VALUE_ENTRY entry{};
@@ -568,6 +616,32 @@ namespace sogen::test
         constexpr std::u16string_view profile_path =
             uR"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\ProfileList\Profile)";
         constexpr std::u16string_view overlay_path = uR"(\Registry\Machine\Software\Vendor\Temporary)";
+        constexpr std::u16string_view current_version_path = uR"(\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion)";
+
+        constexpr auto full_class_offset = offsetof(KEY_FULL_INFORMATION, Class);
+        constexpr auto node_name_offset = offsetof(KEY_NODE_INFORMATION, Name);
+        constexpr auto profile_name_size = std::u16string_view{u"Profile"}.size() * sizeof(char16_t);
+        constexpr auto profile_node_class_offset = 0x28;
+
+        template <typename T>
+        T read_header(const std::vector<std::byte>& output)
+        {
+            T header{};
+            std::memcpy(&header, output.data(), std::min(sizeof(T), output.size()));
+            return header;
+        }
+
+        std::u16string read_u16(const std::vector<std::byte>& output, const size_t offset, const size_t size)
+        {
+            std::u16string result(size / sizeof(char16_t), u'\0');
+            std::memcpy(result.data(), output.data() + offset, result.size() * sizeof(char16_t));
+            return result;
+        }
+
+        bool is_untouched(const std::vector<std::byte>& output, const size_t offset, const size_t size)
+        {
+            return std::ranges::all_of(std::span{output}.subspan(offset, size), [](const auto b) { return b == untouched_byte; });
+        }
     }
 
     TEST_F(RegistryFileTest, ImportsUtf8BomStringsEscapesAndDword)
@@ -1154,5 +1228,194 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), first));
         EXPECT_EQ(STATUS_SUCCESS, this->query_value(recreated, u"Fresh"));
         EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, this->query_value(recreated, u"Stale"));
+    }
+
+    TEST_F(RegistrySyscallTest, FullInformationReportsTheHiveKeyClassC1)
+    {
+        handle profile{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, profile));
+
+        std::vector<std::byte> output{};
+        ULONG result_length{};
+        ASSERT_EQ(STATUS_SUCCESS, this->query_information(profile, KeyFullInformation, 0x100, output, result_length));
+
+        const auto info = read_header<KEY_FULL_INFORMATION>(output);
+        EXPECT_EQ(full_class_offset + profile_class_size, result_length);
+        EXPECT_EQ(full_class_offset, info.ClassOffset);
+        EXPECT_EQ(profile_class_size, info.ClassLength);
+        EXPECT_EQ(profile_class, read_u16(output, full_class_offset, profile_class_size));
+        EXPECT_TRUE(is_untouched(output, full_class_offset + profile_class_size, 4));
+    }
+
+    TEST_F(RegistrySyscallTest, FullInformationBufferBoundariesC5)
+    {
+        handle profile{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, profile));
+
+        const auto required_size = full_class_offset + profile_class_size;
+        std::vector<std::byte> output{};
+        ULONG result_length{};
+
+        EXPECT_EQ(STATUS_BUFFER_TOO_SMALL,
+                  this->query_information(profile, KeyFullInformation, full_class_offset - 1, output, result_length));
+        EXPECT_EQ(required_size, result_length);
+        EXPECT_TRUE(is_untouched(output, 0, full_class_offset));
+
+        EXPECT_EQ(STATUS_BUFFER_OVERFLOW, this->query_information(profile, KeyFullInformation, full_class_offset, output, result_length));
+        EXPECT_EQ(required_size, result_length);
+        EXPECT_EQ(full_class_offset, read_header<KEY_FULL_INFORMATION>(output).ClassOffset);
+        EXPECT_EQ(profile_class_size, read_header<KEY_FULL_INFORMATION>(output).ClassLength);
+        EXPECT_TRUE(is_untouched(output, full_class_offset, profile_class_size));
+
+        constexpr ULONG odd_class_bytes = 0x13;
+        EXPECT_EQ(STATUS_BUFFER_OVERFLOW,
+                  this->query_information(profile, KeyFullInformation, full_class_offset + odd_class_bytes, output, result_length));
+        EXPECT_EQ(required_size, result_length);
+        EXPECT_EQ(profile_class.substr(0, odd_class_bytes / 2), read_u16(output, full_class_offset, odd_class_bytes - 1));
+        EXPECT_EQ(std::byte{static_cast<uint8_t>(profile_class[odd_class_bytes / 2])}, output[full_class_offset + odd_class_bytes - 1]);
+        EXPECT_TRUE(is_untouched(output, full_class_offset + odd_class_bytes, 1));
+    }
+
+    TEST_F(RegistrySyscallTest, FullInformationReportsTheLongestSubKeyClassEvenAfterItIsDeletedC9)
+    {
+        handle profile_list{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, profile_list));
+
+        std::vector<std::byte> output{};
+        ULONG result_length{};
+        ASSERT_EQ(STATUS_SUCCESS, this->query_information(profile_list, KeyFullInformation, 0x100, output, result_length));
+        EXPECT_EQ(0xFFFFFFFFu, read_header<KEY_FULL_INFORMATION>(output).ClassOffset);
+        EXPECT_EQ(profile_class_size, read_header<KEY_FULL_INFORMATION>(output).MaxClassLength);
+
+        handle profile{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, profile));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), profile));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->query_information(profile_list, KeyFullInformation, 0x100, output, result_length));
+        EXPECT_EQ(0u, read_header<KEY_FULL_INFORMATION>(output).SubKeys);
+        EXPECT_EQ(profile_class_size, read_header<KEY_FULL_INFORMATION>(output).MaxClassLength);
+    }
+
+    TEST_F(RegistrySyscallTest, NodeInformationPlacesTheClassAtTheNextUlongAfterTheNameC6C8)
+    {
+        handle profile_list{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, profile_list));
+        handle profile{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, profile));
+
+        const auto expect_profile_node = [](const std::vector<std::byte>& output, const ULONG result_length) {
+            const auto info = read_header<KEY_NODE_INFORMATION>(output);
+            EXPECT_EQ(profile_node_class_offset + profile_class_size, result_length);
+            EXPECT_EQ(static_cast<ULONG>(profile_node_class_offset), info.ClassOffset);
+            EXPECT_EQ(profile_class_size, info.ClassLength);
+            EXPECT_EQ(profile_name_size, info.NameLength);
+            EXPECT_EQ(u"Profile", read_u16(output, node_name_offset, profile_name_size));
+            EXPECT_EQ(std::byte{0}, output[node_name_offset + profile_name_size]);
+            EXPECT_EQ(std::byte{0}, output[node_name_offset + profile_name_size + 1]);
+            EXPECT_EQ(profile_class, read_u16(output, profile_node_class_offset, profile_class_size));
+        };
+
+        std::vector<std::byte> output{};
+        ULONG result_length{};
+        ASSERT_EQ(STATUS_SUCCESS, this->enumerate_node(profile_list, 0, 0x100, output, result_length));
+        expect_profile_node(output, result_length);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->query_information(profile, KeyNodeInformation, 0x100, output, result_length));
+        expect_profile_node(output, result_length);
+    }
+
+    TEST_F(RegistrySyscallTest, NodeInformationWithoutAClassEndsUnpaddedAfterTheNameC13)
+    {
+        handle current_version{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(current_version_path, current_version));
+        handle profile_list{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, profile_list));
+
+        constexpr auto name_size = std::u16string_view{u"ProfileList"}.size() * sizeof(char16_t);
+        constexpr auto name_end = node_name_offset + name_size;
+        static_assert(name_end % sizeof(ULONG) != 0);
+
+        const auto expect_profile_list_node = [&](const std::vector<std::byte>& output, const ULONG result_length) {
+            const auto info = read_header<KEY_NODE_INFORMATION>(output);
+            EXPECT_EQ(name_end, result_length);
+            EXPECT_EQ(0xFFFFFFFFu, info.ClassOffset);
+            EXPECT_EQ(0u, info.ClassLength);
+            EXPECT_EQ(name_size, info.NameLength);
+            EXPECT_EQ(u"ProfileList", read_u16(output, node_name_offset, name_size));
+            EXPECT_TRUE(is_untouched(output, name_end, 4));
+        };
+
+        std::vector<std::byte> output{};
+        ULONG result_length{};
+        for (const ULONG length : {ULONG{0x100}, static_cast<ULONG>(name_end)})
+        {
+            ASSERT_EQ(STATUS_SUCCESS, this->enumerate_node(current_version, 0, length, output, result_length));
+            expect_profile_list_node(output, result_length);
+
+            ASSERT_EQ(STATUS_SUCCESS, this->query_information(profile_list, KeyNodeInformation, length, output, result_length));
+            expect_profile_list_node(output, result_length);
+        }
+    }
+
+    TEST_F(RegistrySyscallTest, NodeInformationBufferBoundariesC7)
+    {
+        handle profile_list{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, profile_list));
+
+        const auto required_size = profile_node_class_offset + profile_class_size;
+        const auto name_end = node_name_offset + profile_name_size;
+        std::vector<std::byte> output{};
+        ULONG result_length{};
+
+        EXPECT_EQ(STATUS_BUFFER_TOO_SMALL, this->enumerate_node(profile_list, 0, node_name_offset - 1, output, result_length));
+        EXPECT_EQ(required_size, result_length);
+        EXPECT_TRUE(is_untouched(output, 0, node_name_offset));
+
+        EXPECT_EQ(STATUS_BUFFER_OVERFLOW, this->enumerate_node(profile_list, 0, node_name_offset, output, result_length));
+        EXPECT_EQ(required_size, result_length);
+        EXPECT_EQ(static_cast<ULONG>(profile_node_class_offset), read_header<KEY_NODE_INFORMATION>(output).ClassOffset);
+        EXPECT_TRUE(is_untouched(output, node_name_offset, 4));
+
+        EXPECT_EQ(STATUS_BUFFER_OVERFLOW, this->enumerate_node(profile_list, 0, node_name_offset + 1, output, result_length));
+        EXPECT_EQ(std::byte{0}, output[node_name_offset]);
+        EXPECT_TRUE(is_untouched(output, node_name_offset + 1, 4));
+
+        EXPECT_EQ(STATUS_BUFFER_OVERFLOW, this->enumerate_node(profile_list, 0, node_name_offset + 3, output, result_length));
+        EXPECT_EQ(u"P", read_u16(output, node_name_offset, 2));
+        EXPECT_EQ(std::byte{0}, output[node_name_offset + 2]);
+        EXPECT_TRUE(is_untouched(output, node_name_offset + 3, 4));
+
+        EXPECT_EQ(STATUS_BUFFER_OVERFLOW, this->enumerate_node(profile_list, 0, static_cast<ULONG>(name_end), output, result_length));
+        EXPECT_EQ(u"Profile", read_u16(output, node_name_offset, profile_name_size));
+        EXPECT_TRUE(is_untouched(output, name_end, 4));
+
+        constexpr ULONG partial_class_bytes = 5;
+        EXPECT_EQ(STATUS_BUFFER_OVERFLOW,
+                  this->enumerate_node(profile_list, 0, profile_node_class_offset + partial_class_bytes, output, result_length));
+        EXPECT_EQ(required_size, result_length);
+        EXPECT_EQ(std::byte{0}, output[name_end]);
+        EXPECT_EQ(std::byte{0}, output[name_end + 1]);
+        EXPECT_EQ(profile_class.substr(0, 2), read_u16(output, profile_node_class_offset, 4));
+        EXPECT_EQ(std::byte{static_cast<uint8_t>(profile_class[2])}, output[profile_node_class_offset + 4]);
+        EXPECT_TRUE(is_untouched(output, profile_node_class_offset + partial_class_bytes, 1));
+    }
+
+    TEST_F(RegistrySyscallTest, RecreatedHiveKeyHasNoClass)
+    {
+        handle profile{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(profile_path, profile));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDeleteKey(this->context(), profile));
+
+        handle recreated{};
+        ULONG disposition{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_key(profile_path, recreated, disposition));
+        ASSERT_EQ(static_cast<ULONG>(REG_CREATED_NEW_KEY), disposition);
+
+        std::vector<std::byte> output{};
+        ULONG result_length{};
+        ASSERT_EQ(STATUS_SUCCESS, this->query_information(recreated, KeyFullInformation, 0x100, output, result_length));
+        EXPECT_EQ(full_class_offset, result_length);
+        EXPECT_EQ(0xFFFFFFFFu, read_header<KEY_FULL_INFORMATION>(output).ClassOffset);
+        EXPECT_EQ(0u, read_header<KEY_FULL_INFORMATION>(output).ClassLength);
     }
 } // namespace sogen::test

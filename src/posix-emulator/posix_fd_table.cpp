@@ -1,7 +1,6 @@
 #include "posix_fd_table.hpp"
 
 #include <algorithm>
-#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -121,16 +120,6 @@ namespace sogen
 #endif
         }
 
-        int64_t read_host_descriptor(FILE* handle, const std::span<std::byte> buffer)
-        {
-#if defined(_WIN32)
-            const auto count = static_cast<unsigned int>(std::min<size_t>(buffer.size(), std::numeric_limits<unsigned int>::max()));
-            return _read(_fileno(handle), buffer.data(), count);
-#else
-            return ::read(::fileno(handle), buffer.data(), buffer.size());
-#endif
-        }
-
         int64_t tell_host_file(FILE* handle)
         {
 #if defined(_WIN32)
@@ -198,6 +187,8 @@ namespace sogen
             buffer.write(fd.guest_path);
             buffer.write(fd.flags);
             buffer.write(fd.directory_position);
+            buffer.write_optional(fd.directory_listing);
+            buffer.write_vector(fd.epoll_entries);
             buffer.write(fd.read_only_mapping);
 
             if (fd.type == fd_type::memory_file)
@@ -249,6 +240,8 @@ namespace sogen
             buffer.read(fd.guest_path);
             buffer.read(fd.flags);
             buffer.read(fd.directory_position);
+            buffer.read_optional(fd.directory_listing);
+            buffer.read_vector(fd.epoll_entries);
             buffer.read(fd.read_only_mapping);
 
             if (fd.type == fd_type::memory_file)
@@ -289,31 +282,6 @@ namespace sogen
 
         const auto bytes_read = std::fread(buffer.data(), 1, buffer.size(), this->handle);
         seek_host_file(this->handle, saved_position);
-        return bytes_read;
-    }
-
-    // Standard streams are read through their descriptor, so a read returns what the stream has, as on a pipe or
-    // terminal; fread would wait until the whole buffer is filled.
-    std::optional<size_t> posix_fd::read(const std::span<std::byte> buffer) const
-    {
-        if (!this->handle)
-        {
-            return std::nullopt;
-        }
-
-        if (this->is_standard_stream())
-        {
-            const auto bytes_read = read_host_descriptor(this->handle, buffer);
-            return bytes_read < 0 ? std::nullopt : std::optional{static_cast<size_t>(bytes_read)};
-        }
-
-        const auto bytes_read = std::fread(buffer.data(), 1, buffer.size(), this->handle);
-        if (bytes_read < buffer.size() && std::ferror(this->handle))
-        {
-            std::clearerr(this->handle);
-            return std::nullopt;
-        }
-
         return bytes_read;
     }
 
@@ -393,5 +361,11 @@ namespace sogen
         }
 
         this->fds_ = std::move(restored);
+
+        this->epoll_descriptions_.clear();
+        for (const auto& file : files)
+        {
+            this->track_description(file);
+        }
     }
 } // namespace sogen

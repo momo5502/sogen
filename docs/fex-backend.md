@@ -103,12 +103,48 @@ root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requir
   MMIO callback directly from inside the real signal handler, rather than through this file's own
   `pending_fault_dispatch_` mechanism (built for exactly this class of hazard, and already used for
   `memory_violation_hooks_`/`interrupt_hooks_`). The one production registrant, `kusd_mmio::read`,
-  takes a mutex also used by `kusd_mmio::access()` from normal call context. No live self-deadlock
-  path exists today under the current single-cooperative-thread-per-vCPU model, but this becomes a
-  real hazard once multi-vCPU FEX support matures.
+  takes `kusd_mmio::mutex_`. While the page is intercepted, the other holders are both
+  `kusd_mmio::access` overloads, which syscalls call in normal context (the QPC frequency, the
+  system root, the processor count and features), and, once FEX runs more than one vCPU, `read` on
+  the other vCPUs. A faulting vCPU's handler can then wait on another vCPU's `read` or on a syscall
+  inside `access`. That is a wait and not a deadlock only because `read` holds the tables lock
+  shared at most, and no `access` functor touches guest memory or takes the tables lock while it
+  holds the mutex. An `access` caller that does either would deadlock against the handler. The
+  handler still blocks on a mutex.
 - **A smaller, same-bug-class gap remains:** `commit_memory` guards against committing into
   `section_kind`/`host_reserved` regions but has no equivalent guard for a guest probing directly into
   other backends' reserved ranges.
+
+## Multiple vCPUs
+
+FEX still reports a single vCPU: `supports_multiple_vcpus()` is false, so `--vcpus` above 1 is
+refused. The per-vCPU groundwork is in place. `sogen::fex::create_x86_64_emulator(vcpu_count)`
+builds 1 to 64 vCPUs (one processor group), each with its own FEXCore thread, GDT, alternate signal
+stack, and on macOS its JIT write-protect retry slots and armed watchpoints; the backend selection
+always asks for one. Syscalls are served by the vCPU running on the calling thread, translated code
+is invalidated in every vCPU's FEXCore thread, and on macOS a memory call that changes the
+no-access pages stops the other vCPUs once so they arm the new watchpoints.
+`supports_multiple_vcpus()` can only become true once these gaps are closed:
+
+- **Snapshots are refused.** `serialize_state`/`deserialize_state` throw "Multi-vCPU snapshots are
+  not supported yet", as in WHP.
+- **A host copy can widen protection for the whole process.** A host read or write of guest memory
+  that lacks the permission it needs changes the host protection while it copies, so another vCPU's
+  guest access to that memory during the copy does not fault.
+- **Linux tracked memory has a flush window.** The cache flush that brings a stale tracked chunk up to
+  date needs the chunk readable, so another vCPU can read its old cache lines between the protection
+  change and the flush.
+- **The backed `KUSER_SHARED_DATA` refresh races guest readers.** Inside a WoW64 process's low window
+  the page is backed by host memory that every vCPU refreshes before it enters the guest and after a
+  syscall, while other vCPUs' guest code may be reading it. The copy does not follow the kernel's
+  `KSYSTEM_TIME` write order.
+
+A misaligned `LDAR`/`STLR` that faults goes to FEXCore's `HandleUnalignedAccess`, which backpatches
+translated code and emulates host code with naturally aligned atomics. Neither keeps an access that
+crosses a 16-byte boundary whole, so another vCPU can observe it torn even where x86 keeps it whole
+inside one cache line: FEAT_LSE2 makes an unaligned access single-copy atomic only within an aligned
+16-byte block, and ARM64 has no wider single-copy-atomic access to cacheable memory. Without
+FEAT_LSE2, as on many Android cores, an unaligned access is not single-copy atomic at all.
 
 ## Fixes found during bring-up and review
 

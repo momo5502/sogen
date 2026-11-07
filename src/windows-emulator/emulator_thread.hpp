@@ -262,6 +262,8 @@ namespace sogen
         NtUserPeekMessage,
         NtUserWaitMessage,
         NtUserMsgWaitForMultipleObjectsEx,
+        NtUserSetWindowLong,
+        NtUserSetWindowLongPtr,
     };
 
     struct callback_frame
@@ -366,6 +368,13 @@ namespace sogen
         }
     };
 
+    enum class stack_guard_fault
+    {
+        outside_stack,
+        grown,
+        overflow,
+    };
+
     class emulator_thread : public ref_counted_object
     {
       public:
@@ -380,7 +389,7 @@ namespace sogen
         }
 
         emulator_thread(memory_manager& memory, const process_context& context, uint64_t start_address, uint64_t argument,
-                        uint64_t stack_size, uint32_t create_flags, uint32_t id, bool initial_thread);
+                        uint64_t stack_size, uint32_t create_flags, uint32_t id, bool initial_thread, uint64_t stack_commit_size = 0);
 
         emulator_thread(const emulator_thread&) = delete;
         emulator_thread& operator=(const emulator_thread&) = delete;
@@ -445,7 +454,9 @@ namespace sogen
         // When set, the thread is parked until this host-side predicate returns true. Used by the GPU
         // bridge to wait on a Vulkan semaphore cooperatively (other guest threads run while the GPU works)
         // instead of blocking the single VP. Polled by is_thread_ready and completed via
-        // mark_as_ready(STATUS_SUCCESS). Not serialized: the only user (GPU bridge) is not snapshotable.
+        // mark_as_ready(STATUS_SUCCESS). Idle vCPUs poll it once a millisecond unless woken, so whatever makes it
+        // true calls windows_emulator::credit_idle_wakeup. Not serialized: the only user (GPU bridge) is not
+        // snapshotable.
         std::function<bool()> await_host_condition{};
 
         bool apc_alertable{false};
@@ -573,6 +584,10 @@ namespace sogen
         }
 
         void refresh_execution_context(cpu_interface& cpu, uint64_t gdt_base) const;
+
+        stack_guard_fault handle_stack_guard_fault(uint64_t address) const;
+        void grow_stack_for_frame(uint64_t address, uint64_t end) const;
+        void commit_stacks_in_full() const;
 
         void setup_if_necessary(cpu_interface& emu, const process_context& context);
 

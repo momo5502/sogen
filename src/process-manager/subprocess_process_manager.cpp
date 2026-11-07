@@ -247,6 +247,8 @@ namespace sogen
             result.standard_output = request.standard_output;
             result.standard_error = request.standard_error;
             result.debugged = request.debugged;
+            result.parent_process_id = request.parent_process_id;
+            result.registry_state = request.registry_state;
             std::unordered_map<uint64_t, std::pair<uint16_t, std::string>> exported_files;
             for (const auto& pipe : request.inherited_pipes)
             {
@@ -300,6 +302,8 @@ namespace sogen
             result.standard_output = request.standard_output;
             result.standard_error = request.standard_error;
             result.debugged = request.debugged;
+            result.parent_process_id = request.parent_process_id;
+            result.registry_state = std::move(request.registry_state);
             std::unordered_map<uint64_t, std::shared_ptr<utils::host_pipe>> imported_files;
             for (const auto& pipe : request.inherited_pipes)
             {

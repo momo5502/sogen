@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -72,54 +73,108 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     super.dispose();
   }
 
+  /// Logical pixels per guest pixel: the window is scaled to fill the view as far as its aspect ratio allows.
+  double _scale = 1;
+
   @override
   Widget build(BuildContext context) {
     final window = widget.window;
 
+    // Trackpad touches only move the cursor by how far the finger travels, so they are taken from the whole view,
+    // including the bars around the window; touches that click where they land stay on the window.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _scale = _fitScale(constraints.biggest);
+        return Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: _onViewDown,
+          onPointerMove: _onViewMove,
+          onPointerUp: _onViewUp,
+          onPointerCancel: _onViewUp,
+          child: _buildWindow(window),
+        );
+      },
+    );
+  }
+
+  double _fitScale(Size view) {
+    final window = widget.window;
+    if (window.width <= 0 || window.height <= 0 || !view.isFinite) {
+      return 1;
+    }
+    final scale = min(view.width / window.width, view.height / window.height);
+    return scale > 0 ? scale : 1;
+  }
+
+  /// The window is drawn at [_scale], the scale trackpad movement is converted with, so both always agree.
+  Widget _buildWindow(GuestWindow window) {
     return ColoredBox(
       color: Colors.black,
       child: Center(
-        child: FittedBox(
-          child: SizedBox(
-            width: window.width.toDouble(),
-            height: window.height.toDouble(),
-            // Inside the FittedBox, local pointer positions are already in guest pixels.
-            child: Listener(
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: _onDown,
-              onPointerMove: _onMove,
-              onPointerHover: _onMove,
-              onPointerUp: _onUp,
-              onPointerCancel: _onUp,
-              onPointerSignal: _onSignal,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: Texture(textureId: window.textureId, filterQuality: FilterQuality.medium),
-                  ),
-                  // The Windows cursor is not drawn, so a trackpad would otherwise steer an invisible one.
-                  if (widget.trackpad && !_relative)
-                    ValueListenableBuilder<Offset?>(
-                      valueListenable: _cursor,
-                      builder: (context, cursor, _) {
-                        final position = cursor ?? Offset(window.width / 2, window.height / 2);
-                        final height = window.height / 36;
-                        return Positioned(
-                          left: position.dx,
-                          top: position.dy,
-                          child: IgnorePointer(
-                            child: CustomPaint(size: Size(height * 0.7, height), painter: const _CursorPainter()),
-                          ),
-                        );
-                      },
+        child: SizedBox(
+          width: window.width * _scale,
+          height: window.height * _scale,
+          child: FittedBox(
+            fit: BoxFit.fill,
+            child: SizedBox(
+              width: window.width.toDouble(),
+              height: window.height.toDouble(),
+              // Inside the FittedBox, local pointer positions are already in guest pixels.
+              child: Listener(
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: _onDown,
+                onPointerMove: _onMove,
+                onPointerHover: _onMove,
+                onPointerUp: _onUp,
+                onPointerCancel: _onUp,
+                onPointerSignal: _onSignal,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: Texture(textureId: window.textureId, filterQuality: FilterQuality.medium),
                     ),
-                ],
+                    // The Windows cursor is not drawn, so a trackpad would otherwise steer an invisible one.
+                    if (widget.trackpad && !_relative)
+                      ValueListenableBuilder<Offset?>(
+                        valueListenable: _cursor,
+                        builder: (context, cursor, _) {
+                          final position = cursor ?? Offset(window.width / 2, window.height / 2);
+                          final height = window.height / 36;
+                          return Positioned(
+                            left: position.dx,
+                            top: position.dy,
+                            child: IgnorePointer(
+                              child: CustomPaint(size: Size(height * 0.7, height), painter: const _CursorPainter()),
+                            ),
+                          );
+                        },
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  void _onViewDown(PointerDownEvent event) {
+    if (_isTrackpadTouch(event)) {
+      _onTrackpadDown(event);
+    }
+  }
+
+  void _onViewMove(PointerMoveEvent event) {
+    if (_isTrackpadTouch(event)) {
+      _onTrackpadMove(event);
+    }
+  }
+
+  void _onViewUp(PointerEvent event) {
+    if (_touch?.pointer == event.pointer) {
+      _onTrackpadUp(event);
+    }
   }
 
   (int, int) _position(PointerEvent event) {
@@ -162,7 +217,6 @@ class _GuestWindowViewState extends State<GuestWindowView> {
 
   void _onDown(PointerDownEvent event) {
     if (_isTrackpadTouch(event)) {
-      _onTrackpadDown(event);
       return;
     }
 
@@ -175,7 +229,6 @@ class _GuestWindowViewState extends State<GuestWindowView> {
 
   void _onMove(PointerEvent event) {
     if (_isTrackpadTouch(event)) {
-      _onTrackpadMove(event);
       return;
     }
 
@@ -186,7 +239,6 @@ class _GuestWindowViewState extends State<GuestWindowView> {
 
   void _onUp(PointerEvent event) {
     if (_touch?.pointer == event.pointer) {
-      _onTrackpadUp(event);
       return;
     }
 
@@ -246,9 +298,10 @@ class _GuestWindowViewState extends State<GuestWindowView> {
     }
 
     final window = widget.window;
+    final delta = event.delta / _scale;
     if (_relative) {
-      // Inside the FittedBox, the delta is already in guest pixels; the fraction carries over so slow movement adds up.
-      final motion = _relativeRemainder + event.localDelta * widget.mouseSensitivity;
+      // The fraction carries over so slow movement adds up.
+      final motion = _relativeRemainder + delta * widget.mouseSensitivity;
       final dx = motion.dx.truncate();
       final dy = motion.dy.truncate();
       _relativeRemainder = Offset(motion.dx - dx, motion.dy - dy);
@@ -258,7 +311,7 @@ class _GuestWindowViewState extends State<GuestWindowView> {
       return;
     }
 
-    final moved = (_cursor.value ?? Offset(window.width / 2, window.height / 2)) + event.localDelta;
+    final moved = (_cursor.value ?? Offset(window.width / 2, window.height / 2)) + delta;
     _cursor.value = Offset(moved.dx.clamp(0, window.width - 1), moved.dy.clamp(0, window.height - 1));
 
     final (cursorX, cursorY) = _cursorPosition();

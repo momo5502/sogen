@@ -156,6 +156,16 @@ namespace sogen
 
     static_assert(sizeof(EMU_TTPOLYCURVE_HEADER) == 0x04);
 
+    struct EMU_PALETTEENTRY
+    {
+        BYTE peRed;
+        BYTE peGreen;
+        BYTE peBlue;
+        BYTE peFlags;
+    };
+
+    static_assert(sizeof(EMU_PALETTEENTRY) == 0x04);
+
     struct EMU_BITMAPINFOHEADER
     {
         DWORD biSize;
@@ -181,17 +191,8 @@ namespace sogen
             EmulatorTraits<Emu64>::PVOID NextFree;
         };
 
-        union
-        {
-            struct
-            {
-                USHORT ProcessId;
-                USHORT Lock : 1;
-                USHORT Count : 15;
-            };
-
-            ULONG Value;
-        } Owner;
+        // The owning process id, with the entry lock in bit 0. gdi32 compares it with the whole 32-bit process id.
+        ULONG Owner;
 
         USHORT Unique;
         UCHAR Type;

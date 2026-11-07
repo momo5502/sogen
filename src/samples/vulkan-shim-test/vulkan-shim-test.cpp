@@ -6,7 +6,10 @@
 #include <windows.h>
 
 #include <array>
+#include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -774,6 +777,416 @@ namespace
         return ok;
     }
 
+    // One 4x4 block of a BC format and the texels the Khronos Data Format Specification decodes it to. The indices of each
+    // row step through the palette, so every entry is checked.
+    struct bc_case
+    {
+        const char* name;
+        VkFormat format;
+        VkFormat texel_format;
+        std::vector<uint8_t> block;
+        std::array<std::array<int, 4>, 16> texels;
+        // Which channels hold interpolated BC3 alpha, BC4 or BC5 values, which decoders compute at different precisions.
+        std::array<bool, 4> interpolated_channels;
+        // The format of the image the block is copied into, whose decoding the texels are, when it is not the same.
+        VkFormat copy_format = VK_FORMAT_UNDEFINED;
+    };
+
+    using rgb = std::array<int, 3>;
+
+    std::vector<uint8_t> color_block(const uint16_t c0, const uint16_t c1)
+    {
+        return {static_cast<uint8_t>(c0),
+                static_cast<uint8_t>(c0 >> 8),
+                static_cast<uint8_t>(c1),
+                static_cast<uint8_t>(c1 >> 8),
+                0xE4,
+                0xE4,
+                0xE4,
+                0xE4};
+    }
+
+    // Texel t uses palette entry t % 8.
+    std::vector<uint8_t> channel_block(const int e0, const int e1)
+    {
+        uint64_t indices = 0;
+        for (uint64_t t = 0; t < 16; ++t)
+        {
+            indices |= (t % 8) << (3 * t);
+        }
+
+        std::vector<uint8_t> block{static_cast<uint8_t>(e0), static_cast<uint8_t>(e1)};
+        for (int i = 0; i < 6; ++i)
+        {
+            block.push_back(static_cast<uint8_t>(indices >> (8 * i)));
+        }
+        return block;
+    }
+
+    std::array<int, 8> channel_palette(const int e0, const int e1, const int low, const int high)
+    {
+        std::array<int, 8> values{e0, e1};
+        if (e0 > e1)
+        {
+            for (int i = 1; i < 7; ++i)
+            {
+                values[i + 1] = static_cast<int>(std::lround(((7.0 - i) * e0 + i * e1) / 7.0));
+            }
+        }
+        else
+        {
+            for (int i = 1; i < 5; ++i)
+            {
+                values[i + 1] = static_cast<int>(std::lround(((5.0 - i) * e0 + i * e1) / 5.0));
+            }
+            values[6] = low;
+            values[7] = high;
+        }
+        return values;
+    }
+
+    std::vector<bc_case> make_bc_cases()
+    {
+        // 0xF800 is red and 0x001F blue; four colors interpolate at thirds, three colors at the middle plus black.
+        const std::array<rgb, 4> four{rgb{255, 0, 0}, rgb{0, 0, 255}, rgb{170, 0, 85}, rgb{85, 0, 170}};
+        const std::array<rgb, 4> three{rgb{0, 0, 255}, rgb{255, 0, 0}, rgb{128, 0, 128}, rgb{0, 0, 0}};
+        const auto unsigned_palette = channel_palette(255, 0, 0, 255);
+        const auto rising_palette = channel_palette(0, 255, 0, 255);
+        const auto signed_palette = channel_palette(127, -127, -127, 127);
+        const auto signed_rising_palette = channel_palette(-127, 127, -127, 127);
+
+        std::vector<bc_case> cases;
+        const auto add = [&](const char* name, const VkFormat format, const VkFormat texel_format, std::vector<uint8_t> block,
+                             const std::array<bool, 4> interpolated_channels, const auto& texel) {
+            bc_case entry{name, format, texel_format, std::move(block), {}, interpolated_channels};
+            for (int t = 0; t < 16; ++t)
+            {
+                entry.texels[t] = texel(t);
+            }
+            cases.push_back(std::move(entry));
+        };
+
+        add("BC1 four colors", VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, color_block(0xF800, 0x001F),
+            {false, false, false, false}, [&](const int t) {
+                const auto& c = four[t % 4];
+                return std::array<int, 4>{c[0], c[1], c[2], 255};
+            });
+        add("BC1 three colors and transparent black", VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, color_block(0x001F, 0xF800),
+            {false, false, false, false}, [&](const int t) {
+                const auto& c = three[t % 4];
+                return std::array<int, 4>{c[0], c[1], c[2], t % 4 == 3 ? 0 : 255};
+            });
+
+        std::vector<uint8_t> bc2{0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE};
+        const auto colors = color_block(0xF800, 0x001F);
+        bc2.insert(bc2.end(), colors.begin(), colors.end());
+        add("BC2 explicit alpha", VK_FORMAT_BC2_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, bc2, {false, false, false, false}, [&](const int t) {
+            const auto& c = four[t % 4];
+            return std::array<int, 4>{c[0], c[1], c[2], t * 17};
+        });
+
+        // The same blocks without alpha: the fourth color of the three-color mode is opaque black.
+        add("BC1 copied into BC1 without alpha", VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, color_block(0x001F, 0xF800),
+            {false, false, false, false}, [&](const int t) {
+                const auto& c = three[t % 4];
+                return std::array<int, 4>{c[0], c[1], c[2], 255};
+            });
+        cases.back().copy_format = VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+
+        // BC4 reads the same 8 bytes as one channel: the color endpoints' low bytes as its endpoints, the rest as indices.
+        const auto bc1 = color_block(0xF800, 0x001F);
+        uint64_t bc1_as_indices = 0;
+        for (size_t i = 2; i < bc1.size(); ++i)
+        {
+            bc1_as_indices |= static_cast<uint64_t>(bc1[i]) << (8 * (i - 2));
+        }
+        const auto bc1_as_channel = channel_palette(bc1[0], bc1[1], 0, 255);
+        add("BC1 copied into BC4", VK_FORMAT_BC1_RGBA_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, bc1, {true, false, false, false},
+            [&](const int t) { return std::array<int, 4>{bc1_as_channel[(bc1_as_indices >> (3 * t)) & 7], 0, 0, 255}; });
+        cases.back().copy_format = VK_FORMAT_BC4_UNORM_BLOCK;
+
+        auto bc3 = channel_block(255, 0);
+        bc3.insert(bc3.end(), colors.begin(), colors.end());
+        add("BC3 interpolated alpha", VK_FORMAT_BC3_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, bc3, {false, false, false, true},
+            [&](const int t) {
+                const auto& c = four[t % 4];
+                return std::array<int, 4>{c[0], c[1], c[2], unsigned_palette[t % 8]};
+            });
+
+        add("BC4 unsigned", VK_FORMAT_BC4_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, channel_block(255, 0), {true, false, false, false},
+            [&](const int t) { return std::array<int, 4>{unsigned_palette[t % 8], 0, 0, 255}; });
+        add("BC4 signed", VK_FORMAT_BC4_SNORM_BLOCK, VK_FORMAT_R8G8B8A8_SNORM, channel_block(127, -127), {true, false, false, false},
+            [&](const int t) { return std::array<int, 4>{signed_palette[t % 8], 0, 0, 127}; });
+
+        auto bc5 = channel_block(255, 0);
+        const auto green = channel_block(0, 255);
+        bc5.insert(bc5.end(), green.begin(), green.end());
+        add("BC5 unsigned", VK_FORMAT_BC5_UNORM_BLOCK, VK_FORMAT_R8G8B8A8_UNORM, bc5, {true, true, false, false},
+            [&](const int t) { return std::array<int, 4>{unsigned_palette[t % 8], rising_palette[t % 8], 0, 255}; });
+
+        auto bc5_signed = channel_block(127, -127);
+        const auto signed_green = channel_block(-127, 127);
+        bc5_signed.insert(bc5_signed.end(), signed_green.begin(), signed_green.end());
+        add("BC5 signed", VK_FORMAT_BC5_SNORM_BLOCK, VK_FORMAT_R8G8B8A8_SNORM, bc5_signed, {true, true, false, false},
+            [&](const int t) { return std::array<int, 4>{signed_palette[t % 8], signed_rising_palette[t % 8], 0, 127}; });
+        return cases;
+    }
+
+    // Uploads each block, copies it to a second image, reads that back, and blits the second image into an uncompressed one
+    // to compare its texels. Decoders may round interpolated colors either way, so those may differ by one. Interpolated
+    // BC3 alpha, BC4 and BC5 values differ by more on hardware that decodes them at another precision (up to 7 on NVIDIA).
+    bool test_bc_formats(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkPhysicalDevice physical_device,
+                         VkDevice device, VkQueue queue, uint32_t queue_family)
+    {
+#define LOAD(type, name) const auto name = reinterpret_cast<PFN_##type>(get_instance_proc(instance, #type))
+        LOAD(vkGetPhysicalDeviceFormatProperties, vkGetPhysicalDeviceFormatProperties);
+        LOAD(vkGetPhysicalDeviceMemoryProperties, vkGetPhysicalDeviceMemoryProperties);
+        LOAD(vkCreateImage, vkCreateImage);
+        LOAD(vkDestroyImage, vkDestroyImage);
+        LOAD(vkGetImageMemoryRequirements, vkGetImageMemoryRequirements);
+        LOAD(vkBindImageMemory, vkBindImageMemory);
+        LOAD(vkCreateBuffer, vkCreateBuffer);
+        LOAD(vkDestroyBuffer, vkDestroyBuffer);
+        LOAD(vkGetBufferMemoryRequirements, vkGetBufferMemoryRequirements);
+        LOAD(vkBindBufferMemory, vkBindBufferMemory);
+        LOAD(vkAllocateMemory, vkAllocateMemory);
+        LOAD(vkFreeMemory, vkFreeMemory);
+        LOAD(vkMapMemory, vkMapMemory);
+        LOAD(vkUnmapMemory, vkUnmapMemory);
+        LOAD(vkCreateCommandPool, vkCreateCommandPool);
+        LOAD(vkDestroyCommandPool, vkDestroyCommandPool);
+        LOAD(vkAllocateCommandBuffers, vkAllocateCommandBuffers);
+        LOAD(vkBeginCommandBuffer, vkBeginCommandBuffer);
+        LOAD(vkEndCommandBuffer, vkEndCommandBuffer);
+        LOAD(vkCmdPipelineBarrier, vkCmdPipelineBarrier);
+        LOAD(vkCmdCopyBufferToImage, vkCmdCopyBufferToImage);
+        LOAD(vkCmdCopyImageToBuffer, vkCmdCopyImageToBuffer);
+        LOAD(vkCmdCopyImage, vkCmdCopyImage);
+        LOAD(vkCmdBlitImage, vkCmdBlitImage);
+        LOAD(vkQueueSubmit, vkQueueSubmit);
+        LOAD(vkQueueWaitIdle, vkQueueWaitIdle);
+#undef LOAD
+
+        VkPhysicalDeviceMemoryProperties memory_properties{};
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+        constexpr VkDeviceSize readback_offset = 256;
+        constexpr VkDeviceSize texel_offset = 512;
+        constexpr VkDeviceSize buffer_size = 1024;
+        constexpr VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+                                                VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT;
+
+        std::vector<VkDeviceMemory> memories;
+        const auto bind = [&](const VkMemoryRequirements& requirements, const VkMemoryPropertyFlags flags) {
+            VkMemoryAllocateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            info.allocationSize = requirements.size;
+            info.memoryTypeIndex = find_memory_type(memory_properties, requirements.memoryTypeBits, flags);
+            VkDeviceMemory memory = VK_NULL_HANDLE;
+            if (info.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(device, &info, nullptr, &memory) != VK_SUCCESS)
+            {
+                return VkDeviceMemory{VK_NULL_HANDLE};
+            }
+            memories.push_back(memory);
+            return memory;
+        };
+
+        const auto create_image = [&](const VkFormat format, const VkImageUsageFlags usage) {
+            VkImageCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            info.imageType = VK_IMAGE_TYPE_2D;
+            info.format = format;
+            info.extent = {.width = 4, .height = 4, .depth = 1};
+            info.mipLevels = 1;
+            info.arrayLayers = 1;
+            info.samples = VK_SAMPLE_COUNT_1_BIT;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = usage;
+            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            VkImage image = VK_NULL_HANDLE;
+            if (vkCreateImage(device, &info, nullptr, &image) != VK_SUCCESS)
+            {
+                return VkImage{VK_NULL_HANDLE};
+            }
+            VkMemoryRequirements requirements{};
+            vkGetImageMemoryRequirements(device, image, &requirements);
+            const auto memory = bind(requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            if (!memory || vkBindImageMemory(device, image, memory, 0) != VK_SUCCESS)
+            {
+                vkDestroyImage(device, image, nullptr);
+                return VkImage{VK_NULL_HANDLE};
+            }
+            return image;
+        };
+
+        const auto barrier = [&](const VkCommandBuffer cmd, const VkImage image, const VkImageLayout from, const VkImageLayout to) {
+            VkImageMemoryBarrier info{};
+            info.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            info.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            info.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+            info.oldLayout = from;
+            info.newLayout = to;
+            info.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            info.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            info.image = image;
+            info.subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &info);
+        };
+
+        VkCommandPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        pool_info.queueFamilyIndex = queue_family;
+        VkCommandPool pool = VK_NULL_HANDLE;
+        if (vkCreateCommandPool(device, &pool_info, nullptr, &pool) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] BC formats -> FAILED (command pool)\n");
+            return false;
+        }
+
+        bool all_ok = true;
+        for (const auto& test : make_bc_cases())
+        {
+            const VkFormat copy_format = test.copy_format != VK_FORMAT_UNDEFINED ? test.copy_format : test.format;
+            VkFormatProperties bc_properties{};
+            vkGetPhysicalDeviceFormatProperties(physical_device, test.format, &bc_properties);
+            VkFormatProperties copy_properties{};
+            vkGetPhysicalDeviceFormatProperties(physical_device, copy_format, &copy_properties);
+            VkFormatProperties texel_properties{};
+            vkGetPhysicalDeviceFormatProperties(physical_device, test.texel_format, &texel_properties);
+            if ((bc_properties.optimalTilingFeatures & needed) != needed || (copy_properties.optimalTilingFeatures & needed) != needed ||
+                (texel_properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0)
+            {
+                std::printf("[shim-test] %s -> SKIP (format unsupported)\n", test.name);
+                continue;
+            }
+
+            constexpr VkImageUsageFlags transfer = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            const VkImage blocks = create_image(test.format, transfer | VK_IMAGE_USAGE_SAMPLED_BIT);
+            const VkImage copied = create_image(copy_format, transfer | VK_IMAGE_USAGE_SAMPLED_BIT);
+            const VkImage texels = create_image(test.texel_format, transfer);
+
+            VkBufferCreateInfo buffer_info{};
+            buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            buffer_info.size = buffer_size;
+            buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+            VkBuffer buffer = VK_NULL_HANDLE;
+            vkCreateBuffer(device, &buffer_info, nullptr, &buffer);
+            VkMemoryRequirements buffer_requirements{};
+            vkGetBufferMemoryRequirements(device, buffer, &buffer_requirements);
+            const auto buffer_memory =
+                bind(buffer_requirements, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+            void* mapped = nullptr;
+            const bool ready = blocks && copied && texels && buffer_memory &&
+                               vkBindBufferMemory(device, buffer, buffer_memory, 0) == VK_SUCCESS &&
+                               vkMapMemory(device, buffer_memory, 0, buffer_size, 0, &mapped) == VK_SUCCESS;
+            bool ok = ready;
+            if (ready)
+            {
+                std::memset(mapped, 0, buffer_size);
+                std::memcpy(mapped, test.block.data(), test.block.size());
+
+                VkCommandBufferAllocateInfo allocate_info{};
+                allocate_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+                allocate_info.commandPool = pool;
+                allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                allocate_info.commandBufferCount = 1;
+                VkCommandBuffer cmd = VK_NULL_HANDLE;
+                vkAllocateCommandBuffers(device, &allocate_info, &cmd);
+
+                VkCommandBufferBeginInfo begin{};
+                begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                vkBeginCommandBuffer(cmd, &begin);
+
+                VkBufferImageCopy region{};
+                region.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1};
+                region.imageExtent = {.width = 4, .height = 4, .depth = 1};
+
+                barrier(cmd, blocks, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                vkCmdCopyBufferToImage(cmd, buffer, blocks, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+                barrier(cmd, blocks, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+                VkImageCopy copy{};
+                copy.srcSubresource = region.imageSubresource;
+                copy.dstSubresource = region.imageSubresource;
+                copy.extent = region.imageExtent;
+                barrier(cmd, copied, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                vkCmdCopyImage(cmd, blocks, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copied, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+                barrier(cmd, copied, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                region.bufferOffset = readback_offset;
+                vkCmdCopyImageToBuffer(cmd, copied, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
+
+                VkImageBlit blit{};
+                blit.srcSubresource = region.imageSubresource;
+                blit.dstSubresource = region.imageSubresource;
+                blit.srcOffsets[1] = {.x = 4, .y = 4, .z = 1};
+                blit.dstOffsets[1] = {.x = 4, .y = 4, .z = 1};
+                barrier(cmd, texels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                vkCmdBlitImage(cmd, copied, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, texels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit,
+                               VK_FILTER_NEAREST);
+                barrier(cmd, texels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                region.bufferOffset = texel_offset;
+                vkCmdCopyImageToBuffer(cmd, texels, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
+                vkEndCommandBuffer(cmd);
+
+                VkSubmitInfo submit{};
+                submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+                submit.commandBufferCount = 1;
+                submit.pCommandBuffers = &cmd;
+                ok = vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE) == VK_SUCCESS && vkQueueWaitIdle(queue) == VK_SUCCESS;
+
+                const auto* bytes = static_cast<const uint8_t*>(mapped);
+                if (ok && std::memcmp(bytes + readback_offset, test.block.data(), test.block.size()) != 0)
+                {
+                    std::printf("[shim-test] %s -> FAILED (blocks read back differ)\n", test.name);
+                    ok = false;
+                }
+
+                const bool is_signed = test.texel_format == VK_FORMAT_R8G8B8A8_SNORM;
+                for (int t = 0; ok && t < 16; ++t)
+                {
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        const uint8_t raw = bytes[texel_offset + (t * 4) + c];
+                        const int value = is_signed ? static_cast<int8_t>(raw) : raw;
+                        const int tolerance = test.interpolated_channels[c] ? 8 : 1;
+                        if (std::abs(value - test.texels[t][c]) > tolerance)
+                        {
+                            std::printf("[shim-test] %s -> FAILED (texel %d channel %d is %d, expected %d)\n", test.name, t, c, value,
+                                        test.texels[t][c]);
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                vkUnmapMemory(device, buffer_memory);
+            }
+
+            std::printf("[shim-test] %s -> %s\n", test.name, ok ? "ok" : "FAILED");
+            all_ok = all_ok && ok;
+
+            vkDestroyBuffer(device, buffer, nullptr);
+            for (const VkImage image : {blocks, copied, texels})
+            {
+                if (image)
+                {
+                    vkDestroyImage(device, image, nullptr);
+                }
+            }
+            for (const auto memory : memories)
+            {
+                vkFreeMemory(device, memory, nullptr);
+            }
+            memories.clear();
+        }
+
+        vkDestroyCommandPool(device, pool, nullptr);
+        return all_ok;
+    }
+
     bool test_shader_module_identifier(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device)
     {
         const auto get_device_proc = reinterpret_cast<PFN_vkGetDeviceProcAddr>(get_instance_proc(instance, "vkGetDeviceProcAddr"));
@@ -959,6 +1372,7 @@ int main(int argc, char** argv)
     bool transform_feedback_capabilities_ok = true;
     bool shader_identifier_test_ok = true;
     bool pipeline_cache_test_ok = true;
+    bool bc_formats_test_ok = true;
     uint32_t count = 0;
     result = enumerate(instance, &count, nullptr);
     std::printf("[shim-test] vkEnumeratePhysicalDevices -> %d, count=%u\n", result, count);
@@ -1237,6 +1651,7 @@ int main(int argc, char** argv)
                 submit_and_wait(get_instance_proc, instance, device, queue, graphics_family);
                 fill_buffer_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
                 clear_image_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
+                bc_formats_test_ok = test_bc_formats(get_instance_proc, instance, devices[0], device, queue, graphics_family);
                 if (shader_identifier_supported)
                 {
                     shader_identifier_test_ok = test_shader_module_identifier(get_instance_proc, instance, device);
@@ -1254,7 +1669,7 @@ int main(int argc, char** argv)
     }
 
     const bool all_ok = timestamp2_test_ok && calibrated_timestamps_test_ok && transform_feedback_test_ok &&
-                        transform_feedback_capabilities_ok && shader_identifier_test_ok && pipeline_cache_test_ok;
+                        transform_feedback_capabilities_ok && shader_identifier_test_ok && pipeline_cache_test_ok && bc_formats_test_ok;
     std::printf("[shim-test] %s\n", all_ok ? "ok" : "FAILED");
     return all_ok ? 0 : 6;
 }

@@ -148,6 +148,32 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            NTSTATUS flush_view_range(const syscall_context& c, const uint64_t address, const uint64_t size, uint64_t& flushed_length)
+            {
+                const auto aligned_start = page_align_down(address);
+                const auto view = c.win_emu.memory.get_region_info(aligned_start);
+                const auto is_view = memory_region_policy::is_section_kind(view.kind) || c.proc.section_views.contains(aligned_start, 1);
+                if (!view.is_reserved || !is_view)
+                {
+                    return STATUS_NOT_MAPPED_VIEW;
+                }
+
+                const auto view_end = view.allocation_base + view.allocation_length;
+                if (size > view_end - address)
+                {
+                    return STATUS_NOT_MAPPED_VIEW;
+                }
+
+                if (view.kind != memory_region_kind::file_section_view)
+                {
+                    return STATUS_NOT_MAPPED_DATA;
+                }
+
+                const auto aligned_end = size == 0 ? view_end : page_align_up(address + size);
+                flushed_length = aligned_end - aligned_start;
+                return STATUS_SUCCESS;
+            }
+
             std::optional<std::u16string> get_mapped_filename(windows_emulator& win_emu, const uint64_t base_address)
             {
                 if (const auto mapped_filename = win_emu.memory.get_region_mapped_filename(base_address))
@@ -176,6 +202,43 @@ namespace sogen
                 {
                     return mod->module_path.to_unc_path();
                 }
+            }
+
+            NTSTATUS release_page_range(const syscall_context& c, const emulator_object<uint64_t> base_address,
+                                        const emulator_object<uint64_t> region_size)
+            {
+                const auto requested_base = base_address.read();
+                const auto release_base = page_align_down(requested_base);
+                const auto release_end = page_align_up(requested_base + region_size.read());
+
+                const auto region_info = c.win_emu.memory.get_region_info(release_base);
+                if (!region_info.is_reserved)
+                {
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+                }
+
+                const auto denied_status = memory_region_policy::nt_free_virtual_memory_denied_status(region_info.kind);
+                if (denied_status != STATUS_SUCCESS)
+                {
+                    return denied_status;
+                }
+
+                if (region_info.kind != memory_region_kind::private_allocation)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (release_end > region_info.allocation_base + region_info.allocation_length)
+                {
+                    return STATUS_UNABLE_TO_FREE_VM;
+                }
+
+                const auto release_length = static_cast<size_t>(release_end - release_base);
+                c.win_emu.memory.release_memory(release_base, release_length);
+
+                base_address.write(release_base);
+                region_size.write(release_length);
+                return STATUS_SUCCESS;
             }
         }
 
@@ -766,8 +829,19 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER_4;
             }
 
+            const auto release = (free_type & MEM_RELEASE) != 0;
+            if (release && (free_type & MEM_DECOMMIT))
+            {
+                return STATUS_INVALID_PARAMETER_4;
+            }
+
             const auto allocation_base = base_address.read();
             const auto allocation_size = bytes_to_allocate.read();
+
+            if (release && (allocation_base > MAX_ALLOCATION_ADDRESS || allocation_size > MAX_ALLOCATION_END_EXCL - allocation_base))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
 
             if (!c.proc.is_current_process_handle(process_handle))
             {
@@ -777,7 +851,6 @@ namespace sogen
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
-                const bool release = (free_type & MEM_RELEASE) != 0;
                 if (free_type & ~(MEM_RELEASE | MEM_DECOMMIT))
                 {
                     return STATUS_INVALID_PARAMETER_4;
@@ -795,7 +868,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (free_type & MEM_RELEASE)
+            if (release)
             {
                 if (free_type & (MEM_PRESERVE_PLACEHOLDER | MEM_COALESCE_PLACEHOLDERS))
                 {
@@ -816,7 +889,7 @@ namespace sogen
                 }
                 if (allocation_size)
                 {
-                    return STATUS_INVALID_PARAMETER;
+                    return release_page_range(c, base_address, bytes_to_allocate);
                 }
 
                 // The base is rounded down to a page; the rounded base must equal the region's base.
@@ -1093,45 +1166,33 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            if (!base_address || !region_size)
+            if (!base_address || !region_size || !io_status_block)
             {
                 return STATUS_ACCESS_VIOLATION;
             }
 
             const auto address = base_address.read();
             const auto size = region_size.read();
-
-            if (!address || !size)
+            if (address > MAX_ALLOCATION_ADDRESS || size > MAX_ALLOCATION_END_EXCL - address)
             {
                 return STATUS_INVALID_PARAMETER;
             }
 
-            const auto aligned_start = page_align_down(address);
-            const auto aligned_end = page_align_up(address + size);
+            base_address.write(page_align_down(address));
 
-            if (aligned_end <= aligned_start)
+            uint64_t flushed_length{};
+            const auto status = flush_view_range(c, address, size, flushed_length);
+            if (status == STATUS_SUCCESS)
             {
-                return STATUS_INVALID_PARAMETER;
+                region_size.write(flushed_length);
             }
 
-            const auto region_info = c.win_emu.memory.get_region_info(aligned_start);
-            if (!region_info.is_committed || region_info.start > aligned_start || region_info.start + region_info.length < aligned_end)
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
+            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+            block.Status = status;
+            block.Information = flushed_length;
+            io_status_block.write(block);
 
-            base_address.write(aligned_start);
-            region_size.write(aligned_end - aligned_start);
-
-            if (io_status_block)
-            {
-                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                block.Status = STATUS_SUCCESS;
-                block.Information = aligned_end - aligned_start;
-                io_status_block.write(block);
-            }
-
-            return STATUS_SUCCESS;
+            return status;
         }
     }
 

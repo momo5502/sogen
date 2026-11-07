@@ -1,40 +1,80 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:simple_icons/simple_icons.dart';
 
 import '../ads.dart';
 import '../emulation_root.dart';
+import '../epic/epic_account.dart';
+import '../epic/epic_library.dart';
 import '../game_library.dart';
+import '../gog/gog_account.dart';
+import '../gog/gog_library.dart';
 import '../session.dart';
 import '../settings.dart';
+import '../steam/steam_account.dart';
+import '../steam/steam_catalog.dart';
+import '../store/cover_cache.dart';
+import '../store/store_catalog.dart';
+import '../store/store_installer.dart';
+import '../support.dart';
 import '../theme.dart';
+import '../widgets/game_row.dart';
 import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
 import 'game_page.dart';
-import 'settings_page.dart';
+import 'settings_tab.dart';
+import 'store_tab.dart';
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.root, required this.library, required this.settings, required this.ads});
+  const HomePage({
+    super.key,
+    required this.root,
+    required this.library,
+    required this.settings,
+    required this.ads,
+    required this.gog,
+    required this.gogCatalog,
+    required this.epic,
+    required this.epicCatalog,
+    required this.steam,
+    required this.steamCatalog,
+    required this.installer,
+    required this.covers,
+  });
 
   final EmulationRoot root;
   final GameLibrary library;
   final AppSettings settings;
   final Ads ads;
+  final GogAccount gog;
+  final StoreCatalog gogCatalog;
+  final EpicAccount epic;
+  final StoreCatalog epicCatalog;
+  final SteamAccount steam;
+  final StoreCatalog steamCatalog;
+  final StoreInstaller installer;
+  final CoverCache covers;
 
   @override
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
+  late final TabController _tabs = TabController(length: 5, vsync: this)..addListener(_onTabChanged);
   bool _installing = false;
   double? _progress;
   String? _error;
 
   final Map<String, GameSession> _saving = {};
 
+  void _onTabChanged() => setState(() {});
+
   @override
   void dispose() {
+    _tabs.dispose();
     for (final session in _saving.values) {
       session.dispose();
     }
@@ -67,8 +107,10 @@ class _HomePageState extends State<HomePage> {
     await widget.library.releaseUnusedFolders();
   }
 
-  void _openSettings() {
-    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => SettingsPage(settings: widget.settings)));
+  /// The download shows its progress on the Installed tab.
+  void _redownloadRoot() {
+    _tabs.animateTo(0);
+    _installRoot();
   }
 
   /// The library outlives the game page, so it reports failed writes even after the page is gone.
@@ -128,43 +170,23 @@ class _HomePageState extends State<HomePage> {
     await widget.library.releaseUnusedFolders();
   }
 
-  void _showGameMenu(Game game) {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: SogenColors.card,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(LucideIcons.pencil),
-              title: const Text('Edit'),
-              onTap: () {
-                Navigator.of(context).pop();
-                _edit(game);
-              },
-            ),
-            ListTile(
-              leading: const Icon(LucideIcons.trash2),
-              title: const Text('Remove'),
-              onTap: () {
-                Navigator.of(context).pop();
-                _confirmRemove(game);
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  GameCommands get _commands => GameCommands(
+    play: _play,
+    edit: _edit,
+    remove: _confirmRemove,
+    isBusy: (game) => _saving.containsKey(game.id),
+    canPlay: !_installing,
+  );
 
   Future<void> _confirmRemove(Game game) async {
     final remove = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Remove ${game.name}?'),
-        content: const Text(
-          'The game files stay where they are. Saves and settings the game kept in its folder are deleted.',
+        content: Text(
+          installIdOf(game.directory) != null
+              ? 'The game files Sogen downloaded are deleted, together with its saves and settings.'
+              : 'The game files stay where they are. The saves and settings Sogen kept for the game are deleted.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
@@ -182,106 +204,182 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     final installed = widget.root.isInstalled;
-    final theme = Theme.of(context);
 
     return Scaffold(
-      body: SafeArea(
-        child: ListenableBuilder(
-          listenable: widget.library,
-          builder: (context, _) {
-            final games = widget.library.games;
-
-            return CustomScrollView(
-              slivers: [
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 12, 0),
-                  sliver: SliverToBoxAdapter(
-                    child: Row(
-                      children: [
-                        Text('Sogen', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                        const Spacer(),
-                        PopupMenuButton<void>(
-                          icon: const Icon(LucideIcons.ellipsisVertical, color: SogenColors.neutral400),
-                          color: SogenColors.card,
-                          itemBuilder: (context) => [
-                            if (installed)
-                              PopupMenuItem(
-                                enabled: !_installing,
-                                onTap: _installRoot,
-                                child: const Text('Re-download emulation root'),
-                              ),
-                            PopupMenuItem(onTap: _openSettings, child: const Text('Settings')),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+      floatingActionButton: _tabs.index == 0 && installed
+          ? FloatingActionButton(
+              tooltip: 'Add game',
+              backgroundColor: SogenColors.neutral100,
+              foregroundColor: SogenColors.neutral900,
+              onPressed: _addGame,
+              child: const Icon(LucideIcons.plus),
+            )
+          : null,
+      bottomNavigationBar: DecoratedBox(
+        decoration: const BoxDecoration(
+          color: SogenColors.background,
+          border: Border(top: BorderSide(color: SogenColors.neutral800)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: TabBar(
+            controller: _tabs,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            dividerHeight: 0,
+            indicator: const _TopLineIndicator(),
+            indicatorSize: TabBarIndicatorSize.tab,
+            tabs: [
+              for (final (index, tab) in _tabIcons.indexed)
+                _IconTab(
+                  label: tab.label,
+                  showLabel: MediaQuery.sizeOf(context).width >= _labelledTabsMinWidth,
+                  position: _tabs.animation!,
+                  index: index,
+                  icon: tab.icon,
                 ),
-                const SliverToBoxAdapter(child: SizedBox(height: 24)),
-                if (!installed || _installing || _error != null)
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-                    sliver: SliverToBoxAdapter(
-                      child: _RootCard(
-                        installed: installed,
-                        installing: _installing,
-                        progress: _progress,
-                        error: _error,
-                        onInstall: _installRoot,
-                      ),
-                    ),
-                  ),
-                if (installed) ...[
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-                    sliver: SliverToBoxAdapter(
-                      child: Row(
-                        children: [
-                          Text('Library', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-                          const SizedBox(width: 12),
-                          Pill(label: games.length == 1 ? '1 game' : '${games.length} games'),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (games.isEmpty)
-                    const SliverPadding(
-                      padding: EdgeInsets.symmetric(horizontal: 24),
-                      sliver: SliverToBoxAdapter(child: _EmptyLibrary()),
-                    )
-                  else
-                    SliverPadding(
-                      padding: const EdgeInsets.symmetric(horizontal: 24),
-                      sliver: SliverList.separated(
-                        itemCount: games.length,
-                        separatorBuilder: (_, _) => const SizedBox(height: 12),
-                        itemBuilder: (context, index) => _GameCard(
-                          game: games[index],
-                          accent: SogenColors.accents[index % SogenColors.accents.length],
-                          enabled: !_installing,
-                          saving: _saving.containsKey(games[index].id),
-                          onPlay: () => _play(games[index]),
-                          onMenu: () => _showGameMenu(games[index]),
-                        ),
-                      ),
-                    ),
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                    sliver: SliverToBoxAdapter(
-                      child: PrimaryButton(
-                        label: 'Add game',
-                        icon: LucideIcons.plus,
-                        expand: true,
-                        onPressed: _addGame,
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            );
-          },
+            ],
+          ),
         ),
       ),
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Expanded(
+              child: TabBarView(
+                controller: _tabs,
+                children: [
+                  _buildInstalled(installed),
+                  StoreTab(
+                    account: widget.gog,
+                    catalog: widget.gogCatalog,
+                    installer: widget.installer,
+                    library: widget.library,
+                    canInstall: installed && !_installing,
+                    color: SogenColors.accents[6],
+                    covers: widget.covers,
+                    commands: _commands,
+                  ),
+                  StoreTab(
+                    account: widget.steam,
+                    catalog: widget.steamCatalog,
+                    installer: widget.installer,
+                    library: widget.library,
+                    canInstall: installed && !_installing,
+                    color: const Color(0xFF66C0F4),
+                    covers: widget.covers,
+                    commands: _commands,
+                  ),
+                  StoreTab(
+                    account: widget.epic,
+                    catalog: widget.epicCatalog,
+                    installer: widget.installer,
+                    library: widget.library,
+                    canInstall: installed && !_installing,
+                    color: SogenColors.neutral100,
+                    covers: widget.covers,
+                    commands: _commands,
+                  ),
+                  SettingsTab(
+                    settings: widget.settings,
+                    accounts: [widget.gog, widget.steam, widget.epic],
+                    onRedownloadRoot: installed && !_installing ? _redownloadRoot : null,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Installed games say where they come from: their store, or their executable when they were added by hand.
+  Widget _installedRow(Game game, int index) {
+    final theme = Theme.of(context);
+    final icon = widget.library.iconOf(game);
+    final saving = _saving.containsKey(game.id);
+    return GameRow(
+      art: GameArt(source: icon == null ? null : LocalArt(icon), color: placeholderColor(index)),
+      title: game.name,
+      subtitle: switch (_storeNames[game.source?.store]) {
+        _ when saving => Text(
+          'Suspending…',
+          maxLines: 1,
+          style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+        ),
+        final store? => Text(
+          store,
+          maxLines: 1,
+          style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+        ),
+        null => Text(
+          game.executable,
+          maxLines: 1,
+          softWrap: false,
+          overflow: TextOverflow.ellipsis,
+          style: monospace(fontSize: 12, color: SogenColors.neutral400),
+        ),
+      },
+      onTap: _commands.tap(game),
+      onLongPress: _commands.menu(game),
+      dimmed: saving,
+      trailing: _commands.actions(game),
+    );
+  }
+
+  Widget _buildInstalled(bool installed) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([widget.library, widget.settings]),
+      builder: (context, _) {
+        final games = widget.library.games;
+
+        return CustomScrollView(
+          slivers: [
+            const SliverToBoxAdapter(child: SizedBox(height: 24)),
+            if (widget.settings.showSupportNotice)
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                sliver: SliverToBoxAdapter(
+                  child: _SupportNotice(
+                    onJoin: () => openDiscord(context),
+                    onDismiss: widget.settings.hideSupportNotice,
+                  ),
+                ),
+              ),
+            if (!installed || _installing || _error != null)
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                sliver: SliverToBoxAdapter(
+                  child: _RootCard(
+                    installed: installed,
+                    installing: _installing,
+                    progress: _progress,
+                    error: _error,
+                    onInstall: _installRoot,
+                  ),
+                ),
+              ),
+            if (installed) ...[
+              if (games.isEmpty)
+                const SliverPadding(
+                  padding: EdgeInsets.symmetric(horizontal: 24),
+                  sliver: SliverToBoxAdapter(child: _EmptyLibrary()),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  sliver: SliverList.separated(
+                    itemCount: games.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 12),
+                    itemBuilder: (context, index) => _installedRow(games[index], index),
+                  ),
+                ),
+            ],
+            const SliverToBoxAdapter(child: SizedBox(height: 96)),
+          ],
+        );
+      },
     );
   }
 }
@@ -349,63 +447,55 @@ class _RootCard extends StatelessWidget {
   }
 }
 
-class _GameCard extends StatelessWidget {
-  const _GameCard({
-    required this.game,
-    required this.accent,
-    required this.enabled,
-    required this.saving,
-    required this.onPlay,
-    required this.onMenu,
-  });
+class _SupportNotice extends StatelessWidget {
+  const _SupportNotice({required this.onJoin, required this.onDismiss});
 
-  final Game game;
-  final Color accent;
-  final bool enabled;
-  final bool saving;
-  final VoidCallback onPlay;
-  final VoidCallback onMenu;
+  final VoidCallback onJoin;
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final card = Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: enabled && !saving ? onPlay : null,
-        onLongPress: saving ? null : onMenu,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              IconTile(icon: LucideIcons.gamepad2, color: accent),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(game.name, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    Text(
-                      saving ? 'Suspending…' : game.executable,
-                      overflow: TextOverflow.ellipsis,
-                      style: monospace(fontSize: 12, color: SogenColors.neutral400),
-                    ),
-                  ],
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 16, 8, 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                IconTile(icon: LucideIcons.flaskConical, color: SogenColors.accents[2]),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(LucideIcons.x, color: SogenColors.neutral400),
+                  tooltip: 'Dismiss',
+                  onPressed: onDismiss,
                 ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Early development', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Sogen is very early in development, and not every game works yet. '
+                    'For help and support, join our Discord.',
+                    style: theme.textTheme.bodyMedium?.copyWith(color: SogenColors.neutral300, height: 1.5),
+                  ),
+                  const SizedBox(height: 20),
+                  PrimaryButton(label: 'Join Discord', icon: LucideIcons.messageCircle, onPressed: onJoin),
+                ],
               ),
-              if (saving)
-                const SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))
-              else
-                const Icon(LucideIcons.play, color: SogenColors.neutral300),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
-
-    return saving ? Opacity(opacity: 0.6, child: card) : card;
   }
 }
 
@@ -434,6 +524,126 @@ class _EmptyLibrary extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The stores a library game can come from, by the names the user knows them by.
+const _storeNames = {GogLibrary.store: 'GOG', SteamCatalog.store: 'Steam', EpicLibrary.store: 'Epic'};
+
+/// How each tab's icon looks once its tab is active. Steam's and Epic's brand colors are black, which would vanish on
+/// the dark tab bar, so they use the light blue of Steam's client and white.
+const _tabIcons = [
+  (label: 'Installed', icon: _TabIcon.sogen()),
+  (label: 'GOG', icon: _TabIcon(SimpleIcons.gogdotcom, Color(0xFFB65FD0))),
+  (label: 'Steam', icon: _TabIcon(SimpleIcons.steam, Color(0xFF66C0F4))),
+  (label: 'Epic', icon: _TabIcon(SimpleIcons.epicgames, Colors.white)),
+  (label: 'Settings', icon: _TabIcon(LucideIcons.settings, SogenColors.neutral100)),
+];
+
+/// A tab shown by its icon alone, named by a tooltip and for screen readers, so that all tabs fit side by side. The
+/// icon follows the tab bar's position, so it takes its color gradually while the user swipes towards its tab.
+/// From this width on, every tab has room for its label next to its icon, e.g. on a tablet held sideways.
+const _labelledTabsMinWidth = 600.0;
+
+class _IconTab extends StatelessWidget {
+  const _IconTab({
+    required this.icon,
+    required this.label,
+    required this.showLabel,
+    required this.position,
+    required this.index,
+  });
+
+  final _TabIcon icon;
+  final String label;
+  final bool showLabel;
+  final Animation<double> position;
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final iconWidget = SizedBox.square(
+      dimension: 22,
+      child: AnimatedBuilder(
+        animation: position,
+        builder: (context, _) => icon.build((1 - (position.value - index).abs()).clamp(0.0, 1.0)),
+      ),
+    );
+
+    if (showLabel) {
+      return Tab(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            iconWidget,
+            const SizedBox(width: 10),
+            Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+      );
+    }
+
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        child: Tab(child: iconWidget),
+      ),
+    );
+  }
+}
+
+/// An icon that is neutral while its tab is inactive and colored while it is active, blending in between.
+class _TabIcon {
+  const _TabIcon(IconData this.icon, Color this.activeColor);
+
+  /// The Sogen logo has several colors, so its colored and neutral versions are cross-faded instead.
+  const _TabIcon.sogen() : icon = null, activeColor = null;
+
+  static const _inactive = SogenColors.neutral400;
+
+  final IconData? icon;
+  final Color? activeColor;
+
+  Widget build(double active) {
+    final icon = this.icon;
+    if (icon != null) {
+      return Icon(icon, size: 22, color: Color.lerp(_inactive, activeColor, active));
+    }
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Opacity(
+          opacity: 1 - active,
+          child: SvgPicture.asset(
+            'assets/sogen_mark.svg',
+            colorFilter: const ColorFilter.mode(_inactive, BlendMode.srcIn),
+          ),
+        ),
+        Opacity(opacity: active, child: SvgPicture.asset('assets/sogen_mark.svg')),
+      ],
+    );
+  }
+}
+
+/// The selected tab's line, drawn along the top edge since the tab bar sits at the bottom of the screen.
+class _TopLineIndicator extends Decoration {
+  const _TopLineIndicator();
+
+  @override
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) => _TopLinePainter();
+}
+
+class _TopLinePainter extends BoxPainter {
+  @override
+  void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
+    final size = configuration.size!;
+    final line = Rect.fromLTWH(offset.dx + size.width * 0.3, offset.dy, size.width * 0.4, 3);
+    canvas.drawRRect(
+      RRect.fromRectAndCorners(line, bottomLeft: const Radius.circular(3), bottomRight: const Radius.circular(3)),
+      Paint()..color = SogenColors.neutral100,
     );
   }
 }

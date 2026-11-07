@@ -1,9 +1,9 @@
 # Guest file system
 
 Sogen gives the guest a file system that is a table of mounts. Each mount connects a guest path, such as `C:\` or
-`C:\out`, to a host file or directory, and has a mode: `ro` (read-only) or `rw` (read-write). To find the mount for a
-guest path, Sogen uses the deepest mount point that contains the path. Thus a `C:\out` mount overrides the `C:\`
-drive for all paths below `C:\out`.
+`C:\out`, to a host file or directory, and has a mode: `ro` (read-only), `rw` (read-write), or, for the root drives
+only, `cow` (copy-on-write, see below). To find the mount for a guest path, Sogen uses the deepest mount point that
+contains the path. Thus a `C:\out` mount overrides the `C:\` drive for all paths below `C:\out`.
 
 With an emulation root, each single-letter directory in `<root>/filesys` becomes a drive mount. For example,
 `<root>/filesys/c` becomes `C:\`. These drives use the mode from `--root-mode`, which is `ro` by default. Without a
@@ -11,15 +11,21 @@ root (Windows hosts only), Sogen mounts the host drives directly. The registry (
 (`<root>/dpapi`) are outside `filesys`, so the guest cannot open them. Sogen reads the DPAPI master key from the root,
 but never writes it.
 
-Add mounts with `--mount HOST:GUEST[:MODE]`. HOST can be a file or a directory. If you do not give MODE, the mount
-uses the default mode, which is `ro`. `-p GUEST HOST` is the same as `--mount HOST:GUEST`. In Python, use
-`root_mode="ro"` and `mounts=[(host, guest)]` or `mounts=[(host, guest, mode)]`.
+The sandbox can also mount the root drives copy-on-write, with `--root-mode cow --root-layer DIR`. This mode needs an
+emulation root and a layer directory, and it applies only to the root drives. Guest writes to drive `C:\` go to
+`DIR/c/upper`, and its deletions are recorded in `DIR/c/state`. The layer directories use the drive letter in lower
+case. The root itself does not change. Child processes get the same layer, and a later run with the same layer sees
+the earlier changes. The Android app uses this mode with one layer per game.
+
+Add mounts with `--mount HOST:GUEST[:MODE]`. HOST can be a file or a directory. MODE is `ro` or `rw`. If you do not
+give MODE, the mount uses the default mode, which is `ro`. `-p GUEST HOST` is the same as `--mount HOST:GUEST`. In
+Python, use `root_mode="ro"` and `mounts=[(host, guest)]` or `mounts=[(host, guest, mode)]`.
 
 A guest write to a `ro` mount fails with `STATUS_ACCESS_DENIED`, and the host files do not change. This applies to:
 
 - opening a file with write access,
 - creating a file or directory,
-- deleting or renaming, where both the source and the target must be `rw`,
+- deleting or renaming, where both the source and the target must be writable (`rw` or `cow`),
 - all `NtSetInformationFile` classes except `FilePositionInformation` (for example times, attributes, size and
   delete-on-close),
 - `NtSetSecurityObject` on a file handle.

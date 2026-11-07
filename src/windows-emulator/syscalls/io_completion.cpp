@@ -5,7 +5,6 @@
 
 namespace sogen
 {
-
     namespace syscalls
     {
         namespace
@@ -71,7 +70,7 @@ namespace sogen
             message.io_status_block.Status = io_status;
             message.io_status_block.Information = io_status_information;
 
-            completion->enqueue(message);
+            io_completion_wait::insert(c.win_emu, io_completion_handle, *completion, message);
             c.win_emu.wake_idle_vcpu();
             return STATUS_SUCCESS;
         }
@@ -133,7 +132,7 @@ namespace sogen
             message.io_status_block.Information = io_status_information;
             message.wait_packet_handle = wait_packet_handle;
 
-            completion->enqueue(message);
+            io_completion_wait::insert(c.win_emu, io_completion_handle, *completion, message);
             c.win_emu.wake_idle_vcpu();
             return STATUS_SUCCESS;
         }
@@ -144,6 +143,15 @@ namespace sogen
                                              const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              const emulator_object<LARGE_INTEGER> timeout)
         {
+            // Probed before the handle is looked at (19041 touches both contexts and the status block's first ULONG), so a
+            // bad buffer fails the call before a packet is taken; the packet is written there after the wait.
+            if (!is_writable_range(c.win_emu.memory, key_context.value(), sizeof(emulator_pointer)) ||
+                !is_writable_range(c.win_emu.memory, apc_context.value(), sizeof(emulator_pointer)) ||
+                !is_writable_range(c.win_emu.memory, io_status_block.value(), sizeof(ULONG)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
             auto* completion = c.proc.io_completions.get(io_completion_handle);
             if (!completion)
             {
@@ -153,10 +161,8 @@ namespace sogen
             io_completion_message message{};
             if (io_completion_wait::dequeue_io_completion_message(c.win_emu, io_completion_handle, message))
             {
-                key_context.write_if_valid(message.key_context);
-                apc_context.write_if_valid(message.apc_context);
-                io_status_block.write_if_valid(message.io_status_block);
-                return STATUS_SUCCESS;
+                return io_completion_wait::write_message(c.win_emu.memory, key_context.value(), apc_context.value(),
+                                                         io_status_block.value(), message);
             }
 
             if (timeout && timeout.read().QuadPart == 0)
@@ -191,6 +197,7 @@ namespace sogen
                 }
             }
 
+            io_completion_wait::add_waiter(*completion, t.id);
             c.win_emu.yield_thread(c.vcpu, false);
             return STATUS_SUCCESS;
         }
@@ -206,20 +213,27 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
+            if (const auto status = io_completion_wait::probe_completion_entries(c.win_emu.memory, io_completion_information.value(), count,
+                                                                                 num_entries_removed.value());
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             auto* completion = c.proc.io_completions.get(io_completion_handle);
             if (!completion)
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto removed =
-                io_completion_wait::dequeue_io_completion_entries(c.win_emu, io_completion_handle, io_completion_information, count);
-            num_entries_removed.write_if_valid(removed);
-            if (removed > 0)
+            const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, io_completion_handle, count);
+            if (!messages.empty())
             {
-                return STATUS_SUCCESS;
+                return io_completion_wait::write_entries(c.win_emu.memory, io_completion_information.value(), num_entries_removed.value(),
+                                                         messages);
             }
 
+            num_entries_removed.write_if_valid(0);
             if (timeout && timeout.read().QuadPart == 0)
             {
                 return STATUS_TIMEOUT;
@@ -253,6 +267,7 @@ namespace sogen
                 }
             }
 
+            io_completion_wait::add_waiter(*completion, t.id);
             c.win_emu.yield_thread(c.vcpu, alertable);
             return STATUS_SUCCESS;
         }
@@ -393,11 +408,26 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (remove_signaled_packet && wait_packet->queued_completion)
+            if (!wait_packet->associated)
             {
+                return STATUS_CANCELLED;
+            }
+
+            // Windows queues the packet when the target is signalled; the emulator only does so on demand, so a
+            // signal that already happened has to be turned into its packet before the wait can be judged.
+            io_completion_wait::materialize_signaled_wait_packets(c.win_emu, wait_packet->io_completion_handle);
+
+            if (wait_packet->queued_completion)
+            {
+                if (!remove_signaled_packet)
+                {
+                    return STATUS_PENDING;
+                }
+
                 if (auto* completion = c.proc.io_completions.get(wait_packet->io_completion_handle))
                 {
-                    if (completion->remove_by_wait_packet(wait_completion_packet_handle))
+                    if (completion->remove_by_wait_packet(
+                            [&](const handle queued) { return c.proc.wait_completion_packets.get(queued) == wait_packet; }))
                     {
                         (void)c.proc.wait_completion_packets.erase(wait_completion_packet_handle);
                     }

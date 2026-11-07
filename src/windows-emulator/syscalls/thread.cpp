@@ -1635,7 +1635,9 @@ namespace sogen
             actual_stack_size = std::max(stack_size, actual_stack_size);
             actual_stack_size = align_up(actual_stack_size, ALLOCATION_GRANULARITY);
 
-            const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags);
+            const auto stack_commit_size = stack_size != 0 ? stack_size : c.win_emu.mod_manager.executable->size_of_stack_commit;
+            const auto h =
+                c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags, false, stack_commit_size);
             c.proc.threads.get(h)->inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             c.win_emu.report_debug_event({

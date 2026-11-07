@@ -33,6 +33,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
   String? _executable;
   bool _liveNetwork = false;
   bool _console = false;
+  DisplayMode? _maxDisplayMode;
   bool _scanning = false;
   bool _saving = false;
   int _scanGeneration = 0;
@@ -52,6 +53,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
     _environment.text = game.environment.entries.map((entry) => '${entry.key}=${entry.value}').join('\n');
     _liveNetwork = game.liveNetwork;
     _console = game.console;
+    _maxDisplayMode = game.maxDisplayMode;
     _settings = game.settings;
     _scan(game.directory, selected: game.executable);
   }
@@ -97,6 +99,17 @@ class _GameEditorPageState extends State<GameEditorPage> {
   }
 
   static Future<List<String>> _findExecutables(String directory) async {
+    final found = await _searchFolder(directory);
+    return [...found]..sort((a, b) => '/'.allMatches(a).length.compareTo('/'.allMatches(b).length));
+  }
+
+  static Future<List<String>> _searchFolder(String directory) async {
+    final installId = installIdOf(directory);
+    if (installId != null) {
+      final games = await installedGamesDirectory();
+      return findExecutablesIn(Directory(p.join(games.path, installId)), maxDepth: _maxSearchDepth);
+    }
+
     if (!isFolderUri(directory)) {
       return const [];
     }
@@ -105,7 +118,7 @@ class _GameEditorPageState extends State<GameEditorPage> {
       'uri': directory,
       'maxDepth': _maxSearchDepth,
     });
-    return [...?found]..sort((a, b) => '/'.allMatches(a).length.compareTo('/'.allMatches(b).length));
+    return found ?? const [];
   }
 
   static Map<String, String> _parseEnvironment(String text) {
@@ -151,7 +164,11 @@ class _GameEditorPageState extends State<GameEditorPage> {
     }
   }
 
+  /// What Sogen knows about a game it installed stays with it while it keeps its folder; GOG's working directory only
+  /// applies to the executable GOG starts.
   Future<void> _store(String directory, String executable) async {
+    final previous = widget.game;
+    final sameFolder = previous != null && previous.directory == directory;
     final game = Game(
       id: widget.game?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
       name: _name.text.trim().isEmpty ? p.basenameWithoutExtension(executable) : _name.text.trim(),
@@ -161,7 +178,11 @@ class _GameEditorPageState extends State<GameEditorPage> {
       environment: _parseEnvironment(_environment.text),
       liveNetwork: _liveNetwork,
       console: _console,
+      maxDisplayMode: _maxDisplayMode,
       settings: _settings,
+      workingDirectory: sameFolder && previous.executable == executable ? previous.workingDirectory : null,
+      source: sameFolder ? previous.source : null,
+      icon: sameFolder ? previous.icon : null,
     );
 
     if (!await _keepOrDiscardSuspendedState(game) || !mounted) {
@@ -177,7 +198,8 @@ class _GameEditorPageState extends State<GameEditorPage> {
     if (previous == null ||
         (previous.directory == game.directory &&
             previous.executable == game.executable &&
-            previous.liveNetwork == game.liveNetwork)) {
+            previous.liveNetwork == game.liveNetwork &&
+            previous.maxDisplayMode == game.maxDisplayMode)) {
       return true;
     }
 
@@ -191,8 +213,8 @@ class _GameEditorPageState extends State<GameEditorPage> {
       builder: (context) => AlertDialog(
         title: Text('Discard the suspended ${previous.name}?'),
         content: const Text(
-          'The game was suspended with a different folder, executable or network access, so it cannot resume after '
-          'this change.',
+          'The game was suspended with a different folder, executable, network access or display resolution, so it '
+          'cannot resume after this change.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
@@ -216,6 +238,31 @@ class _GameEditorPageState extends State<GameEditorPage> {
       }
       return false;
     }
+  }
+
+  /// Offers the display modes that fit the device's screen, and keeps one the game already uses even when it does not.
+  Widget _displayModeField() {
+    final screen = View.of(context).display.size;
+    final offered = [
+      for (final mode in DisplayMode.all)
+        if (mode != DisplayMode.standard &&
+            (mode == _maxDisplayMode || mode.fitsOn(screen.width.round(), screen.height.round())))
+          mode,
+    ];
+    return DropdownButtonFormField<DisplayMode?>(
+      initialValue: _maxDisplayMode,
+      dropdownColor: SogenColors.card,
+      decoration: const InputDecoration(
+        labelText: 'Display resolution',
+        helperText: 'Games sized by the display render fewer pixels, and run faster, at a lower resolution',
+        helperMaxLines: 2,
+      ),
+      items: [
+        DropdownMenuItem(value: null, child: Text('Standard (${DisplayMode.standard.name})')),
+        for (final mode in offered.reversed) DropdownMenuItem(value: mode, child: Text(mode.name)),
+      ],
+      onChanged: (value) => setState(() => _maxDisplayMode = value),
+    );
   }
 
   @override
@@ -359,6 +406,8 @@ class _GameEditorPageState extends State<GameEditorPage> {
                 onChanged: (value) => setState(() => _settings = _settings.copyWith(mouseSensitivity: value)),
               ),
               const SizedBox(height: 8),
+              _displayModeField(),
+              const SizedBox(height: 16),
               DropdownButtonFormField<ScreenOrientation>(
                 initialValue: _settings.orientation,
                 dropdownColor: SogenColors.card,

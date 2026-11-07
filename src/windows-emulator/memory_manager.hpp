@@ -142,6 +142,10 @@ namespace sogen
         // the GPU bridge uses these to make guest writes visible to the host GPU on backends (e.g. KVM) that
         // alias host memory into the guest non-coherently.
         bool host_memory_aliasing_is_coherent() const override;
+        bool supports_page_granular_protection() const override;
+        bool supports_restartable_faults() const override;
+        // Whether a guard page below a thread stack can grow the stack: it has to fault, and the access has to run again.
+        bool supports_guarded_stack_growth() const;
         void flush_host_memory_cache(const void* host_pointer, size_t size) override;
         bool track_access(uint64_t address, size_t size) override;
         void take_written_ranges(uint64_t address, size_t size,
@@ -229,6 +233,7 @@ namespace sogen
         memory_stats compute_memory_stats() const;
 
         void set_dep_enabled(bool enabled);
+        void set_execute_implies_read(bool enabled);
 
         bool is_dep_enabled() const
         {
@@ -239,8 +244,10 @@ namespace sogen
         memory_interface* memory_{};
         reserved_region_map reserved_regions_{};
         std::atomic<std::uint64_t> layout_version_{0};
+        mutable std::atomic_bool page_granular_protection_lost_{false};
         std::uint64_t default_allocation_address_{0x100000000ULL};
         bool dep_enabled_{true};
+        bool execute_implies_read_{false};
         std::vector<uint64_t> host_reserved_addresses_{};
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
@@ -252,6 +259,7 @@ namespace sogen
         void update_layout_version();
         bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool allow_image_section);
         memory_permission get_effective_permissions(nt_memory_permission permissions) const;
+        void reapply_memory_protections();
 
         // allocate_memory(address, ...) without the host-range rescan the public overload performs
         // first; reserve_host_memory_ranges calls this to avoid recursing back into itself.

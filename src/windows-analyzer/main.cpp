@@ -10,6 +10,7 @@
 #include <minidump_loader.hpp>
 #include <scoped_hook.hpp>
 #include <registry/registry_file.hpp>
+#include <registry/registry_state_file.hpp>
 
 #include "object_watching.hpp"
 #include <snapshot.hpp>
@@ -79,9 +80,11 @@ namespace sogen
             std::optional<backend_type> backend{};
             network::network_mode network{network::network_mode::offline};
             bool disable_instruction_precision{false};
+            bool native_timing{false};
             uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::vector<std::filesystem::path> registry_files{};
+            std::filesystem::path registry_state{};
             std::filesystem::path emulation_root{};
             std::filesystem::path working_directory{};
             uint16_t managed_process_port{};
@@ -545,11 +548,21 @@ namespace sogen
             return wide_args;
         }
 
+#ifdef __APPLE__
+        // KUSER_SHARED_DATA lies inside the __PAGEZERO segment of every 64-bit macOS process, so it cannot be mapped as plain
+        // memory and every read has to be emulated; there --native-timing only drops the rdtsc trap, as in the sandbox.
+        constexpr bool kusd_needs_intercept = true;
+#else
+        constexpr bool kusd_needs_intercept = false;
+#endif
+
         emulator_settings create_emulator_settings(const analysis_options& options)
         {
             return {
                 .use_relative_time = options.reproducible,
                 .use_instruction_precision = !options.disable_instruction_precision,
+                .intercept_rdtsc = !options.native_timing,
+                .intercept_kusd = kusd_needs_intercept || !options.native_timing,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
                 .root_mode = options.root_mode,
@@ -729,18 +742,43 @@ namespace sogen
                 });
             }
 #endif
+            std::unique_ptr<registry_state_file> registry_state{};
+            if (!options.registry_state.empty())
+            {
+                if (!options.dump.empty() || !options.minidump_path.empty())
+                {
+                    throw std::runtime_error("Registry state cannot be combined with a snapshot or minidump");
+                }
+#ifndef OS_EMSCRIPTEN
+                if (options.managed_process)
+                {
+                    throw std::runtime_error("Registry state belongs to the primary analyzer process");
+                }
+#endif
+                registry_state = std::make_unique<registry_state_file>(options.registry_state);
+            }
             const auto concise_logging = options.concise_logging;
             const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager.get()});
             if (options.network == network::network_mode::live)
             {
                 win_emu->log.warn("Network mode is live: the guest can use the host network\n");
             }
+            if (registry_state)
+            {
+                registry_state->load(win_emu->registry);
+            }
             apply_registry_files(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
             std::unique_ptr<emulator_process_target> managed_target{};
             if (options.managed_process)
             {
+                if (!options.managed_process->request().registry_state.empty())
+                {
+                    utils::buffer_deserializer state{options.managed_process->request().registry_state};
+                    win_emu->registry.deserialize_runtime_state(state);
+                }
                 win_emu->setup_process_if_necessary();
+                win_emu->process.parent_process_id = options.managed_process->request().parent_process_id;
                 if (options.managed_process->request().debugged)
                 {
                     win_emu->attach_debugger();
@@ -990,6 +1028,10 @@ namespace sogen
             }
 
             const auto success = run_emulation(context, options);
+            if (registry_state && win_emu->process.exit_status.has_value())
+            {
+                registry_state->save(win_emu->registry);
+            }
 #ifndef OS_EMSCRIPTEN
             if (options.managed_process && win_emu->process.exit_status)
             {
@@ -1069,7 +1111,12 @@ namespace sogen
             app.add_flag("--first-exec", options.log_first_section_execution, "Print first executions of sections");
             app.add_flag("--inst-summary", options.instruction_summary, "Print a summary of executed instructions of the analyzed modules");
             app.add_flag("--skip-syscalls", options.skip_syscalls, "Skip the logging of regular syscalls");
-            app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");
+            auto* const reproducible_option =
+                app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");
+            app.add_flag("--native-timing", options.native_timing,
+                         "Let the guest read the host TSC and a periodically refreshed KUSER_SHARED_DATA without trapping (faster, "
+                         "timing is no longer exact); on macOS KUSER_SHARED_DATA stays trapped and only rdtsc runs natively")
+                ->excludes(reproducible_option);
             app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
             app.add_flag("--elevated", options.elevated, "Run the process with an elevated administrator token");
@@ -1093,6 +1140,9 @@ namespace sogen
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
+#ifndef OS_EMSCRIPTEN
+            app.add_option("--registry-state", options.registry_state, "Load registry overlay state and save it after the guest exits");
+#endif
             app.add_option("--reg-file", options.registry_files, "Import registry values from a .reg file")
                 ->type_name("FILE")
                 ->expected(1)

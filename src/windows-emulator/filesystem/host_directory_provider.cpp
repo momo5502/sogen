@@ -25,11 +25,26 @@
 #include <unistd.h>
 #endif
 
+#ifdef OS_WINDOWS
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <algorithm>
+#include <climits>
+#include <sys/resource.h>
+#endif
+
 namespace sogen
 {
 
     namespace
     {
+        // Windows junctions are reported as an implementation-defined file type rather than as symlinks.
+        bool is_link(const std::filesystem::file_status status)
+        {
+            return std::filesystem::is_symlink(status) || std::filesystem::is_other(status);
+        }
+
         bool is_subpath(const std::filesystem::path& root, const std::filesystem::path& target)
         {
             const auto relative_path = target.lexically_relative(root);
@@ -46,9 +61,85 @@ namespace sogen
                 return STATUS_ACCESS_DENIED;
             case EISDIR:
                 return STATUS_FILE_IS_A_DIRECTORY;
+            case EMFILE:
+            case ENFILE:
+                return STATUS_TOO_MANY_OPENED_FILES;
             default:
                 return STATUS_NOT_SUPPORTED;
             }
+        }
+
+#ifdef OS_WINDOWS
+        // Windows only re-creates an existing hidden or system file when the new file keeps those attributes, which is
+        // how an NT caller overwrites it. The guest does not see host attributes, so it cannot ask for them itself.
+        FILE* recreate_keeping_attributes(const std::filesystem::path& path, const std::u16string& mode)
+        {
+            constexpr DWORD kept_attributes = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM;
+            const auto attributes = GetFileAttributesW(path.c_str());
+            if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & kept_attributes) == 0)
+            {
+                return nullptr;
+            }
+
+            const bool readable = mode.find(u'+') != std::u16string::npos;
+            auto* const handle = CreateFileW(path.c_str(), GENERIC_WRITE | (readable ? GENERIC_READ : 0),
+                                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+                                             attributes & kept_attributes, nullptr);
+            if (handle == INVALID_HANDLE_VALUE)
+            {
+                return nullptr;
+            }
+
+            const auto descriptor = _open_osfhandle(reinterpret_cast<intptr_t>(handle), _O_BINARY | (readable ? _O_RDWR : _O_WRONLY));
+            if (descriptor == -1)
+            {
+                CloseHandle(handle);
+                return nullptr;
+            }
+
+            auto* file = _wfdopen(descriptor, u16_to_w(mode).c_str());
+            if (!file)
+            {
+                _close(descriptor);
+            }
+
+            return file;
+        }
+#endif
+
+        // Every open guest file holds a host stream, and the C runtime starts with 512 of them. Windows gives a process
+        // millions of handles, so raise the host limit as far as it goes (Destiny 2 keeps over 2,000 packages open).
+        void raise_open_file_limit()
+        {
+            static const bool raised = [] {
+#ifdef OS_WINDOWS
+                // The UCRT allows 8192 streams; msvcrt.dll, which MinGW builds use, rejects more than 2048.
+                return _setmaxstdio(8192) != -1 || _setmaxstdio(2048) != -1;
+#else
+                rlimit limit{};
+                if (getrlimit(RLIMIT_NOFILE, &limit) != 0)
+                {
+                    return false;
+                }
+
+                // The hard limit can be RLIM_INFINITY, as it normally is on macOS, where setrlimit(2) also rejects a soft
+                // limit above OPEN_MAX (its man page says to use min(OPEN_MAX, rlim_max)). Elsewhere an infinite target is
+                // clamped to Linux's default fs.nr_open.
+                constexpr rlim_t finite_target = rlim_t{1} << 20;
+                auto target = limit.rlim_max == RLIM_INFINITY ? finite_target : limit.rlim_max;
+#ifdef __APPLE__
+                target = std::min<rlim_t>(target, OPEN_MAX);
+#endif
+                if (limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur >= target)
+                {
+                    return true;
+                }
+
+                limit.rlim_cur = target;
+                return setrlimit(RLIMIT_NOFILE, &limit) == 0;
+#endif
+            }();
+            (void)raised;
         }
 
         std::optional<std::filesystem::path> find_entry_ignoring_case(const std::filesystem::path& directory,
@@ -77,7 +168,24 @@ namespace sogen
             return std::filesystem::path{*match};
         }
 
-        std::filesystem::path recover_host_case(const std::filesystem::path& root, const std::filesystem::path& candidate)
+        // With refused links, the status of an entry is taken without following it, so that the one lookup also
+        // tells whether the entry is a link.
+        // A failed lookup reports file_type::none, which is kept apart from an entry that does not exist.
+        std::filesystem::file_status probe_host_entry(const std::filesystem::path& path, const host_links links)
+        {
+            std::error_code ec{};
+            return links == host_links::follow ? std::filesystem::status(path, ec) : std::filesystem::symlink_status(path, ec);
+        }
+
+        bool lookup_failed(const std::filesystem::file_status status)
+        {
+            return status.type() == std::filesystem::file_type::none;
+        }
+
+        // With refused links, each component is checked before anything is looked up beneath it, and a path through a
+        // link comes back empty.
+        std::optional<std::filesystem::path> recover_host_case(const std::filesystem::path& root, const std::filesystem::path& candidate,
+                                                               const host_links links)
         {
             const auto relative = candidate.lexically_relative(root);
             if (relative.empty())
@@ -95,24 +203,36 @@ namespace sogen
                     continue;
                 }
 
-                std::error_code ec{};
-                if (std::filesystem::exists(resolved / *component, ec))
-                {
-                    resolved /= *component;
-                    continue;
-                }
-
                 // The emulation root is created in lower case, so that is the spelling almost every mismatched
                 // component has on a case sensitive host. Trying it first keeps a failed probe deep in System32
                 // from scanning every directory on the way down.
                 const std::filesystem::path lowered{utils::string::to_lower(component->u16string())};
-                if (std::filesystem::exists(resolved / lowered, ec))
+                std::optional<std::filesystem::path> match{};
+                auto status = probe_host_entry(resolved / *component, links);
+                auto failed = lookup_failed(status);
+                if (std::filesystem::exists(status))
                 {
-                    resolved /= lowered;
-                    continue;
+                    match = *component;
+                }
+                else if (status = probe_host_entry(resolved / lowered, links); std::filesystem::exists(status))
+                {
+                    match = lowered;
+                }
+                else
+                {
+                    failed = failed || lookup_failed(status);
+                    match = find_entry_ignoring_case(resolved, *component);
+                    if (match && links == host_links::refuse)
+                    {
+                        status = probe_host_entry(resolved / *match, links);
+                    }
                 }
 
-                const auto match = find_entry_ignoring_case(resolved, *component);
+                if (links == host_links::refuse && (failed || (match && (!std::filesystem::exists(status) || is_link(status)))))
+                {
+                    return std::nullopt;
+                }
+
                 if (!match)
                 {
                     break;
@@ -279,10 +399,33 @@ namespace sogen
         return file_stat;
     }
 
-    host_directory_provider::host_directory_provider(std::filesystem::path target)
+    host_directory_provider::host_directory_provider(std::filesystem::path target, const host_links links)
         : target_(std::move(target)),
+          links_(links),
           lookup_ignores_case_(host_lookup_ignores_case(this->target_))
     {
+        raise_open_file_limit();
+    }
+
+    bool host_directory_provider::avoids_links(const std::filesystem::path& root, const std::filesystem::path& host_path)
+    {
+        auto current = root;
+        for (const auto& component : host_path.lexically_relative(root))
+        {
+            current /= component;
+            std::error_code ec{};
+            const auto status = std::filesystem::symlink_status(current, ec);
+            if (status.type() == std::filesystem::file_type::not_found)
+            {
+                return true;
+            }
+            if (!std::filesystem::exists(status) || is_link(status))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     std::optional<std::filesystem::path> host_directory_provider::get_host_path(const windows_path& path) const
@@ -294,11 +437,22 @@ namespace sogen
 
         auto candidate = (this->target_ / path.to_portable_path()).lexically_normal();
         const auto root = this->target_.lexically_normal();
-        // The containment check is lexical and does not follow symlinks. Host symlinks inside the mount may
-        // point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
+        // The containment check is lexical and does not follow symlinks. Unless they are refused, host symlinks
+        // inside the mount may point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
         if (!is_subpath(root, candidate))
         {
             return std::nullopt;
+        }
+
+        // A normal path that passes through no link below the root needs no canonicalization.
+        if (this->links_ == host_links::refuse)
+        {
+            if (!this->lookup_ignores_case_)
+            {
+                return recover_host_case(root, candidate, this->links_);
+            }
+
+            return avoids_links(root, candidate) ? std::optional{candidate} : std::nullopt;
         }
 
         std::error_code ec{};
@@ -316,7 +470,7 @@ namespace sogen
             }
             else if (!std::filesystem::exists(candidate, ec))
             {
-                candidate = recover_host_case(root, candidate);
+                candidate = *recover_host_case(root, candidate, this->links_);
             }
         }
 
@@ -390,9 +544,26 @@ namespace sogen
         std::error_code ec{};
         for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
         {
+            bool is_directory{};
+            if (this->links_ == host_links::refuse)
+            {
+                std::error_code status_error{};
+                const auto status = file.symlink_status(status_error);
+                if (status_error || !std::filesystem::exists(status) || is_link(status))
+                {
+                    continue;
+                }
+
+                is_directory = std::filesystem::is_directory(status);
+            }
+            else
+            {
+                is_directory = file.is_directory(ec);
+            }
+
             directory_entry entry{
                 .name = file.path().filename().u16string(),
-                .is_directory = file.is_directory(ec),
+                .is_directory = is_directory,
             };
 
 #ifdef OS_WINDOWS
@@ -415,6 +586,33 @@ namespace sogen
         return entries;
     }
 
+    std::vector<std::u16string> host_directory_provider::list_names(const windows_path& path) const
+    {
+        std::vector<std::u16string> names{};
+        const auto host_path = this->get_host_path(path);
+        if (!host_path)
+        {
+            return names;
+        }
+
+        std::error_code ec{};
+        for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
+        {
+            if (this->links_ == host_links::refuse)
+            {
+                std::error_code status_error{};
+                const auto status = file.symlink_status(status_error);
+                if (status_error || !std::filesystem::exists(status) || is_link(status))
+                {
+                    continue;
+                }
+            }
+
+            names.push_back(file.path().filename().u16string());
+        }
+        return names;
+    }
+
     open_result host_directory_provider::open(const windows_path& path, const std::u16string& mode)
     {
         const auto host_path = this->get_host_path(path);
@@ -425,6 +623,12 @@ namespace sogen
 
         FILE* file{};
         const auto error = open_unicode(&file, *host_path, mode);
+#ifdef OS_WINDOWS
+        if (!file && error == EACCES && mode.starts_with(u'w'))
+        {
+            file = recreate_keeping_attributes(*host_path, mode);
+        }
+#endif
         if (!file)
         {
             return {.status = map_open_error(error)};

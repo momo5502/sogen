@@ -26,6 +26,76 @@ namespace sogen
                 uint64_t completion_key;
             };
 
+            constexpr ULONG file_io_completion_notification_modes = 0x7;
+
+            bool is_synchronous(const file& f)
+            {
+                return (f.file_mode & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT)) != 0;
+            }
+
+            bool is_completion_information_class(const FILE_INFORMATION_CLASS info_class)
+            {
+                return info_class == FileCompletionInformation || info_class == FileReplaceCompletionInformation ||
+                       info_class == FileIoCompletionNotificationInformation;
+            }
+
+            NTSTATUS apply_completion_information(const syscall_context& c, file& f, const uint64_t file_information, const ULONG length,
+                                                  const FILE_INFORMATION_CLASS info_class)
+            {
+                if (info_class == FileIoCompletionNotificationInformation)
+                {
+                    if (length < sizeof(ULONG))
+                    {
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
+
+                    const auto modes = emulator_object<ULONG>{c.emu, file_information}.try_read();
+                    if (!modes)
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+
+                    if (is_synchronous(f))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    // Windows only ever adds modes: unknown bits are ignored and a set mode cannot be cleared.
+                    f.completion_notification_flags |= *modes & file_io_completion_notification_modes;
+                    return STATUS_SUCCESS;
+                }
+
+                if (length < sizeof(file_completion_information))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const auto info = emulator_object<file_completion_information>{c.emu, file_information}.try_read();
+                if (!info)
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                if (is_synchronous(f))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (info_class == FileReplaceCompletionInformation)
+                {
+                    return replace_completion_port(c.proc, c.vcpu.active_thread, f.completion_association, info->completion_port,
+                                                   info->completion_key);
+                }
+
+                return associate_completion_port(c.proc, c.vcpu.active_thread, f.completion_association, info->completion_port,
+                                                 info->completion_key);
+            }
+
+            bool is_file_information_class(const uint32_t info_class)
+            {
+                return info_class != 0 && info_class < FileMaximumInformation;
+            }
+
             std::u16string normalize_named_pipe_path(const std::u16string_view filename)
             {
                 for (const auto prefix : dos_named_pipe_prefixes)
@@ -113,6 +183,28 @@ namespace sogen
                 return path;
             }
 
+            constexpr ULONG supported_disposition_flags = FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS |
+                                                          FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK |
+                                                          FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE;
+
+            NTSTATUS set_delete_disposition(const syscall_context& c, file& f, const bool wants_delete, const bool posix_semantics)
+            {
+                if (!wants_delete)
+                {
+                    f.handle.cancel_delete();
+                    f.handle.set_delete_on_close(false);
+                    return STATUS_SUCCESS;
+                }
+
+                if (f.is_directory() && !c.win_emu.file_sys.list_directory(f.handle.path()).empty())
+                {
+                    return STATUS_DIRECTORY_NOT_EMPTY;
+                }
+
+                f.handle.mark_delete_pending(posix_semantics);
+                return STATUS_SUCCESS;
+            }
+
             bool read_file_stat(const guest_file& handle, struct compat_stat& file_stat)
             {
                 const auto result = handle.stat();
@@ -146,21 +238,42 @@ namespace sogen
                                              const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              const uint64_t file_information, const ULONG length, const FILE_INFORMATION_CLASS info_class)
         {
+            if (!is_file_information_class(static_cast<uint32_t>(info_class)))
+            {
+                c.win_emu.log.error("Unsupported NtSetInformationFile info class: 0x%X\n", static_cast<uint32_t>(info_class));
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             auto* f = c.proc.files.get(file_handle);
             if (!f)
             {
                 auto* device = c.proc.devices.get(file_handle);
                 if (device)
                 {
-                    if (info_class == FileCompletionInformation)
+                    if (info_class == FileCompletionInformation || info_class == FileReplaceCompletionInformation)
                     {
                         if (length < sizeof(file_completion_information))
                         {
                             return STATUS_INFO_LENGTH_MISMATCH;
                         }
 
-                        const auto info = c.emu.read_memory<file_completion_information>(file_information);
-                        return device->set_completion_association(c.proc, c.vcpu.active_thread, info.completion_port, info.completion_key);
+                        const auto info = emulator_object<file_completion_information>{c.emu, file_information}.try_read();
+                        if (!info)
+                        {
+                            return STATUS_ACCESS_VIOLATION;
+                        }
+
+                        const auto status = info_class == FileCompletionInformation
+                                                ? device->set_completion_association(c.proc, c.vcpu.active_thread, info->completion_port,
+                                                                                     info->completion_key)
+                                                : device->replace_completion_association(c.proc, c.vcpu.active_thread,
+                                                                                         info->completion_port, info->completion_key);
+                        if (status == STATUS_SUCCESS && io_status_block)
+                        {
+                            io_status_block.write({});
+                        }
+
+                        return status;
                     }
 
                     if (info_class == FileIoCompletionNotificationInformation)
@@ -177,6 +290,17 @@ namespace sogen
                 }
 
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (is_completion_information_class(info_class))
+            {
+                const auto status = apply_completion_information(c, *f, file_information, length, info_class);
+                if (status == STATUS_SUCCESS && io_status_block)
+                {
+                    io_status_block.write({});
+                }
+
+                return status;
             }
 
             if (changes_file_state(info_class) && !c.win_emu.file_sys.is_writable(f->handle.path()))
@@ -245,7 +369,12 @@ namespace sogen
             {
                 if (length < sizeof(FILE_DISPOSITION_INFORMATION))
                 {
-                    return STATUS_BUFFER_OVERFLOW;
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                if (!is_readable_range(c.win_emu.memory, file_information, length))
+                {
+                    return STATUS_ACCESS_VIOLATION;
                 }
 
                 if (!(f->access_mask & DELETE))
@@ -255,9 +384,7 @@ namespace sogen
 
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION>(file_information);
 
-                f->handle.set_delete_on_close(info.DeleteFile != FALSE);
-
-                return STATUS_SUCCESS;
+                return set_delete_disposition(c, *f, info.DeleteFile != FALSE, false);
             }
 
             if (info_class == FileDispositionInformationEx)
@@ -267,7 +394,17 @@ namespace sogen
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
+                if (!is_readable_range(c.win_emu.memory, file_information, length))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
+                if (info.Flags & ~supported_disposition_flags)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
                 const bool wants_delete = (info.Flags & FILE_DISPOSITION_DELETE) != 0;
 
                 if (wants_delete && !(f->access_mask & DELETE))
@@ -275,9 +412,7 @@ namespace sogen
                     return STATUS_ACCESS_DENIED;
                 }
 
-                f->handle.set_delete_on_close(wants_delete);
-
-                return STATUS_SUCCESS;
+                return set_delete_disposition(c, *f, wants_delete, (info.Flags & FILE_DISPOSITION_POSIX_SEMANTICS) != 0);
             }
 
             if (info_class == FilePositionInformation)
@@ -353,6 +488,13 @@ namespace sogen
                                                      const uint64_t fs_information, const ULONG length,
                                                      const FS_INFORMATION_CLASS fs_information_class)
         {
+            if (const auto info_class = static_cast<uint32_t>(fs_information_class);
+                info_class == 0 || info_class >= FileFsMaximumInformation)
+            {
+                c.win_emu.log.error("Unsupported NtQueryVolumeInformationFile info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             switch (fs_information_class)
             {
             case FileFsDeviceInformation:
@@ -590,6 +732,12 @@ namespace sogen
                                                const ULONG query_flags,
                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> file_name)
         {
+            if (!is_file_information_class(info_class))
+            {
+                c.win_emu.log.error("Unsupported NtQueryDirectoryFile info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             auto* f = c.proc.files.get(file_handle);
             if (!f || !f->is_directory())
             {
@@ -652,7 +800,7 @@ namespace sogen
                                                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                                const uint64_t file_information, uint32_t length, const uint32_t info_class)
         {
-            if (info_class == 0 || info_class >= FileMaximumInformation)
+            if (!is_file_information_class(info_class))
             {
                 return STATUS_INVALID_INFO_CLASS;
             }
@@ -959,6 +1107,7 @@ namespace sogen
                 FILE_STANDARD_INFORMATION i{};
                 i.Directory = f->is_directory() ? TRUE : FALSE;
                 i.NumberOfLinks = 1;
+                i.DeletePending = f->handle.is_delete_pending() ? TRUE : FALSE;
 
                 if (f->handle)
                 {
@@ -1209,6 +1358,17 @@ namespace sogen
                 return ret(STATUS_SUCCESS, all_length);
             }
 
+            if (info_class == FileIoCompletionNotificationInformation)
+            {
+                if (length < sizeof(ULONG))
+                {
+                    return ret(STATUS_INFO_LENGTH_MISMATCH);
+                }
+
+                c.emu.write_memory(file_information, f->completion_notification_flags);
+                return ret(STATUS_SUCCESS, sizeof(ULONG));
+            }
+
             c.win_emu.log.error("Unsupported query file info class: 0x%X\n", info_class);
             c.emu.stop();
 
@@ -1220,6 +1380,12 @@ namespace sogen
                                                  const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                                  const uint64_t file_information, const uint32_t length, const uint32_t info_class)
         {
+            if (!is_file_information_class(info_class))
+            {
+                c.win_emu.log.error("Unsupported NtQueryInformationByName info class: 0x%X\n", info_class);
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
             IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
             block.Status = STATUS_SUCCESS;
             block.Information = 0;
@@ -1429,6 +1595,29 @@ namespace sogen
             }
         }
 
+        // Windows completes I/O on a file bound to a completion port asynchronously: even a read served from the
+        // cache returns STATUS_PENDING, and success or end of file reaches the caller through the packet.
+        NTSTATUS complete_file_io(const syscall_context& c, const file& f, const uint64_t event, const uint64_t apc_routine,
+                                  const uint64_t apc_context, const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                  const uint64_t wow64_io_status_block, const NTSTATUS status, const uint64_t information)
+        {
+            deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, status, information);
+            if (!f.completion_association)
+            {
+                return status;
+            }
+
+            io_device_context context{c.emu};
+            context.event = make_handle(event);
+            context.apc_context = apc_context;
+            context.io_status_block = io_status_block;
+            context.completion_port = f.completion_association->completion_port;
+            context.completion_key = f.completion_association->key;
+            io_device::queue_io_completion(c.win_emu, context);
+
+            return STATUS_PENDING;
+        }
+
         NTSTATUS handle_pipe_io(const syscall_context& c, const handle file_handle, const uint64_t event, const uint64_t apc_routine,
                                 const uint64_t apc_context, const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                 const uint64_t wow64_io_status_block, const uint64_t buffer, const ULONG length, const bool reading)
@@ -1499,6 +1688,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (f->completion_association && apc_routine)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
             if (byte_offset)
             {
                 const auto offset = byte_offset.read();
@@ -1523,9 +1717,8 @@ namespace sogen
             if (bytes_read > 0)
             {
                 commit_file_data(std::string_view(temp_buffer.data(), bytes_read), c.emu, io_status_block, buffer);
-                deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, STATUS_SUCCESS,
-                                           bytes_read);
-                return STATUS_SUCCESS;
+                return complete_file_io(c, *f, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, STATUS_SUCCESS,
+                                        bytes_read);
             }
 
             const auto status = length > 0 ? STATUS_END_OF_FILE : STATUS_SUCCESS;
@@ -1538,8 +1731,7 @@ namespace sogen
                 io_status_block.write(block);
             }
 
-            deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, status, 0);
-            return status;
+            return complete_file_io(c, *f, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, status, 0);
         }
 
         namespace
@@ -1707,6 +1899,11 @@ namespace sogen
                 return STATUS_ACCESS_DENIED;
             }
 
+            if (f->completion_association && apc_routine)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
             if (byte_offset)
             {
                 const auto offset = byte_offset.read();
@@ -1746,8 +1943,7 @@ namespace sogen
                 io_status_block.write(block);
             }
 
-            deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, status, bytes_written);
-            return status;
+            return complete_file_io(c, *f, event, apc_routine, apc_context, io_status_block, wow64_io_status_block, status, bytes_written);
         }
 
         NTSTATUS handle_NtCopyFileChunk(const syscall_context& c, const handle source_handle, const handle destination_handle,
@@ -2209,6 +2405,11 @@ namespace sogen
 
             auto& file_sys = c.win_emu.file_sys;
 
+            if (file_sys.is_delete_pending(path))
+            {
+                return STATUS_DELETE_PENDING;
+            }
+
             if ((create_options & FILE_DELETE_ON_CLOSE) && !file_sys.is_writable(path))
             {
                 return STATUS_ACCESS_DENIED;
@@ -2318,6 +2519,17 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
+            // An appending handle cannot also truncate, so an append-only overwrite empties the existing file first.
+            const bool overwrites =
+                create_disposition == FILE_SUPERSEDE || create_disposition == FILE_OVERWRITE || create_disposition == FILE_OVERWRITE_IF;
+            if (file_exists && overwrites && mode == u"a+b")
+            {
+                if (const auto truncation = file_sys.open(path, u"wb"); !truncation.file)
+                {
+                    return truncation.status;
+                }
+            }
+
             auto [io, status] = file_sys.open(path, mode);
             if (status != STATUS_SUCCESS)
             {
@@ -2376,6 +2588,11 @@ namespace sogen
             if (filepath.is_relative())
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            if (c.win_emu.file_sys.is_delete_pending(filepath))
+            {
+                return STATUS_DELETE_PENDING;
             }
 
             const auto file_stat_result = c.win_emu.file_sys.stat(filepath);
@@ -2442,6 +2659,11 @@ namespace sogen
             if (filepath.is_relative())
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            if (c.win_emu.file_sys.is_delete_pending(filepath))
+            {
+                return STATUS_DELETE_PENDING;
             }
 
             const auto file_stat_result = c.win_emu.file_sys.stat(filepath);

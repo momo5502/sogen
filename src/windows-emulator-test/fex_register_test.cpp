@@ -9,6 +9,10 @@
 #endif
 
 #ifdef __APPLE__
+#ifdef SOGEN_ENABLE_FEX
+#include <fex_x86_64_emulator.hpp>
+#endif
+
 #include <cstring>
 #include <string>
 #include <vector>
@@ -228,6 +232,48 @@ namespace sogen::test
         ::munmap(host_buffer, host_page_size);
     }
 
+#ifdef SOGEN_ENABLE_FEX
+    TEST(FexMultiVcpuTest, CodeRewrittenAfterASecondVcpuRanItRunsAsTheNewBytes)
+    {
+        const auto emu = fex::create_x86_64_emulator(2);
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+        constexpr size_t page_size = 0x1000;
+        const uint64_t code = memory.allocate_memory(page_size, memory_permission::read_write);
+        const uint64_t gdt = memory.allocate_memory(page_size, memory_permission::read_write);
+        ASSERT_NE(code, 0u);
+        ASSERT_NE(gdt, 0u);
+
+        constexpr uint16_t long_mode_code_selector = 0x08;
+        constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+        emu->write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+
+        auto& second = emu->get_cpu(1);
+        second.load_gdt(gdt, page_size);
+        second.reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+        emu->hook_interrupt([](cpu_interface& cpu, int) { cpu.stop(); });
+
+        // mov eax, imm32; hlt
+        constexpr std::array<uint8_t, 6> guest_code = {0xB8, 0x01, 0x00, 0x00, 0x00, 0xF4};
+        memory.write_memory(code, guest_code.data(), guest_code.size());
+        ASSERT_TRUE(memory.protect_memory(code, page_size, memory_permission::read_exec));
+
+        const auto run_second = [&] {
+            second.reg(x86_register::rip, code);
+            second.start(0);
+            return second.reg<uint32_t>(x86_register::eax);
+        };
+
+        EXPECT_EQ(run_second(), 1u);
+
+        constexpr uint32_t rewritten_immediate = 2;
+        memory.write_memory(code + 1, &rewritten_immediate, sizeof(rewritten_immediate));
+
+        EXPECT_EQ(run_second(), rewritten_immediate);
+    }
+#endif
+
     namespace
     {
         constexpr size_t recommit_region_size = 0x4000;
@@ -430,6 +476,113 @@ namespace sogen::test
         EXPECT_EQ(observed_address, target);
         EXPECT_EQ(observed_type, memory_violation_type::protection);
         EXPECT_EQ(memory.read_memory<uint64_t>(target), 0u);
+    }
+
+    namespace
+    {
+        constexpr uint64_t shared_user_data = 0x7FFE0000;
+
+        void map_shared_user_data(memory_manager& memory, const uint32_t& value)
+        {
+            ASSERT_TRUE(memory.allocate_mmio(
+                shared_user_data, 0x1000,
+                [&value](const uint64_t offset, void* data, const size_t size) {
+                    std::memset(data, 0, size);
+                    if (offset < sizeof(value))
+                    {
+                        std::memcpy(data, reinterpret_cast<const std::byte*>(&value) + offset,
+                                    std::min(size, static_cast<size_t>(sizeof(value) - offset)));
+                    }
+                },
+                [](uint64_t, const void*, size_t) {}));
+        }
+
+        void run_wow64_long_mode_code(x86_64_emulator& emu, memory_manager& memory, const std::span<const uint8_t> guest_code)
+        {
+            constexpr size_t page_size = 0x1000;
+            constexpr uint64_t code = 0x10000;
+            constexpr uint64_t gdt = 0x30000;
+            ASSERT_TRUE(memory.allocate_memory(code, page_size, memory_permission::read_write));
+            ASSERT_TRUE(memory.allocate_memory(gdt, page_size, memory_permission::read_write));
+
+            constexpr uint16_t long_mode_code_selector = 0x08;
+            constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+            emu.write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+            emu.load_gdt(gdt, page_size);
+            emu.reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+
+            memory.write_memory(code, guest_code.data(), guest_code.size());
+            ASSERT_TRUE(memory.protect_memory(code, page_size, memory_permission::read_exec));
+
+            emu.hook_interrupt([](cpu_interface& cpu, int) { cpu.stop(); });
+            emu.reg(x86_register::rip, code);
+            emu.start(0);
+        }
+    }
+
+    TEST(FexWow64Test, SharedUserDataChangedDuringASyscallIsReadAfterIt)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        emu->notify_process_bitness(true);
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+
+        uint32_t value = 0x11111111;
+        map_shared_user_data(memory, value);
+        emu->hook_instruction(x86_hookable_instructions::syscall, [&](cpu_interface&, uint64_t) {
+            value = 0x22222222;
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        // mov eax, [0x7ffe0000]; syscall; mov ebx, [0x7ffe0000]; hlt
+        constexpr std::array<uint8_t, 17> guest_code = {0x8B, 0x04, 0x25, 0x00, 0x00, 0xFE, 0x7F, 0x0F, 0x05,
+                                                        0x8B, 0x1C, 0x25, 0x00, 0x00, 0xFE, 0x7F, 0xF4};
+        run_wow64_long_mode_code(*emu, memory, guest_code);
+
+        EXPECT_EQ(emu->reg<uint32_t>(x86_register::eax), 0x11111111U);
+        EXPECT_EQ(emu->reg<uint32_t>(x86_register::ebx), 0x22222222U);
+    }
+
+    TEST(FexWow64Test, GuestStoreToSharedUserDataIsAnAccessViolation)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        emu->notify_process_bitness(true);
+
+        memory_manager memory{*emu};
+        memory.reserve_host_memory_ranges();
+
+        constexpr uint32_t value = 0x11111111;
+        map_shared_user_data(memory, value);
+
+        bool observed = false;
+        uint64_t observed_address = 0;
+        memory_operation observed_operation = memory_operation::read;
+        emu->hook_memory_violation([&](cpu_interface& cpu, uint64_t address, size_t, memory_operation operation, memory_violation_type) {
+            observed = true;
+            observed_address = address;
+            observed_operation = operation;
+            cpu.stop();
+            return memory_violation_continuation::stop;
+        });
+
+        // mov [0x7ffe0000], ebx; hlt
+        constexpr std::array<uint8_t, 8> guest_code = {0x89, 0x1C, 0x25, 0x00, 0x00, 0xFE, 0x7F, 0xF4};
+        run_wow64_long_mode_code(*emu, memory, guest_code);
+
+        EXPECT_TRUE(observed);
+        EXPECT_EQ(observed_address, shared_user_data);
+        EXPECT_EQ(observed_operation, memory_operation::write);
     }
 
     namespace

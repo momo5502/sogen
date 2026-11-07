@@ -1417,6 +1417,12 @@ jobs:
         working-directory: app
         run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }}
 
+      # Building the APK generates the Gradle wrapper the native unit tests run with. The Android Gradle Plugin only
+      # creates unit test tasks for the debug build type.
+      - name: Test Native App Code
+        working-directory: app/android
+        run: ./gradlew :app:testDebugUnitTest
+
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
@@ -1601,7 +1607,9 @@ jobs:
 
       - name: Run Python Linux Unicorn Test Script
         if: ${{ startsWith(matrix.runner, 'ubuntu') }}
-        run: python src/python-bindings/test_linux.py
+        run: |
+          python src/python-bindings/test_linux.py
+          python src/python-bindings/test_linux_gc.py
         env:
           LINUX_PYTHON_TEST_BINARY: /bin/true
           LINUX_PYTHON_TEST_ROOT: /
@@ -1616,7 +1624,9 @@ jobs:
 
       - name: Run Python Linux KVM Test Script
         if: ${{ startsWith(matrix.runner, 'ubuntu') }}
-        run: python src/python-bindings/test_linux.py
+        run: |
+          python src/python-bindings/test_linux.py
+          python src/python-bindings/test_linux_gc.py
         env:
           LINUX_PYTHON_TEST_BINARY: /bin/true
           LINUX_PYTHON_TEST_ROOT: /

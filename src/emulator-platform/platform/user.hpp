@@ -30,6 +30,8 @@
 #define FNID_SENDMESSAGEWTOOPTION 0x2B3
 #define FNID_SENDMESSAGECALLBACK  0x2B8
 
+#define CSF_ANSIPROC              0x0002
+
 namespace sogen
 {
 
@@ -63,7 +65,10 @@ namespace sogen
         uint8_t pad_1394[0x74];
         uint32_t dpi96DialogBaseUnitWidth;
         uint32_t dpi96DialogBaseUnitHeight;
-        uint8_t pad_1410[0x73C];
+        uint8_t pad_1410[0x738];
+        // user32's GetKeyState answers keys below 0x20 from the thread's CLIENTINFO cache while the cache carries
+        // this generation. win32k stamps the cache in NtUserGetKeyState and advances this on every key change.
+        uint32_t keyStateGeneration;
         uint32_t asyncKeyStateGeneration;
         // user32's GetCapture only asks win32k for the capture window while this is nonzero.
         uint32_t captureCount;
@@ -85,6 +90,7 @@ namespace sogen
     static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitWidth) == 0x1408);
     static_assert(offsetof(USER_SERVERINFO, captureCount) == 0x1B50);
     static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitHeight) == 0x140C);
+    static_assert(offsetof(USER_SERVERINFO, keyStateGeneration) == 0x1B48);
     static_assert(offsetof(USER_SERVERINFO, asyncKeyStateGeneration) == 0x1B4C);
     static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);
     static_assert(offsetof(USER_SERVERINFO, foregroundWindow) == 0x1DE0);
@@ -153,6 +159,16 @@ namespace sogen
     };
 
     static_assert(sizeof(RAWINPUTDEVICE32) == 0x0C);
+
+    struct RAWINPUTDEVICE64
+    {
+        uint16_t usUsagePage;
+        uint16_t usUsage;
+        uint32_t dwFlags;
+        uint64_t hwndTarget;
+    };
+
+    static_assert(sizeof(RAWINPUTDEVICE64) == 0x10);
 
     struct RAWINPUTHEADER32
     {
@@ -255,15 +271,45 @@ namespace sogen
         EMULATOR_CAST(typename Traits::PVOID, UNICODE_STRING*) pusMenuName;
     };
 
+    // The client view of tagCLS that user32's _GetClassData reads (offsets from its 19041 index tables).
     struct USER_CLASS
     {
-        uint8_t pad_000[0x30];
+        uint8_t pad_000[2];
+        uint16_t atom;
+        uint16_t fnid;
+        uint16_t CSF_flags;
+        uint32_t style;
+        uint32_t cbclsExtra;
+        uint64_t lpszClientAnsiMenuName;
+        uint64_t lpszClientUnicodeMenuName;
+        uint64_t lpfnWndProc;
+        uint64_t lpszMenuName;
         uint64_t lpszAnsiClassName;
-        uint8_t pad_038[0xC8];
+        uint64_t hIconSm;
+        uint64_t hModule;
+        uint64_t hbrBackground;
+        uint32_t cbwndExtra;
+        uint8_t pad_054[0xAC];
     };
 
+    static_assert(offsetof(USER_CLASS, atom) == 0x02);
+    static_assert(offsetof(USER_CLASS, fnid) == 0x04);
+    static_assert(offsetof(USER_CLASS, CSF_flags) == 0x06);
+    static_assert(offsetof(USER_CLASS, style) == 0x08);
+    static_assert(offsetof(USER_CLASS, cbclsExtra) == 0x0C);
+    static_assert(offsetof(USER_CLASS, lpszClientAnsiMenuName) == 0x10);
+    static_assert(offsetof(USER_CLASS, lpszClientUnicodeMenuName) == 0x18);
+    static_assert(offsetof(USER_CLASS, lpfnWndProc) == 0x20);
+    static_assert(offsetof(USER_CLASS, lpszMenuName) == 0x28);
     static_assert(offsetof(USER_CLASS, lpszAnsiClassName) == 0x30);
+    static_assert(offsetof(USER_CLASS, hIconSm) == 0x38);
+    static_assert(offsetof(USER_CLASS, hModule) == 0x40);
+    static_assert(offsetof(USER_CLASS, hbrBackground) == 0x48);
+    static_assert(offsetof(USER_CLASS, cbwndExtra) == 0x50);
     static_assert(sizeof(USER_CLASS) == 0x100);
+
+    // USER_WINDOW::bFlags is byte 2 of tagWND::state, so WNDS_ANSIWINDOWPROC (0x00080000) is bit 3 there.
+    constexpr uint8_t USER_WINDOW_ANSI_WINDOW_PROC = 0x08;
 
     struct USER_WINDOW
     {
@@ -334,6 +380,11 @@ namespace sogen
     static_assert(offsetof(USER_MENU, cItems) == 0x2C);
 
     struct USER_ACCELERATOR_TABLE
+    {
+        uint8_t padding[0xFF]{};
+    };
+
+    struct USER_CURSOR
     {
         uint8_t padding[0xFF]{};
     };

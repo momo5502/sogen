@@ -1,5 +1,6 @@
 #pragma once
 #include "section_view_manager.hpp"
+#include "display_modes.hpp"
 #include "arch/windows_abi.hpp"
 
 #include "emulator_utils.hpp"
@@ -20,6 +21,7 @@
 #include "emulator_thread.hpp"
 #include "port.hpp"
 #include "user_handle_table.hpp"
+#include "wnf_state.hpp"
 
 #include "apiset/apiset.hpp"
 
@@ -150,6 +152,8 @@ namespace sogen
         int32_t current_x{};
         int32_t current_y{};
         bool is_memory_dc{};
+        // Retrieved with GetDC and friends, which hand out the desktop window's DC for no window.
+        bool is_window_dc{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -158,6 +162,7 @@ namespace sogen
             buffer.write(this->current_x);
             buffer.write(this->current_y);
             buffer.write(this->is_memory_dc);
+            buffer.write(this->is_window_dc);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -167,6 +172,7 @@ namespace sogen
             buffer.read(this->current_x);
             buffer.read(this->current_y);
             buffer.read(this->is_memory_dc);
+            buffer.read(this->is_window_dc);
         }
     };
 
@@ -203,14 +209,18 @@ namespace sogen
             emulator_pointer guest_obj_addr{};
             EMU_WNDCLASSEX wnd_class{};
             CLSMENUNAME<EmulatorTraits<Emu64>> menu_name{};
+            bool ansi_proc{};
+            uint16_t atom{};
 
             class_entry() = default;
 
             class_entry(const emulator_pointer guest_obj, const EMU_WNDCLASSEX& wnd_class,
-                        const CLSMENUNAME<EmulatorTraits<Emu64>>& menu_name)
+                        const CLSMENUNAME<EmulatorTraits<Emu64>>& menu_name, const uint16_t atom, const bool ansi_proc = false)
                 : guest_obj_addr(guest_obj),
                   wnd_class(wnd_class),
-                  menu_name(menu_name)
+                  menu_name(menu_name),
+                  ansi_proc(ansi_proc),
+                  atom(atom)
             {
             }
         };
@@ -385,12 +395,13 @@ namespace sogen
         };
 
         process_context(memory_interface& emu, memory_manager& memory, utils::clock& clock, callbacks& cb, const bool intercept_kusd,
-                        const windows_guest_architecture architecture = windows_guest_architecture::x86_64)
+                        const windows_guest_architecture architecture = windows_guest_architecture::x86_64,
+                        std::function<std::optional<native_tsc>()> read_tsc = {})
             : callbacks_(&cb),
               base_allocator(emu),
               peb64(emu),
               process_params64(emu),
-              kusd(memory, clock, intercept_kusd),
+              kusd(memory, clock, intercept_kusd, std::move(read_tsc)),
               user_handles(memory)
         {
             (void)windows_abi_for(architecture);
@@ -404,10 +415,13 @@ namespace sogen
         void setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
                    const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
 
-        static emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name);
+        // A class's extra bytes follow its 0x58-byte tagCLS (win32kfull's InternalRegisterClassEx allocates 0x58 + cbClsExtra),
+        // where user32's GetClassLongPtr reads positive indexes and xxxSetClassLongPtr writes them.
+        static constexpr uint64_t user_class_extra_offset = 0x58;
+        static emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name, uint32_t class_extra = 0);
 
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
-                             bool initial_thread = false);
+                             bool initial_thread = false, uint64_t stack_commit_size = 0);
         void terminate_thread(emulator_thread& thread, NTSTATUS thread_exit_status);
 
         std::optional<uint16_t> find_atom(std::u16string_view name);
@@ -431,6 +445,7 @@ namespace sogen
         void restore_windows_after_state_restore(windows_emulator& win_emu);
 
         generic_handle_store* get_handle_store(handle handle);
+        size_t handle_count() const;
         emulator_thread* find_thread_by_id(uint32_t thread_id);
         const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
         bool is_window_effectively_visible(hwnd window) const;
@@ -442,6 +457,7 @@ namespace sogen
         size_t get_live_thread_count() const;
         // CPU cycles are not modeled; executed instructions are the closest measure.
         uint64_t get_accumulated_cycles() const;
+        void commit_thread_stacks_in_full() const;
 
         // WOW64 support flag - set during process setup based on executable architecture
         bool is_wow64_process{false};
@@ -498,6 +514,7 @@ namespace sogen
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         std::map<uint32_t, EMU_LOGFONTW> gdi_fonts{};
         std::map<uint32_t, std::vector<RECT>> gdi_regions{};
+        std::map<uint32_t, std::vector<EMU_PALETTEENTRY>> gdi_palettes{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         dxgk_state dxgk{};
@@ -525,15 +542,24 @@ namespace sogen
         // mouse button was pressed since the last GetAsyncKeyState query for that virtual key.
         std::array<uint8_t, 256> async_key_state{};
 
-        // Raw mouse input registration (NtUserRegisterRawInputDevices). When registered, mouse motion
-        // synthesizes relative-mouse RAWINPUT delivered as WM_INPUT, so in-game mouse-look works.
-        // raw_mouse_target is the explicit hwndTarget; 0 means "follow focus" (deliver to the foreground
-        // window), resolved at delivery time so a registration done before any window is foreground still works.
-        bool raw_mouse_registered{};
-        hwnd raw_mouse_target{};
-        // Keyboard raw input registration (HID usage page 0x01, usage 0x06), mirroring the mouse fields above.
-        bool raw_keyboard_registered{};
-        hwnd raw_keyboard_target{};
+        struct raw_input_registration
+        {
+            uint16_t usage_page{};
+            uint16_t usage{};
+            uint32_t flags{};
+            // 0 follows the keyboard focus, which is resolved at delivery time so that a registration made before any
+            // window is in the foreground still works.
+            hwnd target{};
+        };
+
+        // The devices registered for raw input, in the order of usage page and usage that NtUserGetRegisteredRawInputDevices
+        // reports them in. A registered mouse or keyboard has its input also arrive as WM_INPUT, which games read for
+        // mouse-look and key presses.
+        std::vector<raw_input_registration> raw_input_registrations{};
+
+        const raw_input_registration* find_raw_input_registration(uint16_t usage_page, uint16_t usage) const;
+        const raw_input_registration* raw_mouse_registration() const;
+        const raw_input_registration* raw_keyboard_registration() const;
 
         // Keyboard and mouse input held back until every low-level hook it is due for has seen it, in arrival order.
         struct low_level_input
@@ -657,12 +683,10 @@ namespace sogen
         handle default_monitor_handle{};
         handle default_desktop_window_handle{};
 
-        static constexpr uint32_t default_display_width = 1920;
-        static constexpr uint32_t default_display_height = 1080;
-        uint32_t display_width{default_display_width};
-        uint32_t display_height{default_display_height};
-        uint32_t registry_display_width{default_display_width};
-        uint32_t registry_display_height{default_display_height};
+        uint32_t display_width{default_display_mode.width};
+        uint32_t display_height{default_display_mode.height};
+        uint32_t registry_display_width{default_display_mode.width};
+        uint32_t registry_display_height{default_display_mode.height};
 
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
         void set_mouse_capture(hwnd window);
@@ -686,6 +710,12 @@ namespace sogen
         // process exiting.
         static void terminate_job_processes(windows_emulator& win_emu, const job_object& job);
         void terminate_kill_on_close_jobs(windows_emulator& win_emu) const;
+        // Like win32k's ApplyKeyStateToQueue, after key_state changes: advances the key-state generation, so user32's
+        // GetKeyState stops answering keys below 0x20 from a thread's CLIENTINFO cache until NtUserGetKeyState
+        // refreshes it.
+        void key_state_changed() const;
+
+        // process_context::handle_count() adds up these kernel object stores by hand: a store added here has to be added there too.
         handle_store<handle_types::event, event> events{};
         handle_store<handle_types::file, file> files{};
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
@@ -712,6 +742,7 @@ namespace sogen
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};
         user_handle_store<handle_types::accelerator_table, accelerator_table> accelerator_tables{user_handles};
+        user_handle_store<handle_types::cursor, cursor_icon> cursor_icons{user_handles};
         handle_store<handle_types::deferred_window_positions, deferred_window_positions> deferred_window_position_batches{};
         handle_store<handle_types::registry, registry_key> registry_keys{};
         handle_store<handle_types::process, emulator_process> processes{};
@@ -729,9 +760,12 @@ namespace sogen
 
         // Process and thread ids share Windows' 4-aligned client ID space.
         uint32_t process_id{default_guest_process_id};
+        uint32_t parent_process_id{};
         uint32_t initial_thread_id{8};
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
+        // Terminated threads that may still be in threads, the only ones the scheduler can delete.
+        size_t terminated_thread_count{0};
 
         // Handles delivered with the most recent ALPC reply message (NtAlpcSendWaitReceivePort). rpcrt4's
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
@@ -750,6 +784,9 @@ namespace sogen
         // Audio streams are numbered per process, so an endpoint port name identifies one stream across every
         // audio-service connection.
         uint32_t next_audio_stream_id{1};
+
+        std::map<uint64_t, wnf_state> wnf_states{};
+        utils::insensitive_u16string_map<uint64_t> service_status_state_names{};
 
         // Extended parameters from last NtMapViewOfSectionEx call
         // These can be used by other syscalls like NtAllocateVirtualMemoryEx
