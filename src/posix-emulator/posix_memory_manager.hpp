@@ -122,6 +122,11 @@ namespace sogen
             return this->mmap_base_;
         }
 
+        uint64_t get_max_mmap_end() const
+        {
+            return this->layout_.max_mmap_end;
+        }
+
         void set_mmap_base(uint64_t address)
         {
             this->mmap_base_ = address;

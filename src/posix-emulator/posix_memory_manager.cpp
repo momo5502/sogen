@@ -128,7 +128,7 @@ namespace sogen
 
     bool posix_memory_manager::allocate_memory(const uint64_t address, const size_t size, const memory_permission permissions)
     {
-        if (this->overlaps_mapped_region(address, size))
+        if (size == 0 || address > std::numeric_limits<uint64_t>::max() - size || this->overlaps_mapped_region(address, size))
         {
             return false;
         }
@@ -498,7 +498,7 @@ namespace sogen
         uint64_t start_address = std::max(this->layout_.min_mmap_address, start ? start : this->mmap_base_);
         start_address = align_up(start_address, this->layout_.allocation_granularity);
 
-        while (start_address + size <= this->layout_.max_mmap_end)
+        while (size <= this->layout_.max_mmap_end && start_address <= this->layout_.max_mmap_end - size)
         {
             const auto overlap_end = this->find_overlap_end(start_address, size);
             if (!overlap_end)

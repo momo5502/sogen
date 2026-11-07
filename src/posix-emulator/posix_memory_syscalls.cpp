@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <span>
 #include <vector>
@@ -142,6 +143,11 @@ namespace sogen
         }
 
         const auto length = *rounded_length;
+        if (length > memory.get_max_mmap_end())
+        {
+            return posix_errno::enomem;
+        }
+
         const auto mapped = map_region(memory, request, length);
         if (std::holds_alternative<posix_errno>(mapped))
         {
@@ -162,7 +168,7 @@ namespace sogen
     posix_result posix_munmap(posix_memory_manager& memory, const uint64_t address, const uint64_t length)
     {
         const auto rounded_length = page_rounded_length(length);
-        if (length == 0 || !rounded_length || !is_page_aligned(address))
+        if (length == 0 || !rounded_length || !is_page_aligned(address) || address > std::numeric_limits<uint64_t>::max() - *rounded_length)
         {
             return posix_errno::einval;
         }
