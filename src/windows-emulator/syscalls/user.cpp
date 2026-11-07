@@ -798,7 +798,7 @@ namespace sogen
                     continue;
                 }
 
-                invalidate_window(c, child, *child_area, erase);
+                invalidate_window(c, child, child_area, erase);
                 invalidate_children(c, child, *child_area, erase, scope);
             }
         }
