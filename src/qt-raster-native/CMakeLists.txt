@@ -1,0 +1,18 @@
+add_library(qt-raster-native-presenter native_presenter.cpp)
+target_include_directories(qt-raster-native-presenter PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(qt-raster-native-presenter PUBLIC windows-emulator qt-raster-session)
+sogen_targets_set_folder("libraries" qt-raster-native-presenter)
+
+if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN AND NOT ANDROID)
+  add_executable(qt-raster-native main.cpp)
+  target_link_libraries(qt-raster-native PRIVATE qt-raster-native-presenter backend-selection)
+  sogen_targets_set_folder("tools" qt-raster-native)
+  sogen_strip_target(qt-raster-native)
+endif()
+
+add_executable(qt-raster-native-test native_presenter_test.cpp)
+target_include_directories(qt-raster-native-test PRIVATE "${PROJECT_SOURCE_DIR}/src/windows-emulator-test")
+target_link_libraries(qt-raster-native-test PRIVATE qt-raster-native-presenter backend-selection gtest gtest_main)
+sogen_targets_set_folder("tests" qt-raster-native-test)
+sogen_target_skip_clang_tidy(qt-raster-native-test)
+add_test(NAME qt-raster-native COMMAND qt-raster-native-test)

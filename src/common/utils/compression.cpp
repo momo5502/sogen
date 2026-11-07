@@ -7,6 +7,7 @@
 #include <memory>
 #include <new>
 #include <stdexcept>
+#include <string>
 #include <thread>
 
 namespace sogen
