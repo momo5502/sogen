@@ -272,6 +272,9 @@ namespace sogen::sandbox
                                                            return arguments;
                                                        }};
 
+            // Declared before the emulator, so the guest's windows are gone while this process waits for its children.
+            const auto children_guard = utils::finally([&] { process_manager.wait_for_processes(); });
+
             emulator_callbacks callbacks{};
             callbacks.on_stdout = [](const std::string_view data) {
                 (void)fwrite(data.data(), 1, data.size(), stdout);
@@ -403,8 +406,6 @@ namespace sogen::sandbox
             {
                 throw std::runtime_error("Reporting managed process exit failed");
             }
-
-            process_manager.wait_for_processes();
 
             return static_cast<int>(*exit_status);
         }

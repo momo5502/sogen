@@ -786,6 +786,13 @@ namespace sogen
                 });
             }
 #endif
+            // Declared before the emulator, so the guest's windows are gone while this process waits for its children.
+            const auto children_guard = utils::finally([&] {
+                if (manager)
+                {
+                    manager->wait_for_processes();
+                }
+            });
             std::unique_ptr<registry_state_file> registry_state{};
             if (!options.registry_state.empty())
             {
@@ -1086,10 +1093,6 @@ namespace sogen
                 }
             }
 #endif
-            if (manager)
-            {
-                manager->wait_for_processes();
-            }
             return success;
         }
 
