@@ -56,7 +56,8 @@ namespace sogen::test
             static constexpr uint32_t pointer_rva = 0x1020;
             static constexpr uint32_t target_rva = 0x1234;
 
-            static std::vector<std::byte> image()
+            static std::vector<std::byte> image(const uint16_t dll_characteristics = 0, const uint16_t characteristics = IMAGE_FILE_DLL,
+                                                const uint32_t relocation_size = 12)
             {
                 std::vector<std::byte> data(0x2200);
                 PEDosHeader_t dos{};
@@ -69,7 +70,7 @@ namespace sogen::test
                 nt.FileHeader.Machine = sizeof(Pointer) == 4 ? PEMachineType::I386 : PEMachineType::AMD64;
                 nt.FileHeader.NumberOfSections = 1;
                 nt.FileHeader.SizeOfOptionalHeader = sizeof(nt.OptionalHeader);
-                nt.FileHeader.Characteristics = IMAGE_FILE_DLL | (sizeof(Pointer) == 4 ? IMAGE_FILE_32BIT_MACHINE : 0);
+                nt.FileHeader.Characteristics = characteristics | (sizeof(Pointer) == 4 ? IMAGE_FILE_32BIT_MACHINE : 0);
                 auto& optional = nt.OptionalHeader;
                 optional.Magic = PEOptionalHeader_t<Pointer>::k_Magic;
                 optional.ImageBase = preferred_base;
@@ -78,9 +79,10 @@ namespace sogen::test
                 optional.FileAlignment = 0x200;
                 optional.SizeOfHeaders = 0x200;
                 optional.SizeOfImage = 0x3000;
+                optional.DllCharacteristics = dll_characteristics;
                 optional.NumberOfRvaAndSizes = 16;
                 optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = 0x1800;
-                optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = 12;
+                optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = relocation_size;
                 poke(data, k_nt_offset, nt);
 
                 IMAGE_SECTION_HEADER section{};
@@ -268,6 +270,85 @@ namespace sogen::test
         const auto independent = this->map(data);
         EXPECT_NE(original.image_base, independent.image_base);
         this->expect_relocations(independent, independent.image_base);
+    }
+
+    TYPED_TEST(ModuleRelocationTest, DynamicDllsUseHighAddressesAndRelocateAbsolutePointers)
+    {
+        const auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+        const auto first = this->map(data);
+        const auto second = this->map(data);
+        EXPECT_NE(first.image_base, second.image_base);
+        for (const auto* module : {&first, &second})
+        {
+            EXPECT_NE(this->preferred_base, module->image_base);
+            EXPECT_EQ(this->preferred_base, module->image_base_file);
+            if constexpr (sizeof(TypeParam) == 4)
+            {
+                EXPECT_GE(module->image_base, 0x70000000ULL);
+                EXPECT_LT(module->image_base + module->size_of_image, 0x80000000ULL);
+            }
+            else
+            {
+                EXPECT_GE(module->image_base, 0x00007F0000000000ULL);
+                EXPECT_LE(module->image_base + module->size_of_image - 1, MAX_ALLOCATION_ADDRESS);
+            }
+            this->expect_relocations(*module, module->image_base);
+        }
+    }
+
+    TYPED_TEST(ModuleRelocationTest, DynamicPlacementRequiresARelocatableDynamicDll)
+    {
+        struct image_case
+        {
+            uint16_t dll_characteristics;
+            uint16_t characteristics;
+            uint32_t relocation_size;
+        };
+
+        const std::array cases{
+            image_case{0, IMAGE_FILE_DLL, 12},
+            image_case{IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE, 0, 12},
+            image_case{IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE, IMAGE_FILE_DLL, 0},
+            image_case{IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE, IMAGE_FILE_DLL | IMAGE_FILE_RELOCS_STRIPPED, 12},
+        };
+        for (const auto& configuration : cases)
+        {
+            SCOPED_TRACE(configuration.characteristics);
+            const auto data = this->image(configuration.dll_characteristics, configuration.characteristics, configuration.relocation_size);
+            const auto module = this->map(data);
+            EXPECT_EQ(this->preferred_base, module.image_base);
+            this->expect_relocations(module, module.image_base);
+            ASSERT_TRUE(unmap_module(this->memory_, module));
+        }
+    }
+
+    TYPED_TEST(ModuleRelocationTest, SecondaryDynamicViewPreservesTheOriginalRelocationBase)
+    {
+        const auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+        const auto original = this->map(data);
+        const auto secondary = this->map(data, original.image_base);
+        EXPECT_NE(this->preferred_base, original.image_base);
+        EXPECT_EQ(this->preferred_base, secondary.image_base);
+        this->expect_relocations(secondary, original.image_base);
+    }
+
+    using ModuleRelocation64Test = ModuleRelocationTest<uint64_t>;
+
+    TEST_F(ModuleRelocation64Test, DynamicWow64CpuRemainsReachableFrom32BitCode)
+    {
+        for (const uint64_t file_base : {0x180000000ULL, 0x10000000ULL})
+        {
+            SCOPED_TRACE(file_base);
+            auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+            constexpr auto header_offset =
+                k_nt_offset + offsetof(PENTHeaders_t<uint64_t>, OptionalHeader) + offsetof(PEOptionalHeader_t<uint64_t>, ImageBase);
+            poke(data, header_offset, file_base);
+            poke(data, 0x220, file_base + target_rva);
+            const auto module = this->map(data, 0, windows_path{"C:\\wow64cpu.dll"});
+            EXPECT_LT(module.image_base + module.size_of_image, uint64_t{1} << 32);
+            this->expect_relocations(module, module.image_base);
+            ASSERT_TRUE(unmap_module(this->memory_, module));
+        }
     }
 
     TEST_F(ModuleMappingTest, SectionWithoutVirtualSizeIsMappedByItsRawSize)

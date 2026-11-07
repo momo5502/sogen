@@ -60,7 +60,7 @@ namespace sogen
             }
         }
 
-        bool must_map_module_below_4gb(const std::string& module_name, const PEMachineType machine, const uint64_t image_base)
+        bool must_map_module_below_4gb(const std::string& module_name, const PEMachineType machine)
         {
             if (machine != PEMachineType::AMD64)
             {
@@ -73,7 +73,7 @@ namespace sogen
                 return false;
             }
 
-            return image_base > std::numeric_limits<uint32_t>::max();
+            return true;
         }
 
         template <typename T>
@@ -679,10 +679,10 @@ namespace sogen
         binary.image_base_file = optional_header.ImageBase;
         binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
 
-        const bool force_wow64cpu_32bit_va = must_map_module_below_4gb(binary.name, nt_headers.FileHeader.Machine, binary.image_base);
+        const bool force_wow64cpu_32bit_va = must_map_module_below_4gb(binary.name, nt_headers.FileHeader.Machine);
         constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
 
-        if (force_wow64cpu_32bit_va)
+        if (force_wow64cpu_32bit_va && binary.image_base > below_4gb_ceiling)
         {
             binary.image_base = memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image),
                                                                       DEFAULT_ALLOCATION_ADDRESS_32BIT, below_4gb_ceiling);
@@ -701,6 +701,17 @@ namespace sogen
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
         const auto is_relocatable = is_dll || has_dynamic_base;
+
+        const auto is_x64 = nt_headers.FileHeader.Machine == PEMachineType::AMD64;
+        const auto& relocations = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+        const bool has_relocations = relocations.Size != 0 && !(nt_headers.FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED);
+        if (!relocation_base && !force_wow64cpu_32bit_va && (is_32bit || is_x64) && is_dll && has_dynamic_base && has_relocations)
+        {
+            const uint64_t image_arena_start = is_32bit ? 0x70000000ULL : 0x00007FF000000000ULL;
+            const uint64_t image_arena_end = is_32bit ? 0x7FFDFFFFULL : MAX_ALLOCATION_ADDRESS;
+            binary.image_base =
+                memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image), image_arena_start, image_arena_end);
+        }
 
         if (!binary.image_base || !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
                                                                   relocation_base ? relocation_base : binary.image_base))
