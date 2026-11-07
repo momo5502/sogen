@@ -265,6 +265,10 @@ namespace sogen
                         ? write_message(win_emu.memory, wait.key_context_ptr, wait.apc_context_ptr, wait.io_status_block_ptr, message)
                         : write_entries(win_emu.memory, wait.completion_entries_ptr, wait.entries_removed_ptr, {&message, 1}));
                 worker_factory_support::on_io_completion_message_dequeued(win_emu, message);
+
+                // NtWaitForWorkViaWorkerFactory checks for more work after its wait, and a packet handed straight to its worker
+                // does not go back through that syscall.
+                worker_factory_support::check_create_worker(win_emu, wait.worker_factory_handle);
                 clear_wait_packet_completion_state(win_emu.process, message.wait_packet_handle);
                 win_emu.wake_idle_vcpu();
             }

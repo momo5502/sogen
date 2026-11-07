@@ -1282,6 +1282,7 @@ namespace sogen
         uint32_t pending_release_count{};
         bool release_pending{};
         std::vector<handle> worker_threads{};
+        uint32_t pending_worker_count{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -1311,6 +1312,7 @@ namespace sogen
             buffer.write(this->pending_release_count);
             buffer.write(this->release_pending);
             buffer.write_vector(this->worker_threads);
+            buffer.write(this->pending_worker_count);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1341,6 +1343,7 @@ namespace sogen
             buffer.read(this->pending_release_count);
             buffer.read(this->release_pending);
             buffer.read_vector(this->worker_threads);
+            buffer.read(this->pending_worker_count);
         }
     };
 

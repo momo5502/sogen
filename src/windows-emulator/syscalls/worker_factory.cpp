@@ -86,10 +86,10 @@ namespace sogen
                 return read_unicode_string(c.emu, attributes.ObjectName);
             }
 
-            void prune_worker_factory_threads(const syscall_context& c, worker_factory& factory)
+            void prune_worker_factory_threads(windows_emulator& win_emu, worker_factory& factory)
             {
                 std::erase_if(factory.worker_threads, [&](const handle thread_handle) {
-                    const auto* thread = c.proc.threads.get(thread_handle);
+                    const auto* thread = win_emu.process.threads.get(thread_handle);
                     return thread == nullptr || thread->is_terminated();
                 });
             }
@@ -116,6 +116,22 @@ namespace sogen
                 return limit;
             }
 
+            void create_worker_factory_thread(windows_emulator& win_emu, worker_factory& factory)
+            {
+                const auto stack_size =
+                    factory.stack_reserve != 0 ? factory.stack_reserve : win_emu.mod_manager.executable->size_of_stack_reserve;
+                const auto create_flags = (factory.flags & WORKER_FACTORY_FLAG_LOADER_POOL) ? THREAD_CREATE_FLAGS_LOADER_WORKER : 0;
+                const auto stack_commit_size =
+                    factory.stack_commit != 0 ? factory.stack_commit : win_emu.mod_manager.executable->size_of_stack_commit;
+                const auto thread_handle = win_emu.process.create_thread(win_emu.memory, factory.start_routine, factory.start_parameter,
+                                                                         stack_size, create_flags, false, stack_commit_size);
+                factory.worker_threads.push_back(thread_handle);
+
+                // Like ExpWorkerFactoryCreateThread: the new worker stays pending until it calls NtWorkerFactoryWorkerReady.
+                ++factory.pending_worker_count;
+                win_emu.wake_idle_vcpu();
+            }
+
             void ensure_worker_factory_threads(const syscall_context& c, worker_factory& factory)
             {
                 if (factory.shutdown || factory.paused != 0 || factory.start_routine == 0)
@@ -123,7 +139,7 @@ namespace sogen
                     return;
                 }
 
-                prune_worker_factory_threads(c, factory);
+                prune_worker_factory_threads(c.win_emu, factory);
 
                 const auto limit = get_worker_factory_thread_limit(factory);
                 if (limit == 0)
@@ -131,28 +147,48 @@ namespace sogen
                     return;
                 }
 
-                auto desired = std::max(factory.thread_minimum, factory.binding_count);
-                if (factory.release_pending || factory.pending_release_count != 0)
-                {
-                    desired = std::max(desired, 1u);
-                }
-
-                desired = std::min(desired, limit);
-
+                const auto desired = std::min(std::max(factory.thread_minimum, factory.binding_count), limit);
                 while (factory.worker_threads.size() < desired)
                 {
-                    const auto stack_size =
-                        factory.stack_reserve != 0 ? factory.stack_reserve : c.win_emu.mod_manager.executable->size_of_stack_reserve;
-                    const auto create_flags = (factory.flags & WORKER_FACTORY_FLAG_LOADER_POOL) ? THREAD_CREATE_FLAGS_LOADER_WORKER : 0;
-                    const auto stack_commit_size =
-                        factory.stack_commit != 0 ? factory.stack_commit : c.win_emu.mod_manager.executable->size_of_stack_commit;
-                    const auto thread_handle = c.proc.create_thread(c.win_emu.memory, factory.start_routine, factory.start_parameter,
-                                                                    stack_size, create_flags, false, stack_commit_size);
-                    factory.worker_threads.push_back(thread_handle);
-                    c.win_emu.wake_idle_vcpu();
+                    create_worker_factory_thread(c.win_emu, factory);
                 }
             }
 
+            bool has_waiting_worker(windows_emulator& win_emu, const worker_factory& factory)
+            {
+                return std::ranges::any_of(factory.worker_threads, [&](const handle thread_handle) {
+                    const auto* thread = win_emu.process.threads.get(thread_handle);
+                    return thread && thread->await_io_completion &&
+                           thread->await_io_completion->io_completion_handle == factory.io_completion_handle;
+                });
+            }
+
+            // Windows ExpWorkerFactoryCheckCreate: start one more worker when work is queued (a completion or a
+            // release not yet taken), no worker waits on the port for it, no new worker is still starting and the
+            // factory is under its maximum. Without it a pool whose workers are all inside long callbacks never runs
+            // newly posted work.
+            // ponytail: creates at once where Windows defers 30-150 ms (a processor's worth of workers running, recent
+            // thread churn, above the soft maximum); add a deferred-create timer if a guest ever depends on that pacing.
+            void check_create_worker_factory_thread(windows_emulator& win_emu, worker_factory& factory)
+            {
+                if (factory.shutdown || factory.paused != 0 || factory.start_routine == 0 || factory.pending_worker_count != 0)
+                {
+                    return;
+                }
+
+                prune_worker_factory_threads(win_emu, factory);
+                if (factory.worker_threads.size() >= factory.thread_maximum)
+                {
+                    return;
+                }
+
+                const auto* completion = win_emu.process.io_completions.get(factory.io_completion_handle);
+                const auto work_queued = factory.pending_release_count != 0 || (completion && !completion->queue.empty());
+                if (work_queued && !has_waiting_worker(win_emu, factory))
+                {
+                    create_worker_factory_thread(win_emu, factory);
+                }
+            }
         }
 
         NTSTATUS handle_NtCreateWorkerFactory(const syscall_context& c, const emulator_object<handle> worker_factory_handle,
@@ -222,7 +258,13 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            ensure_worker_factory_threads(c, *factory);
+            // A worker counts as started once it reports in; with none starting, Windows fails the call.
+            if (factory->pending_worker_count == 0)
+            {
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            --factory->pending_worker_count;
             return STATUS_SUCCESS;
         }
 
@@ -449,9 +491,11 @@ namespace sogen
                 }
 
                 c.win_emu.wake_idle_vcpu();
+
+                // Like the kernel, look for a free worker only when the release packet is newly queued.
+                check_create_worker_factory_thread(c.win_emu, *factory);
             }
 
-            ensure_worker_factory_threads(c, *factory);
             return STATUS_SUCCESS;
         }
 
@@ -490,6 +534,8 @@ namespace sogen
             const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion_handle, count);
             if (!messages.empty())
             {
+                // A worker taking work makes sure another one is coming for whatever is still queued.
+                check_create_worker_factory_thread(c.win_emu, *factory);
                 return io_completion_wait::write_entries(c.win_emu.memory, mini_packets.value(), packets_returned.value(), messages);
             }
 
@@ -506,6 +552,7 @@ namespace sogen
             auto& wait = *t.await_io_completion;
             wait.type = io_completion_wait_type::remove_multiple;
             wait.io_completion_handle = factory->io_completion_handle;
+            wait.worker_factory_handle = worker_factory_handle;
             wait.completion_entries_ptr = mini_packets.value();
             wait.entries_removed_ptr = packets_returned.value();
             wait.max_entries = count;
@@ -528,6 +575,17 @@ namespace sogen
             io_completion_wait::add_waiter(*completion, t.id);
             c.win_emu.yield_thread(c.vcpu, false);
             return STATUS_SUCCESS;
+        }
+    }
+
+    namespace worker_factory_support
+    {
+        void check_create_worker(windows_emulator& win_emu, const handle worker_factory_handle)
+        {
+            if (auto* factory = win_emu.process.worker_factories.get(worker_factory_handle))
+            {
+                syscalls::check_create_worker_factory_thread(win_emu, *factory);
+            }
         }
     }
 
