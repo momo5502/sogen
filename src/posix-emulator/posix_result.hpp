@@ -23,6 +23,7 @@ namespace sogen
         enospc,
         enotconn,
         enotdir,
+        enotty,
         eperm,
         epipe,
         erofs,

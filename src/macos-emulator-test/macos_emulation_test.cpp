@@ -166,6 +166,21 @@ namespace sogen::macos_test
             0x0F, 0x05,                                     // syscall
         });
 
+        constexpr auto FIOCLEX_GETFD_CODE = std::to_array<uint8_t>({
+            0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
+            0xBE, 0x01, 0x66, 0x00, 0x20, // mov esi, 0x20006601 (FIOCLEX)
+            0xB8, 0x36, 0x00, 0x00, 0x02, // mov eax, 0x2000036 (ioctl)
+            0x0F, 0x05,                   // syscall
+            0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
+            0xBE, 0x01, 0x00, 0x00, 0x00, // mov esi, 1 (F_GETFD)
+            0xB8, 0x5C, 0x00, 0x00, 0x02, // mov eax, 0x200005C (fcntl)
+            0x0F, 0x05,                   // syscall
+            0x89, 0xC7,                   // mov edi, eax
+            0x11, 0xFF,                   // adc edi, edi
+            0xB8, 0x01, 0x00, 0x00, 0x02, // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                   // syscall
+        });
+
         constexpr auto OVERSIZED_WRITE_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02,                               // mov eax, 0x2000004 (write)
             0xBF, 0x01, 0x00, 0x00, 0x00,                               // mov edi, 1
@@ -637,6 +652,14 @@ namespace sogen::macos_test
 
         constexpr int eagain = 35;
         EXPECT_EQ(result.exit_status, (eagain * 2) + 1);
+    }
+
+    TEST(MacosEmulationTest, MarksDescriptorCloseOnExecThroughIoctl)
+    {
+        const auto result = run_image(make_test_image(FIOCLEX_GETFD_CODE));
+
+        constexpr int fd_cloexec = 1;
+        EXPECT_EQ(result.exit_status, fd_cloexec * 2);
     }
 
     TEST(MacosEmulationTest, FailsReadIntoUnwritableRangeWithoutConsumingInput)

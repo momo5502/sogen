@@ -117,6 +117,8 @@ namespace sogen
             return linux_errno::LINUX_ENOTCONN;
         case posix_errno::enotdir:
             return linux_errno::LINUX_ENOTDIR;
+        case posix_errno::enotty:
+            return linux_errno::LINUX_ENOTTY;
         case posix_errno::eperm:
             return linux_errno::LINUX_EPERM;
         case posix_errno::epipe:

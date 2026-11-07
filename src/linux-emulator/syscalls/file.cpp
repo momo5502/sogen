@@ -7,6 +7,7 @@
 #include <posix_descriptor_syscalls.hpp>
 #include <posix_directory.hpp>
 #include <posix_io_syscalls.hpp>
+#include <posix_ioctl.hpp>
 #include <posix_open.hpp>
 #include <posix_path_resolution.hpp>
 #include <posix_path_syscalls.hpp>
@@ -1698,6 +1699,34 @@ namespace sogen
         write_linux_syscall_result(c, 0);
     }
 
+    namespace
+    {
+        std::optional<posix_file_ioctl> file_ioctl(const uint64_t request)
+        {
+            constexpr uint64_t FIONREAD = 0x541B;
+            constexpr uint64_t FIONBIO = 0x5421;
+            constexpr uint64_t FIONCLEX = 0x5450;
+            constexpr uint64_t FIOCLEX = 0x5451;
+            constexpr uint64_t FIOASYNC = 0x5452;
+
+            switch (request)
+            {
+            case FIOCLEX:
+                return posix_file_ioctl::set_close_on_exec;
+            case FIONCLEX:
+                return posix_file_ioctl::clear_close_on_exec;
+            case FIONREAD:
+                return posix_file_ioctl::read_queued_bytes;
+            case FIONBIO:
+                return posix_file_ioctl::set_nonblocking;
+            case FIOASYNC:
+                return posix_file_ioctl::set_async;
+            default:
+                return std::nullopt;
+            }
+        }
+    }
+
     void sys_ioctl(const linux_syscall_context& c)
     {
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
@@ -1716,6 +1745,15 @@ namespace sogen
         if (!fd_entry)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        const auto file_request = file_ioctl(request);
+        const auto is_close_on_exec =
+            file_request == posix_file_ioctl::set_close_on_exec || file_request == posix_file_ioctl::clear_close_on_exec;
+        if (is_close_on_exec || (file_request && posix_has_file_ioctls(*fd_entry)))
+        {
+            write_linux_syscall_result(c, posix_ioctl(io_context(c), fd, *file_request, get_linux_syscall_argument(c.emu, 2)));
             return;
         }
 

@@ -85,6 +85,8 @@ namespace sogen
             return macos_errno::MACOS_ENOTCONN;
         case posix_errno::enotdir:
             return macos_errno::MACOS_ENOTDIR;
+        case posix_errno::enotty:
+            return macos_errno::MACOS_ENOTTY;
         case posix_errno::eperm:
             return macos_errno::MACOS_EPERM;
         case posix_errno::epipe:
