@@ -32,6 +32,9 @@ class SessionController(
     private var game: HostedProcess? = null
     private val children = mutableMapOf<Long, HostedProcess>()
     private val slots = arrayOfNulls<HostedProcess>(childServices.size)
+
+    /** A child service process started ahead, so that creating a child process does not wait for Android to start one. */
+    private var spare: HostedProcess? = null
     private var nextChild = 1L
     private var exited = false
     private var stopRequested = false
@@ -53,12 +56,14 @@ class SessionController(
 
         exited = false
         stopRequested = false
-        val process = HostedProcess(GAME_PROCESS, config, parent = null, request = 0, slot = null)
+        val process = HostedProcess(slot = null)
+        process.assign(GAME_PROCESS, config, parent = null, request = 0)
         game = process
         if (!process.bind(SogenService::class.java)) {
             game = null
             return false
         }
+        prepareSpare()
         return true
     }
 
@@ -111,15 +116,14 @@ class SessionController(
 
     /**
      * One guest process and the service process it runs in. Its windows are known to Flutter by an id that combines the
-     * process id with the window handle; the game's process has id 0, so its windows keep their handles.
+     * process id with the window handle; the game's process has id 0, so its windows keep their handles. A spare service
+     * process has no guest process yet; [assign] gives it one.
      */
-    private inner class HostedProcess(
-        val id: Long,
-        val config: RunConfig,
-        val parent: HostedProcess?,
-        val request: Long,
-        val slot: Int?,
-    ) {
+    private inner class HostedProcess(val slot: Int?) {
+        var id = GAME_PROCESS
+        var config: RunConfig? = null
+        var parent: HostedProcess? = null
+        var request = 0L
         var session: ISogenSession? = null
         var connection: ServiceConnection? = null
         val windows = mutableSetOf<Long>()
@@ -136,18 +140,10 @@ class SessionController(
                     val remote = ISogenSession.Stub.asInterface(binder)
                     session = remote
                     binder.linkToDeath({ mainHandler.post { finish(null) } }, 0)
-                    call {
-                        remote.start(config.toBundle(), callback)
-                        if (parent == null) {
-                            consoleSize?.let { (columns, rows) -> remote.consoleResize(columns, rows) }
-                        }
-                        remote.setStatsInterval(statsInterval)
-                        remote.setFrameLimit(frameLimit)
-                        // The service creates the session synchronously in start, and a stopped session exits as soon
-                        // as it runs, reporting its exit code as usual.
-                        if (parent == null && stopRequested) {
-                            remote.stop()
-                        }
+                    if (config != null) {
+                        start(remote)
+                    } else {
+                        call { remote.prepare() }
                     }
                 }
 
@@ -166,6 +162,32 @@ class SessionController(
             return true
         }
 
+        fun assign(id: Long, config: RunConfig, parent: HostedProcess?, request: Long) {
+            this.id = id
+            this.config = config
+            this.parent = parent
+            this.request = request
+            session?.let(::start)
+        }
+
+        private fun start(remote: ISogenSession) {
+            val config = config ?: return
+            val isGame = parent == null
+            call {
+                remote.start(config.toBundle(), callback)
+                if (isGame) {
+                    consoleSize?.let { (columns, rows) -> remote.consoleResize(columns, rows) }
+                }
+                remote.setStatsInterval(statsInterval)
+                remote.setFrameLimit(frameLimit)
+                // The service creates the session synchronously in start, and a stopped session exits as soon
+                // as it runs, reporting its exit code as usual.
+                if (isGame && stopRequested) {
+                    remote.stop()
+                }
+            }
+        }
+
         /** [exitCode] is null when the service process died without reporting one, i.e. it crashed. */
         fun finish(exitCode: Int?) {
             if (finished) {
@@ -178,15 +200,24 @@ class SessionController(
             // Unbinding ends the service process, so a child killed this way is gone once this returns.
             connection?.let { context.unbindService(it) }
             connection = null
+            slot?.let { slots[it] = null }
 
+            if (config == null) {
+                if (spare === this) {
+                    spare = null
+                }
+                return
+            }
+
+            val parent = parent
             if (parent == null) {
                 onGameExit(exitCode)
                 return
             }
 
             children.remove(id)
-            slot?.let { slots[it] = null }
             call { parent.session?.childExited(request, exitCode ?: CRASHED_EXIT_STATUS) }
+            prepareSpare()
         }
 
         private fun destroyWindow(window: Long) {
@@ -274,9 +305,8 @@ class SessionController(
             override fun onExit(exitCode: Int) = post { finish(exitCode) }
 
             override fun onProcessStarted(processId: Int) = post {
-                if (parent != null) {
-                    call { parent.session?.childStarted(request, processId) }
-                }
+                val parent = parent ?: return@post
+                call { parent.session?.childStarted(request, processId) }
             }
 
             override fun startChild(request: Long, arguments: Array<String>) = post { startChild(this@HostedProcess, request, arguments) }
@@ -303,21 +333,44 @@ class SessionController(
     }
 
     private fun startChild(parent: HostedProcess, request: Long, arguments: Array<String>) {
-        val slot = slots.indexOfFirst { it == null }
-        val root = game
-        if (slot < 0 || root == null || parent.finished) {
+        val config = game?.config
+        if (config == null || parent.finished) {
+            call { parent.session?.childStarted(request, 0) }
+            return
+        }
+
+        val child = spare ?: bindChildService()
+        if (child == null) {
             call { parent.session?.childStarted(request, NO_FREE_SLOT) }
             return
         }
 
-        val child = HostedProcess(nextChild++, root.config.forChildProcess(arguments.toList()), parent, request, slot)
-        slots[slot] = child
+        spare = null
+        child.assign(nextChild++, config.forChildProcess(arguments.toList()), parent, request)
         children[child.id] = child
-        if (!child.bind(childServices[slot])) {
-            slots[slot] = null
-            children.remove(child.id)
-            call { parent.session?.childStarted(request, 0) }
+        prepareSpare()
+    }
+
+    /** Keeps one free child slot's service process started, so that the next child process starts in it right away. */
+    private fun prepareSpare() {
+        if (spare == null && game != null && !exited) {
+            spare = bindChildService()
         }
+    }
+
+    private fun bindChildService(): HostedProcess? {
+        val slot = slots.indexOfFirst { it == null }
+        if (slot < 0) {
+            return null
+        }
+
+        val process = HostedProcess(slot)
+        slots[slot] = process
+        if (!process.bind(childServices[slot])) {
+            slots[slot] = null
+            return null
+        }
+        return process
     }
 
     private fun onGameExit(exitCode: Int?) {
@@ -327,6 +380,7 @@ class SessionController(
 
         exited = true
         children.values.toList().forEach { it.finish(KILLED_EXIT_STATUS) }
+        spare?.finish(null)
         windows.values.forEach { it.release() }
         windows.clear()
         game = null

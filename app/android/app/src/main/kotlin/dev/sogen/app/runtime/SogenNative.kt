@@ -145,5 +145,8 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         init {
             System.loadLibrary("sogen")
         }
+
+        /** Loads the library, which the first session would otherwise wait for. */
+        fun load() = Unit
     }
 }

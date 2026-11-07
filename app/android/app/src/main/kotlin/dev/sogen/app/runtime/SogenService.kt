@@ -67,6 +67,16 @@ open class SogenService : Service() {
             native?.stop()
         }
 
+        override fun prepare() {
+            thread(name = "sogen-prepare") {
+                try {
+                    SogenNative.load()
+                } catch (e: UnsatisfiedLinkError) {
+                    Log.e(TAG, "Could not load the emulator library", e)
+                }
+            }
+        }
+
         override fun childStarted(request: Long, processId: Int) {
             native?.childStarted(request, processId)
         }
