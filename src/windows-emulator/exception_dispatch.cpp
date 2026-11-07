@@ -496,6 +496,197 @@ namespace sogen
         dispatch_exception(win_emu, vcpu, STATUS_ILLEGAL_INSTRUCTION, {});
     }
 
+    namespace
+    {
+        // The KiOpOneByteTable and KiOpTwoByteTable entries whose KiOp_Priv handler makes a user-mode #GP raise
+        // STATUS_PRIVILEGED_INSTRUCTION. The remaining entries serve #UD and #DE, or only act for flagged threads or with
+        // CR4.UMIP set, which sogen's guests never have, so KiPreprocessFault leaves those faults as access violations.
+        struct privileged_opcode
+        {
+            uint8_t first{};
+            uint8_t count{1};
+            uint8_t modrm_reg{0xFF};
+            uint8_t modrm_mod{0xFF}; // 3 matches the register form only, any other value the memory form only
+            uint8_t modrm_rm{0xFF};
+        };
+
+        constexpr std::array<privileged_opcode, 6> one_byte_privileged_opcodes{{
+            {.first = 0xFA},             // CLI
+            {.first = 0xFB},             // STI
+            {.first = 0xE4, .count = 4}, // IN/OUT imm8
+            {.first = 0xEC, .count = 4}, // IN/OUT DX
+            {.first = 0x6C, .count = 4}, // INS/OUTS
+            {.first = 0xF4},             // HLT
+        }};
+
+        constexpr std::array<privileged_opcode, 14> two_byte_privileged_opcodes{{
+            {.first = 0x00, .modrm_reg = 2},                                // LLDT
+            {.first = 0x00, .modrm_reg = 3},                                // LTR
+            {.first = 0x01, .modrm_reg = 2, .modrm_mod = 0},                // LGDT
+            {.first = 0x01, .modrm_reg = 3, .modrm_mod = 0},                // LIDT
+            {.first = 0x01, .modrm_reg = 6},                                // LMSW
+            {.first = 0x01, .modrm_reg = 7, .modrm_mod = 0},                // INVLPG
+            {.first = 0x01, .modrm_reg = 7, .modrm_mod = 3, .modrm_rm = 0}, // SWAPGS
+            {.first = 0x06},                                                // CLTS
+            {.first = 0x07},                                                // SYSRET
+            {.first = 0x08},                                                // INVD
+            {.first = 0x09},                                                // WBINVD
+            {.first = 0x20, .count = 4},                                    // MOV to and from CR/DR
+            {.first = 0x30, .count = 4},                                    // WRMSR, RDTSC, RDMSR, RDPMC
+            {.first = 0x35},                                                // SYSEXIT
+        }};
+
+        // KiOpPrefixTable. KiOpIsPrefix fails the decode on a repeated prefix or a second one from the same group.
+        struct instruction_prefix
+        {
+            uint8_t value{};
+            uint16_t flag{};
+            uint8_t group{};
+        };
+
+        constexpr std::array<instruction_prefix, 11> instruction_prefixes{{
+            {.value = 0x26, .flag = 0x001, .group = 1},
+            {.value = 0x2E, .flag = 0x002, .group = 1},
+            {.value = 0x36, .flag = 0x004, .group = 1},
+            {.value = 0x3E, .flag = 0x008, .group = 1},
+            {.value = 0x64, .flag = 0x010, .group = 1},
+            {.value = 0x65, .flag = 0x020, .group = 1},
+            {.value = 0x66, .flag = 0x040, .group = 0},
+            {.value = 0x67, .flag = 0x080, .group = 0},
+            {.value = 0xF0, .flag = 0x100, .group = 0},
+            {.value = 0xF2, .flag = 0x200, .group = 2},
+            {.value = 0xF3, .flag = 0x400, .group = 2},
+        }};
+
+        constexpr uint16_t rex_prefix_flag = 0x800;
+
+        const instruction_prefix* find_instruction_prefix(const uint8_t value)
+        {
+            for (const auto& prefix : instruction_prefixes)
+            {
+                if (prefix.value == value)
+                {
+                    return &prefix;
+                }
+            }
+
+            return nullptr;
+        }
+
+        bool matches_modrm(const privileged_opcode& entry, const uint8_t modrm)
+        {
+            const auto is_register_form = (modrm & 0xC0) == 0xC0;
+            return (entry.modrm_reg == 0xFF || entry.modrm_reg == ((modrm >> 3) & 7)) &&
+                   (entry.modrm_rm == 0xFF || entry.modrm_rm == (modrm & 7)) &&
+                   (entry.modrm_mod == 0xFF || (entry.modrm_mod == 3) == is_register_form);
+        }
+    }
+
+    NTSTATUS get_general_protection_fault_status(const std::span<const uint8_t> instruction, const bool is_32bit)
+    {
+        size_t offset = 0;
+        uint16_t prefix_flags = 0;
+        uint8_t prefix_groups = 0;
+
+        for (; offset < instruction.size(); ++offset)
+        {
+            const auto value = instruction[offset];
+            uint16_t flag = 0;
+            uint8_t group = 0;
+
+            if (!is_32bit && (value & 0xF0) == 0x40)
+            {
+                flag = rex_prefix_flag;
+            }
+            else if (const auto* const prefix = find_instruction_prefix(value))
+            {
+                flag = prefix->flag;
+                group = prefix->group;
+            }
+            else
+            {
+                break;
+            }
+
+            if ((prefix_flags & flag) != 0 || (prefix_groups & group) != 0)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            prefix_flags |= flag;
+            prefix_groups |= group;
+        }
+
+        const auto byte_at = [&](const size_t index) -> std::optional<uint8_t> {
+            return index < instruction.size() ? std::optional{instruction[index]} : std::nullopt;
+        };
+
+        auto opcode = byte_at(offset);
+        std::span<const privileged_opcode> table = one_byte_privileged_opcodes;
+        if (opcode == 0x0F)
+        {
+            opcode = byte_at(++offset);
+            table = two_byte_privileged_opcodes;
+        }
+
+        if (!opcode)
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
+
+        const auto modrm = byte_at(offset + 1);
+        for (const auto& entry : table)
+        {
+            if (*opcode < entry.first || *opcode >= entry.first + entry.count)
+            {
+                continue;
+            }
+
+            if (entry.modrm_reg == 0xFF && entry.modrm_mod == 0xFF && entry.modrm_rm == 0xFF)
+            {
+                return STATUS_PRIVILEGED_INSTRUCTION;
+            }
+
+            if (!modrm)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (matches_modrm(entry, *modrm))
+            {
+                return STATUS_PRIVILEGED_INSTRUCTION;
+            }
+        }
+
+        return STATUS_ACCESS_VIOLATION;
+    }
+
+    void dispatch_general_protection_fault(windows_emulator& win_emu, vcpu_context& vcpu)
+    {
+        auto& cpu = vcpu.x64_cpu();
+        const auto rip = win_emu.uses_instruction_precision() ? vcpu.thread().current_ip : cpu.read_instruction_pointer();
+
+        // KiOpFetchNextByte decodes at most 16 bytes and stops at the first unreadable one.
+        std::array<uint8_t, 16> instruction{};
+        size_t length = 0;
+        while (length < instruction.size() && win_emu.memory.try_read_memory(rip + length, &instruction[length], 1))
+        {
+            ++length;
+        }
+
+        // KiOpDecode only treats 0x40-0x4F as REX outside the 32-bit user code segment.
+        const auto is_32bit = cpu.reg<uint16_t>(x86_register::cs) == 0x23;
+        const auto status = get_general_protection_fault_status({instruction.data(), length}, is_32bit);
+        if (status == STATUS_ACCESS_VIOLATION)
+        {
+            // KiPreprocessFault reports any other #GP as a read of the all-ones address.
+            dispatch_access_violation(win_emu, vcpu, ~uint64_t{0}, memory_operation::read);
+            return;
+        }
+
+        dispatch_exception(win_emu, vcpu, status, {});
+    }
+
     void dispatch_integer_division_by_zero(windows_emulator& win_emu, vcpu_context& vcpu)
     {
         dispatch_exception(win_emu, vcpu, STATUS_INTEGER_DIVIDE_BY_ZERO, {});

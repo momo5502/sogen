@@ -1745,6 +1745,10 @@ namespace sogen
                 this->callbacks.on_suspicious_activity("Illegal instruction");
                 dispatch_illegal_instruction_violation(*this, vcpu);
                 return;
+            case 13:
+                this->callbacks.on_suspicious_activity("General protection fault");
+                dispatch_general_protection_fault(*this, vcpu);
+                return;
             case 41:
                 this->callbacks.on_fast_fail(acting.reg<uint32_t>(x86_register::ecx));
                 this->process.exit_status = STATUS_FAIL_FAST_EXCEPTION;
