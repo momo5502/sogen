@@ -20,7 +20,7 @@ namespace sogen
         constexpr uint64_t SYSCALL_INSTRUCTION_SIZE = 2;
 
         constexpr posix_signal_numbers LINUX_SIGNAL_NUMBERS{
-            .count = linux_signals::LINUX_NSIG,
+            .highest = linux_signals::LINUX_NSIG,
             .kill = linux_signals::LINUX_SIGKILL,
             .stop = linux_signals::LINUX_SIGSTOP,
         };
@@ -28,7 +28,8 @@ namespace sogen
         constexpr int32_t LINUX_SS_AUTODISARM = static_cast<int32_t>(1U << 31);
         constexpr posix_signal_stack_rules SIGNAL_STACK_RULES{
             .disable_flag = LINUX_SS_DISABLE,
-            .accepted_flags = LINUX_SS_DISABLE | POSIX_SS_ONSTACK | LINUX_SS_AUTODISARM,
+            .kept_flags = LINUX_SS_AUTODISARM,
+            .on_stack_enables = true,
             .minimum_size = 2048,
         };
 
@@ -47,7 +48,7 @@ namespace sogen
         {
             if (stack.flags & LINUX_SS_DISABLE)
             {
-                return {.sp = 0, .flags = LINUX_SS_DISABLE, .padding = 0, .size = 0};
+                return {.sp = 0, .flags = stack.flags, .padding = 0, .size = 0};
             }
 
             return {.sp = stack.base, .flags = stack.flags, .padding = 0, .size = stack.size};
@@ -97,7 +98,7 @@ namespace sogen
 
         bool is_valid_signal(const int sig)
         {
-            return sig >= 0 && sig < 64;
+            return sig >= 0 && sig <= linux_signals::LINUX_NSIG;
         }
 
         void deliver_signal_after_success(const linux_syscall_context& c, const int sig)

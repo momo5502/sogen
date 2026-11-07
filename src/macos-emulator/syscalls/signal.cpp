@@ -40,7 +40,8 @@ namespace sogen
         constexpr auto UNBLOCKABLE_SIGNALS = static_cast<uint32_t>(posix_unblockable_signals(MACOS_SIGNAL_NUMBERS));
         constexpr posix_signal_stack_rules SIGNAL_STACK_RULES{
             .disable_flag = MACOS_SS_DISABLE,
-            .accepted_flags = MACOS_SS_DISABLE,
+            .kept_flags = 0,
+            .on_stack_enables = false,
             .minimum_size = 32768,
         };
 

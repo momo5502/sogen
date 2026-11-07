@@ -25,7 +25,10 @@ namespace sogen
     posix_result posix_set_signal_stack(posix_signal_stack& stack, const posix_signal_stack& requested,
                                         const posix_signal_stack_rules& rules)
     {
-        if ((requested.flags & ~rules.accepted_flags) != 0)
+        const auto kept_flags = requested.flags & rules.kept_flags;
+        const auto mode = requested.flags & ~rules.kept_flags;
+        const auto enables = mode == 0 || (rules.on_stack_enables && mode == POSIX_SS_ONSTACK);
+        if (!enables && mode != rules.disable_flag)
         {
             return posix_errno::einval;
         }
@@ -35,9 +38,9 @@ namespace sogen
             return posix_errno::eperm;
         }
 
-        if ((requested.flags & rules.disable_flag) != 0)
+        if (!enables)
         {
-            stack.flags = rules.disable_flag;
+            stack.flags = rules.disable_flag | kept_flags;
             return uint64_t{0};
         }
 
@@ -46,7 +49,7 @@ namespace sogen
             return posix_errno::enomem;
         }
 
-        stack = {.base = requested.base, .size = requested.size, .flags = 0};
+        stack = {.base = requested.base, .size = requested.size, .flags = kept_flags};
         return uint64_t{0};
     }
 }

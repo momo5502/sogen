@@ -10,7 +10,7 @@ namespace sogen
     constexpr int MACOS_NSIG = 32;
     constexpr int MACOS_SIGKILL = 9;
     constexpr int MACOS_SIGSTOP = 17;
-    constexpr posix_signal_numbers MACOS_SIGNAL_NUMBERS{.count = MACOS_NSIG, .kill = MACOS_SIGKILL, .stop = MACOS_SIGSTOP};
+    constexpr posix_signal_numbers MACOS_SIGNAL_NUMBERS{.highest = MACOS_NSIG - 1, .kill = MACOS_SIGKILL, .stop = MACOS_SIGSTOP};
     constexpr uint64_t MACOS_SIG_DFL = 0;
     constexpr uint64_t MACOS_SIG_IGN = 1;
     constexpr int32_t MACOS_SS_DISABLE = 4;

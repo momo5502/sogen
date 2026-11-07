@@ -6,10 +6,11 @@
 
 namespace sogen
 {
-    // The numbering of the signals that cannot be caught, blocked or ignored, which Linux and XNU place differently.
+    // Signals are numbered from 1; Linux goes up to 64 and XNU to 31, and the two place SIGKILL and SIGSTOP, which
+    // cannot be caught, blocked or ignored, differently.
     struct posix_signal_numbers
     {
-        int count{};
+        int highest{};
         int kill{};
         int stop{};
     };
@@ -26,7 +27,7 @@ namespace sogen
 
     constexpr bool posix_is_valid_signal(const posix_signal_numbers& numbers, const int signal)
     {
-        return signal > 0 && signal < numbers.count;
+        return signal > 0 && signal <= numbers.highest;
     }
 
     constexpr bool posix_is_catchable_signal(const posix_signal_numbers& numbers, const int signal)
@@ -52,11 +53,14 @@ namespace sogen
         int32_t flags{};
     };
 
-    // SS_ONSTACK is 1 on both kernels, while SS_DISABLE, the flags a guest may pass and MINSIGSTKSZ differ.
+    // SS_ONSTACK is 1 on both kernels, while SS_DISABLE and MINSIGSTKSZ differ. A request asks for one mode, enabled
+    // or disabled, alongside flags the stack keeps and reports back (Linux's SS_AUTODISARM); Linux also takes
+    // SS_ONSTACK as a request to enable the stack.
     struct posix_signal_stack_rules
     {
         int32_t disable_flag{};
-        int32_t accepted_flags{};
+        int32_t kept_flags{};
+        bool on_stack_enables{};
         uint64_t minimum_size{};
     };
 
