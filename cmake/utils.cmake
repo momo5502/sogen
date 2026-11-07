@@ -482,3 +482,23 @@ function(sogen_targets_enable_clang_tidy)
     sogen_target_enable_clang_tidy(${target})
   endforeach()
 endfunction()
+
+##########################################
+
+# Compiler launchers only run with the Ninja and Makefile generators. sccache cannot cache MSVC objects that write their
+# debug info into a shared PDB (/Zi, which Ninja pairs with /FS), so they embed it instead (/Z7); the linker still
+# produces the PDB.
+macro(sogen_enable_sccache)
+  if(SOGEN_ENABLE_SCCACHE
+     AND CMAKE_GENERATOR MATCHES "Ninja|Makefiles"
+     AND NOT CMAKE_C_COMPILER_LAUNCHER
+     AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(SCCACHE_PROGRAM sccache)
+    if(SCCACHE_PROGRAM)
+      message(STATUS "Caching compilations with ${SCCACHE_PROGRAM}")
+      set(CMAKE_C_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
+      set(CMAKE_CXX_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
+      set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
+    endif()
+  endif()
+endmacro()

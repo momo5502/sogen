@@ -144,8 +144,10 @@ namespace sogen::test
         class second_vcpu final : public register_file_cpu<x86_64_cpu>
         {
           public:
-            // Runs at the start of every register save of this vCPU.
+            // Run at the start of every register save, GDTR load and register write of this vCPU.
             std::function<void()> on_save{};
+            std::function<void()> on_load_gdt{};
+            std::function<void(int)> on_write_register{};
 
             explicit second_vcpu(memory_interface& memory)
                 : memory_(&memory)
@@ -165,6 +167,26 @@ namespace sogen::test
                 }
 
                 return register_file_cpu::save_registers();
+            }
+
+            void load_gdt(const uint64_t address, const uint32_t limit) override
+            {
+                if (this->on_load_gdt)
+                {
+                    this->on_load_gdt();
+                }
+
+                register_file_cpu::load_gdt(address, limit);
+            }
+
+            size_t write_raw_register(const int reg, const void* value, const size_t size) override
+            {
+                if (this->on_write_register)
+                {
+                    this->on_write_register(reg);
+                }
+
+                return register_file_cpu::write_raw_register(reg, value, size);
             }
 
             memory_interface& memory() override
@@ -1022,6 +1044,41 @@ namespace sogen::test
         EXPECT_EQ(&dropped, vcpu.active_thread);
         EXPECT_EQ(static_cast<uint64_t>(STATUS_ALERTED), this->rax(1));
         EXPECT_EQ(live_rbx, vcpu.x64_cpu().reg(x86_register::rbx));
+    }
+
+    TEST_F(RunningThreadContextTest, ThreadSwitchedInGetsItsGdtAndWaitStatusWithTheKernelLockReleased)
+    {
+        auto& vcpu = this->emu->vcpu(1);
+        auto& waiter = this->thread(this->second);
+        this->emu->synchronize([&] {
+            waiter.save(vcpu.cpu);
+            vcpu.active_thread = nullptr;
+            waiter.waiting_for_alert = true;
+            waiter.alerted = true;
+        });
+
+        // Each check takes the kernel lock on a host thread. They are kept to the end, as one may only finish once
+        // the caller released the lock.
+        std::vector<std::future<void>> lock_takers{};
+        const auto lock_is_free = [&] {
+            auto& taker = lock_takers.emplace_back(std::async(std::launch::async, [this] { this->emu->synchronize([] {}); }));
+            return taker.wait_for(std::chrono::seconds(1)) == std::future_status::ready;
+        };
+        bool gdt_reloaded_unlocked{};
+        bool status_written_unlocked{};
+        this->machine->second().on_load_gdt = [&] { gdt_reloaded_unlocked = lock_is_free(); };
+        this->machine->second().on_write_register = [&](const int reg) {
+            if (reg == static_cast<int>(x86_register::rax))
+            {
+                status_written_unlocked = lock_is_free();
+            }
+        };
+
+        EXPECT_TRUE(this->emu->perform_thread_switch(vcpu));
+        EXPECT_TRUE(gdt_reloaded_unlocked);
+        EXPECT_TRUE(status_written_unlocked);
+        EXPECT_EQ(&waiter, vcpu.active_thread);
+        EXPECT_EQ(static_cast<uint64_t>(STATUS_ALERTED), this->rax(1));
     }
 
     TEST_F(RunningThreadContextTest, GetDoesNotWaitForAThreadInAnUnlockedHostWait)

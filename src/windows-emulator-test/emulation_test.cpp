@@ -29,6 +29,33 @@ namespace sogen::test
         EXPECT_EQ(interrupt, 0);
         EXPECT_EQ(cpu.reg<uint64_t>(x86_register::rip), address);
     }
+
+    TEST(EmulationTest, PrivilegedInstructionsReachTheInterruptHook)
+    {
+        if (get_x86_64_emulator_backend_from_environment() != backend_type::whp)
+        {
+            GTEST_SKIP() << "Only WHP runs the guest in user mode, where privileged instructions raise #GP";
+        }
+
+        auto machine = create_x86_64_emulator_from_environment();
+        constexpr uint64_t address = 0x10000;
+        constexpr std::array<uint8_t, 3> mov_rax_cr2{0x0F, 0x20, 0xD0};
+        memory_manager memory{*machine};
+        ASSERT_TRUE(memory.allocate_memory(address, 0x1000, memory_permission::all));
+        machine->write_memory(address, mov_rax_cr2.data(), mov_rax_cr2.size());
+        auto& cpu = machine->get_cpu(0);
+        cpu.reg(x86_register::rip, address);
+        int interrupt = -1;
+        machine->hook_interrupt([&](cpu_interface& acting, const int vector) {
+            interrupt = vector;
+            acting.stop();
+        });
+
+        cpu.start(1);
+
+        EXPECT_EQ(interrupt, 13);
+        EXPECT_EQ(cpu.reg<uint64_t>(x86_register::rip), address);
+    }
 #endif
 
     TEST(EmulationTest, BasicEmulationWorks)
