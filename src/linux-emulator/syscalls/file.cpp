@@ -1725,6 +1725,27 @@ namespace sogen
                 return std::nullopt;
             }
         }
+
+        // do_vfs_ioctl handles close-on-exec and FIONBIO for every descriptor, and FIOASYNC for files with a fasync
+        // operation, which pipes and sockets have and regular files, eventfd and epoll do not. FIONREAD on sockets
+        // stays with the socket layer.
+        bool takes_file_ioctl(const posix_fd& file, const posix_file_ioctl request)
+        {
+            switch (request)
+            {
+            case posix_file_ioctl::set_close_on_exec:
+            case posix_file_ioctl::clear_close_on_exec:
+            case posix_file_ioctl::set_nonblocking:
+                return true;
+            case posix_file_ioctl::set_async:
+                return file.type == fd_type::pipe_read || file.type == fd_type::pipe_write || file.type == fd_type::socket ||
+                       file.is_standard_stream();
+            case posix_file_ioctl::read_queued_bytes:
+                return posix_has_file_ioctls(file);
+            }
+
+            return false;
+        }
     }
 
     void sys_ioctl(const linux_syscall_context& c)
@@ -1749,11 +1770,15 @@ namespace sogen
         }
 
         const auto file_request = file_ioctl(request);
-        const auto is_close_on_exec =
-            file_request == posix_file_ioctl::set_close_on_exec || file_request == posix_file_ioctl::clear_close_on_exec;
-        if (is_close_on_exec || (file_request && posix_has_file_ioctls(*fd_entry)))
+        if (file_request && takes_file_ioctl(*fd_entry, *file_request))
         {
-            write_linux_syscall_result(c, posix_ioctl(io_context(c), fd, *file_request, get_linux_syscall_argument(c.emu, 2)));
+            const auto result = posix_ioctl(io_context(c), fd, *file_request, get_linux_syscall_argument(c.emu, 2));
+            if (*file_request == posix_file_ioctl::set_nonblocking && std::holds_alternative<uint64_t>(result))
+            {
+                linux_socket_apply_fd_flags(fd, *fd_entry);
+            }
+
+            write_linux_syscall_result(c, result);
             return;
         }
 

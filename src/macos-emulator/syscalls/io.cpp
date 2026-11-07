@@ -77,6 +77,22 @@ namespace sogen
             }
         }
 
+        bool takes_file_ioctl(const posix_fd& file, const posix_file_ioctl request)
+        {
+            switch (request)
+            {
+            case posix_file_ioctl::set_close_on_exec:
+            case posix_file_ioctl::clear_close_on_exec:
+            case posix_file_ioctl::set_nonblocking:
+                return true;
+            case posix_file_ioctl::set_async:
+            case posix_file_ioctl::read_queued_bytes:
+                return posix_has_file_ioctls(file);
+            }
+
+            return false;
+        }
+
         int open_socket(posix_fd_table& fds)
         {
             posix_fd socket{};
@@ -296,9 +312,9 @@ namespace sogen
         write_macos_syscall_error(c, name ? macos_errno::MACOS_ENOENT : macos_errno::MACOS_EFAULT);
     }
 
-    // XNU's ioctl() sets close-on-exec for every descriptor. Pipes and the standard streams then behave as its
-    // pipe_ioctl and files as its vn_ioctl: non-blocking, async and readable-byte queries succeed, and everything
-    // else is ENOTTY.
+    // XNU's ioctl() sets close-on-exec and non-blocking mode for every descriptor. Pipes and the standard streams then
+    // behave as its pipe_ioctl and files as its vn_ioctl: async and readable-byte queries succeed, and everything else
+    // is ENOTTY.
     void sys_ioctl(const macos_syscall_context& c)
     {
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
@@ -313,9 +329,7 @@ namespace sogen
         }
 
         const auto file_request = file_ioctl(request);
-        const auto is_close_on_exec =
-            file_request == posix_file_ioctl::set_close_on_exec || file_request == posix_file_ioctl::clear_close_on_exec;
-        if (is_close_on_exec || (file_request && posix_has_file_ioctls(*file)))
+        if (file_request && takes_file_ioctl(*file, *file_request))
         {
             write_macos_syscall_result(c, posix_ioctl(io_context(c.emu_ref), fd, *file_request, argument));
             return;

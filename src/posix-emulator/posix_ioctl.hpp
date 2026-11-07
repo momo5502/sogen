@@ -20,5 +20,7 @@ namespace sogen
     // Files, pipes and the standard streams; other descriptors have their own ioctls.
     bool posix_has_file_ioctls(const posix_fd& file);
 
+    // Both kernels handle close-on-exec and non-blocking mode for every descriptor before its own ioctls, and FIONREAD
+    // for files and pipes. Which descriptors take FIOASYNC is left to the caller.
     posix_result posix_ioctl(const posix_io_context& context, int fd, posix_file_ioctl request, uint64_t argument);
 }

@@ -88,26 +88,22 @@ namespace sogen
             return posix_errno::ebadf;
         }
 
-        if (request == posix_file_ioctl::set_close_on_exec || request == posix_file_ioctl::clear_close_on_exec)
-        {
-            context.fds.set_close_on_exec(fd, request == posix_file_ioctl::set_close_on_exec);
-            return uint64_t{0};
-        }
-
-        if (!posix_has_file_ioctls(*file))
-        {
-            return posix_errno::enotty;
-        }
-
         switch (request)
         {
+        case posix_file_ioctl::set_close_on_exec:
+        case posix_file_ioctl::clear_close_on_exec:
+            context.fds.set_close_on_exec(fd, request == posix_file_ioctl::set_close_on_exec);
+            break;
         case posix_file_ioctl::set_nonblocking:
             return set_nonblocking(context, *file, argument);
         case posix_file_ioctl::read_queued_bytes:
+            if (!posix_has_file_ioctls(*file))
+            {
+                return posix_errno::enotty;
+            }
+
             return read_queued_bytes(context, *file, argument);
         case posix_file_ioctl::set_async:
-        case posix_file_ioctl::set_close_on_exec:
-        case posix_file_ioctl::clear_close_on_exec:
             break;
         }
 
