@@ -136,6 +136,10 @@ namespace sogen
         {
         }
 
+        virtual void activate_window(const hwnd /*window*/)
+        {
+        }
+
         virtual void set_window_enabled(const hwnd /*window*/, const bool /*enabled*/)
         {
         }

@@ -2,6 +2,7 @@
 #include "checksum.hpp"
 
 #include <cassert>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace sogen::gdb_stub
@@ -78,7 +79,7 @@ namespace sogen::gdb_stub
             return;
         }
 
-        const auto checksum = strtoul(packet.c_str() + packet.size() - CHECKSUM_SIZE, nullptr, 16);
+        const auto checksum = std::strtoul(packet.c_str() + packet.size() - CHECKSUM_SIZE, nullptr, 16);
         assert((checksum & 0xFF) == checksum);
 
         packet.erase(packet.begin());

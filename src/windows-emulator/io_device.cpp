@@ -10,6 +10,7 @@
 #include "devices/network_store_interface.hpp"
 #include "devices/gpu_bridge.hpp"
 #include "devices/steam_bridge.hpp"
+#include "devices/qt_raster.hpp"
 #include "devices/console.hpp"
 #include <iostream>
 
@@ -161,6 +162,7 @@ namespace sogen
             {u"NamedPipe"sv, create_named_pipe_device},
             {u"SogenGpu"sv, create_gpu_bridge},
             {u"SogenSteam"sv, create_steam_bridge},
+            {u"SogenQtBridge"sv, create_qt_raster},
             // AFD
             {u"Afd\\Endpoint"sv, create_afd_endpoint},
             {u"Afd\\Mio"sv, create_afd_mio_endpoint},

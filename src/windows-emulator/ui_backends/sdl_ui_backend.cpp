@@ -1324,6 +1324,17 @@ namespace sogen
                 });
             }
 
+            void activate_window(const hwnd window) override
+            {
+                this->queue_or_run([this, window] {
+                    if (auto* state = this->resolve_window(window); state && state->window && state->desc.visible && state->desc.enabled)
+                    {
+                        SDL_RaiseWindow(state->window);
+                        apply_x11_focus_fallback(state->window);
+                    }
+                });
+            }
+
             void set_window_enabled(const hwnd window, const bool enabled) override
             {
                 this->queue_or_run([this, window, enabled] {
