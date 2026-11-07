@@ -118,8 +118,15 @@ namespace sogen
         return posix_stat_host_path(file_system.translate(guest_path), follow_symlinks);
     }
 
+    // The standard streams are presented as pipes, as when output is captured, so runs do not depend on whether the
+    // host has a terminal or what its /dev/stdin stands for.
     posix_stat_result posix_stat_descriptor(const posix_fd& file)
     {
+        if (file.is_standard_stream())
+        {
+            return anonymous_status(POSIX_S_IFIFO | PIPE_PERMISSIONS);
+        }
+
         switch (file.type)
         {
         case fd_type::pipe_read:

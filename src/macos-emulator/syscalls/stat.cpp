@@ -51,7 +51,6 @@ namespace sogen
         constexpr int32_t BLOCK_SIZE = 4096;
         constexpr int64_t STAT_BLOCK_UNIT = 512;
         constexpr uint64_t AT_SYMLINK_NOFOLLOW = 0x20;
-        constexpr uint32_t STANDARD_STREAM_PERMISSIONS = 0600;
 
         constexpr macos_timespec FILE_TIME{.seconds = MACOS_EPOCH_SECONDS, .nanoseconds = 0};
 
@@ -148,14 +147,6 @@ namespace sogen
         if (file == nullptr)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        // The standard streams are presented as pipes, as when output is captured, so runs do not depend on whether
-        // the host has a terminal.
-        if (file->is_standard_stream())
-        {
-            write_stat(c, to_anonymous_macos_stat({.mode = POSIX_S_IFIFO | STANDARD_STREAM_PERMISSIONS}), buffer);
             return;
         }
 
