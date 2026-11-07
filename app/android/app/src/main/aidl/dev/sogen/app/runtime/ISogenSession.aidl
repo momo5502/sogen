@@ -8,6 +8,10 @@ oneway interface ISogenSession {
     void start(in Bundle config, ISogenCallback callback);
     void stop();
 
+    /** [processId] is the child's service process, 0 or less if it could not be started and -1 if no slot was free. */
+    void childStarted(long request, int processId);
+    void childExited(long request, int exitStatus);
+
     /** Saves the process to [destination], or to a new file when it is empty, and ends the session. */
     void suspend(String destination);
 

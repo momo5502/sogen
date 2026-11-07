@@ -32,6 +32,10 @@ interface NativeListener {
 
     /** Opens a document of a [DocumentTree] for reading. Returns a descriptor the caller owns, or -1. */
     fun openDocument(tree: String, documentId: String): Int
+
+    /** The guest created a child process; [SogenNative.childStarted] answers. */
+    fun startChild(request: Long, arguments: Array<String>)
+    fun killChild(request: Long)
 }
 
 /** Owns one native emulation session. Only used inside the `:sogen` process. */
@@ -64,7 +68,11 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkan.driverName,
         config.snapshotDirectory,
         config.resumeFile,
+        config.managedArguments.toTypedArray(),
     )
+
+    fun childStarted(request: Long, processId: Int) = nativeChildStarted(handle, request, processId)
+    fun childExited(request: Long, exitStatus: Int) = nativeChildExited(handle, request, exitStatus)
 
     fun stop() = nativeStop(handle)
 
@@ -111,7 +119,11 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkanDriverName: String,
         snapshotDirectory: String,
         resumeFile: String,
+        managedArguments: Array<String>,
     ): Int
+
+    private external fun nativeChildStarted(handle: Long, request: Long, processId: Int)
+    private external fun nativeChildExited(handle: Long, request: Long, exitStatus: Int)
 
     private external fun nativeStop(handle: Long)
     private external fun nativeSetFrameLimit(handle: Long, framesPerSecond: Int)

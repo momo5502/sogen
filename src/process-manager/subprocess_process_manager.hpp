@@ -72,6 +72,9 @@ namespace sogen
         process_error terminate_process(managed_process process, uint64_t exit_code) override;
         process_exit_status_result exit_status(managed_process process) const override;
         void wait_for_processes() override;
+
+        // Ends every child process, which also ends a wait for them.
+        void kill_processes();
         process_memory_result allocate_memory(managed_process process, uint64_t address, uint64_t size, memory_permission permission,
                                               bool reserve, bool commit) override;
         process_error free_memory(managed_process process, uint64_t address, uint64_t size, bool release) override;

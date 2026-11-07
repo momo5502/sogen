@@ -880,6 +880,16 @@ namespace sogen
         return error;
     }
 
+    void subprocess_process_manager::kill_processes()
+    {
+        const std::scoped_lock lock(this->mutex_);
+        for (const auto& [handle, process] : this->processes_)
+        {
+            (void)handle;
+            process->kill_requested = true;
+        }
+    }
+
     // A child that was never resumed cannot run without this process, so only resumed children are waited for; the
     // destructor still ends the others.
     void subprocess_process_manager::wait_for_processes()
