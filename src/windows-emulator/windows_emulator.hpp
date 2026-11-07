@@ -690,7 +690,7 @@ namespace sogen
         void yield_thread(vcpu_context& vcpu, bool alertable = false);
         bool perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock);
         bool perform_thread_switch(vcpu_context& vcpu);
-        void commit_thread_stacks_if_page_protection_was_lost();
+        void commit_thread_stacks_without_guarded_growth();
         bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
         // Runs f with the kernel lock released, for host calls that can block for a long time (e.g. a GPU present)
