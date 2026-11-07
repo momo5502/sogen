@@ -404,6 +404,8 @@ namespace sogen::sandbox
                 throw std::runtime_error("Reporting managed process exit failed");
             }
 
+            process_manager.wait_for_processes();
+
             return static_cast<int>(*exit_status);
         }
 

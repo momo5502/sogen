@@ -1086,6 +1086,10 @@ namespace sogen
                 }
             }
 #endif
+            if (manager)
+            {
+                manager->wait_for_processes();
+            }
             return success;
         }
 
