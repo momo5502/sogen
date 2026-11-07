@@ -4475,9 +4475,10 @@ namespace sogen
 
             if (!is_message_only)
             {
+                const bool hosted_child = parent_win && !c.proc.is_surface_root(win);
                 c.win_emu.ui().create_window(ui_window_desc{
                     .handle = handle.bits,
-                    .parent = has_child_parent && parent_win ? parent_win->handle : 0,
+                    .parent = hosted_child ? parent_win->handle : 0,
                     .owner = has_owner && parent_win ? parent_win->handle : 0,
                     .rect = get_window_rect(win),
                     .client_insets = get_host_ui_client_insets(win),
@@ -4485,10 +4486,10 @@ namespace sogen
                     .title = win.name,
                     .style = style,
                     .ex_style = ex_style,
-                    .control_id = has_child_parent ? static_cast<uint32_t>(menu) : 0,
+                    .control_id = hosted_child ? static_cast<uint32_t>(menu) : 0,
                     .visible = (style & WS_VISIBLE) != 0,
                     .enabled = (style & WS_DISABLED) == 0,
-                    .top_level = !has_child_parent,
+                    .top_level = !hosted_child,
                 });
 
                 if (has_child_parent)
