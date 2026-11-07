@@ -130,12 +130,34 @@ namespace sogen
             return address != 0 && memory.try_read_memory(address, data, size);
         }
 
+        template <size_t Count>
         // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        bool try_copy_client_pfn_array(memory_interface& memory, const uint64_t source, uint64_t (&destination)[FNID_ARRAY_SIZE],
+        bool try_copy_client_pfn_array(memory_interface& memory, const uint64_t source, uint64_t (&destination)[Count],
                                        const size_t source_size)
         {
             std::ranges::fill(destination, 0);
             return try_read_exact(memory, source, destination, std::min(sizeof(destination), source_size));
+        }
+
+        // user32 creates system-class windows from the atoms in SERVERINFO.atomSysClass, indexed by ICLS_*: the dialog
+        // manager maps control-class ordinals (0x80 Button to 0x85 ComboBox) through it and abandons the whole dialog
+        // when an atom names no class, and a combo box creates its drop-down list as ICLS_COMBOLISTBOX.
+        void seed_system_class_atoms(process_context& process)
+        {
+            static constexpr std::array<std::u16string_view, 6> dialog_control_classes = {
+                u"Button", u"Edit", u"Static", u"ListBox", u"ScrollBar", u"ComboBox",
+            };
+            constexpr size_t icls_combo_list_box = 7;
+            constexpr size_t icls_dialog = 18;
+
+            process.user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) {
+                for (size_t i = 0; i < dialog_control_classes.size(); ++i)
+                {
+                    server_info.atomSysClass[i] = process.add_or_find_atom(std::u16string{dialog_control_classes[i]});
+                }
+                server_info.atomSysClass[icls_combo_list_box] = process.add_or_find_atom(u"ComboLBox");
+                server_info.atomSysClass[icls_dialog] = builtin_dialog_class_atom;
+            });
         }
 
         // user32 builds MessageBox dialogs from SERVERINFO.MBStrings: an array of
@@ -209,6 +231,7 @@ namespace sogen
             }
 
             seed_messagebox_button_strings(memory, process.user_handles.get_server_info().value());
+            seed_system_class_atoms(process);
 
             refresh_dispatch_client_message(process);
             return true;

@@ -7,6 +7,8 @@
 
 #define FNID_START                0x29A
 #define FNID_ARRAY_SIZE           24
+#define CLIENT_WORKER_PFN_COUNT   11
+#define ICLS_MAX                  25
 
 #define FNID_SCROLLBAR            0x29A
 #define FNID_ICONTITLE            0x29B
@@ -48,8 +50,10 @@ namespace sogen
         uint8_t pad_10[0x178];
         uint64_t apfnClientA[FNID_ARRAY_SIZE];
         uint64_t apfnClientW[FNID_ARRAY_SIZE];
-        uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
-        uint8_t pad_3c8[0x19C];
+        uint64_t apfnClientWorker[CLIENT_WORKER_PFN_COUNT];
+        uint32_t cbHandleTable;
+        uint16_t atomSysClass[ICLS_MAX];
+        uint8_t pad_396[0x1CE];
         uint8_t oemToAnsi[256];
         uint8_t ansiToOem[256];
         uint8_t pad_764[0x4];
@@ -79,6 +83,7 @@ namespace sogen
     };
 
     static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
+    static_assert(offsetof(USER_SERVERINFO, atomSysClass) == 0x364);
     static_assert(offsetof(USER_SERVERINFO, oemToAnsi) == 0x564);
     static_assert(offsetof(USER_SERVERINFO, ansiToOem) == 0x664);
     static_assert(offsetof(USER_SERVERINFO, systemMetrics) == 0x768);

@@ -746,6 +746,47 @@ namespace sogen
             }
         }
 
+        enum class child_invalidation
+        {
+            none,
+            unclipped,
+            all,
+        };
+
+        // Invalidating a window also invalidates the visible children its update area covers. By default this
+        // stops at a window with WS_CLIPCHILDREN, whose own painting cannot reach its children (see RedrawWindow).
+        void invalidate_children(const syscall_context& c, const window& parent, const RECT& area, const bool erase,
+                                 const child_invalidation scope)
+        {
+            if (scope == child_invalidation::none || (scope == child_invalidation::unclipped && (parent.style & WS_CLIPCHILDREN) != 0))
+            {
+                return;
+            }
+
+            for (auto& [index, child] : c.proc.windows)
+            {
+                (void)index;
+                if (child.parent_handle != parent.handle || (child.style & WS_VISIBLE) == 0)
+                {
+                    continue;
+                }
+
+                const RECT child_area{
+                    .left = std::max<LONG>(area.left - child.client_x(), 0),
+                    .top = std::max<LONG>(area.top - child.client_y(), 0),
+                    .right = std::min<LONG>(area.right - child.client_x(), child.client_width()),
+                    .bottom = std::min<LONG>(area.bottom - child.client_y(), child.client_height()),
+                };
+                if (child_area.left >= child_area.right || child_area.top >= child_area.bottom)
+                {
+                    continue;
+                }
+
+                invalidate_window(c, child, child_area, erase);
+                invalidate_children(c, child, child_area, erase, scope);
+            }
+        }
+
         // Invalidate a window together with its visible descendant controls. Used when a window
         // transitions to visible: child controls created while an ancestor was still hidden skip
         // their paint body (user32 gates control painting on the whole parent chain being visible),
@@ -5316,6 +5357,7 @@ namespace sogen
             }
 
             invalidate_window(c, *win, update_rect, erase != FALSE);
+            invalidate_children(c, *win, update_rect.value_or(get_client_rect(*win)), erase != FALSE, child_invalidation::unclipped);
             return TRUE;
         }
 
@@ -6551,7 +6593,19 @@ namespace sogen
                     rect = update_rect.read();
                 }
 
-                invalidate_window(c, *win, rect, (flags & RDW_ERASE) != 0 && (flags & RDW_NOERASE) == 0);
+                const bool erase = (flags & RDW_ERASE) != 0 && (flags & RDW_NOERASE) == 0;
+                invalidate_window(c, *win, rect, erase);
+
+                auto scope = child_invalidation::unclipped;
+                if ((flags & RDW_NOCHILDREN) != 0)
+                {
+                    scope = child_invalidation::none;
+                }
+                else if ((flags & RDW_ALLCHILDREN) != 0)
+                {
+                    scope = child_invalidation::all;
+                }
+                invalidate_children(c, *win, rect.value_or(get_client_rect(*win)), erase, scope);
             }
 
             if ((flags & RDW_INTERNALPAINT) != 0)
