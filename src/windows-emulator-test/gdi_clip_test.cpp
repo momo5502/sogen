@@ -4,6 +4,7 @@
 
 #include <map>
 #include <utility>
+#include <vector>
 
 namespace sogen::test
 {
@@ -66,6 +67,33 @@ namespace sogen::test
             for (LONG x = 3; x < 5; ++x)
             {
                 EXPECT_EQ(1u, visits.count({x, y})) << "pixel " << x << "," << y;
+            }
+        }
+    }
+
+    TEST(GdiClipRegionTest, FragmentedRegionsStillVisitEachVisiblePixelOnce)
+    {
+        constexpr RECT client{.left = 0, .top = 0, .right = 40, .bottom = 40};
+        gdi::clip_region region{client};
+        std::vector<RECT> holes{};
+        for (LONG y = 2; y < 40; y += 8)
+        {
+            for (LONG x = 2; x < 40; x += 8)
+            {
+                holes.push_back({.left = x, .top = y, .right = x + 3, .bottom = y + 3});
+                region.subtract(holes.back());
+            }
+        }
+        ASSERT_GT(region.rects().size(), 16u);
+
+        const auto visits = visited_pixels(region, client);
+        for (LONG y = 0; y < 40; ++y)
+        {
+            for (LONG x = 0; x < 40; ++x)
+            {
+                const bool visible = std::ranges::none_of(holes, [&](const RECT& hole) { return inside(hole, x, y); });
+                const auto it = visits.find({x, y});
+                EXPECT_EQ(visible ? 1 : 0, it == visits.end() ? 0 : it->second) << "pixel " << x << "," << y;
             }
         }
     }

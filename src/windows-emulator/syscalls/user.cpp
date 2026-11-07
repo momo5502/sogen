@@ -758,6 +758,22 @@ namespace sogen
             return scope == child_redraw_scope::all || (scope == child_redraw_scope::unclipped && (parent.style & WS_CLIPCHILDREN) == 0);
         }
 
+        // The part of a parent's client area that falls into the child's client area, in the child's coordinates.
+        std::optional<RECT> area_in_child(const window& child, const RECT& parent_area)
+        {
+            const RECT child_area{
+                .left = std::max<LONG>(parent_area.left - child.client_x(), 0),
+                .top = std::max<LONG>(parent_area.top - child.client_y(), 0),
+                .right = std::min<LONG>(parent_area.right - child.client_x(), child.client_width()),
+                .bottom = std::min<LONG>(parent_area.bottom - child.client_y(), child.client_height()),
+            };
+            if (child_area.left >= child_area.right || child_area.top >= child_area.bottom)
+            {
+                return std::nullopt;
+            }
+            return child_area;
+        }
+
         // Invalidating a window also invalidates the visible children its update area covers. By default this
         // stops at a window with WS_CLIPCHILDREN, whose own painting cannot reach its children (see RedrawWindow).
         void invalidate_children(const syscall_context& c, const window& parent, const RECT& area, const bool erase,
@@ -776,19 +792,14 @@ namespace sogen
                     continue;
                 }
 
-                const RECT child_area{
-                    .left = std::max<LONG>(area.left - child.client_x(), 0),
-                    .top = std::max<LONG>(area.top - child.client_y(), 0),
-                    .right = std::min<LONG>(area.right - child.client_x(), child.client_width()),
-                    .bottom = std::min<LONG>(area.bottom - child.client_y(), child.client_height()),
-                };
-                if (child_area.left >= child_area.right || child_area.top >= child_area.bottom)
+                const auto child_area = area_in_child(child, area);
+                if (!child_area)
                 {
                     continue;
                 }
 
-                invalidate_window(c, child, child_area, erase);
-                invalidate_children(c, child, child_area, erase, scope);
+                invalidate_window(c, child, *child_area, erase);
+                invalidate_children(c, child, *child_area, erase, scope);
             }
         }
 
@@ -1075,7 +1086,9 @@ namespace sogen
             win.update_rect = {};
         }
 
-        void validate_children(const syscall_context& c, const window& parent, const child_redraw_scope scope)
+        // A window's update region is tracked as one bounding rectangle, so a child is only validated when the area covers
+        // all of it; validating less would drop the uncovered part of its pending repaint.
+        void validate_children(const syscall_context& c, const window& parent, const RECT& area, const child_redraw_scope scope)
         {
             if (!reaches_children(parent, scope))
             {
@@ -1085,11 +1098,24 @@ namespace sogen
             for (auto& [index, child] : c.proc.windows)
             {
                 (void)index;
-                if (child.parent_handle == parent.handle)
+                if (child.parent_handle != parent.handle)
+                {
+                    continue;
+                }
+
+                const auto child_area = area_in_child(child, area);
+                if (!child_area)
+                {
+                    continue;
+                }
+
+                const auto& pending = child.update_rect;
+                if (child.update_pending && pending.left >= child_area->left && pending.top >= child_area->top &&
+                    pending.right <= child_area->right && pending.bottom <= child_area->bottom)
                 {
                     validate_window(child);
-                    validate_children(c, child, scope);
                 }
+                validate_children(c, child, *child_area, scope);
             }
         }
 
@@ -6613,20 +6639,20 @@ namespace sogen
                 scope = child_redraw_scope::all;
             }
 
+            std::optional<RECT> rect{};
+            if (update_rect)
+            {
+                rect = update_rect.read();
+            }
+
             if ((flags & RDW_VALIDATE) != 0)
             {
                 validate_window(*win);
-                validate_children(c, *win, scope);
+                validate_children(c, *win, rect.value_or(get_client_rect(*win)), scope);
             }
 
             if ((flags & RDW_INVALIDATE) != 0)
             {
-                std::optional<RECT> rect{};
-                if (update_rect)
-                {
-                    rect = update_rect.read();
-                }
-
                 const bool erase = (flags & RDW_ERASE) != 0 && (flags & RDW_NOERASE) == 0;
                 invalidate_window(c, *win, rect, erase);
                 invalidate_children(c, *win, rect.value_or(get_client_rect(*win)), erase, scope);

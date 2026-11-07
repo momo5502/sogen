@@ -7,6 +7,9 @@ namespace sogen::syscalls
 {
     hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);
     COLORREF handle_NtGdiSetPixel(const syscall_context& c, hdc dc, int x, int y, COLORREF color);
+    BOOL handle_NtUserInvalidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
+    BOOL handle_NtUserRedrawWindow(const syscall_context& c, hwnd hwnd, emulator_object<RECT> update_rect, uint64_t update_rgn, UINT flags);
+    BOOL handle_NtUserGetUpdateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
 }
 
 namespace sogen::test
@@ -16,7 +19,7 @@ namespace sogen::test
         constexpr COLORREF k_red = 0x0000FF;
         constexpr COLORREF k_clipped = 0xFFFFFFFF;
 
-        class GdiWindowClipTest : public testing::Test
+        class WindowPaintingTest : public testing::Test
         {
           protected:
             void SetUp() override
@@ -64,11 +67,29 @@ namespace sogen::test
                 return syscalls::handle_NtGdiSetPixel(this->context(), dc, x, y, k_red);
             }
 
+            bool needs_repaint(const hwnd window)
+            {
+                return syscalls::handle_NtUserGetUpdateRect(this->context(), window, {this->emu.memory}, FALSE) != FALSE;
+            }
+
+            emulator_object<RECT> guest_rect(const RECT& rect)
+            {
+                if (this->rect_storage == 0)
+                {
+                    this->rect_storage = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+                }
+
+                const emulator_object<RECT> object{this->emu.memory, this->rect_storage};
+                object.write(rect);
+                return object;
+            }
+
             windows_emulator emu = create_sample_emulator();
+            emulator_pointer rect_storage{};
         };
     }
 
-    TEST_F(GdiWindowClipTest, ClipSiblingsKeepsAWindowOffTheSiblingsInFrontOfIt)
+    TEST_F(WindowPaintingTest, ClipSiblingsKeepsAWindowOffTheSiblingsInFrontOfIt)
     {
         const auto top_level = this->create_window(0, WS_POPUP | WS_VISIBLE, {.left = 0, .top = 0, .right = 40, .bottom = 30});
         const auto back =
@@ -82,7 +103,7 @@ namespace sogen::test
         EXPECT_EQ(k_red, this->set_pixel(front, 5, 5));
     }
 
-    TEST_F(GdiWindowClipTest, ClipChildrenKeepsAWindowOffItsChildren)
+    TEST_F(WindowPaintingTest, ClipChildrenKeepsAWindowOffItsChildren)
     {
         const auto top_level =
             this->create_window(0, WS_POPUP | WS_VISIBLE | WS_CLIPCHILDREN, {.left = 0, .top = 0, .right = 40, .bottom = 30});
@@ -92,5 +113,24 @@ namespace sogen::test
         EXPECT_EQ(k_clipped, this->set_pixel(top_level, 15, 15));
         EXPECT_EQ(k_red, this->set_pixel(top_level, 5, 5));
         EXPECT_EQ(k_red, this->set_pixel(child, 5, 5));
+    }
+
+    TEST_F(WindowPaintingTest, ValidatingPartOfAWindowKeepsTheChildrenOutsideThatPart)
+    {
+        const auto top_level = this->create_window(0, WS_POPUP | WS_VISIBLE, {.left = 0, .top = 0, .right = 40, .bottom = 30});
+        const auto left = this->create_window(top_level, WS_CHILD | WS_VISIBLE, {.left = 0, .top = 0, .right = 20, .bottom = 20});
+        const auto right = this->create_window(top_level, WS_CHILD | WS_VISIBLE, {.left = 20, .top = 0, .right = 40, .bottom = 20});
+        this->set_z_order(top_level, {left, right});
+
+        syscalls::handle_NtUserInvalidateRect(this->context(), left, {this->emu.memory}, FALSE);
+        syscalls::handle_NtUserInvalidateRect(this->context(), right, {this->emu.memory}, FALSE);
+        ASSERT_TRUE(this->needs_repaint(left));
+        ASSERT_TRUE(this->needs_repaint(right));
+
+        syscalls::handle_NtUserRedrawWindow(this->context(), top_level, this->guest_rect({.left = 0, .top = 0, .right = 20, .bottom = 20}),
+                                            0, RDW_VALIDATE);
+
+        EXPECT_FALSE(this->needs_repaint(left));
+        EXPECT_TRUE(this->needs_repaint(right));
     }
 }
