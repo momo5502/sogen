@@ -1264,6 +1264,33 @@ namespace sogen
                 state.popup = false;
             }
 
+            // SDL_DestroyWindow takes a window's popups and their renderers with it, so they have to go first and come back
+            // once the owner's host has been replaced.
+            std::vector<hwnd> release_owned_popups(const window_state& owner)
+            {
+                std::vector<hwnd> popups{};
+                for (auto& [handle, state] : this->windows_)
+                {
+                    if (state.popup && this->popup_owner(state) == &owner)
+                    {
+                        this->destroy_host(state);
+                        popups.push_back(handle);
+                    }
+                }
+                return popups;
+            }
+
+            void restore_popups(const std::vector<hwnd>& popups)
+            {
+                for (const auto handle : popups)
+                {
+                    if (auto* state = this->resolve_window(handle))
+                    {
+                        this->create_popup_host(*state);
+                    }
+                }
+            }
+
             void set_window_relationship(const hwnd window, const hwnd parent, const hwnd owner, const bool top_level) override
             {
                 this->queue_or_run([this, window, parent, owner, top_level] {
@@ -1394,12 +1421,14 @@ namespace sogen
 
                 place_host_window(window, state.placed_position, [&] { finish_host_window(window, x, y, flags); });
 
+                const auto popups = this->release_owned_popups(state);
                 SDL_StopTextInput(old_window);
                 this->guest_by_window_id_.erase(SDL_GetWindowID(old_window));
                 SDL_DestroyWindow(old_window);
 
                 state.window = window;
                 this->guest_by_window_id_[SDL_GetWindowID(window)] = state.desc.handle;
+                this->restore_popups(popups);
                 this->apply_cursor_capture();
                 return true;
             }
@@ -1422,6 +1451,7 @@ namespace sogen
                         });
 
                         auto* focus_fallback = this->find_focus_fallback(it->second);
+                        const auto popups = this->release_owned_popups(it->second);
                         // Child (non-top-level) windows have no SDL window; only top-level windows do.
                         if (it->second.window)
                         {
@@ -1430,6 +1460,7 @@ namespace sogen
                         }
                         destroy_window_resources(it->second);
                         this->windows_.erase(it);
+                        this->restore_popups(popups);
                         if (focus_fallback)
                         {
                             apply_x11_focus_fallback(focus_fallback);
