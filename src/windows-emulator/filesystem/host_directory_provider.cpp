@@ -543,6 +543,33 @@ namespace sogen
         return entries;
     }
 
+    std::vector<std::u16string> host_directory_provider::list_names(const windows_path& path) const
+    {
+        std::vector<std::u16string> names{};
+        const auto host_path = this->get_host_path(path);
+        if (!host_path)
+        {
+            return names;
+        }
+
+        std::error_code ec{};
+        for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
+        {
+            if (this->links_ == host_links::refuse)
+            {
+                std::error_code status_error{};
+                const auto status = file.symlink_status(status_error);
+                if (status_error || !std::filesystem::exists(status) || is_link(status))
+                {
+                    continue;
+                }
+            }
+
+            names.push_back(file.path().filename().u16string());
+        }
+        return names;
+    }
+
     open_result host_directory_provider::open(const windows_path& path, const std::u16string& mode)
     {
         const auto host_path = this->get_host_path(path);

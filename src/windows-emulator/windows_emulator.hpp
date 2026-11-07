@@ -150,6 +150,10 @@ namespace sogen
         // Gives the process an elevated administrator token. Windows then starts elevation requests such as
         // ShellExecute "runas" directly instead of going through the consent service, which is not emulated.
         bool elevated{false};
+
+        // The largest display mode the guest sees, one of display_modes. The display starts in it and offers no larger
+        // one, so games that size their rendering by the display draw fewer pixels.
+        std::optional<display_mode> max_display_mode{};
     };
 
     struct provider_mount
@@ -428,6 +432,7 @@ namespace sogen
         void update_key_state(const ui_event& event);
         ui_event resolve_injected_event(const ui_event& event) const;
         void apply_cursor_capture();
+        void apply_cursor_shape();
         void set_foreground_window(hwnd window);
 
         // The highest address the process's own code can reach: 32-bit code only reaches the low 2GB unless the
@@ -578,6 +583,11 @@ namespace sogen
         bool spoofs_gpu_features() const
         {
             return this->spoof_gpu_features_;
+        }
+
+        const std::optional<display_mode>& max_display_mode() const
+        {
+            return this->max_display_mode_;
         }
 
         bool runs_elevated() const
@@ -765,6 +775,7 @@ namespace sogen
         bool intercept_kusd_{true};
         bool spoof_gpu_features_{false};
         bool elevated_{false};
+        std::optional<display_mode> max_display_mode_{};
         uint32_t vcpu_count_{1};
         std::atomic_bool suspend_requested_{false};
         std::atomic_bool should_stop{false};

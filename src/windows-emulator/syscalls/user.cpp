@@ -2930,14 +2930,6 @@ namespace sogen
             return c.proc.cursor_show_count;
         }
 
-        hcursor handle_NtUserSetCursor(const syscall_context& c, const hcursor cursor)
-        {
-            // SetCursor(NULL) removes the cursor shape (hides it); a non-null handle restores it.
-            c.proc.cursor_shape_visible = cursor != 0;
-            apply_cursor_visibility(c);
-            return std::exchange(c.proc.current_cursor, cursor);
-        }
-
         hcursor handle_NtUserGetCursor(const syscall_context& c)
         {
             return c.proc.current_cursor;
@@ -3094,6 +3086,16 @@ namespace sogen
 
                 return handle.bits;
             }
+        }
+
+        hcursor handle_NtUserSetCursor(const syscall_context& c, const hcursor cursor)
+        {
+            const auto previous = std::exchange(c.proc.current_cursor, cursor);
+            c.win_emu.apply_cursor_shape();
+            // SetCursor(NULL) removes the cursor shape (hides it); a non-null handle restores it.
+            c.proc.cursor_shape_visible = cursor != 0;
+            apply_cursor_visibility(c);
+            return previous;
         }
 
         hicon handle_NtUserCreateEmptyCursorObject(const syscall_context& c)
@@ -5469,25 +5471,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        struct display_mode
-        {
-            uint32_t width;
-            uint32_t height;
-        };
-
-        // The single virtual display advertises a list of common modes so callers (e.g. DXVK's mode enumeration, which
-        // the game uses to validate available resolutions) see real entries.
-        constexpr std::array<display_mode, 8> k_display_modes = {{
-            {.width = 640, .height = 480},
-            {.width = 800, .height = 600},
-            {.width = 1024, .height = 768},
-            {.width = 1280, .height = 720},
-            {.width = 1280, .height = 1024},
-            {.width = 1600, .height = 900},
-            {.width = 1680, .height = 1050},
-            {.width = 1920, .height = 1080},
-        }};
-
         constexpr uint32_t k_display_bits_per_pixel = 32;
         constexpr uint32_t k_display_frequency = 60;
 
@@ -5535,10 +5518,17 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (mode_num < k_display_modes.size())
+            auto offered = display_modes | std::views::filter([&](const display_mode& mode) {
+                               return mode.fits_within(c.win_emu.max_display_mode()); //
+                           });
+            DWORD index = 0;
+            for (const auto& mode : offered)
             {
-                fill_mode(k_display_modes[mode_num].width, k_display_modes[mode_num].height);
-                return STATUS_SUCCESS;
+                if (index++ == mode_num)
+                {
+                    fill_mode(mode.width, mode.height);
+                    return STATUS_SUCCESS;
+                }
             }
 
             return STATUS_UNSUCCESSFUL;
@@ -5584,8 +5574,8 @@ namespace sogen
                 }
             }
 
-            if (std::ranges::none_of(k_display_modes,
-                                     [&](const display_mode& mode) { return mode.width == width && mode.height == height; }))
+            const display_mode requested{.width = width, .height = height};
+            if (!requested.fits_within(c.win_emu.max_display_mode()) || std::ranges::find(display_modes, requested) == display_modes.end())
             {
                 return disp_change_badmode;
             }

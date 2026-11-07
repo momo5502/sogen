@@ -192,6 +192,11 @@ namespace sogen
         {
         }
 
+        // Apply a standard IDC_* cursor on the next UI pump. SDL reset and destruction require that thread.
+        virtual void set_system_cursor(const uint32_t /*idc*/)
+        {
+        }
+
         // Confine the host cursor to a guest ClipCursor rectangle (emulated screen coordinates), or release it.
         // With relative set, the host reports raw motion instead, which a hidden cursor needs: mouse-look keeps
         // receiving deltas at the edge of the clip rectangle, as raw input does on Windows.

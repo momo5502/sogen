@@ -246,7 +246,7 @@ namespace sogen
             return;
         }
 
-        if (mode & w_ok)
+        if ((mode & w_ok) && c.emu_ref.file_system.is_read_only_guest_path(c.emu_ref.resolve_guest_path(*guest_path)))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EROFS);
             return;

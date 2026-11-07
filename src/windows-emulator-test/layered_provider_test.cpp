@@ -52,6 +52,10 @@ namespace sogen::test
                 names.insert(entry.name);
             }
 
+            const auto listed_names = provider.list_names(directory);
+            EXPECT_EQ(names, (std::set<std::u16string>{listed_names.begin(), listed_names.end()}));
+            EXPECT_EQ(names.size(), listed_names.size());
+
             return names;
         }
 

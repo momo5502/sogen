@@ -1,4 +1,5 @@
 #include "fuzzer.hpp"
+#include <atomic>
 #include <cinttypes>
 
 #include "input_generator.hpp"

@@ -88,6 +88,8 @@ namespace sogen::sandbox
             // Elevation is not part of the snapshot: the token queries and access checks read it from the current
             // settings, so a snapshot has to refuse to resume under the other setting.
             configuration += std::string{"elevated="} + (settings.elevated ? "on" : "off") + "\n";
+            configuration +=
+                "max-display-mode=" + (settings.max_display_mode ? to_string(*settings.max_display_mode) : std::string{}) + "\n";
 
             for (const auto& mount : settings.mounts)
             {
@@ -143,8 +145,9 @@ namespace sogen::sandbox
                 const std::vector<document_mount>& document_mounts, const std::filesystem::path& emulation_root,
                 const std::filesystem::path& registry_directory, const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
-                const bool spoof_gpu_features, const bool elevated, const std::filesystem::path& snapshot_directory,
-                const std::filesystem::path& resume_file, managed_process_connection* managed_connection)
+                const bool spoof_gpu_features, const bool elevated, const std::optional<display_mode>& max_display_mode,
+                const std::filesystem::path& snapshot_directory, const std::filesystem::path& resume_file,
+                managed_process_connection* managed_connection)
         {
             application_settings app_settings{
                 .application = args.empty() ? std::u8string{} : std::u8string(args[0].begin(), args[0].end()),
@@ -196,6 +199,7 @@ namespace sogen::sandbox
                 .network = network_mode,
                 .spoof_gpu_features = spoof_gpu_features,
                 .elevated = elevated,
+                .max_display_mode = max_display_mode,
             };
 
             if (!emulation_root.empty())
@@ -227,6 +231,11 @@ namespace sogen::sandbox
                                                            if (elevated)
                                                            {
                                                                arguments.emplace_back("--elevated");
+                                                           }
+                                                           if (max_display_mode)
+                                                           {
+                                                               arguments.emplace_back("--max-display-mode");
+                                                               arguments.push_back(to_string(*max_display_mode));
                                                            }
                                                            if (!settings.emulation_root.empty())
                                                            {
@@ -455,6 +464,13 @@ namespace sogen::sandbox
 
             app.add_flag("--spoof-gpu-features", spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
+            std::string max_display_mode_name{};
+            app.add_option("--max-display-mode", max_display_mode_name,
+                           "The largest display mode the guest sees, e.g. 1280x720. Games sized by the display then render fewer pixels")
+                ->type_name("WIDTHxHEIGHT")
+                ->check([](const std::string& value) {
+                    return parse_display_mode(value) ? std::string{} : "Not one of the display's modes: " + value; //
+                });
             std::filesystem::path snapshot_directory{"snapshots"};
             std::filesystem::path resume_file{};
             app.add_option("--snapshot-dir", snapshot_directory, "Where Ctrl+Alt+Shift+S saves the process")
@@ -532,7 +548,8 @@ namespace sogen::sandbox
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_root_mode(root_mode).value(), root_layer, std::move(mounts), directory_mounts, document_mounts,
                            emulation_root, registry_directory, registry_files, environment, network::parse_network_mode(network_name),
-                           spoof_gpu_features, elevated, snapshot_directory, resume_file, managed_process ? &*managed_process : nullptr);
+                           spoof_gpu_features, elevated, parse_display_mode(max_display_mode_name), snapshot_directory, resume_file,
+                           managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {
