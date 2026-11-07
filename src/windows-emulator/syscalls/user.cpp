@@ -424,7 +424,36 @@ namespace sogen
             c.proc.user_handles.set_owner(index, owner);
         }
 
-        void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
+        enum class child_redraw_scope
+        {
+            none,
+            unclipped,
+            all,
+        };
+
+        bool reaches_children(const window& parent, const child_redraw_scope scope)
+        {
+            return scope == child_redraw_scope::all || (scope == child_redraw_scope::unclipped && (parent.style & WS_CLIPCHILDREN) == 0);
+        }
+
+        // The part of a parent's client area that falls into the child's client area, in the child's coordinates.
+        std::optional<RECT> area_in_child(const window& child, const RECT& parent_area)
+        {
+            const RECT child_area{
+                .left = std::max<LONG>(parent_area.left - child.client_x(), 0),
+                .top = std::max<LONG>(parent_area.top - child.client_y(), 0),
+                .right = std::min<LONG>(parent_area.right - child.client_x(), child.client_width()),
+                .bottom = std::min<LONG>(parent_area.bottom - child.client_y(), child.client_height()),
+            };
+            if (child_area.left >= child_area.right || child_area.top >= child_area.bottom)
+            {
+                return std::nullopt;
+            }
+            return child_area;
+        }
+
+        void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase,
+                               child_redraw_scope scope = child_redraw_scope::unclipped);
 
         RECT get_client_rect(const window& win)
         {
@@ -703,8 +732,10 @@ namespace sogen
             };
         }
 
+        // All windows of a top-level window paint into one shared surface, so whenever a window may paint over its
+        // children, they have to paint again afterwards. Only WS_CLIPCHILDREN keeps a window's painting off them.
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect = std::nullopt,
-                               bool erase = false)
+                               bool erase = false, const child_redraw_scope scope)
         {
             const RECT new_rect = update_rect.value_or(get_client_rect(win));
 
@@ -732,6 +763,25 @@ namespace sogen
                     thread->mark_queue_status_changed(QS_PAINT);
                 }
             }
+
+            if (!reaches_children(win, scope))
+            {
+                return;
+            }
+
+            for (auto& [index, child] : c.proc.windows)
+            {
+                (void)index;
+                if (child.parent_handle != win.handle || (child.style & WS_VISIBLE) == 0)
+                {
+                    continue;
+                }
+
+                if (const auto child_area = area_in_child(child, new_rect))
+                {
+                    invalidate_window(c, child, child_area, erase, scope);
+                }
+            }
         }
 
         void set_internal_paint_pending(const syscall_context& c, window& win, const bool pending)
@@ -746,79 +796,13 @@ namespace sogen
             }
         }
 
-        enum class child_redraw_scope
-        {
-            none,
-            unclipped,
-            all,
-        };
-
-        bool reaches_children(const window& parent, const child_redraw_scope scope)
-        {
-            return scope == child_redraw_scope::all || (scope == child_redraw_scope::unclipped && (parent.style & WS_CLIPCHILDREN) == 0);
-        }
-
-        // The part of a parent's client area that falls into the child's client area, in the child's coordinates.
-        std::optional<RECT> area_in_child(const window& child, const RECT& parent_area)
-        {
-            const RECT child_area{
-                .left = std::max<LONG>(parent_area.left - child.client_x(), 0),
-                .top = std::max<LONG>(parent_area.top - child.client_y(), 0),
-                .right = std::min<LONG>(parent_area.right - child.client_x(), child.client_width()),
-                .bottom = std::min<LONG>(parent_area.bottom - child.client_y(), child.client_height()),
-            };
-            if (child_area.left >= child_area.right || child_area.top >= child_area.bottom)
-            {
-                return std::nullopt;
-            }
-            return child_area;
-        }
-
-        // Invalidating a window also invalidates the visible children its update area covers. By default this
-        // stops at a window with WS_CLIPCHILDREN, whose own painting cannot reach its children (see RedrawWindow).
-        void invalidate_children(const syscall_context& c, const window& parent, const RECT& area, const bool erase,
-                                 const child_redraw_scope scope)
-        {
-            if (!reaches_children(parent, scope))
-            {
-                return;
-            }
-
-            for (auto& [index, child] : c.proc.windows)
-            {
-                (void)index;
-                if (child.parent_handle != parent.handle || (child.style & WS_VISIBLE) == 0)
-                {
-                    continue;
-                }
-
-                const auto child_area = area_in_child(child, area);
-                if (!child_area)
-                {
-                    continue;
-                }
-
-                invalidate_window(c, child, child_area, erase);
-                invalidate_children(c, child, *child_area, erase, scope);
-            }
-        }
-
         // Invalidate a window together with its visible descendant controls. Used when a window
         // transitions to visible: child controls created while an ancestor was still hidden skip
         // their paint body (user32 gates control painting on the whole parent chain being visible),
         // so they must be repainted once the ancestor becomes visible.
         void invalidate_window_tree(const syscall_context& c, window& win)
         {
-            invalidate_window(c, win);
-
-            for (auto& [index, child] : c.proc.windows)
-            {
-                (void)index;
-                if (child.parent_handle == win.handle && (child.style & WS_VISIBLE) != 0)
-                {
-                    invalidate_window_tree(c, child);
-                }
-            }
+            invalidate_window(c, win, std::nullopt, false, child_redraw_scope::all);
         }
 
         void write_guest_window_text(const syscall_context& c, window& win, const std::u16string& title)
@@ -2176,7 +2160,7 @@ namespace sogen
             return window;
         }
 
-        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd /*window*/, hdc /*dc*/, uint32_t control_type)
+        uint64_t system_control_brush(const syscall_context& c, const uint32_t control_type)
         {
             uint32_t brush_index = k_color_btnface;
             if (control_type == k_ctlcolor_edit || control_type == k_ctlcolor_listbox)
@@ -2199,9 +2183,8 @@ namespace sogen
             return brush;
         }
 
-        // The WM_CTLCOLOR* messages are WM_CTLCOLORMSGBOX plus the CTLCOLOR_* control type.
-        uint64_t handle_NtUserGetControlColor(const syscall_context& c, const hwnd /*parent*/, const hwnd window, const hdc dc,
-                                              const uint32_t message)
+        // Controls ask for their brush with a WM_CTLCOLOR* message, which is WM_CTLCOLORMSGBOX plus the CTLCOLOR_* type.
+        uint64_t control_message_brush(const syscall_context& c, const uint32_t message)
         {
             constexpr uint32_t wm_ctlcolormsgbox = 0x132;
             constexpr uint32_t wm_ctlcolorstatic = 0x138;
@@ -2210,7 +2193,18 @@ namespace sogen
                 return 0;
             }
 
-            return handle_NtUserGetControlBrush(c, window, dc, message - wm_ctlcolormsgbox);
+            return system_control_brush(c, message - wm_ctlcolormsgbox);
+        }
+
+        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, const hwnd /*window*/, const hdc /*dc*/, const uint32_t message)
+        {
+            return control_message_brush(c, message);
+        }
+
+        uint64_t handle_NtUserGetControlColor(const syscall_context& c, const hwnd /*parent*/, const hwnd /*window*/, const hdc /*dc*/,
+                                              const uint32_t message)
+        {
+            return control_message_brush(c, message);
         }
 
         BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc,
@@ -2226,7 +2220,7 @@ namespace sogen
             uint64_t control_brush = brush;
             if (control_brush < ctlcolor_max)
             {
-                control_brush = handle_NtUserGetControlBrush(c, parent_window, dc, static_cast<uint32_t>(brush));
+                control_brush = system_control_brush(c, static_cast<uint32_t>(brush));
             }
 
             constexpr DWORD patcopy = 0x00F00021;
@@ -5426,7 +5420,6 @@ namespace sogen
             }
 
             invalidate_window(c, *win, update_rect, erase != FALSE);
-            invalidate_children(c, *win, update_rect.value_or(get_client_rect(*win)), erase != FALSE, child_redraw_scope::unclipped);
             return TRUE;
         }
 
@@ -6739,8 +6732,7 @@ namespace sogen
             if ((flags & RDW_INVALIDATE) != 0)
             {
                 const bool erase = (flags & RDW_ERASE) != 0 && (flags & RDW_NOERASE) == 0;
-                invalidate_window(c, *win, rect, erase);
-                invalidate_children(c, *win, rect.value_or(get_client_rect(*win)), erase, scope);
+                invalidate_window(c, *win, rect, erase, scope);
             }
 
             if ((flags & RDW_INTERNALPAINT) != 0)
