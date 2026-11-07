@@ -684,6 +684,10 @@ namespace sogen
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
         void set_mouse_capture(hwnd window);
         void release_mouse_capture(hwnd window);
+        // Like win32k's ApplyKeyStateToQueue, after key_state changes: advances the key-state generation, so user32's
+        // GetKeyState stops answering keys below 0x20 from a thread's CLIENTINFO cache until NtUserGetKeyState
+        // refreshes it.
+        void key_state_changed() const;
 
         // process_context::handle_count() adds up these kernel object stores by hand: a store added here has to be added there too.
         handle_store<handle_types::event, event> events{};

@@ -42,6 +42,8 @@ namespace sogen
                 srv.defaultFontWidthScale = 0;
                 srv.dpi96DialogBaseUnitWidth = 8;
                 srv.dpi96DialogBaseUnitHeight = 16;
+                // Nonzero, so a thread's still empty CLIENTINFO key caches never pass for current.
+                srv.keyStateGeneration = 1;
                 srv.asyncKeyStateGeneration = 1;
                 srv.systemDpi = 96;
                 srv.systemMetrics[0] = 1920;  // SM_CXSCREEN

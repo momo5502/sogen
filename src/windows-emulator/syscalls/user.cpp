@@ -2894,10 +2894,38 @@ namespace sogen
         // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
         // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. GetKeyState reports the
         // high down bit and the low toggle bit; GetAsyncKeyState instead returns the low pressed-since-last-query bit.
+        //
+        // Like win32k, every NtUserGetKeyState also refreshes the caller's CLIENTINFO key cache (dwKeyCache at
+        // +0x70, then two bits a key, down and toggled, for the keys below 0x20), from which user32!GetKeyState
+        // answers those keys without a syscall until the next key change (process_context::key_state_changed).
         uint32_t handle_NtUserGetKeyState(const syscall_context& c, const int32_t virtual_key)
         {
-            const auto state = c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF];
-            return ((state & 0x80) ? 0x8000u : 0u) | (state & 0x01);
+            if (static_cast<uint32_t>(virtual_key) >= 0x100)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
+            constexpr uint64_t client_info_key_cache = 0x70;
+
+            struct
+            {
+                uint32_t generation;
+                std::array<uint8_t, 8> states;
+            } cache{};
+
+            cache.generation = c.win_emu.memory.read_memory<uint32_t>(c.proc.user_handles.get_server_info().value() +
+                                                                      offsetof(USER_SERVERINFO, keyStateGeneration));
+            for (uint32_t key = 0; key < 0x20; ++key)
+            {
+                const auto bits = ((c.proc.key_state[key] & 0x80) ? 1u : 0u) | ((c.proc.key_state[key] & 0x01) ? 2u : 0u);
+                cache.states[key >> 2] |= static_cast<uint8_t>(bits << (2 * (key & 3)));
+            }
+            c.win_emu.memory.write_memory(c.vcpu.active_thread->teb64->value() + offsetof(TEB64, Win32ClientInfo) + client_info_key_cache,
+                                          &cache, sizeof(cache));
+
+            const auto state = c.proc.key_state[static_cast<uint32_t>(virtual_key)];
+            return ((state & 0x80) ? 0xFF80u : 0u) | (state & 0x01);
         }
 
         uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, const int32_t virtual_key)
@@ -8716,6 +8744,7 @@ namespace sogen
                         proc.async_key_state[virtual_key] = 1;
                     }
                     proc.key_state[virtual_key] = down ? 0x80 : 0;
+                    proc.key_state_changed();
                     return;
                 }
 

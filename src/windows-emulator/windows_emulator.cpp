@@ -2475,6 +2475,9 @@ namespace sogen
                 this->process.key_state[generic] = any_down ? 0x80 : 0;
             }
         }
+
+        // Every caller changes the key state here, injected input without a window to receive it included.
+        this->process.key_state_changed();
     }
 
     ui_event windows_emulator::resolve_injected_event(const ui_event& event) const
@@ -2663,6 +2666,7 @@ namespace sogen
                 {
                     this->process.key_state[virtual_key] = 0;
                 }
+                this->process.key_state_changed();
             }
             break;
         }
@@ -3153,6 +3157,7 @@ namespace sogen
     // would have seen it happen.
     void windows_emulator::release_held_input()
     {
+        bool released = false;
         for (uint32_t key = 0; key < this->process.key_state.size(); ++key)
         {
             if ((this->process.key_state[key] & 0x80) == 0)
@@ -3160,6 +3165,7 @@ namespace sogen
                 continue;
             }
 
+            released = true;
             if (key == VK_LBUTTON || key == VK_RBUTTON || key == VK_MBUTTON || key == VK_XBUTTON1 || key == VK_XBUTTON2)
             {
                 this->process.key_state[key] = 0;
@@ -3177,6 +3183,13 @@ namespace sogen
 
             // Delivering the release does not clear the key when there is no window to deliver it to.
             this->process.key_state[key] &= 0x01;
+        }
+
+        // The buttons and the keys that could not be delivered were cleared here directly. The CLIENTINFO caches and the
+        // generation are restored with guest memory, so a cache stamped before the save would still pass for current.
+        if (released)
+        {
+            this->process.key_state_changed();
         }
     }
 

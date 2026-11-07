@@ -794,6 +794,11 @@ namespace sogen
         this->user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) { server_info.captureCount = window != 0 ? 1 : 0; });
     }
 
+    void process_context::key_state_changed() const
+    {
+        this->user_handles.get_server_info().access([](USER_SERVERINFO& server_info) { ++server_info.keyStateGeneration; });
+    }
+
     void process_context::release_mouse_capture(const hwnd window)
     {
         if (this->mouse_capture_window == window)
