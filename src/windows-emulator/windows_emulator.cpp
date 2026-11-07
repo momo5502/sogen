@@ -96,8 +96,7 @@ namespace sogen
             for (const auto& [index, child] : process.windows)
             {
                 (void)index;
-                if (child.parent_handle != parent || (child.style & WS_VISIBLE) == 0 || (child.style & WS_DISABLED) != 0 ||
-                    is_transparent_to_mouse(child))
+                if (child.parent_handle != parent || (child.style & WS_VISIBLE) == 0 || (child.style & WS_DISABLED) != 0)
                 {
                     continue;
                 }
@@ -110,7 +109,7 @@ namespace sogen
                     {
                         result = descendant;
                     }
-                    else
+                    else if (!is_transparent_to_mouse(child))
                     {
                         result = child_hit_test_result{.win = &child, .x = child_x, .y = child_y};
                     }
