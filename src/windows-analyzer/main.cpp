@@ -786,9 +786,11 @@ namespace sogen
                 });
             }
 #endif
-            // Declared before the emulator, so the guest's windows are gone while this process waits for its children.
+            // Declared before the emulator, so the guest's windows are gone while this process waits for its children. Any
+            // other way out leaves the children to the process manager's destructor.
+            bool guest_exited = false;
             const auto children_guard = utils::finally([&] {
-                if (manager)
+                if (manager && guest_exited)
                 {
                     manager->wait_for_processes();
                 }
@@ -1093,6 +1095,7 @@ namespace sogen
                 }
             }
 #endif
+            guest_exited = success && win_emu->process.exit_status.has_value();
             return success;
         }
 
