@@ -29,36 +29,32 @@ namespace sogen::gdi
 
         void intersect(const RECT& area)
         {
-            std::vector<RECT> kept{};
-            for (const auto& rect : this->rects_)
+            for (auto& rect : this->rects_)
             {
-                const RECT overlap = intersection(rect, area);
-                if (!is_empty(overlap))
-                {
-                    kept.push_back(overlap);
-                }
+                rect = intersection(rect, area);
             }
-            this->rects_ = std::move(kept);
+            std::erase_if(this->rects_, is_empty);
         }
 
         void subtract(const RECT& area)
         {
-            std::vector<RECT> kept{};
-            for (const auto& rect : this->rects_)
+            const auto original_count = this->rects_.size();
+            for (size_t i = 0; i < original_count; ++i)
             {
+                const RECT rect = this->rects_[i];
                 const RECT overlap = intersection(rect, area);
                 if (is_empty(overlap))
                 {
-                    kept.push_back(rect);
                     continue;
                 }
 
-                append_if_not_empty(kept, {.left = rect.left, .top = rect.top, .right = rect.right, .bottom = overlap.top});
-                append_if_not_empty(kept, {.left = rect.left, .top = overlap.bottom, .right = rect.right, .bottom = rect.bottom});
-                append_if_not_empty(kept, {.left = rect.left, .top = overlap.top, .right = overlap.left, .bottom = overlap.bottom});
-                append_if_not_empty(kept, {.left = overlap.right, .top = overlap.top, .right = rect.right, .bottom = overlap.bottom});
+                this->rects_[i] = {.left = rect.left, .top = rect.top, .right = rect.right, .bottom = overlap.top};
+                append_if_not_empty(this->rects_, {.left = rect.left, .top = overlap.bottom, .right = rect.right, .bottom = rect.bottom});
+                append_if_not_empty(this->rects_, {.left = rect.left, .top = overlap.top, .right = overlap.left, .bottom = overlap.bottom});
+                append_if_not_empty(this->rects_,
+                                    {.left = overlap.right, .top = overlap.top, .right = rect.right, .bottom = overlap.bottom});
             }
-            this->rects_ = std::move(kept);
+            std::erase_if(this->rects_, is_empty);
         }
 
         bool contains(const int64_t x, const int64_t y) const

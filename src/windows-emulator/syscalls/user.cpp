@@ -746,19 +746,24 @@ namespace sogen
             }
         }
 
-        enum class child_invalidation
+        enum class child_redraw_scope
         {
             none,
             unclipped,
             all,
         };
 
+        bool reaches_children(const window& parent, const child_redraw_scope scope)
+        {
+            return scope == child_redraw_scope::all || (scope == child_redraw_scope::unclipped && (parent.style & WS_CLIPCHILDREN) == 0);
+        }
+
         // Invalidating a window also invalidates the visible children its update area covers. By default this
         // stops at a window with WS_CLIPCHILDREN, whose own painting cannot reach its children (see RedrawWindow).
         void invalidate_children(const syscall_context& c, const window& parent, const RECT& area, const bool erase,
-                                 const child_invalidation scope)
+                                 const child_redraw_scope scope)
         {
-            if (scope == child_invalidation::none || (scope == child_invalidation::unclipped && (parent.style & WS_CLIPCHILDREN) != 0))
+            if (!reaches_children(parent, scope))
             {
                 return;
             }
@@ -1068,6 +1073,24 @@ namespace sogen
             win.update_pending = false;
             win.erase_pending = false;
             win.update_rect = {};
+        }
+
+        void validate_children(const syscall_context& c, const window& parent, const child_redraw_scope scope)
+        {
+            if (!reaches_children(parent, scope))
+            {
+                return;
+            }
+
+            for (auto& [index, child] : c.proc.windows)
+            {
+                (void)index;
+                if (child.parent_handle == parent.handle)
+                {
+                    validate_window(child);
+                    validate_children(c, child, scope);
+                }
+            }
         }
 
         void present_existing_guest_window_surface(const syscall_context& c, const window& painted_window)
@@ -5357,7 +5380,7 @@ namespace sogen
             }
 
             invalidate_window(c, *win, update_rect, erase != FALSE);
-            invalidate_children(c, *win, update_rect.value_or(get_client_rect(*win)), erase != FALSE, child_invalidation::unclipped);
+            invalidate_children(c, *win, update_rect.value_or(get_client_rect(*win)), erase != FALSE, child_redraw_scope::unclipped);
             return TRUE;
         }
 
@@ -6580,9 +6603,20 @@ namespace sogen
                 return FALSE;
             }
 
+            auto scope = child_redraw_scope::unclipped;
+            if ((flags & RDW_NOCHILDREN) != 0)
+            {
+                scope = child_redraw_scope::none;
+            }
+            else if ((flags & RDW_ALLCHILDREN) != 0)
+            {
+                scope = child_redraw_scope::all;
+            }
+
             if ((flags & RDW_VALIDATE) != 0)
             {
                 validate_window(*win);
+                validate_children(c, *win, scope);
             }
 
             if ((flags & RDW_INVALIDATE) != 0)
@@ -6595,16 +6629,6 @@ namespace sogen
 
                 const bool erase = (flags & RDW_ERASE) != 0 && (flags & RDW_NOERASE) == 0;
                 invalidate_window(c, *win, rect, erase);
-
-                auto scope = child_invalidation::unclipped;
-                if ((flags & RDW_NOCHILDREN) != 0)
-                {
-                    scope = child_invalidation::none;
-                }
-                else if ((flags & RDW_ALLCHILDREN) != 0)
-                {
-                    scope = child_invalidation::all;
-                }
                 invalidate_children(c, *win, rect.value_or(get_client_rect(*win)), erase, scope);
             }
 

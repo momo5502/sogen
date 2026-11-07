@@ -993,9 +993,10 @@ namespace sogen
                 return &surface;
             }
 
-            std::vector<const window*> children_in_z_order(const syscall_context& c, const window& parent)
+            // Visits the children front to back: the guest's child list runs from the top of the Z order down.
+            template <typename Visitor>
+            void for_each_child_in_z_order(const syscall_context& c, const window& parent, Visitor&& visit)
             {
-                std::vector<const window*> children{};
                 uint64_t next = 0;
                 parent.guest.access([&](const USER_WINDOW& guest_parent) { next = guest_parent.spwndChild; });
                 for (size_t guard = 0; next != 0 && guard < c.proc.windows.size(); ++guard)
@@ -1003,46 +1004,12 @@ namespace sogen
                     USER_WINDOW guest_child{};
                     c.emu.read_memory(next, &guest_child, sizeof(guest_child));
                     next = guest_child.spwndNext;
-                    if (const auto* child = c.proc.windows.get(guest_child.hWnd))
+                    const auto* child = c.proc.windows.get(guest_child.hWnd);
+                    if (child && !visit(*child))
                     {
-                        children.push_back(child);
+                        return;
                     }
                 }
-                return children;
-            }
-
-            struct window_in_surface
-            {
-                const window* win{};
-                POINT client_origin{};
-            };
-
-            // The window and its ancestors up to the top-level window that owns the surface, with their client origins.
-            std::vector<window_in_surface> window_chain_in_surface(const syscall_context& c, const window& target)
-            {
-                std::vector<const window*> chain{&target};
-                while ((chain.back()->style & WS_CHILD) != 0)
-                {
-                    const auto* parent = c.proc.windows.get(chain.back()->parent_handle);
-                    if (!parent)
-                    {
-                        break;
-                    }
-                    chain.push_back(parent);
-                }
-
-                std::vector<window_in_surface> placed(chain.size());
-                POINT origin{};
-                for (size_t i = chain.size(); i-- > 0;)
-                {
-                    if (i + 1 < chain.size())
-                    {
-                        origin.x += chain[i]->client_x();
-                        origin.y += chain[i]->client_y();
-                    }
-                    placed[i] = {.win = chain[i], .client_origin = origin};
-                }
-                return placed;
             }
 
             RECT window_rect_in_parent(const window& win, const POINT parent_client_origin)
@@ -1056,47 +1023,60 @@ namespace sogen
             void subtract_siblings_in_front(const syscall_context& c, gdi::clip_region& visible, const window& win, const window& parent,
                                             const POINT parent_client_origin)
             {
-                for (const auto* sibling : children_in_z_order(c, parent))
-                {
-                    if (sibling == &win)
+                for_each_child_in_z_order(c, parent, [&](const window& sibling) {
+                    if (&sibling == &win)
                     {
-                        break;
+                        return false;
                     }
-                    if ((sibling->style & WS_VISIBLE) != 0)
+                    if ((sibling.style & WS_VISIBLE) != 0)
                     {
-                        visible.subtract(window_rect_in_parent(*sibling, parent_client_origin));
+                        visible.subtract(window_rect_in_parent(sibling, parent_client_origin));
                     }
-                }
+                    return true;
+                });
             }
 
             // A window DC paints only inside the window's client area and those of its ancestors. WS_CLIPCHILDREN
             // keeps it off the window's children, and WS_CLIPSIBLINGS keeps a window off the siblings in front of it.
-            gdi::clip_region window_dc_clip(const syscall_context& c, const window& target, const gdi_bitmap_surface& surface)
+            gdi::clip_region window_dc_clip(const syscall_context& c, const window& target, const gdi_bitmap_surface& surface,
+                                            const POINT target_client_origin)
             {
                 auto visible = gdi::clip_region::whole(surface.width, surface.height);
-                const auto chain = window_chain_in_surface(c, target);
-                for (size_t i = 0; i < chain.size(); ++i)
+
+                if ((target.style & WS_CLIPCHILDREN) != 0)
                 {
-                    const auto& [win, origin] = chain[i];
+                    for_each_child_in_z_order(c, target, [&](const window& child) {
+                        if ((child.style & WS_VISIBLE) != 0)
+                        {
+                            visible.subtract(window_rect_in_parent(child, target_client_origin));
+                        }
+                        return true;
+                    });
+                }
+
+                const auto* win = &target;
+                auto origin = target_client_origin;
+                while (win)
+                {
                     visible.intersect({.left = origin.x,
                                        .top = origin.y,
                                        .right = origin.x + win->client_width(),
                                        .bottom = origin.y + win->client_height()});
-                    if (i + 1 < chain.size() && (win->style & WS_CLIPSIBLINGS) != 0)
-                    {
-                        subtract_siblings_in_front(c, visible, *win, *chain[i + 1].win, chain[i + 1].client_origin);
-                    }
-                }
 
-                if ((target.style & WS_CLIPCHILDREN) != 0)
-                {
-                    for (const auto* child : children_in_z_order(c, target))
+                    const auto* parent = (win->style & WS_CHILD) != 0 ? c.proc.windows.get(win->parent_handle) : nullptr;
+                    if (!parent)
                     {
-                        if ((child->style & WS_VISIBLE) != 0)
-                        {
-                            visible.subtract(window_rect_in_parent(*child, chain.front().client_origin));
-                        }
+                        break;
                     }
+
+                    const POINT parent_origin{.x = origin.x - win->client_x(), .y = origin.y - win->client_y()};
+                    if ((win->style & WS_CLIPSIBLINGS) != 0)
+                    {
+                        subtract_siblings_in_front(c, visible, *win, *parent, parent_origin);
+                    }
+
+                    win = parent;
+                    origin = parent_origin;
                 }
 
                 return visible;
@@ -1114,7 +1094,8 @@ namespace sogen
 
                 const auto& dc_state = c.proc.gdi_dc_states.at(static_cast<uint32_t>(dc));
                 const auto* target = dc_state.selected_bitmap == 0 ? c.proc.windows.get(dc_state.target_window) : nullptr;
-                visible = target ? window_dc_clip(c, *target, *surface) : gdi::clip_region::whole(surface->width, surface->height);
+                visible = target ? window_dc_clip(c, *target, *surface, POINT{.x = origin_x, .y = origin_y})
+                                 : gdi::clip_region::whole(surface->width, surface->height);
                 return surface;
             }
 
@@ -3532,8 +3513,9 @@ namespace sogen
                 const uint8_t* row = data.data() + static_cast<size_t>(bits_row) * stride;
                 const int64_t left = static_cast<int64_t>(x_dest) + origin_x;
                 const int64_t out_y = static_cast<int64_t>(y_dest) + origin_y + j;
-                const auto row_width = std::min<int64_t>(width, static_cast<int64_t>(src_width) - x_src);
-                visible.for_each_span(clamped_to_surface(*surface, left, out_y, left + row_width, out_y + 1),
+                const auto first_column = std::max<int64_t>(0, -static_cast<int64_t>(x_src));
+                const auto end_column = std::min<int64_t>(width, static_cast<int64_t>(src_width) - x_src);
+                visible.for_each_span(clamped_to_surface(*surface, left + first_column, out_y, left + end_column, out_y + 1),
                                       [&](const LONG x_begin, const LONG x_end, const LONG y) {
                                           auto* out = surface_row(*surface, y);
                                           for (auto x = x_begin; x < x_end; ++x)
@@ -6799,8 +6781,13 @@ namespace sogen
                 return clr_invalid;
             }
 
+            if (!visible.contains(surface_x, surface_y))
+            {
+                return clr_invalid;
+            }
+
             const auto bgra = colorref_to_bgra(color);
-            set_clipped_pixel(*surface, visible, surface_x, surface_y, bgra);
+            set_surface_pixel(*surface, surface_x, surface_y, bgra);
             present_win_surface(c, present_handle, surface);
 
             return bgra_to_colorref(bgra);
