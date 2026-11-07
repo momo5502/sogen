@@ -6135,6 +6135,8 @@ namespace sogen
             }
 
             const bool was_surface_root = c.proc.is_surface_root(*child);
+            const RECT vacated_area{
+                .left = child->x, .top = child->y, .right = child->x + child->width, .bottom = child->y + child->height};
             child->parent_handle = effective_parent->handle;
             child->guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.spwndParent = effective_parent->guest.value();
@@ -6144,6 +6146,13 @@ namespace sogen
 
             append_to_parent();
             update_window_relationship(c, *child, was_surface_root);
+
+            // Windows hides the window before it changes the parent, so the old parent repaints what the window covered.
+            if (auto* vacated_parent = c.proc.windows.get(old_parent);
+                vacated_parent && vacated_parent != effective_parent && (child->style & WS_VISIBLE) != 0)
+            {
+                invalidate_window(c, *vacated_parent, vacated_area, true);
+            }
 
             return old_parent;
         }
