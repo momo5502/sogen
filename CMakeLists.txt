@@ -9,6 +9,7 @@ option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" OFF)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
+option(SOGEN_ENABLE_SCCACHE "Cache compilations with sccache when it is installed" ON)
 option(SOGEN_ENABLE_SDL3 "Enable SDL3 host UI and audio backends" ON)
 # When ON, a system-installed SDL3 (find_package, e.g. libsdl3-dev on Ubuntu 25.04+,
 # Homebrew, vcpkg) is used if present, falling back to the vendored deps/SDL submodule.
@@ -54,19 +55,6 @@ add_compile_definitions(SOGEN_REFLECTION_LEVEL=${SOGEN_REFLECTION_LEVEL})
 
 if(SOGEN_ENABLE_REFLECTION)
   add_compile_definitions(SOGEN_ENABLE_REFLECTION=1)
-endif()
-
-option(SOGEN_ENABLE_SCCACHE "Cache compilations with sccache when it is installed" ON)
-if(SOGEN_ENABLE_SCCACHE AND NOT CMAKE_C_COMPILER_LAUNCHER AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
-  find_program(SCCACHE_PROGRAM sccache)
-  if(SCCACHE_PROGRAM)
-    message(STATUS "Caching compilations with ${SCCACHE_PROGRAM}")
-    set(CMAKE_C_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
-    set(CMAKE_CXX_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
-    # sccache cannot cache MSVC objects that write their debug info into a shared PDB (/Zi, which Ninja pairs with /FS).
-    # Embedding it in each object (/Z7) keeps them cacheable; the linker still produces the PDB.
-    set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>")
-  endif()
 endif()
 
 ##########################################
@@ -131,6 +119,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 include(cmake/utils.cmake)
 include(cmake/compiler-env.cmake)
+sogen_enable_sccache()
 
 ##########################################
 
