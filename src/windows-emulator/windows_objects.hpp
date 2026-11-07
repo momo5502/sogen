@@ -459,14 +459,21 @@ namespace sogen
             return client_bottom - client_top;
         }
 
-        void sync_guest_rects()
+        // The guest's WND.rcWindow and rcClient are in screen coordinates, while x and y are relative to the parent's client
+        // area, so the caller supplies where the window's top-left corner is on the screen.
+        void sync_guest_rects(const POINT screen_origin)
         {
-            const RECT window_rect{.left = this->x, .top = this->y, .right = this->x + this->width, .bottom = this->y + this->height};
+            const RECT window_rect{.left = screen_origin.x,
+                                   .top = screen_origin.y,
+                                   .right = screen_origin.x + this->width,
+                                   .bottom = screen_origin.y + this->height};
+            const auto client_left = screen_origin.x + this->client_x_offset();
+            const auto client_top = screen_origin.y + this->client_y_offset();
             const RECT client_rect{
-                .left = this->client_x(),
-                .top = this->client_y(),
-                .right = this->client_x() + this->client_width(),
-                .bottom = this->client_y() + this->client_height(),
+                .left = client_left,
+                .top = client_top,
+                .right = client_left + this->client_width(),
+                .bottom = client_top + this->client_height(),
             };
 
             this->guest.access([&](USER_WINDOW& guest_win) {

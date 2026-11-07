@@ -54,10 +54,11 @@ namespace sogen
 
             constexpr uint32_t k_gdi_dc_attr_hbrush_offset = 0xA0;
             constexpr uint32_t k_gdi_dc_attr_hpen_offset = 0xA8;
-            constexpr uint32_t k_gdi_dc_attr_dc_brush_color_offset = 0xC4;   // SetDCBrushColor
-            constexpr uint32_t k_gdi_dc_attr_dc_pen_color_offset = 0xCC;     // SetDCPenColor
-            constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0x20; // DC_ATTR.crBackgroundClr (SetBkColor)
-            constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0x28;       // DC_ATTR.crForegroundClr (SetTextColor)
+            constexpr uint32_t k_gdi_dc_attr_dc_brush_color_offset = 0xC4; // SetDCBrushColor
+            constexpr uint32_t k_gdi_dc_attr_dc_pen_color_offset = 0xCC;   // SetDCPenColor
+            constexpr uint32_t k_gdi_dc_attr_realized_background_color_offset = 0xB0;
+            constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0xB4; // SetBkColor/GetBkColor
+            constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0xBC;       // SetTextColor/GetTextColor
             constexpr uint32_t k_gdi_dc_attr_rop2_offset = 0xD4;             // DC_ATTR.jROP2 (SetROP2)
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
             constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
@@ -988,7 +989,7 @@ namespace sogen
                 // Walk up to the owning top-level window, accumulating each child's client-area offset.
                 int32_t off_x = 0;
                 int32_t off_y = 0;
-                while (win && (win->style & WS_CHILD) != 0)
+                while (win && !c.proc.is_surface_root(*win))
                 {
                     off_x += win->client_x();
                     off_y += win->client_y();
@@ -1089,7 +1090,7 @@ namespace sogen
                                        .right = origin.x + win->client_width(),
                                        .bottom = origin.y + win->client_height()});
 
-                    const auto* parent = (win->style & WS_CHILD) != 0 ? c.proc.windows.get(win->parent_handle) : nullptr;
+                    const auto* parent = c.proc.is_surface_root(*win) ? nullptr : c.proc.windows.get(win->parent_handle);
                     if (!parent)
                     {
                         break;
@@ -2154,6 +2155,10 @@ namespace sogen
                 constexpr uint32_t white = 0x00FFFFFFu;
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_dc_brush_color_offset, &white, sizeof(white));
 
+                // A new DC draws opaque text on white; gdi32 batches text with the realized background color.
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_background_color_offset, &white, sizeof(white));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_realized_background_color_offset, &white, sizeof(white));
+
                 const std::array<std::pair<uint32_t, uint32_t>, 3> default_objects{{
                     {k_stock_system_font_index, k_gdi_dc_attr_font_offset},
                     {k_stock_white_brush_index, k_gdi_dc_attr_hbrush_offset},
@@ -3065,6 +3070,14 @@ namespace sogen
 
             it->second.selected_bitmap = default_bitmap;
             return dc;
+        }
+
+        bool is_gdi_brush(const syscall_context& c, const uint64_t handle)
+        {
+            GDI_HANDLE_ENTRY64 entry{};
+            uint64_t entry_address = 0;
+            return handle != 0 && read_gdi_entry_for_handle(c, static_cast<uint32_t>(handle), entry, entry_address) &&
+                   gdi_object_type(entry) == k_gdi_brush_type;
         }
 
         hdc create_gdi_window_dc(const syscall_context& c, const hwnd window)

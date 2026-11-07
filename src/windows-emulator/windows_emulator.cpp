@@ -2741,7 +2741,7 @@ namespace sogen
 
         win->x = x;
         win->y = y;
-        win->sync_guest_rects();
+        this->process.sync_guest_window_rects(*win);
 
         msg m{};
         m.window = window_handle;
@@ -2777,7 +2777,7 @@ namespace sogen
         win->height = client_height + insets.top + insets.bottom;
         win->style = maximized ? (win->style | WS_MAXIMIZE) : (win->style & ~WS_MAXIMIZE);
         win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win->style; });
-        win->sync_guest_rects();
+        this->process.sync_guest_window_rects(*win);
 
         win->update_rect = RECT{.left = 0, .top = 0, .right = win->client_width(), .bottom = win->client_height()};
         win->update_pending = true;

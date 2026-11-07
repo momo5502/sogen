@@ -424,11 +424,46 @@ namespace sogen
             c.proc.user_handles.set_owner(index, owner);
         }
 
-        void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
+        enum class child_redraw_scope
+        {
+            none,
+            unclipped,
+            all,
+        };
+
+        bool reaches_children(const window& parent, const child_redraw_scope scope)
+        {
+            return scope == child_redraw_scope::all || (scope == child_redraw_scope::unclipped && (parent.style & WS_CLIPCHILDREN) == 0);
+        }
+
+        // The part of a parent's client area that falls into the child's client area, in the child's coordinates.
+        std::optional<RECT> area_in_child(const window& child, const RECT& parent_area)
+        {
+            const RECT child_area{
+                .left = std::max<LONG>(parent_area.left - child.client_x(), 0),
+                .top = std::max<LONG>(parent_area.top - child.client_y(), 0),
+                .right = std::min<LONG>(parent_area.right - child.client_x(), child.client_width()),
+                .bottom = std::min<LONG>(parent_area.bottom - child.client_y(), child.client_height()),
+            };
+            if (child_area.left >= child_area.right || child_area.top >= child_area.bottom)
+            {
+                return std::nullopt;
+            }
+            return child_area;
+        }
+
+        void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase,
+                               child_redraw_scope scope = child_redraw_scope::unclipped);
 
         RECT get_client_rect(const window& win)
         {
             return RECT{.left = 0, .top = 0, .right = win.client_width(), .bottom = win.client_height()};
+        }
+
+        RECT get_screen_window_rect(const syscall_context& c, const window& win)
+        {
+            const auto origin = c.proc.window_screen_origin(win);
+            return RECT{.left = origin.x, .top = origin.y, .right = origin.x + win.width, .bottom = origin.y + win.height};
         }
 
         RECT get_window_rect(const window& win)
@@ -470,7 +505,7 @@ namespace sogen
             win.y = y;
             win.width = width;
             win.height = height;
-            win.sync_guest_rects();
+            c.proc.sync_guest_window_rects(win);
 
             if (win.host_surface_window)
             {
@@ -703,8 +738,10 @@ namespace sogen
             };
         }
 
+        // All windows of a top-level window paint into one shared surface, so whenever a window may paint over its
+        // children, they have to paint again afterwards. Only WS_CLIPCHILDREN keeps a window's painting off them.
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect = std::nullopt,
-                               bool erase = false)
+                               bool erase = false, const child_redraw_scope scope)
         {
             const RECT new_rect = update_rect.value_or(get_client_rect(win));
 
@@ -732,6 +769,25 @@ namespace sogen
                     thread->mark_queue_status_changed(QS_PAINT);
                 }
             }
+
+            if (!reaches_children(win, scope))
+            {
+                return;
+            }
+
+            for (auto& [index, child] : c.proc.windows)
+            {
+                (void)index;
+                if (child.parent_handle != win.handle || (child.style & WS_VISIBLE) == 0)
+                {
+                    continue;
+                }
+
+                if (const auto child_area = area_in_child(child, new_rect))
+                {
+                    invalidate_window(c, child, child_area, erase, scope);
+                }
+            }
         }
 
         void set_internal_paint_pending(const syscall_context& c, window& win, const bool pending)
@@ -746,79 +802,13 @@ namespace sogen
             }
         }
 
-        enum class child_redraw_scope
-        {
-            none,
-            unclipped,
-            all,
-        };
-
-        bool reaches_children(const window& parent, const child_redraw_scope scope)
-        {
-            return scope == child_redraw_scope::all || (scope == child_redraw_scope::unclipped && (parent.style & WS_CLIPCHILDREN) == 0);
-        }
-
-        // The part of a parent's client area that falls into the child's client area, in the child's coordinates.
-        std::optional<RECT> area_in_child(const window& child, const RECT& parent_area)
-        {
-            const RECT child_area{
-                .left = std::max<LONG>(parent_area.left - child.client_x(), 0),
-                .top = std::max<LONG>(parent_area.top - child.client_y(), 0),
-                .right = std::min<LONG>(parent_area.right - child.client_x(), child.client_width()),
-                .bottom = std::min<LONG>(parent_area.bottom - child.client_y(), child.client_height()),
-            };
-            if (child_area.left >= child_area.right || child_area.top >= child_area.bottom)
-            {
-                return std::nullopt;
-            }
-            return child_area;
-        }
-
-        // Invalidating a window also invalidates the visible children its update area covers. By default this
-        // stops at a window with WS_CLIPCHILDREN, whose own painting cannot reach its children (see RedrawWindow).
-        void invalidate_children(const syscall_context& c, const window& parent, const RECT& area, const bool erase,
-                                 const child_redraw_scope scope)
-        {
-            if (!reaches_children(parent, scope))
-            {
-                return;
-            }
-
-            for (auto& [index, child] : c.proc.windows)
-            {
-                (void)index;
-                if (child.parent_handle != parent.handle || (child.style & WS_VISIBLE) == 0)
-                {
-                    continue;
-                }
-
-                const auto child_area = area_in_child(child, area);
-                if (!child_area)
-                {
-                    continue;
-                }
-
-                invalidate_window(c, child, child_area, erase);
-                invalidate_children(c, child, *child_area, erase, scope);
-            }
-        }
-
         // Invalidate a window together with its visible descendant controls. Used when a window
         // transitions to visible: child controls created while an ancestor was still hidden skip
         // their paint body (user32 gates control painting on the whole parent chain being visible),
         // so they must be repainted once the ancestor becomes visible.
         void invalidate_window_tree(const syscall_context& c, window& win)
         {
-            invalidate_window(c, win);
-
-            for (auto& [index, child] : c.proc.windows)
-            {
-                (void)index;
-                if (child.parent_handle == win.handle && (child.style & WS_VISIBLE) != 0)
-                {
-                    invalidate_window_tree(c, child);
-                }
-            }
+            invalidate_window(c, win, std::nullopt, false, child_redraw_scope::all);
         }
 
         void write_guest_window_text(const syscall_context& c, window& win, const std::u16string& title)
@@ -1122,7 +1112,7 @@ namespace sogen
         void present_existing_guest_window_surface(const syscall_context& c, const window& painted_window)
         {
             const window* top_level = &painted_window;
-            while (top_level && (top_level->style & WS_CHILD) != 0)
+            while (top_level && !c.proc.is_surface_root(*top_level))
             {
                 top_level = top_level->parent_handle != 0 ? c.proc.windows.get(top_level->parent_handle) : nullptr;
             }
@@ -1902,6 +1892,7 @@ namespace sogen
         uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
                                           emulator_pointer bits);
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
+        bool is_gdi_brush(const syscall_context& c, uint64_t handle);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         uint32_t count_process_gdi_objects(const syscall_context& c);
         bool set_gdi_region_rect(const syscall_context& c, handle region, const RECT& rect);
@@ -2176,7 +2167,7 @@ namespace sogen
             return window;
         }
 
-        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd /*window*/, hdc /*dc*/, uint32_t control_type)
+        uint64_t system_control_brush(const syscall_context& c, const uint32_t control_type)
         {
             uint32_t brush_index = k_color_btnface;
             if (control_type == k_ctlcolor_edit || control_type == k_ctlcolor_listbox)
@@ -2199,20 +2190,91 @@ namespace sogen
             return brush;
         }
 
-        BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc,
-                                     const hbrush brush)
+        // Controls ask for their brush with a WM_CTLCOLOR* message, which is WM_CTLCOLORMSGBOX plus the CTLCOLOR_* type.
+        constexpr uint32_t k_wm_ctlcolormsgbox = 0x132;
+        constexpr uint32_t k_wm_ctlcolorstatic = 0x138;
+
+        bool is_control_color_message(const uint32_t message)
         {
-            auto* win = c.proc.windows.get(window);
-            if (dc == 0 || !win || (parent_window != 0 && !c.proc.windows.get(parent_window)))
+            return message >= k_wm_ctlcolormsgbox && message <= k_wm_ctlcolorstatic;
+        }
+
+        uint64_t control_message_brush(const syscall_context& c, const uint32_t message)
+        {
+            return is_control_color_message(message) ? system_control_brush(c, message - k_wm_ctlcolormsgbox) : 0;
+        }
+
+        // The parent picks a control's brush by answering the WM_CTLCOLOR* message, with the DC in wParam and the control in
+        // lParam; only a parent that returns no brush leaves the control with the system one.
+        bool ask_parent_for_control_brush(const syscall_context& c, const callback_id id, const hwnd parent, const hwnd window,
+                                          const hdc dc, const uint32_t message)
+        {
+            const auto* parent_window = c.proc.windows.get(parent);
+            if (!is_control_color_message(message) || !parent_window || parent_window->wnd_proc == 0 ||
+                parent_window->thread_id != c.thread().id)
             {
-                return FALSE;
+                return false;
             }
 
-            constexpr hbrush ctlcolor_max = 7;
-            uint64_t control_brush = brush;
-            if (control_brush < ctlcolor_max)
+            dispatch_window_message(c, id, nullptr, *parent_window, message, dc, window);
+            return true;
+        }
+
+        uint64_t answered_control_brush(const syscall_context& c, const uint32_t message)
+        {
+            const auto brush = c.get_callback_result<uint64_t>();
+            return is_gdi_brush(c, brush) ? brush : control_message_brush(c, message);
+        }
+
+        // A child control asks its parent; a top-level window answers for itself.
+        hwnd control_brush_parent(const syscall_context& c, const hwnd window)
+        {
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
             {
-                control_brush = handle_NtUserGetControlBrush(c, parent_window, dc, static_cast<uint32_t>(brush));
+                return 0;
+            }
+            return (win->style & WS_CHILD) != 0 && win->parent_handle != 0 ? win->parent_handle : window;
+        }
+
+        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, const hwnd window, const hdc dc, const uint32_t message)
+        {
+            if (ask_parent_for_control_brush(c, callback_id::NtUserGetControlBrush, control_brush_parent(c, window), window, dc, message))
+            {
+                return {};
+            }
+            return control_message_brush(c, message);
+        }
+
+        uint64_t completion_NtUserGetControlBrush(const syscall_context& c, const hwnd /*window*/, const hdc /*dc*/, const uint32_t message)
+        {
+            return answered_control_brush(c, message);
+        }
+
+        uint64_t handle_NtUserGetControlColor(const syscall_context& c, const hwnd parent, const hwnd window, const hdc dc,
+                                              const uint32_t message)
+        {
+            if (ask_parent_for_control_brush(c, callback_id::NtUserGetControlColor, parent, window, dc, message))
+            {
+                return {};
+            }
+            return control_message_brush(c, message);
+        }
+
+        uint64_t completion_NtUserGetControlColor(const syscall_context& c, const hwnd /*parent*/, const hwnd /*window*/, const hdc /*dc*/,
+                                                  const uint32_t message)
+        {
+            return answered_control_brush(c, message);
+        }
+
+        constexpr hbrush k_ctlcolor_max = 7;
+
+        BOOL fill_window_client(const syscall_context& c, const hwnd window, const hdc dc, const uint64_t control_brush)
+        {
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
             }
 
             constexpr DWORD patcopy = 0x00F00021;
@@ -2222,6 +2284,34 @@ namespace sogen
                                                    client_rect.bottom - client_rect.top, patcopy);
             handle_NtGdiSelectBrushLocal(c, dc, static_cast<uint32_t>(previous_brush), 0);
             return result;
+        }
+
+        // A CTLCOLOR_* index instead of a brush fills with the brush the parent picks for that kind of control.
+        BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc,
+                                     const hbrush brush)
+        {
+            if (dc == 0 || !c.proc.windows.get(window) || (parent_window != 0 && !c.proc.windows.get(parent_window)))
+            {
+                return FALSE;
+            }
+
+            if (brush >= k_ctlcolor_max)
+            {
+                return fill_window_client(c, window, dc, brush);
+            }
+
+            const auto message = k_wm_ctlcolormsgbox + static_cast<uint32_t>(brush);
+            if (ask_parent_for_control_brush(c, callback_id::NtUserFillWindow, parent_window, window, dc, message))
+            {
+                return {};
+            }
+            return fill_window_client(c, window, dc, control_message_brush(c, message));
+        }
+
+        BOOL completion_NtUserFillWindow(const syscall_context& c, const hwnd /*parent_window*/, const hwnd window, const hdc dc,
+                                         const hbrush brush)
+        {
+            return fill_window_client(c, window, dc, answered_control_brush(c, k_wm_ctlcolormsgbox + static_cast<uint32_t>(brush)));
         }
 
         BOOL handle_NtUserReleaseDC(const syscall_context& c, const hdc dc)
@@ -2942,7 +3032,7 @@ namespace sogen
                     return FALSE;
                 }
 
-                const auto rect = get_window_rect(*win);
+                const auto rect = get_screen_window_rect(c, *win);
                 c.emu.write_memory(pv_data, &rect, sizeof(rect));
                 return TRUE;
             }
@@ -4288,16 +4378,6 @@ namespace sogen
                 guest_win.ptrBase = win.guest.value();
                 guest_win.dwExStyle = ex_style;
                 guest_win.dwStyle = style;
-                guest_win.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
-                // The client rect is the window minus its non-client frame (see window::nonclient_insets). The
-                // guest reads rcClient client-side to size its render target/backbuffer, so seeding it with the
-                // outer rect here makes a framed window render too large and rescale (softening the frame).
-                guest_win.rcClient = {
-                    .left = win.client_x(),
-                    .top = win.client_y(),
-                    .right = win.client_x() + win.client_width(),
-                    .bottom = win.client_y() + win.client_height(),
-                };
                 if (parent_win && has_child_parent)
                 {
                     guest_win.spwndParent = parent_win->guest.value();
@@ -4340,6 +4420,7 @@ namespace sogen
                     guest_win.pExtraBytes = c.win_emu.memory.allocate_memory(extra_size, memory_permission::read_write);
                 }
             });
+            c.proc.sync_guest_window_rects(win);
             write_guest_window_text(c, win, win.name);
 
             if (has_child_parent && parent_win && parent_win->guest.value() != 0)
@@ -4394,9 +4475,10 @@ namespace sogen
 
             if (!is_message_only)
             {
+                const bool hosted_child = parent_win && !c.proc.is_surface_root(win);
                 c.win_emu.ui().create_window(ui_window_desc{
                     .handle = handle.bits,
-                    .parent = has_child_parent && parent_win ? parent_win->handle : 0,
+                    .parent = hosted_child ? parent_win->handle : 0,
                     .owner = has_owner && parent_win ? parent_win->handle : 0,
                     .rect = get_window_rect(win),
                     .client_insets = get_host_ui_client_insets(win),
@@ -4404,10 +4486,10 @@ namespace sogen
                     .title = win.name,
                     .style = style,
                     .ex_style = ex_style,
-                    .control_id = has_child_parent ? static_cast<uint32_t>(menu) : 0,
+                    .control_id = hosted_child ? static_cast<uint32_t>(menu) : 0,
                     .visible = (style & WS_VISIBLE) != 0,
                     .enabled = (style & WS_DISABLED) == 0,
-                    .top_level = !has_child_parent,
+                    .top_level = !hosted_child,
                 });
 
                 if (has_child_parent)
@@ -4834,10 +4916,16 @@ namespace sogen
 
                 if (is_child && win->parent_handle != 0)
                 {
-                    if (auto* parent_win = c.proc.windows.get(win->parent_handle))
+                    // A combo box moves its drop-down list under the desktop window, whose window procedure lives outside
+                    // the process, so the process can neither repaint nor erase it. Any other parent is repainted, and
+                    // erased right away only when its procedure runs on this thread.
+                    if (auto* parent_win = c.proc.windows.get(win->parent_handle); parent_win && parent_win->wnd_proc != 0)
                     {
                         invalidate_window(c, *parent_win, std::nullopt, true);
-                        orchestrator.set_parent_erase_window(parent_win->handle);
+                        if (parent_win->thread_id == c.thread().id)
+                        {
+                            orchestrator.set_parent_erase_window(parent_win->handle);
+                        }
                     }
                 }
 
@@ -5406,7 +5494,6 @@ namespace sogen
             }
 
             invalidate_window(c, *win, update_rect, erase != FALSE);
-            invalidate_children(c, *win, update_rect.value_or(get_client_rect(*win)), erase != FALSE, child_redraw_scope::unclipped);
             return TRUE;
         }
 
@@ -5894,8 +5981,31 @@ namespace sogen
                 return FALSE;
             }
 
-            rect.write(get_window_rect(*win));
+            rect.write(get_screen_window_rect(c, *win));
             return TRUE;
+        }
+
+        // A window that stops being a surface root draws into its new root's surface from now on, so its own surface is
+        // dropped; either way it repaints where it now appears.
+        void update_window_relationship(const syscall_context& c, window& win, const bool was_surface_root)
+        {
+            const bool surface_root = c.proc.is_surface_root(win);
+            c.proc.sync_guest_window_rects(win);
+            if (was_surface_root && !surface_root)
+            {
+                c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win.handle));
+            }
+
+            if (win.host_surface_window)
+            {
+                c.win_emu.ui().set_window_relationship(win.handle, surface_root ? 0 : win.parent_handle,
+                                                       surface_root ? win.owner_handle : 0, surface_root);
+            }
+
+            if ((win.style & WS_VISIBLE) != 0)
+            {
+                invalidate_window(c, win, std::nullopt, true, child_redraw_scope::all);
+            }
         }
 
         hwnd handle_NtUserSetParent(const syscall_context& c, const hwnd hwnd_child, const hwnd hwnd_new_parent)
@@ -6024,6 +6134,9 @@ namespace sogen
                 child->owner_handle = previous_parent->handle;
             }
 
+            const bool was_surface_root = c.proc.is_surface_root(*child);
+            const RECT vacated_area{
+                .left = child->x, .top = child->y, .right = child->x + child->width, .bottom = child->y + child->height};
             child->parent_handle = effective_parent->handle;
             child->guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.spwndParent = effective_parent->guest.value();
@@ -6032,6 +6145,14 @@ namespace sogen
             });
 
             append_to_parent();
+            update_window_relationship(c, *child, was_surface_root);
+
+            // Windows hides the window before it changes the parent, so the old parent repaints what the window covered.
+            if (auto* vacated_parent = c.proc.windows.get(old_parent);
+                vacated_parent && vacated_parent != effective_parent && (child->style & WS_VISIBLE) != 0)
+            {
+                invalidate_window(c, *vacated_parent, vacated_area, true);
+            }
 
             return old_parent;
         }
@@ -6267,21 +6388,105 @@ namespace sogen
             return find_foreground_window(c);
         }
 
-        hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
+        // The focus moves before either window hears of it: WM_KILLFOCUS goes to the old window with the new one in wParam,
+        // then WM_SETFOCUS to the new window with the old one. Either window procedure can move the focus again or destroy a
+        // window, so each message is only sent while its window exists and the focus change it reports is still current.
+        hwnd continue_focus_change(const syscall_context& c, focus_change_state state)
         {
-            if (hwnd != 0 && !c.proc.windows.get(hwnd))
+            const auto& thread = c.thread();
+            const auto notifies = [&](const uint64_t window) -> const sogen::window* {
+                const auto* win = c.proc.windows.get(window);
+                return win && win->thread_id == thread.id && thread.focus_window == state.next ? win : nullptr;
+            };
+
+            if (!state.kill_focus_sent)
             {
-                return 0;
+                state.kill_focus_sent = true;
+                if (const auto* old_focus = notifies(state.previous))
+                {
+                    const auto new_focus = state.next;
+                    dispatch_window_message(c, callback_id::NtUserSetFocus, std::move(state), *old_focus, WM_KILLFOCUS, new_focus);
+                    return {};
+                }
             }
 
+            if (!state.set_focus_sent)
+            {
+                state.set_focus_sent = true;
+                if (const auto* new_focus = notifies(state.next))
+                {
+                    const auto old_focus = state.previous;
+                    dispatch_window_message(c, callback_id::NtUserSetFocus, std::move(state), *new_focus, WM_SETFOCUS, old_focus);
+                    return {};
+                }
+            }
+
+            return state.previous;
+        }
+
+        // A window cannot take the focus while it or any window up to its top-level window is disabled or minimized.
+        bool can_take_focus(const syscall_context& c, const window& target)
+        {
+            const auto* current = &target;
+            for (size_t depth = 0; current && depth < c.proc.windows.size(); ++depth)
+            {
+                if ((current->style & (WS_DISABLED | WS_MINIMIZE)) != 0)
+                {
+                    return false;
+                }
+                if (c.proc.is_surface_root(*current))
+                {
+                    return true;
+                }
+                current = c.proc.windows.get(current->parent_handle);
+            }
+            return true;
+        }
+
+        hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
+        {
             auto& thread = c.thread();
+            if (hwnd != 0)
+            {
+                const auto* target = c.proc.windows.get(hwnd);
+                if (!target)
+                {
+                    set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                    return 0;
+                }
+                if (target->thread_id != thread.id)
+                {
+                    set_guest_last_error(c, 5); // ERROR_ACCESS_DENIED
+                    return 0;
+                }
+                if (!can_take_focus(c, *target))
+                {
+                    set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                    return 0;
+                }
+            }
+
             const auto previous = thread.focus_window;
+            if (previous == hwnd)
+            {
+                return previous;
+            }
+
             thread.set_focus_window(hwnd);
             if (hwnd != 0)
             {
                 set_thread_window_context(c, hwnd);
             }
-            return previous;
+
+            focus_change_state state{};
+            state.previous = previous;
+            state.next = hwnd;
+            return continue_focus_change(c, std::move(state));
+        }
+
+        hwnd completion_NtUserSetFocus(const syscall_context& c, const hwnd /*hwnd*/)
+        {
+            return continue_focus_change(c, std::move(c.get_completion_state<focus_change_state>()));
         }
 
         BOOL handle_NtUserZapActiveAndFocus(const syscall_context& c)
@@ -6495,6 +6700,7 @@ namespace sogen
                 win->ex_style = styles.styleNew;
                 win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwExStyle = styles.styleNew; });
             }
+            c.proc.sync_guest_window_rects(*win);
 
             state.style_applied = true;
             const auto address = state.style_alloc.address();
@@ -6654,8 +6860,7 @@ namespace sogen
             if ((flags & RDW_INVALIDATE) != 0)
             {
                 const bool erase = (flags & RDW_ERASE) != 0 && (flags & RDW_NOERASE) == 0;
-                invalidate_window(c, *win, rect, erase);
-                invalidate_children(c, *win, rect.value_or(get_client_rect(*win)), erase, scope);
+                invalidate_window(c, *win, rect, erase, scope);
             }
 
             if ((flags & RDW_INTERNALPAINT) != 0)
