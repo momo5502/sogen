@@ -54,10 +54,11 @@ namespace sogen
 
             constexpr uint32_t k_gdi_dc_attr_hbrush_offset = 0xA0;
             constexpr uint32_t k_gdi_dc_attr_hpen_offset = 0xA8;
-            constexpr uint32_t k_gdi_dc_attr_dc_brush_color_offset = 0xC4;   // SetDCBrushColor
-            constexpr uint32_t k_gdi_dc_attr_dc_pen_color_offset = 0xCC;     // SetDCPenColor
-            constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0x20; // DC_ATTR.crBackgroundClr (SetBkColor)
-            constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0x28;       // DC_ATTR.crForegroundClr (SetTextColor)
+            constexpr uint32_t k_gdi_dc_attr_dc_brush_color_offset = 0xC4; // SetDCBrushColor
+            constexpr uint32_t k_gdi_dc_attr_dc_pen_color_offset = 0xCC;   // SetDCPenColor
+            constexpr uint32_t k_gdi_dc_attr_realized_background_color_offset = 0xB0;
+            constexpr uint32_t k_gdi_dc_attr_background_color_offset = 0xB4; // SetBkColor/GetBkColor
+            constexpr uint32_t k_gdi_dc_attr_text_color_offset = 0xBC;       // SetTextColor/GetTextColor
             constexpr uint32_t k_gdi_dc_attr_rop2_offset = 0xD4;             // DC_ATTR.jROP2 (SetROP2)
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
             constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
@@ -2094,6 +2095,10 @@ namespace sogen
 
                 constexpr uint32_t white = 0x00FFFFFFu;
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_dc_brush_color_offset, &white, sizeof(white));
+
+                // A new DC draws opaque text on white; gdi32 batches text with the realized background color.
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_background_color_offset, &white, sizeof(white));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_realized_background_color_offset, &white, sizeof(white));
 
                 const std::array<std::pair<uint32_t, uint32_t>, 3> default_objects{{
                     {k_stock_system_font_index, k_gdi_dc_attr_font_offset},
