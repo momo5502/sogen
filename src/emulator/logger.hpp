@@ -4,13 +4,15 @@
 #include <utils/function.hpp>
 #include <utils/win.hpp>
 
-#include <chrono>
+#include <memory>
 #include <mutex>
 #include <string_view>
 #include <utility>
 
 namespace sogen
 {
+
+    class queued_file_writer;
 
     class logger : public generic_logger
     {
@@ -23,9 +25,7 @@ namespace sogen
         using sink = utils::optional_function<void(color c, std::string_view message)>;
 
         logger();
-#ifdef _WIN32
         ~logger() override;
-#endif
         void print(color c, std::string_view message) override;
         void print(color c, const char* message, ...) override FORMAT_ATTRIBUTE(3, 4);
         void force_print(color c, const char* message, ...) FORMAT_ATTRIBUTE(3, 4);
@@ -73,7 +73,7 @@ namespace sogen
         bool terminal_{true};
         sink sink_{};
         mutable std::mutex print_mutex_{};
-        mutable std::chrono::steady_clock::time_point last_flush_{};
+        mutable std::unique_ptr<queued_file_writer> redirected_output_{};
         void print_message(color c, std::string_view message, bool force = false) const;
     };
 
