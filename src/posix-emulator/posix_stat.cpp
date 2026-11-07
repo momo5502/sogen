@@ -34,8 +34,8 @@ namespace sogen
         // The C runtime reports neither a device nor an inode number; the volume serial and file index stand for them.
         void apply_file_id(const std::filesystem::path& path, posix_file_status& status)
         {
-            const auto handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                                            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+            auto* const handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
             if (handle == INVALID_HANDLE_VALUE)
             {
                 return;
