@@ -447,6 +447,16 @@ namespace sogen
         emulator_thread* find_thread_by_id(uint32_t thread_id);
         const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
         bool is_window_effectively_visible(hwnd window) const;
+
+        // Whether the window draws into a surface of its own rather than its parent's. SetParent keeps WS_CHILD, so a child
+        // moved under the desktop window, like a combo box's drop-down list, becomes a top-level window that keeps the style.
+        bool is_surface_root(const window& win) const;
+
+        // Where the window's top-left corner is on the screen: a child's x and y are relative to its parent's client area.
+        POINT window_screen_origin(const window& win) const;
+
+        // Updates the guest's screen rectangles of the window and everything inside it, which move along with it.
+        void sync_guest_window_rects(window& win);
         bool is_current_process_handle(handle handle) const;
         bool is_current_thread_handle(handle handle, const emulator_thread* active_thread) const;
         bool is_object_pseudo_handle(handle handle) const;

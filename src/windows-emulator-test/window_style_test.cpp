@@ -54,7 +54,7 @@ namespace sogen::test
                     guest.dwStyle = win.style;
                     guest.dwExStyle = win.ex_style;
                 });
-                win.sync_guest_rects();
+                this->emu->process.sync_guest_window_rects(win);
                 this->window_handle = created_handle;
             }
 

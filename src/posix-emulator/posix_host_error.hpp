@@ -32,6 +32,8 @@ namespace sogen
             return posix_errno::emfile;
         case ENOENT:
             return posix_errno::enoent;
+        case ENOMEM:
+            return posix_errno::enomem;
         case ENOSPC:
             return posix_errno::enospc;
         case ENOTDIR:

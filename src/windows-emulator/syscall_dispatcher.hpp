@@ -359,6 +359,31 @@ namespace sogen
         }
     };
 
+    struct focus_change_state : completion_state
+    {
+        uint64_t previous{};
+        uint64_t next{};
+        bool kill_focus_sent{};
+        bool set_focus_sent{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->previous);
+            buffer.write(this->next);
+            buffer.write(this->kill_focus_sent);
+            buffer.write(this->set_focus_sent);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->previous);
+            buffer.read(this->next);
+            buffer.read(this->kill_focus_sent);
+            buffer.read(this->set_focus_sent);
+        }
+    };
+
     struct window_update_state : completion_state
     {
         // Window handles still to be painted (WM_PAINT), back() is dispatched next.

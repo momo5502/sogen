@@ -52,7 +52,7 @@ namespace sogen
 
     bool signal_dispatcher::deliver_signal(linux_emulator& emu, const int signum, const uint64_t fault_addr, const int si_code)
     {
-        if (signum < 1 || signum >= 64)
+        if (signum < 1 || signum > LINUX_NSIG)
         {
             return false;
         }

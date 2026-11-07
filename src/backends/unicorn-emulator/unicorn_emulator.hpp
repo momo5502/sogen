@@ -727,6 +727,7 @@ namespace sogen::unicorn
 
             const detail::uc_context_serializer serializer(this->uc_, is_snapshot);
             serializer.deserialize(buffer);
+            this->violation_ip_.reset();
         }
 
         std::vector<std::byte> save_registers() const override
@@ -752,6 +753,7 @@ namespace sogen::unicorn
             utils::buffer_deserializer buffer{register_data};
             const detail::uc_context_serializer serializer(this->uc_, false);
             serializer.deserialize(buffer);
+            this->violation_ip_.reset();
         }
 
         bool has_violation() const override

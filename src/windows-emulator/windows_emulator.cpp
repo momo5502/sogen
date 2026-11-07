@@ -96,8 +96,7 @@ namespace sogen
             for (const auto& [index, child] : process.windows)
             {
                 (void)index;
-                if (child.parent_handle != parent || (child.style & WS_VISIBLE) == 0 || (child.style & WS_DISABLED) != 0 ||
-                    is_transparent_to_mouse(child))
+                if (child.parent_handle != parent || (child.style & WS_VISIBLE) == 0 || (child.style & WS_DISABLED) != 0)
                 {
                     continue;
                 }
@@ -110,7 +109,7 @@ namespace sogen
                     {
                         result = descendant;
                     }
-                    else
+                    else if (!is_transparent_to_mouse(child))
                     {
                         result = child_hit_test_result{.win = &child, .x = child_x, .y = child_y};
                     }
@@ -2741,7 +2740,7 @@ namespace sogen
 
         win->x = x;
         win->y = y;
-        win->sync_guest_rects();
+        this->process.sync_guest_window_rects(*win);
 
         msg m{};
         m.window = window_handle;
@@ -2777,7 +2776,7 @@ namespace sogen
         win->height = client_height + insets.top + insets.bottom;
         win->style = maximized ? (win->style | WS_MAXIMIZE) : (win->style & ~WS_MAXIMIZE);
         win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win->style; });
-        win->sync_guest_rects();
+        this->process.sync_guest_window_rects(*win);
 
         win->update_rect = RECT{.left = 0, .top = 0, .right = win->client_width(), .bottom = win->client_height()};
         win->update_pending = true;
