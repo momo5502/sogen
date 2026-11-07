@@ -773,12 +773,21 @@ namespace sogen
         }
     }
 
-    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name)
+    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name,
+                                                          const uint32_t class_extra)
     {
+        // The zeroed extra bytes start at user_class_extra_offset, inside USER_CLASS's padding for small ones; the ANSI name
+        // comes after both.
         const auto ansi_class_name = u16_to_cp1252(class_name);
-        const auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS) + ansi_class_name.size() + 1));
+        const auto name_offset = std::max<uint64_t>(sizeof(USER_CLASS), user_class_extra_offset + class_extra);
+        const auto cls_size = static_cast<size_t>(page_align_up(name_offset + ansi_class_name.size() + 1));
         const auto cls_ptr = memory.allocate_memory(cls_size, memory_permission::read);
-        const auto ansi_class_name_ptr = cls_ptr + sizeof(USER_CLASS);
+        if (!cls_ptr)
+        {
+            return 0;
+        }
+
+        const auto ansi_class_name_ptr = cls_ptr + name_offset;
 
         memory.write_memory(ansi_class_name_ptr, ansi_class_name.c_str(), ansi_class_name.size() + 1);
 

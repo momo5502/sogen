@@ -195,11 +195,21 @@ namespace sogen
             return name;
         }
 
+        // user32 answers GetClassLongPtr from the class object, never through a syscall, so it has to carry the
+        // registered values.
         void publish_class_to_guest(memory_manager& memory, const process_context::class_entry& entry)
         {
             emulator_object<USER_CLASS>{memory, entry.guest_obj_addr}.access([&](USER_CLASS& cls) {
                 cls.atom = entry.atom;
+                cls.style = entry.wnd_class.style;
+                cls.cbclsExtra = static_cast<uint32_t>(entry.wnd_class.cbClsExtra);
+                cls.lpszClientAnsiMenuName = entry.menu_name.pszClientAnsiMenuName;
+                cls.lpszClientUnicodeMenuName = entry.menu_name.pwszClientUnicodeMenuName;
                 cls.lpfnWndProc = entry.wnd_class.lpfnWndProc;
+                cls.hIconSm = entry.wnd_class.hIconSm;
+                cls.hModule = entry.wnd_class.hInstance;
+                cls.hbrBackground = entry.wnd_class.hbrBackground;
+                cls.cbwndExtra = static_cast<uint32_t>(entry.wnd_class.cbWndExtra);
             });
         }
 
@@ -3786,7 +3796,7 @@ namespace sogen
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                                  const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class_version*/,
                                                  const emulator_object<CLSMENUNAME<EmulatorTraits<Emu64>>> class_menu_name,
-                                                 const DWORD /*function_id*/, const DWORD flags, const emulator_pointer /*wow*/)
+                                                 const DWORD function_id, const DWORD flags, const emulator_pointer /*wow*/)
         {
             if (!wnd_class_ex)
             {
@@ -3794,14 +3804,51 @@ namespace sogen
                 return 0;
             }
 
+            // win32kfull's InternalRegisterClassEx sizes the class object as 0x58 + cbClsExtra in 32 bits, and a size that wraps
+            // fails with ERROR_INVALID_PARAMETER. The object comes from the desktop heap, 20 MB on an interactive desktop
+            // (SharedSection's second value), and the class name's atom is only added once it is allocated. An object the
+            // heap cannot hold, from a more negative or a large positive extra, fails the registration without an error.
+            // ponytail: the whole heap bounds one object; what the desktop's other objects already use is not counted.
+            constexpr uint32_t desktop_heap_size = 20480 * 1024;
+            constexpr auto class_object_size = static_cast<uint32_t>(process_context::user_class_extra_offset);
+            const auto wnd_class = wnd_class_ex.read();
+            const auto class_size = class_object_size + static_cast<uint32_t>(wnd_class.cbClsExtra);
+            if (class_size < class_object_size)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
             const auto class_name_str = read_unicode_string(c.emu, class_name);
+            const auto cls_ptr =
+                class_size <= desktop_heap_size
+                    ? process_context::allocate_user_class(c.win_emu.memory, class_name_str, static_cast<uint32_t>(wnd_class.cbClsExtra))
+                    : 0;
+            if (!cls_ptr)
+            {
+                return 0;
+            }
+
             const auto index = c.proc.add_or_find_atom(class_name_str);
 
-            const auto cls_ptr = process_context::allocate_user_class(c.win_emu.memory, class_name_str);
-
-            const auto wnd_class = wnd_class_ex.read();
-            const auto entry = process_context::class_entry{cls_ptr, wnd_class, class_menu_name.read(), index, (flags & CSF_ANSIPROC) != 0};
+            const auto menu_name = class_menu_name.read();
+            const auto entry = process_context::class_entry{cls_ptr, wnd_class, menu_name, index, (flags & CSF_ANSIPROC) != 0};
             publish_class_to_guest(c.win_emu.memory, entry);
+
+            // win32kfull takes the menu name from pusMenuName, not from the WNDCLASSEX, and marks only a non-empty string,
+            // with -1; user32's GetClassLongPtr(GCLP_MENUNAME) then returns its client copy of the name.
+            UNICODE_STRING<EmulatorTraits<Emu64>> menu_string{};
+            char16_t menu_first_char{};
+            const auto has_menu_string = c.win_emu.memory.try_read_memory(menu_name.pusMenuName, &menu_string, sizeof(menu_string)) &&
+                                         (menu_string.Buffer >> 16) != 0 &&
+                                         c.win_emu.memory.try_read_memory(menu_string.Buffer, &menu_first_char, sizeof(menu_first_char)) &&
+                                         menu_first_char != 0;
+            emulator_object<USER_CLASS>{c.win_emu.memory, cls_ptr}.access([&](USER_CLASS& cls) {
+                cls.fnid = static_cast<uint16_t>(function_id);
+                // RegisterClassExWOW passes the CSF_* flags user32 computed; CSF_ANSIPROC marks an ANSI class procedure.
+                cls.CSF_flags = static_cast<uint16_t>(flags);
+                cls.lpszMenuName = has_menu_string ? ~0ull : 0;
+            });
 
             if (c.win_emu.callbacks.on_generic_activity)
             {
@@ -6190,7 +6237,6 @@ namespace sogen
             case gclp_wndproc:
                 old_value = cls.lpfnWndProc;
                 cls.lpfnWndProc = dwNewLong;
-                publish_class_to_guest(c.win_emu.memory, entry->second);
                 break;
             case gclp_hmodule:
                 old_value = cls.hInstance;
@@ -6213,10 +6259,28 @@ namespace sogen
                 cls.hIconSm = dwNewLong;
                 break;
             default:
-                // GCL_CBCLSEXTRA / GCL_CBWNDEXTRA / GCLP_MENUNAME / positive class-extra offsets: not modeled.
+                // A positive index addresses the class's extra bytes. win32kfull's xxxSetClassLongPtr fails one whose 8 bytes
+                // do not fit in cbClsExtra with ERROR_INVALID_INDEX, and otherwise swaps the value in place.
+                if (nIndex >= 0)
+                {
+                    const auto offset = static_cast<uint32_t>(nIndex);
+                    if (offset + 8 < offset || offset + 8 > static_cast<uint32_t>(cls.cbClsExtra))
+                    {
+                        set_guest_last_error(c, 1413); // ERROR_INVALID_INDEX
+                        return 0;
+                    }
+
+                    const auto address = entry->second.guest_obj_addr + process_context::user_class_extra_offset + offset;
+                    old_value = c.win_emu.memory.read_memory<uint64_t>(address);
+                    c.win_emu.memory.write_memory(address, uint64_t{dwNewLong});
+                    return old_value;
+                }
+
+                // GCL_CBCLSEXTRA / GCL_CBWNDEXTRA / GCLP_MENUNAME: not modeled.
                 break;
             }
 
+            publish_class_to_guest(c.win_emu.memory, entry->second);
             return old_value;
         }
 
