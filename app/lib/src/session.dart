@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:xterm/xterm.dart';
 
 import 'game_library.dart';
+import 'steam/install_script.dart';
 
 class GuestWindow {
   GuestWindow({
@@ -161,6 +162,7 @@ class GameSession extends ChangeNotifier {
 
     final layers = await layerDirectory(game);
     final mount = {guestGameDirectory: installed?.path ?? game.directory};
+    final registryFiles = [if (installed != null) ?await _writeInstallScriptRegistry(game, installed)];
     final started =
         await _methods.invokeMethod<bool>('start', {
           'emulationRoot': emulationRoot,
@@ -175,6 +177,7 @@ class GameSession extends ChangeNotifier {
           'liveNetwork': game.liveNetwork,
           'maxDisplayMode': game.maxDisplayMode?.name ?? '',
           'resumeFile': resumeFile ?? '',
+          'registryFiles': registryFiles,
           'registryState': (await registryStateFile(game)).path,
         }) ??
         false;
@@ -189,6 +192,30 @@ class GameSession extends ChangeNotifier {
     }
     notifyListeners();
     return started;
+  }
+
+  /// Writes the registry values the game's Steam install script sets, as Steam does when it installs the game. Later
+  /// sessions start from the registry state the game saved, so its own changes to these values are kept.
+  Future<String?> _writeInstallScriptRegistry(Game game, Directory installed) async {
+    final script = File(p.join(installed.path, 'installscript.vdf'));
+    if (!script.existsSync() || (await registryStateFile(game)).existsSync()) {
+      return null;
+    }
+
+    final String? registry;
+    try {
+      registry = installScriptRegistry(await script.readAsString(), guestGameDirectory);
+    } on FormatException {
+      return null;
+    }
+    if (registry == null) {
+      return null;
+    }
+
+    final file = await startupRegistryFile(game);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(registry);
+    return file.path;
   }
 
   Future<void> stop() {

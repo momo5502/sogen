@@ -410,6 +410,11 @@ Future<File> registryStateFile(Game game) async {
   return File(p.join((await _gameLayers(game)).path, 'registry.state'));
 }
 
+/// The registry values Sogen sets for the game when it starts, written before each start.
+Future<File> startupRegistryFile(Game game) async {
+  return File(p.join((await _gameLayers(game)).path, 'startup.reg'));
+}
+
 /// Everything that is kept for the game besides its folder.
 Future<Directory> _gameLayers(Game game) async {
   final support = await getApplicationSupportDirectory();
