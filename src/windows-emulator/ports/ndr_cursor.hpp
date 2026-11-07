@@ -1,7 +1,20 @@
 #pragma once
 
+#include "../port.hpp"
+
 namespace sogen
 {
+
+    inline std::vector<uint8_t> read_rpc_request(const memory_interface& memory, const lpc_request_context& c)
+    {
+        std::vector<uint8_t> request(c.send_buffer_length);
+        if (!request.empty() && !memory.try_read_memory(c.send_buffer, request.data(), request.size()))
+        {
+            request.clear();
+        }
+
+        return request;
+    }
 
     struct ndr_cursor
     {

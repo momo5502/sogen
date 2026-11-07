@@ -195,6 +195,8 @@ namespace sogen
         emulator_pointer entries_removed_ptr{};
         ULONG max_entries{};
         std::optional<std::chrono::steady_clock::time_point> timeout{};
+        // The worker factory a NtWaitForWorkViaWorkerFactory wait takes work for; none for NtRemoveIoCompletion(Ex).
+        handle worker_factory_handle{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -207,6 +209,7 @@ namespace sogen
             buffer.write(this->entries_removed_ptr);
             buffer.write(this->max_entries);
             buffer.write_optional(this->timeout);
+            buffer.write(this->worker_factory_handle);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -221,6 +224,7 @@ namespace sogen
             buffer.read(this->entries_removed_ptr);
             buffer.read(this->max_entries);
             buffer.read_optional(this->timeout);
+            buffer.read(this->worker_factory_handle);
         }
     };
 
@@ -264,6 +268,10 @@ namespace sogen
         NtUserMsgWaitForMultipleObjectsEx,
         NtUserSetWindowLong,
         NtUserSetWindowLongPtr,
+        NtUserSetFocus,
+        NtUserGetControlBrush,
+        NtUserGetControlColor,
+        NtUserFillWindow,
     };
 
     struct callback_frame
@@ -454,7 +462,9 @@ namespace sogen
         // When set, the thread is parked until this host-side predicate returns true. Used by the GPU
         // bridge to wait on a Vulkan semaphore cooperatively (other guest threads run while the GPU works)
         // instead of blocking the single VP. Polled by is_thread_ready and completed via
-        // mark_as_ready(STATUS_SUCCESS). Not serialized: the only user (GPU bridge) is not snapshotable.
+        // mark_as_ready(STATUS_SUCCESS). Idle vCPUs poll it once a millisecond unless woken, so whatever makes it
+        // true calls windows_emulator::credit_idle_wakeup. Not serialized: the only user (GPU bridge) is not
+        // snapshotable.
         std::function<bool()> await_host_condition{};
 
         bool apc_alertable{false};

@@ -10,6 +10,7 @@
 #include <minidump_loader.hpp>
 #include <scoped_hook.hpp>
 #include <registry/registry_file.hpp>
+#include <registry/registry_state_file.hpp>
 
 #include "object_watching.hpp"
 #include <snapshot.hpp>
@@ -66,6 +67,9 @@ namespace sogen
             bool log_foreign_module_access{false};
             bool tenet_trace{false};
             bool prepend_call_count{false};
+#ifndef OS_EMSCRIPTEN
+            bool trace_children{false};
+#endif
 #if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
             bool pause_before_start{false};
 #endif
@@ -83,6 +87,7 @@ namespace sogen
             uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::vector<std::filesystem::path> registry_files{};
+            std::filesystem::path registry_state{};
             std::filesystem::path emulation_root{};
             std::filesystem::path working_directory{};
             uint16_t managed_process_port{};
@@ -95,9 +100,41 @@ namespace sogen
 
 #ifndef OS_EMSCRIPTEN
         std::vector<std::string> create_managed_process_arguments(const analysis_options& options, const uint16_t port,
-                                                                  const std::string& token)
+                                                                  const std::string& token, const uint64_t child_id)
         {
             std::vector<std::string> arguments{"--managed-process-port", std::to_string(port), "--managed-process-token", token};
+            if (options.trace_children)
+            {
+                arguments.insert(arguments.end(), {"--trace-children", "--backend", "whp"});
+                const auto add_flag = [&](const std::string_view flag, const bool enabled) {
+                    if (enabled)
+                    {
+                        arguments.emplace_back(flag);
+                    }
+                };
+                add_flag("--very-concise", options.skip_generic_activity);
+                add_flag("--concise", options.concise_logging);
+                add_flag("--verbose", options.verbose_logging);
+                const auto add_output = [&](const std::string_view option, std::filesystem::path path) {
+                    if (!path.empty())
+                    {
+                        path.replace_filename(path.stem().string() + ".child-" + std::to_string(child_id) + path.extension().string());
+                        arguments.emplace_back(option);
+                        arguments.push_back(path.string());
+                    }
+                };
+                add_output("--report", options.report_path);
+                add_output("--stdout", options.stdout_path);
+                arguments.insert(arguments.end(), {"--report-format", options.report_format});
+                for (const auto& module : options.modules)
+                {
+                    arguments.insert(arguments.end(), {"--module", module});
+                }
+                for (const auto& function : options.ignored_functions)
+                {
+                    arguments.insert(arguments.end(), {"--ignore", function});
+                }
+            }
             arguments.emplace_back("--network");
             arguments.emplace_back(network::to_string(options.network));
             if (options.spoof_gpu_features)
@@ -728,22 +765,60 @@ namespace sogen
                 .auto_break_before_call = options.break_call,
             };
 
+#ifndef OS_EMSCRIPTEN
+            std::atomic<uint64_t> child_counter{};
+#endif
             std::unique_ptr<process_manager> manager{};
 
 #ifndef OS_EMSCRIPTEN
             const auto is_x86_64_target = get_target_machine(options, args) != PEMachineType::ARM64;
-            if (is_x86_64_target && options.backend.value_or(get_x86_64_emulator_backend_from_environment()) == backend_type::whp)
+            const auto supports_managed_processes =
+                is_x86_64_target && options.backend.value_or(get_x86_64_emulator_backend_from_environment()) == backend_type::whp;
+            if (options.trace_children && !supports_managed_processes)
             {
-                manager = std::make_unique<subprocess_process_manager>(get_sandbox_executable(), [&](const auto port, const auto& token) {
-                    return create_managed_process_arguments(options, port, token);
+                throw std::runtime_error("--trace-children requires an x86 or x64 target with the WHP backend");
+            }
+            if (supports_managed_processes)
+            {
+                const auto child_executable = options.trace_children ? utils::get_current_executable_path() : get_sandbox_executable();
+                manager = std::make_unique<subprocess_process_manager>(child_executable, [&](const auto port, const auto& token) {
+                    return create_managed_process_arguments(options, port, token, ++child_counter);
                 });
             }
 #endif
+            // Declared before the emulator, so the guest's windows are gone while this process waits for its children. Any
+            // other way out leaves the children to the process manager's destructor.
+            bool guest_exited = false;
+            const auto children_guard = utils::finally([&] {
+                if (manager && guest_exited)
+                {
+                    manager->wait_for_processes();
+                }
+            });
+            std::unique_ptr<registry_state_file> registry_state{};
+            if (!options.registry_state.empty())
+            {
+                if (!options.dump.empty() || !options.minidump_path.empty())
+                {
+                    throw std::runtime_error("Registry state cannot be combined with a snapshot or minidump");
+                }
+#ifndef OS_EMSCRIPTEN
+                if (options.managed_process)
+                {
+                    throw std::runtime_error("Registry state belongs to the primary analyzer process");
+                }
+#endif
+                registry_state = std::make_unique<registry_state_file>(options.registry_state);
+            }
             const auto concise_logging = options.concise_logging;
             const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager.get()});
             if (options.network == network::network_mode::live)
             {
                 win_emu->log.warn("Network mode is live: the guest can use the host network\n");
+            }
+            if (registry_state)
+            {
+                registry_state->load(win_emu->registry);
             }
             apply_registry_files(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
@@ -1006,6 +1081,10 @@ namespace sogen
             }
 
             const auto success = run_emulation(context, options);
+            if (registry_state && win_emu->process.exit_status.has_value())
+            {
+                registry_state->save(win_emu->registry);
+            }
 #ifndef OS_EMSCRIPTEN
             if (options.managed_process && win_emu->process.exit_status)
             {
@@ -1016,6 +1095,7 @@ namespace sogen
                 }
             }
 #endif
+            guest_exited = win_emu->process.exit_status.has_value();
             return success;
         }
 
@@ -1080,6 +1160,9 @@ namespace sogen
             app.add_flag("--no-inst-precision", options.disable_instruction_precision,
                          "Disable per-instruction precision (faster, less precise)");
             app.add_flag("--call-count", options.prepend_call_count, "Prefix function and syscall lines with a traced-call count");
+#ifndef OS_EMSCRIPTEN
+            app.add_flag("--trace-children", options.trace_children, "Run managed child processes in the analyzer with tracing enabled");
+#endif
 #if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
             app.add_flag("--break-start", options.pause_before_start, "Pause before executing the first instruction");
 #endif
@@ -1097,6 +1180,9 @@ namespace sogen
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
+#ifndef OS_EMSCRIPTEN
+            app.add_option("--registry-state", options.registry_state, "Load registry overlay state and save it after the guest exits");
+#endif
             app.add_option("--reg-file", options.registry_files, "Import registry values from a .reg file")
                 ->type_name("FILE")
                 ->expected(1)

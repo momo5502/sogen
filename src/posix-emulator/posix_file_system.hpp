@@ -22,13 +22,20 @@ namespace sogen
         return std::u8string{utf8.begin(), utf8.end()};
     }
 
+    enum class posix_root_access
+    {
+        read_write,
+        read_only,
+    };
+
     class posix_file_system
     {
       public:
         posix_file_system() = default;
 
-        explicit posix_file_system(std::filesystem::path root)
-            : root_(std::move(root))
+        explicit posix_file_system(std::filesystem::path root, const posix_root_access root_access = posix_root_access::read_write)
+            : root_(std::move(root)),
+              root_access_(root_access)
         {
         }
 
@@ -209,9 +216,13 @@ namespace sogen
 
         bool is_read_only_guest_path(const std::string_view guest_path) const
         {
-            const auto normalized_guest = normalize_guest_path(guest_path);
-            const auto* mapping = this->find_mapping(normalized_guest);
-            return mapping != nullptr && mapping->read_only;
+            const auto normalized_guest = normalize_guest_path_string(guest_path);
+            if (const auto* mapping = this->find_mapping(normalized_guest))
+            {
+                return mapping->read_only;
+            }
+
+            return this->root_access_ == posix_root_access::read_only && !is_device(normalized_guest);
         }
 
         static std::filesystem::path normalize_guest_path(const std::string_view guest_path)
@@ -297,6 +308,7 @@ namespace sogen
         };
 
         std::filesystem::path root_{};
+        posix_root_access root_access_{posix_root_access::read_write};
         std::vector<std::filesystem::path> passthrough_prefixes_{};
         std::vector<path_mapping> path_mappings_{};
 
@@ -380,6 +392,11 @@ namespace sogen
         static bool is_dev_urandom(const std::string_view path)
         {
             return path == "/dev/urandom" || path == "/dev/random";
+        }
+
+        static bool is_device(const std::string_view path)
+        {
+            return is_dev_null(path) || is_dev_zero(path) || is_dev_urandom(path);
         }
     };
 

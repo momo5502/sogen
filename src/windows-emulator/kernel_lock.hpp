@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <mutex>
+#include "adaptive_mutex.hpp"
 #include <thread>
 
 namespace sogen
@@ -130,7 +131,7 @@ namespace sogen
             this->held_since_ = clock::now();
         }
 
-        std::mutex mutex_{};
+        adaptive_mutex mutex_{};
         std::atomic<std::thread::id> owner_{};
 
         // Guarded by mutex_ (written/read only by the current holder).

@@ -14,6 +14,8 @@ namespace sogen::syscalls
     BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
     uint32_t handle_NtUserGetRegisteredRawInputDevices(const syscall_context& c, emulator_pointer devices, emulator_pointer device_count,
                                                        uint32_t size);
+    uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
+    uint32_t handle_NtUserSendInput(const syscall_context& c, uint32_t input_count, emulator_pointer inputs, int32_t input_size);
 }
 
 namespace sogen::test
@@ -92,6 +94,23 @@ namespace sogen::test
             EMU_TITLEBARINFO read_title_bar_info()
             {
                 return this->emu.memory.read_memory<EMU_TITLEBARINFO>(this->storage);
+            }
+
+            // CLIENTINFO.dwKeyCache and the two-bit states after it, as user32!GetKeyState reads them.
+            std::pair<uint32_t, std::array<uint8_t, 8>> client_key_cache()
+            {
+                const auto address = this->emu.vcpu(0).active_thread->teb64->value() + offsetof(TEB64, Win32ClientInfo) + 0x70;
+                return {this->emu.memory.read_memory<uint32_t>(address), this->emu.memory.read_memory<std::array<uint8_t, 8>>(address + 4)};
+            }
+
+            uint32_t key_state_generation() const
+            {
+                return this->emu.process.user_handles.get_server_info().read().keyStateGeneration;
+            }
+
+            uint32_t key_state(const int32_t virtual_key)
+            {
+                return syscalls::handle_NtUserGetKeyState(this->context(), virtual_key);
             }
 
             windows_emulator emu = create_sample_emulator();
@@ -435,5 +454,91 @@ namespace sogen::test
         EXPECT_EQ(failed, registered(ending_before_read_only, count, 8));
         EXPECT_EQ(error_noaccess, this->last_error());
         EXPECT_EQ(0, this->emu.memory.read_memory<RAWINPUTDEVICE64>(ending_before_read_only).usUsage);
+    }
+
+    TEST_F(UserQueryTest, KeyStateRefreshesTheCallersKeyCacheOfTheKeysBelowSpace)
+    {
+        // A new thread's empty cache never passes for current.
+        EXPECT_EQ(0u, this->client_key_cache().first);
+        EXPECT_NE(0u, this->key_state_generation());
+
+        auto& keys = this->emu.process.key_state;
+        keys[VK_LBUTTON] = 0x80;
+        keys[VK_SHIFT] = 0x80;
+        keys[VK_CAPITAL] = 0x01;
+        keys['A'] = 0x80;
+
+        EXPECT_EQ(0xFF80u, this->key_state('A'));
+        EXPECT_EQ(0xFF80u, this->key_state(VK_SHIFT));
+        EXPECT_EQ(1u, this->key_state(VK_CAPITAL));
+        EXPECT_EQ(0u, this->key_state(VK_ESCAPE));
+
+        const auto [generation, states] = this->client_key_cache();
+        EXPECT_EQ(this->key_state_generation(), generation);
+        EXPECT_EQ(0x04, states[VK_LBUTTON >> 2]); // VK_LBUTTON's down bit
+        EXPECT_EQ(0x01, states[VK_SHIFT >> 2]);   // VK_SHIFT's down bit
+        EXPECT_EQ(0x02, states[VK_CAPITAL >> 2]); // VK_CAPITAL's toggled bit
+        EXPECT_EQ(0x00, states[VK_ESCAPE >> 2]);
+    }
+
+    TEST_F(UserQueryTest, KeyChangeOutdatesTheKeyCacheUntilTheNextKeyStateQuery)
+    {
+        (void)this->key_state('A');
+        const auto stamped = this->client_key_cache().first;
+
+        this->emu.process.key_state[VK_CONTROL] = 0x80;
+        this->emu.process.key_state_changed();
+        EXPECT_NE(stamped, this->key_state_generation());
+
+        (void)this->key_state('A');
+        const auto [generation, states] = this->client_key_cache();
+        EXPECT_EQ(this->key_state_generation(), generation);
+        EXPECT_EQ(0x04, states[VK_CONTROL >> 2]); // VK_CONTROL's down bit
+    }
+
+    // SendInput with no window in the foreground changes the key state without a message to deliver; the cache of the
+    // keys below 0x20 must stop passing for current all the same.
+    TEST_F(UserQueryTest, KeyInjectedWithoutAWindowOutdatesTheKeyCache)
+    {
+        // Nothing to receive the input: no foreground window and no visible top-level one, the desktop window included.
+        this->emu.process.foreground_window = 0;
+        for (auto& [index, window] : this->emu.process.windows)
+        {
+            window.style &= ~static_cast<uint32_t>(WS_VISIBLE);
+        }
+
+        (void)this->key_state('A');
+        const auto stamped = this->client_key_cache().first;
+
+        // INPUT{INPUT_KEYBOARD, KEYBDINPUT{wVk = VK_SHIFT}}, 40 bytes on x64.
+        this->emu.memory.set_memory(this->storage, 0, 40);
+        this->emu.memory.write_memory(this->storage, uint32_t{1});
+        this->emu.memory.write_memory(this->storage + 8, uint16_t{VK_SHIFT});
+        ASSERT_EQ(1u, syscalls::handle_NtUserSendInput(this->context(), 1, this->storage, 40));
+        EXPECT_NE(stamped, this->key_state_generation());
+
+        EXPECT_EQ(0xFF80u, this->key_state(VK_SHIFT));
+        EXPECT_EQ(0x01, this->client_key_cache().second[VK_SHIFT >> 2]); // VK_SHIFT's down bit
+    }
+
+    // Continuing a saved process releases what was held when it was saved. The cache and the generation come back with
+    // guest memory, so the release must outdate the cache too.
+    TEST_F(UserQueryTest, ReleasingHeldInputOutdatesTheKeyCache)
+    {
+        this->emu.process.key_state[VK_LBUTTON] = 0x80;
+        (void)this->key_state('A');
+        const auto [stamped, states] = this->client_key_cache();
+        ASSERT_EQ(0x04, states[VK_LBUTTON >> 2]); // VK_LBUTTON's down bit
+
+        this->emu.release_held_input();
+        EXPECT_NE(stamped, this->key_state_generation());
+        EXPECT_EQ(0u, this->key_state(VK_LBUTTON));
+        EXPECT_EQ(0x00, this->client_key_cache().second[VK_LBUTTON >> 2]);
+    }
+
+    TEST_F(UserQueryTest, KeyStateOfAKeyPastTheLastFailsWithInvalidParameter)
+    {
+        EXPECT_EQ(0u, this->key_state(0x100));
+        EXPECT_EQ(87u, this->last_error()); // ERROR_INVALID_PARAMETER
     }
 }

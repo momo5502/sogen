@@ -1,14 +1,12 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
-#include <posix_path_resolution.hpp>
+#include <posix_path_syscalls.hpp>
+#include <posix_stat.hpp>
 
 #include <array>
 #include <cstddef>
-#include <filesystem>
-#include <optional>
 #include <string>
-#include <string_view>
 
 namespace sogen
 {
@@ -50,51 +48,22 @@ namespace sogen
         static_assert(offsetof(macos_stat64, st_size) == 96);
         static_assert(offsetof(macos_stat64, st_blksize) == 112);
 
-        constexpr uint16_t MACOS_S_IFIFO = 0010000;
-        constexpr uint16_t MACOS_S_IFDIR = 0040000;
-        constexpr uint16_t MACOS_S_IFREG = 0100000;
-        constexpr uint16_t MACOS_S_IFLNK = 0120000;
-        constexpr uint16_t PIPE_PERMISSIONS = 0600;
         constexpr int32_t BLOCK_SIZE = 4096;
         constexpr int64_t STAT_BLOCK_UNIT = 512;
+        constexpr uint64_t AT_SYMLINK_NOFOLLOW = 0x20;
 
         constexpr macos_timespec FILE_TIME{.seconds = MACOS_EPOCH_SECONDS, .nanoseconds = 0};
 
-        std::optional<macos_stat64> stat_host_path(macos_emulator& emu, const std::string_view requested_path, const bool follow_symlinks)
+        // Only the file type, permissions and the size of regular files come from the host. Identifiers and times
+        // are synthetic, so runs are deterministic and never expose host inode numbers.
+        macos_stat64 to_macos_stat(macos_emulator& emu, const posix_file_status& status, const std::string& guest_path)
         {
-            const auto guest_path = emu.resolve_guest_path(requested_path);
-            const auto host_path = emu.file_system.translate(guest_path);
-
-            std::error_code ec{};
-            const auto status = follow_symlinks ? std::filesystem::status(host_path, ec) : std::filesystem::symlink_status(host_path, ec);
-            if (ec || !std::filesystem::exists(status))
-            {
-                return std::nullopt;
-            }
-
-            uint16_t type{};
-            int64_t size{};
-            switch (status.type())
-            {
-            case std::filesystem::file_type::regular:
-                type = MACOS_S_IFREG;
-                size = static_cast<int64_t>(std::filesystem::file_size(host_path, ec));
-                break;
-            case std::filesystem::file_type::directory:
-                type = MACOS_S_IFDIR;
-                break;
-            case std::filesystem::file_type::symlink:
-                type = MACOS_S_IFLNK;
-                break;
-            default:
-                return std::nullopt;
-            }
-
             const auto id = emu.file_ids.id_for(guest_path);
+            const auto size = status.file_type() == POSIX_S_IFREG ? status.size : 0;
 
             macos_stat64 result{};
             result.st_dev = id.fsid[0];
-            result.st_mode = static_cast<uint16_t>(type | (static_cast<uint16_t>(status.permissions()) & 07777));
+            result.st_mode = static_cast<uint16_t>(status.mode);
             result.st_nlink = 1;
             result.st_ino = id.object_id;
             result.st_atimespec = FILE_TIME;
@@ -107,15 +76,19 @@ namespace sogen
             return result;
         }
 
-        void write_stat_result(const macos_syscall_context& c, const std::optional<macos_stat64>& result, const uint64_t buffer)
+        // Pipes and sockets have no path to name them by.
+        macos_stat64 to_anonymous_macos_stat(const posix_file_status& status)
         {
-            if (!result)
-            {
-                write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-                return;
-            }
+            macos_stat64 result{};
+            result.st_mode = static_cast<uint16_t>(status.mode);
+            result.st_nlink = 1;
+            result.st_blksize = BLOCK_SIZE;
+            return result;
+        }
 
-            if (!c.emu.try_write_memory(buffer, &*result, sizeof(*result)))
+        void write_stat(const macos_syscall_context& c, const macos_stat64& result, const uint64_t buffer)
+        {
+            if (!c.emu.try_write_memory(buffer, &result, sizeof(result)))
             {
                 write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
                 return;
@@ -124,35 +97,45 @@ namespace sogen
             write_macos_syscall_success(c, 0);
         }
 
-        void stat_path(const macos_syscall_context& c, const bool follow_symlinks)
+        void stat_at(const macos_syscall_context& c, const int directory_fd, const size_t path_index, const uint64_t buffer,
+                     const bool follow_symlinks)
         {
-            const auto guest_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
-            if (!guest_path)
+            const auto guest_path = read_guest_path_argument(c, path_index, directory_fd);
+            if (const auto* error = std::get_if<posix_errno>(&guest_path))
             {
-                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                write_macos_syscall_result(c, *error);
                 return;
             }
 
-            if (guest_path->empty())
+            const auto& path = std::get<std::string>(guest_path);
+            const auto status = posix_stat_path(c.emu_ref.file_system, path, follow_symlinks);
+            const auto* file_status = std::get_if<posix_file_status>(&status);
+            c.emu_ref.log.log("%sstat64(%s)%s\n", follow_symlinks ? "" : "l", path.c_str(), file_status ? "" : " -> error");
+            if (!file_status)
             {
-                write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+                write_macos_syscall_result(c, std::get<posix_errno>(status));
                 return;
             }
 
-            const auto result = stat_host_path(c.emu_ref, *guest_path, follow_symlinks);
-            c.emu_ref.log.log("%sstat64(%s)%s\n", follow_symlinks ? "" : "l", guest_path->c_str(), result ? "" : " -> ENOENT");
-            write_stat_result(c, result, get_macos_syscall_argument(c.emu, 1));
+            write_stat(c, to_macos_stat(c.emu_ref, *file_status, path), buffer);
         }
     }
 
     void sys_stat64(const macos_syscall_context& c)
     {
-        stat_path(c, true);
+        stat_at(c, MACOS_AT_FDCWD, 0, get_macos_syscall_argument(c.emu, 1), true);
     }
 
     void sys_lstat64(const macos_syscall_context& c)
     {
-        stat_path(c, false);
+        stat_at(c, MACOS_AT_FDCWD, 0, get_macos_syscall_argument(c.emu, 1), false);
+    }
+
+    void sys_fstatat64(const macos_syscall_context& c)
+    {
+        const auto directory_fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        const auto flags = get_macos_syscall_argument(c.emu, 3);
+        stat_at(c, directory_fd, 1, get_macos_syscall_argument(c.emu, 2), (flags & AT_SYMLINK_NOFOLLOW) == 0);
     }
 
     void sys_fstat64(const macos_syscall_context& c)
@@ -167,97 +150,32 @@ namespace sogen
             return;
         }
 
-        // The standard streams are presented as pipes, as when output is captured, so runs do not depend on whether
-        // the host has a terminal.
-        if (file->is_standard_stream())
+        const auto status = posix_stat_descriptor(*file);
+        if (const auto* error = std::get_if<posix_errno>(&status))
         {
-            macos_stat64 pipe{};
-            pipe.st_mode = MACOS_S_IFIFO | PIPE_PERMISSIONS;
-            pipe.st_nlink = 1;
-            pipe.st_blksize = BLOCK_SIZE;
-            write_stat_result(c, pipe, buffer);
+            write_macos_syscall_result(c, *error);
             return;
         }
 
-        write_stat_result(c, stat_host_path(c.emu_ref, file->guest_path, true), buffer);
-    }
-
-    void sys_fstatat64(const macos_syscall_context& c)
-    {
-        constexpr int at_fdcwd = -2;
-        constexpr uint64_t at_symlink_nofollow = 0x20;
-
-        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
-        const auto path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 1));
-        const auto buffer = get_macos_syscall_argument(c.emu, 2);
-        const auto flags = get_macos_syscall_argument(c.emu, 3);
-        if (!path)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-            return;
-        }
-
-        posix_path_error error{};
-        const auto directory_fd = fd == at_fdcwd ? std::nullopt : std::optional{fd};
-        const auto guest_path = posix_resolve_guest_path_at(c.emu_ref.fds, c.emu_ref.working_directory, directory_fd, *path, error);
-        if (!guest_path)
-        {
-            const auto is_not_directory = error == posix_path_error::not_a_directory;
-            write_macos_syscall_error(c, is_not_directory ? macos_errno::MACOS_ENOTDIR : macos_errno::MACOS_EBADF);
-            return;
-        }
-
-        if (path->empty())
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-            return;
-        }
-
-        const auto result = stat_host_path(c.emu_ref, *guest_path, (flags & at_symlink_nofollow) == 0);
-        c.emu_ref.log.log("fstatat64(%d, %s)%s\n", fd, guest_path->c_str(), result ? "" : " -> ENOENT");
-        write_stat_result(c, result, buffer);
+        const auto& file_status = std::get<posix_file_status>(status);
+        write_stat(c, is_vnode(*file) ? to_macos_stat(c.emu_ref, file_status, file->guest_path) : to_anonymous_macos_stat(file_status),
+                   buffer);
     }
 
     void sys_access(const macos_syscall_context& c)
     {
-        constexpr uint64_t x_ok = 0x1;
-        constexpr uint64_t w_ok = 0x2;
+        const auto guest_path = read_guest_path_argument(c, 0);
+        if (const auto* error = std::get_if<posix_errno>(&guest_path))
+        {
+            write_macos_syscall_result(c, *error);
+            return;
+        }
 
-        const auto guest_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
+        const auto& path = std::get<std::string>(guest_path);
         const auto mode = get_macos_syscall_argument(c.emu, 1);
-        if (!guest_path)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-            return;
-        }
-
-        if (guest_path->empty())
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-            return;
-        }
-
-        const auto result = stat_host_path(c.emu_ref, *guest_path, true);
-        c.emu_ref.log.log("access(%s, %llu)%s\n", guest_path->c_str(), static_cast<unsigned long long>(mode), result ? "" : " -> ENOENT");
-
-        if (!result)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
-            return;
-        }
-
-        if (mode & w_ok)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EROFS);
-            return;
-        }
-
-        if ((mode & x_ok) && (result->st_mode & 0111) == 0)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EACCES);
-            return;
-        }
-
-        write_macos_syscall_success(c, 0);
+        const auto result = posix_access(c.emu_ref.file_system, path, mode);
+        c.emu_ref.log.log("access(%s, %llu)%s\n", path.c_str(), static_cast<unsigned long long>(mode),
+                          std::holds_alternative<posix_errno>(result) ? " -> error" : "");
+        write_macos_syscall_result(c, result);
     }
 }

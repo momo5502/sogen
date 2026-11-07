@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <stdexcept>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <functional>

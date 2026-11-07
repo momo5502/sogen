@@ -101,6 +101,13 @@ namespace sogen
             return true;
         }
 
+        // Whether an access that faults has changed no guest state yet, so that the instruction can run again once the
+        // fault is handled.
+        virtual bool supports_restartable_faults() const
+        {
+            return true;
+        }
+
         virtual void flush_host_memory_cache(const void* /*host_pointer*/, size_t /*size*/)
         {
         }

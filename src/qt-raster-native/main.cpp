@@ -47,6 +47,11 @@ namespace sogen
                 this->backend->destroy_window(window);
             }
 
+            void set_window_relationship(const hwnd window, const hwnd parent, const hwnd owner, const bool top_level) override
+            {
+                this->backend->set_window_relationship(window, parent, owner, top_level);
+            }
+
             void set_window_rect(const hwnd window, const RECT& rect) override
             {
                 this->backend->set_window_rect(window, rect);
