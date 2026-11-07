@@ -9,6 +9,7 @@ option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" OFF)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
+option(SOGEN_ENABLE_SCCACHE "Cache compilations with sccache when it is installed" ON)
 option(SOGEN_ENABLE_SDL3 "Enable SDL3 host UI and audio backends" ON)
 # When ON, a system-installed SDL3 (find_package, e.g. libsdl3-dev on Ubuntu 25.04+,
 # Homebrew, vcpkg) is used if present, falling back to the vendored deps/SDL submodule.
@@ -121,6 +122,7 @@ include(cmake/compiler-env.cmake)
 
 ##########################################
 
+sogen_enable_sccache()
 sogen_set_new_artifact_directory()
 
 ##########################################

@@ -84,6 +84,7 @@ namespace sogen::android
                 .root_layer = config.root_layer,
                 .network = config.live_network ? network::network_mode::live : network::network_mode::offline,
                 .spoof_gpu_features = true,
+                .max_display_mode = config.max_display_mode,
             };
         }
 
@@ -91,7 +92,8 @@ namespace sogen::android
         std::string describe_configuration(const run_config& config)
         {
             std::string configuration = "emulation-root=" + config.emulation_root.string() + "\nroot-layer=" + config.root_layer.string() +
-                                        "\nbackend=" + config.backend + "\nnetwork=" + (config.live_network ? "live" : "offline") + "\n";
+                                        "\nbackend=" + config.backend + "\nnetwork=" + (config.live_network ? "live" : "offline") +
+                                        "\nmax-display-mode=" + (config.max_display_mode ? to_string(*config.max_display_mode) : "") + "\n";
             for (const auto& mount : config.directory_mounts)
             {
                 configuration += "directory=" + mount.host_directory.string() + ":" + mount.guest_path.string() + ":" +
@@ -127,6 +129,12 @@ namespace sogen::android
             if (settings.spoof_gpu_features)
             {
                 arguments.emplace_back("--spoof-gpu-features");
+            }
+
+            if (settings.max_display_mode)
+            {
+                arguments.emplace_back("--max-display-mode");
+                arguments.push_back(to_string(*settings.max_display_mode));
             }
 
             for (const auto& mount : directory_mounts)

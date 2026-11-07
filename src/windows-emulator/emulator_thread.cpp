@@ -195,9 +195,9 @@ namespace sogen
         allocated_stack allocate_thread_stack(memory_manager& memory, const uint64_t reserve_size, const uint64_t commit_size,
                                               const uint64_t guard_size)
         {
-            // A guard page that never faults would let the stack run into reserved memory, so such a backend gets the
-            // stack committed in full.
-            if (!memory.supports_page_granular_protection())
+            // A guard page that never faults would let the stack run into reserved memory, and one whose faulting access
+            // cannot run again would repeat part of it, so such a backend gets the stack committed in full.
+            if (!memory.supports_guarded_stack_growth())
             {
                 const auto base = memory.allocate_memory(static_cast<size_t>(reserve_size), memory_permission::read_write);
                 return {.base = base, .limit = base};
@@ -1484,7 +1484,7 @@ namespace sogen
 
         if (this->await_host_condition)
         {
-            // Cooperative host wait (e.g. a GPU-bridge semaphore poll): ready when the predicate signals,
+            // Cooperative host wait (e.g. a GPU-bridge semaphore wait): ready when the predicate signals,
             // otherwise stay parked.
             if (this->await_host_condition())
             {

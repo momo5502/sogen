@@ -89,6 +89,8 @@ const SC_MINIMIZE = 0xf020;
 const SC_MAXIMIZE = 0xf030;
 
 // Window style bits relevant to non-client chrome.
+const WS_CHILD = 0x40000000;
+const WS_POPUP = 0x80000000;
 const WS_CAPTION = 0x00c00000;
 const WS_SYSMENU = 0x00080000;
 const WS_MINIMIZEBOX = 0x00020000;
@@ -641,6 +643,31 @@ export function attachSogenUiHost(
     context2d.restore();
   }
 
+  // A child window moved under the desktop, like a combo box's drop-down list, is top-level but belongs to the window
+  // that opened it: it takes the pointer, while the keyboard focus stays with its owner.
+  function isPromotedChild(window: HostWindowState) {
+    return (
+      window.topLevel &&
+      (window.style & WS_CHILD) !== 0 &&
+      (window.style & WS_POPUP) === 0
+    );
+  }
+
+  function focusTarget(window: HostWindowState) {
+    let current: HostWindowState | undefined = window;
+    for (
+      let depth = 0;
+      current && isPromotedChild(current) && depth < 32;
+      depth++
+    ) {
+      current = windows.get(current.owner);
+      while (current && !current.topLevel && current.parent) {
+        current = windows.get(current.parent);
+      }
+    }
+    return current && !isPromotedChild(current) ? current.hwnd : 0;
+  }
+
   function raiseWindow(hwnd: number) {
     const window = windows.get(hwnd);
     if (!window) {
@@ -748,7 +775,7 @@ export function attachSogenUiHost(
         window.visible = !!message.visible;
         window.enabled = message.enabled ?? true;
         window.topLevel = message.top_level ?? true;
-        if (window.topLevel && window.visible) {
+        if (window.topLevel && window.visible && !isPromotedChild(window)) {
           focusedWindow = hwnd;
         }
         break;
@@ -765,10 +792,29 @@ export function attachSogenUiHost(
         viewportPinnedByUser = false;
         getWindow(hwnd).rect = cloneRect(message.rect);
         break;
-      case "set_visible":
-        viewportPinnedByUser = false;
-        getWindow(hwnd).visible = !!message.value;
+      case "set_relationship": {
+        const window = getWindow(hwnd);
+        const previousFocusTarget = focusTarget(window);
+        window.parent = message.parent ?? 0;
+        window.owner = message.owner ?? 0;
+        window.topLevel = message.top_level ?? true;
+        if (focusedWindow === hwnd && isPromotedChild(window)) {
+          focusedWindow = focusTarget(window);
+        } else if (focusedWindow === hwnd && !window.topLevel) {
+          focusedWindow =
+            previousFocusTarget !== hwnd ? previousFocusTarget : 0;
+        }
         break;
+      }
+      case "set_visible": {
+        viewportPinnedByUser = false;
+        const window = getWindow(hwnd);
+        window.visible = !!message.value;
+        if (!window.visible && focusedWindow === hwnd) {
+          focusedWindow = focusTarget(window);
+        }
+        break;
+      }
       case "set_enabled":
         getWindow(hwnd).enabled = !!message.value;
         break;
@@ -804,7 +850,13 @@ export function attachSogenUiHost(
     }
 
     const window = hit.window;
-    focusedWindow = window.hwnd;
+    const focusWindow = focusTarget(window);
+    if (focusWindow && focusWindow !== window.hwnd) {
+      focusedWindow = focusWindow;
+      raiseWindow(focusWindow);
+    } else if (!isPromotedChild(window)) {
+      focusedWindow = window.hwnd;
+    }
     raiseWindow(window.hwnd);
 
     if (hit.region === "button") {

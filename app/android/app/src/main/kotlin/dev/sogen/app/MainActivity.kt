@@ -215,6 +215,7 @@ class MainActivity : FlutterActivity() {
         workingDirectory = call.argument<String>("workingDirectory").orEmpty(),
         backend = call.argument<String>("backend").orEmpty(),
         liveNetwork = call.argument<Boolean>("liveNetwork") == true,
+        maxDisplayMode = call.argument<String>("maxDisplayMode").orEmpty(),
         snapshotDirectory = File(filesDir, "snapshots").path,
         resumeFile = call.argument<String>("resumeFile").orEmpty(),
     )

@@ -28,6 +28,10 @@
 #ifdef OS_WINDOWS
 #include <fcntl.h>
 #include <io.h>
+#else
+#include <algorithm>
+#include <climits>
+#include <sys/resource.h>
 #endif
 
 namespace sogen
@@ -57,6 +61,9 @@ namespace sogen
                 return STATUS_ACCESS_DENIED;
             case EISDIR:
                 return STATUS_FILE_IS_A_DIRECTORY;
+            case EMFILE:
+            case ENFILE:
+                return STATUS_TOO_MANY_OPENED_FILES;
             default:
                 return STATUS_NOT_SUPPORTED;
             }
@@ -99,6 +106,41 @@ namespace sogen
             return file;
         }
 #endif
+
+        // Every open guest file holds a host stream, and the C runtime starts with 512 of them. Windows gives a process
+        // millions of handles, so raise the host limit as far as it goes (Destiny 2 keeps over 2,000 packages open).
+        void raise_open_file_limit()
+        {
+            static const bool raised = [] {
+#ifdef OS_WINDOWS
+                // The UCRT allows 8192 streams; msvcrt.dll, which MinGW builds use, rejects more than 2048.
+                return _setmaxstdio(8192) != -1 || _setmaxstdio(2048) != -1;
+#else
+                rlimit limit{};
+                if (getrlimit(RLIMIT_NOFILE, &limit) != 0)
+                {
+                    return false;
+                }
+
+                // The hard limit can be RLIM_INFINITY, as it normally is on macOS, where setrlimit(2) also rejects a soft
+                // limit above OPEN_MAX (its man page says to use min(OPEN_MAX, rlim_max)). Elsewhere an infinite target is
+                // clamped to Linux's default fs.nr_open.
+                constexpr rlim_t finite_target = rlim_t{1} << 20;
+                auto target = limit.rlim_max == RLIM_INFINITY ? finite_target : limit.rlim_max;
+#ifdef __APPLE__
+                target = std::min<rlim_t>(target, OPEN_MAX);
+#endif
+                if (limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur >= target)
+                {
+                    return true;
+                }
+
+                limit.rlim_cur = target;
+                return setrlimit(RLIMIT_NOFILE, &limit) == 0;
+#endif
+            }();
+            (void)raised;
+        }
 
         std::optional<std::filesystem::path> find_entry_ignoring_case(const std::filesystem::path& directory,
                                                                       const std::filesystem::path& name)
@@ -362,6 +404,7 @@ namespace sogen
           links_(links),
           lookup_ignores_case_(host_lookup_ignores_case(this->target_))
     {
+        raise_open_file_limit();
     }
 
     bool host_directory_provider::avoids_links(const std::filesystem::path& root, const std::filesystem::path& host_path)

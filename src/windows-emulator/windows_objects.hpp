@@ -459,14 +459,21 @@ namespace sogen
             return client_bottom - client_top;
         }
 
-        void sync_guest_rects()
+        // The guest's WND.rcWindow and rcClient are in screen coordinates, while x and y are relative to the parent's client
+        // area, so the caller supplies where the window's top-left corner is on the screen.
+        void sync_guest_rects(const POINT screen_origin)
         {
-            const RECT window_rect{.left = this->x, .top = this->y, .right = this->x + this->width, .bottom = this->y + this->height};
+            const RECT window_rect{.left = screen_origin.x,
+                                   .top = screen_origin.y,
+                                   .right = screen_origin.x + this->width,
+                                   .bottom = screen_origin.y + this->height};
+            const auto client_left = screen_origin.x + this->client_x_offset();
+            const auto client_top = screen_origin.y + this->client_y_offset();
             const RECT client_rect{
-                .left = this->client_x(),
-                .top = this->client_y(),
-                .right = this->client_x() + this->client_width(),
-                .bottom = this->client_y() + this->client_height(),
+                .left = client_left,
+                .top = client_top,
+                .right = client_left + this->client_width(),
+                .bottom = client_top + this->client_height(),
             };
 
             this->guest.access([&](USER_WINDOW& guest_win) {
@@ -1214,6 +1221,10 @@ namespace sogen
         std::u16string name{};
         handle io_completion_handle{};
         handle target_object_handle{};
+        // The target's object as last looked up, valid while its store's generation is still target_generation. Not
+        // serialized; a restored packet looks it up again.
+        ref_counted_object* target_object{};
+        uint64_t target_generation{};
         uint64_t key_context{};
         uint64_t apc_context{};
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> io_status_block{};
@@ -1278,6 +1289,7 @@ namespace sogen
         uint32_t pending_release_count{};
         bool release_pending{};
         std::vector<handle> worker_threads{};
+        uint32_t pending_worker_count{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -1307,6 +1319,7 @@ namespace sogen
             buffer.write(this->pending_release_count);
             buffer.write(this->release_pending);
             buffer.write_vector(this->worker_threads);
+            buffer.write(this->pending_worker_count);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1337,6 +1350,7 @@ namespace sogen
             buffer.read(this->pending_release_count);
             buffer.read(this->release_pending);
             buffer.read_vector(this->worker_threads);
+            buffer.read(this->pending_worker_count);
         }
     };
 

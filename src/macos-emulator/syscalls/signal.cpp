@@ -1,6 +1,10 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
+#include <posix_signals.hpp>
+
+#include <optional>
+
 namespace sogen
 {
     namespace
@@ -33,21 +37,36 @@ namespace sogen
         static_assert(sizeof(user_sigaction) == 16);
         static_assert(sizeof(user_stack) == 24);
 
-        constexpr uint32_t signal_bit(const int signal)
-        {
-            return 1U << (signal - 1);
-        }
+        constexpr auto UNBLOCKABLE_SIGNALS = static_cast<uint32_t>(posix_unblockable_signals(MACOS_SIGNAL_NUMBERS));
+        constexpr posix_signal_stack_rules SIGNAL_STACK_RULES{
+            .disable_flag = MACOS_SS_DISABLE,
+            .kept_flags = 0,
+            .on_stack_enables = false,
+            .minimum_size = 32768,
+        };
 
-        constexpr uint32_t UNBLOCKABLE_SIGNALS = signal_bit(MACOS_SIGKILL) | signal_bit(MACOS_SIGSTOP);
-        constexpr uint64_t MINIMUM_SIGNAL_STACK_SIZE = 32768;
+        std::optional<posix_signal_mask_operation> mask_operation(const uint64_t how)
+        {
+            constexpr uint64_t sig_block = 1;
+            constexpr uint64_t sig_unblock = 2;
+            constexpr uint64_t sig_setmask = 3;
+
+            switch (how)
+            {
+            case sig_block:
+                return posix_signal_mask_operation::block;
+            case sig_unblock:
+                return posix_signal_mask_operation::unblock;
+            case sig_setmask:
+                return posix_signal_mask_operation::set;
+            default:
+                return std::nullopt;
+            }
+        }
     }
 
     void sys_sigprocmask(const macos_syscall_context& c)
     {
-        constexpr uint64_t sig_block = 1;
-        constexpr uint64_t sig_unblock = 2;
-        constexpr uint64_t sig_setmask = 3;
-
         const auto how = get_macos_syscall_argument(c.emu, 0);
         const auto set_pointer = get_macos_syscall_argument(c.emu, 1);
         const auto old_set_pointer = get_macos_syscall_argument(c.emu, 2);
@@ -68,21 +87,14 @@ namespace sogen
                 return;
             }
 
-            switch (how)
+            const auto operation = mask_operation(how);
+            if (!operation)
             {
-            case sig_block:
-                mask |= set;
-                break;
-            case sig_unblock:
-                mask &= ~set;
-                break;
-            case sig_setmask:
-                mask = set;
-                break;
-            default:
                 write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
                 return;
             }
+
+            mask = static_cast<uint32_t>(posix_updated_signal_mask(mask, *operation, set, MACOS_SIGNAL_NUMBERS));
         }
 
         write_macos_syscall_success(c, 0);
@@ -94,7 +106,7 @@ namespace sogen
         const auto new_action_pointer = get_macos_syscall_argument(c.emu, 1);
         const auto old_action_pointer = get_macos_syscall_argument(c.emu, 2);
 
-        if (signal <= 0 || signal >= MACOS_NSIG || signal == MACOS_SIGKILL || signal == MACOS_SIGSTOP)
+        if (!posix_is_catchable_signal(MACOS_SIGNAL_NUMBERS, signal))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
             return;
@@ -155,33 +167,9 @@ namespace sogen
             return;
         }
 
-        if ((new_stack.flags & ~MACOS_SS_DISABLE) != 0)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
-            return;
-        }
-
-        if ((stack.flags & MACOS_SS_ONSTACK) != 0)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EPERM);
-            return;
-        }
-
-        if ((new_stack.flags & MACOS_SS_DISABLE) != 0)
-        {
-            stack.flags = MACOS_SS_DISABLE;
-            write_macos_syscall_success(c, 0);
-            return;
-        }
-
-        if (new_stack.size < MINIMUM_SIGNAL_STACK_SIZE)
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_ENOMEM);
-            return;
-        }
-
-        stack = {.base = new_stack.base, .size = new_stack.size, .flags = 0};
-        write_macos_syscall_success(c, 0);
+        write_macos_syscall_result(
+            c,
+            posix_set_signal_stack(stack, {.base = new_stack.base, .size = new_stack.size, .flags = new_stack.flags}, SIGNAL_STACK_RULES));
     }
 
     // libc's longjmp tells the kernel it left the alternate signal stack through sigreturn with no context. Real
@@ -195,11 +183,11 @@ namespace sogen
         auto& stack = c.emu_ref.signals.stack;
         if (style == set_alternate_stack)
         {
-            stack.flags |= MACOS_SS_ONSTACK;
+            stack.flags |= POSIX_SS_ONSTACK;
         }
         else if (style == reset_alternate_stack)
         {
-            stack.flags &= ~MACOS_SS_ONSTACK;
+            stack.flags &= ~POSIX_SS_ONSTACK;
         }
         else
         {

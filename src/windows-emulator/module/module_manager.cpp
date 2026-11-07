@@ -354,7 +354,7 @@ namespace sogen
 
             const auto image_base = mod.image_base;
             const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
-            this->last_module_cache_ = this->modules_.end();
+            this->recent_module_count_ = 0;
             this->callbacks_->on_module_load(entry.first->second);
             return &entry.first->second;
         }
@@ -545,7 +545,7 @@ namespace sogen
                 module.sections.emplace_back(std::move(section));
 
                 this->modules_.emplace(module.image_base, std::move(module));
-                this->last_module_cache_ = this->modules_.end();
+                this->recent_module_count_ = 0;
             }
         }
 
@@ -720,7 +720,7 @@ namespace sogen
         }
         buffer.read_map(this->modules_);
         buffer.read_map(this->modules_load_count);
-        this->last_module_cache_ = this->modules_.end();
+        this->recent_module_count_ = 0;
 
         const auto executable_base = buffer.read<uint64_t>();
         const auto ntdll_base = buffer.read<uint64_t>();
@@ -770,7 +770,7 @@ namespace sogen
         }
 
         this->modules_.erase(mod);
-        this->last_module_cache_ = this->modules_.end();
+        this->recent_module_count_ = 0;
 
         return true;
     }

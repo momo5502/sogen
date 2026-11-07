@@ -63,6 +63,11 @@ namespace sogen
         new_thread.stack_base = child_stack; // child_stack points to top of stack
         new_thread.stack_size = 0;           // unknown
 
+        if (c.proc.active_thread)
+        {
+            new_thread.signal_mask = c.proc.active_thread->signal_mask;
+        }
+
         // Save the parent's current register state into the child's saved_regs
         // The child thread will start by returning 0 from clone()
         new_thread.save(c.emu);

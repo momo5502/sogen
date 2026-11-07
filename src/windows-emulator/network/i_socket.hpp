@@ -33,6 +33,13 @@ namespace sogen
 
             virtual sent_size recv(std::span<std::byte> data) = 0;
             virtual sent_size recvfrom(address& source, std::span<std::byte> data) = 0;
+
+            // The bytes waiting to be received, left in place (MSG_PEEK); -1 from a socket that cannot look at them.
+            virtual sent_size peek(std::span<std::byte> data)
+            {
+                (void)data;
+                return -1;
+            }
         };
     }
 

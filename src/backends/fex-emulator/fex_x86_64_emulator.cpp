@@ -2817,6 +2817,13 @@ namespace sogen::fex
         }
 #endif
 
+        // The translated code of a guest instruction can update guest registers before its access faults: a 32-bit push
+        // lowers ESP first. Running the instruction again after the fault would repeat that part.
+        bool supports_restartable_faults() const override
+        {
+            return false;
+        }
+
         void flush_host_memory_cache(const void* host_pointer, size_t size) override
         {
             flush_cache_lines(host_pointer, size);

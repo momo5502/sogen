@@ -8,6 +8,15 @@ namespace sogen
     {
         constexpr uint64_t k_hrgn_window = 1;
 
+        // Like RDW_ERASENOW, showing a window only erases windows whose update region is still invalid. A window procedure
+        // can paint them during the activation messages (with UpdateWindow, for instance), and erasing afterwards would
+        // wipe that paint with nothing left to redraw it.
+        bool still_needs_erase(const process_context& process, const hwnd handle)
+        {
+            const auto* win = process.windows.get(handle);
+            return win && win->update_pending;
+        }
+
         uint64_t pack_message_lparam(const int low, const int high)
         {
             return static_cast<uint64_t>(static_cast<uint16_t>(low)) | (static_cast<uint64_t>(static_cast<uint16_t>(high)) << 16);
@@ -133,7 +142,7 @@ namespace sogen
         if (this->data_.parent_erase_pending)
         {
             this->data_.parent_erase_pending = false;
-            if (this->context_.proc.windows.get(this->data_.parent_erase_window))
+            if (still_needs_erase(this->context_.proc, this->data_.parent_erase_window))
             {
                 return this->prepare_step(this->data_.parent_erase_window,
                                           {.message = WM_ERASEBKGND, .wParam = this->data_.parent_erase_background_dc, .lParam = 0});
@@ -194,6 +203,10 @@ namespace sogen
             {
                 this->collect_visible_descendants(*win, this->data_.visible_descendants);
                 std::ranges::reverse(this->data_.visible_descendants);
+                if (!still_needs_erase(this->context_.proc, this->data_.handle))
+                {
+                    return this->advance();
+                }
             }
 
             return this->prepare_step(this->data_.handle, message);
@@ -214,7 +227,10 @@ namespace sogen
 
     void window_show_orchestrator::build_descendant_paint(const hwnd descendant) const
     {
-        this->data_.descendant_erase_background_dc = syscalls::create_gdi_window_dc(this->context_, descendant);
+        if (still_needs_erase(this->context_.proc, descendant))
+        {
+            this->data_.descendant_erase_background_dc = syscalls::create_gdi_window_dc(this->context_, descendant);
+        }
         if (this->data_.descendant_erase_background_dc != 0)
         {
             this->data_.descendant_message_queue.push_back(
