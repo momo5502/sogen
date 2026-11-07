@@ -48,6 +48,81 @@ namespace sogen::test
             std::memcpy(image.data() + offset, &value, sizeof(value));
         }
 
+        template <typename Pointer>
+        class ModuleRelocationTest : public testing::Test
+        {
+          protected:
+            static constexpr Pointer preferred_base = sizeof(Pointer) == 4 ? 0x10000000ULL : 0x180000000ULL;
+            static constexpr uint32_t pointer_rva = 0x1020;
+            static constexpr uint32_t target_rva = 0x1234;
+
+            static std::vector<std::byte> image()
+            {
+                std::vector<std::byte> data(0x2200);
+                PEDosHeader_t dos{};
+                dos.e_magic = PEDosHeader_t::k_Magic;
+                dos.e_lfanew = k_nt_offset;
+                poke(data, 0, dos);
+
+                PENTHeaders_t<Pointer> nt{};
+                nt.Signature = decltype(nt)::k_Signature;
+                nt.FileHeader.Machine = sizeof(Pointer) == 4 ? PEMachineType::I386 : PEMachineType::AMD64;
+                nt.FileHeader.NumberOfSections = 1;
+                nt.FileHeader.SizeOfOptionalHeader = sizeof(nt.OptionalHeader);
+                nt.FileHeader.Characteristics = IMAGE_FILE_DLL | (sizeof(Pointer) == 4 ? IMAGE_FILE_32BIT_MACHINE : 0);
+                auto& optional = nt.OptionalHeader;
+                optional.Magic = PEOptionalHeader_t<Pointer>::k_Magic;
+                optional.ImageBase = preferred_base;
+                optional.AddressOfEntryPoint = 0x1000;
+                optional.SectionAlignment = 0x1000;
+                optional.FileAlignment = 0x200;
+                optional.SizeOfHeaders = 0x200;
+                optional.SizeOfImage = 0x3000;
+                optional.NumberOfRvaAndSizes = 16;
+                optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress = 0x1800;
+                optional.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size = 12;
+                poke(data, k_nt_offset, nt);
+
+                IMAGE_SECTION_HEADER section{};
+                section.VirtualAddress = 0x1000;
+                section.Misc.VirtualSize = 0x2000;
+                section.PointerToRawData = 0x200;
+                section.SizeOfRawData = 0x2000;
+                section.Characteristics = k_code;
+                poke(data, k_nt_offset + sizeof(nt), section);
+                poke(data, 0x220, static_cast<Pointer>(preferred_base + target_rva));
+
+                IMAGE_BASE_RELOCATION relocations{};
+                relocations.VirtualAddress = 0x1000;
+                relocations.SizeOfBlock = 12;
+                poke(data, 0xA00, relocations);
+                constexpr auto type = sizeof(Pointer) == 4 ? IMAGE_REL_BASED_HIGHLOW : IMAGE_REL_BASED_DIR64;
+                poke(data, 0xA08, static_cast<uint16_t>((type << 12) | 0x20));
+                return data;
+            }
+
+            mapped_module map(const std::vector<std::byte>& data, const uint64_t relocation_base = 0,
+                              const windows_path& path = windows_path{"C:\\test.dll"})
+            {
+                return map_module_from_data<Pointer>(this->memory_, data, "test.dll", path, relocation_base);
+            }
+
+            void expect_relocations(const mapped_module& module, const uint64_t relocation_base)
+            {
+                EXPECT_EQ(relocation_base + target_rva, this->memory_.template read_memory<Pointer>(module.image_base + pointer_rva));
+                constexpr auto header_offset =
+                    k_nt_offset + offsetof(PENTHeaders_t<Pointer>, OptionalHeader) + offsetof(PEOptionalHeader_t<Pointer>, ImageBase);
+                EXPECT_EQ(relocation_base, this->memory_.template read_memory<Pointer>(module.image_base + header_offset));
+                EXPECT_EQ(module.image_base + 0x1000, module.entry_point);
+            }
+
+            page_memory backend_{};
+            memory_manager memory_{backend_};
+        };
+
+        using ModulePointerTypes = testing::Types<uint32_t, uint64_t>;
+        TYPED_TEST_SUITE(ModuleRelocationTest, ModulePointerTypes);
+
         std::vector<std::byte> build_image(const image_layout& layout)
         {
             const auto size_of_headers = layout.size_of_headers ? layout.size_of_headers : layout.file_alignment;
@@ -173,6 +248,26 @@ namespace sogen::test
                     },
             };
         }
+    }
+
+    TYPED_TEST(ModuleRelocationTest, SecondaryViewPreservesTheOriginalRelocationBase)
+    {
+        const auto data = this->image();
+        const auto original = this->map(data);
+        const auto secondary = this->map(data, original.image_base);
+        EXPECT_EQ(this->preferred_base, original.image_base);
+        EXPECT_NE(original.image_base, secondary.image_base);
+        this->expect_relocations(original, original.image_base);
+        this->expect_relocations(secondary, original.image_base);
+    }
+
+    TYPED_TEST(ModuleRelocationTest, IndependentViewRelocatesToItsOwnBase)
+    {
+        const auto data = this->image();
+        const auto original = this->map(data);
+        const auto independent = this->map(data);
+        EXPECT_NE(original.image_base, independent.image_base);
+        this->expect_relocations(independent, independent.image_base);
     }
 
     TEST_F(ModuleMappingTest, SectionWithoutVirtualSizeIsMappedByItsRawSize)

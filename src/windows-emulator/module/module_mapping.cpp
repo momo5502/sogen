@@ -726,10 +726,6 @@ namespace sogen
             // exhausted address space terminates rather than spins.
             constexpr int max_host_relocation_retries = 8;
             bool mapped = false;
-            // Also applies when the caller passed a relocation_base: that only expresses a preferred
-            // target (e.g. mapping another view of an already-loaded image at its current base), not a
-            // hard requirement - real Windows itself falls back to relocating such a view elsewhere and
-            // reports STATUS_IMAGE_NOT_AT_BASE rather than failing the map outright.
             for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)
             {
                 binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, highest_address);
@@ -739,7 +735,7 @@ namespace sogen
                 }
 
                 if (try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
-                                                   binary.image_base))
+                                                   relocation_base ? relocation_base : binary.image_base))
                 {
                     mapped = true;
                     break;
