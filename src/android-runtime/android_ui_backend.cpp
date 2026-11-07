@@ -179,9 +179,18 @@ namespace sogen::android
         }
     }
 
+    // A process's windows end with it. The app shows a game's windows until it hears of that, and a launcher's process
+    // stays alive after its guest exited, while it waits for the game it started.
     android_ui_backend::~android_ui_backend()
     {
         this->release_surfaces();
+        for (const auto& [handle, state] : this->windows_)
+        {
+            if (is_host_window(state.desc))
+            {
+                this->host_->on_window_destroyed(handle);
+            }
+        }
     }
 
     void android_ui_backend::attach_surface(const hwnd window, ANativeWindow* surface)
