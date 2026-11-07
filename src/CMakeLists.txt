@@ -2,6 +2,7 @@ add_subdirectory(common)
 add_subdirectory(version)
 add_subdirectory(gpu-bridge-protocol)
 add_subdirectory(steam-bridge-protocol)
+add_subdirectory(qt-raster-protocol)
 
 include("${PROJECT_SOURCE_DIR}/cmake/steam-bridge.cmake")
 
@@ -38,6 +39,7 @@ if(SOGEN_BUILD_STATIC)
 endif()
 
 if(_SOGEN_BUILD_STANDALONE_TARGETS)
+  add_subdirectory(qt-raster-probe)
   add_subdirectory(ui-cursor-diagnostic)
   add_subdirectory(windows-analyzer)
   add_subdirectory(linux-analyzer)

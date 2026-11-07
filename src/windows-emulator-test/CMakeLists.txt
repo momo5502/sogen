@@ -41,6 +41,7 @@ add_executable(windows-emulator-test ${SRC_FILES})
 sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(windows-emulator-test PRIVATE
+  qt-raster-session
   gtest
   gtest_main
   windows-emulator
