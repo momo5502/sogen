@@ -268,6 +268,7 @@ namespace sogen
         NtUserMsgWaitForMultipleObjectsEx,
         NtUserSetWindowLong,
         NtUserSetWindowLongPtr,
+        NtUserSetFocus,
     };
 
     struct callback_frame

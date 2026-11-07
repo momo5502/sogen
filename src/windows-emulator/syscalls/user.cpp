@@ -2199,6 +2199,20 @@ namespace sogen
             return brush;
         }
 
+        // The WM_CTLCOLOR* messages are WM_CTLCOLORMSGBOX plus the CTLCOLOR_* control type.
+        uint64_t handle_NtUserGetControlColor(const syscall_context& c, const hwnd /*parent*/, const hwnd window, const hdc dc,
+                                              const uint32_t message)
+        {
+            constexpr uint32_t wm_ctlcolormsgbox = 0x132;
+            constexpr uint32_t wm_ctlcolorstatic = 0x138;
+            if (message < wm_ctlcolormsgbox || message > wm_ctlcolorstatic)
+            {
+                return 0;
+            }
+
+            return handle_NtUserGetControlBrush(c, window, dc, message - wm_ctlcolormsgbox);
+        }
+
         BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc,
                                      const hbrush brush)
         {
@@ -4834,10 +4848,16 @@ namespace sogen
 
                 if (is_child && win->parent_handle != 0)
                 {
-                    if (auto* parent_win = c.proc.windows.get(win->parent_handle))
+                    // A combo box moves its drop-down list under the desktop window, whose window procedure lives outside
+                    // the process, so the process can neither repaint nor erase it. Any other parent is repainted, and
+                    // erased right away only when its procedure runs on this thread.
+                    if (auto* parent_win = c.proc.windows.get(win->parent_handle); parent_win && parent_win->wnd_proc != 0)
                     {
                         invalidate_window(c, *parent_win, std::nullopt, true);
-                        orchestrator.set_parent_erase_window(parent_win->handle);
+                        if (parent_win->thread_id == c.thread().id)
+                        {
+                            orchestrator.set_parent_erase_window(parent_win->handle);
+                        }
                     }
                 }
 
@@ -6267,21 +6287,86 @@ namespace sogen
             return find_foreground_window(c);
         }
 
-        hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
+        // The focus moves before either window hears of it: WM_KILLFOCUS goes to the old window with the new one in wParam,
+        // then WM_SETFOCUS to the new window with the old one. Either window procedure can move the focus again or destroy a
+        // window, so each message is only sent while its window exists and the focus change it reports is still current.
+        hwnd continue_focus_change(const syscall_context& c, focus_change_state state)
         {
-            if (hwnd != 0 && !c.proc.windows.get(hwnd))
+            const auto& thread = c.thread();
+            const auto notifies = [&](const uint64_t window) -> const sogen::window* {
+                const auto* win = c.proc.windows.get(window);
+                return win && win->thread_id == thread.id && thread.focus_window == state.next ? win : nullptr;
+            };
+
+            if (!state.kill_focus_sent)
             {
-                return 0;
+                state.kill_focus_sent = true;
+                if (const auto* old_focus = notifies(state.previous))
+                {
+                    const auto new_focus = state.next;
+                    dispatch_window_message(c, callback_id::NtUserSetFocus, std::move(state), *old_focus, WM_KILLFOCUS, new_focus);
+                    return {};
+                }
             }
 
+            if (!state.set_focus_sent)
+            {
+                state.set_focus_sent = true;
+                if (const auto* new_focus = notifies(state.next))
+                {
+                    const auto old_focus = state.previous;
+                    dispatch_window_message(c, callback_id::NtUserSetFocus, std::move(state), *new_focus, WM_SETFOCUS, old_focus);
+                    return {};
+                }
+            }
+
+            return state.previous;
+        }
+
+        hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
+        {
             auto& thread = c.thread();
+            if (hwnd != 0)
+            {
+                const auto* target = c.proc.windows.get(hwnd);
+                if (!target)
+                {
+                    set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                    return 0;
+                }
+                if (target->thread_id != thread.id)
+                {
+                    set_guest_last_error(c, 5); // ERROR_ACCESS_DENIED
+                    return 0;
+                }
+                if ((target->style & WS_DISABLED) != 0)
+                {
+                    set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                    return 0;
+                }
+            }
+
             const auto previous = thread.focus_window;
+            if (previous == hwnd)
+            {
+                return previous;
+            }
+
             thread.set_focus_window(hwnd);
             if (hwnd != 0)
             {
                 set_thread_window_context(c, hwnd);
             }
-            return previous;
+
+            focus_change_state state{};
+            state.previous = previous;
+            state.next = hwnd;
+            return continue_focus_change(c, std::move(state));
+        }
+
+        hwnd completion_NtUserSetFocus(const syscall_context& c, const hwnd /*hwnd*/)
+        {
+            return continue_focus_change(c, std::move(c.get_completion_state<focus_change_state>()));
         }
 
         BOOL handle_NtUserZapActiveAndFocus(const syscall_context& c)

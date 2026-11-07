@@ -2306,6 +2306,125 @@ namespace
         }
     }
 
+    struct focus_message
+    {
+        HWND window;
+        UINT message;
+        HWND other;
+
+        bool operator==(const focus_message&) const = default;
+    };
+
+    std::vector<focus_message> g_focus_messages{};
+    HWND g_refocus_on_kill{};
+
+    LRESULT CALLBACK focus_window_proc(const HWND hwnd, const UINT message, const WPARAM w_param, const LPARAM l_param)
+    {
+        if (message == WM_SETFOCUS || message == WM_KILLFOCUS)
+        {
+            g_focus_messages.push_back({.window = hwnd, .message = message, .other = reinterpret_cast<HWND>(w_param)});
+            if (message == WM_KILLFOCUS && g_refocus_on_kill)
+            {
+                SetFocus(std::exchange(g_refocus_on_kill, nullptr));
+            }
+        }
+
+        return DefWindowProcA(hwnd, message, w_param, l_param);
+    }
+
+    bool test_set_focus()
+    {
+        WNDCLASSEXA wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpszClassName = "TestFocusClass";
+        wc.hInstance = GetModuleHandleA(nullptr);
+        wc.lpfnWndProc = focus_window_proc;
+        if (!RegisterClassExA(&wc))
+        {
+            return false;
+        }
+        const auto unregister_class = sogen::utils::finally([&] { UnregisterClassA(wc.lpszClassName, wc.hInstance); });
+
+        const HWND top = CreateWindowExA(0, wc.lpszClassName, nullptr, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 300, 200, nullptr, nullptr,
+                                         wc.hInstance, nullptr);
+        const auto destroy_top = sogen::utils::finally([&] { DestroyWindow(top); });
+        const auto create_child = [&](const int x) {
+            return CreateWindowExA(0, wc.lpszClassName, nullptr, WS_CHILD | WS_VISIBLE, x, 0, 50, 50, top, nullptr, wc.hInstance, nullptr);
+        };
+        const HWND a = create_child(0);
+        const HWND b = create_child(60);
+        const HWND c = create_child(120);
+        if (!top || !a || !b || !c)
+        {
+            return false;
+        }
+
+        bool success = true;
+        const auto check = [&](const bool condition, const char* what) {
+            if (!condition)
+            {
+                printf("SetFocus: %s\n", what);
+                success = false;
+            }
+        };
+
+        SetForegroundWindow(top);
+        SetActiveWindow(top);
+        SetFocus(a);
+        g_focus_messages.clear();
+
+        // The focus moves first; the window losing it hears of the new one and the window gaining it of the old one.
+        check(SetFocus(b) == a && GetFocus() == b, "switching returns the previous focus");
+        check(g_focus_messages == std::vector<focus_message>{{a, WM_KILLFOCUS, b}, {b, WM_SETFOCUS, a}}, "switching sends kill then set");
+        g_focus_messages.clear();
+
+        check(SetFocus(b) == b && g_focus_messages.empty(), "the same target sends nothing");
+
+        EnableWindow(c, FALSE);
+        SetLastError(0);
+        check(SetFocus(c) == nullptr && GetLastError() == ERROR_INVALID_PARAMETER && GetFocus() == b, "a disabled target fails");
+        EnableWindow(c, TRUE);
+
+        SetLastError(0);
+        check(SetFocus(reinterpret_cast<HWND>(static_cast<ULONG_PTR>(0x1234))) == nullptr &&
+                  GetLastError() == ERROR_INVALID_WINDOW_HANDLE && GetFocus() == b,
+              "an invalid target fails");
+
+        // The window lives as long as the thread that created it, so the thread waits until the check is done.
+        HWND other_thread_window{};
+        const HANDLE created = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+        const HANDLE checked = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+        std::thread owner([&] {
+            other_thread_window =
+                CreateWindowExA(0, wc.lpszClassName, nullptr, WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nullptr, nullptr, wc.hInstance, nullptr);
+            SetEvent(created);
+            WaitForSingleObject(checked, INFINITE);
+            DestroyWindow(other_thread_window);
+        });
+        WaitForSingleObject(created, INFINITE);
+        SetLastError(0);
+        check(other_thread_window && SetFocus(other_thread_window) == nullptr && GetLastError() == ERROR_ACCESS_DENIED && GetFocus() == b,
+              "a target of another thread fails");
+        SetEvent(checked);
+        owner.join();
+        CloseHandle(created);
+        CloseHandle(checked);
+        check(g_focus_messages.empty(), "failed calls send nothing");
+
+        // A window procedure that moves the focus while losing it wins over the change that is still in progress.
+        g_refocus_on_kill = c;
+        check(SetFocus(a) == b && GetFocus() == c, "refocusing while losing the focus wins");
+        check(g_focus_messages == std::vector<focus_message>{{b, WM_KILLFOCUS, a}, {a, WM_KILLFOCUS, c}, {c, WM_SETFOCUS, a}},
+              "refocusing sends only the nested change after the first kill");
+        g_focus_messages.clear();
+
+        check(SetFocus(nullptr) == c && GetFocus() == nullptr, "clearing returns the previous focus");
+        check(g_focus_messages == std::vector<focus_message>{{c, WM_KILLFOCUS, nullptr}}, "clearing only kills the focus");
+        g_focus_messages.clear();
+
+        return success;
+    }
+
     bool test_dialog_table()
     {
         alignas(DWORD) static const std::array<uint8_t, 28> template_bytes = {
@@ -2679,6 +2798,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_mmio, "MMIO")
     RUN_TEST(test_gdi, "GDI")
     RUN_TEST(test_dialog_table, "Dialog Table")
+    RUN_TEST(test_set_focus, "SetFocus")
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
     RUN_TEST(test_bcrypt_random, "BCrypt Random")
     RUN_TEST(test_ansi_oem_translation, "ANSI/OEM Translation")
