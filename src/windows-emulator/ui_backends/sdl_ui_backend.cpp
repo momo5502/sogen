@@ -676,6 +676,8 @@ namespace sogen
                 bool translucent{};
                 bool popup{};
                 std::vector<uint32_t> blended_pixels{};
+                ui_surface_desc popup_surface{};
+                std::vector<uint8_t> popup_pixels{};
                 std::optional<std::pair<int, int>> placed_position{};
             };
 
@@ -1280,13 +1282,25 @@ namespace sogen
                 return popups;
             }
 
+            // A popup's texture dies with its renderer, and nothing makes the guest paint it again, so it shows its last
+            // frame from a copy.
             void restore_popups(const std::vector<hwnd>& popups)
             {
                 for (const auto handle : popups)
                 {
-                    if (auto* state = this->resolve_window(handle))
+                    auto* state = this->resolve_window(handle);
+                    if (!state)
                     {
-                        this->create_popup_host(*state);
+                        continue;
+                    }
+
+                    this->create_popup_host(*state);
+                    if (state->renderer && !state->popup_pixels.empty())
+                    {
+                        auto surface = state->popup_surface;
+                        surface.pixels = state->popup_pixels.data();
+                        update_surface_texture(*state, surface);
+                        render_window(*state);
                     }
                 }
             }
@@ -1593,6 +1607,11 @@ namespace sogen
                     {
                         update_surface_texture(*state, copy);
                         render_window(*state);
+                        if (state->popup)
+                        {
+                            state->popup_surface = copy;
+                            state->popup_pixels = std::move(pixels);
+                        }
                     }
                 });
             }
