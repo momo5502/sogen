@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -16,6 +17,17 @@ namespace sogen
         bool is_page_aligned(const uint64_t value)
         {
             return page_align_down(value) == value;
+        }
+
+        std::optional<size_t> page_rounded_length(const uint64_t length)
+        {
+            const auto rounded = page_align_up(length);
+            if (rounded < length)
+            {
+                return std::nullopt;
+            }
+
+            return static_cast<size_t>(rounded);
         }
 
         bool is_mappable(const posix_fd& file)
@@ -102,7 +114,8 @@ namespace sogen
         return permission;
     }
 
-    posix_result posix_mmap(posix_memory_manager& memory, const posix_fd_table& fds, const posix_map_request& request)
+    posix_result posix_mmap(posix_memory_manager& memory, const posix_fd_table& fds, const posix_map_request& request,
+                            const posix_errno oversized_length_error)
     {
         const auto is_fixed = request.placement != posix_map_placement::hint;
         if (request.length == 0 || !is_page_aligned(request.offset) ||
@@ -122,7 +135,13 @@ namespace sogen
             return posix_errno::enodev;
         }
 
-        const auto length = static_cast<size_t>(page_align_up(request.length));
+        const auto rounded_length = page_rounded_length(request.length);
+        if (!rounded_length)
+        {
+            return oversized_length_error;
+        }
+
+        const auto length = *rounded_length;
         const auto mapped = map_region(memory, request, length);
         if (std::holds_alternative<posix_errno>(mapped))
         {
@@ -142,23 +161,31 @@ namespace sogen
     // Unmapping a range that holds no mapping is not an error.
     posix_result posix_munmap(posix_memory_manager& memory, const uint64_t address, const uint64_t length)
     {
-        if (length == 0 || !is_page_aligned(address))
+        const auto rounded_length = page_rounded_length(length);
+        if (length == 0 || !rounded_length || !is_page_aligned(address))
         {
             return posix_errno::einval;
         }
 
-        memory.release_memory(address, static_cast<size_t>(page_align_up(length)));
+        memory.release_memory(address, *rounded_length);
         return uint64_t{0};
     }
 
-    posix_result posix_mprotect(posix_memory_manager& memory, const uint64_t address, const uint64_t length, const uint64_t protection)
+    posix_result posix_mprotect(posix_memory_manager& memory, const uint64_t address, const uint64_t length, const uint64_t protection,
+                                const posix_errno oversized_length_error)
     {
         if (length == 0 || !is_page_aligned(address))
         {
             return posix_errno::einval;
         }
 
-        if (!memory.protect_memory(address, static_cast<size_t>(page_align_up(length)), posix_memory_permission(protection)))
+        const auto rounded_length = page_rounded_length(length);
+        if (!rounded_length)
+        {
+            return oversized_length_error;
+        }
+
+        if (!memory.protect_memory(address, *rounded_length, posix_memory_permission(protection)))
         {
             return posix_errno::enomem;
         }

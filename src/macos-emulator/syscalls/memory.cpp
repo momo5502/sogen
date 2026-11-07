@@ -23,7 +23,7 @@ namespace sogen
             .offset = get_macos_syscall_argument(c.emu, 5),
         };
 
-        write_macos_syscall_result(c, posix_mmap(c.emu_ref.memory, c.emu_ref.fds, request));
+        write_macos_syscall_result(c, posix_mmap(c.emu_ref.memory, c.emu_ref.fds, request, posix_errno::einval));
     }
 
     void sys_munmap(const macos_syscall_context& c)
@@ -38,7 +38,7 @@ namespace sogen
         const auto address = get_macos_syscall_argument(c.emu, 0);
         const auto length = get_macos_syscall_argument(c.emu, 1);
         const auto protection = get_macos_syscall_argument(c.emu, 2);
-        write_macos_syscall_result(c, posix_mprotect(c.emu_ref.memory, address, length, protection));
+        write_macos_syscall_result(c, posix_mprotect(c.emu_ref.memory, address, length, protection, posix_errno::einval));
     }
 
     void sys_shared_region_check_np(const macos_syscall_context& c)

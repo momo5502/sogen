@@ -181,6 +181,21 @@ namespace sogen::macos_test
             0x0F, 0x05,                   // syscall
         });
 
+        constexpr auto WRAPPING_MMAP_LENGTH_CODE = std::to_array<uint8_t>({
+            0x31, 0xFF,                               // xor edi, edi
+            0x48, 0xC7, 0xC6, 0x01, 0xF0, 0xFF, 0xFF, // mov rsi, -0xFFF
+            0xBA, 0x03, 0x00, 0x00, 0x00,             // mov edx, 3 (PROT_READ | PROT_WRITE)
+            0x41, 0xBA, 0x02, 0x10, 0x00, 0x00,       // mov r10d, 0x1002 (MAP_ANON | MAP_PRIVATE)
+            0x41, 0xB8, 0xFF, 0xFF, 0xFF, 0xFF,       // mov r8d, -1
+            0x45, 0x31, 0xC9,                         // xor r9d, r9d
+            0xB8, 0xC5, 0x00, 0x00, 0x02,             // mov eax, 0x20000C5 (mmap)
+            0x0F, 0x05,                               // syscall
+            0x89, 0xC7,                               // mov edi, eax
+            0x11, 0xFF,                               // adc edi, edi
+            0xB8, 0x01, 0x00, 0x00, 0x02,             // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                               // syscall
+        });
+
         constexpr auto OVERSIZED_WRITE_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02,                               // mov eax, 0x2000004 (write)
             0xBF, 0x01, 0x00, 0x00, 0x00,                               // mov edi, 1
@@ -660,6 +675,14 @@ namespace sogen::macos_test
 
         constexpr int fd_cloexec = 1;
         EXPECT_EQ(result.exit_status, fd_cloexec * 2);
+    }
+
+    TEST(MacosEmulationTest, FailsMmapWhoseLengthWrapsWhenRoundedToAPage)
+    {
+        const auto result = run_image(make_test_image(WRAPPING_MMAP_LENGTH_CODE));
+
+        constexpr int einval = 22;
+        EXPECT_EQ(result.exit_status, (einval * 2) + 1);
     }
 
     TEST(MacosEmulationTest, FailsReadIntoUnwritableRangeWithoutConsumingInput)

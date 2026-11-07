@@ -40,7 +40,7 @@ namespace sogen
             .offset = get_linux_syscall_argument(c.emu, 5),
         };
 
-        const auto result = posix_mmap(c.emu_ref.memory, c.proc.fds, request);
+        const auto result = posix_mmap(c.emu_ref.memory, c.proc.fds, request, posix_errno::enomem);
         const auto* address = std::get_if<uint64_t>(&result);
         const auto* file = request.fd ? c.proc.fds.get(*request.fd) : nullptr;
         if (address && file && !file->host_path.empty() && (request.protection & POSIX_PROT_EXEC))
@@ -56,7 +56,7 @@ namespace sogen
         const auto addr = get_linux_syscall_argument(c.emu, 0);
         const auto length = get_linux_syscall_argument(c.emu, 1);
         const auto prot = get_linux_syscall_argument(c.emu, 2);
-        write_linux_syscall_result(c, posix_mprotect(c.emu_ref.memory, addr, length, prot));
+        write_linux_syscall_result(c, posix_mprotect(c.emu_ref.memory, addr, length, prot, posix_errno::enomem));
     }
 
     void sys_munmap(const linux_syscall_context& c)

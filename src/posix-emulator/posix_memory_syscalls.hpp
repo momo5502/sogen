@@ -35,7 +35,11 @@ namespace sogen
         uint64_t offset{};
     };
 
-    posix_result posix_mmap(posix_memory_manager& memory, const posix_fd_table& fds, const posix_map_request& request);
+    // A length that wraps when rounded up to a page fails mmap and mprotect with ENOMEM on Linux and EINVAL on XNU, and
+    // munmap with EINVAL on both.
+    posix_result posix_mmap(posix_memory_manager& memory, const posix_fd_table& fds, const posix_map_request& request,
+                            posix_errno oversized_length_error);
     posix_result posix_munmap(posix_memory_manager& memory, uint64_t address, uint64_t length);
-    posix_result posix_mprotect(posix_memory_manager& memory, uint64_t address, uint64_t length, uint64_t protection);
+    posix_result posix_mprotect(posix_memory_manager& memory, uint64_t address, uint64_t length, uint64_t protection,
+                                posix_errno oversized_length_error);
 }
