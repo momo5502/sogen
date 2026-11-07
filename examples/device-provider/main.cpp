@@ -7,7 +7,7 @@ using sogen::NTSTATUS;
 
 namespace
 {
-    constexpr sogen::ULONG echo_ioctl = 0x222004;
+    constexpr uint32_t echo_ioctl = 0x222004;
 
     class echo_device final : public sogen::stateless_device
     {
