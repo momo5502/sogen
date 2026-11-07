@@ -2339,7 +2339,8 @@ namespace sogen
 
                 if (registration->validate_open)
                 {
-                    const auto status = registration->validate_open({.is_32_bit = needs_32_bit_devices(c.win_emu)});
+                    const auto status =
+                        registration->validate_open({.is_32_bit = needs_32_bit_devices(c.win_emu), .provider = registration->lifetime});
                     if (status != STATUS_SUCCESS)
                     {
                         return status;

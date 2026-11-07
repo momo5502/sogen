@@ -121,27 +121,9 @@ namespace sogen
         return registry;
     }
 
-    bool is_device_supported(std::u16string_view device)
-    {
-        const auto& registry = get_device_registry();
-        return registry.contains(device);
-    }
-
     bool needs_32_bit_devices(const windows_emulator& win_emu)
     {
         return win_emu.process.is_wow64_process;
-    }
-
-    std::unique_ptr<io_device> create_device(const std::u16string_view device, const device_creation_context& context)
-    {
-        const auto& registry = get_device_registry();
-        const auto it = registry.find(device);
-        if (it == registry.end())
-        {
-            throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
-        }
-
-        return it->second(context);
     }
 
     device_registry::device_registry(std::vector<device_registration> registrations)
@@ -189,10 +171,11 @@ namespace sogen
         return registration && registration->dos_alias;
     }
 
-    void io_device_container::file_state::create(const device_registry::entry& registration, const device_creation_context& context)
+    void io_device_container::file_state::create(const device_registry::entry& registration, device_creation_context context)
     {
         this->provider = registration.lifetime;
         this->external = registration.external;
+        context.provider = this->provider;
         this->device = registration.factory(context);
         if (!this->device)
         {
@@ -480,8 +463,8 @@ namespace sogen
         buffer.read_shared(this->file_, [&](file_state& file) {
             buffer.read_optional(file.completion_association);
             buffer.read(file.completion_notification_flags);
-            const auto& win_emu = buffer.read<windows_emulator_wrapper>().get();
-            const auto* registration = win_emu.device_factories().find(this->device_name_);
+            const auto emulator = buffer.read<windows_emulator_wrapper>();
+            const auto* registration = emulator.get().device_factories().find(this->device_name_);
             if (!registration || registration->external)
             {
                 throw std::runtime_error("Unsupported device in snapshot");

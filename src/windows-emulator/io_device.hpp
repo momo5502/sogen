@@ -237,25 +237,16 @@ namespace sogen
 
     bool needs_32_bit_devices(const windows_emulator& win_emu);
 
-    // Everything a device factory needs to construct its device. Only the WoW64 flag for now; grows as
-    // more construction-time context is required, without touching every factory signature again.
     struct device_creation_context
     {
         bool is_32_bit{};
+        std::shared_ptr<void> provider{};
     };
 
     using device_factory = std::unique_ptr<io_device> (*)(const device_creation_context& context);
 
-    std::unique_ptr<io_device> create_device(std::u16string_view device, const device_creation_context& context);
-
-    // Single source of truth for the emulator's IO devices: NT device name -> factory. Several names may
-    // map to the same factory (e.g. the transport stub serves Tcp/Tcp6/Udp/RawIp). create_device() looks a
-    // name up here, and consumers that need every device type (e.g. the handler fuzzer) enumerate it and
-    // dedupe by factory, so a newly added device is visible everywhere without a second list to update.
-    // Ordered so the fuzzer's enumeration is deterministic across runs.
+    // Ordered built-in factories; aliases share a factory so the handler fuzzer can deduplicate them.
     const std::map<std::u16string_view, device_factory>& get_device_registry();
-
-    bool is_device_supported(std::u16string_view device);
 
     using device_open_validator = NTSTATUS (*)(const device_creation_context& context);
 
@@ -368,7 +359,7 @@ namespace sogen
             std::optional<device_completion_association> completion_association{};
             ULONG completion_notification_flags{};
 
-            void create(const device_registry::entry& registration, const device_creation_context& context);
+            void create(const device_registry::entry& registration, device_creation_context context);
         };
 
         std::shared_ptr<file_state> file_{};

@@ -4,8 +4,10 @@ Embedding applications can supply additional devices through
 `emulator_interfaces::devices` before constructing a Windows emulator. Each
 `device_registration` owns its UTF-16 NT device name and supplies the existing
 `device_factory`. Registrations are immutable after construction and apply only to
-that emulator. Empty names, null factories, duplicate names and replacement of a
-built-in device are rejected before guest execution.
+that emulator. The factory and open validator receive the registration's shared
+owner through `device_creation_context::provider`, allowing the same factory to use
+different state in different emulators. Empty names, null factories, duplicate
+names and replacement of a built-in device are rejected before guest execution.
 
 ```cpp
 sogen::emulator_interfaces interfaces{};
@@ -54,8 +56,8 @@ registration interface.
 
 ## Example
 
-`examples/device-provider` builds a separate embedding executable, excluded from the
-default build, which links an echo device with the ordinary emulator libraries. It
+`examples/device-provider` builds a separate embedding executable with the other
+standalone targets, linking an echo device with the ordinary emulator libraries. It
 exchanges a copied integer through the device completion path without loading a
 guest executable or registry hives. Configure the emulator with standalone tools
 enabled, then build the example explicitly:

@@ -294,6 +294,7 @@ namespace sogen::test
         this->emu->process.devices.get(server)->serialize(snapshot);
         this->emu->process.devices.get(root)->serialize(snapshot);
         utils::buffer_deserializer input{snapshot};
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         input.register_factory<guest_machine_wrapper>([&] { return guest_machine_wrapper{this->emu->emu()}; });
         this->emu->process.devices.get(server)->deserialize(input);
         this->emu->process.devices.get(root)->deserialize(input);
@@ -510,6 +511,7 @@ namespace sogen::test
         utils::buffer_serializer snapshot;
         this->emu->process.devices.get(root)->serialize(snapshot);
         utils::buffer_deserializer input{snapshot};
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         input.register_factory<guest_machine_wrapper>([&] { return guest_machine_wrapper{this->emu->emu()}; });
         this->emu->process.devices.get(root)->deserialize(input);
         this->work(root);

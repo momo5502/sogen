@@ -44,6 +44,49 @@ namespace sogen::test
             return std::make_unique<echo_device>();
         }
 
+        struct provider_state
+        {
+            uint32_t reply{};
+            bool allowed{true};
+        };
+
+        struct configured_echo_device : echo_device
+        {
+            explicit configured_echo_device(std::shared_ptr<provider_state> state)
+                : state_(std::move(state))
+            {
+            }
+
+            NTSTATUS io_control(windows_emulator& emu, const io_device_context& request) override
+            {
+                const auto status = echo_device::io_control(emu, request);
+                if (status == STATUS_SUCCESS)
+                {
+                    emu.memory.write_memory(request.output_buffer, this->state_->reply);
+                }
+                return status;
+            }
+
+          private:
+            std::shared_ptr<provider_state> state_;
+        };
+
+        std::unique_ptr<io_device> create_configured_echo(const device_creation_context& context)
+        {
+            auto state = std::static_pointer_cast<provider_state>(context.provider);
+            if (!state)
+            {
+                throw std::runtime_error("Missing provider state");
+            }
+            return std::make_unique<configured_echo_device>(std::move(state));
+        }
+
+        NTSTATUS validate_configured_echo(const device_creation_context& context)
+        {
+            const auto state = std::static_pointer_cast<provider_state>(context.provider);
+            return state && state->allowed ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;
+        }
+
         struct tracked_device : echo_device
         {
             ~tracked_device() override
@@ -109,7 +152,7 @@ namespace sogen::test
             return {result, output.read()};
         }
 
-        void expect_echo(windows_emulator& emu, const handle file)
+        void expect_echo(windows_emulator& emu, const handle file, const uint32_t expected = 0xFEDCBA98)
         {
             auto* device = emu.process.devices.get(file);
             ASSERT_NE(nullptr, device);
@@ -127,7 +170,7 @@ namespace sogen::test
             const auto event = emu.process.events.store(sogen::event{});
             request.event = event;
             EXPECT_EQ(STATUS_SUCCESS, device->execute_ioctl(emu, request));
-            EXPECT_EQ(payload, emu.memory.read_memory<uint32_t>(storage + 8));
+            EXPECT_EQ(expected, emu.memory.read_memory<uint32_t>(storage + 8));
             EXPECT_EQ(STATUS_SUCCESS, request.io_status_block.read().Status);
             EXPECT_EQ(sizeof(payload), request.io_status_block.read().Information);
             EXPECT_TRUE(emu.process.events.get(event)->signaled);
@@ -146,12 +189,33 @@ namespace sogen::test
         EXPECT_EQ(0xDEADBEEFu, unsupported.file.bits);
     }
 
-    TEST(DeviceProviderTest, DosAliasIsExplicitAndRegistrationOwnsItsName)
+    TEST(DeviceProviderTest, FactoryAndValidatorUseTheirOwnEmulatorsProviderState)
     {
-        std::u16string name = u"Echo";
-        std::vector<device_registration> registrations{{.name = name, .factory = create_echo, .dos_alias = true}};
-        auto emu = make_provider_emulator(std::move(registrations));
-        name.assign(1024, u'x');
+        auto first_state = std::make_shared<provider_state>(provider_state{.reply = 0x13579BDF});
+        auto second_state = std::make_shared<provider_state>(provider_state{.reply = 0x2468ACE0, .allowed = false});
+        auto first = make_provider_emulator({{.name = u"Configured",
+                                              .factory = create_configured_echo,
+                                              .validate_open = validate_configured_echo,
+                                              .lifetime = first_state}});
+        auto second = make_provider_emulator({{.name = u"Configured",
+                                               .factory = create_configured_echo,
+                                               .validate_open = validate_configured_echo,
+                                               .lifetime = second_state}});
+        const auto allowed = open(first, u"\\Device\\Configured");
+        ASSERT_EQ(STATUS_SUCCESS, allowed.status);
+        expect_echo(first, allowed.file, first_state->reply);
+        const auto denied = open(second, u"\\Device\\Configured");
+        EXPECT_EQ(STATUS_ACCESS_DENIED, denied.status);
+        EXPECT_EQ(0xDEADBEEFu, denied.file.bits);
+        second_state->allowed = true;
+        const auto enabled = open(second, u"\\Device\\Configured");
+        ASSERT_EQ(STATUS_SUCCESS, enabled.status);
+        expect_echo(second, enabled.file, second_state->reply);
+    }
+
+    TEST(DeviceProviderTest, DosAliasIsExplicit)
+    {
+        auto emu = make_provider_emulator({{.name = u"Echo", .factory = create_echo, .dos_alias = true}});
         const auto result = open(emu, u"\\??\\Echo");
         ASSERT_EQ(STATUS_SUCCESS, result.status);
         expect_echo(emu, result.file);
