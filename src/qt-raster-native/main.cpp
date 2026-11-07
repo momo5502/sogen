@@ -107,6 +107,11 @@ namespace sogen
                 this->backend->set_cursor_position(window, screen_x, screen_y);
             }
 
+            void set_system_cursor(const uint32_t idc) override
+            {
+                this->backend->set_system_cursor(idc);
+            }
+
             void set_cursor_visibility(const bool visible) override
             {
                 this->backend->set_cursor_visibility(visible);
