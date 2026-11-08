@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -28,7 +29,9 @@ class StoreConnection {
 
   /// Reads the stored session.
   final Future<void> Function() restore;
-  final VoidCallback close;
+
+  /// Releases the sign-in and every client the account's catalog and downloads use.
+  final Future<void> Function() close;
 }
 
 /// A store Sogen can sign in to.
@@ -146,11 +149,11 @@ class StoreAccounts extends ChangeNotifier implements DownloadAccounts {
     try {
       signedIn = await connection.signIn.signIn();
     } catch (_) {
-      connection.close();
+      await _discard(connection);
       rethrow;
     }
     if (!signedIn) {
-      connection.close();
+      await connection.close();
       return null;
     }
 
@@ -164,7 +167,13 @@ class StoreAccounts extends ChangeNotifier implements DownloadAccounts {
     }
 
     final known = _accounts.where((account) => account.provider == provider).toList();
-    await _identifyLegacy(known);
+    if (!await _identifyLegacy(known)) {
+      final error = connection.signIn.service.error(
+        'Sogen could not check whether you are already signed in to this ${provider.name} account. Please try again.',
+      );
+      await _discard(connection);
+      throw error;
+    }
     final existing =
         known.where((account) => account.userId == userId).firstOrNull ??
         // The session kept from before Sogen knew several accounts may not have named its user; a store had only one
@@ -182,8 +191,9 @@ class StoreAccounts extends ChangeNotifier implements DownloadAccounts {
   }
 
   /// A session restored from before Sogen knew several accounts names its user once it is refreshed, which has to
-  /// happen before a new sign-in can tell whether it is the same user.
-  Future<void> _identifyLegacy(List<KnownAccount> known) async {
+  /// happen before a new sign-in can tell whether it is the same user. Returns whether every one of them is known.
+  Future<bool> _identifyLegacy(List<KnownAccount> known) async {
+    var identified = true;
     for (final account in known) {
       if (account.legacy && account.userId == null && account.isSignedIn) {
         try {
@@ -191,8 +201,10 @@ class StoreAccounts extends ChangeNotifier implements DownloadAccounts {
         } on StoreException catch (e) {
           debugPrint('Could not tell who the earlier ${account.provider.name} session belongs to: ${e.message}');
         }
+        identified &= account.connection.signIn.userId != null || !account.isSignedIn;
       }
     }
+    return identified;
   }
 
   Future<KnownAccount> _addAccount(StoreProvider provider, String secretName, StoreConnection connection) async {
@@ -248,7 +260,7 @@ class StoreAccounts extends ChangeNotifier implements DownloadAccounts {
         debugPrint('Could not delete the replaced ${account.provider.name} session: $e');
       }
     }
-    previous.connection.close();
+    await previous.connection.close();
     return account;
   }
 
@@ -259,7 +271,7 @@ class StoreAccounts extends ChangeNotifier implements DownloadAccounts {
     } on Exception catch (e) {
       debugPrint('Could not delete an unused session: $e');
     }
-    connection.close();
+    await connection.close();
   }
 
   Future<void> signOut(KnownAccount account) => account.connection.signIn.signOut();
@@ -343,7 +355,7 @@ class StoreAccounts extends ChangeNotifier implements DownloadAccounts {
   void dispose() {
     for (final account in _accounts) {
       account.connection.signIn.removeListener(_onChanged);
-      account.connection.close();
+      unawaited(account.connection.close());
     }
     super.dispose();
   }

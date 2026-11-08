@@ -14,6 +14,8 @@ class SteamCatalog implements StoreCatalog {
   final SteamClient _client;
   final SteamPlanner _planner;
 
+  void close() => _planner.close();
+
   @override
   Future<List<StoreGame>> games() async {
     final apps = await _client.appInfo(await _client.ownedApps());

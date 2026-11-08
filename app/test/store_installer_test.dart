@@ -104,7 +104,7 @@ void main() {
       supportDirectory: () async => support,
     );
     await installer.restore();
-    final download = installer.download(_OneAccount.id, 'gog', '42')!;
+    final download = installer.download('gog', '42')!;
     expect(download.status, DownloadStatus.paused);
 
     final first = installer.resume(download, allowMetered: false);
@@ -125,7 +125,7 @@ void main() {
     );
     await installer.restore();
 
-    final download = installer.download(_OneAccount.id, 'gog', '42')!;
+    final download = installer.download('gog', '42')!;
     final resume = installer.resume(download, allowMetered: false);
     final cancel = installer.cancel(download);
     links.release();

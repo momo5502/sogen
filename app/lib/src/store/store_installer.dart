@@ -139,9 +139,10 @@ class StoreInstaller extends ChangeNotifier {
   final _approvedMetered = <String>{};
   StreamSubscription<Object?>? _subscription;
 
-  /// The download of a game with an account, including a paused one left from an earlier run.
-  GameDownload? download(String accountId, String store, String productId) =>
-      _downloads[_key(accountId, store, productId)];
+  /// The download of a game, including a paused one left from an earlier run. A game is downloaded with one account at
+  /// a time, whether or not that account is still signed in.
+  GameDownload? download(String store, String productId) =>
+      _downloads.values.where((download) => download.store == store && download.productId == productId).firstOrNull;
 
   static String _key(String accountId, String store, String productId) => '$accountId/$store/$productId';
 

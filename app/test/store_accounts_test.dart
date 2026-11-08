@@ -28,18 +28,24 @@ void main() {
 
   tearDown(() => directory.deleteSync(recursive: true));
 
-  StoreProvider provider() => StoreProvider(
+  StoreProvider provider({bool unreachable = false, bool failsAfterStoring = false}) => StoreProvider(
     store: 'gog',
     name: 'GOG',
     signInDescription: '',
     open: (secretName) {
-      final signIn = _FakeSignIn(secrets, secretName, nextUsers);
+      final signIn = _FakeSignIn(
+        secrets,
+        secretName,
+        nextUsers,
+        unreachable: unreachable,
+        failsAfterStoring: failsAfterStoring,
+      );
       return StoreConnection(
         signIn: signIn,
         catalog: const _NoCatalog(),
         installSource: const _NoSource(),
         restore: signIn.restore,
-        close: signIn.dispose,
+        close: () async => signIn.dispose(),
       );
     },
   );
@@ -135,6 +141,28 @@ void main() {
     expect(secrets, isEmpty);
   });
 
+  test('a sign-in that fails after its session was stored leaves no session behind', () async {
+    final gog = provider(failsAfterStoring: true);
+    final accounts = await open(gog);
+    nextUsers.add('alice');
+
+    await expectLater(accounts.signIn(gog), throwsA(isA<StoreException>()));
+    expect(accounts.signedIn, isEmpty);
+    expect(secrets, isEmpty);
+  });
+
+  test('while the earlier session cannot be identified, a new sign-in is refused instead of duplicating it', () async {
+    secrets['gog'] = 'alice';
+    final gog = provider(unreachable: true);
+    final accounts = await open(gog);
+    final legacy = accounts.ownerOf(legacyGame)!;
+    nextUsers.add('alice');
+
+    await expectLater(accounts.signIn(gog), throwsA(isA<StoreException>()));
+    expect(accounts.signedIn, [legacy]);
+    expect(secrets, {'gog': 'alice'});
+  });
+
   test('a session that cannot be stored keeps the one it would have replaced', () async {
     final gog = provider();
     final accounts = await open(gog);
@@ -151,13 +179,24 @@ void main() {
 }
 
 /// Signs in to the next user of [_nextUsers], or to one the store does not name for null, and keeps the session as
-/// the user's name. Like a GOG session, a restored one names its user only once it is identified.
+/// the user's name. Like a GOG session, a restored one names its user only once it is identified, which an
+/// [_unreachable] store fails to do.
 class _FakeSignIn extends ChangeNotifier implements StoreSignIn {
-  _FakeSignIn(this._secrets, this._secretName, this._nextUsers);
+  _FakeSignIn(
+    this._secrets,
+    this._secretName,
+    this._nextUsers, {
+    required this._unreachable,
+    required this._failsAfterStoring,
+  });
 
   final Map<String, String> _secrets;
   final String _secretName;
   final List<String?> _nextUsers;
+  final bool _unreachable;
+
+  /// Like a GOG sign-in whose user lookup fails after the token was redeemed and stored.
+  final bool _failsAfterStoring;
   String? _session;
   bool _identified = false;
 
@@ -175,6 +214,9 @@ class _FakeSignIn extends ChangeNotifier implements StoreSignIn {
 
   @override
   Future<void> identify() async {
+    if (_unreachable) {
+      throw const StoreException('unreachable');
+    }
     _identified = true;
     notifyListeners();
   }
@@ -190,6 +232,9 @@ class _FakeSignIn extends ChangeNotifier implements StoreSignIn {
     _identified = true;
     _secrets[_secretName] = _session!;
     notifyListeners();
+    if (_failsAfterStoring) {
+      throw const StoreException('lookup failed');
+    }
     return true;
   }
 

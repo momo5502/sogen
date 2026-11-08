@@ -79,7 +79,10 @@ List<StoreProvider> _storeProviders(GlobalKey<NavigatorState> navigator) => [
         catalog: GogCatalog(account, content),
         installSource: GogInstallSource(content),
         restore: account.restore,
-        close: account.dispose,
+        close: () async {
+          content.close();
+          account.dispose();
+        },
       );
     },
   ),
@@ -98,12 +101,17 @@ List<StoreProvider> _storeProviders(GlobalKey<NavigatorState> navigator) => [
         ),
       );
       final client = SteamClient(account);
+      final catalog = SteamCatalog(client);
       return StoreConnection(
         signIn: account,
-        catalog: SteamCatalog(client),
+        catalog: catalog,
         installSource: SteamInstallSource(client),
         restore: account.restore,
-        close: account.dispose,
+        close: () async {
+          catalog.close();
+          await client.close();
+          account.dispose();
+        },
       );
     },
   ),
@@ -127,7 +135,11 @@ List<StoreProvider> _storeProviders(GlobalKey<NavigatorState> navigator) => [
         catalog: EpicCatalog(api, content),
         installSource: EpicInstallSource(content),
         restore: account.restore,
-        close: account.dispose,
+        close: () async {
+          content.close();
+          api.close();
+          account.dispose();
+        },
       );
     },
   ),

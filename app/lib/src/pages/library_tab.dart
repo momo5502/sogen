@@ -246,10 +246,7 @@ class _LibraryTabState extends State<LibraryTab> with AutomaticKeepAliveClientMi
     final installed = widget.library.games
         .where((game) => game.source?.store == entry.store && game.source?.productId == entry.productId)
         .firstOrNull;
-    final download = entry.owners
-        .map((owner) => widget.installer.download(owner.account.id, entry.store, entry.productId))
-        .nonNulls
-        .firstOrNull;
+    final download = widget.installer.download(entry.store, entry.productId);
 
     if (installed != null) {
       final owner = widget.accounts.ownerOf(installed.source!);
