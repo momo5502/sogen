@@ -25,6 +25,7 @@
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
 #include <platform/audio_backend.hpp>
+#include "steam_backend.hpp"
 #include <platform/crypt_protect_backend.hpp>
 #include <platform/console_backend.hpp>
 #include <platform/ui_backend.hpp>
@@ -170,6 +171,7 @@ namespace sogen
         std::unique_ptr<network::socket_factory> socket_factory{};
         std::unique_ptr<ui_backend> ui{};
         std::unique_ptr<audio_backend> audio{};
+        std::unique_ptr<steam_backend> steam{};
         std::unique_ptr<crypt_protect_backend> crypt_protect{};
         process_manager* processes{};
         std::unique_ptr<console_backend> console{};
@@ -253,6 +255,7 @@ namespace sogen
         std::unique_ptr<ui_backend> ui_backend_{};
         frame_pacer frame_pacer_{};
         std::unique_ptr<audio_backend> audio_backend_{};
+        std::unique_ptr<steam_backend> steam_backend_{};
         std::unique_ptr<crypt_protect_backend> crypt_protect_backend_{};
         process_manager* process_manager_{};
         debug_port debugger_{};
@@ -383,6 +386,12 @@ namespace sogen
         const audio_backend& audio() const
         {
             return *this->audio_backend_;
+        }
+
+        // The Steam backend the embedder provided, or null when the Steam device picks its own.
+        steam_backend* steam()
+        {
+            return this->steam_backend_.get();
         }
 
         crypt_protect_backend& crypt_protect()
