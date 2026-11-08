@@ -5,8 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../game_library.dart';
 import '../store/cover_cache.dart';
-import '../store/store_account.dart';
-import '../store/store_catalog.dart';
+import '../store/store_accounts.dart';
 import '../store/store_game.dart';
 import '../store/store_http.dart';
 import '../store/store_installer.dart';
@@ -14,44 +13,63 @@ import '../theme.dart';
 import '../widgets/game_row.dart';
 import '../widgets/sogen_widgets.dart';
 
-/// Signing in to a store, and the Windows games the account owns there.
-class StoreTab extends StatefulWidget {
-  const StoreTab({
+/// The Windows games of every signed-in account, together in one list.
+class LibraryTab extends StatefulWidget {
+  const LibraryTab({
     super.key,
-    required this.account,
-    required this.catalog,
+    required this.accounts,
     required this.installer,
     required this.library,
     required this.canInstall,
-    required this.color,
     required this.covers,
     required this.commands,
+    required this.onSignIn,
   });
 
-  final StoreSignIn account;
-  final StoreCatalog catalog;
+  final StoreAccounts accounts;
   final StoreInstaller installer;
   final GameLibrary library;
 
   /// Whether the emulation root is installed, without which there is nothing to run a downloaded game with.
   final bool canInstall;
 
-  /// The accent the signed-out card shows the store in.
-  final Color color;
-
   final CoverCache covers;
 
-  /// How the installed games of the store start, change and go.
+  /// How the installed games start, change and go.
   final GameCommands commands;
 
+  /// Lets the user pick a store to sign in to.
+  final VoidCallback onSignIn;
+
   @override
-  State<StoreTab> createState() => _StoreTabState();
+  State<LibraryTab> createState() => _LibraryTabState();
 }
 
-class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin {
+/// A game as one account owns it.
+class _Owned {
+  const _Owned(this.account, this.game);
+
+  final KnownAccount account;
+  final StoreGame game;
+}
+
+/// A game the library lists once, however many of the accounts own it.
+class _Entry {
+  _Entry(this.store, this.productId, this.title, this.imageUrl);
+
+  final String store;
+  final String productId;
+  final String title;
+  final Uri? imageUrl;
+  final owners = <_Owned>[];
+
+  String get key => '$store/$productId';
+}
+
+class _LibraryTabState extends State<LibraryTab> with AutomaticKeepAliveClientMixin {
   final _preparing = <String>{};
-  Future<List<StoreGame>>? _games;
-  bool _signingIn = false;
+  final _games = <String, Future<List<StoreGame>>>{};
+  Future<List<(KnownAccount, List<StoreGame>?, Object?)>>? _loads;
   String _search = '';
 
   @override
@@ -60,34 +78,31 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
   @override
   void initState() {
     super.initState();
-    widget.account.addListener(_onAccountChanged);
+    widget.accounts.addListener(_onAccountsChanged);
   }
 
   @override
   void dispose() {
-    widget.account.removeListener(_onAccountChanged);
+    widget.accounts.removeListener(_onAccountsChanged);
     super.dispose();
   }
 
-  void _onAccountChanged() {
-    if (!widget.account.isSignedIn && _games != null) {
-      setState(() => _games = null);
-    }
+  /// An account that signed out takes its games with it; one that signed in loads its games on the next build.
+  void _onAccountsChanged() {
+    final signedIn = {for (final account in widget.accounts.signedIn) account.id};
+    setState(() {
+      _games.removeWhere((id, _) => !signedIn.contains(id));
+      _loads = null;
+    });
   }
 
-  Future<void> _signIn() async {
-    setState(() => _signingIn = true);
-    try {
-      await widget.account.signIn();
-    } on StoreException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _signingIn = false);
-      }
-    }
+  Future<List<StoreGame>> _gamesOf(KnownAccount account) => _games[account.id] ??= account.connection.catalog.games();
+
+  void _reload(KnownAccount account) {
+    setState(() {
+      _games.remove(account.id);
+      _loads = null;
+    });
   }
 
   void _showError(Object error) {
@@ -97,33 +112,59 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     }
   }
 
-  Future<void> _download(StoreGame game) async {
-    setState(() => _preparing.add(game.productId));
+  Future<void> _download(_Entry entry) async {
+    setState(() => _preparing.add(entry.key));
     try {
-      final chosen = await widget.catalog.plan(game, (languages) => _chooseLanguage(game, languages));
+      final owner = entry.owners.length == 1 ? entry.owners.single : await _chooseOwner(entry);
+      if (owner == null) {
+        return;
+      }
+
+      final chosen = await owner.account.connection.catalog.plan(
+        owner.game,
+        (languages) => _chooseLanguage(owner, languages),
+      );
       if (chosen == null) {
         return;
       }
 
       final (planned, language) = chosen;
       final metered = await widget.installer.isMetered();
-      if (metered && !await _confirmMeteredDownload(game, planned.plan.downloadBytes)) {
+      if (metered && !await _confirmMeteredDownload(entry.title, planned.plan.downloadBytes)) {
         return;
       }
 
-      await widget.installer.install(game, planned, language: language, allowMetered: metered);
+      await widget.installer.install(
+        owner.game,
+        planned,
+        accountId: owner.account.id,
+        language: language,
+        allowMetered: metered,
+      );
     } catch (error) {
       _showError(error);
     } finally {
       if (mounted) {
-        setState(() => _preparing.remove(game.productId));
+        setState(() => _preparing.remove(entry.key));
       }
     }
   }
 
-  Future<String?> _chooseLanguage(StoreGame game, List<String> languages) async {
+  /// The account a game is downloaded with owns it from then on, e.g. for the game's saves.
+  Future<_Owned?> _chooseOwner(_Entry entry) => showDialog<_Owned>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text('Download ${entry.title} with'),
+      children: [
+        for (final owner in entry.owners)
+          SimpleDialogOption(onPressed: () => Navigator.of(context).pop(owner), child: Text(owner.account.label)),
+      ],
+    ),
+  );
+
+  Future<String?> _chooseLanguage(_Owned owner, List<String> languages) async {
     if (languages.isEmpty) {
-      throw StoreException('${widget.catalog.name} lists no language for this game.');
+      throw StoreException('${owner.account.provider.name} lists no language for this game.');
     }
     if (languages.length == 1) {
       return languages.single;
@@ -139,29 +180,29 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
 
     return showDialog<String>(
       context: context,
-      builder: (context) => _LanguageDialog(title: game.title, languages: languages, initial: preselected),
+      builder: (context) => _LanguageDialog(title: owner.game.title, languages: languages, initial: preselected),
     );
   }
 
-  Future<void> _resume(StoreGame game, GameDownload download) async {
+  Future<void> _resume(String title, GameDownload download) async {
     try {
       final metered = await widget.installer.isMetered();
       final remaining = download.total > download.written ? download.total - download.written : 0;
-      if (metered && !await _confirmMeteredDownload(game, remaining)) {
+      if (metered && !await _confirmMeteredDownload(title, remaining)) {
         return;
       }
-      await widget.installer.resume(game.store, game.productId, allowMetered: metered);
+      await widget.installer.resume(download, allowMetered: metered);
     } catch (error) {
       _showError(error);
     }
   }
 
-  Future<bool> _confirmMeteredDownload(StoreGame game, int bytes) async {
+  Future<bool> _confirmMeteredDownload(String title, int bytes) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Use mobile data?'),
-        content: Text('${game.title} downloads ${formatBytes(bytes)}. You are not on Wi-Fi.'),
+        content: Text('$title downloads ${formatBytes(bytes)}. You are not on Wi-Fi.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
           TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Download')),
@@ -171,11 +212,11 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     return confirmed == true;
   }
 
-  Future<void> _confirmCancel(StoreGame game) async {
+  Future<void> _confirmCancel(String title, GameDownload download) async {
     final cancel = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Cancel downloading ${game.title}?'),
+        title: Text('Cancel downloading $title?'),
         content: const Text('What was downloaded so far is deleted.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Keep')),
@@ -184,25 +225,38 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
       ),
     );
     if (cancel == true) {
-      await widget.installer.cancel(game.store, game.productId).catchError(_showError);
+      await widget.installer.cancel(download).catchError(_showError);
     }
   }
 
-  Widget _art(StoreGame game, int index) {
-    final image = game.imageUrl;
+  Widget _art(_Entry entry, int index) {
+    final image = entry.imageUrl;
     return GameArt(source: image == null ? null : StoreArt(image, widget.covers), color: placeholderColor(index));
   }
 
-  Widget _row(StoreGame game, int index) {
+  Widget _storeLine(String text) => Text(
+    text,
+    maxLines: 1,
+    softWrap: false,
+    overflow: TextOverflow.ellipsis,
+    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+  );
+
+  Widget _row(_Entry entry, int index) {
     final installed = widget.library.games
-        .where((entry) => entry.source?.store == game.store && entry.source?.productId == game.productId)
+        .where((game) => game.source?.store == entry.store && game.source?.productId == entry.productId)
         .firstOrNull;
-    final download = widget.installer.download(game.store, game.productId);
+    final download = entry.owners
+        .map((owner) => widget.installer.download(owner.account.id, entry.store, entry.productId))
+        .nonNulls
+        .firstOrNull;
 
     if (installed != null) {
+      final owner = widget.accounts.ownerOf(installed.source!);
       return GameRow(
-        art: _art(game, index),
-        title: game.title,
+        art: _art(entry, index),
+        title: entry.title,
+        subtitle: _storeLine(owner?.label ?? entry.owners.first.account.provider.name),
         onTap: widget.commands.tap(installed),
         onLongPress: widget.commands.menu(installed),
         dimmed: widget.commands.isBusy(installed),
@@ -211,8 +265,8 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
     }
     if (download != null) {
       return GameRow(
-        art: _art(game, index),
-        title: game.title,
+        art: _art(entry, index),
+        title: entry.title,
         status: _DownloadStatusLine(download: download),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -227,19 +281,24 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
               IconButton(
                 icon: const Icon(LucideIcons.download),
                 tooltip: 'Resume',
-                onPressed: widget.installer.isBusy || !widget.canInstall ? null : () => _resume(game, download),
+                onPressed: widget.installer.isBusy || !widget.canInstall ? null : () => _resume(entry.title, download),
               ),
             if (download.status != DownloadStatus.complete)
-              IconButton(icon: const Icon(LucideIcons.x), tooltip: 'Cancel', onPressed: () => _confirmCancel(game)),
+              IconButton(
+                icon: const Icon(LucideIcons.x),
+                tooltip: 'Cancel',
+                onPressed: () => _confirmCancel(entry.title, download),
+              ),
           ],
         ),
       );
     }
 
-    final preparing = _preparing.contains(game.productId);
+    final preparing = _preparing.contains(entry.key);
     return GameRow(
-      art: _art(game, index),
-      title: game.title,
+      art: _art(entry, index),
+      title: entry.title,
+      subtitle: _storeLine(entry.owners.first.account.provider.name),
       trailing: preparing
           ? const Padding(
               padding: EdgeInsets.all(12),
@@ -249,65 +308,70 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
               icon: const Icon(LucideIcons.download),
               tooltip: widget.canInstall ? 'Download' : 'Download the emulation root first',
               onPressed: widget.canInstall && !widget.installer.isBusy && _preparing.isEmpty
-                  ? () => _download(game)
+                  ? () => _download(entry)
                   : null,
             ),
     );
-  }
-
-  void _reload() {
-    setState(() {
-      _games = widget.catalog.games();
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
-    return ListenableBuilder(
-      listenable: widget.account,
-      builder: (context, _) {
-        if (!widget.account.isSignedIn) {
-          return _SignedOut(
-            name: widget.catalog.name,
-            description: widget.catalog.signInDescription,
-            color: widget.color,
-            signingIn: _signingIn,
-            onSignIn: _signIn,
-          );
+    final accounts = widget.accounts.signedIn;
+    if (accounts.isEmpty) {
+      return _SignedOut(onSignIn: widget.onSignIn);
+    }
+
+    // A changed future keeps the games of the previous one on screen until it completes.
+    _loads ??= Future.wait([
+      for (final account in accounts)
+        _gamesOf(account).then<(KnownAccount, List<StoreGame>?, Object?)>(
+          (games) => (account, games, null),
+          onError: (Object error) => (account, null, error),
+        ),
+    ]);
+    return FutureBuilder(
+      future: _loads,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Center(child: SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2)));
         }
 
-        return FutureBuilder(
-          future: _games ??= widget.catalog.games(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(
-                child: SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2)),
-              );
-            }
+        final entries = <String, _Entry>{};
+        final failed = <(KnownAccount, Object)>[];
+        for (final (account, games, error) in snapshot.requireData) {
+          if (games == null) {
+            failed.add((account, error!));
+            continue;
+          }
+          for (final game in games) {
+            entries
+                .putIfAbsent(
+                  '${game.store}/${game.productId}',
+                  () => _Entry(game.store, game.productId, game.title, game.imageUrl),
+                )
+                .owners
+                .add(_Owned(account, game));
+          }
+        }
 
-            if (snapshot.hasError) {
-              final error = snapshot.error;
-              return CenteredMessage(
-                icon: LucideIcons.cloudOff,
-                text: error is StoreException ? error.message : 'Could not load your ${widget.catalog.name} library.',
-                action: PrimaryButton(label: 'Try again', icon: LucideIcons.refreshCw, onPressed: _reload),
-              );
-            }
-
-            return _OwnedGames(
-              name: widget.catalog.name,
-              games: snapshot.requireData,
-              listenable: Listenable.merge([widget.installer, widget.library]),
-              rowBuilder: _row,
-              search: _search,
-              onSearch: (search) => setState(() => _search = search),
-              onRefresh: () async {
-                _reload();
-                await _games?.catchError((Object _) => <StoreGame>[]);
-              },
-            );
+        return _OwnedGames(
+          games: entries.values.toList()..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase())),
+          failed: failed,
+          listenable: Listenable.merge([widget.installer, widget.library]),
+          rowBuilder: _row,
+          onRetry: _reload,
+          search: _search,
+          onSearch: (search) => setState(() => _search = search),
+          onRefresh: () async {
+            setState(() {
+              _games.clear();
+              _loads = null;
+            });
+            await Future.wait([
+              for (final account in accounts) _gamesOf(account).catchError((Object _) => <StoreGame>[]),
+            ]);
           },
         );
       },
@@ -316,18 +380,8 @@ class _StoreTabState extends State<StoreTab> with AutomaticKeepAliveClientMixin 
 }
 
 class _SignedOut extends StatelessWidget {
-  const _SignedOut({
-    required this.name,
-    required this.description,
-    required this.color,
-    required this.signingIn,
-    required this.onSignIn,
-  });
+  const _SignedOut({required this.onSignIn});
 
-  final String name;
-  final String description;
-  final Color color;
-  final bool signingIn;
   final VoidCallback onSignIn;
 
   @override
@@ -343,20 +397,17 @@ class _SignedOut extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                IconTile(icon: LucideIcons.library, color: color),
+                IconTile(icon: LucideIcons.library, color: SogenColors.accents[6]),
                 const SizedBox(height: 16),
-                Text(name, style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
+                Text('Your games', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 8),
                 Text(
-                  description,
+                  'Sign in to GOG, Steam or Epic to see the Windows games you own there, and download them. You can '
+                  'sign in to several accounts.',
                   style: theme.textTheme.bodyMedium?.copyWith(color: SogenColors.neutral300, height: 1.5),
                 ),
                 const SizedBox(height: 20),
-                PrimaryButton(
-                  label: 'Sign in to $name',
-                  icon: LucideIcons.logIn,
-                  onPressed: signingIn ? null : onSignIn,
-                ),
+                PrimaryButton(label: 'Sign in', icon: LucideIcons.logIn, onPressed: onSignIn),
               ],
             ),
           ),
@@ -368,37 +419,29 @@ class _SignedOut extends StatelessWidget {
 
 class _OwnedGames extends StatelessWidget {
   const _OwnedGames({
-    required this.name,
     required this.games,
+    required this.failed,
     required this.listenable,
     required this.rowBuilder,
+    required this.onRetry,
     required this.search,
     required this.onSearch,
     required this.onRefresh,
   });
 
-  final String name;
-  final List<StoreGame> games;
+  final List<_Entry> games;
+
+  /// The accounts whose games could not be loaded, with why.
+  final List<(KnownAccount, Object)> failed;
   final Listenable listenable;
-  final Widget Function(StoreGame game, int index) rowBuilder;
+  final Widget Function(_Entry entry, int index) rowBuilder;
+  final ValueChanged<KnownAccount> onRetry;
   final String search;
   final ValueChanged<String> onSearch;
   final RefreshCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
-    if (games.isEmpty) {
-      return RefreshIndicator(
-        onRefresh: onRefresh,
-        child: ListView(
-          children: [
-            const SizedBox(height: 96),
-            CenteredMessage(icon: LucideIcons.library, text: 'Your $name account owns no Windows games.'),
-          ],
-        ),
-      );
-    }
-
     final query = search.trim().toLowerCase();
     final matches = query.isEmpty ? games : games.where((game) => game.title.toLowerCase().contains(query)).toList();
 
@@ -406,21 +449,36 @@ class _OwnedGames extends StatelessWidget {
       onRefresh: onRefresh,
       child: CustomScrollView(
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+        physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           SliverPadding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
             sliver: SliverToBoxAdapter(
               child: TextField(
                 onChanged: onSearch,
-                decoration: InputDecoration(
-                  hintText: 'Search your $name games',
-                  prefixIcon: const Icon(LucideIcons.search, size: 18),
+                decoration: const InputDecoration(
+                  hintText: 'Search your games',
+                  prefixIcon: Icon(LucideIcons.search, size: 18),
                 ),
               ),
             ),
           ),
+          for (final (account, error) in failed)
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+              sliver: SliverToBoxAdapter(
+                child: _LoadFailure(account: account, error: error, onRetry: () => onRetry(account)),
+              ),
+            ),
+          if (games.isEmpty && failed.isEmpty)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.only(top: 72),
+                child: CenteredMessage(icon: LucideIcons.library, text: 'Your accounts own no Windows games.'),
+              ),
+            ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 96),
             sliver: SliverList.separated(
               itemCount: matches.length,
               separatorBuilder: (_, _) => const SizedBox(height: 12),
@@ -429,6 +487,38 @@ class _OwnedGames extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LoadFailure extends StatelessWidget {
+  const _LoadFailure({required this.account, required this.error, required this.onRetry});
+
+  final KnownAccount account;
+  final Object error;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final error = this.error;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 4, 8),
+        child: Row(
+          children: [
+            const Icon(LucideIcons.cloudOff, size: 18, color: SogenColors.neutral400),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                error is StoreException ? '${account.label}: ${error.message}' : 'Could not load ${account.label}.',
+                style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral300),
+              ),
+            ),
+            IconButton(icon: const Icon(LucideIcons.refreshCw), tooltip: 'Try again', onPressed: onRetry),
+          ],
+        ),
       ),
     );
   }

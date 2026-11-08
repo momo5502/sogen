@@ -37,6 +37,12 @@ abstract interface class StoreSignIn implements Listenable {
   StoreService get service;
   bool get isSignedIn;
 
+  /// The store's id of the signed-in user, once the store named it.
+  String? get userId;
+
+  /// The name the store shows for the user, once known.
+  String? get displayName;
+
   /// Completes with false when the user left the sign-in without finishing it.
   Future<bool> signIn();
   Future<void> signOut();
@@ -70,6 +76,8 @@ abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
   Future<String>? _refreshing;
   int _session = 0;
   Future<void> _secretChanges = Future.value();
+  String? _userId;
+  String? _displayName;
 
   @override
   StoreService get service;
@@ -96,6 +104,20 @@ abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
 
   @protected
   SignedOutException signedOut();
+
+  /// Who a token answer of the store was issued for.
+  @protected
+  ({String? userId, String? displayName}) identityOf(Map<String, Object?> body);
+
+  /// Looks up the user's name, for stores whose token answer does not carry it.
+  @protected
+  Future<String?> fetchDisplayName(String accessToken) async => null;
+
+  @override
+  String? get userId => _userId;
+
+  @override
+  String? get displayName => _displayName;
 
   @override
   bool get isSignedIn => _refreshToken != null;
@@ -125,12 +147,22 @@ abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
 
   @override
   Future<bool> signIn() async {
+    // The login page would otherwise sign in to the account it remembers instead of letting the user pick another.
+    await _forgetLoginPage();
     final grant = await authorize();
     if (grant == null) {
       return false;
     }
 
-    await _redeem(grant);
+    final accessToken = await _redeem(grant);
+    if (_displayName == null) {
+      try {
+        _displayName = await fetchDisplayName(accessToken);
+        notifyListeners();
+      } on StoreException {
+        // The account works without a name; it is shown by its store's name instead.
+      }
+    }
     return true;
   }
 
@@ -220,6 +252,9 @@ abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
       throw signedOut();
     }
 
+    final identity = identityOf(body);
+    _userId = identity.userId ?? _userId;
+    _displayName = identity.displayName ?? _displayName;
     _refreshToken = refreshToken;
     _accessToken = accessToken;
     _accessTokenExpiry = _now().add(Duration(seconds: expiresIn));

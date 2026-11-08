@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../store/store_account.dart';
-import '../store/store_http.dart';
+import '../store/store_http.dart' show StoreService;
 import 'gog_http.dart';
 
 export '../store/store_account.dart' show DeviceSecretStorage, SecretStorage;
@@ -31,23 +31,14 @@ Future<void> forgetGogLoginPage() => _gogChannel.invokeMethod<void>('forgetLogin
 class GogAccount extends StoreAccount {
   GogAccount({
     required super.secrets,
+    required super.secretName,
     required this._loginPage,
     super.forgetLoginPage,
     super.client,
     Random? random,
     super.now,
   }) : _random = random ?? Random.secure(),
-       super(secretName: 'gog');
-
-  static Future<GogAccount> load() async {
-    final account = GogAccount(
-      secrets: const DeviceSecretStorage(),
-      loginPage: showGogLoginPage,
-      forgetLoginPage: forgetGogLoginPage,
-    );
-    await account.restore();
-    return account;
-  }
+       super();
 
   // GOG registers no clients for other applications, so this is the published client of GOG Galaxy that open source
   // GOG clients sign in with. Its login page only redirects to this URL.
@@ -108,6 +99,25 @@ class GogAccount extends StoreAccount {
 
   @override
   SignedOutException signedOut() => const GogSignedOutException();
+
+  @override
+  ({String? userId, String? displayName}) identityOf(Map<String, Object?> body) {
+    final userId = body['user_id'];
+    return (userId: userId is String && userId.isNotEmpty ? userId : null, displayName: null);
+  }
+
+  @override
+  Future<String?> fetchDisplayName(String accessToken) async {
+    final request = http.Request('GET', Uri.https('embed.gog.com', '/userData.json'))
+      ..headers['Authorization'] = 'Bearer $accessToken';
+    final body = await sendJson(
+      client,
+      request,
+      onError: (status, _) => GogException('GOG answered with status $status.'),
+    );
+    final username = body['username'];
+    return username is String && username.isNotEmpty ? username : null;
+  }
 
   String _randomToken() => base64Url.encode(List.generate(32, (_) => _random.nextInt(256))).replaceAll('=', '');
 }
