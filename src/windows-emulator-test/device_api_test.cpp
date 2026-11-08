@@ -269,13 +269,17 @@ namespace sogen::test
         EXPECT_EQ(0u, this->result().handle);
     }
 
-    // The class name is copied with all of its declared length, and that copy's probe fails the request when the range
-    // cannot be read; a name longer than RtlInitUnicodeStringEx takes is reported in the reply.
+    // The class name is copied with all of its declared length, aligned to a character, and that copy's probe fails the
+    // request when the range cannot be read or is misaligned; a name longer than RtlInitUnicodeStringEx takes is reported
+    // in the reply.
     TEST_F(DeviceApiTest, ClassNameIsCheckedAsTheKernelCopiesIt)
     {
         const std::u16string short_name = u"{4d36e968-e325-11ce-bfc1-08002be10318}";
-        this->emu.memory.write_memory(this->storage + 0x100, short_name.c_str(), (short_name.size() + 1) * sizeof(char16_t));
+        const auto name_bytes = static_cast<uint32_t>((short_name.size() + 1) * sizeof(char16_t));
+        this->emu.memory.write_memory(this->storage + 0x100, short_name.c_str(), name_bytes);
         EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->open_class_key({.class_name = this->storage + 0x100, .class_name_bytes = 0xFFFFFFFE}));
+        EXPECT_EQ(STATUS_DATATYPE_MISALIGNMENT,
+                  this->open_class_key({.class_name = this->storage + 0x101, .class_name_bytes = name_bytes}));
 
         constexpr size_t too_long = 0x7FFF;
         const auto long_name = this->emu.memory.allocate_memory(0x11000, memory_permission::read_write);
