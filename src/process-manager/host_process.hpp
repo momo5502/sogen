@@ -10,7 +10,6 @@
 
 namespace sogen
 {
-    // The host process that runs one managed guest process.
     class host_process
     {
       public:
@@ -24,11 +23,8 @@ namespace sogen
 
         virtual uint32_t id() const = 0;
 
-        // Ends the process. Safe to call from any thread and more than once, while run() is running or after it returned.
         virtual void kill() = 0;
 
-        // Runs until the process exits, forwarding what it writes. Returns its exit status, or nothing when it could not
-        // be watched.
         virtual std::optional<int> run() = 0;
     };
 
@@ -38,7 +34,6 @@ namespace sogen
         process_error error{process_error::none};
     };
 
-    // Starts the host processes of managed guest processes, so that a platform can run them as its own kind of process.
     class host_process_launcher
     {
       public:
@@ -53,6 +48,5 @@ namespace sogen
         virtual host_process_launch_result launch(const std::vector<std::string>& command) = 0;
     };
 
-    // Runs each command as a subprocess of this process.
     std::unique_ptr<host_process_launcher> create_subprocess_launcher();
 }
