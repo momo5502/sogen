@@ -228,6 +228,75 @@ namespace sogen::test
         EXPECT_EQ(0xCCCCCCCCu, this->list_result().size);
     }
 
+    // An interface key "##?#<device path>" under the class with reference keys "#" and "#Ref", as the PnP manager writes
+    // them: listing all interfaces names both links, a device ID filters on the key's DeviceInstance value, and a
+    // present-only query names neither, as the emulator enables no interfaces.
+    TEST_F(DeviceApiTest, InterfaceListNamesRegisteredInterfaces)
+    {
+        constexpr std::array<uint8_t, 16> test_class{0x4c, 0x3d, 0x2e, 0x1f, 0x6a, 0x5b, 0x78, 0x49,
+                                                     0x86, 0x95, 0xa4, 0xb3, 0xc2, 0xd1, 0xe0, 0xf0};
+        const std::u16string interface_name = u"##?#ROOT#SOGEN#0000#{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F0}";
+        const std::u16string instance = uR"(ROOT\SOGEN\0000)";
+        const std::filesystem::path class_path{
+            uR"(\Registry\Machine\System\CurrentControlSet\Control\DeviceClasses\{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F0})"};
+
+        const auto interface_key = this->emu.registry.create_key(class_path / interface_name);
+        ASSERT_TRUE(interface_key.has_value());
+        ASSERT_TRUE(this->emu.registry.create_key(class_path / interface_name / u"#").has_value());
+        ASSERT_TRUE(this->emu.registry.create_key(class_path / interface_name / u"#Ref").has_value());
+        this->emu.registry.set_value(*interface_key, "DeviceInstance", REG_SZ,
+                                     std::as_bytes(std::span{instance.c_str(), instance.size() + 1}));
+
+        const auto query = [&](const uint32_t flags, const std::u16string& device_id) {
+            interface_list_input input{.flags = flags, .interface_class = test_class};
+            if (!device_id.empty())
+            {
+                this->emu.memory.write_memory(this->storage + 0x100, device_id.c_str(), (device_id.size() + 1) * sizeof(char16_t));
+                input.device_id = this->storage + 0x100;
+                input.device_id_bytes = static_cast<uint32_t>((device_id.size() + 1) * sizeof(char16_t));
+            }
+
+            this->emu.memory.write_memory(this->storage, &input, sizeof(input));
+            this->context.io_control_code = ioctl_get_device_interface_list;
+            this->context.io_status_block.set_address(this->storage + 0x300);
+            this->context.input_buffer = this->storage;
+            this->context.input_buffer_length = sizeof(input);
+            this->context.output_buffer = this->storage + 0x400;
+            this->context.output_buffer_length = 0x400;
+
+            io_device_container device{u"DeviceApi\\CMApi", this->emu, {}};
+            EXPECT_EQ(STATUS_SUCCESS, device.execute_ioctl(this->emu, this->context));
+
+            const auto reply = this->emu.memory.read_memory<buffer_result>(this->storage + 0x400);
+            EXPECT_EQ(STATUS_SUCCESS, reply.status);
+            std::u16string list(reply.data_bytes / sizeof(char16_t), u'\0');
+            this->emu.memory.read_memory(this->storage + 0x400 + 16, list.data(), reply.data_bytes);
+            return list;
+        };
+
+        const auto links = [](const std::u16string& list) {
+            std::vector<std::u16string> names;
+            for (size_t start = 0; start < list.size() && list[start] != u'\0'; start = list.find(u'\0', start) + 1)
+            {
+                names.emplace_back(list.substr(start, list.find(u'\0', start) - start));
+            }
+
+            std::ranges::sort(names);
+            return names;
+        };
+
+        const std::u16string link = uR"(\\?\ROOT#SOGEN#0000#{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F0})";
+        const std::vector<std::u16string> both{link, link + uR"(\Ref)"};
+        const std::u16string empty(1, u'\0');
+
+        const auto all = query(0, {});
+        EXPECT_EQ(both, links(all));
+        EXPECT_TRUE(all.ends_with(std::u16string(2, u'\0')));
+        EXPECT_EQ(both, links(query(0, instance)));
+        EXPECT_EQ(empty, query(0, uR"(ROOT\OTHER\0000)"));
+        EXPECT_EQ(empty, query(0x10000, {}));
+    }
+
     TEST_F(DeviceApiTest, OpensTheInterfaceClassRoot)
     {
         ASSERT_EQ(STATUS_SUCCESS, this->open_class_key({}));
