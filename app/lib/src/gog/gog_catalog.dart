@@ -12,6 +12,8 @@ class GogCatalog implements StoreCatalog {
   final GogLibrary _library;
   final GogPlanner _planner;
 
+  void close() => _library.close();
+
   @override
   Future<List<StoreGame>> games() => _library.games();
 

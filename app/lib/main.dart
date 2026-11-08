@@ -74,12 +74,14 @@ List<StoreProvider> _storeProviders(GlobalKey<NavigatorState> navigator) => [
         forgetLoginPage: forgetGogLoginPage,
       );
       final content = GogContent(account);
+      final catalog = GogCatalog(account, content);
       return StoreConnection(
         signIn: account,
-        catalog: GogCatalog(account, content),
+        catalog: catalog,
         installSource: GogInstallSource(content),
         restore: account.restore,
         close: () async {
+          catalog.close();
           content.close();
           account.dispose();
         },
