@@ -410,7 +410,7 @@ Future<File> registryStateFile(Game game) async {
   return File(p.join((await _gameLayers(game)).path, 'registry.state'));
 }
 
-/// The registry values Sogen sets for the game when it starts, written before each start.
+/// The registry values a game's install script sets, written for its first session.
 Future<File> startupRegistryFile(Game game) async {
   return File(p.join((await _gameLayers(game)).path, 'startup.reg'));
 }
