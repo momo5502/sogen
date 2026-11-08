@@ -157,6 +157,20 @@ namespace sogen
         process_error error{process_error::none};
     };
 
+    struct process_session_endpoint
+    {
+        uint16_t port{};
+        std::string token{};
+    };
+
+    struct process_identity
+    {
+        uint32_t process_id{};
+        uint32_t parent_process_id{};
+        uint64_t native_environment{};
+        uint64_t compatibility_environment{};
+    };
+
     struct process_create_request
     {
         std::string application{};
@@ -175,6 +189,7 @@ namespace sogen
         bool debugged{};
         uint32_t parent_process_id{};
         std::vector<uint8_t> registry_state{};
+        process_session_endpoint session{};
     };
 
     struct process_create_result
@@ -186,6 +201,7 @@ namespace sogen
         uint64_t compatibility_environment{};
         uint64_t native_parameters{};
         uint64_t compatibility_parameters{};
+        uint32_t parent_process_id{};
         process_error error{process_error::none};
 
         explicit operator bool() const
@@ -328,6 +344,19 @@ namespace sogen
     struct process_manager
     {
         virtual ~process_manager() = default;
+
+        virtual void register_current_process(process_identity)
+        {
+        }
+
+        virtual void notify_current_process_exit(uint64_t)
+        {
+        }
+
+        virtual process_create_result open_process(uint32_t)
+        {
+            return {.error = process_error::invalid_process};
+        }
 
         virtual process_create_result create_process(process_create_request request) = 0;
         virtual process_error resume_process(managed_process process) = 0;

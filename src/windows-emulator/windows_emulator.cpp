@@ -1960,6 +1960,21 @@ namespace sogen
         this->last_stop_detail_.clear();
         this->setup_process_if_necessary();
 
+        if (this->process_manager_)
+        {
+            this->process_manager_->register_current_process(
+                {.process_id = this->process.process_id,
+                 .parent_process_id = this->process.parent_process_id,
+                 .native_environment = this->process.peb64.value(),
+                 .compatibility_environment = this->process.peb32 ? this->process.peb32->value() : 0});
+        }
+        const auto report_exit = utils::finally([this] {
+            if (this->process_manager_ && this->process.exit_status)
+            {
+                this->process_manager_->notify_current_process_exit(static_cast<uint32_t>(*this->process.exit_status));
+            }
+        });
+
         this->debugger_.begin_emulation();
         const auto end_debugger_emulation = utils::finally([this] { this->debugger_.end_emulation(); });
         this->report_debugger_process_start();

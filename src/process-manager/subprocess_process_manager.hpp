@@ -59,7 +59,8 @@ namespace sogen
         using argument_factory = std::function<std::vector<std::string>(uint16_t, const std::string&)>;
 
         subprocess_process_manager(std::filesystem::path executable, argument_factory arguments,
-                                   std::unique_ptr<host_process_launcher> launcher = create_subprocess_launcher());
+                                   std::unique_ptr<host_process_launcher> launcher = create_subprocess_launcher(),
+                                   process_session_endpoint session = {});
         ~subprocess_process_manager() override;
 
         subprocess_process_manager(const subprocess_process_manager&) = delete;
@@ -67,6 +68,10 @@ namespace sogen
         subprocess_process_manager(subprocess_process_manager&&) = delete;
         subprocess_process_manager& operator=(subprocess_process_manager&&) = delete;
 
+        void register_current_process(process_identity identity) override;
+        process_session_endpoint session_endpoint() const;
+        void notify_current_process_exit(uint64_t exit_code) override;
+        process_create_result open_process(uint32_t process_id) override;
         process_create_result create_process(process_create_request request) override;
         process_error resume_process(managed_process process) override;
         process_error terminate_process(managed_process process, uint64_t exit_code) override;
@@ -100,6 +105,7 @@ namespace sogen
 
       private:
         struct process_entry;
+        struct process_session;
 
         template <typename Request>
         std::optional<ProcessProtocol::MessageT> exchange(managed_process process, Request request, uint8_t response_type) const;
@@ -110,6 +116,9 @@ namespace sogen
         argument_factory arguments_{};
         std::unique_ptr<host_process_launcher> launcher_{};
         mutable std::mutex mutex_{};
+        std::unique_ptr<process_session> session_{};
+        uint32_t current_process_id_{};
+        bool current_process_exited_{};
         std::unordered_map<uint64_t, std::shared_ptr<process_entry>> processes_{};
         uint64_t next_process_{1};
         bool stopping_{};

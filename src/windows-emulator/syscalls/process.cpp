@@ -466,6 +466,7 @@ namespace sogen
             emulator_process child{};
             child.process = result.process;
             child.id = process_id;
+            child.parent_id = c.proc.process_id;
             child.is_wow64_process = child_is_wow64;
             child.native_environment = result.native_environment;
             child.compatibility_environment = result.compatibility_environment;
@@ -599,7 +600,7 @@ namespace sogen
                         basic_info.ExitStatus = status.status ? process_exit_code(*status.status) : STATUS_PENDING;
                         basic_info.PebBaseAddress = managed->native_environment;
                         basic_info.UniqueProcessId = managed->id;
-                        basic_info.InheritedFromUniqueProcessId = c.proc.process_id;
+                        basic_info.InheritedFromUniqueProcessId = managed->parent_id;
                     };
 
                     switch (process_information_length)
@@ -1321,6 +1322,27 @@ namespace sogen
                 {
                     process_handle.write(c.proc.processes.open_by_index(index, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
+                }
+            }
+
+            if (auto* manager = c.win_emu.processes(); manager && id.UniqueProcess <= std::numeric_limits<uint32_t>::max())
+            {
+                const auto result = manager->open_process(static_cast<uint32_t>(id.UniqueProcess));
+                if (result)
+                {
+                    emulator_process process{};
+                    process.process = result.process;
+                    process.id = result.process_id;
+                    process.parent_id = result.parent_process_id;
+                    process.native_environment = result.native_environment;
+                    process.compatibility_environment = result.compatibility_environment;
+                    process.is_wow64_process = result.compatibility_environment != 0;
+                    process_handle.write(c.proc.processes.store(std::move(process)));
+                    return STATUS_SUCCESS;
+                }
+                if (result.error != process_error::invalid_process)
+                {
+                    return map_process_error(result.error);
                 }
             }
 
