@@ -886,7 +886,7 @@ namespace sogen
         for (const auto& [handle, process] : this->processes_)
         {
             (void)handle;
-            process->kill_requested = true;
+            process->kill();
         }
     }
 

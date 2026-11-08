@@ -1,7 +1,6 @@
 #include "std_include.hpp"
 #include "android_process_launcher.hpp"
 
-#include <atomic>
 #include <chrono>
 
 namespace sogen::android
@@ -10,7 +9,6 @@ namespace sogen::android
     {
         // Binding a service process and starting its emulator library takes a while on a slow device.
         constexpr auto start_timeout = std::chrono::seconds(30);
-        constexpr auto kill_poll_interval = std::chrono::milliseconds(50);
         constexpr int32_t no_free_slot = -1;
     }
 
@@ -29,9 +27,14 @@ namespace sogen::android
             return static_cast<uint32_t>(*this->state_->process_id);
         }
 
-        std::optional<int> run(const std::atomic_bool& kill_requested) override
+        void kill() override
         {
-            return this->launcher_.run_child(this->request_, this->state_, kill_requested);
+            this->launcher_.kill_child(this->request_, *this->state_);
+        }
+
+        std::optional<int> run() override
+        {
+            return this->launcher_.run_child(this->request_, this->state_);
         }
 
       private:
@@ -98,23 +101,24 @@ namespace sogen::android
         }
     }
 
-    std::optional<int> android_process_launcher::run_child(const uint64_t request, const std::shared_ptr<child_state>& state,
-                                                           const std::atomic_bool& kill_requested)
+    void android_process_launcher::kill_child(const uint64_t request, child_state& state)
     {
-        bool kill_sent = false;
-        std::unique_lock lock(this->mutex_);
-        while (!state->exit_status)
         {
-            if (kill_requested && !kill_sent)
+            const std::scoped_lock lock(this->mutex_);
+            if (state.kill_sent || state.exit_status)
             {
-                kill_sent = true;
-                lock.unlock();
-                this->kill_(request);
-                lock.lock();
-                continue;
+                return;
             }
-            this->changed_.wait_for(lock, kill_poll_interval);
+            state.kill_sent = true;
         }
+
+        this->kill_(request);
+    }
+
+    std::optional<int> android_process_launcher::run_child(const uint64_t request, const std::shared_ptr<child_state>& state)
+    {
+        std::unique_lock lock(this->mutex_);
+        this->changed_.wait(lock, [&] { return state->exit_status.has_value(); });
 
         const auto exit_status = *state->exit_status;
         this->children_.erase(request);

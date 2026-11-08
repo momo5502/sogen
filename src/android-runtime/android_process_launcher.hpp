@@ -36,6 +36,7 @@ namespace sogen::android
         {
             std::optional<int32_t> process_id{};
             std::optional<int32_t> exit_status{};
+            bool kill_sent{};
         };
 
         class child_process;
@@ -48,6 +49,7 @@ namespace sogen::android
         std::unordered_map<uint64_t, std::shared_ptr<child_state>> children_{};
         uint64_t next_request_{1};
 
-        std::optional<int> run_child(uint64_t request, const std::shared_ptr<child_state>& state, const std::atomic_bool& kill_requested);
+        void kill_child(uint64_t request, child_state& state);
+        std::optional<int> run_child(uint64_t request, const std::shared_ptr<child_state>& state);
     };
 }
