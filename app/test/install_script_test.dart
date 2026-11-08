@@ -55,6 +55,40 @@ void main() {
     );
   });
 
+  test('takes the values of the game\'s language, else English, and writes (Default) as the unnamed value', () {
+    const script = r'''
+"InstallScript"
+{
+	"Registry"
+	{
+		"HKEY_CURRENT_USER\\Software\\Example Game"
+		{
+			"string"
+			{
+				"(Default)"		"example"
+				"english"
+				{
+					"Name"		"Example"
+				}
+				"german"
+				{
+					"Name"		"Beispiel"
+				}
+			}
+		}
+	}
+}
+''';
+
+    String registryIn(String language) => installScriptRegistry(script, r'C:\game', language: language)!;
+
+    expect(registryIn('german'), contains('"name"="Beispiel"'));
+    expect(registryIn('german'), isNot(contains('"name"="Example"')));
+    expect(registryIn('french'), contains('"name"="Example"'));
+    expect(registryIn('german'), contains('@="example"'));
+    expect(registryIn('german'), isNot(contains('(default)')));
+  });
+
   test('a script without a registry section sets nothing', () {
     expect(installScriptRegistry('"InstallScript"\n{\n}\n', r'C:\game'), isNull);
   });

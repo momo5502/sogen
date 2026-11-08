@@ -2,7 +2,8 @@ import 'key_values.dart';
 
 /// The registry values a Steam game's `installscript.vdf` sets, as a `.reg` file, or null if it sets none. Steam
 /// writes them while installing the game, and launchers look for them, such as Skyrim's for its installed path.
-String? installScriptRegistry(String installScript, String guestInstallDirectory) {
+/// The format is documented in Steamworks' "Install Scripts", under "Registry".
+String? installScriptRegistry(String installScript, String guestInstallDirectory, {String language = 'english'}) {
   final registry = KeyValues.parseText(installScript)['registry'];
   if (registry == null) {
     return null;
@@ -12,21 +13,30 @@ String? installScriptRegistry(String installScript, String guestInstallDirectory
   for (final MapEntry(key: path, value: key) in registry.sections) {
     lines.add('[${_steamClientView(path)}]');
     for (final MapEntry(key: type, value: values) in key.sections) {
-      for (final MapEntry(key: name, value: value) in values.entries) {
-        if (value is KeyValues) {
-          continue;
-        }
-        final text = value.toString().replaceAll(RegExp('%INSTALLDIR%', caseSensitive: false), guestInstallDirectory);
+      for (final MapEntry(key: name, value: value) in _valuesFor(values, language)) {
+        final text = value.replaceAll(RegExp('%INSTALLDIR%', caseSensitive: false), guestInstallDirectory);
         final data = switch (type) {
           'dword' => 'dword:${(int.tryParse(text) ?? 0).toUnsigned(32).toRadixString(16).padLeft(8, '0')}',
           _ => '"${_escape(text)}"',
         };
-        lines.add('"${_escape(name)}"=$data');
+        lines.add('${name == '(default)' ? '@' : '"${_escape(name)}"'}=$data');
       }
     }
     lines.add('');
   }
   return lines.join('\r\n');
+}
+
+/// A value section can hold one subsection per language; Steam takes the game's language and falls back to English.
+Iterable<MapEntry<String, String>> _valuesFor(KeyValues values, String language) sync* {
+  final localized = values[language] ?? values['english'];
+  for (final section in [values, ?localized]) {
+    for (final MapEntry(:key, :value) in section.entries) {
+      if (value is! KeyValues) {
+        yield MapEntry(key, value.toString());
+      }
+    }
+  }
 }
 
 /// The Steam client is a 32-bit program, so what it writes below `HKLM\Software` lands in the 32-bit view.

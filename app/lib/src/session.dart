@@ -204,7 +204,11 @@ class GameSession extends ChangeNotifier {
 
     final String? registry;
     try {
-      registry = installScriptRegistry(await script.readAsString(), guestGameDirectory);
+      registry = installScriptRegistry(
+        await script.readAsString(),
+        guestGameDirectory,
+        language: game.source?.language ?? 'english',
+      );
     } on FormatException {
       return null;
     }
