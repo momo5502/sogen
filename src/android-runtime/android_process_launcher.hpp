@@ -56,4 +56,22 @@ namespace sogen::android
         void kill_child(uint64_t request, child_state& state);
         std::optional<int> run_child(uint64_t request, const std::shared_ptr<child_state>& state);
     };
+
+    // Lets a process manager use a launcher that its owner keeps alive longer than the manager.
+    class process_launcher_reference final : public host_process_launcher
+    {
+      public:
+        explicit process_launcher_reference(host_process_launcher& launcher)
+            : launcher_(launcher)
+        {
+        }
+
+        host_process_launch_result launch(const std::vector<std::string>& command) override
+        {
+            return this->launcher_.launch(command);
+        }
+
+      private:
+        host_process_launcher& launcher_;
+    };
 }

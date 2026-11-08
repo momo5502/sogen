@@ -244,26 +244,31 @@ namespace sogen::android
                 });
             }
 
+            // The launcher outlives the process manager: tearing the manager down waits for its children to exit, and the app
+            // reports their exits to the launcher.
+            std::unique_ptr<android_process_launcher> launcher{};
             std::unique_ptr<subprocess_process_manager> processes{};
-            android_process_launcher* launcher{};
             if (!config.sandbox_executable.empty())
             {
-                auto child_launcher = std::make_unique<android_process_launcher>(
+                launcher = std::make_unique<android_process_launcher>(
                     [this](const uint64_t request, const std::vector<std::string>& arguments) { this->start_child(request, arguments); },
                     [this](const uint64_t request) { this->kill_child(request); });
-                launcher = child_launcher.get();
                 processes = std::make_unique<subprocess_process_manager>(config.sandbox_executable, create_child_arguments,
-                                                                         std::move(child_launcher));
+                                                                         std::make_unique<process_launcher_reference>(*launcher));
             }
             {
                 const std::lock_guard lock{this->mutex_};
-                this->launcher_ = launcher;
+                this->launcher_ = launcher.get();
                 this->processes_ = processes.get();
             }
-            const auto processes_guard = utils::finally([this] {
+            const auto processes_guard = utils::finally([&] {
+                {
+                    const std::lock_guard lock{this->mutex_};
+                    this->processes_ = nullptr;
+                }
+                processes.reset();
                 const std::lock_guard lock{this->mutex_};
                 this->launcher_ = nullptr;
-                this->processes_ = nullptr;
             });
 
             // Declared before the emulator, so the guest's windows are gone while this process waits for its children. Any
