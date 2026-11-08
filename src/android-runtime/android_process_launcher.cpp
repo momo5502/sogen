@@ -72,12 +72,13 @@ namespace sogen::android
             return state->process_id.has_value() || state->exit_status.has_value() || this->launches_cancelled_;
         });
         const auto process_id = state->process_id.value_or(0);
-        if (process_id <= 0)
+        if (process_id <= 0 || this->launches_cancelled_)
         {
-            const bool still_starting = !state->process_id && !state->exit_status;
+            const bool kill = !state->exit_status && !state->kill_sent;
+            state->kill_sent = true;
             this->children_.erase(request);
             lock.unlock();
-            if (still_starting)
+            if (kill)
             {
                 this->kill_(request);
             }
@@ -87,11 +88,28 @@ namespace sogen::android
         return {.process = std::make_unique<child_process>(*this, request, std::move(state))};
     }
 
+    // A child can have started while the process manager does not know it yet, so every child that runs is ended here.
     void android_process_launcher::cancel_launches()
     {
-        const std::scoped_lock lock(this->mutex_);
-        this->launches_cancelled_ = true;
-        this->changed_.notify_all();
+        std::vector<uint64_t> running{};
+        {
+            const std::scoped_lock lock(this->mutex_);
+            this->launches_cancelled_ = true;
+            for (const auto& [request, state] : this->children_)
+            {
+                if (!state->exit_status && !state->kill_sent)
+                {
+                    state->kill_sent = true;
+                    running.push_back(request);
+                }
+            }
+            this->changed_.notify_all();
+        }
+
+        for (const auto request : running)
+        {
+            this->kill_(request);
+        }
     }
 
     void android_process_launcher::started(const uint64_t request, const int32_t process_id)

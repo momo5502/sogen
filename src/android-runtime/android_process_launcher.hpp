@@ -31,7 +31,7 @@ namespace sogen::android
         void started(uint64_t request, int32_t process_id);
         void exited(uint64_t request, int32_t exit_status);
 
-        // Ends the waits for child processes that have not started yet, and makes later launches fail.
+        // Ends every child process that is still starting or running, and makes later launches fail.
         void cancel_launches();
 
       private:
