@@ -123,8 +123,8 @@ namespace sogen::android
 
         std::pair<int32_t, int32_t> popup_offset(const ui_window_desc& popup, const ui_window_desc& owner)
         {
-            return {popup.rect.left - (owner.rect.left + owner.client_insets.left),
-                    popup.rect.top - (owner.rect.top + owner.client_insets.top)};
+            return {(popup.rect.left + popup.client_insets.left) - (owner.rect.left + owner.client_insets.left),
+                    (popup.rect.top + popup.client_insets.top) - (owner.rect.top + owner.client_insets.top)};
         }
 
         void draw_popup(std::vector<uint8_t>& pixels, const ui_surface_desc& frame, const std::vector<uint8_t>& popup_pixels,
@@ -649,6 +649,7 @@ namespace sogen::android
     void android_ui_backend::set_window_visible(const hwnd window, const bool visible)
     {
         bool activated{};
+        bool host_window{};
         hwnd owner{};
 
         {
@@ -661,7 +662,8 @@ namespace sogen::android
             }
 
             it->second.desc.visible = visible;
-            if (!is_host_window(it->second.desc))
+            host_window = is_host_window(it->second.desc);
+            if (!host_window)
             {
                 owner = this->popup_owner_handle(window);
             }
@@ -671,7 +673,7 @@ namespace sogen::android
             }
         }
 
-        if (owner != 0)
+        if (!host_window)
         {
             this->present_composited(owner);
             return;
