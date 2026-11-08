@@ -6,6 +6,7 @@
 #include "ports/api_port.hpp"
 #include "ports/audio_service.hpp"
 #include "ports/core_messaging_registrar.hpp"
+#include "ports/crypt_service.hpp"
 #include "ports/dns_resolver.hpp"
 #include "ports/event_log.hpp"
 #include "ports/lsa_policy_lookup.hpp"
@@ -359,6 +360,11 @@ namespace sogen
         if (port == u"\\RPC Control\\lsasspirpc")
         {
             return create_sspi_rpc_port();
+        }
+
+        if (port == u"\\RPC Control\\keysvc")
+        {
+            return create_crypt_service_port();
         }
 
         if (port == u"\\RPC Control\\umpo")

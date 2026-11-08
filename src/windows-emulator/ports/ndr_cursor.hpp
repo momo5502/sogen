@@ -54,6 +54,18 @@ namespace sogen
             return true;
         }
 
+        bool read_u16(uint16_t& value)
+        {
+            if (!align_to(sizeof(uint16_t)) || !remaining(sizeof(uint16_t)))
+            {
+                return false;
+            }
+
+            std::memcpy(&value, bytes.data() + offset, sizeof(value));
+            offset += sizeof(value);
+            return true;
+        }
+
         bool read_u32(uint32_t& value)
         {
             if (!align_to(sizeof(uint32_t)) || !remaining(sizeof(uint32_t)))
