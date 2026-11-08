@@ -387,6 +387,38 @@ namespace sogen::test
         this->expect_relocations(secondary, original.image_base);
     }
 
+    TYPED_TEST(ModuleRelocationTest, UndeclaredDirectoriesDoNotCauseRelocations)
+    {
+        for (const bool short_header : {false, true})
+        {
+            SCOPED_TRACE(short_header);
+            auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+            constexpr auto optional_offset = k_nt_offset + offsetof(PENTHeaders_t<TypeParam>, OptionalHeader);
+            if (short_header)
+            {
+                constexpr uint16_t optional_size = offsetof(PEOptionalHeader_t<TypeParam>, DataDirectory);
+                IMAGE_SECTION_HEADER section{};
+                std::memcpy(&section, data.data() + k_nt_offset + sizeof(PENTHeaders_t<TypeParam>), sizeof(section));
+                poke(data, k_nt_offset + offsetof(PENTHeaders_t<TypeParam>, FileHeader) + offsetof(PEFileHeader_t, SizeOfOptionalHeader),
+                     optional_size);
+                poke(data, optional_offset + optional_size, section);
+            }
+            else
+            {
+                poke(data, optional_offset + offsetof(PEOptionalHeader_t<TypeParam>, NumberOfRvaAndSizes), uint32_t{5});
+            }
+            const auto original = this->map(data);
+            EXPECT_EQ(original.image_base, this->preferred_base);
+            this->expect_relocations(original, this->preferred_base);
+            const auto secondary = this->map(data, this->preferred_base + 0x10000);
+            EXPECT_NE(original.image_base, secondary.image_base);
+            EXPECT_EQ(this->preferred_base + this->target_rva,
+                      this->memory_.template read_memory<TypeParam>(secondary.image_base + this->pointer_rva));
+            ASSERT_TRUE(unmap_module(this->memory_, secondary));
+            ASSERT_TRUE(unmap_module(this->memory_, original));
+        }
+    }
+
     TYPED_TEST(ModuleRelocationTest, AZeroImageSizeIsAnImageError)
     {
         auto data = this->image();

@@ -700,7 +700,22 @@ namespace sogen
         const auto dos_header = buffer.as<PEDosHeader_t>(0).get();
         const auto nt_headers_offset = dos_header.e_lfanew;
 
-        const auto nt_headers = buffer.as<PENTHeaders_t<T>>(nt_headers_offset).get();
+        PENTHeaders_t<T> nt_headers{};
+        constexpr auto optional_offset = offsetof(PENTHeaders_t<T>, OptionalHeader);
+        std::memcpy(&nt_headers, buffer.get_pointer_for_range(nt_headers_offset, optional_offset), optional_offset);
+        constexpr auto directories_offset = offsetof(PEOptionalHeader_t<T>, DataDirectory);
+        const auto optional_size = nt_headers.FileHeader.SizeOfOptionalHeader;
+        if (optional_size < directories_offset)
+        {
+            throw std::runtime_error("Optional header is too small");
+        }
+        const auto* optional_data = buffer.get_pointer_for_range(nt_headers_offset + optional_offset, optional_size);
+        std::memcpy(&nt_headers.OptionalHeader, optional_data, std::min<size_t>(optional_size, sizeof(nt_headers.OptionalHeader)));
+        auto& directories = nt_headers.OptionalHeader.DataDirectory;
+        const auto directory_count = std::min<size_t>({nt_headers.OptionalHeader.NumberOfRvaAndSizes, std::size(directories),
+                                                       (optional_size - directories_offset) / sizeof(directories[0])});
+        std::fill(std::begin(directories) + directory_count, std::end(directories), PEDirectory_t2{});
+        nt_headers.OptionalHeader.NumberOfRvaAndSizes = static_cast<uint32_t>(directory_count);
         const auto& optional_header = nt_headers.OptionalHeader;
 
         validate_image_machine(nt_headers);
