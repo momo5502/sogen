@@ -382,6 +382,10 @@ namespace sogen::android
         {
             this->snapshots_->stop();
         }
+        if (this->launcher_)
+        {
+            this->launcher_->cancel_launches();
+        }
         if (this->processes_)
         {
             this->processes_->kill_processes();

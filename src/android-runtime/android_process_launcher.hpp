@@ -31,6 +31,9 @@ namespace sogen::android
         void started(uint64_t request, int32_t process_id);
         void exited(uint64_t request, int32_t exit_status);
 
+        // Ends the waits for child processes that have not started yet, and makes later launches fail.
+        void cancel_launches();
+
       private:
         struct child_state
         {
@@ -48,6 +51,7 @@ namespace sogen::android
         std::condition_variable changed_{};
         std::unordered_map<uint64_t, std::shared_ptr<child_state>> children_{};
         uint64_t next_request_{1};
+        bool launches_cancelled_{};
 
         void kill_child(uint64_t request, child_state& state);
         std::optional<int> run_child(uint64_t request, const std::shared_ptr<child_state>& state);

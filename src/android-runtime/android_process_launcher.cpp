@@ -55,6 +55,10 @@ namespace sogen::android
         uint64_t request{};
         {
             const std::scoped_lock lock(this->mutex_);
+            if (this->launches_cancelled_)
+            {
+                return {.error = process_error::unavailable};
+            }
             request = this->next_request_++;
             this->children_.emplace(request, state);
         }
@@ -64,14 +68,16 @@ namespace sogen::android
         this->start_(request, arguments);
 
         std::unique_lock lock(this->mutex_);
-        this->changed_.wait_for(lock, start_timeout, [&] { return state->process_id.has_value(); });
+        this->changed_.wait_for(lock, start_timeout, [&] {
+            return state->process_id.has_value() || state->exit_status.has_value() || this->launches_cancelled_;
+        });
         const auto process_id = state->process_id.value_or(0);
         if (process_id <= 0)
         {
-            const bool timed_out = !state->process_id;
+            const bool still_starting = !state->process_id && !state->exit_status;
             this->children_.erase(request);
             lock.unlock();
-            if (timed_out)
+            if (still_starting)
             {
                 this->kill_(request);
             }
@@ -79,6 +85,13 @@ namespace sogen::android
         }
 
         return {.process = std::make_unique<child_process>(*this, request, std::move(state))};
+    }
+
+    void android_process_launcher::cancel_launches()
+    {
+        const std::scoped_lock lock(this->mutex_);
+        this->launches_cancelled_ = true;
+        this->changed_.notify_all();
     }
 
     void android_process_launcher::started(const uint64_t request, const int32_t process_id)

@@ -112,7 +112,7 @@ class SessionController(
     }
 
     private val foreground: HostedProcess?
-        get() = children.values.maxByOrNull { it.id } ?: game
+        get() = children.values.filter { !it.finished }.maxByOrNull { it.id } ?: game
 
     /**
      * One guest process and the service process it runs in. Its windows are known to Flutter by an id that combines the
@@ -128,6 +128,10 @@ class SessionController(
         var connection: ServiceConnection? = null
         val windows = mutableSetOf<Long>()
         var finished = false
+        private var binder: IBinder? = null
+        private var dead = false
+        private var released = false
+        private var exitCode: Int? = null
 
         fun external(window: Long): Long {
             require(window and LOCAL_WINDOW_MASK.inv() == 0L) { "Window handle $window does not fit the window id" }
@@ -139,7 +143,13 @@ class SessionController(
                 override fun onServiceConnected(name: ComponentName, binder: IBinder) {
                     val remote = ISogenSession.Stub.asInterface(binder)
                     session = remote
-                    binder.linkToDeath({ mainHandler.post { finish(null) } }, 0)
+                    this@HostedProcess.binder = binder
+                    try {
+                        binder.linkToDeath({ mainHandler.post { died() } }, 0)
+                    } catch (_: RemoteException) {
+                        died()
+                        return
+                    }
                     if (config != null) {
                         start(remote)
                     } else {
@@ -147,9 +157,9 @@ class SessionController(
                     }
                 }
 
-                override fun onServiceDisconnected(name: ComponentName) = finish(null)
+                override fun onServiceDisconnected(name: ComponentName) = died()
 
-                override fun onBindingDied(name: ComponentName) = finish(null)
+                override fun onBindingDied(name: ComponentName) = died()
             }
 
             connection = serviceConnection
@@ -188,18 +198,38 @@ class SessionController(
             }
         }
 
-        /** [exitCode] is null when the service process died without reporting one, i.e. it crashed. */
+        /**
+         * Ends the process. Unbinding makes the service end its process, but until it has, binding the same component
+         * again would reach the dying process, so the slot and the exit are only given back once it is gone.
+         * [exitCode] is null when the service process died without reporting one, i.e. it crashed.
+         */
         fun finish(exitCode: Int?) {
             if (finished) {
                 return
             }
             finished = true
+            this.exitCode = exitCode
 
             windows.toList().forEach(::destroyWindow)
             session = null
-            // Unbinding ends the service process, so a child killed this way is gone once this returns.
             connection?.let { context.unbindService(it) }
             connection = null
+            if (binder == null || dead) {
+                release()
+            }
+        }
+
+        private fun died() {
+            dead = true
+            finish(null)
+            release()
+        }
+
+        private fun release() {
+            if (released) {
+                return
+            }
+            released = true
             slot?.let { slots[it] = null }
 
             if (config == null) {
