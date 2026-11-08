@@ -342,7 +342,7 @@ void main() {
           },
         });
       });
-      final account = EpicAccount(secrets: secrets, loginPage: (_) async => null, client: client);
+      final account = EpicAccount(secrets: secrets, secretName: 'epic', loginPage: (_) async => null, client: client);
       await account.restore();
 
       final games = await EpicLibrary(EpicApi(account, client: client)).games();
@@ -358,6 +358,7 @@ void main() {
       final secrets = _MemorySecrets()..values['epic'] = jsonEncode({'refreshToken': 'stored'});
       final account = EpicAccount(
         secrets: secrets,
+        secretName: 'epic',
         loginPage: (_) async => null,
         client: MockClient(
           (_) async => http.Response(
@@ -377,6 +378,7 @@ void main() {
       final secrets = _MemorySecrets()..values['epic'] = jsonEncode({'refreshToken': 'stored'});
       final account = EpicAccount(
         secrets: secrets,
+        secretName: 'epic',
         loginPage: (_) async => null,
         client: MockClient((_) async => http.Response('{}', 503)),
       );
