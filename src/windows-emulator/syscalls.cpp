@@ -813,6 +813,7 @@ namespace sogen
         int32_t handle_NtUserCheckMenuItem(const syscall_context& c, hmenu menu, UINT item, UINT check);
         BOOL handle_NtUserCreateCaret();
         BOOL handle_NtUserDestroyCaret();
+        BOOL handle_NtUserGetCaretPos();
         BOOL handle_NtUserSetCaretPos();
         BOOL handle_NtUserShowCaret();
         BOOL handle_NtUserHideCaret();
@@ -2189,6 +2190,7 @@ namespace sogen
         add_handler(NtUserSetWindowPlacement);
         add_handler(NtUserCreateCaret);
         add_handler(NtUserDestroyCaret);
+        add_handler(NtUserGetCaretPos);
         add_handler(NtUserSetCaretPos);
         add_handler(NtUserShowCaret);
         add_handler(NtUserHideCaret);

@@ -7888,6 +7888,11 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserGetCaretPos()
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserSetCaretPos()
         {
             return TRUE;
