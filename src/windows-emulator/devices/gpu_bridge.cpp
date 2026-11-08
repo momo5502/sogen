@@ -249,6 +249,8 @@ namespace sogen
                     return handle_update_descriptor_sets_batch(win_emu, context);
                 case gpu_bridge::ioctl_allocate_descriptor_sets_with_updates:
                     return handle_allocate_descriptor_sets_with_updates(win_emu, context);
+                case gpu_bridge::ioctl_get_device_image_memory_requirements:
+                    return handle_get_device_image_memory_requirements(win_emu, context);
                 case gpu_bridge::ioctl_create_sampler:
                     return handle_create_sampler(win_emu, context);
                 case gpu_bridge::ioctl_destroy_sampler:
@@ -2313,6 +2315,28 @@ namespace sogen
                 uint32_t memory_type_bits = 0;
                 const int32_t result =
                     this->vulkan_.get_image_memory_requirements(request.device, request.image, size, alignment, memory_type_bits);
+                return write_output(win_emu, context,
+                                    gpu_bridge::memory_requirements_response{
+                                        .vk_result = result, .memory_type_bits = memory_type_bits, .size = size, .alignment = alignment});
+            }
+
+            // vkGetDeviceImageMemoryRequirements: the requirements of the image handle_create_image would make from the same
+            // request.
+            NTSTATUS handle_get_device_image_memory_requirements(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_image_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t size = 0;
+                uint64_t alignment = 0;
+                uint32_t memory_type_bits = 0;
+                const int32_t result = this->vulkan_.get_device_image_memory_requirements(
+                    request.device, request.format, request.width, request.height, request.usage, request.tiling, request.samples,
+                    request.image_type, request.depth, request.mip_levels, request.array_layers, request.flags, size, alignment,
+                    memory_type_bits);
                 return write_output(win_emu, context,
                                     gpu_bridge::memory_requirements_response{
                                         .vk_result = result, .memory_type_bits = memory_type_bits, .size = size, .alignment = alignment});
