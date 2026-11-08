@@ -756,9 +756,11 @@ namespace sogen
         const auto is_relocatable = (is_dll || has_dynamic_base) && !relocations_stripped;
 
         const auto is_x64 = nt_headers.FileHeader.Machine == PEMachineType::AMD64;
+        const bool prefers_below_4gb = is_x64 && is_dll && optional_header.ImageBase <= below_4gb_ceiling;
         const auto& relocations = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
         const bool has_relocations = relocations.Size != 0 && !(nt_headers.FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED);
-        if (!relocation_base && !force_wow64cpu_32bit_va && (is_32bit || is_x64) && is_dll && has_dynamic_base && has_relocations)
+        if (!relocation_base && !force_wow64cpu_32bit_va && !prefers_below_4gb && (is_32bit || is_x64) && is_dll && has_dynamic_base &&
+            has_relocations)
         {
             const uint64_t image_arena_start = is_32bit ? 0x70000000ULL : 0x00007FF000000000ULL;
             const uint64_t image_arena_end = std::min(is_32bit ? 0x7FFDFFFFULL : MAX_ALLOCATION_ADDRESS, address_limit);
@@ -783,7 +785,9 @@ namespace sogen
             // 32-bit module once the low arena fills; WOW64 pointer marshaling then truncates it to 32
             // bits, aliasing the module onto whatever unrelated allocation sits at the truncated address.
             const bool needs_below_4gb = address_limit < DEFAULT_ALLOCATION_ADDRESS_64BIT;
-            uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
+            // Windows prefers low addresses for low-based PE64 images because they may truncate pointers.
+            uint64_t fallback_start =
+                needs_below_4gb || prefers_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
             const auto image_size = static_cast<size_t>(binary.size_of_image);
 
             // The preferred base was taken, so relocate. On backends sharing the address space with the
@@ -807,6 +811,8 @@ namespace sogen
                     break;
                 }
 
+                // A secondary view may occupy another address while its relocation fixups
+                // continue to reference the original loaded image.
                 if (try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
                                                    relocation_base ? relocation_base : binary.image_base))
                 {

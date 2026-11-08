@@ -460,6 +460,42 @@ namespace sogen::test
     using ModuleRelocation32Test = ModuleRelocationTest<uint32_t>;
     using ModuleRelocation64Test = ModuleRelocationTest<uint64_t>;
 
+    TEST_F(ModuleRelocation64Test, LowBasedDllsPreferLowAddressesWithoutRequiringThem)
+    {
+        constexpr uint64_t low_base = 0x10000000;
+        constexpr uint64_t high_start = 0x100000000;
+        for (const auto reservation : {0, 1, 2})
+        {
+            SCOPED_TRACE(reservation);
+            auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+            const auto base_offset = k_nt_offset + offset_of_member<PENTHeaders_t<uint64_t>>(&PENTHeaders_t<uint64_t>::OptionalHeader) +
+                                     offset_of_member<PEOptionalHeader_t<uint64_t>>(&PEOptionalHeader_t<uint64_t>::ImageBase);
+            poke(data, base_offset, low_base);
+            poke(data, 0x220, low_base + target_rva);
+            const auto reserved_base = reservation == 2 ? uint64_t{0x10000} : low_base;
+            const auto reserved_size = reservation == 2 ? high_start - reserved_base : uint64_t{0x1000};
+            if (reservation)
+            {
+                ASSERT_TRUE(this->memory_.allocate_memory(reserved_base, reserved_size, memory_permission::read_write, true));
+            }
+            const auto module = this->map(data);
+            if (reservation == 2)
+            {
+                EXPECT_GE(module.image_base, high_start);
+            }
+            else
+            {
+                EXPECT_LT(module.image_base + module.size_of_image - 1, high_start);
+            }
+            this->expect_relocations(module, module.image_base);
+            ASSERT_TRUE(unmap_module(this->memory_, module));
+            if (reservation)
+            {
+                ASSERT_TRUE(this->memory_.release_memory(reserved_base, 0));
+            }
+        }
+    }
+
     TEST_F(ModuleRelocation64Test, AnExhaustedHighRangeFallsBackBelow4GiB)
     {
         constexpr uint64_t high_start = 0x100000000;
