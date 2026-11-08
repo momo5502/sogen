@@ -11,6 +11,8 @@
 #include <utils/finally.hpp>
 #include <filesystem/document_mount.hpp>
 #include <filesystem/layered_provider.hpp>
+#include <registry/registry_file.hpp>
+#include <registry/registry_state_file.hpp>
 #include <snapshot.hpp>
 #include <subprocess_process_manager.hpp>
 #include <windows_emulator.hpp>
@@ -311,9 +313,30 @@ namespace sogen::android
             }
 
             const auto configuration = describe_configuration(config);
+            const auto registry_state =
+                config.registry_state.empty() ? nullptr : std::make_unique<registry_state_file>(config.registry_state);
             if (!config.resume_file.empty())
             {
                 snapshot::load_emulator_snapshot(win_emu, config.resume_file, configuration);
+            }
+            else
+            {
+                if (registry_state)
+                {
+                    registry_state->load(win_emu.registry);
+                }
+                for (const auto& file : config.registry_files)
+                {
+                    import_registry_file(win_emu.registry, file);
+                }
+                if (!config.expanded_registry_files.empty())
+                {
+                    const auto expand = win_emu.environment_string_expander();
+                    for (const auto& file : config.expanded_registry_files)
+                    {
+                        import_registry_file(win_emu.registry, file, expand);
+                    }
+                }
             }
 
             std::unique_ptr<emulator_process_target> parent_target{};
@@ -359,6 +382,10 @@ namespace sogen::android
             }
 
             const auto exit_status = win_emu.process.exit_status;
+            if (registry_state && exit_status)
+            {
+                registry_state->save(win_emu.registry);
+            }
             if (parent && exit_status && !parent->notify_exit(static_cast<uint64_t>(static_cast<uint32_t>(*exit_status))))
             {
                 throw std::runtime_error("Reporting the exit to the parent process failed");

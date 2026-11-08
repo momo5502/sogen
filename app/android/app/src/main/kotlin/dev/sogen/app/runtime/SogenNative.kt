@@ -71,6 +71,9 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkan.driverName,
         config.snapshotDirectory,
         config.resumeFile,
+        config.registryFiles.toTypedArray(),
+        config.expandedRegistryFiles.toTypedArray(),
+        config.registryState,
         config.managedArguments.toTypedArray(),
     )
 
@@ -122,6 +125,9 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkanDriverName: String,
         snapshotDirectory: String,
         resumeFile: String,
+        registryFiles: Array<String>,
+        expandedRegistryFiles: Array<String>,
+        registryState: String,
         managedArguments: Array<String>,
     ): Int
 

@@ -405,6 +405,16 @@ Future<Directory> rootLayerDirectory(Game game) async {
   return Directory(p.join((await _gameLayers(game)).path, 'root'));
 }
 
+/// Where the game's registry changes are kept between sessions. They outlive choosing another folder for the game.
+Future<File> registryStateFile(Game game) async {
+  return File(p.join((await _gameLayers(game)).path, 'registry.state'));
+}
+
+/// The registry values a game's install script sets, written for its first session.
+Future<File> startupRegistryFile(Game game) async {
+  return File(p.join((await _gameLayers(game)).path, 'startup.reg'));
+}
+
 /// Everything that is kept for the game besides its folder.
 Future<Directory> _gameLayers(Game game) async {
   final support = await getApplicationSupportDirectory();

@@ -313,6 +313,12 @@ namespace sogen
         constexpr auto critical_section_timeout = static_cast<uint64_t>(-25920000000000LL);
     }
 
+    std::function<std::u16string(std::u16string_view)> windows_emulator::environment_string_expander()
+    {
+        return [environment = get_environment_variables(this->registry, this->version, this->application_settings_)](
+                   const std::u16string_view text) { return expand_environment_string(std::u16string{text}, environment); };
+    }
+
     void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
                                 const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
     {
