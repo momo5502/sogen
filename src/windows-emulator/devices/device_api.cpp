@@ -3,15 +3,14 @@
 
 #include "../windows_emulator.hpp"
 #include "../syscall_utils.hpp"
+#include "../token.hpp"
 
 namespace sogen
 {
     namespace
     {
-        // \Device\DeviceApi\CMApi, which cfgmgr32 asks for device and interface lists, class keys and properties. Device ID
-        // lists come back empty, i.e. no device matches the filter. Succeeding without writing the reply made
-        // CM_Get_Device_ID_List_Size fail, so SetupDiGetClassDevs returned INVALID_HANDLE_VALUE, on which Unreal
-        // Engine 4 enumerates monitors forever. Other requests keep succeeding without data.
+        // \Device\DeviceApi\CMApi, which cfgmgr32 asks for device and interface lists, class keys and properties. Requests
+        // it does not answer yet succeed without data.
         struct device_api_device : stateless_device
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -566,41 +565,499 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            // The device ID list request CM_Get_Device_ID_List and its size query send. WoW64 callers send a 20-byte layout
+            // with a 32-bit filter pointer, which PiCMCaptureDeviceListInputData widens to this one.
+            struct device_list_input
+            {
+                uint32_t size;
+                uint32_t flags;
+                uint64_t filter;
+                uint32_t filter_bytes;
+                uint32_t result_size;
+            };
+
+            static_assert(sizeof(device_list_input) == 24);
+
+            struct device_list_input32
+            {
+                uint32_t size;
+                uint32_t flags;
+                uint32_t filter;
+                uint32_t filter_bytes;
+                uint32_t result_size;
+            };
+
+            static_assert(sizeof(device_list_input32) == 20);
+
+            // The flags PiCMConvertDeviceListFilters takes: at most one filter in the low word, which says what the filter
+            // string names.
+            static constexpr uint32_t device_list_enumerator = 0x1;
+            static constexpr uint32_t device_list_service = 0x2;
+            static constexpr uint32_t device_list_relations = 0x4 | 0x8 | 0x10 | 0x20 | 0x40; // ejection, removal, power, bus, transport
+            static constexpr uint32_t device_list_class = 0x80;
+            static constexpr uint32_t device_list_filters = 0xFFFF;
+            static constexpr uint32_t device_list_present_only = 0x10000;
+            // CMP_Get_Device_ID_List's request for the list without the mandatory filters.
+            static constexpr uint32_t device_list_unfiltered = 0x20000;
+
+            static constexpr std::u16string_view enum_key = u"\\Registry\\Machine\\System\\CurrentControlSet\\Enum";
+            static constexpr std::u16string_view installer_classes_key = u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class";
+
+            // MAX_DEVICE_ID_LEN: the characters a device ID, and the enumerator filter's copy, may take with a terminator.
+            static constexpr size_t max_device_id_length = 200;
+
+            // CmGetDeviceRegProp reads CM_DRP_CLASSGUID into a 78-byte buffer: a braced GUID and its terminator.
+            static constexpr size_t class_guid_length = 38;
+
+            // DEVPKEY_Device_SessionId and DEVPKEY_Device_RestrictedSD as keys of the device's property store, whose values
+            // keep 0xFFFF0000 | DEVPROPTYPE as their registry type.
+            static constexpr std::u16string_view session_id_property = u"{83da6326-97a6-4088-9453-a1923f573b29}\\0006";
+            static constexpr std::u16string_view restricted_sd_property = u"{8c439ff0-9cf7-43cd-961e-9299a4c6c157}\\0064";
+            static constexpr uint32_t devprop_type_mask = 0xFFFF;
+            static constexpr uint32_t devprop_type_uint32 = 0x7;
+            static constexpr uint32_t devprop_type_security_descriptor = 0x13;
+
+            // The access PiPnpRtlIsDeviceEnumerableForUser asks of DEVPKEY_Device_RestrictedSD.
+            static constexpr ACCESS_MASK enumerate_device_access = 0x1;
+
+            static_assert(token_session_id != 0, "PiPnpRtlApplyMandatoryFilters checks session 0 callers another way");
+
+            // PiCMCaptureDeviceListInputData. The filter is captured like a class name, aligned to a character.
+            static NTSTATUS capture_device_list_input(windows_emulator& win_emu, const io_device_context& c, device_list_input& input,
+                                                      std::optional<std::u16string>& filter)
+            {
+                device_list_input32 input32{};
+                if (const auto status = read_request(win_emu, c, input, input32); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (win_emu.process.is_wow64_process)
+                {
+                    input = {
+                        .size = sizeof(input),
+                        .flags = input32.flags,
+                        .filter = input32.filter,
+                        .filter_bytes = input32.filter_bytes,
+                        .result_size = input32.result_size,
+                    };
+                }
+
+                if (input.filter ? input.filter_bytes < sizeof(char16_t) : input.filter_bytes != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                return input.filter ? capture_name(win_emu, input.filter, input.filter_bytes, filter.emplace()) : STATUS_SUCCESS;
+            }
+
+            static bool is_device_list_request(const uint32_t flags)
+            {
+                const auto filter = flags & device_list_filters;
+                return (flags & ~(device_list_filters | device_list_present_only | device_list_unfiltered)) == 0 &&
+                       (filter == 0 || (std::has_single_bit(filter) && filter <= device_list_class));
+            }
+
+            // SeCaptureSubjectContext: the issuing thread's impersonation token, else the process token.
+            static handle caller_token(const io_device_context& c)
+            {
+                const auto* thread = c.vcpu ? c.vcpu->active_thread : nullptr;
+                return thread && thread->impersonation_token.bits != 0 ? thread->impersonation_token : CURRENT_PROCESS_TOKEN;
+            }
+
+            // PiAuDoesClientHaveAccess(2): PiAuSecurityObject allows that access to Administrators, then denies NETWORK all
+            // access, then allows LocalSystem all access.
+            static bool can_list_unfiltered(const windows_emulator& win_emu, const handle token)
+            {
+                return token_holds_sid(win_emu, token, administrators_sid) ||
+                       (!token_holds_sid(win_emu, token, network_sid) && token_holds_sid(win_emu, token, local_system_sid));
+            }
+
+            static std::u16string sub_key_path(const std::u16string_view parent, const std::u16string_view name)
+            {
+                std::u16string path{parent};
+                path += u'\\';
+                path += name;
+                return path;
+            }
+
+            static std::vector<std::u16string> sub_key_names(windows_emulator& win_emu, const std::u16string& path)
+            {
+                std::vector<std::u16string> names{};
+                const auto key = win_emu.registry.get_key({path});
+                for (size_t index = 0; key && index < win_emu.registry.get_sub_key_count(*key); ++index)
+                {
+                    if (const auto name = win_emu.registry.get_sub_key_name(*key, index))
+                    {
+                        names.push_back(u8_to_u16(*name));
+                    }
+                }
+
+                return names;
+            }
+
+            // CmValidateDeviceName allows the characters from 0x21 to 0x7F but ',' in each part of a device ID.
+            static bool is_device_id_part(const std::u16string_view part)
+            {
+                return !part.empty() &&
+                       std::ranges::all_of(part, [](const char16_t c) { return c >= u'!' && c <= u'\x7F' && c != u',' && c != u'\\'; });
+            }
+
+            // The devices the PnP manager knows whose IDs start with the prefix, ignoring case: each
+            // Enum\<enumerator>\<device>\<instance> key that names a valid device ID.
+            static std::vector<std::u16string> registered_device_ids(windows_emulator& win_emu, const std::u16string& prefix)
+            {
+                const auto may_lead_to_prefix = [&](const std::u16string& id_start) {
+                    return id_start.size() < prefix.size() ? utils::string::starts_with_ignore_case(prefix, id_start)
+                                                           : utils::string::starts_with_ignore_case(id_start, prefix);
+                };
+
+                std::vector<std::u16string> ids{};
+                for (const auto& enumerator : sub_key_names(win_emu, std::u16string{enum_key}))
+                {
+                    if (!may_lead_to_prefix(sub_key_path(enumerator, {})))
+                    {
+                        continue;
+                    }
+
+                    const auto enumerator_path = sub_key_path(enum_key, enumerator);
+                    for (const auto& device : sub_key_names(win_emu, enumerator_path))
+                    {
+                        const auto device_id = sub_key_path(enumerator, device);
+                        if (!may_lead_to_prefix(sub_key_path(device_id, {})))
+                        {
+                            continue;
+                        }
+
+                        for (const auto& instance : sub_key_names(win_emu, sub_key_path(enumerator_path, device)))
+                        {
+                            auto id = sub_key_path(device_id, instance);
+                            if (id.size() < max_device_id_length && is_device_id_part(enumerator) && is_device_id_part(device) &&
+                                is_device_id_part(instance) && utils::string::starts_with_ignore_case(id, prefix))
+                            {
+                                ids.push_back(std::move(id));
+                            }
+                        }
+                    }
+                }
+
+                return ids;
+            }
+
+            static std::optional<registry_value> registry_value_at(windows_emulator& win_emu, const std::u16string& path,
+                                                                   const std::string_view name)
+            {
+                const auto key = win_emu.registry.get_key({path});
+                return key ? win_emu.registry.get_value(*key, name) : std::nullopt;
+            }
+
+            static std::u16string_view value_characters(const registry_value& value)
+            {
+                return {reinterpret_cast<const char16_t*>(value.data.data()), value.data.size() / sizeof(char16_t)};
+            }
+
+            // CmGetDeviceRegProp hands out CM_DRP_SERVICE with its last character made a terminator.
+            static bool names_service(const std::optional<registry_value>& value, const std::u16string_view service)
+            {
+                if (!value || value->data.size() < sizeof(char16_t))
+                {
+                    return false;
+                }
+
+                auto name = value_characters(*value);
+                name.remove_suffix(1);
+                return utils::string::equals_ignore_case(name.substr(0, name.find(u'\0')), service);
+            }
+
+            // A REG_MULTI_SZ filter list as CmGetDeviceRegProp hands it out, with its last two characters made terminators.
+            static bool lists_service(const std::optional<registry_value>& value, const std::u16string_view service)
+            {
+                if (!value || value->type != REG_MULTI_SZ || value->data.size() < sizeof(char16_t))
+                {
+                    return false;
+                }
+
+                std::u16string list{value_characters(*value)};
+                if (value->data.size() > sizeof(char16_t))
+                {
+                    list[list.size() - 1] = u'\0';
+                }
+
+                if (value->data.size() > 2 * sizeof(char16_t))
+                {
+                    list[list.size() - 2] = u'\0';
+                }
+
+                for (size_t start = 0; start < list.size() && list[start] != u'\0';)
+                {
+                    const auto end = std::min(list.find(u'\0', start), list.size());
+                    if (utils::string::equals_ignore_case(std::u16string_view{list}.substr(start, end - start), service))
+                    {
+                        return true;
+                    }
+
+                    start = end + 1;
+                }
+
+                return false;
+            }
+
+            static std::optional<std::u16string> device_class_guid(windows_emulator& win_emu, const registry_key& device_key)
+            {
+                const auto value = win_emu.registry.get_value(device_key, "ClassGUID");
+                if (!value || value->type != REG_SZ || value->data.size() < sizeof(char16_t) ||
+                    value->data.size() > (class_guid_length + 1) * sizeof(char16_t))
+                {
+                    return std::nullopt;
+                }
+
+                const auto guid = value_characters(*value).substr(0, class_guid_length);
+                return std::u16string{guid.substr(0, guid.find(u'\0'))};
+            }
+
+            // PiPnpRtlServiceFilterCallback: the device's function driver, or a filter driver of the device or of its class.
+            // The compound filter lists it reads also merge filters declared with INF AddFilter directives, which are not
+            // modelled.
+            static bool uses_service(windows_emulator& win_emu, const registry_key& device_key, const std::u16string_view service)
+            {
+                if (names_service(win_emu.registry.get_value(device_key, "Service"), service) ||
+                    lists_service(win_emu.registry.get_value(device_key, "UpperFilters"), service) ||
+                    lists_service(win_emu.registry.get_value(device_key, "LowerFilters"), service))
+                {
+                    return true;
+                }
+
+                const auto class_guid = device_class_guid(win_emu, device_key);
+                const auto installer_class =
+                    class_guid ? win_emu.registry.get_key({sub_key_path(installer_classes_key, *class_guid)}) : std::nullopt;
+                return installer_class && (lists_service(win_emu.registry.get_value(*installer_class, "UpperFilters"), service) ||
+                                           lists_service(win_emu.registry.get_value(*installer_class, "LowerFilters"), service));
+            }
+
+            static std::optional<registry_value> device_property(windows_emulator& win_emu, const std::u16string& device_path,
+                                                                 const std::u16string_view property)
+            {
+                return registry_value_at(win_emu, sub_key_path(sub_key_path(device_path, u"Properties"), property), "");
+            }
+
+            // PiPnpRtlApplyMandatoryDeviceFilters: a device stored with another session's DEVPKEY_Device_SessionId, or with a
+            // DEVPKEY_Device_RestrictedSD that does not let the caller read it, is left out. PnpGetObjectProperty reads the
+            // session into four bytes and PnpValidatePropertyData wants exactly four for a UINT32, and a property that
+            // cannot be read leaves the device out too.
+            static bool is_enumerable_for_caller(windows_emulator& win_emu, const std::u16string& device_path, const handle token)
+            {
+                if (const auto session = device_property(win_emu, device_path, session_id_property))
+                {
+                    if (session->data.size() > sizeof(uint32_t))
+                    {
+                        return false;
+                    }
+
+                    if ((session->type & devprop_type_mask) == devprop_type_uint32)
+                    {
+                        uint32_t session_id{};
+                        if (session->data.size() != sizeof(session_id))
+                        {
+                            return false;
+                        }
+
+                        memcpy(&session_id, session->data.data(), sizeof(session_id));
+                        if (session_id != token_session_id)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
+                const auto restricted = device_property(win_emu, device_path, restricted_sd_property);
+                return !restricted || (restricted->type & devprop_type_mask) != devprop_type_security_descriptor ||
+                       token_grants_access(win_emu, token, restricted->data, enumerate_device_access);
+            }
+
+            // PiPnpRtlGetFilteredDeviceList's enumerator filter: an enumerator, optionally with a device, which it copies
+            // with a separator into a MAX_DEVICE_ID_LEN buffer to match device IDs by prefix.
+            static NTSTATUS enumerator_prefix(const std::u16string& filter, std::u16string& prefix)
+            {
+                if (filter.empty() || std::ranges::count(filter, u'\\') > 1 || filter.front() == u'\\' || filter.back() == u'\\')
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (filter.size() >= max_device_id_length)
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                if (filter.size() + 1 >= max_device_id_length)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                prefix = filter + u'\\';
+                return STATUS_SUCCESS;
+            }
+
+            // RtlHashUnicodeString(id, TRUE, HASH_STRING_ALGORITHM_X65599). Device IDs hold ASCII characters only.
+            static uint32_t device_id_hash(const std::u16string_view id)
+            {
+                constexpr uint32_t x65599_multiplier = 65599;
+                uint32_t hash = 0;
+                for (const auto character : id)
+                {
+                    const auto upper = character >= u'a' && character <= u'z' ? character - (u'a' - u'A') : character;
+                    hash = (hash * x65599_multiplier) + static_cast<uint32_t>(upper);
+                }
+
+                return hash;
+            }
+
+            // The lists come from the PnP manager's device cache, which PiDmCompareObjects orders by device_id_hash, then by
+            // _wcsicmp.
+            static void sort_as_device_cache(std::vector<std::u16string>& ids)
+            {
+                std::vector<std::pair<uint32_t, std::u16string>> keyed{};
+                keyed.reserve(ids.size());
+                for (auto& id : ids)
+                {
+                    keyed.emplace_back(device_id_hash(id), std::move(id));
+                }
+
+                std::ranges::sort(keyed, [](const auto& left, const auto& right) {
+                    return left.first != right.first ? left.first < right.first
+                                                     : utils::string::compare_ignore_case(left.second, right.second) < 0;
+                });
+
+                ids.clear();
+                for (auto& [hash, id] : keyed)
+                {
+                    ids.push_back(std::move(id));
+                }
+            }
+
+            // PiPnpRtlGetFilteredDeviceList and the mandatory filter PiCMMandatoryFilterCallback adds, or the status that
+            // fails the request. Relations and presence come from devnodes, and the emulator starts no devices.
+            static NTSTATUS list_device_ids(windows_emulator& win_emu, const io_device_context& c, const uint32_t flags,
+                                            const std::optional<std::u16string>& filter, std::vector<std::u16string>& ids)
+            {
+                const auto kind = flags & device_list_filters;
+                if (kind != 0 && !filter)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if ((kind & device_list_relations) != 0)
+                {
+                    return filter->size() > max_name_length ? STATUS_NAME_TOO_LONG : STATUS_OBJECT_NAME_NOT_FOUND;
+                }
+
+                std::u16string prefix{};
+                if (kind == device_list_enumerator)
+                {
+                    if (const auto status = enumerator_prefix(*filter, prefix); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+                }
+                else if (kind == device_list_service && filter->size() > max_name_length)
+                {
+                    return STATUS_NAME_TOO_LONG;
+                }
+
+                if ((flags & device_list_present_only) != 0)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                const auto matches = [&](const std::u16string& path) {
+                    switch (kind)
+                    {
+                    case device_list_service: {
+                        if (filter->empty())
+                        {
+                            return true;
+                        }
+
+                        const auto device_key = win_emu.registry.get_key({path});
+                        return device_key && uses_service(win_emu, *device_key, *filter);
+                    }
+                    case device_list_class: {
+                        if (filter->empty())
+                        {
+                            return false;
+                        }
+
+                        const auto device_key = win_emu.registry.get_key({path});
+                        const auto class_guid = device_key ? device_class_guid(win_emu, *device_key) : std::nullopt;
+                        return class_guid && utils::string::equals_ignore_case(*class_guid, *filter);
+                    }
+                    default:
+                        return true;
+                    }
+                };
+
+                const auto token = caller_token(c);
+                const auto unfiltered = (flags & device_list_unfiltered) != 0;
+                for (auto& id : registered_device_ids(win_emu, prefix))
+                {
+                    const auto path = sub_key_path(enum_key, id);
+                    if (matches(path) && (unfiltered || is_enumerable_for_caller(win_emu, path, token)))
+                    {
+                        ids.push_back(std::move(id));
+                    }
+                }
+
+                sort_as_device_cache(ids);
+                return STATUS_SUCCESS;
+            }
+
+            // PiCMGetDeviceIdList. A request that fails once its flags are read reports the room its reply had for the list
+            // as the list's size. An empty list is a lone terminator, which a size query's 20-byte buffer has no room for.
             static NTSTATUS get_device_id_list(windows_emulator& win_emu, const io_device_context& c)
             {
-                // cfgmgr32 reads the request's status and the list size from this header and the list right after it,
-                // but sizes its buffer as 20 bytes plus the list, and asks for the size with a 20-byte buffer.
-                struct device_id_list_header
+                device_list_input input{};
+                std::optional<std::u16string> filter{};
+                if (const auto status = capture_device_list_input(win_emu, c, input, filter); status != STATUS_SUCCESS)
                 {
-                    uint32_t reserved1;
-                    NTSTATUS status;
-                    uint32_t list_bytes;
-                    uint32_t reserved2;
-                };
-
-                static_assert(sizeof(device_id_list_header) == 16);
-
-                constexpr ULONG minimum_reply = 20;
-                constexpr char16_t empty_list = u'\0';
-                if (!c.output_buffer || c.output_buffer_length < minimum_reply)
-                {
-                    return STATUS_BUFFER_TOO_SMALL;
+                    return status;
                 }
 
-                const bool fits = c.output_buffer_length >= minimum_reply + sizeof(empty_list);
-                const device_id_list_header header{
-                    .reserved1 = 0,
-                    .status = fits ? STATUS_SUCCESS : STATUS_BUFFER_TOO_SMALL,
-                    .list_bytes = sizeof(empty_list),
-                    .reserved2 = 0,
-                };
-                win_emu.memory.write_memory(c.output_buffer, &header, sizeof(header));
-                if (fits)
+                if (!c.output_buffer || c.output_buffer_length < sizeof(buffer_result))
                 {
-                    win_emu.memory.write_memory(c.output_buffer + sizeof(header), &empty_list, sizeof(empty_list));
+                    return return_buffer_result(win_emu, c, STATUS_INVALID_PARAMETER, 0, {}, input.result_size);
                 }
 
-                return STATUS_SUCCESS;
+                if ((input.flags & device_list_unfiltered) != 0 && !can_list_unfiltered(win_emu, caller_token(c)))
+                {
+                    return return_buffer_result(win_emu, c, STATUS_ACCESS_DENIED, 0, {}, input.result_size);
+                }
+
+                const auto room = c.output_buffer_length - static_cast<uint32_t>(sizeof(buffer_result));
+                const auto room_bytes = static_cast<uint32_t>(room < sizeof(char16_t) ? 0 : room - (room % sizeof(char16_t)));
+
+                std::vector<std::u16string> ids{};
+                const auto status =
+                    is_device_list_request(input.flags) ? list_device_ids(win_emu, c, input.flags, filter, ids) : STATUS_INVALID_PARAMETER;
+                if (status != STATUS_SUCCESS)
+                {
+                    return return_buffer_result(win_emu, c, status, room_bytes, {}, input.result_size);
+                }
+
+                std::u16string list{};
+                for (const auto& id : ids)
+                {
+                    list += id;
+                    list += u'\0';
+                }
+
+                list += u'\0';
+                const std::span list_bytes{reinterpret_cast<const uint8_t*>(list.data()), list.size() * sizeof(char16_t)};
+                const auto list_size = static_cast<uint32_t>(list_bytes.size());
+                if (list_size > room_bytes)
+                {
+                    return return_buffer_result(win_emu, c, STATUS_BUFFER_TOO_SMALL, list_size, {}, input.result_size);
+                }
+
+                return return_buffer_result(win_emu, c, STATUS_SUCCESS, list_size, list_bytes, input.result_size);
             }
         };
     }

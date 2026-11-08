@@ -1006,6 +1006,8 @@ namespace sogen
 #ifndef OS_WINDOWS
 #define ACL_REVISION            2
 #define ACCESS_ALLOWED_ACE_TYPE 0
+#define ACCESS_DENIED_ACE_TYPE  1
+#define INHERIT_ONLY_ACE        0x8
 
     struct ACL
     {
