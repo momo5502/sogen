@@ -36,6 +36,8 @@ class GamePage extends StatefulWidget {
     required this.emulationRoot,
     required this.ads,
     required this.onSettingsChanged,
+    this.steamId = 0,
+    this.steamOwnershipTicket,
     this.session,
   });
 
@@ -46,6 +48,12 @@ class GamePage extends StatefulWidget {
   final Future<void> Function(GameSettings settings) onSettingsChanged;
 
   final GameSession? session;
+
+  /// The signed-in Steam account a Steam game runs as, or 0.
+  final int steamId;
+
+  /// Asks Steam for the ownership ticket of an app, which a game's DRM checks at startup.
+  final Future<Uint8List?> Function(int appId)? steamOwnershipTicket;
 
   @override
   State<GamePage> createState() => _GamePageState();
@@ -112,6 +120,7 @@ class _GamePageState extends State<GamePage> {
       }
     }
 
+    final steamOwnershipTicket = await _steamOwnershipTicket();
     if (!mounted) {
       return;
     }
@@ -119,6 +128,8 @@ class _GamePageState extends State<GamePage> {
     final started = await _session.start(
       widget.game,
       emulationRoot: widget.emulationRoot,
+      steamId: widget.steamId,
+      steamOwnershipTicket: steamOwnershipTicket,
       resumeFile: resume ? saved.path : null,
     );
     if (!started && mounted) {
@@ -183,6 +194,21 @@ class _GamePageState extends State<GamePage> {
       _keyboardFocus.unfocus();
     } else {
       setState(() => _panelOpen = !_panelOpen);
+    }
+  }
+
+  /// Without Steam answering in time the game starts without a ticket, as it would on a Steam client that is offline.
+  Future<Uint8List?> _steamOwnershipTicket() async {
+    final fetch = widget.steamOwnershipTicket;
+    final appId = widget.game.steamAppId;
+    if (fetch == null || appId == 0 || widget.steamId == 0) {
+      return null;
+    }
+    try {
+      return await fetch(appId).timeout(const Duration(seconds: 10));
+    } on Exception catch (e) {
+      debugPrint('No Steam ownership ticket for $appId: $e');
+      return null;
     }
   }
 

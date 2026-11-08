@@ -147,6 +147,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   Future<void> _play(Game game, {GameSession? session}) async {
+    final owner = game.source == null ? null : widget.accounts.ownerOf(game.source!);
+    final steamOwner = owner != null && owner.provider.store == 'steam' && owner.isSignedIn ? owner : null;
     final suspended = await Navigator.of(context).push<GameSession>(
       MaterialPageRoute(
         builder: (_) => GamePage(
@@ -154,6 +156,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
           emulationRoot: widget.root.path,
           ads: widget.ads,
           onSettingsChanged: (settings) => _storeSettings(game, settings),
+          steamId: int.tryParse(steamOwner?.userId ?? '') ?? 0,
+          steamOwnershipTicket: steamOwner?.connection.ownershipTicket,
           session: session,
         ),
       ),

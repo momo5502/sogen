@@ -97,7 +97,8 @@
             "cacheVariables": {
                 "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/android-ndk.cmake",
                 "SOGEN_ENABLE_RUST_CODE": "OFF",
-                "SOGEN_ENABLE_FEX": "ON"
+                "SOGEN_ENABLE_FEX": "ON",
+                "SOGEN_ENABLE_STEAM_LOCAL_PROVIDER": "ON"
             },
             "environment": {
                 "ANDROID_ABI": "arm64-v8a"
