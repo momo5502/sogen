@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -18,9 +18,6 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
-#ifdef __MINGW32__
-#include <pthread.h>
-#endif
 #endif
 
 namespace sogen::test
@@ -129,9 +126,12 @@ namespace sogen::test
         signaller.join();
     }
 
-#ifdef _WIN32
+#ifdef _MSC_VER
     // A lock that reserves itself for the next waiter in line stalls every other thread while that waiter is not
     // running, as when other work takes the host's cores.
+    //
+    // MSVC only: MinGW's libstdc++ waits and notifies under a shared mutex, so suspending the waiter while it holds
+    // that mutex blocks unlock() in notify_one() forever.
     TEST_F(AdaptiveMutexTest, AWaiterThatIsNotRunningDoesNotKeepTheLockFromOthers)
     {
         for (int round = 0; round < 20; ++round)
@@ -149,12 +149,7 @@ namespace sogen::test
                 std::this_thread::yield();
             }
 
-            // MinGW's std::thread runs on winpthreads, whose native handle is a pthread_t, not the Win32 thread handle.
-#ifdef __MINGW32__
-            const HANDLE waiter_handle = pthread_gethandle(waiter.native_handle());
-#else
             const HANDLE waiter_handle = waiter.native_handle();
-#endif
             ASSERT_NE(SuspendThread(waiter_handle), static_cast<DWORD>(-1));
             lock.unlock();
 
