@@ -433,7 +433,7 @@ namespace sogen
                 const int type = entry >> 12;
                 const auto offset = static_cast<uint16_t>(entry & 0xfff);
                 const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
-                const auto local_offset = total_offset - min_offset;
+                const auto local_offset = static_cast<size_t>(total_offset - min_offset);
 
                 switch (type)
                 {

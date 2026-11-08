@@ -473,7 +473,7 @@ namespace sogen::test
             poke(data, base_offset, low_base);
             poke(data, 0x220, low_base + target_rva);
             const auto reserved_base = reservation == 2 ? uint64_t{0x10000} : low_base;
-            const auto reserved_size = reservation == 2 ? high_start - reserved_base : uint64_t{0x1000};
+            const auto reserved_size = reservation == 2 ? static_cast<size_t>(high_start - reserved_base) : size_t{0x1000};
             if (reservation)
             {
                 ASSERT_TRUE(this->memory_.allocate_memory(reserved_base, reserved_size, memory_permission::read_write, true));
