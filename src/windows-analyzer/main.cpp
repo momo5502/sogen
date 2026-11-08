@@ -3,8 +3,7 @@
 #include <CLI/CLI.hpp>
 
 #include <windows_emulator.hpp>
-#include <emulator_process_target.hpp>
-#include <inherited_pipes.hpp>
+#include <managed_process_start.hpp>
 #include <backend_selection.hpp>
 #include <win_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
@@ -884,23 +883,7 @@ namespace sogen
             std::unique_ptr<emulator_process_target> managed_target{};
             if (options.managed_process)
             {
-                if (!options.managed_process->request().registry_state.empty())
-                {
-                    utils::buffer_deserializer state{options.managed_process->request().registry_state};
-                    win_emu->registry.deserialize_runtime_state(state);
-                }
-                win_emu->setup_process_if_necessary();
-                win_emu->process.parent_process_id = options.managed_process->request().parent_process_id;
-                if (options.managed_process->request().debugged)
-                {
-                    win_emu->attach_debugger();
-                }
-                install_inherited_pipes(*win_emu, options.managed_process->request(), options.managed_process->take_inherited_pipes());
-                managed_target = std::make_unique<emulator_process_target>(*win_emu);
-                if (!options.managed_process->wait_for_resume(*managed_target))
-                {
-                    throw std::runtime_error("Acknowledging managed process startup failed");
-                }
+                managed_target = start_managed_process(*win_emu, *options.managed_process);
             }
             const auto managed_process_guard = utils::finally([&] {
                 if (options.managed_process)
