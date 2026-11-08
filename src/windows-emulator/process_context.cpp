@@ -1128,6 +1128,30 @@ namespace sogen
         }
     }
 
+    void process_context::move_absolute_deadlines(const std::chrono::steady_clock::duration system_time_ahead)
+    {
+        for (auto& thread : this->threads | std::views::values)
+        {
+            thread.move_absolute_deadlines(system_time_ahead);
+        }
+
+        for (auto& timer : this->timers | std::views::values)
+        {
+            utils::follow_system_time(timer.due_time, timer.absolute, system_time_ahead);
+        }
+
+        // The handles of one file share its device (a duplicated handle), whose deadlines move once.
+        std::unordered_set<const io_device*> moved{};
+        for (const auto& container : this->devices | std::views::values)
+        {
+            auto* device = container.get_internal_device();
+            if (device && moved.insert(device).second)
+            {
+                device->move_absolute_deadlines(system_time_ahead);
+            }
+        }
+    }
+
     void process_context::restore_windows_after_state_restore(windows_emulator& win_emu)
     {
         std::vector<const window*> pending{};
