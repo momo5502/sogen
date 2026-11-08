@@ -762,7 +762,9 @@ namespace sogen
             const uint64_t image_arena_start = is_32bit ? 0x70000000ULL : 0x00007FF000000000ULL;
             const uint64_t image_arena_end = std::min(is_32bit ? 0x7FFDFFFFULL : MAX_ALLOCATION_ADDRESS, address_limit);
             binary.image_base =
-                memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image), image_arena_start, image_arena_end);
+                image_arena_start <= image_arena_end
+                    ? memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image), image_arena_start, image_arena_end)
+                    : 0;
         }
 
         const bool preferred_fits = binary.image_base && binary.size_of_image && binary.image_base <= address_limit &&
@@ -779,7 +781,7 @@ namespace sogen
             // 32-bit module once the low arena fills; WOW64 pointer marshaling then truncates it to 32
             // bits, aliasing the module onto whatever unrelated allocation sits at the truncated address.
             const bool needs_below_4gb = address_limit < DEFAULT_ALLOCATION_ADDRESS_64BIT;
-            const uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
+            uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
             const auto image_size = static_cast<size_t>(binary.size_of_image);
 
             // The preferred base was taken, so relocate. On backends sharing the address space with the
@@ -793,6 +795,11 @@ namespace sogen
             for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)
             {
                 binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, address_limit);
+                if (!binary.image_base && fallback_start == DEFAULT_ALLOCATION_ADDRESS_64BIT)
+                {
+                    fallback_start = DEFAULT_ALLOCATION_ADDRESS_32BIT;
+                    binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, address_limit);
+                }
                 if (!binary.image_base)
                 {
                     break;
