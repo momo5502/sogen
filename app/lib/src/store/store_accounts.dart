@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../game_library.dart';
 import 'store_account.dart';
+import 'store_http.dart';
 import 'store_catalog.dart';
 import 'store_installer.dart';
 
@@ -154,35 +155,111 @@ class StoreAccounts extends ChangeNotifier implements DownloadAccounts {
     }
 
     final userId = connection.signIn.userId;
-    final known = _accounts.where((account) => account.provider == provider);
+    if (userId == null) {
+      final error = connection.signIn.service.error(
+        '${provider.name} did not say which account you signed in to. Please try again.',
+      );
+      await _discard(connection);
+      throw error;
+    }
+
+    final known = _accounts.where((account) => account.provider == provider).toList();
+    await _identifyLegacy(known);
     final existing =
-        known.where((account) => userId != null && account.userId == userId).firstOrNull ??
-        // The session kept from before Sogen knew several accounts may not have named its user yet; a store had only
-        // one account then, so the first sign-in after it ended takes its place.
+        known.where((account) => account.userId == userId).firstOrNull ??
+        // The session kept from before Sogen knew several accounts may not have named its user; a store had only one
+        // account then, so the first sign-in after it ended takes its place.
         known.where((account) => account.legacy && account.userId == null && !account.isSignedIn).firstOrNull;
 
-    final KnownAccount account;
-    if (existing == null) {
-      account = KnownAccount._(_newId(), provider, secretName, connection);
-      _accounts.add(account);
-    } else {
-      account = existing;
-      final previous = existing._connection;
-      previous.signIn.removeListener(_onChanged);
-      existing
-        .._connection = connection
-        .._secretName = secretName;
-      if (previous.signIn.isSignedIn) {
-        await previous.signIn.signOut();
-      }
-      previous.close();
+    try {
+      return existing == null
+          ? await _addAccount(provider, secretName, connection)
+          : await _replaceSession(existing, secretName, connection);
+    } catch (_) {
+      await _discard(connection);
+      rethrow;
     }
-    account
-      ..userId = userId ?? account.userId
-      ..displayName = connection.signIn.displayName ?? account.displayName;
+  }
+
+  /// A session restored from before Sogen knew several accounts names its user once it is refreshed, which has to
+  /// happen before a new sign-in can tell whether it is the same user.
+  Future<void> _identifyLegacy(List<KnownAccount> known) async {
+    for (final account in known) {
+      if (account.legacy && account.userId == null && account.isSignedIn) {
+        try {
+          await account.connection.signIn.identify();
+        } on StoreException catch (e) {
+          debugPrint('Could not tell who the earlier ${account.provider.name} session belongs to: ${e.message}');
+        }
+      }
+    }
+  }
+
+  Future<KnownAccount> _addAccount(StoreProvider provider, String secretName, StoreConnection connection) async {
+    final account = KnownAccount._(
+      _newId(),
+      provider,
+      secretName,
+      connection,
+      userId: connection.signIn.userId,
+      displayName: connection.signIn.displayName,
+    );
+    _accounts.add(account);
+    try {
+      await _save();
+    } catch (_) {
+      _accounts.remove(account);
+      notifyListeners();
+      rethrow;
+    }
     connection.signIn.addListener(_onChanged);
-    await _save();
     return account;
+  }
+
+  /// The list points at the new session before the old one is deleted, so that dying in between never leaves an
+  /// account whose session is gone.
+  Future<KnownAccount> _replaceSession(KnownAccount account, String secretName, StoreConnection connection) async {
+    final previous = (connection: account._connection, secretName: account._secretName);
+    final identity = (userId: account.userId, displayName: account.displayName);
+    previous.connection.signIn.removeListener(_onChanged);
+    account
+      .._connection = connection
+      .._secretName = secretName
+      ..userId = connection.signIn.userId ?? account.userId
+      ..displayName = connection.signIn.displayName ?? account.displayName;
+    try {
+      await _save();
+    } catch (_) {
+      account
+        .._connection = previous.connection
+        .._secretName = previous.secretName
+        ..userId = identity.userId
+        ..displayName = identity.displayName;
+      previous.connection.signIn.addListener(_onChanged);
+      notifyListeners();
+      rethrow;
+    }
+    connection.signIn.addListener(_onChanged);
+
+    if (previous.connection.signIn.isSignedIn) {
+      try {
+        await previous.connection.signIn.signOut();
+      } on Exception catch (e) {
+        debugPrint('Could not delete the replaced ${account.provider.name} session: $e');
+      }
+    }
+    previous.connection.close();
+    return account;
+  }
+
+  /// Deletes the session of a sign-in that did not become an account.
+  static Future<void> _discard(StoreConnection connection) async {
+    try {
+      await connection.signIn.signOut();
+    } on Exception catch (e) {
+      debugPrint('Could not delete an unused session: $e');
+    }
+    connection.close();
   }
 
   Future<void> signOut(KnownAccount account) => account.connection.signIn.signOut();

@@ -107,7 +107,7 @@ class GogAccount extends StoreAccount {
   }
 
   @override
-  Future<String?> fetchDisplayName(String accessToken) async {
+  Future<({String? userId, String? displayName})> fetchIdentity(String accessToken) async {
     final request = http.Request('GET', Uri.https('embed.gog.com', '/userData.json'))
       ..headers['Authorization'] = 'Bearer $accessToken';
     final body = await sendJson(
@@ -115,8 +115,12 @@ class GogAccount extends StoreAccount {
       request,
       onError: (status, _) => GogException('GOG answered with status $status.'),
     );
+    final userId = body['galaxyUserId'];
     final username = body['username'];
-    return username is String && username.isNotEmpty ? username : null;
+    return (
+      userId: userId is String && userId.isNotEmpty ? userId : null,
+      displayName: username is String && username.isNotEmpty ? username : null,
+    );
   }
 
   String _randomToken() => base64Url.encode(List.generate(32, (_) => _random.nextInt(256))).replaceAll('=', '');

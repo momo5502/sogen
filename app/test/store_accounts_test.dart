@@ -110,45 +110,92 @@ void main() {
     expect(restarted.ownerOf(bobsGame)?.isSignedIn, isFalse);
     expect(restarted.ownerOf(legacyGame)?.userId, 'alice');
   });
+
+  test('signing in to the user of the earlier session before it was refreshed keeps its account', () async {
+    secrets['gog'] = 'alice';
+    final gog = provider();
+    final accounts = await open(gog);
+    final legacy = accounts.ownerOf(legacyGame)!;
+    nextUsers.add('alice');
+
+    final signedIn = await accounts.signIn(gog);
+
+    expect(signedIn?.id, legacy.id);
+    expect(accounts.signedIn, hasLength(1));
+    expect(secrets.values, ['alice']);
+  });
+
+  test('a sign-in the store names no user for is refused and forgotten', () async {
+    final gog = provider();
+    final accounts = await open(gog);
+    nextUsers.add(null);
+
+    await expectLater(accounts.signIn(gog), throwsA(isA<StoreException>()));
+    expect(accounts.signedIn, isEmpty);
+    expect(secrets, isEmpty);
+  });
+
+  test('a session that cannot be stored keeps the one it would have replaced', () async {
+    final gog = provider();
+    final accounts = await open(gog);
+    nextUsers.addAll(['alice', 'alice']);
+    final alice = await accounts.signIn(gog);
+    final aliceSecret = Map.of(secrets);
+    file.deleteSync();
+    Directory(file.path).createSync();
+
+    await expectLater(accounts.signIn(gog), throwsA(isA<FileSystemException>()));
+    expect(accounts.signedIn.single.id, alice!.id);
+    expect(secrets, aliceSecret);
+  });
 }
 
-/// Signs in to the next user of [_nextUsers] and keeps the session as the user's name.
+/// Signs in to the next user of [_nextUsers], or to one the store does not name for null, and keeps the session as
+/// the user's name. Like a GOG session, a restored one names its user only once it is identified.
 class _FakeSignIn extends ChangeNotifier implements StoreSignIn {
   _FakeSignIn(this._secrets, this._secretName, this._nextUsers);
 
   final Map<String, String> _secrets;
   final String _secretName;
   final List<String?> _nextUsers;
-  String? _user;
+  String? _session;
+  bool _identified = false;
 
   @override
   StoreService get service => const StoreService('GOG', StoreException.new);
 
   @override
-  bool get isSignedIn => _user != null;
+  bool get isSignedIn => _session != null;
 
   @override
-  String? get userId => _user;
+  String? get userId => _identified && _session != '' ? _session : null;
 
   @override
-  String? get displayName => _user;
+  String? get displayName => userId;
+
+  @override
+  Future<void> identify() async {
+    _identified = true;
+    notifyListeners();
+  }
 
   Future<void> restore() async {
-    _user = _secrets[_secretName];
+    _session = _secrets[_secretName];
     notifyListeners();
   }
 
   @override
   Future<bool> signIn() async {
-    _user = _nextUsers.removeAt(0);
-    _secrets[_secretName] = _user!;
+    _session = _nextUsers.removeAt(0) ?? '';
+    _identified = true;
+    _secrets[_secretName] = _session!;
     notifyListeners();
     return true;
   }
 
   @override
   Future<void> signOut() async {
-    _user = null;
+    _session = null;
     _secrets.remove(_secretName);
     notifyListeners();
   }

@@ -51,6 +51,10 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
   @override
   String? get displayName => _accountName;
 
+  /// A Steam session names its user in its refresh token.
+  @override
+  Future<void> identify() async {}
+
   Future<void> restore() async {
     String? stored;
     try {
