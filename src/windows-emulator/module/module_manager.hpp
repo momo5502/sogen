@@ -110,7 +110,7 @@ namespace sogen
 
         std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
         mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false,
-                                  uint64_t relocation_base = 0, uint64_t highest_address = 0);
+                                  uint64_t relocation_base = 0, uint64_t highest_address = 0, NTSTATUS* status = nullptr);
         mapped_module* map_module_or_throw(const windows_path& file, const logger& logger, bool is_static = false,
                                            bool allow_duplicate = false);
         static std::filesystem::path module_identity(const windows_path& path);
@@ -204,7 +204,7 @@ namespace sogen
         execution_mode current_execution_mode_ = execution_mode::unknown;
 
         mapped_module* map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
-                                       const logger& logger, bool is_static);
+                                       const logger& logger, bool is_static, NTSTATUS* status = nullptr);
 
         bool supports_image(const pe_detection_result& detection_result) const;
 

@@ -2,6 +2,7 @@
 #include "module_mapping.hpp"
 #include <address_utils.hpp>
 #include <algorithm>
+#include <new>
 
 #include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
@@ -557,7 +558,7 @@ namespace sogen
                 const auto size_in_image = mapped_as_one_region ? size_of_data : section_size;
                 if (section.VirtualAddress + size_in_image > binary.size_of_image)
                 {
-                    return false;
+                    throw std::runtime_error("Section extends beyond the image");
                 }
 
                 if (!mapped_as_one_region && !memory.commit_image_memory(target_ptr, section_size, memory_permission::read_write))
@@ -622,7 +623,7 @@ namespace sogen
             const auto image_size = static_cast<size_t>(binary.size_of_image);
             if (optional_header.SizeOfHeaders > image_size)
             {
-                return false;
+                throw std::runtime_error("Headers extend beyond the image");
             }
 
             if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::all, true, memory_region_kind::section_image))
@@ -707,6 +708,10 @@ namespace sogen
         binary.image_base = optional_header.ImageBase;
         binary.image_base_file = optional_header.ImageBase;
         binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
+        if (!binary.size_of_image)
+        {
+            throw std::runtime_error("Invalid image size");
+        }
 
         const bool force_wow64cpu_32bit_va = must_map_module_below_4gb(binary.name, nt_headers.FileHeader.Machine);
         constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
@@ -751,7 +756,7 @@ namespace sogen
         {
             if (!is_relocatable && relocation_base == 0)
             {
-                throw std::runtime_error("Memory range not allocatable");
+                throw std::bad_alloc{};
             }
 
             // The ceiling is explicit because an unbounded search can pick a base above 4 GB for a
@@ -787,7 +792,7 @@ namespace sogen
 
             if (!mapped)
             {
-                throw std::runtime_error("Memory range not allocatable");
+                throw std::bad_alloc{};
             }
         }
 

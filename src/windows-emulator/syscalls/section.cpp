@@ -554,6 +554,13 @@ namespace sogen
 
             if (section_entry->is_image())
             {
+                if (!base_address.read())
+                {
+                    if (const auto status = check_zero_bits_of_section(zero_bits); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+                }
                 const auto file_path = module_manager::module_identity(section_entry->file_name);
                 uint64_t relocation_base{};
                 for (const auto& loaded_module : c.win_emu.mod_manager.modules() | std::views::values)
@@ -566,11 +573,12 @@ namespace sogen
                 }
 
                 const auto highest_address = highest_address_for_zero_bits(base_address.read() ? 0 : zero_bits);
+                NTSTATUS mapping_status{};
                 const auto* binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log, false, true, relocation_base,
-                                                                      highest_address);
+                                                                      highest_address, &mapping_status);
                 if (!binary)
                 {
-                    return STATUS_FILE_INVALID;
+                    return mapping_status;
                 }
 
                 std::u16string wide_name(binary->name.begin(), binary->name.end());

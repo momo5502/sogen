@@ -207,9 +207,12 @@ namespace sogen::test
         ASSERT_NE(original, nullptr);
         ASSERT_GT(original->image_base, uint64_t{0x7FFFFFFF});
         const auto count = this->emu->mod_manager.modules().size();
-        EXPECT_EQ(this->emu->mod_manager.map_module(file, this->emu->log, false, false, 0, 0x7FFFFFFF), nullptr);
+        NTSTATUS status{};
+        EXPECT_EQ(this->emu->mod_manager.map_module(file, this->emu->log, false, false, 0, 0x7FFFFFFF, &status), nullptr);
+        EXPECT_EQ(status, STATUS_NO_MEMORY);
         EXPECT_EQ(this->emu->mod_manager.modules().size(), count);
-        EXPECT_EQ(this->emu->mod_manager.map_module(file, this->emu->log), original);
+        EXPECT_EQ(this->emu->mod_manager.map_module(file, this->emu->log, false, false, 0, 0, &status), original);
+        EXPECT_EQ(status, STATUS_SUCCESS);
     }
 
     TEST_F(CreateSectionExTest, AnImpossibleImageViewConstraintDoesNotPublishAModule)
@@ -220,15 +223,50 @@ namespace sogen::test
         const auto section_handle = this->emu->process.sections.store(std::move(image));
         const emulator_object<uint64_t> base{this->emu->memory, this->storage};
         const emulator_object<EmulatorTraits<Emu64>::SIZE_T> size{this->emu->memory, this->storage + 8};
-        base.write(0);
-        size.write(0);
         const auto module_count = this->emu->mod_manager.modules().size();
-        const auto status = syscalls::handle_NtMapViewOfSection(this->context(), section_handle, CURRENT_PROCESS, base, 20, 0,
-                                                                {this->emu->memory}, size, ViewUnmap, 0, PAGE_READONLY);
-        EXPECT_FALSE(NT_SUCCESS(status));
-        EXPECT_EQ(0u, base.read());
-        EXPECT_EQ(0u, size.read());
-        EXPECT_EQ(module_count, this->emu->mod_manager.modules().size());
+
+        struct constraint_case
+        {
+            uint64_t zero_bits;
+            NTSTATUS expected;
+        };
+
+        const std::array cases{
+            constraint_case{16, STATUS_NO_MEMORY},
+            constraint_case{17, STATUS_NO_MEMORY},
+            constraint_case{20, STATUS_NO_MEMORY},
+            constraint_case{21, STATUS_NO_MEMORY},
+            constraint_case{22, STATUS_INVALID_PARAMETER},
+            constraint_case{31, STATUS_INVALID_PARAMETER},
+            constraint_case{32, STATUS_INVALID_PARAMETER},
+            constraint_case{0x10000, STATUS_NO_MEMORY},
+            constraint_case{0x3FF, STATUS_INVALID_PARAMETER},
+            constraint_case{0x400, STATUS_NO_MEMORY},
+        };
+        for (const auto& configuration : cases)
+        {
+            SCOPED_TRACE(configuration.zero_bits);
+            base.write(0);
+            size.write(0);
+            const auto status =
+                syscalls::handle_NtMapViewOfSection(this->context(), section_handle, CURRENT_PROCESS, base, configuration.zero_bits, 0,
+                                                    {this->emu->memory}, size, ViewUnmap, 0, PAGE_READONLY);
+            EXPECT_EQ(configuration.expected, status);
+            EXPECT_EQ(0u, base.read());
+            EXPECT_EQ(0u, size.read());
+            EXPECT_EQ(module_count, this->emu->mod_manager.modules().size());
+        }
+    }
+
+    TEST_F(CreateSectionExTest, AFileErrorDoesNotBecomeAnAllocationError)
+    {
+        NTSTATUS status = STATUS_NO_MEMORY;
+        const auto count = this->emu->mod_manager.modules().size();
+        EXPECT_EQ(
+            this->emu->mod_manager.map_module(windows_path{"C:\\sogen-missing-image.dll"}, this->emu->log, false, false, 0, 0, &status),
+            nullptr);
+        EXPECT_EQ(STATUS_FILE_INVALID, status);
+        EXPECT_EQ(count, this->emu->mod_manager.modules().size());
     }
 
     TEST_F(CreateSectionExTest, UnreadableEntryIsAnAccessViolation)

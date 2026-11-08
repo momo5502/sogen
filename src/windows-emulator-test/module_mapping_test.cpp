@@ -370,8 +370,17 @@ namespace sogen::test
     TYPED_TEST(ModuleRelocationTest, AnImpossibleAddressCeilingDoesNotLeaveAnImageMapped)
     {
         const auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
-        EXPECT_THROW(this->map(data, 0, windows_path{"C:\\test.dll"}, 0xFFFF), std::runtime_error);
+        EXPECT_THROW(this->map(data, 0, windows_path{"C:\\test.dll"}, 0xFFFF), std::bad_alloc);
         EXPECT_FALSE(this->memory_.get_region_info(this->preferred_base).is_reserved);
+    }
+
+    TYPED_TEST(ModuleRelocationTest, AZeroImageSizeIsAnImageError)
+    {
+        auto data = this->image();
+        constexpr auto offset =
+            k_nt_offset + offsetof(PENTHeaders_t<TypeParam>, OptionalHeader) + offsetof(PEOptionalHeader_t<TypeParam>, SizeOfImage);
+        poke(data, offset, uint32_t{0});
+        EXPECT_THROW(this->map(data), std::runtime_error);
     }
 
     using ModuleRelocation32Test = ModuleRelocationTest<uint32_t>;
