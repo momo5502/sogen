@@ -219,6 +219,34 @@ namespace sogen
         this->print_message(c, message);
     }
 
+    void logger::print_deferred_record(const color c, void (*format)(const void* record, std::string& out), const void* record,
+                                       const size_t size)
+    {
+        {
+            const std::scoped_lock lock(this->print_mutex_);
+
+            if (!this->sink_ && (this->silent_ || this->disable_output_))
+            {
+                return;
+            }
+
+            if (!this->sink_ && !this->terminal_ && c != color::red)
+            {
+                if (!this->redirected_output_)
+                {
+                    this->redirected_output_ = std::make_unique<queued_file_writer>(stdout);
+                }
+
+                this->redirected_output_->write_deferred(format, record, size);
+                return;
+            }
+        }
+
+        std::string line{};
+        format(record, line);
+        this->print_message(c, line);
+    }
+
     // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
     void logger::print(const color c, const char* message, ...)
     {

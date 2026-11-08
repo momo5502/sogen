@@ -196,6 +196,10 @@ namespace sogen
 
         std::vector<std::byte> create_emulator_snapshot(windows_emulator& win_emu, const std::string_view configuration)
         {
+            // As when one is written to a file, a process that keeps running does not see the time the snapshot took.
+            const auto time = win_emu.current_guest_time();
+            const auto continue_time = utils::finally([&] { win_emu.continue_time_at(time); });
+
             win_emu.emu().ensure_restorable_in_new_process();
             win_emu.prepare_serialization();
 
@@ -230,6 +234,12 @@ namespace sogen
         void write_emulator_snapshot(windows_emulator& win_emu, const std::filesystem::path& snapshot_file,
                                      const std::string_view configuration, const std::function<bool()>& should_commit)
         {
+            // With keep_guest_time_across_snapshots the guest's time stands still while it is written (seconds for a large
+            // process), as it does in the snapshot itself, so a process that keeps running does not see the write as time
+            // that passed.
+            const auto time = win_emu.current_guest_time();
+            const auto continue_time = utils::finally([&] { win_emu.continue_time_at(time); });
+
             win_emu.emu().ensure_restorable_in_new_process();
             win_emu.prepare_serialization();
 

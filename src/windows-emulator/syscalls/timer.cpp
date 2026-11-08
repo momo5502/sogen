@@ -241,6 +241,7 @@ namespace sogen
             const auto due = due_time.read();
             previous_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock())));
             entry->due_time = timer_deadline(c.win_emu.clock(), due);
+            entry->absolute = utils::is_absolute_due_time(due);
             entry->period_nanoseconds = static_cast<int64_t>(period) * 1000000;
             entry->signaled = false;
             return STATUS_SUCCESS;
@@ -264,7 +265,9 @@ namespace sogen
             {
                 return STATUS_INVALID_PARAMETER_3;
             }
-            entry->due_time = timer_deadline(c.win_emu.clock(), due_time.read());
+            const auto due = due_time.read();
+            entry->due_time = timer_deadline(c.win_emu.clock(), due);
+            entry->absolute = utils::is_absolute_due_time(due);
             entry->period_nanoseconds = interval * 100;
             entry->signaled = false;
             return STATUS_SUCCESS;

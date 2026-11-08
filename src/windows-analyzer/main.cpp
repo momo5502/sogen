@@ -3,8 +3,7 @@
 #include <CLI/CLI.hpp>
 
 #include <windows_emulator.hpp>
-#include <emulator_process_target.hpp>
-#include <inherited_pipes.hpp>
+#include <managed_process_start.hpp>
 #include <backend_selection.hpp>
 #include <win_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
@@ -85,6 +84,7 @@ namespace sogen
             network::network_mode network{network::network_mode::offline};
             bool disable_instruction_precision{false};
             bool native_timing{false};
+            bool keep_guest_time{false};
             uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::vector<std::filesystem::path> registry_files{};
@@ -656,6 +656,7 @@ namespace sogen
                 .use_instruction_precision = !options.disable_instruction_precision,
                 .intercept_rdtsc = !options.native_timing,
                 .intercept_kusd = kusd_needs_intercept || !options.native_timing,
+                .keep_guest_time_across_snapshots = options.keep_guest_time,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
                 .root_mode = options.root_mode,
@@ -884,23 +885,7 @@ namespace sogen
             std::unique_ptr<emulator_process_target> managed_target{};
             if (options.managed_process)
             {
-                if (!options.managed_process->request().registry_state.empty())
-                {
-                    utils::buffer_deserializer state{options.managed_process->request().registry_state};
-                    win_emu->registry.deserialize_runtime_state(state);
-                }
-                win_emu->setup_process_if_necessary();
-                win_emu->process.parent_process_id = options.managed_process->request().parent_process_id;
-                if (options.managed_process->request().debugged)
-                {
-                    win_emu->attach_debugger();
-                }
-                install_inherited_pipes(*win_emu, options.managed_process->request(), options.managed_process->take_inherited_pipes());
-                managed_target = std::make_unique<emulator_process_target>(*win_emu);
-                if (!options.managed_process->wait_for_resume(*managed_target))
-                {
-                    throw std::runtime_error("Acknowledging managed process startup failed");
-                }
+                managed_target = start_managed_process(*win_emu, *options.managed_process);
             }
             const auto managed_process_guard = utils::finally([&] {
                 if (options.managed_process)
@@ -1213,6 +1198,9 @@ namespace sogen
                          "Let the guest read the host TSC and a periodically refreshed KUSER_SHARED_DATA without trapping (faster, "
                          "timing is no longer exact); on macOS KUSER_SHARED_DATA stays trapped and only rdtsc runs natively")
                 ->excludes(reproducible_option);
+            app.add_flag("--keep-guest-time", options.keep_guest_time,
+                         "Keep the guest's time across snapshots: its clocks stand still while the process is saved or loaded "
+                         "and continue from the save, as a game that times out without its server needs");
             app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
             app.add_flag("--elevated", options.elevated, "Run the process with an elevated administrator token");

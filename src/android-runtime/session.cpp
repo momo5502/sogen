@@ -4,7 +4,11 @@
 #include <future>
 #include <iterator>
 
+#include "android_process_launcher.hpp"
+
 #include <backend_selection.hpp>
+#include <managed_process_start.hpp>
+#include <utils/finally.hpp>
 #include <filesystem/document_mount.hpp>
 #include <filesystem/layered_provider.hpp>
 #include <registry/registry_file.hpp>
@@ -81,6 +85,8 @@ namespace sogen::android
             return emulator_settings{
                 .intercept_rdtsc = false,
                 .intercept_kusd = false,
+                // A game resumed from a save goes on from it, as its timeouts expect.
+                .keep_guest_time_across_snapshots = true,
                 .emulation_root = config.emulation_root,
                 .root_mode = filesystem_mode::copy_on_write,
                 .root_layer = config.root_layer,
@@ -108,50 +114,46 @@ namespace sogen::android
             return configuration;
         }
 
-        std::vector<std::string> create_child_arguments(const emulator_settings& settings,
-                                                        const std::vector<directory_mount>& directory_mounts,
-                                                        const std::vector<document_mount>& document_mounts, const uint16_t port,
-                                                        const std::string& token)
+        // The game's library runs every process, so a child only needs to know where to reach its parent.
+        std::vector<std::string> create_child_arguments(const uint16_t port, const std::string& token)
         {
-            std::vector<std::string> arguments{
-                "--managed-process-port",
-                std::to_string(port),
-                "--managed-process-token",
-                token,
-                "--emulation",
-                settings.emulation_root.string(),
-                "--root-mode",
-                std::string{to_string(settings.root_mode)},
-                "--root-layer",
-                settings.root_layer.string(),
-                "--network",
-                std::string{network::to_string(settings.network)},
+            return {"--managed-process-port", std::to_string(port), "--managed-process-token", token};
+        }
+
+        managed_process_connection connect_to_parent(const std::vector<std::string>& arguments)
+        {
+            uint16_t port{};
+            std::string token{};
+            for (size_t i = 0; i + 1 < arguments.size(); ++i)
+            {
+                if (arguments[i] == "--managed-process-port")
+                {
+                    port = static_cast<uint16_t>(std::stoul(arguments[i + 1]));
+                }
+                else if (arguments[i] == "--managed-process-token")
+                {
+                    token = arguments[i + 1];
+                }
+            }
+
+            if (port == 0 || token.empty())
+            {
+                throw std::runtime_error("A child process needs its parent's port and token");
+            }
+            return connect_managed_process(port, token);
+        }
+
+        application_settings create_child_application_settings(const process_create_request& request)
+        {
+            application_settings settings{
+                .application = std::u8string(request.application.begin(), request.application.end()),
             };
-
-            if (settings.spoof_gpu_features)
+            for (const auto& argument : request.arguments)
             {
-                arguments.emplace_back("--spoof-gpu-features");
+                settings.arguments.push_back(u8_to_u16(argument));
             }
-
-            if (settings.max_display_mode)
-            {
-                arguments.emplace_back("--max-display-mode");
-                arguments.push_back(to_string(*settings.max_display_mode));
-            }
-
-            for (const auto& mount : directory_mounts)
-            {
-                arguments.emplace_back("--directory-mount");
-                std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
-            }
-
-            for (const auto& mount : document_mounts)
-            {
-                arguments.emplace_back("--document-mount");
-                std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
-            }
-
-            return arguments;
+            apply_managed_request(settings, request);
+            return settings;
         }
     }
 
@@ -171,7 +173,10 @@ namespace sogen::android
             .on_cursor_moved = env.GetMethodID(listener_class, "onCursorMoved", "(JII)V"),
             .on_relative_mouse_changed = env.GetMethodID(listener_class, "onRelativeMouseChanged", "(JZ)V"),
             .on_snapshot = env.GetMethodID(listener_class, "onSnapshot", "(Ljava/lang/String;Ljava/lang/String;)V"),
+            .on_guest_exited = env.GetMethodID(listener_class, "onGuestExited", "()V"),
             .open_document = env.GetMethodID(listener_class, "openDocument", "(Ljava/lang/String;Ljava/lang/String;)I"),
+            .start_child = env.GetMethodID(listener_class, "startChild", "(J[Ljava/lang/String;)V"),
+            .kill_child = env.GetMethodID(listener_class, "killChild", "(J)V"),
         };
         env.DeleteLocalRef(listener_class);
 
@@ -204,6 +209,12 @@ namespace sogen::android
     {
         try
         {
+            std::optional<managed_process_connection> parent{};
+            if (!config.managed_arguments.empty())
+            {
+                parent.emplace(connect_to_parent(config.managed_arguments));
+            }
+
             auto ui = std::make_unique<android_ui_backend>(*this, config.vulkan);
             auto* ui_backend = ui.get();
 
@@ -222,25 +233,11 @@ namespace sogen::android
                 });
             }
 
-            std::vector<std::unique_ptr<document_broker>> brokers{};
-            std::vector<document_mount> child_document_mounts{};
             for (const auto& tree : config.document_trees)
             {
                 auto source = std::make_shared<descriptor_document_source>(
                     [this, uri = tree.uri](const std::string& document_id) { return this->open_document(uri, document_id); },
                     cached_document_descriptors);
-
-                if (!config.sandbox_executable.empty())
-                {
-                    const auto& broker = brokers.emplace_back(std::make_unique<document_broker>(tree.entries, source));
-                    child_document_mounts.push_back(document_mount{
-                        .guest_path = windows_path{tree.guest_path},
-                        .broker = broker->name(),
-                        .token = broker->token(),
-                        .upper_directory = tree.upper_directory,
-                        .state_directory = tree.state_directory,
-                    });
-                }
 
                 mounts.push_back(provider_mount{
                     .guest_path = windows_path{tree.guest_path},
@@ -251,20 +248,49 @@ namespace sogen::android
                 });
             }
 
+            // The launcher outlives the process manager: tearing the manager down waits for its children to exit, and the app
+            // reports their exits to the launcher.
+            std::unique_ptr<android_process_launcher> launcher{};
             std::unique_ptr<subprocess_process_manager> processes{};
             if (!config.sandbox_executable.empty())
             {
-                processes = std::make_unique<subprocess_process_manager>(
-                    config.sandbox_executable,
-                    [settings, directory_mounts = config.directory_mounts, child_document_mounts](const auto port, const auto& token) {
-                        return create_child_arguments(settings, directory_mounts, child_document_mounts, port, token);
-                    });
+                launcher = std::make_unique<android_process_launcher>(
+                    [this](const uint64_t request, const std::vector<std::string>& arguments) { this->start_child(request, arguments); },
+                    [this](const uint64_t request) { this->kill_child(request); });
+                processes = std::make_unique<subprocess_process_manager>(config.sandbox_executable, create_child_arguments,
+                                                                         std::make_unique<process_launcher_reference>(*launcher));
             }
+            {
+                const std::lock_guard lock{this->mutex_};
+                this->launcher_ = launcher.get();
+                this->processes_ = processes.get();
+            }
+            const auto processes_guard = utils::finally([&] {
+                {
+                    const std::lock_guard lock{this->mutex_};
+                    this->processes_ = nullptr;
+                }
+                processes.reset();
+                const std::lock_guard lock{this->mutex_};
+                this->launcher_ = nullptr;
+            });
+
+            // Declared before the emulator, so the guest's windows are gone while this process waits for its children. Any
+            // other way out leaves the children to the process manager's destructor.
+            bool guest_exited = false;
+            const auto children_guard = utils::finally([&] {
+                if (processes && guest_exited)
+                {
+                    processes->wait_for_processes();
+                }
+            });
 
             auto emulator = create_x86_64_emulator(parse_backend(config.backend));
             emulator_interfaces interfaces{.ui = std::move(ui), .processes = processes.get(), .mounts = std::move(mounts)};
             auto win_emu_ptr = config.resume_file.empty()
-                                   ? std::make_unique<windows_emulator>(std::move(emulator), create_application_settings(config),
+                                   ? std::make_unique<windows_emulator>(std::move(emulator),
+                                                                        parent ? create_child_application_settings(parent->request())
+                                                                               : create_application_settings(config),
                                                                         std::move(settings), std::move(callbacks), std::move(interfaces))
                                    : std::make_unique<windows_emulator>(std::move(emulator), std::move(settings), std::move(callbacks),
                                                                         std::move(interfaces));
@@ -313,6 +339,18 @@ namespace sogen::android
                 }
             }
 
+            std::unique_ptr<emulator_process_target> parent_target{};
+            if (parent && config.resume_file.empty())
+            {
+                parent_target = start_managed_process(win_emu, *parent);
+            }
+            const auto parent_guard = utils::finally([&] {
+                if (parent)
+                {
+                    parent->disconnect();
+                }
+            });
+
             snapshot::controller snapshots{win_emu, configuration, config.snapshot_directory,
                                            [this](const snapshot::snapshot_outcome& outcome) { this->report_snapshot(outcome); }};
 
@@ -348,6 +386,15 @@ namespace sogen::android
             {
                 registry_state->save(win_emu.registry);
             }
+            if (parent && exit_status && !parent->notify_exit(static_cast<uint64_t>(static_cast<uint32_t>(*exit_status))))
+            {
+                throw std::runtime_error("Reporting the exit to the parent process failed");
+            }
+            guest_exited = exit_status.has_value();
+            if (guest_exited)
+            {
+                this->report_guest_exit();
+            }
             return exit_status ? static_cast<int>(*exit_status) : 1;
         }
         catch (const std::exception& e)
@@ -374,6 +421,64 @@ namespace sogen::android
         {
             this->snapshots_->stop();
         }
+        if (this->launcher_)
+        {
+            this->launcher_->cancel_launches();
+        }
+        if (this->processes_)
+        {
+            this->processes_->kill_processes();
+        }
+    }
+
+    void session::child_started(const uint64_t request, const int32_t process_id)
+    {
+        const std::lock_guard lock{this->mutex_};
+        if (this->launcher_)
+        {
+            this->launcher_->started(request, process_id);
+        }
+    }
+
+    void session::child_exited(const uint64_t request, const int32_t exit_status)
+    {
+        const std::lock_guard lock{this->mutex_};
+        if (this->launcher_)
+        {
+            this->launcher_->exited(request, exit_status);
+        }
+    }
+
+    void session::start_child(const uint64_t request, const std::vector<std::string>& arguments)
+    {
+        this->dispatcher_.post([this, request, arguments](JNIEnv& env) {
+            auto* string_class = env.FindClass("java/lang/String");
+            auto* java_arguments = env.NewObjectArray(static_cast<jsize>(arguments.size()), string_class, nullptr);
+            for (size_t i = 0; i < arguments.size(); ++i)
+            {
+                auto* argument = make_java_string(env, u8_to_u16(arguments[i]));
+                env.SetObjectArrayElement(java_arguments, static_cast<jsize>(i), argument);
+                env.DeleteLocalRef(argument);
+            }
+            env.CallVoidMethod(this->listener_, this->methods_.start_child, static_cast<jlong>(request), java_arguments);
+            if (env.ExceptionCheck())
+            {
+                env.ExceptionClear();
+            }
+            env.DeleteLocalRef(java_arguments);
+            env.DeleteLocalRef(string_class);
+        });
+    }
+
+    void session::kill_child(const uint64_t request)
+    {
+        this->dispatcher_.post([this, request](JNIEnv& env) {
+            env.CallVoidMethod(this->listener_, this->methods_.kill_child, static_cast<jlong>(request));
+            if (env.ExceptionCheck())
+            {
+                env.ExceptionClear();
+            }
+        });
     }
 
     bool session::suspend(std::filesystem::path destination)
@@ -411,6 +516,11 @@ namespace sogen::android
             env.DeleteLocalRef(java_path);
             env.DeleteLocalRef(java_error);
         });
+    }
+
+    void session::report_guest_exit()
+    {
+        this->dispatcher_.post([this](JNIEnv& env) { env.CallVoidMethod(this->listener_, this->methods_.on_guest_exited); });
     }
 
     unique_fd session::open_document(const std::string& tree, const std::string& document_id)
