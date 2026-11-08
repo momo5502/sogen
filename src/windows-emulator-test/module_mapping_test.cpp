@@ -48,6 +48,15 @@ namespace sogen::test
             std::memcpy(image.data() + offset, &value, sizeof(value));
         }
 
+        template <typename Object, typename Member>
+        size_t offset_of_member(const Member member)
+        {
+            const Object object{};
+            const auto* start = reinterpret_cast<const std::byte*>(&object);
+            const auto* field = reinterpret_cast<const std::byte*>(&(object.*member));
+            return static_cast<size_t>(field - start);
+        }
+
         template <typename Pointer>
         class ModuleRelocationTest : public testing::Test
         {
@@ -113,8 +122,8 @@ namespace sogen::test
             void expect_relocations(const mapped_module& module, const uint64_t relocation_base)
             {
                 EXPECT_EQ(relocation_base + target_rva, this->memory_.template read_memory<Pointer>(module.image_base + pointer_rva));
-                constexpr auto header_offset =
-                    k_nt_offset + offsetof(PENTHeaders_t<Pointer>, OptionalHeader) + offsetof(PEOptionalHeader_t<Pointer>, ImageBase);
+                const auto header_offset = k_nt_offset + offset_of_member<PENTHeaders_t<Pointer>>(&PENTHeaders_t<Pointer>::OptionalHeader) +
+                                           offset_of_member<PEOptionalHeader_t<Pointer>>(&PEOptionalHeader_t<Pointer>::ImageBase);
                 EXPECT_EQ(relocation_base, this->memory_.template read_memory<Pointer>(module.image_base + header_offset));
                 EXPECT_EQ(module.image_base + 0x1000, module.entry_point);
             }
@@ -351,8 +360,8 @@ namespace sogen::test
         constexpr uint64_t limit = 0x1FFFFFFF;
         constexpr TypeParam file_base = 0x10000000;
         auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
-        constexpr auto header_offset =
-            k_nt_offset + offsetof(PENTHeaders_t<TypeParam>, OptionalHeader) + offsetof(PEOptionalHeader_t<TypeParam>, ImageBase);
+        const auto header_offset = k_nt_offset + offset_of_member<PENTHeaders_t<TypeParam>>(&PENTHeaders_t<TypeParam>::OptionalHeader) +
+                                   offset_of_member<PEOptionalHeader_t<TypeParam>>(&PEOptionalHeader_t<TypeParam>::ImageBase);
         poke(data, header_offset, file_base);
         poke(data, 0x220, static_cast<TypeParam>(file_base + this->target_rva));
         const auto module = this->map(data, 0, windows_path{"C:\\test.dll"}, limit);
@@ -407,19 +416,25 @@ namespace sogen::test
         {
             SCOPED_TRACE(short_header);
             auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
-            constexpr auto optional_offset = k_nt_offset + offsetof(PENTHeaders_t<TypeParam>, OptionalHeader);
+            const auto optional_offset =
+                k_nt_offset + offset_of_member<PENTHeaders_t<TypeParam>>(&PENTHeaders_t<TypeParam>::OptionalHeader);
             if (short_header)
             {
-                constexpr uint16_t optional_size = offsetof(PEOptionalHeader_t<TypeParam>, DataDirectory);
+                const auto optional_size =
+                    static_cast<uint16_t>(offset_of_member<PEOptionalHeader_t<TypeParam>>(&PEOptionalHeader_t<TypeParam>::DataDirectory));
                 IMAGE_SECTION_HEADER section{};
                 std::memcpy(&section, data.data() + k_nt_offset + sizeof(PENTHeaders_t<TypeParam>), sizeof(section));
-                poke(data, k_nt_offset + offsetof(PENTHeaders_t<TypeParam>, FileHeader) + offsetof(PEFileHeader_t, SizeOfOptionalHeader),
+                poke(data,
+                     k_nt_offset + offset_of_member<PENTHeaders_t<TypeParam>>(&PENTHeaders_t<TypeParam>::FileHeader) +
+                         offsetof(PEFileHeader_t, SizeOfOptionalHeader),
                      optional_size);
                 poke(data, optional_offset + optional_size, section);
             }
             else
             {
-                poke(data, optional_offset + offsetof(PEOptionalHeader_t<TypeParam>, NumberOfRvaAndSizes), uint32_t{5});
+                poke(data,
+                     optional_offset + offset_of_member<PEOptionalHeader_t<TypeParam>>(&PEOptionalHeader_t<TypeParam>::NumberOfRvaAndSizes),
+                     uint32_t{5});
             }
             const auto original = this->map(data);
             EXPECT_EQ(original.image_base, this->preferred_base);
@@ -436,8 +451,8 @@ namespace sogen::test
     TYPED_TEST(ModuleRelocationTest, AZeroImageSizeIsAnImageError)
     {
         auto data = this->image();
-        constexpr auto offset =
-            k_nt_offset + offsetof(PENTHeaders_t<TypeParam>, OptionalHeader) + offsetof(PEOptionalHeader_t<TypeParam>, SizeOfImage);
+        const auto offset = k_nt_offset + offset_of_member<PENTHeaders_t<TypeParam>>(&PENTHeaders_t<TypeParam>::OptionalHeader) +
+                            offset_of_member<PEOptionalHeader_t<TypeParam>>(&PEOptionalHeader_t<TypeParam>::SizeOfImage);
         poke(data, offset, uint32_t{0});
         EXPECT_THROW(this->map(data), std::runtime_error);
     }
@@ -517,8 +532,8 @@ namespace sogen::test
         {
             SCOPED_TRACE(file_base);
             auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
-            constexpr auto header_offset =
-                k_nt_offset + offsetof(PENTHeaders_t<uint64_t>, OptionalHeader) + offsetof(PEOptionalHeader_t<uint64_t>, ImageBase);
+            const auto header_offset = k_nt_offset + offset_of_member<PENTHeaders_t<uint64_t>>(&PENTHeaders_t<uint64_t>::OptionalHeader) +
+                                       offset_of_member<PEOptionalHeader_t<uint64_t>>(&PEOptionalHeader_t<uint64_t>::ImageBase);
             poke(data, header_offset, file_base);
             poke(data, 0x220, file_base + target_rva);
             const auto module = this->map(data, 0, windows_path{"C:\\wow64cpu.dll"});
