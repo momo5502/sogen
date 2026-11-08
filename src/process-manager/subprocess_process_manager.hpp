@@ -1,5 +1,6 @@
 #pragma once
 
+#include "host_process.hpp"
 #include "process_manager.hpp"
 
 #include <network/tcp_client_socket.hpp>
@@ -57,7 +58,8 @@ namespace sogen
       public:
         using argument_factory = std::function<std::vector<std::string>(uint16_t, const std::string&)>;
 
-        subprocess_process_manager(std::filesystem::path executable, argument_factory arguments);
+        subprocess_process_manager(std::filesystem::path executable, argument_factory arguments,
+                                   std::unique_ptr<host_process_launcher> launcher = create_subprocess_launcher());
         ~subprocess_process_manager() override;
 
         subprocess_process_manager(const subprocess_process_manager&) = delete;
@@ -97,6 +99,7 @@ namespace sogen
 
         std::filesystem::path executable_{};
         argument_factory arguments_{};
+        std::unique_ptr<host_process_launcher> launcher_{};
         mutable std::mutex mutex_{};
         std::unordered_map<uint64_t, std::shared_ptr<process_entry>> processes_{};
         uint64_t next_process_{1};
