@@ -688,7 +688,8 @@ namespace sogen
 
     template <typename T>
     mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file,
-                                       windows_path module_path, const uint64_t relocation_base, const uint64_t highest_address)
+                                       windows_path module_path, const uint64_t relocation_base, const uint64_t highest_address,
+                                       NTSTATUS* status)
     {
         mapped_module binary{};
         binary.path = std::move(file);
@@ -767,6 +768,7 @@ namespace sogen
                     : 0;
         }
 
+        const auto preferred_base = relocation_base ? relocation_base : binary.image_base;
         const bool preferred_fits = binary.image_base && binary.size_of_image && binary.image_base <= address_limit &&
                                     binary.size_of_image - 1 <= address_limit - binary.image_base;
         if (!preferred_fits || !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
@@ -820,6 +822,10 @@ namespace sogen
         }
 
         binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
+        if (status)
+        {
+            *status = binary.image_base == preferred_base ? STATUS_SUCCESS : STATUS_IMAGE_NOT_AT_BASE;
+        }
 
         return binary;
     }
@@ -918,10 +924,10 @@ namespace sogen
 
     template mapped_module map_module_from_data<std::uint32_t>(memory_manager& memory, const std::span<const std::byte> data,
                                                                std::filesystem::path file, windows_path module_path,
-                                                               uint64_t relocation_base, uint64_t highest_address);
+                                                               uint64_t relocation_base, uint64_t highest_address, NTSTATUS* status);
     template mapped_module map_module_from_data<std::uint64_t>(memory_manager& memory, const std::span<const std::byte> data,
                                                                std::filesystem::path file, windows_path module_path,
-                                                               uint64_t relocation_base, uint64_t highest_address);
+                                                               uint64_t relocation_base, uint64_t highest_address, NTSTATUS* status);
 
     template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                                                  windows_path module_path);

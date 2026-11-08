@@ -104,9 +104,10 @@ namespace sogen::test
             }
 
             mapped_module map(const std::vector<std::byte>& data, const uint64_t relocation_base = 0,
-                              const windows_path& path = windows_path{"C:\\test.dll"}, const uint64_t highest_address = 0)
+                              const windows_path& path = windows_path{"C:\\test.dll"}, const uint64_t highest_address = 0,
+                              NTSTATUS* status = nullptr)
             {
-                return map_module_from_data<Pointer>(this->memory_, data, "test.dll", path, relocation_base, highest_address);
+                return map_module_from_data<Pointer>(this->memory_, data, "test.dll", path, relocation_base, highest_address, status);
             }
 
             void expect_relocations(const mapped_module& module, const uint64_t relocation_base)
@@ -261,6 +262,19 @@ namespace sogen::test
         EXPECT_NE(original.image_base, secondary.image_base);
         this->expect_relocations(original, original.image_base);
         this->expect_relocations(secondary, original.image_base);
+    }
+
+    TYPED_TEST(ModuleRelocationTest, PlacementStatusDistinguishesPreferredAndFallbackAddresses)
+    {
+        const auto data = this->image();
+        NTSTATUS status{};
+        const auto original = this->map(data, 0, windows_path{"C:\\test.dll"}, 0, &status);
+        EXPECT_EQ(status, STATUS_SUCCESS);
+        this->expect_relocations(original, original.image_base);
+        const auto relocated = this->map(data, 0, windows_path{"C:\\test.dll"}, 0, &status);
+        EXPECT_EQ(status, STATUS_IMAGE_NOT_AT_BASE);
+        EXPECT_NE(original.image_base, relocated.image_base);
+        this->expect_relocations(relocated, relocated.image_base);
     }
 
     TYPED_TEST(ModuleRelocationTest, IndependentViewRelocatesToItsOwnBase)

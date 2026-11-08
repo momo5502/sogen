@@ -47,7 +47,8 @@ namespace sogen
       public:
         virtual ~module_mapping_strategy() = default;
         virtual mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
-                                            windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0) = 0;
+                                            windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0,
+                                            NTSTATUS* status = nullptr) = 0;
         virtual mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                               windows_path module_path) = 0;
     };
@@ -56,7 +57,8 @@ namespace sogen
     {
       public:
         mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
-                                    windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0) override;
+                                    windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0,
+                                    NTSTATUS* status = nullptr) override;
         mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                       windows_path module_path) override;
     };
@@ -65,7 +67,8 @@ namespace sogen
     {
       public:
         mapped_module map_from_data(memory_manager& memory, std::span<const std::byte> data, std::filesystem::path identity,
-                                    windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0) override;
+                                    windows_path module_path, uint64_t relocation_base, uint64_t highest_address = 0,
+                                    NTSTATUS* status = nullptr) override;
         mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                       windows_path module_path) override;
     };

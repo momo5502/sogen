@@ -258,10 +258,10 @@ namespace sogen
     // PE32 Mapping Strategy Implementation
     mapped_module pe32_mapping_strategy::map_from_data(memory_manager& memory, const std::span<const std::byte> data,
                                                        std::filesystem::path identity, windows_path module_path,
-                                                       const uint64_t relocation_base, const uint64_t highest_address)
+                                                       const uint64_t relocation_base, const uint64_t highest_address, NTSTATUS* status)
     {
         return map_module_from_data<std::uint32_t>(memory, data, std::move(identity), std::move(module_path), relocation_base,
-                                                   highest_address);
+                                                   highest_address, status);
     }
 
     mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -273,10 +273,10 @@ namespace sogen
     // PE64 Mapping Strategy Implementation
     mapped_module pe64_mapping_strategy::map_from_data(memory_manager& memory, const std::span<const std::byte> data,
                                                        std::filesystem::path identity, windows_path module_path,
-                                                       const uint64_t relocation_base, const uint64_t highest_address)
+                                                       const uint64_t relocation_base, const uint64_t highest_address, NTSTATUS* status)
     {
         return map_module_from_data<std::uint64_t>(memory, data, std::move(identity), std::move(module_path), relocation_base,
-                                                   highest_address);
+                                                   highest_address, status);
     }
 
     mapped_module pe64_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -360,10 +360,6 @@ namespace sogen
             const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
             this->recent_module_count_ = 0;
             this->callbacks_->on_module_load(entry.first->second);
-            if (status)
-            {
-                *status = STATUS_SUCCESS;
-            }
             return &entry.first->second;
         }
         catch (const std::bad_alloc& e)
@@ -378,6 +374,10 @@ namespace sogen
         catch (const std::exception& e)
         {
             logger.error("Failed to map module: %s\n", e.what());
+            if (status)
+            {
+                *status = STATUS_FILE_INVALID;
+            }
             return nullptr;
         }
     }
@@ -684,7 +684,8 @@ namespace sogen
             detection_result,
             [&]() {
                 auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-                return strategy.map_from_data(*this->memory_, data, std::move(identity), std::move(file), relocation_base, highest_address);
+                return strategy.map_from_data(*this->memory_, data, std::move(identity), std::move(file), relocation_base, highest_address,
+                                              status);
             },
             logger, is_static, status);
     }

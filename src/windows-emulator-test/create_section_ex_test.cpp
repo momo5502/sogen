@@ -200,6 +200,57 @@ namespace sogen::test
         EXPECT_GT(base.read(), uint64_t{0xFFFFFFFF});
     }
 
+    TEST_F(CreateSectionExTest, ImageViewStatusDistinguishesInitialPlacementFromSecondaryViews)
+    {
+        this->emu->process.peb64 = emulator_object<PEB64>{this->emu->memory, this->storage + 0x100};
+        this->emu->process.peb64.write(PEB64{});
+        section image{};
+        image.file_name = u"C:\\Windows\\System32\\kernel32.dll";
+        image.allocation_attributes = SEC_IMAGE;
+        const auto section_handle = this->emu->process.sections.store(std::move(image));
+        const emulator_object<uint64_t> base{this->emu->memory, this->storage};
+        const emulator_object<EmulatorTraits<Emu64>::SIZE_T> size{this->emu->memory, this->storage + 8};
+        for (const auto expected : {STATUS_SUCCESS, STATUS_IMAGE_NOT_AT_BASE})
+        {
+            SCOPED_TRACE(expected);
+            ASSERT_NO_THROW(base.write(0));
+            ASSERT_NO_THROW(size.write(0));
+            NTSTATUS status{};
+            ASSERT_NO_THROW(status = syscalls::handle_NtMapViewOfSection(this->context(), section_handle, CURRENT_PROCESS, base, 0, 0,
+                                                                         {this->emu->memory}, size, ViewUnmap, 0, PAGE_READONLY));
+            ASSERT_TRUE(NT_SUCCESS(status));
+            const auto* module = this->emu->mod_manager.find_by_address(base.read());
+            ASSERT_NE(module, nullptr);
+            EXPECT_EQ(status, expected);
+
+            EXPECT_EQ(size.read(), module->size_of_image);
+        }
+    }
+
+    TEST_F(CreateSectionExTest, AConstrainedImageFallsBackBelow4GiBAndReportsRelocation)
+    {
+        constexpr uint64_t high_start = 0x100000000;
+        ASSERT_TRUE(this->emu->memory.release_memory(this->storage, 0));
+        this->storage = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write, false, 0x10000);
+        ASSERT_NE(this->storage, 0u);
+        ASSERT_TRUE(this->emu->memory.allocate_memory(high_start, high_start, memory_permission::read_write, true));
+        section image{};
+        image.file_name = u"C:\\Windows\\System32\\kernel32.dll";
+        image.allocation_attributes = SEC_IMAGE;
+        const auto section_handle = this->emu->process.sections.store(std::move(image));
+        const emulator_object<uint64_t> base{this->emu->memory, this->storage};
+        const emulator_object<EmulatorTraits<Emu64>::SIZE_T> size{this->emu->memory, this->storage + 8};
+        base.write(0);
+        size.write(0);
+        EXPECT_EQ(STATUS_IMAGE_NOT_AT_BASE,
+                  syscalls::handle_NtMapViewOfSection(this->context(), section_handle, CURRENT_PROCESS, base, high_start, 0,
+                                                      {this->emu->memory}, size, ViewUnmap, 0, PAGE_READONLY));
+        ASSERT_NE(base.read(), 0u);
+        ASSERT_NE(size.read(), 0u);
+        EXPECT_LT(base.read() + size.read() - 1, high_start);
+        ASSERT_NE(this->emu->mod_manager.find_by_address(base.read()), nullptr);
+    }
+
     TEST_F(CreateSectionExTest, CachedImagesRespectTheAddressCeiling)
     {
         const windows_path file{"C:\\Windows\\System32\\kernel32.dll"};

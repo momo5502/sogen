@@ -564,11 +564,21 @@ namespace sogen
                 }
                 const auto file_path = module_manager::module_identity(section_entry->file_name);
                 uint64_t relocation_base{};
+                uint64_t existing_image_base{};
                 for (const auto& loaded_module : c.win_emu.mod_manager.modules() | std::views::values)
                 {
-                    if (loaded_module.path == file_path && loader_list_contains_image(c, loaded_module))
+                    if (loaded_module.path != file_path)
+                    {
+                        continue;
+                    }
+                    if (!existing_image_base)
+                    {
+                        existing_image_base = loaded_module.image_base;
+                    }
+                    if (loader_list_contains_image(c, loaded_module))
                     {
                         relocation_base = loaded_module.image_base;
+                        existing_image_base = loaded_module.image_base;
                         break;
                     }
                 }
@@ -598,12 +608,7 @@ namespace sogen
                     return STATUS_IMAGE_MACHINE_TYPE_MISMATCH;
                 }
 
-                if (c.win_emu.mod_manager.get_module_load_count_by_path(section_entry->file_name) > 1)
-                {
-                    return STATUS_IMAGE_NOT_AT_BASE;
-                }
-
-                return STATUS_SUCCESS;
+                return existing_image_base && existing_image_base != binary->image_base ? STATUS_IMAGE_NOT_AT_BASE : mapping_status;
             }
 
             int64_t offset = 0;
