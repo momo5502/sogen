@@ -2,7 +2,6 @@
 
 #include "process_manager.hpp"
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -25,9 +24,12 @@ namespace sogen
 
         virtual uint32_t id() const = 0;
 
-        // Runs until the process exits, forwarding what it writes and ending it once kill_requested is set. Returns its
-        // exit status, or nothing when it could not be watched.
-        virtual std::optional<int> run(const std::atomic_bool& kill_requested) = 0;
+        // Ends the process. Safe to call from any thread and more than once, while run() is running or after it returned.
+        virtual void kill() = 0;
+
+        // Runs until the process exits, forwarding what it writes. Returns its exit status, or nothing when it could not
+        // be watched.
+        virtual std::optional<int> run() = 0;
     };
 
     struct host_process_launch_result

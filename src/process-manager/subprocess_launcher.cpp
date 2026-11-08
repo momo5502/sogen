@@ -7,6 +7,7 @@
 #include <reproc++/reproc.hpp>
 
 #include <array>
+#include <atomic>
 #include <cstdio>
 #include <tuple>
 
@@ -45,13 +46,19 @@ namespace sogen
                 return this->id_;
             }
 
-            std::optional<int> run(const std::atomic_bool& kill_requested) override
+            // reproc::process is not safe to use from two threads, so the thread in run() does the killing.
+            void kill() override
+            {
+                this->kill_requested_ = true;
+            }
+
+            std::optional<int> run() override
             {
                 std::array<uint8_t, 4096> buffer{};
                 bool killed = false;
                 for (;;)
                 {
-                    if (kill_requested && !killed)
+                    if (this->kill_requested_ && !killed)
                     {
                         killed = !this->process_.kill();
                     }
@@ -93,6 +100,7 @@ namespace sogen
           private:
             reproc::process process_{};
             uint32_t id_{};
+            std::atomic_bool kill_requested_{};
         };
 
         class subprocess_launcher final : public host_process_launcher

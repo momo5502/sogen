@@ -377,7 +377,6 @@ namespace sogen
         std::optional<uint64_t> termination_code{};
         std::optional<int> host_exit_status{};
         bool host_failure{};
-        std::atomic_bool kill_requested{};
         std::atomic_bool resumed{};
 
         std::optional<ProcessProtocol::MessageT> receive_response(const ProcessProtocol::MessagePayload expected,
@@ -396,9 +395,17 @@ namespace sogen
             return message->payload.type == expected ? std::move(message) : std::nullopt;
         }
 
+        void kill() const
+        {
+            if (this->host)
+            {
+                this->host->kill();
+            }
+        }
+
         ~process_entry()
         {
-            this->kill_requested = true;
+            this->kill();
             this->control.close();
             if (this->output_thread.joinable())
             {
@@ -712,7 +719,7 @@ namespace sogen
 
         for (const auto& process : processes)
         {
-            process->kill_requested = true;
+            process->kill();
         }
     }
 
@@ -768,7 +775,7 @@ namespace sogen
         request.thread_id = request.process_id + 1;
 
         entry->output_thread = std::thread([process = entry.get()] {
-            const auto status = process->host->run(process->kill_requested);
+            const auto status = process->host->run();
             const std::scoped_lock lock(process->state_mutex);
             if (status)
             {
@@ -812,26 +819,26 @@ namespace sogen
         }
         catch (const std::exception&)
         {
-            entry->kill_requested = true;
+            entry->kill();
             return {.error = process_error::communication_failure};
         }
         if (!sent)
         {
-            entry->kill_requested = true;
+            entry->kill();
             return {.error = process_error::communication_failure};
         }
 
         const auto started = receive_message_until(entry->control, deadline);
         if (!started || started->payload.type != ProcessProtocol::MessagePayload_ProcessStarted)
         {
-            entry->kill_requested = true;
+            entry->kill();
             return {.error = process_error::internal_failure};
         }
         {
             const std::scoped_lock lock(this->mutex_);
             if (this->stopping_)
             {
-                entry->kill_requested = true;
+                entry->kill();
                 return {.error = process_error::unavailable};
             }
             this->processes_.emplace(handle.value, entry);
@@ -1179,7 +1186,7 @@ namespace sogen
             }
             entry->termination_code = exit_code;
         }
-        entry->kill_requested = true;
+        entry->kill();
         return process_error::none;
     }
 
