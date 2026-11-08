@@ -181,6 +181,19 @@ namespace sogen::android
             }
         }
 
+        void draw_frame(ANativeWindow* target, const ui_surface_desc& frame)
+        {
+            if (ANativeWindow_setBuffersGeometry(target, frame.width, frame.height, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) == 0)
+            {
+                ANativeWindow_Buffer buffer{};
+                if (ANativeWindow_lock(target, &buffer, nullptr) == 0)
+                {
+                    copy_surface(buffer, frame);
+                    ANativeWindow_unlockAndPost(target);
+                }
+            }
+        }
+
         // The library stays loaded for the life of the process; each session process runs a single game.
         void* load_vulkan_library(const vulkan_driver& driver)
         {
@@ -743,6 +756,7 @@ namespace sogen::android
         }
 
         hwnd owner{};
+        ANativeWindow* target{};
 
         {
             const std::lock_guard lock{this->mutex_};
@@ -758,10 +772,37 @@ namespace sogen::android
             state->frame.pixels = nullptr;
             state->frame_pixels.assign(pixels, pixels + (static_cast<size_t>(surface.stride) * static_cast<size_t>(surface.height)));
 
-            owner = is_promoted_window(state->desc) ? this->popup_owner_handle(state->desc.handle) : state->desc.handle;
+            if (is_promoted_window(state->desc))
+            {
+                owner = this->popup_owner_handle(state->desc.handle);
+            }
+            else if (this->has_visible_popup(*state))
+            {
+                owner = state->desc.handle;
+            }
+            else if (state->surface)
+            {
+                target = state->surface;
+                ANativeWindow_acquire(target);
+            }
+        }
+
+        if (target)
+        {
+            draw_frame(target, surface);
+            ANativeWindow_release(target);
+            return;
         }
 
         this->present_composited(owner);
+    }
+
+    bool android_ui_backend::has_visible_popup(const window_state& owner) const
+    {
+        return std::ranges::any_of(this->windows_, [&](const auto& entry) {
+            const auto& state = entry.second;
+            return state.desc.visible && is_promoted_window(state.desc) && this->popup_owner(state) == &owner;
+        });
     }
 
     // Only CPU-drawn owners are composited: a Vulkan-owned surface has no frame of its own to draw the popups onto.
@@ -803,16 +844,7 @@ namespace sogen::android
         }
 
         frame.pixels = pixels.data();
-        if (ANativeWindow_setBuffersGeometry(target, frame.width, frame.height, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) == 0)
-        {
-            ANativeWindow_Buffer buffer{};
-            if (ANativeWindow_lock(target, &buffer, nullptr) == 0)
-            {
-                copy_surface(buffer, frame);
-                ANativeWindow_unlockAndPost(target);
-            }
-        }
-
+        draw_frame(target, frame);
         ANativeWindow_release(target);
     }
 

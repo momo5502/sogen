@@ -141,6 +141,7 @@ namespace sogen::android
         hwnd top_level_ancestor(hwnd window) const;
         window_state* find_top_level(hwnd window);
         const window_state* popup_owner(const window_state& popup) const;
+        bool has_visible_popup(const window_state& owner) const;
         hwnd popup_owner_handle(hwnd popup) const;
         pointer_target pointer_target_at(hwnd window, int32_t x, int32_t y) const;
         void present_composited(hwnd owner);
