@@ -374,6 +374,19 @@ namespace sogen::test
         EXPECT_FALSE(this->memory_.get_region_info(this->preferred_base).is_reserved);
     }
 
+    TYPED_TEST(ModuleRelocationTest, StrippedImagesCannotMoveToSatisfyAnAddressCeiling)
+    {
+        const auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE, IMAGE_FILE_DLL | IMAGE_FILE_RELOCS_STRIPPED, 0);
+        EXPECT_THROW(this->map(data, 0, windows_path{"C:\\test.dll"}, this->preferred_base - 1), std::bad_alloc);
+        EXPECT_FALSE(this->memory_.get_region_info(this->preferred_base).is_reserved);
+        const auto original = this->map(data);
+        this->expect_relocations(original, this->preferred_base);
+        EXPECT_THROW(this->map(data), std::bad_alloc);
+        const auto secondary = this->map(data, original.image_base);
+        EXPECT_NE(original.image_base, secondary.image_base);
+        this->expect_relocations(secondary, original.image_base);
+    }
+
     TYPED_TEST(ModuleRelocationTest, AZeroImageSizeIsAnImageError)
     {
         auto data = this->image();

@@ -736,7 +736,8 @@ namespace sogen
 
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
-        const auto is_relocatable = is_dll || has_dynamic_base;
+        const auto relocations_stripped = nt_headers.FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED;
+        const auto is_relocatable = (is_dll || has_dynamic_base) && !relocations_stripped;
 
         const auto is_x64 = nt_headers.FileHeader.Machine == PEMachineType::AMD64;
         const auto& relocations = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
