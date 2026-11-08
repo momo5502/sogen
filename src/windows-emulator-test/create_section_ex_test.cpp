@@ -258,6 +258,39 @@ namespace sogen::test
         }
     }
 
+    TEST_F(CreateSectionExTest, ExplicitImageBasesMustSatisfyZeroBits)
+    {
+        section image{};
+        image.allocation_attributes = SEC_IMAGE;
+        image.file_name = u"C:\\Windows\\System32\\kernel32.dll";
+        const auto section_handle = this->emu->process.sections.store(std::move(image));
+        const emulator_object<uint64_t> base{this->emu->memory, this->storage};
+        const emulator_object<EmulatorTraits<Emu64>::SIZE_T> size{this->emu->memory, this->storage + 8};
+        const auto count = this->emu->mod_manager.modules().size();
+        for (const uint64_t bits : {3, 20, 22, 32, 0x400})
+        {
+            SCOPED_TRACE(bits);
+            base.write(0x20000000);
+            size.write(0);
+            EXPECT_EQ(STATUS_INVALID_PARAMETER,
+                      syscalls::handle_NtMapViewOfSection(this->context(), section_handle, CURRENT_PROCESS, base, bits, 0,
+                                                          {this->emu->memory}, size, ViewUnmap, 0, PAGE_READONLY));
+            EXPECT_EQ(base.read(), 0x20000000u);
+            EXPECT_EQ(size.read(), 0u);
+            EXPECT_EQ(this->emu->mod_manager.modules().size(), count);
+        }
+        for (const uint64_t bits : {1, 2})
+        {
+            SCOPED_TRACE(bits);
+            base.write(0x20000000);
+            size.write(0);
+            ASSERT_TRUE(NT_SUCCESS(syscalls::handle_NtMapViewOfSection(this->context(), section_handle, CURRENT_PROCESS, base, bits, 0,
+                                                                       {this->emu->memory}, size, ViewUnmap, 0, PAGE_READONLY)));
+            EXPECT_LE(base.read() + size.read() - 1, highest_address_for_zero_bits(bits));
+            ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtUnmapViewOfSection(this->context(), CURRENT_PROCESS, base.read()));
+        }
+    }
+
     TEST_F(CreateSectionExTest, AFileErrorDoesNotBecomeAnAllocationError)
     {
         NTSTATUS status = STATUS_NO_MEMORY;
