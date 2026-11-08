@@ -832,6 +832,7 @@ namespace sogen
           socket_factory_(get_socket_factory(interfaces, settings.network)),
           ui_backend_(get_ui_backend(interfaces)),
           audio_backend_(get_audio_backend(interfaces)),
+          steam_backend_(std::move(interfaces.steam)),
           crypt_protect_backend_(get_crypt_protect_backend(
               interfaces, settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root))),
           process_manager_(interfaces.processes),
