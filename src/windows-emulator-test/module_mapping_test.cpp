@@ -500,7 +500,9 @@ namespace sogen::test
     {
         constexpr uint64_t high_start = 0x100000000;
         constexpr uint64_t ceiling = 0x1FFFFFFFF;
-        ASSERT_TRUE(this->memory_.allocate_memory(high_start, high_start, memory_permission::read_write, true));
+        constexpr size_t reservation_size = 0x80000000;
+        ASSERT_TRUE(this->memory_.allocate_memory(high_start, reservation_size, memory_permission::read_write, true));
+        ASSERT_TRUE(this->memory_.allocate_memory(high_start + reservation_size, reservation_size, memory_permission::read_write, true));
         const auto data = this->image();
         const auto module = this->map(data, 0, windows_path{"C:\\test.dll"}, ceiling);
         EXPECT_LT(module.image_base + module.size_of_image - 1, high_start);
@@ -513,7 +515,9 @@ namespace sogen::test
         constexpr uint64_t ceiling = 0x1FFFFFFFF;
         const auto data = this->image(IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
         const auto original = this->map(data);
-        ASSERT_TRUE(this->memory_.allocate_memory(high_start, high_start, memory_permission::read_write, true));
+        constexpr size_t reservation_size = 0x80000000;
+        ASSERT_TRUE(this->memory_.allocate_memory(high_start, reservation_size, memory_permission::read_write, true));
+        ASSERT_TRUE(this->memory_.allocate_memory(high_start + reservation_size, reservation_size, memory_permission::read_write, true));
         const auto secondary = this->map(data, original.image_base, windows_path{"C:\\test.dll"}, ceiling);
         EXPECT_LT(secondary.image_base + secondary.size_of_image - 1, high_start);
         this->expect_relocations(secondary, original.image_base);

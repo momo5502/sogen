@@ -233,7 +233,10 @@ namespace sogen::test
         ASSERT_TRUE(this->emu->memory.release_memory(this->storage, 0));
         this->storage = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write, false, 0x10000);
         ASSERT_NE(this->storage, 0u);
-        ASSERT_TRUE(this->emu->memory.allocate_memory(high_start, high_start, memory_permission::read_write, true));
+        constexpr size_t reservation_size = 0x80000000;
+        ASSERT_TRUE(this->emu->memory.allocate_memory(high_start, reservation_size, memory_permission::read_write, true));
+        ASSERT_TRUE(
+            this->emu->memory.allocate_memory(high_start + reservation_size, reservation_size, memory_permission::read_write, true));
         section image{};
         image.file_name = u"C:\\Windows\\System32\\kernel32.dll";
         image.allocation_attributes = SEC_IMAGE;
