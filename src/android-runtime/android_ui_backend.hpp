@@ -96,6 +96,16 @@ namespace sogen::android
             ui_window_desc desc{};
             ANativeWindow* surface{};
             bool vulkan_owned{};
+            // The last frame drawn without Vulkan, kept so the window can be drawn again with the popups that cover it.
+            ui_surface_desc frame{};
+            std::vector<uint8_t> frame_pixels{};
+        };
+
+        struct pointer_target
+        {
+            hwnd window{};
+            int32_t x{};
+            int32_t y{};
         };
 
         struct delayed_event
@@ -130,6 +140,11 @@ namespace sogen::android
         void queue_relative_event(hwnd window, uint32_t message, uint64_t w_param);
         hwnd top_level_ancestor(hwnd window) const;
         window_state* find_top_level(hwnd window);
+        const window_state* popup_owner(const window_state& popup) const;
+        bool has_visible_popup(const window_state& owner) const;
+        hwnd popup_owner_handle(hwnd popup) const;
+        pointer_target pointer_target_at(hwnd window, int32_t x, int32_t y) const;
+        void present_composited(hwnd owner);
         void release_surfaces();
     };
 }
