@@ -98,14 +98,24 @@ namespace sogen
                 return input.size == sizeof(input) ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
             }
 
-            // A name PiControlMakeUserModeCallersCopy captured, once its whole range is probed. The kernel copies all of its
-            // bytes, terminates the copy at the last character and uses the name up to the first NUL, so only that much is
-            // read here: a guest-chosen length up to 4 GB does not size a host allocation. Past max_name_length the name
-            // fails anyway (RtlInitUnicodeStringEx), and the read stops one character beyond it.
-            static std::u16string read_captured_name(windows_emulator& win_emu, const uint64_t address, const uint32_t bytes)
+            // PiControlMakeUserModeCallersCopy for a name, as both captures call it: the probe of all of its bytes for read,
+            // aligned to a character, fails the request. The kernel then terminates its copy at the last character and uses
+            // the name up to the first NUL, so only that much is read here: a guest-chosen length up to 4 GB does not size a
+            // host allocation. Past max_name_length the name fails anyway (RtlInitUnicodeStringEx), and the read stops one
+            // character beyond it.
+            static NTSTATUS capture_name(windows_emulator& win_emu, const uint64_t address, const uint32_t bytes, std::u16string& name)
             {
+                if (address % sizeof(char16_t) != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+                if (!is_readable_range(win_emu.memory, address, bytes))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
                 const uint64_t usable = (bytes / sizeof(char16_t)) - 1;
-                std::u16string name{};
+                name.clear();
                 std::array<char16_t, 0x100> piece{};
                 for (uint64_t offset = 0; offset < usable && name.size() <= max_name_length; offset += piece.size())
                 {
@@ -120,7 +130,7 @@ namespace sogen
                     }
                 }
 
-                return name;
+                return STATUS_SUCCESS;
             }
 
             // The probe PiCMReturnHandleResultData and PiCMReturnBufferResultData make before they write a reply: the
@@ -201,21 +211,7 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                if (input.device_id)
-                {
-                    if (input.device_id % sizeof(char16_t) != 0)
-                    {
-                        return STATUS_DATATYPE_MISALIGNMENT;
-                    }
-                    if (!is_readable_range(win_emu.memory, input.device_id, input.device_id_bytes))
-                    {
-                        return STATUS_ACCESS_VIOLATION;
-                    }
-
-                    device_id = read_captured_name(win_emu, input.device_id, input.device_id_bytes);
-                }
-
-                return STATUS_SUCCESS;
+                return input.device_id ? capture_name(win_emu, input.device_id, input.device_id_bytes, device_id) : STATUS_SUCCESS;
             }
 
             // PiCMReturnBufferResultData: the header with the request's status and the data's size, then the data, which is
@@ -363,14 +359,11 @@ namespace sogen
 
                 if (input.class_name)
                 {
-                    // The probe of PiControlMakeUserModeCallersCopy's copy fails the request with STATUS_ACCESS_VIOLATION when
-                    // the range cannot be read.
-                    if (!is_readable_range(win_emu.memory, input.class_name, input.class_name_bytes))
+                    if (const auto status = capture_name(win_emu, input.class_name, input.class_name_bytes, request.class_name.emplace());
+                        status != STATUS_SUCCESS)
                     {
-                        return STATUS_ACCESS_VIOLATION;
+                        return status;
                     }
-
-                    request.class_name = read_captured_name(win_emu, input.class_name, input.class_name_bytes);
                 }
 
                 return STATUS_SUCCESS;
