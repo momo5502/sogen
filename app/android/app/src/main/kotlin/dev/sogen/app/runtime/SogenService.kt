@@ -315,6 +315,8 @@ open class SogenService : Service() {
 
         override fun onSnapshot(path: String, error: String) = deliver { callback.onSnapshot(path, error) }
 
+        override fun onGuestExited() = deliver { callback.onGuestExited() }
+
         override fun openDocument(tree: String, documentId: String): Int = DocumentTree.open(resolver, tree, documentId)
 
         override fun startChild(request: Long, arguments: Array<String>) = deliver { callback.startChild(request, arguments) }

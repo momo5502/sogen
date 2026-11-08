@@ -72,8 +72,20 @@ class SessionController(
         call { game?.session?.stop() }
     }
 
-    /** Saves the newest running process, which is the one the player sees: a launcher's game outlives the launcher. */
-    fun suspend(destination: String) = call { foreground?.session?.suspend(destination) }
+    /**
+     * Saves the game while only one of its processes runs, such as a game a launcher started and then exited for. A saved
+     * process holds one emulator, so a game with several running processes cannot be saved.
+     */
+    fun suspend(destination: String) {
+        val running = runningProcesses
+        val process = running.singleOrNull()
+        if (process == null) {
+            val error = if (running.isEmpty()) "Nothing is running that could be saved" else "A game can only be saved while one of its processes runs"
+            emit(mapOf("event" to "snapshot", "path" to destination, "error" to error))
+            return
+        }
+        call { process.session?.suspend(destination) }
+    }
 
     fun consoleInput(data: ByteArray) = call { game?.session?.consoleInput(data) }
 
@@ -111,8 +123,12 @@ class SessionController(
         children.values.forEach { child -> call { child.session?.setStatsInterval(milliseconds) } }
     }
 
+    private val runningProcesses: List<HostedProcess>
+        get() = (listOfNotNull(game) + children.values).filter { it.isRunning }
+
+    /** The newest running process, which is the one the player sees: a launcher's game outlives the launcher. */
     private val foreground: HostedProcess?
-        get() = children.values.filter { !it.finished }.maxByOrNull { it.id } ?: game
+        get() = runningProcesses.maxByOrNull { it.id } ?: game
 
     /**
      * One guest process and the service process it runs in. Its windows are known to Flutter by an id that combines the
@@ -128,10 +144,14 @@ class SessionController(
         var connection: ServiceConnection? = null
         val windows = mutableSetOf<Long>()
         var finished = false
+        private var guestExited = false
         private var binder: IBinder? = null
         private var dead = false
         private var released = false
         private var exitCode: Int? = null
+
+        val isRunning: Boolean
+            get() = config != null && !finished && !guestExited
 
         fun external(window: Long): Long {
             require(window and LOCAL_WINDOW_MASK.inv() == 0L) { "Window handle $window does not fit the window id" }
@@ -333,6 +353,8 @@ class SessionController(
             }
 
             override fun onExit(exitCode: Int) = post { finish(exitCode) }
+
+            override fun onGuestExited() = post { guestExited = true }
 
             override fun onProcessStarted(processId: Int) = post {
                 val parent = parent ?: return@post

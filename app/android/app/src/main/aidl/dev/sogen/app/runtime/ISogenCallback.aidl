@@ -15,6 +15,9 @@ oneway interface ISogenCallback {
     void onSnapshot(String path, String error);
     void onExit(int exitCode);
 
+    /** The guest process exited, while its service process still waits for the child processes it created. */
+    void onGuestExited();
+
     /** The session runs in the service process [processId]. */
     void onProcessStarted(int processId);
 

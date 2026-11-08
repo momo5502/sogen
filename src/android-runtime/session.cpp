@@ -169,6 +169,7 @@ namespace sogen::android
             .on_cursor_moved = env.GetMethodID(listener_class, "onCursorMoved", "(JII)V"),
             .on_relative_mouse_changed = env.GetMethodID(listener_class, "onRelativeMouseChanged", "(JZ)V"),
             .on_snapshot = env.GetMethodID(listener_class, "onSnapshot", "(Ljava/lang/String;Ljava/lang/String;)V"),
+            .on_guest_exited = env.GetMethodID(listener_class, "onGuestExited", "()V"),
             .open_document = env.GetMethodID(listener_class, "openDocument", "(Ljava/lang/String;Ljava/lang/String;)I"),
             .start_child = env.GetMethodID(listener_class, "startChild", "(J[Ljava/lang/String;)V"),
             .kill_child = env.GetMethodID(listener_class, "killChild", "(J)V"),
@@ -356,6 +357,10 @@ namespace sogen::android
                 throw std::runtime_error("Reporting the exit to the parent process failed");
             }
             guest_exited = exit_status.has_value();
+            if (guest_exited)
+            {
+                this->report_guest_exit();
+            }
             return exit_status ? static_cast<int>(*exit_status) : 1;
         }
         catch (const std::exception& e)
@@ -477,6 +482,11 @@ namespace sogen::android
             env.DeleteLocalRef(java_path);
             env.DeleteLocalRef(java_error);
         });
+    }
+
+    void session::report_guest_exit()
+    {
+        this->dispatcher_.post([this](JNIEnv& env) { env.CallVoidMethod(this->listener_, this->methods_.on_guest_exited); });
     }
 
     unique_fd session::open_document(const std::string& tree, const std::string& document_id)

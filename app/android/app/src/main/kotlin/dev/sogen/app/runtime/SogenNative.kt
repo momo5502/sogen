@@ -30,6 +30,9 @@ interface NativeListener {
     /** [error] is empty once the process was saved to [path]. */
     fun onSnapshot(path: String, error: String)
 
+    /** The guest process exited; the session still waits for the child processes it created. */
+    fun onGuestExited()
+
     /** Opens a document of a [DocumentTree] for reading. Returns a descriptor the caller owns, or -1. */
     fun openDocument(tree: String, documentId: String): Int
 

@@ -116,6 +116,7 @@ namespace sogen::android
       private:
         int run_emulator(const run_config& config);
         void report_snapshot(const snapshot::snapshot_outcome& outcome);
+        void report_guest_exit();
         unique_fd open_document(const std::string& tree, const std::string& document_id);
         void start_child(uint64_t request, const std::vector<std::string>& arguments);
         void kill_child(uint64_t request);
@@ -132,6 +133,7 @@ namespace sogen::android
             jmethodID on_cursor_moved{};
             jmethodID on_relative_mouse_changed{};
             jmethodID on_snapshot{};
+            jmethodID on_guest_exited{};
             jmethodID open_document{};
             jmethodID start_child{};
             jmethodID kill_child{};
