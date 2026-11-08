@@ -121,6 +121,12 @@ namespace sogen
         return highest_address + 1 == lowest_allocation_end ? STATUS_CONFLICTING_ADDRESSES : STATUS_SUCCESS;
     }
 
+    // NtMapViewOfSection accepts up to 21 effective ZeroBits, even when the resulting range cannot hold an allocation.
+    inline NTSTATUS check_zero_bits_of_section(const uint64_t zero_bits)
+    {
+        return highest_address_for_zero_bits(zero_bits) < highest_address_for_zero_bits(21) ? STATUS_INVALID_PARAMETER : STATUS_SUCCESS;
+    }
+
     inline bool is_accessible_range(memory_manager& memory, const uint64_t address, const uint64_t size, const memory_permission required)
     {
         const auto end = address + size;
