@@ -65,6 +65,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         config.snapshotDirectory,
         config.resumeFile,
         config.registryFiles.toTypedArray(),
+        config.expandedRegistryFiles.toTypedArray(),
         config.registryState,
     )
 
@@ -114,6 +115,7 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         snapshotDirectory: String,
         resumeFile: String,
         registryFiles: Array<String>,
+        expandedRegistryFiles: Array<String>,
         registryState: String,
     ): Int
 

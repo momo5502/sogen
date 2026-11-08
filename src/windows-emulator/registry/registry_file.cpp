@@ -291,6 +291,20 @@ namespace sogen
             return data;
         }
 
+        std::u16string decode_string_data(const std::span<const std::byte> data)
+        {
+            std::u16string value{};
+            for (size_t i = 0; i + 1 < data.size(); i += 2)
+            {
+                value.push_back(static_cast<char16_t>(std::to_integer<uint16_t>(data[i]) | (std::to_integer<uint16_t>(data[i + 1]) << 8)));
+            }
+            while (!value.empty() && value.back() == u'\0')
+            {
+                value.pop_back();
+            }
+            return value;
+        }
+
         parsed_registry_value parse_registry_value(std::u16string_view line_text, const std::string_view source_name, const size_t line)
         {
             parsed_registry_value result{};
@@ -514,9 +528,22 @@ namespace sogen
     }
 
     void import_registry_file_contents(registry_manager& registry, const std::span<const std::byte> contents,
-                                       const std::string_view source_name)
+                                       const std::string_view source_name, const registry_string_transform& transform)
     {
         auto keys = parse_registry_file(contents, source_name);
+        if (transform)
+        {
+            for (auto& key : keys)
+            {
+                for (auto& value : key.values)
+                {
+                    if (value.type == REG_SZ)
+                    {
+                        value.data = encode_registry_string(transform(decode_string_data(value.data)));
+                    }
+                }
+            }
+        }
         for (const auto& key : keys)
         {
             if (!registry.can_create_key(key.path))
@@ -540,7 +567,7 @@ namespace sogen
         }
     }
 
-    void import_registry_file(registry_manager& registry, const std::filesystem::path& file)
+    void import_registry_file(registry_manager& registry, const std::filesystem::path& file, const registry_string_transform& transform)
     {
         std::vector<std::byte> contents{};
         if (!utils::io::read_file(file, &contents))
@@ -548,6 +575,6 @@ namespace sogen
             throw std::runtime_error("Failed to read registry file: " + file.string());
         }
 
-        import_registry_file_contents(registry, contents, file.string());
+        import_registry_file_contents(registry, contents, file.string(), transform);
     }
 }

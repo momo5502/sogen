@@ -284,6 +284,9 @@ namespace sogen
 
         windows_emulator(std::unique_ptr<guest_machine> emu, const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
                          emulator_interfaces interfaces = {});
+        // Expands %VAR% references the way the guest process's environment would; unknown ones stay as they are.
+        std::u16string expand_environment_strings(std::u16string_view text);
+
         windows_emulator(std::unique_ptr<guest_machine> emu, application_settings app_settings, const emulator_settings& settings = {},
                          emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
 

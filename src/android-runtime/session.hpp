@@ -64,6 +64,8 @@ namespace sogen::android
         std::filesystem::path resume_file{};
         // Registry values imported into a fresh session over the saved registry state.
         std::vector<std::filesystem::path> registry_files{};
+        // Like registry_files, but their strings refer to the guest's environment variables, such as %USERPROFILE%.
+        std::vector<std::filesystem::path> expanded_registry_files{};
         // Where the guest's registry changes are kept between sessions; empty keeps none.
         std::filesystem::path registry_state{};
     };

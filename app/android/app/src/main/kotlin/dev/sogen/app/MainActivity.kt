@@ -219,6 +219,7 @@ class MainActivity : FlutterActivity() {
         snapshotDirectory = File(filesDir, "snapshots").path,
         resumeFile = call.argument<String>("resumeFile").orEmpty(),
         registryFiles = call.argument<List<String>>("registryFiles").orEmpty(),
+        expandedRegistryFiles = call.argument<List<String>>("expandedRegistryFiles").orEmpty(),
         registryState = call.argument<String>("registryState").orEmpty(),
     )
 

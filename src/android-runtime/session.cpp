@@ -303,6 +303,11 @@ namespace sogen::android
                 {
                     import_registry_file(win_emu.registry, file);
                 }
+                for (const auto& file : config.expanded_registry_files)
+                {
+                    import_registry_file(win_emu.registry, file,
+                                         [&win_emu](const std::u16string_view text) { return win_emu.expand_environment_strings(text); });
+                }
             }
 
             snapshot::controller snapshots{win_emu, configuration, config.snapshot_directory,

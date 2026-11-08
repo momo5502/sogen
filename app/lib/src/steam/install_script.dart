@@ -14,7 +14,7 @@ String? installScriptRegistry(String installScript, String guestInstallDirectory
     lines.add('[${_steamClientView(path)}]');
     for (final MapEntry(key: type, value: values) in key.sections) {
       for (final MapEntry(key: name, value: value) in _valuesFor(values, language)) {
-        final text = value.replaceAll(RegExp('%INSTALLDIR%', caseSensitive: false), guestInstallDirectory);
+        final text = _resolveFolders(value, guestInstallDirectory);
         final data = switch (type) {
           'dword' => 'dword:${(int.tryParse(text) ?? 0).toUnsigned(32).toRadixString(16).padLeft(8, '0')}',
           _ => '"${_escape(text)}"',
@@ -37,6 +37,28 @@ Iterable<MapEntry<String, String>> _valuesFor(KeyValues values, String language)
       }
     }
   }
+}
+
+/// Steam's folder names in a value, as the guest knows them. The install folder and its drive are the app's; the others
+/// depend on the guest's user profile, so they become environment variables that Sogen expands when it imports the file.
+String _resolveFolders(String value, String guestInstallDirectory) {
+  final installDrive = guestInstallDirectory.length >= 2 && guestInstallDirectory[1] == ':'
+      ? guestInstallDirectory.substring(0, 2)
+      : 'C:';
+  final folders = {
+    'INSTALLDIR': guestInstallDirectory,
+    'ROOTDRIVE': installDrive,
+    'APPDATA': r'%USERPROFILE%\AppData\Roaming',
+    'LOCALAPPDATA': r'%USERPROFILE%\AppData\Local',
+    'USER_MYDOCS': r'%USERPROFILE%\Documents',
+    'COMMON_MYDOCS': r'%SystemDrive%\Users\Public\Documents',
+    'WINDIR': '%SystemRoot%',
+    'STEAMPATH': r'%SystemDrive%\Program Files (x86)\Steam',
+  };
+  return value.replaceAllMapped(
+    RegExp('%(${folders.keys.join('|')})%', caseSensitive: false),
+    (match) => folders[match[1]!.toUpperCase()]!,
+  );
 }
 
 /// The Steam client is a 32-bit program, so what it writes below `HKLM\Software` lands in the 32-bit view.

@@ -162,7 +162,7 @@ class GameSession extends ChangeNotifier {
 
     final layers = await layerDirectory(game);
     final mount = {guestGameDirectory: installed?.path ?? game.directory};
-    final registryFiles = [if (installed != null) ?await _writeInstallScriptRegistry(game, installed)];
+    final installScriptRegistryFiles = [if (installed != null) ?await _writeInstallScriptRegistry(game, installed)];
     final started =
         await _methods.invokeMethod<bool>('start', {
           'emulationRoot': emulationRoot,
@@ -177,7 +177,7 @@ class GameSession extends ChangeNotifier {
           'liveNetwork': game.liveNetwork,
           'maxDisplayMode': game.maxDisplayMode?.name ?? '',
           'resumeFile': resumeFile ?? '',
-          'registryFiles': registryFiles,
+          'expandedRegistryFiles': installScriptRegistryFiles,
           'registryState': (await registryStateFile(game)).path,
         }) ??
         false;

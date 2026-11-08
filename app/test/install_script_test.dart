@@ -89,6 +89,36 @@ void main() {
     expect(registryIn('german'), isNot(contains('(default)')));
   });
 
+  test('resolves Steam\'s folder names to the install folder or to guest environment variables', () {
+    const script = r'''
+"InstallScript"
+{
+	"Registry"
+	{
+		"HKEY_CURRENT_USER\\Software\\Example Game"
+		{
+			"string"
+			{
+				"Drive"		"%ROOTDRIVE%\\"
+				"Saves"		"%user_mydocs%\\My Games\\Example"
+				"Shared"		"%COMMON_MYDOCS%\\Example"
+				"Cache"		"%LOCALAPPDATA%\\Example"
+				"Other"		"%TEMP%\\Example"
+			}
+		}
+	}
+}
+''';
+
+    final registry = installScriptRegistry(script, r'D:\game')!;
+
+    expect(registry, contains(r'"drive"="D:\\"'));
+    expect(registry, contains(r'"saves"="%USERPROFILE%\\Documents\\My Games\\Example"'));
+    expect(registry, contains(r'"shared"="%SystemDrive%\\Users\\Public\\Documents\\Example"'));
+    expect(registry, contains(r'"cache"="%USERPROFILE%\\AppData\\Local\\Example"'));
+    expect(registry, contains(r'"other"="%TEMP%\\Example"'));
+  });
+
   test('a script without a registry section sets nothing', () {
     expect(installScriptRegistry('"InstallScript"\n{\n}\n', r'C:\game'), isNull);
   });
