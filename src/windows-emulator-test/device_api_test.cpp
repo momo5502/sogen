@@ -1,10 +1,193 @@
 #include "emulation_test_utils.hpp"
 #include <io_device.hpp>
+#include <token.hpp>
 
 namespace sogen::test
 {
     namespace
     {
+        constexpr ULONG ioctl_get_device_id_list = 0x470803;
+        constexpr uint32_t list_by_enumerator = 0x1;
+        constexpr uint32_t list_by_service = 0x2;
+        constexpr uint32_t list_bus_relations = 0x20;
+        constexpr uint32_t list_by_class = 0x80;
+        constexpr uint32_t list_present_only = 0x10000;
+        constexpr uint32_t list_unfiltered = 0x20000;
+
+        // The request cfgmgr32's InitializeInputDeviceListData builds for CM_Get_Device_ID_List.
+        struct device_list_input
+        {
+            uint32_t size{24};
+            uint32_t flags{};
+            uint64_t filter{};
+            uint32_t filter_bytes{};
+            uint32_t result_size{20};
+        };
+
+        struct device_list_reply
+        {
+            NTSTATUS ioctl_status{};
+            NTSTATUS status{};
+            uint32_t data_bytes{};
+            uint64_t information{};
+            std::u16string list{};
+        };
+
+        constexpr std::u16string_view enum_path = uR"(\Registry\Machine\System\CurrentControlSet\Enum\)";
+        constexpr std::u16string_view installer_classes_path = uR"(\Registry\Machine\System\CurrentControlSet\Control\Class\)";
+        constexpr std::u16string_view session_id_property = uR"(\Properties\{83da6326-97a6-4088-9453-a1923f573b29}\0006)";
+        constexpr std::u16string_view restricted_sd_property = uR"(\Properties\{8c439ff0-9cf7-43cd-961e-9299a4c6c157}\0064)";
+        constexpr uint32_t devprop_type_uint32 = 0xFFFF0007;
+        constexpr uint32_t devprop_type_security_descriptor = 0xFFFF0013;
+        constexpr ACCESS_MASK enumerate_device_access = 0x1;
+
+        // What a device ID list request answers: the filter goes to storage + 0x100, the reply to storage + 0x400.
+        device_list_reply query_device_ids(windows_emulator& emu, const uint64_t storage, const uint32_t flags,
+                                           const std::optional<std::u16string_view> filter = {}, const ULONG output_length = 0x400,
+                                           const uint32_t result_size = 20)
+        {
+            device_list_input input{.flags = flags, .result_size = result_size};
+            if (filter)
+            {
+                const std::u16string terminated{*filter};
+                emu.memory.write_memory(storage + 0x100, terminated.c_str(), (terminated.size() + 1) * sizeof(char16_t));
+                input.filter = storage + 0x100;
+                input.filter_bytes = static_cast<uint32_t>((terminated.size() + 1) * sizeof(char16_t));
+            }
+
+            emu.memory.write_memory(storage, &input, sizeof(input));
+            emu.memory.set_memory(storage + 0x400, 0xCC, output_length);
+
+            io_device_context context{emu.memory};
+            context.io_control_code = ioctl_get_device_id_list;
+            context.io_status_block.set_address(storage + 0x300);
+            context.input_buffer = storage;
+            context.input_buffer_length = sizeof(input);
+            context.output_buffer = storage + 0x400;
+            context.output_buffer_length = output_length;
+
+            io_device_container device{u"DeviceApi\\CMApi", emu, {}};
+            device_list_reply reply{.ioctl_status = device.execute_ioctl(emu, context)};
+            reply.status = emu.memory.read_memory<NTSTATUS>(storage + 0x404);
+            reply.data_bytes = emu.memory.read_memory<uint32_t>(storage + 0x408);
+            reply.information = context.io_status_block.read().Information;
+            if (reply.ioctl_status == STATUS_SUCCESS && reply.status == STATUS_SUCCESS)
+            {
+                reply.list.resize(reply.data_bytes / sizeof(char16_t));
+                emu.memory.read_memory(storage + 0x410, reply.list.data(), reply.data_bytes);
+            }
+
+            return reply;
+        }
+
+        std::u16string multi_sz(const std::initializer_list<std::u16string_view> strings)
+        {
+            std::u16string list{};
+            for (const auto string : strings)
+            {
+                list += string;
+                list += u'\0';
+            }
+
+            list += u'\0';
+            return list;
+        }
+
+        struct test_device
+        {
+            std::u16string id;
+            std::u16string service{};
+            std::u16string class_guid{};
+            std::u16string upper_filter{};
+            std::optional<uint32_t> session{};
+            std::vector<std::byte> restricted_descriptor{};
+        };
+
+        void set_string_value(windows_emulator& emu, const std::u16string& key_path, const std::string& name, const uint32_t type,
+                              std::u16string value)
+        {
+            const auto key = emu.registry.create_key(std::filesystem::path{key_path});
+            ASSERT_TRUE(key.has_value());
+            value.push_back(u'\0');
+            if (type == REG_MULTI_SZ)
+            {
+                value.push_back(u'\0');
+            }
+
+            emu.registry.set_value(*key, name, type, std::as_bytes(std::span{value}));
+        }
+
+        void set_property(windows_emulator& emu, const std::u16string& key_path, const uint32_t type, const std::span<const std::byte> data)
+        {
+            const auto key = emu.registry.create_key(std::filesystem::path{key_path});
+            ASSERT_TRUE(key.has_value());
+            emu.registry.set_value(*key, "", type, data);
+        }
+
+        void add_device(windows_emulator& emu, const test_device& device)
+        {
+            const auto path = std::u16string{enum_path} + device.id;
+            ASSERT_TRUE(emu.registry.create_key(std::filesystem::path{path}).has_value());
+            if (!device.service.empty())
+            {
+                set_string_value(emu, path, "Service", REG_SZ, device.service);
+            }
+
+            if (!device.class_guid.empty())
+            {
+                set_string_value(emu, path, "ClassGUID", REG_SZ, device.class_guid);
+            }
+
+            if (!device.upper_filter.empty())
+            {
+                set_string_value(emu, path, "UpperFilters", REG_MULTI_SZ, device.upper_filter);
+            }
+
+            if (device.session)
+            {
+                set_property(emu, path + std::u16string{session_id_property}, devprop_type_uint32,
+                             std::as_bytes(std::span{&*device.session, 1}));
+            }
+
+            if (!device.restricted_descriptor.empty())
+            {
+                set_property(emu, path + std::u16string{restricted_sd_property}, devprop_type_security_descriptor,
+                             device.restricted_descriptor);
+            }
+        }
+
+        // A self-relative security descriptor whose DACL holds one ACE.
+        std::vector<std::byte> descriptor_with_ace(const uint8_t type, const uint8_t flags, const ACCESS_MASK mask,
+                                                   const std::span<const uint8_t> sid)
+        {
+            constexpr auto sid_offset = offsetof(ACCESS_ALLOWED_ACE, SidStart);
+            const auto ace_size = static_cast<WORD>(sid_offset + sid.size());
+
+            SECURITY_DESCRIPTOR_RELATIVE header{};
+            header.Revision = SECURITY_DESCRIPTOR_REVISION;
+            header.Control = SE_SELF_RELATIVE | SE_DACL_PRESENT;
+            header.Dacl = sizeof(header);
+
+            ACL acl{};
+            acl.AclRevision = ACL_REVISION;
+            acl.AclSize = static_cast<WORD>(sizeof(acl) + ace_size);
+            acl.AceCount = 1;
+
+            ACCESS_ALLOWED_ACE ace{};
+            ace.Header.AceType = type;
+            ace.Header.AceFlags = flags;
+            ace.Header.AceSize = ace_size;
+            ace.Mask = mask;
+
+            std::vector<std::byte> descriptor(sizeof(header) + acl.AclSize);
+            const auto ace_offset = sizeof(header) + sizeof(acl);
+            memcpy(descriptor.data(), &header, sizeof(header));
+            memcpy(descriptor.data() + sizeof(header), &acl, sizeof(acl));
+            memcpy(descriptor.data() + ace_offset, &ace, sid_offset);
+            memcpy(descriptor.data() + ace_offset + sid_offset, sid.data(), sid.size());
+            return descriptor;
+        }
+
         constexpr ULONG ioctl_open_class_key = 0x470863;
         constexpr uint32_t installer_class = 2;
         constexpr uint32_t interface_class = 3;
@@ -116,6 +299,12 @@ namespace sogen::test
             buffer_result list_result()
             {
                 return this->emu.memory.read_memory<buffer_result>(this->storage + 0x200);
+            }
+
+            device_list_reply device_ids(const uint32_t flags, const std::optional<std::u16string_view> filter = {},
+                                         const ULONG output_length = 0x400, const uint32_t result_size = 20)
+            {
+                return query_device_ids(this->emu, this->storage, flags, filter, output_length, result_size);
             }
 
             std::string opened_path(const handle_result& reply)
@@ -403,5 +592,148 @@ namespace sogen::test
         EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->open_class_key({.size = 36}, {}, 0, request));
         EXPECT_EQ(STATUS_DATATYPE_MISALIGNMENT, this->open_class_key({.size = 36}, {}, 0, this->storage + 0x402));
         EXPECT_EQ(0u, this->result().size);
+    }
+
+    // The list names the Enum keys that are valid device instance IDs, in the order of the PnP manager's device cache
+    // (PiDmCompareObjects: the ID's case-insensitive X65599 hash, then the ID), which is not alphabetical. An enumerator
+    // filter matches the IDs it prefixes, ignoring case, and a size query reads the list's size from a
+    // STATUS_BUFFER_TOO_SMALL reply.
+    TEST_F(DeviceApiTest, DeviceIdListNamesRegisteredDevicesInDeviceCacheOrder)
+    {
+        for (const auto* device : {u"DISPLAY", u"MONITOR", u"AUDIO", u"KEYBOARD", u"MOUSE", u"GAMEPAD"})
+        {
+            add_device(this->emu, {.id = std::u16string{uR"(SOGENTEST\)"} + device + uR"(\0000)"});
+        }
+
+        add_device(this->emu, {.id = uR"(SOGENTEST\NOT,VALID\0000)"});
+
+        const auto all = this->device_ids(list_by_enumerator, u"sogentest");
+        ASSERT_EQ(STATUS_SUCCESS, all.ioctl_status);
+        EXPECT_EQ(STATUS_SUCCESS, all.status);
+        EXPECT_EQ(multi_sz({uR"(SOGENTEST\AUDIO\0000)", uR"(SOGENTEST\GAMEPAD\0000)", uR"(SOGENTEST\MONITOR\0000)",
+                            uR"(SOGENTEST\MOUSE\0000)", uR"(SOGENTEST\KEYBOARD\0000)", uR"(SOGENTEST\DISPLAY\0000)"}),
+                  all.list);
+        EXPECT_EQ(20u + all.data_bytes, all.information);
+
+        EXPECT_EQ(multi_sz({uR"(SOGENTEST\MOUSE\0000)"}), this->device_ids(list_by_enumerator, uR"(SOGENTEST\MOUSE)").list);
+
+        const auto size_query = this->device_ids(list_by_enumerator, u"SOGENTEST", 20);
+        EXPECT_EQ(STATUS_BUFFER_TOO_SMALL, size_query.status);
+        EXPECT_EQ(all.data_bytes, size_query.data_bytes);
+    }
+
+    // A service filter lists the devices the service drives or filters: by their Service value, their UpperFilters or
+    // LowerFilters, or their class's. A class filter lists the devices whose ClassGUID names it, ignoring case, and an
+    // empty one names no class.
+    TEST_F(DeviceApiTest, DeviceIdListFiltersByServiceAndClass)
+    {
+        constexpr std::u16string_view test_class = u"{5e0f1a2b-3c4d-4e5f-8a9b-0c1d2e3f4a5b}";
+        constexpr std::u16string_view test_class_upper = u"{5E0F1A2B-3C4D-4E5F-8A9B-0C1D2E3F4A5B}";
+        set_string_value(this->emu, std::u16string{installer_classes_path} + std::u16string{test_class}, "LowerFilters", REG_MULTI_SZ,
+                         u"SogenClassFilter");
+        add_device(this->emu, {.id = uR"(SOGENTEST\AUDIO\0000)", .service = u"SogenAudio"});
+        add_device(this->emu, {.id = uR"(SOGENTEST\MOUSE\0000)",
+                               .service = u"SogenMouse",
+                               .class_guid = std::u16string{test_class},
+                               .upper_filter = u"SogenDeviceFilter"});
+        add_device(this->emu,
+                   {.id = uR"(SOGENTEST\KEYBOARD\0000)", .service = u"SogenKeyboard", .class_guid = std::u16string{test_class_upper}});
+
+        const auto class_members = multi_sz({uR"(SOGENTEST\MOUSE\0000)", uR"(SOGENTEST\KEYBOARD\0000)"});
+        EXPECT_EQ(multi_sz({uR"(SOGENTEST\AUDIO\0000)"}), this->device_ids(list_by_service, u"sogenaudio").list);
+        EXPECT_EQ(multi_sz({uR"(SOGENTEST\MOUSE\0000)"}), this->device_ids(list_by_service, u"SogenDeviceFilter").list);
+        EXPECT_EQ(class_members, this->device_ids(list_by_service, u"SogenClassFilter").list);
+        EXPECT_EQ(class_members, this->device_ids(list_by_class, test_class_upper).list);
+        EXPECT_EQ(multi_sz({}), this->device_ids(list_by_class, u"").list);
+    }
+
+    // PiPnpRtlApplyMandatoryDeviceFilters leaves out a device stored with another session's DEVPKEY_Device_SessionId, and
+    // one whose DEVPKEY_Device_RestrictedSD does not let the caller read it; an inherit-only ACE does not apply to the
+    // device. The list without those filters needs PnP access the caller only has elevated.
+    TEST_F(DeviceApiTest, DeviceIdListLeavesOutDevicesTheCallerMayNotSee)
+    {
+        // S-1-5-21-1-2-3-1001
+        this->emu.process.sid = {0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x01, 0x00,
+                                 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0xE9, 0x03, 0x00, 0x00};
+        const auto& user_sid = this->emu.process.sid;
+
+        add_device(this->emu, {.id = uR"(SOGENTEST\AUDIO\0000)", .session = token_session_id + 1});
+        add_device(this->emu, {.id = uR"(SOGENTEST\GAMEPAD\0000)", .session = token_session_id});
+        add_device(this->emu,
+                   {.id = uR"(SOGENTEST\MONITOR\0000)",
+                    .restricted_descriptor = descriptor_with_ace(ACCESS_ALLOWED_ACE_TYPE, 0, enumerate_device_access, administrators_sid)});
+        add_device(this->emu,
+                   {.id = uR"(SOGENTEST\MOUSE\0000)",
+                    .restricted_descriptor = descriptor_with_ace(ACCESS_ALLOWED_ACE_TYPE, 0, enumerate_device_access, user_sid)});
+        add_device(this->emu, {.id = uR"(SOGENTEST\KEYBOARD\0000)",
+                               .restricted_descriptor =
+                                   descriptor_with_ace(ACCESS_ALLOWED_ACE_TYPE, INHERIT_ONLY_ACE, enumerate_device_access, user_sid)});
+
+        EXPECT_EQ(multi_sz({uR"(SOGENTEST\GAMEPAD\0000)", uR"(SOGENTEST\MOUSE\0000)"}),
+                  this->device_ids(list_by_enumerator, u"SOGENTEST").list);
+
+        const auto unfiltered = this->device_ids(list_by_enumerator | list_unfiltered, u"SOGENTEST");
+        EXPECT_EQ(STATUS_ACCESS_DENIED, unfiltered.status);
+        EXPECT_EQ(0u, unfiltered.data_bytes);
+    }
+
+    // An elevated caller's token holds Administrators, which a restricted descriptor can grant, and the PnP access the list
+    // without the mandatory filters needs.
+    TEST(ElevatedDeviceApiTest, DeviceIdListWithoutTheMandatoryFiltersNamesEveryDevice)
+    {
+        emulator_interfaces interfaces{};
+        interfaces.socket_factory = network::create_static_socket_factory();
+        interfaces.dns_lookup = create_sample_dns_lookup();
+        auto emu = create_emulator({.use_relative_time = true, .elevated = true}, {}, std::move(interfaces));
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        add_device(emu, {.id = uR"(SOGENTEST\AUDIO\0000)", .session = token_session_id + 1});
+        add_device(emu,
+                   {.id = uR"(SOGENTEST\MONITOR\0000)",
+                    .restricted_descriptor = descriptor_with_ace(ACCESS_ALLOWED_ACE_TYPE, 0, enumerate_device_access, administrators_sid)});
+
+        EXPECT_EQ(multi_sz({uR"(SOGENTEST\MONITOR\0000)"}), query_device_ids(emu, storage, list_by_enumerator, u"SOGENTEST").list);
+        EXPECT_EQ(multi_sz({uR"(SOGENTEST\AUDIO\0000)", uR"(SOGENTEST\MONITOR\0000)"}),
+                  query_device_ids(emu, storage, list_by_enumerator | list_unfiltered, u"SOGENTEST").list);
+    }
+
+    // An empty list is a lone terminator, so a reply under 22 bytes has no room for it. The emulator starts no devices:
+    // present-only lists are empty and relations, which devnodes hold, fail. A request that fails once its flags are read
+    // reports its reply's room for the list, rounded down to a character, as the list's size.
+    TEST_F(DeviceApiTest, DeviceIdListEmptyListsAndFailedRequests)
+    {
+        add_device(this->emu, {.id = uR"(SOGENTEST\AUDIO\0000)"});
+
+        for (const ULONG output_length : {20u, 21u})
+        {
+            const auto reply = this->device_ids(list_by_enumerator, u"SOGENNONE", output_length);
+            EXPECT_EQ(STATUS_BUFFER_TOO_SMALL, reply.status);
+            EXPECT_EQ(2u, reply.data_bytes);
+            EXPECT_EQ(20u, reply.information);
+        }
+
+        const auto empty = this->device_ids(list_by_enumerator, u"SOGENNONE", 22);
+        EXPECT_EQ(STATUS_SUCCESS, empty.status);
+        EXPECT_EQ(multi_sz({}), empty.list);
+        EXPECT_EQ(22u, empty.information);
+
+        EXPECT_EQ(multi_sz({}), this->device_ids(list_by_enumerator | list_present_only, u"SOGENTEST").list);
+
+        using failed_reply = std::pair<NTSTATUS, uint32_t>;
+        const auto failure = [&](const uint32_t flags, const std::optional<std::u16string_view> filter) {
+            const auto reply = this->device_ids(flags, filter, 0x101);
+            return failed_reply{reply.status, reply.data_bytes};
+        };
+
+        // The 0x101-byte reply has 237 bytes of room after its header, 236 of them whole characters.
+        const auto with_room = [](const NTSTATUS status) { return failed_reply{status, 236}; };
+        const std::u16string long_enumerator(205, u'E');
+        EXPECT_EQ(with_room(STATUS_INVALID_PARAMETER), failure(0x3, std::nullopt));
+        EXPECT_EQ(with_room(STATUS_OBJECT_NAME_NOT_FOUND), failure(list_bus_relations, uR"(SOGENTEST\AUDIO\0000)"));
+        EXPECT_EQ(with_room(STATUS_INVALID_PARAMETER), failure(list_bus_relations, std::nullopt));
+        EXPECT_EQ(with_room(STATUS_INVALID_PARAMETER), failure(list_by_enumerator, std::nullopt));
+        EXPECT_EQ(with_room(STATUS_INVALID_PARAMETER), failure(list_by_enumerator, uR"(SOGENTEST\AUDIO\0000)"));
+        EXPECT_EQ(with_room(STATUS_BUFFER_OVERFLOW), failure(list_by_enumerator, long_enumerator));
+
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->device_ids(list_by_enumerator, u"SOGENTEST", 0x400, 16).ioctl_status);
     }
 }
