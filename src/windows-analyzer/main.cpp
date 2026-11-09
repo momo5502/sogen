@@ -188,6 +188,7 @@ namespace sogen
             };
             add_path("--emulation", options.emulation_root);
             add_path("--registry", options.registry_path);
+            add_path("--snapshot-dir", options.snapshot_directory);
             for (const auto& registry_file : options.registry_files)
             {
                 arguments.emplace_back("--reg-file");
