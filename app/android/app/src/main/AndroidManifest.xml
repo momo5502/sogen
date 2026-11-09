@@ -57,6 +57,16 @@
             android:exported="false"
             android:process=":sogen" />
 
+        <service
+            android:name=".runtime.SogenChildService0"
+            android:exported="false"
+            android:process=":sogen_child0" />
+
+        <service
+            android:name=".runtime.SogenChildService1"
+            android:exported="false"
+            android:process=":sogen_child1" />
+
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="ca-app-pub-6021244053292554~3874733531" />

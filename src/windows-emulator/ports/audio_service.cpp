@@ -36,6 +36,9 @@ namespace sogen
         constexpr std::array<uint8_t, 16> k_iface_audio_client_19041 = {0x76, 0x52, 0x93, 0x5f, 0x7b, 0x1c, 0xf5, 0x46,
                                                                         0xac, 0x77, 0x07, 0x77, 0x59, 0x00, 0x1d, 0x2b};
 
+        constexpr std::array<uint8_t, 16> k_iface_audio_client_26100_9549 = {0x75, 0x2e, 0x68, 0xcd, 0x49, 0x37, 0x4d, 0x4a,
+                                                                             0xa6, 0xb1, 0xc0, 0x27, 0xed, 0x8a, 0x4c, 0x13};
+
         constexpr uint32_t k_audio_opnum_mmdev_get_blob = 0;        // MMDevice enumeration: [out] serialized blob, no [in]
         constexpr uint32_t k_audio_opnum_get_default_endpoint = 25; // MMDevice enumeration
         constexpr uint32_t k_audio_opnum_get_mix_format = 0;        // AudioClientRpc
@@ -261,8 +264,14 @@ namespace sogen
             bool stream_has_extra_i64{};
         };
 
-        constexpr std::array<audio_client_interface, 3> k_audio_client_interfaces{{
+        constexpr std::array<audio_client_interface, 4> k_audio_client_interfaces{{
             {.id = k_iface_audio_client,
+             .get_session_state_opnum = 27,
+             .destroy_session_opnum = 55,
+             .derive_stream_category_opnum = 122,
+             .is_format_supported_format_offsets = {.ndr32 = 308, .ndr64 = 336},
+             .control_data_v1 = true},
+            {.id = k_iface_audio_client_26100_9549,
              .get_session_state_opnum = 27,
              .destroy_session_opnum = 55,
              .derive_stream_category_opnum = 122,

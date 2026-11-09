@@ -6,6 +6,11 @@
 #include <cinttypes>
 #include <logger.hpp>
 
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <cstring>
+
 namespace sogen
 {
 
@@ -13,6 +18,46 @@ namespace sogen
 
     namespace
     {
+        // A regular syscall's line. Verbose runs print one per syscall, tens of thousands a second, while the syscall
+        // holds the kernel lock, so the logger formats it on its writer thread from this copy.
+        struct syscall_line
+        {
+            bool has_call_count{};
+            uint64_t call_count{};
+            uint32_t syscall_id{};
+            uint32_t thread_id{};
+            uint32_t vcpu{};
+            uint64_t rip{};
+            uint64_t caller_rip{};
+            std::array<char, 64> syscall_name{};
+            std::array<char, 64> caller_module{};
+        };
+
+        template <size_t Size>
+        void copy_truncated(std::array<char, Size>& to, const std::string_view from)
+        {
+            const auto size = std::min(from.size(), Size - 1);
+            from.copy(to.data(), size);
+            to[size] = '\0';
+        }
+
+        void format_syscall_line(const syscall_line& line, std::string& out)
+        {
+            if (line.has_call_count)
+            {
+                out += '[';
+                out += std::to_string(line.call_count);
+                out += "] ";
+            }
+
+            std::array<char, 0x200> buffer{};
+            const auto size = std::snprintf(
+                buffer.data(), buffer.size(),
+                "Executing syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s) (tid: %" PRIu32 ", vCPU: %" PRIu32 ")\n",
+                line.syscall_name.data(), line.syscall_id, line.rip, line.caller_rip, line.caller_module.data(), line.thread_id, line.vcpu);
+            out.append(buffer.data(), std::min(static_cast<size_t>(std::max(size, 0)), buffer.size() - 1));
+        }
+
         class console_analysis_reporter final : public analysis_reporter
         {
           public:
@@ -26,7 +71,7 @@ namespace sogen
             {
                 if (this->settings_.silent)
                 {
-                    report_silent(event);
+                    this->report_silent(event);
                 }
                 else
                 {
@@ -34,13 +79,16 @@ namespace sogen
                 }
             }
 
-            static void report_silent(const analysis_event& event)
+            // The guest's output goes to stdout directly, so the lines the logger queued before it are flushed first.
+            void report_silent(const analysis_event& event) const
             {
                 std::visit(make_overloaded(
                                [&](const run_finished_event&) {
+                                   this->log_.flush();
                                    fflush(stdout); //
                                },
                                [&](const stdout_chunk_event& e) {
+                                   this->log_.flush();
                                    (void)fwrite(e.data.data(), 1, e.data.size(), stdout); //
                                    fflush(stdout);
                                },
@@ -225,23 +273,35 @@ namespace sogen
                             switch (e.classification)
                             {
                             case syscall_classification::inline_syscall:
-                                this->log_.print(color::blue, "%sExecuting inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s)\n",
+                                this->log_.print(color::blue,
+                                                 "%sExecuting inline syscall: %s (0x%X) at 0x%" PRIx64 " (%s) (tid: %" PRIu32
+                                                 ", vCPU: %" PRIu32 ")\n",
                                                  prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip,
-                                                 e.execution.rip_module.c_str());
+                                                 e.execution.rip_module.c_str(), e.execution.thread_id, e.execution.vcpu);
                                 break;
                             case syscall_classification::crafted_out_of_line:
-                                this->log_.print(
-                                    color::blue, "%sCrafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
-                                    prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip, e.execution.rip_module.c_str(),
-                                    e.execution.previous_ip.value_or(0), e.execution.previous_ip_module.value_or("<N/A>").c_str());
+                                this->log_.print(color::blue,
+                                                 "%sCrafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64
+                                                 " (%s) (tid: %" PRIu32 ", vCPU: %" PRIu32 ")\n",
+                                                 prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip,
+                                                 e.execution.rip_module.c_str(), e.execution.previous_ip.value_or(0),
+                                                 e.execution.previous_ip_module.value_or("<N/A>").c_str(), e.execution.thread_id,
+                                                 e.execution.vcpu);
                                 break;
                             case syscall_classification::regular:
-                            default:
-                                this->log_.print(color::dark_gray,
-                                                 "%sExecuting syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n", prefix.c_str(),
-                                                 e.syscall_name.c_str(), e.syscall_id, e.execution.rip, e.caller_rip.value_or(0),
-                                                 e.caller_module.value_or("<N/A>").c_str());
+                            default: {
+                                syscall_line line{.has_call_count = this->settings_.prepend_call_count,
+                                                  .call_count = e.call_count,
+                                                  .syscall_id = e.syscall_id,
+                                                  .thread_id = e.execution.thread_id,
+                                                  .vcpu = e.execution.vcpu,
+                                                  .rip = e.execution.rip,
+                                                  .caller_rip = e.caller_rip.value_or(0)};
+                                copy_truncated(line.syscall_name, e.syscall_name);
+                                copy_truncated(line.caller_module, e.caller_module.value_or("<N/A>"));
+                                this->log_.print_deferred<format_syscall_line>(color::dark_gray, line);
                                 break;
+                            }
                             }
                         },
                         [&](const foreign_module_read_event& e) {

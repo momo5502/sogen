@@ -249,6 +249,10 @@ namespace sogen
                     return handle_update_descriptor_sets_batch(win_emu, context);
                 case gpu_bridge::ioctl_allocate_descriptor_sets_with_updates:
                     return handle_allocate_descriptor_sets_with_updates(win_emu, context);
+                case gpu_bridge::ioctl_get_device_image_memory_requirements:
+                    return handle_get_device_image_memory_requirements(win_emu, context);
+                case gpu_bridge::ioctl_create_image_after_destroy:
+                    return handle_create_image_after_destroy(win_emu, context);
                 case gpu_bridge::ioctl_create_sampler:
                     return handle_create_sampler(win_emu, context);
                 case gpu_bridge::ioctl_destroy_sampler:
@@ -2248,6 +2252,24 @@ namespace sogen
                 };
             }
 
+            gpu_bridge::create_image_response create_image(const gpu_bridge::create_image_request& request)
+            {
+                gpu_bridge::create_image_response response{};
+                response.vk_result = this->vulkan_.create_image(
+                    request.device, request.format, request.width, request.height, request.usage, request.tiling, request.samples,
+                    request.image_type, request.depth, request.mip_levels, request.array_layers, request.flags, response.image);
+                // vkGetImageMemoryRequirements is invalid usage for a disjoint image (VUID-vkGetImageMemoryRequirements-image-01588),
+                // so such an image keeps memory_type_bits 0, which makes the shim ask the host when the guest queries it.
+                constexpr uint32_t vk_image_create_disjoint_bit = 0x00000200; // VK_IMAGE_CREATE_DISJOINT_BIT (no vulkan.h here)
+                if (response.vk_result == vk_success && (request.flags & vk_image_create_disjoint_bit) == 0)
+                {
+                    this->vulkan_.get_image_memory_requirements(request.device, response.image, response.size, response.alignment,
+                                                                response.memory_type_bits);
+                }
+
+                return response;
+            }
+
             NTSTATUS handle_create_image(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::create_image_request request{};
@@ -2256,12 +2278,19 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                uint64_t image = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_image(
-                    request.device, request.format, request.width, request.height, request.usage, request.tiling, request.samples,
-                    request.image_type, request.depth, request.mip_levels, request.array_layers, request.flags, image);
-                return write_output(win_emu, context,
-                                    gpu_bridge::create_image_response{.vk_result = result, .reserved = 0, .image = image});
+                return write_output(win_emu, context, this->create_image(request));
+            }
+
+            NTSTATUS handle_create_image_after_destroy(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_image_after_destroy_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.destroy_image(request.destroy.device, request.destroy.image);
+                return write_output(win_emu, context, this->create_image(request.create));
             }
 
             NTSTATUS handle_get_physical_device_image_format_properties(windows_emulator& win_emu, const io_device_context& context)
@@ -2313,6 +2342,28 @@ namespace sogen
                 uint32_t memory_type_bits = 0;
                 const int32_t result =
                     this->vulkan_.get_image_memory_requirements(request.device, request.image, size, alignment, memory_type_bits);
+                return write_output(win_emu, context,
+                                    gpu_bridge::memory_requirements_response{
+                                        .vk_result = result, .memory_type_bits = memory_type_bits, .size = size, .alignment = alignment});
+            }
+
+            // vkGetDeviceImageMemoryRequirements: the requirements of the image handle_create_image would make from the same
+            // request.
+            NTSTATUS handle_get_device_image_memory_requirements(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_image_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t size = 0;
+                uint64_t alignment = 0;
+                uint32_t memory_type_bits = 0;
+                const int32_t result = this->vulkan_.get_device_image_memory_requirements(
+                    request.device, request.format, request.width, request.height, request.usage, request.tiling, request.samples,
+                    request.image_type, request.depth, request.mip_levels, request.array_layers, request.flags, size, alignment,
+                    memory_type_bits);
                 return write_output(win_emu, context,
                                     gpu_bridge::memory_requirements_response{
                                         .vk_result = result, .memory_type_bits = memory_type_bits, .size = size, .alignment = alignment});

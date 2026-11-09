@@ -5,7 +5,8 @@ set(ZSTD_BUILD_PROGRAMS OFF)
 set(ZSTD_BUILD_CONTRIB OFF)
 set(ZSTD_BUILD_TESTS OFF)
 
-if(MINGW)
+# Emscripten builds have no threads to start compression workers on.
+if(MINGW OR EMSCRIPTEN)
   set(ZSTD_MULTITHREAD_SUPPORT OFF)
 endif()
 

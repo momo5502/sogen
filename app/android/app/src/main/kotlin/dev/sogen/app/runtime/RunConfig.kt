@@ -25,7 +25,32 @@ data class RunConfig(
     val snapshotDirectory: String = "",
     /** A saved process to continue instead of starting [application]. */
     val resumeFile: String = "",
+    /** Registry files imported into a fresh session over [registryState]. */
+    val registryFiles: List<String> = emptyList(),
+    /** Like [registryFiles], but their strings refer to the guest's environment variables, such as %USERPROFILE%. */
+    val expandedRegistryFiles: List<String> = emptyList(),
+    /** Where the guest's registry changes are kept between sessions, or empty to keep none. */
+    val registryState: String = "",
+    /** What the parent's process manager passed to a child process, which then runs instead of [application]. */
+    val managedArguments: List<String> = emptyList(),
 ) {
+    /**
+     * The settings a child process of this game runs with. It takes only what all of the game's processes share; the
+     * parent passes what belongs to the process itself.
+     */
+    fun forChildProcess(arguments: List<String>) = RunConfig(
+        emulationRoot = emulationRoot,
+        application = "",
+        rootLayerDirectory = rootLayerDirectory,
+        documentMounts = documentMounts,
+        directoryMounts = directoryMounts,
+        layerDirectory = layerDirectory,
+        backend = backend,
+        liveNetwork = liveNetwork,
+        maxDisplayMode = maxDisplayMode,
+        managedArguments = arguments,
+    )
+
     fun toBundle(): Bundle = Bundle().apply {
         putString(KEY_ROOT, emulationRoot)
         putString(KEY_APPLICATION, application)
@@ -41,6 +66,10 @@ data class RunConfig(
         putString(KEY_MAX_DISPLAY_MODE, maxDisplayMode)
         putString(KEY_SNAPSHOT_DIRECTORY, snapshotDirectory)
         putString(KEY_RESUME_FILE, resumeFile)
+        putStringArrayList(KEY_REGISTRY_FILES, ArrayList(registryFiles))
+        putStringArrayList(KEY_EXPANDED_REGISTRY_FILES, ArrayList(expandedRegistryFiles))
+        putString(KEY_REGISTRY_STATE, registryState)
+        putStringArrayList(KEY_MANAGED_ARGUMENTS, ArrayList(managedArguments))
     }
 
     companion object {
@@ -58,6 +87,10 @@ data class RunConfig(
         private const val KEY_MAX_DISPLAY_MODE = "maxDisplayMode"
         private const val KEY_SNAPSHOT_DIRECTORY = "snapshotDirectory"
         private const val KEY_RESUME_FILE = "resumeFile"
+        private const val KEY_REGISTRY_FILES = "registryFiles"
+        private const val KEY_EXPANDED_REGISTRY_FILES = "expandedRegistryFiles"
+        private const val KEY_REGISTRY_STATE = "registryState"
+        private const val KEY_MANAGED_ARGUMENTS = "managedArguments"
 
         fun fromBundle(bundle: Bundle) = RunConfig(
             emulationRoot = bundle.getString(KEY_ROOT).orEmpty(),
@@ -74,6 +107,10 @@ data class RunConfig(
             maxDisplayMode = bundle.getString(KEY_MAX_DISPLAY_MODE).orEmpty(),
             snapshotDirectory = bundle.getString(KEY_SNAPSHOT_DIRECTORY).orEmpty(),
             resumeFile = bundle.getString(KEY_RESUME_FILE).orEmpty(),
+            registryFiles = bundle.getStringArrayList(KEY_REGISTRY_FILES).orEmpty(),
+            expandedRegistryFiles = bundle.getStringArrayList(KEY_EXPANDED_REGISTRY_FILES).orEmpty(),
+            registryState = bundle.getString(KEY_REGISTRY_STATE).orEmpty(),
+            managedArguments = bundle.getStringArrayList(KEY_MANAGED_ARGUMENTS).orEmpty(),
         )
 
         private fun pairs(flat: List<String>?): Map<String, String> =

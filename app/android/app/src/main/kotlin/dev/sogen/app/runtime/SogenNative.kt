@@ -30,8 +30,15 @@ interface NativeListener {
     /** [error] is empty once the process was saved to [path]. */
     fun onSnapshot(path: String, error: String)
 
+    /** The guest process exited; the session still waits for the child processes it created. */
+    fun onGuestExited()
+
     /** Opens a document of a [DocumentTree] for reading. Returns a descriptor the caller owns, or -1. */
     fun openDocument(tree: String, documentId: String): Int
+
+    /** The guest created a child process; [SogenNative.childStarted] answers. */
+    fun startChild(request: Long, arguments: Array<String>)
+    fun killChild(request: Long)
 }
 
 /** Owns one native emulation session. Only used inside the `:sogen` process. */
@@ -64,7 +71,14 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkan.driverName,
         config.snapshotDirectory,
         config.resumeFile,
+        config.registryFiles.toTypedArray(),
+        config.expandedRegistryFiles.toTypedArray(),
+        config.registryState,
+        config.managedArguments.toTypedArray(),
     )
+
+    fun childStarted(request: Long, processId: Int) = nativeChildStarted(handle, request, processId)
+    fun childExited(request: Long, exitStatus: Int) = nativeChildExited(handle, request, exitStatus)
 
     fun stop() = nativeStop(handle)
 
@@ -111,7 +125,14 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         vulkanDriverName: String,
         snapshotDirectory: String,
         resumeFile: String,
+        registryFiles: Array<String>,
+        expandedRegistryFiles: Array<String>,
+        registryState: String,
+        managedArguments: Array<String>,
     ): Int
+
+    private external fun nativeChildStarted(handle: Long, request: Long, processId: Int)
+    private external fun nativeChildExited(handle: Long, request: Long, exitStatus: Int)
 
     private external fun nativeStop(handle: Long)
     private external fun nativeSetFrameLimit(handle: Long, framesPerSecond: Int)
@@ -133,5 +154,8 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         init {
             System.loadLibrary("sogen")
         }
+
+        /** Loads the library, which the first session would otherwise wait for. */
+        fun load() = Unit
     }
 }
