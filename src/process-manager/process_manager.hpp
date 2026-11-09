@@ -272,6 +272,12 @@ namespace sogen
         virtual process_memory_read_result read_memory(managed_process process, uint64_t address, uint64_t size) const = 0;
         virtual process_memory_result write_memory(managed_process process, uint64_t address, std::span<const uint8_t> data) = 0;
 
+        // On Windows a child outlives the process that created it, so a host process that ends with its guest stays behind
+        // as the broker of the children it started until they have exited.
+        virtual void wait_for_processes()
+        {
+        }
+
         virtual process_debug_event_result next_debug_event(managed_process /*process*/)
         {
             return {.error = process_error::unavailable};

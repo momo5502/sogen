@@ -38,6 +38,7 @@ if(SOGEN_BUILD_STATIC)
 endif()
 
 if(_SOGEN_BUILD_STANDALONE_TARGETS)
+  add_subdirectory(ui-cursor-diagnostic)
   add_subdirectory(windows-analyzer)
   add_subdirectory(linux-analyzer)
   add_subdirectory(macos-analyzer)

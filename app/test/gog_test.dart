@@ -41,7 +41,12 @@ Map<String, Object> _tokens(String refreshToken) => {
 
 Future<GogAccount> _signedIn(_MemorySecrets secrets, http.Client client, {GogLoginPage? loginPage}) async {
   secrets.values['gog'] = jsonEncode({'refreshToken': 'stored'});
-  final account = GogAccount(secrets: secrets, loginPage: loginPage ?? (_) async => null, client: client);
+  final account = GogAccount(
+    secrets: secrets,
+    secretName: 'gog',
+    loginPage: loginPage ?? (_) async => null,
+    client: client,
+  );
   await account.restore();
   return account;
 }
@@ -101,6 +106,7 @@ void main() {
       var requests = 0;
       final account = GogAccount(
         secrets: secrets,
+        secretName: 'gog',
         loginPage: (url) async =>
             Uri.parse('https://embed.gog.com/on_login_success?origin=client&code=abc&state=forged'),
         client: MockClient((_) async {
@@ -118,19 +124,25 @@ void main() {
       final secrets = _MemorySecrets();
       final account = GogAccount(
         secrets: secrets,
+        secretName: 'gog',
         loginPage: (url) async => Uri.parse(
           'https://embed.gog.com/on_login_success?origin=client&code=abc&state=${url.queryParameters['state']}',
         ),
         client: MockClient((request) async {
+          if (request.url.path == '/userData.json') {
+            expect(request.headers['Authorization'], 'Bearer access-new');
+            return _json({'username': 'alice'});
+          }
           expect(request.bodyFields['grant_type'], 'authorization_code');
           expect(request.bodyFields['code'], 'abc');
-          return _json(_tokens('new'));
+          return _json({..._tokens('new'), 'user_id': '123'});
         }),
       );
 
       expect(await account.signIn(), isTrue);
       expect(account.isSignedIn, isTrue);
       expect(jsonDecode(secrets.values['gog']!), {'refreshToken': 'new'});
+      expect((account.userId, account.displayName), ('123', 'alice'));
     });
 
     test('signing out while a refreshed token is being stored leaves the account signed out', () async {

@@ -79,6 +79,7 @@ namespace sogen::android
         void set_window_rect(hwnd window, const RECT& rect) override;
         void set_window_visible(hwnd window, bool visible) override;
         void set_window_title(hwnd window, std::u16string_view title) override;
+        void set_window_relationship(hwnd window, hwnd parent, hwnd owner, bool top_level) override;
         void present_surface(hwnd window, const ui_surface_desc& surface) override;
         void set_cursor_position(hwnd window, int32_t screen_x, int32_t screen_y) override;
         void set_cursor_clip(hwnd window, const std::optional<ui_rect>& screen_rect, bool relative) override;
@@ -95,6 +96,16 @@ namespace sogen::android
             ui_window_desc desc{};
             ANativeWindow* surface{};
             bool vulkan_owned{};
+            // The last frame drawn without Vulkan, kept so the window can be drawn again with the popups that cover it.
+            ui_surface_desc frame{};
+            std::vector<uint8_t> frame_pixels{};
+        };
+
+        struct pointer_target
+        {
+            hwnd window{};
+            int32_t x{};
+            int32_t y{};
         };
 
         struct delayed_event
@@ -129,6 +140,11 @@ namespace sogen::android
         void queue_relative_event(hwnd window, uint32_t message, uint64_t w_param);
         hwnd top_level_ancestor(hwnd window) const;
         window_state* find_top_level(hwnd window);
+        const window_state* popup_owner(const window_state& popup) const;
+        bool has_visible_popup(const window_state& owner) const;
+        hwnd popup_owner_handle(hwnd popup) const;
+        pointer_target pointer_target_at(hwnd window, int32_t x, int32_t y) const;
+        void present_composited(hwnd owner);
         void release_surfaces();
     };
 }

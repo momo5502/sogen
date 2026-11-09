@@ -128,6 +128,12 @@ namespace sogen
         {
         }
 
+        // SetParent moved the window. A window that is now top-level shows in a host window of its own, kept with its owner;
+        // otherwise it is drawn as part of its parent.
+        virtual void set_window_relationship(const hwnd /*window*/, const hwnd /*parent*/, const hwnd /*owner*/, const bool /*top_level*/)
+        {
+        }
+
         virtual void set_window_rect(const hwnd /*window*/, const RECT& /*rect*/)
         {
         }
@@ -189,6 +195,11 @@ namespace sogen
         // SetCursor(NULL)) and recenter every frame; without honoring this the host cursor stays visible
         // and flickers as the guest warps it back to the center.
         virtual void set_cursor_visibility(const bool /*visible*/)
+        {
+        }
+
+        // Apply a standard IDC_* cursor on the next UI pump. SDL reset and destruction require that thread.
+        virtual void set_system_cursor(const uint32_t /*idc*/)
         {
         }
 

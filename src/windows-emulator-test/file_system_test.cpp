@@ -170,6 +170,9 @@ namespace sogen::test
         }
 
         EXPECT_EQ((std::map<std::u16string, bool>{{u"mnt", true}, {u"windows", false}, {u"x.txt", false}}), entries);
+        auto names = fs.list_directory_names(windows_path{'c', {}});
+        std::ranges::sort(names);
+        EXPECT_EQ((std::vector<std::u16string>{u"mnt", u"windows", u"x.txt"}), names);
     }
 
     TEST_F(FileSystemTest, RenameAcrossMountsCopiesFile)

@@ -19,9 +19,6 @@
 #undef poll
 #endif
 
-#include <reproc++/drain.hpp>
-#include <reproc++/reproc.hpp>
-
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -366,27 +363,11 @@ namespace sogen
             return token;
         }
 
-        process_error map_process_error(const std::error_code& error)
-        {
-            if (error == std::errc::permission_denied)
-            {
-                return process_error::permission_denied;
-            }
-            if (error == std::errc::no_such_file_or_directory)
-            {
-                return process_error::unavailable;
-            }
-            if (error == std::errc::not_enough_memory || error == std::errc::resource_unavailable_try_again)
-            {
-                return process_error::resource_limit;
-            }
-            return process_error::internal_failure;
-        }
     }
 
     struct subprocess_process_manager::process_entry
     {
-        reproc::process process{};
+        std::unique_ptr<host_process> host{};
         network::tcp_client_socket control{};
         std::vector<utils::host_pipe_transfer> pipe_transfers{};
         std::thread output_thread{};
@@ -396,7 +377,7 @@ namespace sogen
         std::optional<uint64_t> termination_code{};
         std::optional<int> host_exit_status{};
         bool host_failure{};
-        std::atomic_bool kill_requested{};
+        std::atomic_bool resumed{};
 
         std::optional<ProcessProtocol::MessageT> receive_response(const ProcessProtocol::MessagePayload expected,
                                                                   const std::chrono::steady_clock::time_point deadline)
@@ -414,9 +395,17 @@ namespace sogen
             return message->payload.type == expected ? std::move(message) : std::nullopt;
         }
 
+        void kill() const
+        {
+            if (this->host)
+            {
+                this->host->kill();
+            }
+        }
+
         ~process_entry()
         {
-            this->kill_requested = true;
+            this->kill();
             this->control.close();
             if (this->output_thread.joinable())
             {
@@ -702,11 +691,13 @@ namespace sogen
         return {std::move(socket), decode_create_request(std::move(*message->payload.AsProcessCreateRequest()))};
     }
 
-    subprocess_process_manager::subprocess_process_manager(std::filesystem::path executable, argument_factory arguments)
+    subprocess_process_manager::subprocess_process_manager(std::filesystem::path executable, argument_factory arguments,
+                                                           std::unique_ptr<host_process_launcher> launcher)
         : executable_(std::move(executable)),
-          arguments_(std::move(arguments))
+          arguments_(std::move(arguments)),
+          launcher_(std::move(launcher))
     {
-        if (this->executable_.empty() || !this->arguments_)
+        if (this->executable_.empty() || !this->arguments_ || !this->launcher_)
         {
             throw std::invalid_argument("An executable and argument factory are required");
         }
@@ -728,7 +719,7 @@ namespace sogen
 
         for (const auto& process : processes)
         {
-            process->kill_requested = true;
+            process->kill();
         }
     }
 
@@ -774,81 +765,25 @@ namespace sogen
         }
 
         const auto entry = std::make_shared<process_entry>();
-        reproc::options options{};
-        options.redirect.in.type = reproc::redirect::parent;
-        options.redirect.out.type = reproc::redirect::pipe;
-        options.redirect.err.type = reproc::redirect::pipe;
-        const auto start_error = entry->process.start(command, options);
-        if (start_error)
+        auto launched = this->launcher_->launch(command);
+        if (!launched.process)
         {
-            return {.error = map_process_error(start_error)};
+            return {.error = launched.error};
         }
-
-        const auto [host_process_id, process_id_error] = entry->process.pid();
-        if (process_id_error || host_process_id <= 0)
-        {
-            std::ignore = entry->process.kill();
-            std::ignore = entry->process.wait(reproc::infinite);
-            return {.error = process_error::internal_failure};
-        }
-        request.process_id = static_cast<uint32_t>(host_process_id) * 2;
+        entry->host = std::move(launched.process);
+        request.process_id = entry->host->id() * 2;
         request.thread_id = request.process_id + 1;
 
         entry->output_thread = std::thread([process = entry.get()] {
-            std::array<uint8_t, 4096> buffer{};
-            for (;;)
+            const auto status = process->host->run();
+            const std::scoped_lock lock(process->state_mutex);
+            if (status)
             {
-                if (process->kill_requested)
-                {
-                    const auto kill_error = process->process.kill();
-                    if (!kill_error)
-                    {
-                        process->kill_requested = false;
-                    }
-                    else
-                    {
-                        const std::scoped_lock lock(process->state_mutex);
-                        process->host_failure = true;
-                    }
-                }
-                const auto [events, poll_error] =
-                    process->process.poll(reproc::event::out | reproc::event::err | reproc::event::exit, reproc::milliseconds(50));
-                if (poll_error && poll_error != std::errc::timed_out)
-                {
-                    const std::scoped_lock lock(process->state_mutex);
-                    process->host_failure = true;
-                    break;
-                }
-
-                for (const auto& [event, stream, file] : {std::tuple{reproc::event::out, reproc::stream::out, stdout},
-                                                          std::tuple{reproc::event::err, reproc::stream::err, stderr}})
-                {
-                    if ((events & event) == 0)
-                    {
-                        continue;
-                    }
-                    const auto [size, read_error] = process->process.read(stream, buffer.data(), buffer.size());
-                    if (!read_error)
-                    {
-                        (void)fwrite(buffer.data(), 1, size, file);
-                        fflush(file);
-                    }
-                }
-
-                if ((events & reproc::event::exit) != 0)
-                {
-                    const auto [status, wait_error] = process->process.wait(reproc::infinite);
-                    const std::scoped_lock lock(process->state_mutex);
-                    if (wait_error)
-                    {
-                        process->host_failure = true;
-                    }
-                    else
-                    {
-                        process->host_exit_status = status;
-                    }
-                    break;
-                }
+                process->host_exit_status = status;
+            }
+            else
+            {
+                process->host_failure = true;
             }
         });
 
@@ -884,26 +819,26 @@ namespace sogen
         }
         catch (const std::exception&)
         {
-            entry->kill_requested = true;
+            entry->kill();
             return {.error = process_error::communication_failure};
         }
         if (!sent)
         {
-            entry->kill_requested = true;
+            entry->kill();
             return {.error = process_error::communication_failure};
         }
 
         const auto started = receive_message_until(entry->control, deadline);
         if (!started || started->payload.type != ProcessProtocol::MessagePayload_ProcessStarted)
         {
-            entry->kill_requested = true;
+            entry->kill();
             return {.error = process_error::internal_failure};
         }
         {
             const std::scoped_lock lock(this->mutex_);
             if (this->stopping_)
             {
-                entry->kill_requested = true;
+                entry->kill();
                 return {.error = process_error::unavailable};
             }
             this->processes_.emplace(handle.value, entry);
@@ -936,7 +871,50 @@ namespace sogen
         {
             return process_error::communication_failure;
         }
-        return decode_error(response->payload.AsResumeProcessResponse()->error);
+
+        const auto error = decode_error(response->payload.AsResumeProcessResponse()->error);
+        if (error == process_error::none)
+        {
+            entry->resumed = true;
+        }
+        return error;
+    }
+
+    void subprocess_process_manager::kill_processes()
+    {
+        const std::scoped_lock lock(this->mutex_);
+        for (const auto& [handle, process] : this->processes_)
+        {
+            (void)handle;
+            process->kill();
+        }
+    }
+
+    // A child that was never resumed cannot run without this process, so only resumed children are waited for; the
+    // destructor still ends the others.
+    void subprocess_process_manager::wait_for_processes()
+    {
+        std::vector<std::shared_ptr<process_entry>> processes{};
+        {
+            const std::scoped_lock lock(this->mutex_);
+            this->stopping_ = true;
+            for (const auto& [handle, process] : this->processes_)
+            {
+                (void)handle;
+                if (process->resumed)
+                {
+                    processes.push_back(process);
+                }
+            }
+        }
+
+        for (const auto& process : processes)
+        {
+            if (process->output_thread.joinable())
+            {
+                process->output_thread.join();
+            }
+        }
     }
 
     process_memory_result subprocess_process_manager::allocate_memory(const managed_process process, const uint64_t address,
@@ -1218,7 +1196,7 @@ namespace sogen
             }
             entry->termination_code = exit_code;
         }
-        entry->kill_requested = true;
+        entry->kill();
         return process_error::none;
     }
 
@@ -1228,6 +1206,22 @@ namespace sogen
         if (!entry)
         {
             return {.error = process_error::invalid_process};
+        }
+
+        {
+            const std::scoped_lock lock(entry->state_mutex);
+            if (entry->exit)
+            {
+                return {.status = entry->exit};
+            }
+        }
+
+        // The child reports its guest's exit before its host process waits for its own children, so the guest process is
+        // signaled as soon as the report arrives, not when the host process ends.
+        if (std::unique_lock control(entry->control_mutex, std::try_to_lock); control.owns_lock() && entry->control.is_ready(true))
+        {
+            (void)entry->receive_response(ProcessProtocol::MessagePayload_ProcessExited,
+                                          std::chrono::steady_clock::now() + exit_notification_timeout);
         }
 
         bool host_exited{};

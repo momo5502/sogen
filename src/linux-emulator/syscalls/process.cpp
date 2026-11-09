@@ -2,6 +2,8 @@
 #include "../linux_emulator.hpp"
 #include "../linux_syscall_dispatcher.hpp"
 
+#include <posix_signals.hpp>
+
 #include <cstring>
 
 namespace sogen
@@ -16,6 +18,60 @@ namespace sogen
         constexpr int ARCH_GET_FS = 0x1003;
         constexpr int ARCH_GET_GS = 0x1004;
         constexpr uint64_t SYSCALL_INSTRUCTION_SIZE = 2;
+
+        constexpr posix_signal_numbers LINUX_SIGNAL_NUMBERS{
+            .highest = linux_signals::LINUX_NSIG,
+            .kill = linux_signals::LINUX_SIGKILL,
+            .stop = linux_signals::LINUX_SIGSTOP,
+        };
+
+        constexpr int32_t LINUX_SS_AUTODISARM = static_cast<int32_t>(1U << 31);
+        constexpr posix_signal_stack_rules SIGNAL_STACK_RULES{
+            .disable_flag = LINUX_SS_DISABLE,
+            .kept_flags = LINUX_SS_AUTODISARM,
+            .on_stack_enables = true,
+            .minimum_size = 2048,
+        };
+
+        struct linux_stack
+        {
+            uint64_t sp;
+            int32_t flags;
+            int32_t padding;
+            uint64_t size;
+        };
+
+        static_assert(sizeof(linux_stack) == 24);
+
+        // A disabled stack reads back without a range, as the kernel clears it.
+        linux_stack to_linux_stack(const posix_signal_stack& stack)
+        {
+            if (stack.flags & LINUX_SS_DISABLE)
+            {
+                return {.sp = 0, .flags = stack.flags, .padding = 0, .size = 0};
+            }
+
+            return {.sp = stack.base, .flags = stack.flags, .padding = 0, .size = stack.size};
+        }
+
+        std::optional<posix_signal_mask_operation> mask_operation(const uint64_t how)
+        {
+            constexpr uint64_t LINUX_SIG_BLOCK = 0;
+            constexpr uint64_t LINUX_SIG_UNBLOCK = 1;
+            constexpr uint64_t LINUX_SIG_SETMASK = 2;
+
+            switch (how)
+            {
+            case LINUX_SIG_BLOCK:
+                return posix_signal_mask_operation::block;
+            case LINUX_SIG_UNBLOCK:
+                return posix_signal_mask_operation::unblock;
+            case LINUX_SIG_SETMASK:
+                return posix_signal_mask_operation::set;
+            default:
+                return std::nullopt;
+            }
+        }
 
         // Linux utsname structure
         // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -42,7 +98,7 @@ namespace sogen
 
         bool is_valid_signal(const int sig)
         {
-            return sig >= 0 && sig < 64;
+            return sig >= 0 && sig <= linux_signals::LINUX_NSIG;
         }
 
         void deliver_signal_after_success(const linux_syscall_context& c, const int sig)
@@ -263,27 +319,33 @@ namespace sogen
         const auto signum = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         const auto act_addr = get_linux_syscall_argument(c.emu, 1);
         const auto oldact_addr = get_linux_syscall_argument(c.emu, 2);
-        // sigsetsize is arg 3 (should be 8)
+        const auto sigsetsize = get_linux_syscall_argument(c.emu, 3);
 
-        if (signum < 1 || signum >= 64)
+        if (sigsetsize != sizeof(uint64_t) || !posix_is_valid_signal(LINUX_SIGNAL_NUMBERS, signum) ||
+            (act_addr != 0 && !posix_is_catchable_signal(LINUX_SIGNAL_NUMBERS, signum)))
         {
             write_linux_syscall_result(c, -LINUX_EINVAL);
             return;
         }
 
-        // Return old action if requested
-        if (oldact_addr != 0)
+        linux_kernel_sigaction new_action{};
+        if (act_addr != 0 && !c.emu.try_read_memory(act_addr, &new_action, sizeof(new_action)))
         {
-            const auto& old_action = c.emu_ref.signals.actions.at(static_cast<size_t>(signum));
-            c.emu.write_memory(oldact_addr, &old_action, sizeof(old_action));
+            write_linux_syscall_result(c, -LINUX_EFAULT);
+            return;
         }
 
-        // Store new action if provided
+        auto& action = c.emu_ref.signals.actions.at(static_cast<size_t>(signum));
+        if (oldact_addr != 0 && !c.emu.try_write_memory(oldact_addr, &action, sizeof(action)))
+        {
+            write_linux_syscall_result(c, -LINUX_EFAULT);
+            return;
+        }
+
         if (act_addr != 0)
         {
-            linux_kernel_sigaction new_action{};
-            c.emu.read_memory(act_addr, &new_action, sizeof(new_action));
-            c.emu_ref.signals.actions.at(static_cast<size_t>(signum)) = new_action;
+            new_action.linux_sa_mask &= ~posix_unblockable_signals(LINUX_SIGNAL_NUMBERS);
+            action = new_action;
         }
 
         write_linux_syscall_result(c, 0);
@@ -291,28 +353,86 @@ namespace sogen
 
     void sys_rt_sigprocmask(const linux_syscall_context& c)
     {
-        const auto how = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+        const auto how = get_linux_syscall_argument(c.emu, 0);
         const auto set_addr = get_linux_syscall_argument(c.emu, 1);
         const auto oldset_addr = get_linux_syscall_argument(c.emu, 2);
-        // sigsetsize is arg 3
+        const auto sigsetsize = get_linux_syscall_argument(c.emu, 3);
 
-        (void)how;
-        (void)set_addr;
-
-        // If oldset is requested, write the current mask
-        if (oldset_addr != 0 && c.proc.active_thread)
+        auto* thread = c.proc.active_thread;
+        if (sigsetsize != sizeof(uint64_t) || !thread)
         {
-            const auto mask = c.proc.active_thread->signal_mask;
-            c.emu.write_memory(oldset_addr, &mask, sizeof(mask));
+            write_linux_syscall_result(c, -LINUX_EINVAL);
+            return;
+        }
+
+        const auto old_mask = thread->signal_mask;
+        if (set_addr != 0)
+        {
+            uint64_t set{};
+            if (!c.emu.try_read_memory(set_addr, &set, sizeof(set)))
+            {
+                write_linux_syscall_result(c, -LINUX_EFAULT);
+                return;
+            }
+
+            const auto operation = mask_operation(how);
+            if (!operation)
+            {
+                write_linux_syscall_result(c, -LINUX_EINVAL);
+                return;
+            }
+
+            thread->signal_mask = posix_updated_signal_mask(old_mask, *operation, set, LINUX_SIGNAL_NUMBERS);
+        }
+
+        if (oldset_addr != 0 && !c.emu.try_write_memory(oldset_addr, &old_mask, sizeof(old_mask)))
+        {
+            write_linux_syscall_result(c, -LINUX_EFAULT);
+            return;
         }
 
         write_linux_syscall_result(c, 0);
     }
 
+    // The previous stack is reported after the new one is in place, as the kernel copies it out last.
     void sys_sigaltstack(const linux_syscall_context& c)
     {
-        // Stub: pretend we set the alternate signal stack
-        (void)c;
+        const auto new_stack_addr = get_linux_syscall_argument(c.emu, 0);
+        const auto old_stack_addr = get_linux_syscall_argument(c.emu, 1);
+
+        auto* thread = c.proc.active_thread;
+        if (!thread)
+        {
+            write_linux_syscall_result(c, -LINUX_EINVAL);
+            return;
+        }
+
+        auto& stack = thread->signal_stack;
+        const auto old_stack = to_linux_stack(stack);
+        if (new_stack_addr != 0)
+        {
+            linux_stack requested{};
+            if (!c.emu.try_read_memory(new_stack_addr, &requested, sizeof(requested)))
+            {
+                write_linux_syscall_result(c, -LINUX_EFAULT);
+                return;
+            }
+
+            const auto result =
+                posix_set_signal_stack(stack, {.base = requested.sp, .size = requested.size, .flags = requested.flags}, SIGNAL_STACK_RULES);
+            if (std::holds_alternative<posix_errno>(result))
+            {
+                write_linux_syscall_result(c, result);
+                return;
+            }
+        }
+
+        if (old_stack_addr != 0 && !c.emu.try_write_memory(old_stack_addr, &old_stack, sizeof(old_stack)))
+        {
+            write_linux_syscall_result(c, -LINUX_EFAULT);
+            return;
+        }
+
         write_linux_syscall_result(c, 0);
     }
 

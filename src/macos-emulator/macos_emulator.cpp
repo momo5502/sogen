@@ -467,7 +467,8 @@ namespace sogen
         : system_(std::make_shared<macos_system>(macos_system{.create_backend = std::move(create_backend)})),
           emu_(this->system_->create_backend()),
           memory(*this->emu_, MACOS_MEMORY_LAYOUT),
-          file_system(std::move(emulation_root))
+          // The root is copied from a Mac's sealed system volume and must stay intact; guests write into mapped directories.
+          file_system(std::move(emulation_root), posix_root_access::read_only)
     {
         this->load_image(this->prepare_process_image({image.begin(), image.end()}), executable_path, argv, envp);
         this->setup_hooks();

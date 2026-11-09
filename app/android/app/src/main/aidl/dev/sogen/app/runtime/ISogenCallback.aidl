@@ -15,6 +15,16 @@ oneway interface ISogenCallback {
     void onSnapshot(String path, String error);
     void onExit(int exitCode);
 
+    /** The guest process exited, while its service process still waits for the child processes it created. */
+    void onGuestExited();
+
+    /** The session runs in the service process [processId]. */
+    void onProcessStarted(int processId);
+
+    /** The guest created a child process; the launcher answers with [ISogenSession.childStarted]. */
+    void startChild(long request, in String[] arguments);
+    void killChild(long request);
+
     /** Frames presented so far, the longest time between two presents since the last report, and the memory in use. */
     void onStats(long frames, long worstPresentIntervalNs, long residentBytes);
 }

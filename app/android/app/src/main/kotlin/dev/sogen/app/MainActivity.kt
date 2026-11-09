@@ -215,8 +215,12 @@ class MainActivity : FlutterActivity() {
         workingDirectory = call.argument<String>("workingDirectory").orEmpty(),
         backend = call.argument<String>("backend").orEmpty(),
         liveNetwork = call.argument<Boolean>("liveNetwork") == true,
+        maxDisplayMode = call.argument<String>("maxDisplayMode").orEmpty(),
         snapshotDirectory = File(filesDir, "snapshots").path,
         resumeFile = call.argument<String>("resumeFile").orEmpty(),
+        registryFiles = call.argument<List<String>>("registryFiles").orEmpty(),
+        expandedRegistryFiles = call.argument<List<String>>("expandedRegistryFiles").orEmpty(),
+        registryState = call.argument<String>("registryState").orEmpty(),
     )
 
     /** Completes with the tree URI of the chosen folder, which stays readable across restarts, or null. */

@@ -190,8 +190,8 @@ namespace sogen
     class signal_dispatcher
     {
       public:
-        // Registered signal handlers (indexed by signal number, 0-63)
-        std::array<linux_kernel_sigaction, 64> actions{};
+        // Registered signal handlers, indexed by signal number (1-64)
+        std::array<linux_kernel_sigaction, linux_signals::LINUX_NSIG + 1> actions{};
 
         // Address of the sigreturn trampoline code page
         uint64_t sigreturn_trampoline_addr{};

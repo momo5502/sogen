@@ -32,6 +32,19 @@ namespace sogen::android
             return (static_cast<uint64_t>(static_cast<uint32_t>(y) & 0xFFFFu) << 16) | (static_cast<uint32_t>(x) & 0xFFFFu);
         }
 
+        // SetParent promotes a WS_CHILD window under the desktop to a popup of the window that opened it, such as a combo
+        // box's list. The host cannot show such a window, so it is neither handed to the host nor activated.
+        bool is_host_window(const ui_window_desc& desc)
+        {
+            return desc.top_level && ((desc.style & WS_CHILD) == 0 || (desc.style & WS_POPUP) != 0);
+        }
+
+        // A promoted window, like a combo box's list, is drawn onto the host window of its owner.
+        bool is_promoted_window(const ui_window_desc& desc)
+        {
+            return desc.top_level && !is_host_window(desc);
+        }
+
         int32_t client_width(const ui_window_desc& desc)
         {
             return std::max<int32_t>(1, (desc.rect.right - desc.rect.left) - desc.client_insets.left - desc.client_insets.right);
@@ -108,6 +121,38 @@ namespace sogen::android
             }
         }
 
+        std::pair<int32_t, int32_t> popup_offset(const ui_window_desc& popup, const ui_window_desc& owner)
+        {
+            return {(popup.rect.left + popup.client_insets.left) - (owner.rect.left + owner.client_insets.left),
+                    (popup.rect.top + popup.client_insets.top) - (owner.rect.top + owner.client_insets.top)};
+        }
+
+        void draw_popup(std::vector<uint8_t>& pixels, const ui_surface_desc& frame, const std::vector<uint8_t>& popup_pixels,
+                        const ui_surface_desc& popup, const std::pair<int32_t, int32_t> offset)
+        {
+            const auto [offset_x, offset_y] = offset;
+            const auto first_x = std::max(0, -offset_x);
+            const auto first_y = std::max(0, -offset_y);
+            const auto last_x = std::min(popup.width, frame.width - offset_x);
+            const auto last_y = std::min(popup.height, frame.height - offset_y);
+            const bool swap = popup.format != frame.format;
+
+            for (int32_t y = first_y; y < last_y; ++y)
+            {
+                const auto* source = popup_pixels.data() + (static_cast<size_t>(y) * static_cast<size_t>(popup.stride));
+                auto* destination = pixels.data() + (static_cast<size_t>(y + offset_y) * static_cast<size_t>(frame.stride));
+                for (int32_t x = first_x; x < last_x; ++x)
+                {
+                    const auto* pixel = source + (static_cast<size_t>(x) * 4);
+                    auto* target = destination + (static_cast<size_t>(x + offset_x) * 4);
+                    target[0] = swap ? pixel[2] : pixel[0];
+                    target[1] = pixel[1];
+                    target[2] = swap ? pixel[0] : pixel[2];
+                    target[3] = pixel[3];
+                }
+            }
+        }
+
         void copy_surface(const ANativeWindow_Buffer& buffer, const ui_surface_desc& surface)
         {
             const auto width = std::min(surface.width, buffer.width);
@@ -132,6 +177,19 @@ namespace sogen::android
                     target[2] = swap ? pixel[0] : pixel[2];
                     // GDI leaves the alpha channel undefined; the texture is composited, so force it opaque.
                     target[3] = 0xFF;
+                }
+            }
+        }
+
+        void draw_frame(ANativeWindow* target, const ui_surface_desc& frame)
+        {
+            if (ANativeWindow_setBuffersGeometry(target, frame.width, frame.height, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) == 0)
+            {
+                ANativeWindow_Buffer buffer{};
+                if (ANativeWindow_lock(target, &buffer, nullptr) == 0)
+                {
+                    copy_surface(buffer, frame);
+                    ANativeWindow_unlockAndPost(target);
                 }
             }
         }
@@ -172,9 +230,18 @@ namespace sogen::android
         }
     }
 
+    // A process's windows end with it. The app shows a game's windows until it hears of that, and a launcher's process
+    // stays alive after its guest exited, while it waits for the game it started.
     android_ui_backend::~android_ui_backend()
     {
         this->release_surfaces();
+        for (const auto& [handle, state] : this->windows_)
+        {
+            if (is_host_window(state.desc))
+            {
+                this->host_->on_window_destroyed(handle);
+            }
+        }
     }
 
     void android_ui_backend::attach_surface(const hwnd window, ANativeWindow* surface)
@@ -211,7 +278,8 @@ namespace sogen::android
     void android_ui_backend::post_mouse_move(const hwnd window, const int32_t x, const int32_t y)
     {
         const std::lock_guard lock{this->mutex_};
-        this->queue_event(window, WM_MOUSEMOVE, this->mouse_buttons_, pack_point(x, y));
+        const auto target = this->pointer_target_at(window, x, y);
+        this->queue_event(target.window, WM_MOUSEMOVE, this->mouse_buttons_, pack_point(target.x, target.y));
     }
 
     void android_ui_backend::post_mouse_motion(const hwnd window, const int32_t dx, const int32_t dy)
@@ -304,8 +372,9 @@ namespace sogen::android
             return;
         }
 
-        this->queue_event(window, WM_MOUSEMOVE, this->mouse_buttons_, pack_point(x, y));
-        this->queue_event(window, button_message(button, down), this->mouse_buttons_, pack_point(x, y));
+        const auto target = this->pointer_target_at(window, x, y);
+        this->queue_event(target.window, WM_MOUSEMOVE, this->mouse_buttons_, pack_point(target.x, target.y));
+        this->queue_event(target.window, button_message(button, down), this->mouse_buttons_, pack_point(target.x, target.y));
     }
 
     void android_ui_backend::post_mouse_wheel(const hwnd window, const int32_t delta, const int32_t x, const int32_t y)
@@ -319,7 +388,8 @@ namespace sogen::android
             return;
         }
 
-        this->queue_event(window, WM_MOUSEWHEEL, w_param, pack_point(x, y));
+        const auto target = this->pointer_target_at(window, x, y);
+        this->queue_event(target.window, WM_MOUSEWHEEL, w_param, pack_point(target.x, target.y));
     }
 
     void android_ui_backend::post_key(const hwnd window, const int32_t keycode, const bool down)
@@ -478,7 +548,7 @@ namespace sogen::android
             const std::lock_guard lock{this->mutex_};
 
             this->windows_[desc.handle].desc = desc;
-            if (!desc.top_level)
+            if (!is_host_window(desc))
             {
                 return;
             }
@@ -499,6 +569,7 @@ namespace sogen::android
     void android_ui_backend::destroy_window(const hwnd window)
     {
         bool top_level{};
+        hwnd owner{};
 
         {
             const std::lock_guard lock{this->mutex_};
@@ -509,7 +580,8 @@ namespace sogen::android
                 return;
             }
 
-            top_level = it->second.desc.top_level;
+            top_level = is_host_window(it->second.desc);
+            owner = this->popup_owner_handle(window);
             if (it->second.surface)
             {
                 ANativeWindow_release(it->second.surface);
@@ -536,11 +608,13 @@ namespace sogen::android
         {
             this->host_->on_window_destroyed(window);
         }
+        this->present_composited(owner);
     }
 
     void android_ui_backend::set_window_rect(const hwnd window, const RECT& rect)
     {
         ui_window_desc desc{};
+        hwnd owner{};
 
         {
             const std::lock_guard lock{this->mutex_};
@@ -553,16 +627,22 @@ namespace sogen::android
 
             const auto previous_width = client_width(it->second.desc);
             const auto previous_height = client_height(it->second.desc);
+            const auto previous_owner = this->popup_owner_handle(window);
             it->second.desc.rect = rect;
             desc = it->second.desc;
+            owner = previous_owner;
 
-            if (!desc.top_level || (client_width(desc) == previous_width && client_height(desc) == previous_height))
+            if (!is_host_window(desc) || (client_width(desc) == previous_width && client_height(desc) == previous_height))
             {
-                return;
+                desc = {};
             }
         }
 
-        this->host_->on_window_resized(window, client_width(desc), client_height(desc));
+        if (desc.handle != 0)
+        {
+            this->host_->on_window_resized(window, client_width(desc), client_height(desc));
+        }
+        this->present_composited(owner);
     }
 
     void android_ui_backend::set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y)
@@ -591,6 +671,8 @@ namespace sogen::android
     void android_ui_backend::set_window_visible(const hwnd window, const bool visible)
     {
         bool activated{};
+        bool host_window{};
+        hwnd owner{};
 
         {
             const std::lock_guard lock{this->mutex_};
@@ -602,21 +684,55 @@ namespace sogen::android
             }
 
             it->second.desc.visible = visible;
-            if (!it->second.desc.top_level)
+            host_window = is_host_window(it->second.desc);
+            if (!host_window)
             {
-                return;
+                owner = this->popup_owner_handle(window);
             }
-
-            if (visible)
+            else if (visible)
             {
                 activated = this->activate(window);
             }
+        }
+
+        if (!host_window)
+        {
+            this->present_composited(owner);
+            return;
         }
 
         this->host_->on_window_visibility_changed(window, visible);
         if (activated)
         {
             this->update_relative_mouse();
+        }
+    }
+
+    void android_ui_backend::set_window_relationship(const hwnd window, const hwnd parent, const hwnd owner, const bool top_level)
+    {
+        hwnd previous_owner{};
+        hwnd new_owner{};
+
+        {
+            const std::lock_guard lock{this->mutex_};
+
+            const auto it = this->windows_.find(window);
+            if (it == this->windows_.end())
+            {
+                return;
+            }
+
+            previous_owner = this->popup_owner_handle(window);
+            it->second.desc.parent = parent;
+            it->second.desc.owner = owner;
+            it->second.desc.top_level = top_level;
+            new_owner = this->popup_owner_handle(window);
+        }
+
+        this->present_composited(previous_owner);
+        if (new_owner != previous_owner)
+        {
+            this->present_composited(new_owner);
         }
     }
 
@@ -632,7 +748,7 @@ namespace sogen::android
             }
 
             it->second.desc.title = title;
-            if (!it->second.desc.top_level)
+            if (!is_host_window(it->second.desc))
             {
                 return;
             }
@@ -643,37 +759,148 @@ namespace sogen::android
 
     void android_ui_backend::present_surface(const hwnd window, const ui_surface_desc& surface)
     {
-        if (!surface.pixels || surface.width <= 0 || surface.height <= 0)
+        if (!surface.pixels || surface.width <= 0 || surface.height <= 0 || surface.stride <= 0)
         {
             return;
         }
 
+        hwnd owner{};
         ANativeWindow* target{};
 
         {
             const std::lock_guard lock{this->mutex_};
 
-            const auto* state = this->find_top_level(window);
-            if (!state || !state->surface || state->vulkan_owned)
+            auto* state = this->find_top_level(window);
+            if (!state || state->vulkan_owned)
             {
                 return;
             }
 
-            target = state->surface;
-            ANativeWindow_acquire(target);
-        }
+            const auto* pixels = static_cast<const uint8_t*>(surface.pixels);
+            state->frame = surface;
+            state->frame.pixels = nullptr;
+            state->frame_pixels.assign(pixels, pixels + (static_cast<size_t>(surface.stride) * static_cast<size_t>(surface.height)));
 
-        if (ANativeWindow_setBuffersGeometry(target, surface.width, surface.height, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) == 0)
-        {
-            ANativeWindow_Buffer buffer{};
-            if (ANativeWindow_lock(target, &buffer, nullptr) == 0)
+            if (is_promoted_window(state->desc))
             {
-                copy_surface(buffer, surface);
-                ANativeWindow_unlockAndPost(target);
+                owner = this->popup_owner_handle(state->desc.handle);
+            }
+            else if (this->has_visible_popup(*state))
+            {
+                owner = state->desc.handle;
+            }
+            else if (state->surface)
+            {
+                target = state->surface;
+                ANativeWindow_acquire(target);
             }
         }
 
+        if (target)
+        {
+            draw_frame(target, surface);
+            ANativeWindow_release(target);
+            return;
+        }
+
+        this->present_composited(owner);
+    }
+
+    bool android_ui_backend::has_visible_popup(const window_state& owner) const
+    {
+        return std::ranges::any_of(this->windows_, [&](const auto& entry) {
+            const auto& state = entry.second;
+            return state.desc.visible && is_promoted_window(state.desc) && this->popup_owner(state) == &owner;
+        });
+    }
+
+    // Only CPU-drawn owners are composited: a Vulkan-owned surface has no frame of its own to draw the popups onto.
+    void android_ui_backend::present_composited(const hwnd owner)
+    {
+        if (owner == 0)
+        {
+            return;
+        }
+
+        ANativeWindow* target{};
+        ui_surface_desc frame{};
+        std::vector<uint8_t> pixels{};
+
+        {
+            const std::lock_guard lock{this->mutex_};
+
+            const auto it = this->windows_.find(owner);
+            if (it == this->windows_.end() || !it->second.surface || it->second.vulkan_owned || it->second.frame_pixels.empty())
+            {
+                return;
+            }
+
+            const auto& owner_state = it->second;
+            frame = owner_state.frame;
+            pixels = owner_state.frame_pixels;
+            for (const auto& [handle, state] : this->windows_)
+            {
+                (void)handle;
+                if (state.desc.visible && is_promoted_window(state.desc) && !state.frame_pixels.empty() &&
+                    this->popup_owner(state) == &owner_state)
+                {
+                    draw_popup(pixels, frame, state.frame_pixels, state.frame, popup_offset(state.desc, owner_state.desc));
+                }
+            }
+
+            target = owner_state.surface;
+            ANativeWindow_acquire(target);
+        }
+
+        frame.pixels = pixels.data();
+        draw_frame(target, frame);
         ANativeWindow_release(target);
+    }
+
+    const android_ui_backend::window_state* android_ui_backend::popup_owner(const window_state& popup) const
+    {
+        const auto it = this->windows_.find(this->top_level_ancestor(popup.desc.owner));
+        return it != this->windows_.end() && is_host_window(it->second.desc) ? &it->second : nullptr;
+    }
+
+    hwnd android_ui_backend::popup_owner_handle(const hwnd popup) const
+    {
+        const auto it = this->windows_.find(popup);
+        if (it == this->windows_.end() || !is_promoted_window(it->second.desc))
+        {
+            return 0;
+        }
+
+        const auto* owner = this->popup_owner(it->second);
+        return owner ? owner->desc.handle : 0;
+    }
+
+    // Popups lie on their owner's surface, so a touch there belongs to the popup under it, in the popup's coordinates.
+    android_ui_backend::pointer_target android_ui_backend::pointer_target_at(const hwnd window, const int32_t x, const int32_t y) const
+    {
+        const auto owner_it = this->windows_.find(this->top_level_ancestor(window));
+        if (owner_it == this->windows_.end())
+        {
+            return {.window = window, .x = x, .y = y};
+        }
+
+        for (const auto& [handle, state] : this->windows_)
+        {
+            if (!state.desc.visible || !is_promoted_window(state.desc) || this->popup_owner(state) != &owner_it->second)
+            {
+                continue;
+            }
+
+            const auto [offset_x, offset_y] = popup_offset(state.desc, owner_it->second.desc);
+            const auto local_x = x - offset_x;
+            const auto local_y = y - offset_y;
+            if (local_x >= 0 && local_y >= 0 && local_x < client_width(state.desc) && local_y < client_height(state.desc))
+            {
+                return {.window = handle, .x = local_x, .y = local_y};
+            }
+        }
+
+        return {.window = window, .x = x, .y = y};
     }
 
     std::vector<std::string> android_ui_backend::vulkan_instance_extensions()

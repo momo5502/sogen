@@ -17,11 +17,13 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #define VK_NO_PROTOTYPES
@@ -377,6 +379,32 @@ namespace
                                nullptr) != FALSE;
     }
 
+    // The requirements the host reported with each image vkCreateImage made, which vkGetImageMemoryRequirements answers with.
+    std::unordered_map<gb::object_id, VkMemoryRequirements>& image_memory_requirements()
+    {
+        static std::unordered_map<gb::object_id, VkMemoryRequirements> requirements;
+        return requirements;
+    }
+
+    // Images vkBindImageMemory bound. They are destroyed on the host at once: the guest may free their memory right after,
+    // and the host must not keep an image on freed memory (a snapshot taken then could not be loaded).
+    std::unordered_set<gb::object_id>& bound_images()
+    {
+        static std::unordered_set<gb::object_id> images;
+        return images;
+    }
+
+    // The never-bound image the guest destroyed last, destroyed on the host by the next vkCreateImage in the same round
+    // trip. DXVK's allocator creates an image, queries it and destroys it again whenever it cannot place the image's memory.
+    std::optional<gb::destroy_image_request> g_pending_image_destroy;
+    std::mutex g_image_mutex;
+
+    std::optional<gb::destroy_image_request> take_pending_image_destroy()
+    {
+        std::lock_guard<std::mutex> lock(g_image_mutex);
+        return std::exchange(g_pending_image_destroy, std::nullopt);
+    }
+
     void record_command(gb::object_id command_buffer, gb::command command, const void* payload, size_t size)
     {
         auto& stream = command_streams()[command_buffer];
@@ -501,6 +529,26 @@ namespace
         default:
             return VK_IMAGE_ASPECT_COLOR_BIT;
         }
+    }
+
+    // The bridge's form of an image create-info, shared by vkCreateImage and vkGetDeviceImageMemoryRequirements so the
+    // host measures exactly the image vkCreateImage would make.
+    gb::create_image_request image_create_request(const VkDevice device, const VkImageCreateInfo& info)
+    {
+        gb::create_image_request request{};
+        request.device = to_object_id(device);
+        request.format = static_cast<uint32_t>(info.format);
+        request.width = info.extent.width;
+        request.height = info.extent.height;
+        request.usage = info.usage;
+        request.tiling = static_cast<uint32_t>(info.tiling);
+        request.samples = static_cast<uint32_t>(info.samples);
+        request.image_type = static_cast<uint32_t>(info.imageType);
+        request.depth = info.extent.depth;
+        request.mip_levels = info.mipLevels;
+        request.array_layers = info.arrayLayers;
+        request.flags = info.flags;
+        return request;
     }
 }
 
@@ -858,6 +906,11 @@ extern "C"
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDevice(VkDevice device, const VkAllocationCallbacks*)
     {
+        if (const auto pending = take_pending_image_destroy())
+        {
+            bridge_call(gb::ioctl_destroy_image, &*pending, sizeof(*pending), nullptr, 0);
+        }
+
         gb::destroy_device_request request{};
         request.device = to_object_id(device);
         bridge_call(gb::ioctl_destroy_device, &request, sizeof(request), nullptr, 0);
@@ -2568,28 +2621,34 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImage(VkDevice device, const VkImageCreateInfo* pCreateInfo,
                                                                        const VkAllocationCallbacks*, VkImage* pImage)
     {
-        gb::create_image_request request{};
-        request.device = to_object_id(device);
-        request.format = static_cast<uint32_t>(pCreateInfo->format);
-        request.width = pCreateInfo->extent.width;
-        request.height = pCreateInfo->extent.height;
-        request.usage = pCreateInfo->usage;
-        request.tiling = static_cast<uint32_t>(pCreateInfo->tiling);
-        request.samples = static_cast<uint32_t>(pCreateInfo->samples);
-        request.image_type = static_cast<uint32_t>(pCreateInfo->imageType);
-        request.depth = pCreateInfo->extent.depth;
-        request.mip_levels = pCreateInfo->mipLevels;
-        request.array_layers = pCreateInfo->arrayLayers;
-        request.flags = pCreateInfo->flags;
+        const auto request = image_create_request(device, *pCreateInfo);
 
         gb::create_image_response response{};
-        if (!bridge_call(gb::ioctl_create_image, &request, sizeof(request), &response, sizeof(response)))
+        bool sent = false;
+        if (const auto pending = take_pending_image_destroy())
+        {
+            const gb::create_image_after_destroy_request combined{.destroy = *pending, .create = request};
+            sent = bridge_call(gb::ioctl_create_image_after_destroy, &combined, sizeof(combined), &response, sizeof(response));
+        }
+        else
+        {
+            sent = bridge_call(gb::ioctl_create_image, &request, sizeof(request), &response, sizeof(response));
+        }
+
+        if (!sent)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         if (response.vk_result != VK_SUCCESS)
         {
             return static_cast<VkResult>(response.vk_result);
+        }
+
+        if (response.memory_type_bits != 0)
+        {
+            std::lock_guard<std::mutex> lock(g_image_mutex);
+            image_memory_requirements()[response.image] = {
+                .size = response.size, .alignment = response.alignment, .memoryTypeBits = response.memory_type_bits};
         }
 
         *pImage = to_handle<VkImage>(response.image);
@@ -2602,10 +2661,26 @@ extern "C"
         {
             return;
         }
-        gb::destroy_image_request request{};
-        request.device = to_object_id(device);
-        request.image = to_object_id(image);
-        bridge_call(gb::ioctl_destroy_image, &request, sizeof(request), nullptr, 0);
+
+        const gb::destroy_image_request request{.device = to_object_id(device), .image = to_object_id(image)};
+        std::optional<gb::destroy_image_request> destroy_now{};
+        {
+            std::lock_guard<std::mutex> lock(g_image_mutex);
+            image_memory_requirements().erase(request.image);
+            if (bound_images().erase(request.image) != 0)
+            {
+                destroy_now = request;
+            }
+            else
+            {
+                destroy_now = std::exchange(g_pending_image_destroy, request);
+            }
+        }
+
+        if (destroy_now)
+        {
+            bridge_call(gb::ioctl_destroy_image, &*destroy_now, sizeof(*destroy_now), nullptr, 0);
+        }
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetImageMemoryRequirements(VkDevice device, VkImage image,
@@ -2616,6 +2691,15 @@ extern "C"
             return;
         }
         *pMemoryRequirements = {};
+
+        {
+            std::lock_guard<std::mutex> lock(g_image_mutex);
+            if (const auto known = image_memory_requirements().find(to_object_id(image)); known != image_memory_requirements().end())
+            {
+                *pMemoryRequirements = known->second;
+                return;
+            }
+        }
 
         gb::get_image_memory_requirements_request request{};
         request.device = to_object_id(device);
@@ -2687,9 +2771,9 @@ extern "C"
         vkGetImageMemoryRequirements(device, pInfo->image, &pMemoryRequirements->memoryRequirements);
     }
 
-    // Vulkan 1.3 (maintenance4) lets callers query memory requirements without a live object. The bridge
-    // has no equivalent query, so probe a throwaway object created from the supplied create-info. DXVK's
-    // memory allocator relies on these during device construction.
+    // Vulkan 1.3 (maintenance4) lets callers query memory requirements without a live object. The bridge has no buffer
+    // equivalent, so probe a throwaway buffer created from the supplied create-info. DXVK's memory allocator relies on
+    // these during device construction.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceBufferMemoryRequirements(VkDevice device,
                                                                                          const VkDeviceBufferMemoryRequirements* pInfo,
                                                                                          VkMemoryRequirements2* pMemoryRequirements)
@@ -2707,6 +2791,7 @@ extern "C"
         vkDestroyBuffer(device, buffer, nullptr);
     }
 
+    // Answered by the host driver's vkGetDeviceImageMemoryRequirements for the image vkCreateImage would make.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageMemoryRequirements(VkDevice device,
                                                                                         const VkDeviceImageMemoryRequirements* pInfo,
                                                                                         VkMemoryRequirements2* pMemoryRequirements)
@@ -2715,18 +2800,24 @@ extern "C"
         {
             return;
         }
-        VkImage image = VK_NULL_HANDLE;
-        if (vkCreateImage(device, pInfo->pCreateInfo, nullptr, &image) != VK_SUCCESS)
+        auto& requirements = pMemoryRequirements->memoryRequirements;
+        requirements = {};
+
+        const auto request = image_create_request(device, *pInfo->pCreateInfo);
+        gb::memory_requirements_response response{};
+        if (!bridge_call(gb::ioctl_get_device_image_memory_requirements, &request, sizeof(request), &response, sizeof(response)))
         {
             return;
         }
-        vkGetImageMemoryRequirements(device, image, &pMemoryRequirements->memoryRequirements);
-        vkDestroyImage(device, image, nullptr);
+
+        requirements.size = response.size;
+        requirements.alignment = response.alignment;
+        requirements.memoryTypeBits = response.memory_type_bits;
     }
 
     // VK_KHR_maintenance5 / core 1.4: query an image's subresource layout straight from its create-info,
-    // with no live VkImage. The bridge has no such query, so probe a throwaway image (same approach as
-    // vkGetDeviceImageMemoryRequirements above). DXVK calls this during resource setup.
+    // with no live VkImage. The bridge has no such query, so probe a throwaway image (as
+    // vkGetDeviceBufferMemoryRequirements does with a buffer). DXVK calls this during resource setup.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageSubresourceLayoutKHR(VkDevice device,
                                                                                           const VkDeviceImageSubresourceInfo* pInfo,
                                                                                           VkSubresourceLayout2* pLayout)
@@ -2757,6 +2848,12 @@ extern "C"
         if (!bridge_call(gb::ioctl_bind_image_memory, &request, sizeof(request), &response, sizeof(response)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (response.vk_result == VK_SUCCESS)
+        {
+            std::lock_guard<std::mutex> lock(g_image_mutex);
+            bound_images().insert(request.image);
         }
         return static_cast<VkResult>(response.vk_result);
     }

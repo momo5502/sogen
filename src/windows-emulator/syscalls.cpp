@@ -563,7 +563,11 @@ namespace sogen
         hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);
         hdc handle_NtUserGetWindowDC(const syscall_context& c, hwnd window);
         hwnd handle_NtUserWindowFromDC(const syscall_context& c, hdc dc);
-        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t control_type);
+        uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t message);
+        uint64_t handle_NtUserGetControlColor(const syscall_context& c, hwnd parent, hwnd window, hdc dc, uint32_t message);
+        uint64_t completion_NtUserGetControlColor(const syscall_context& c, hwnd parent, hwnd window, hdc dc, uint32_t message);
+        uint64_t completion_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t message);
+        BOOL completion_NtUserFillWindow(const syscall_context& c, hwnd parent_window, hwnd window, hdc dc, hbrush brush);
         BOOL handle_NtUserFillWindow(const syscall_context& c, hwnd parent_window, hwnd window, hdc dc, hbrush brush);
         BOOL handle_NtUserReleaseDC(const syscall_context& c, hdc dc);
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
@@ -592,6 +596,7 @@ namespace sogen
         BOOL handle_NtUserTransformPoint(const syscall_context& c, emulator_pointer point, uint32_t from_dpi, uint32_t to_dpi,
                                          uint32_t flags);
         int32_t handle_NtUserShowCursor(const syscall_context& c, BOOL show);
+        NTSTATUS handle_NtUserHideCursorNoCapture();
         uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
         uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, int32_t virtual_key);
         BOOL handle_NtUserClipCursor(const syscall_context& c, emulator_pointer rect);
@@ -746,6 +751,7 @@ namespace sogen
         NTSTATUS handle_NtUserSetForegroundWindow();
         hwnd handle_NtUserGetForegroundWindow(const syscall_context& c);
         hwnd handle_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
+        hwnd completion_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserZapActiveAndFocus(const syscall_context& c);
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL Ansi);
@@ -808,6 +814,7 @@ namespace sogen
         int32_t handle_NtUserCheckMenuItem(const syscall_context& c, hmenu menu, UINT item, UINT check);
         BOOL handle_NtUserCreateCaret();
         BOOL handle_NtUserDestroyCaret();
+        BOOL handle_NtUserGetCaretPos(const syscall_context& c, emulator_object<POINT> point);
         BOOL handle_NtUserSetCaretPos();
         BOOL handle_NtUserShowCaret();
         BOOL handle_NtUserHideCaret();
@@ -858,6 +865,7 @@ namespace sogen
         BOOL handle_NtUserGetGUIThreadInfo(const syscall_context& c, uint32_t thread_id, emulator_pointer info);
         BOOL handle_NtUserSetWinEventHook();
         BOOL handle_NtUserUnhookWinEvent();
+        uint64_t handle_NtUserQueryInputContext(const syscall_context& c, uint64_t input_context, uint32_t query_type);
         BOOL handle_NtUserDisableThreadIme();
         BOOL handle_NtUserGetPointerDevices();
         BOOL handle_NtUserHwndQueryRedirectionInfo();
@@ -1205,7 +1213,7 @@ namespace sogen
             }
         }
 
-        NTSTATUS handle_NtQueryWnfStateData(const syscall_context&, const emulator_object<uint64_t> state_name,
+        NTSTATUS handle_NtQueryWnfStateData(const syscall_context& c, const emulator_object<uint64_t> state_name,
                                             const emulator_pointer /*type_id*/, const emulator_pointer /*explicit_scope*/,
                                             const emulator_object<ULONG> change_stamp, const emulator_pointer buffer,
                                             const emulator_object<ULONG> buffer_size)
@@ -1216,24 +1224,44 @@ namespace sogen
                 return STATUS_ACCESS_VIOLATION;
             }
 
-            // External WNF state names are XORed with this key; the decoded low bits hold the version and the data scope.
-            constexpr uint64_t state_name_key = 0x41C64E6DA3BC0074;
             constexpr uint64_t max_data_scope = 5;
-            const auto decoded = *name ^ state_name_key;
+            const auto decoded = *name ^ wnf_state_name_key;
             if ((decoded & 0xF) != 1 || ((decoded >> 6) & 0xF) > max_data_scope)
             {
                 return STATUS_INVALID_PARAMETER;
             }
 
+            // As 19041, the change stamp, the buffer size and the buffer (for that size) are probed for writing before the name
+            // is looked up, so an output that cannot be written fails the call before anything is written.
+            auto& memory = c.win_emu.memory;
             const auto size = buffer_size.try_read();
-            if (!change_stamp || !size || (!buffer && *size != 0))
+            if (!size || !is_writable_range(memory, change_stamp.value(), sizeof(ULONG)) ||
+                !is_writable_range(memory, buffer_size.value(), sizeof(ULONG)) || (*size != 0 && !is_writable_range(memory, buffer, *size)))
             {
                 return STATUS_ACCESS_VIOLATION;
             }
 
-            // There is no WNF store, so every well-formed name reads like one that was never published.
-            change_stamp.write(0);
-            buffer_size.write(0);
+            const auto state = c.proc.wnf_states.find(*name);
+            if (state == c.proc.wnf_states.end())
+            {
+                change_stamp.write(0);
+                buffer_size.write(0);
+                return STATUS_SUCCESS;
+            }
+
+            const auto data_size = static_cast<ULONG>(state->second.data.size());
+            change_stamp.write(state->second.change_stamp);
+            buffer_size.write(data_size);
+            if (*size < data_size)
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            if (data_size != 0)
+            {
+                c.emu.write_memory(buffer, state->second.data.data(), data_size);
+            }
+
             return STATUS_SUCCESS;
         }
 
@@ -1873,6 +1901,7 @@ namespace sogen
         add_handler(NtUserGetWindowDC);
         add_handler(NtUserWindowFromDC);
         add_handler(NtUserGetControlBrush);
+        add_handler(NtUserGetControlColor);
         add_handler(NtUserFillWindow);
         add_handler(NtUserGetOemBitmapSize);
         add_handler(NtUserSetCapture);
@@ -1905,6 +1934,7 @@ namespace sogen
         add_handler(NtUserGetClipCursor);
         add_handler(NtUserTransformPoint);
         add_handler(NtUserShowCursor);
+        add_handler(NtUserHideCursorNoCapture);
         add_handler(NtUserClipCursor);
         add_handler(NtUserGetWindowCompositionAttribute);
         add_handler(NtUserSetCursorPos);
@@ -2162,6 +2192,7 @@ namespace sogen
         add_handler(NtUserSetWindowPlacement);
         add_handler(NtUserCreateCaret);
         add_handler(NtUserDestroyCaret);
+        add_handler(NtUserGetCaretPos);
         add_handler(NtUserSetCaretPos);
         add_handler(NtUserShowCaret);
         add_handler(NtUserHideCaret);
@@ -2214,6 +2245,7 @@ namespace sogen
         add_handler(NtUserChangeWindowMessageFilter);
         add_handler(NtUserSetWinEventHook);
         add_handler(NtUserUnhookWinEvent);
+        add_handler(NtUserQueryInputContext);
         add_handler(NtUserDisableThreadIme);
         add_handler(NtUserGetPointerDevices);
         add_handler(NtUserHwndQueryRedirectionInfo);
@@ -2254,6 +2286,10 @@ namespace sogen
         add_callback(NtUserSetWindowLong, window_style_change_state);
         add_callback(NtUserSetWindowLongPtr, window_style_change_state);
         add_callback(NtUserUpdateWindow, window_update_state);
+        add_callback(NtUserSetFocus, focus_change_state);
+        add_stateless_callback(NtUserGetControlBrush);
+        add_stateless_callback(NtUserGetControlColor);
+        add_stateless_callback(NtUserFillWindow);
         add_callback(NtUserGetMessage, get_message_hook_state);
         add_callback(NtUserPeekMessage, get_message_hook_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);

@@ -7,6 +7,8 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <variant>
 
 namespace sogen
 {
@@ -41,6 +43,7 @@ namespace sogen
     void sys_close(const macos_syscall_context& c);
     void sys_dup(const macos_syscall_context& c);
     void sys_dup2(const macos_syscall_context& c);
+    void sys_pipe(const macos_syscall_context& c);
     void sys_getdtablesize(const macos_syscall_context& c);
     void sys_fcntl(const macos_syscall_context& c);
     void sys_fsgetpath(const macos_syscall_context& c);
@@ -81,6 +84,11 @@ namespace sogen
     {
         return (file.type == fd_type::file && !file.is_standard_stream()) || file.type == fd_type::directory;
     }
+
+    constexpr int MACOS_AT_FDCWD = -2;
+
+    std::variant<std::string, posix_errno> read_guest_path_argument(const macos_syscall_context& c, size_t index,
+                                                                    int directory_fd = MACOS_AT_FDCWD);
 
     std::optional<uint64_t> allocate_virtual_memory(macos_emulator& emu, uint64_t address, uint64_t size, uint64_t mask, uint64_t flags,
                                                     memory_permission permissions, bool honor_hint);

@@ -389,6 +389,7 @@ namespace sogen
         {
             io_device_context context;
             std::optional<std::chrono::steady_clock::time_point> timeout{};
+            bool timeout_absolute{};
             handle retained_completion_port{};
 
             pending_poll(memory_interface& emu)
@@ -396,9 +397,11 @@ namespace sogen
             {
             }
 
-            pending_poll(const io_device_context& context, const std::optional<std::chrono::steady_clock::time_point> timeout)
+            pending_poll(const io_device_context& context, const std::optional<std::chrono::steady_clock::time_point> timeout,
+                         const bool timeout_absolute)
                 : context(context),
-                  timeout(timeout)
+                  timeout(timeout),
+                  timeout_absolute(timeout_absolute)
             {
             }
 
@@ -411,6 +414,7 @@ namespace sogen
             {
                 this->context.serialize(buffer);
                 buffer.write_optional(this->timeout);
+                buffer.write(this->timeout_absolute);
                 buffer.write(this->retained_completion_port);
             }
 
@@ -418,6 +422,7 @@ namespace sogen
             {
                 this->context.deserialize(buffer);
                 buffer.read_optional(this->timeout);
+                buffer.read(this->timeout_absolute);
                 buffer.read(this->retained_completion_port);
             }
         };
@@ -433,11 +438,45 @@ namespace sogen
                 std::unique_ptr<network::i_socket> accepted_socket;
             };
 
+            // A connected stream socket's two ends, the bytes that had reached it unread when it was saved, and whether an
+            // accept gave it its socket.
+            struct saved_connection
+            {
+                network::address local{};
+                network::address remote{};
+                std::vector<std::byte> unread{};
+                bool accepted{};
+
+                void serialize(utils::buffer_serializer& buffer) const
+                {
+                    buffer.write(this->local);
+                    buffer.write(this->remote);
+                    buffer.write(this->unread);
+                    buffer.write(this->accepted);
+                }
+
+                void deserialize(utils::buffer_deserializer& buffer)
+                {
+                    buffer.read(this->local);
+                    buffer.read(this->remote);
+                    buffer.read(this->unread);
+                    buffer.read(this->accepted);
+                }
+            };
+
             std::unique_ptr<network::i_socket> s_{};
 
             bool executing_delayed_ioctl_{};
             bool connect_failed_{};
-            bool bound_{};
+            // The address the guest bound the socket to (for a listener, the one the host assigned, as a bind to port 0
+            // picks its port then) and the backlog it listens with. A load creates a new host socket, which takes both
+            // again, so a server the guest runs keeps its port; a connection's peer is gone.
+            std::optional<network::address> bound_address_{};
+            std::optional<int> listen_backlog_{};
+            // Set between a load and restore_after_state_restore, which connects the socket to its peer again.
+            std::optional<saved_connection> saved_connection_{};
+            // The socket came from an accept: after a load, the end of its connection that the other end connects to.
+            bool accepted_{};
             std::optional<ULONG> connect_data_sent_{};
             std::optional<afd_creation_data> creation_data{};
             std::optional<bool> require_poll_{};
@@ -490,6 +529,14 @@ namespace sogen
                 if (this->s_)
                 {
                     this->s_->set_blocking(false);
+                }
+            }
+
+            void move_absolute_deadlines(const std::chrono::steady_clock::duration system_time_ahead) override
+            {
+                for (auto& poll : this->pending_polls_)
+                {
+                    utils::follow_system_time(poll.timeout, poll.timeout_absolute, system_time_ahead);
                 }
             }
 
@@ -813,10 +860,24 @@ namespace sogen
                 buffer.read_optional(this->timeout_);
                 buffer.read(this->non_blocking_);
                 buffer.read(this->connect_failed_);
-                buffer.read(this->bound_);
+                buffer.read_optional(this->bound_address_);
+                buffer.read_optional(this->listen_backlog_);
+                buffer.read_optional(this->saved_connection_);
                 buffer.read_optional(this->connect_data_sent_);
                 buffer.read(this->shared_context_);
                 buffer.read_vector(this->pending_polls_);
+
+                // A connected socket is bound in restore_after_state_restore: by its connect, or here as well when it
+                // stays unconnected.
+                if (!this->saved_connection_)
+                {
+                    this->bind_again();
+                }
+
+                if (this->listen_backlog_ && !this->s_->listen(*this->listen_backlog_))
+                {
+                    throw std::runtime_error("Failed to listen on a restored socket");
+                }
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override
@@ -828,10 +889,179 @@ namespace sogen
                 buffer.write_optional(this->timeout_);
                 buffer.write(this->non_blocking_);
                 buffer.write(this->connect_failed_);
-                buffer.write(this->bound_);
+                buffer.write_optional(this->bound_address_);
+                buffer.write_optional(this->listen_backlog_);
+                buffer.write_optional(this->connection_to_save());
                 buffer.write_optional(this->connect_data_sent_);
                 buffer.write(this->shared_context_);
                 buffer.write_vector(this->pending_polls_);
+            }
+
+            // The host connection ends with the run that saved it. Its two ends and the bytes waiting unread are kept, so
+            // a load can connect the socket to its peer again when the peer is a socket of this process as well (Destiny
+            // 2 runs its server inside the guest); a peer outside it lost its state, so then the socket stays unconnected.
+            std::optional<saved_connection> connection_to_save() const
+            {
+                if (!this->s_ || !this->creation_data || translate_win_to_host_type(this->creation_data->type) != SOCK_STREAM)
+                {
+                    return std::nullopt;
+                }
+
+                auto remote = this->s_->get_remote_address();
+                auto local = remote ? this->s_->get_local_address() : std::nullopt;
+                if (!local)
+                {
+                    return std::nullopt;
+                }
+
+                saved_connection connection{.local = std::move(*local), .remote = std::move(*remote), .accepted = this->accepted_};
+                for (size_t size = 0x10000;; size *= 2)
+                {
+                    connection.unread.resize(size);
+                    const auto peeked = this->s_->peek(connection.unread);
+                    if (peeked < static_cast<sent_size>(size))
+                    {
+                        connection.unread.resize(peeked > 0 ? static_cast<size_t>(peeked) : 0);
+                        return connection;
+                    }
+                }
+            }
+
+            void restore_after_state_restore(windows_emulator& win_emu) override
+            {
+                if (!this->saved_connection_)
+                {
+                    return;
+                }
+
+                const auto connection = std::move(*this->saved_connection_);
+                this->saved_connection_.reset();
+
+                auto* peer = find_endpoint(win_emu, [&](const afd_endpoint& endpoint) {
+                    return endpoint.saved_connection_ && endpoint.saved_connection_->local == connection.remote &&
+                           endpoint.saved_connection_->remote == connection.local;
+                });
+                if (!peer)
+                {
+                    this->bind_again();
+                    return;
+                }
+
+                const auto peer_connection = std::move(*peer->saved_connection_);
+                peer->saved_connection_.reset();
+
+                // The end an accept gave its socket is the one the other end connects to again: through the listening
+                // socket of this process at its port or, when that listener is closed, through its own new socket, which
+                // listens at its address meanwhile.
+                if (connection.accepted == peer_connection.accepted)
+                {
+                    this->bind_again();
+                    peer->bind_again();
+                    return;
+                }
+
+                auto& server = connection.accepted ? *this : *peer;
+                auto& client = connection.accepted ? *peer : *this;
+                const auto& server_connection = connection.accepted ? connection : peer_connection;
+                const auto& client_connection = connection.accepted ? peer_connection : connection;
+
+                // ponytail: matched by port and family, as two listeners on one port with different addresses do not occur.
+                auto* listener = find_endpoint(win_emu, [&](const afd_endpoint& endpoint) {
+                    return endpoint.listen_backlog_ && endpoint.bound_address_ &&
+                           endpoint.bound_address_->get_port() == server_connection.local.get_port() &&
+                           endpoint.bound_address_->get_family() == server_connection.local.get_family();
+                });
+                if (!listener && (!server.s_->bind(server_connection.local) || !server.s_->listen(1)))
+                {
+                    throw std::runtime_error("Failed to listen for a restored connection at " + server_connection.local.to_string());
+                }
+
+                server.set_socket(accept_restored_connection(*client.s_, listener ? *listener->s_ : *server.s_, server_connection.local));
+                server.accepted_ = true;
+                send_unread(*client.s_, server_connection.unread);
+                send_unread(*server.s_, client_connection.unread);
+            }
+
+            // A load whose address is taken fails rather than leave the guest a socket that is not there.
+            void bind_again() const
+            {
+                if (this->bound_address_ && !this->s_->bind(*this->bound_address_))
+                {
+                    throw std::runtime_error("Failed to bind a restored socket to " + this->bound_address_->to_string());
+                }
+            }
+
+            template <typename Predicate>
+            static afd_endpoint* find_endpoint(windows_emulator& win_emu, const Predicate& predicate)
+            {
+                for (auto& device : win_emu.process.devices | std::views::values)
+                {
+                    auto* endpoint = device.template get_internal_device<afd_endpoint>();
+                    if (endpoint && predicate(*endpoint))
+                    {
+                        return endpoint;
+                    }
+                }
+
+                return nullptr;
+            }
+
+            // What a non-blocking connect reports while it is still under way: EINPROGRESS on Linux and macOS, EWOULDBLOCK
+            // on Windows.
+            static bool is_connect_in_progress(const int error)
+            {
+                return error == SERR(EINPROGRESS) || error == SERR(EWOULDBLOCK)
+#ifndef _WIN32
+                       || error == EAGAIN
+#endif
+                       || error == SERR(EALREADY);
+            }
+
+            // Connects client to the listener at address and returns the socket the listener accepts from it.
+            static std::unique_ptr<network::i_socket> accept_restored_connection(network::i_socket& client, network::i_socket& listener,
+                                                                                 const network::address& address)
+            {
+                if (!client.connect(address) && !is_connect_in_progress(client.get_last_error()))
+                {
+                    throw std::runtime_error("Failed to connect a restored socket to " + address.to_string());
+                }
+
+                const auto client_address = client.get_local_address();
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (std::chrono::steady_clock::now() < deadline)
+                {
+                    network::address from{};
+                    if (auto accepted = listener.accept(from); accepted && client_address && from.get_port() == client_address->get_port())
+                    {
+                        return accepted;
+                    }
+
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+
+                throw std::runtime_error("A restored connection to " + address.to_string() + " was not accepted");
+            }
+
+            // Sends the bytes the peer had waiting unread when it was saved, so they wait there to be read again.
+            static void send_unread(network::i_socket& socket, std::span<const std::byte> data)
+            {
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                while (!data.empty())
+                {
+                    const auto sent = socket.send(data);
+                    if (sent > 0)
+                    {
+                        data = data.subspan(static_cast<size_t>(sent));
+                        continue;
+                    }
+
+                    if (socket.get_last_error() != SERR(EWOULDBLOCK) || std::chrono::steady_clock::now() >= deadline)
+                    {
+                        throw std::runtime_error("Failed to give a restored connection its unread bytes");
+                    }
+
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
             }
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -951,7 +1181,7 @@ namespace sogen
                     return STATUS_CONNECTION_ACTIVE;
                 }
 
-                if (!this->bound_ || this->s_->is_listening())
+                if (!this->bound_address_ || this->s_->is_listening())
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -1111,11 +1341,7 @@ namespace sogen
                 {
                     const auto error = this->s_->get_last_error();
 
-                    if (error == SERR(EINPROGRESS) || error == SERR(EWOULDBLOCK)
-#ifndef _WIN32
-                        || error == EAGAIN
-#endif
-                        || error == SERR(EALREADY))
+                    if (is_connect_in_progress(error))
                     {
                         return this->delay_ioctrl(win_emu, c, false);
                     }
@@ -1157,11 +1383,11 @@ namespace sogen
                     return STATUS_ADDRESS_ALREADY_ASSOCIATED;
                 }
 
-                this->bound_ = true;
+                this->bound_address_ = addr;
                 return STATUS_SUCCESS;
             }
 
-            NTSTATUS ioctl_listen(windows_emulator& win_emu, const io_device_context& c) const
+            NTSTATUS ioctl_listen(windows_emulator& win_emu, const io_device_context& c)
             {
                 if (!this->s_)
                 {
@@ -1175,9 +1401,16 @@ namespace sogen
 
                 const auto listen_info = win_emu.emu().read_memory<AFD_LISTEN_INFO>(c.input_buffer);
 
-                if (!this->s_->listen(static_cast<int>(listen_info.MaximumConnectionQueue)))
+                const auto backlog = static_cast<int>(listen_info.MaximumConnectionQueue);
+                if (!this->s_->listen(backlog))
                 {
                     return STATUS_INVALID_PARAMETER;
+                }
+
+                this->listen_backlog_ = backlog;
+                if (const auto local_address = this->s_->get_local_address())
+                {
+                    this->bound_address_ = *local_address;
                 }
 
                 return STATUS_SUCCESS;
@@ -1274,6 +1507,7 @@ namespace sogen
                 }
 
                 target_endpoint->set_socket(std::move(accepted_socket));
+                target_endpoint->accepted_ = true;
 
                 pending_connections_.erase(it);
 
@@ -1598,7 +1832,7 @@ namespace sogen
                                                                           {.QuadPart = std::numeric_limits<int64_t>::max()});
                 }
 
-                pending_poll poll{c, timeout};
+                pending_poll poll{c, timeout, timeout && utils::is_absolute_due_time(info.Timeout)};
                 this->pending_polls_.reserve(this->pending_polls_.size() + 1);
 
                 handle retained_port{};

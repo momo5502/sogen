@@ -103,7 +103,9 @@ namespace sogen
 
         std::vector<posix_memory_region_info> get_mapped_region_infos() const;
         std::optional<posix_memory_region_info> get_region_info(uint64_t address) const;
+        bool is_readable_range(uint64_t address, size_t size) const;
         bool is_writable_range(uint64_t address, size_t size) const;
+        size_t writable_prefix_size(uint64_t address, size_t size) const;
         posix_memory_stats compute_memory_stats() const;
 
         using memory_allocate_callback = std::function<void(uint64_t address, size_t size, memory_permission permissions, bool committed)>;
@@ -118,6 +120,11 @@ namespace sogen
         uint64_t get_mmap_base() const
         {
             return this->mmap_base_;
+        }
+
+        uint64_t get_max_mmap_end() const
+        {
+            return this->layout_.max_mmap_end;
         }
 
         void set_mmap_base(uint64_t address)
@@ -143,6 +150,7 @@ namespace sogen
         std::vector<std::pair<uint64_t, memory_release_callback>> memory_release_callbacks_{};
 
         std::optional<uint64_t> find_overlap_end(uint64_t address, size_t size) const;
+        size_t accessible_prefix_size(uint64_t address, size_t size, bool (*is_accessible)(memory_permission)) const;
 
         void notify_memory_allocate(uint64_t address, size_t size, memory_permission permissions, bool committed);
         void notify_memory_protect(uint64_t address, size_t size, memory_permission permissions);

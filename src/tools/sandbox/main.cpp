@@ -1,7 +1,6 @@
 #include <windows_emulator.hpp>
 #include <subprocess_process_manager.hpp>
-#include <emulator_process_target.hpp>
-#include <inherited_pipes.hpp>
+#include <managed_process_start.hpp>
 #include <registry/registry_file.hpp>
 #include <filesystem/directory_mount.hpp>
 #include <filesystem/document_mount.hpp>
@@ -88,6 +87,8 @@ namespace sogen::sandbox
             // Elevation is not part of the snapshot: the token queries and access checks read it from the current
             // settings, so a snapshot has to refuse to resume under the other setting.
             configuration += std::string{"elevated="} + (settings.elevated ? "on" : "off") + "\n";
+            configuration +=
+                "max-display-mode=" + (settings.max_display_mode ? to_string(*settings.max_display_mode) : std::string{}) + "\n";
 
             for (const auto& mount : settings.mounts)
             {
@@ -143,8 +144,9 @@ namespace sogen::sandbox
                 const std::vector<document_mount>& document_mounts, const std::filesystem::path& emulation_root,
                 const std::filesystem::path& registry_directory, const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
-                const bool spoof_gpu_features, const bool elevated, const std::filesystem::path& snapshot_directory,
-                const std::filesystem::path& resume_file, managed_process_connection* managed_connection)
+                const bool spoof_gpu_features, const bool elevated, const std::optional<display_mode>& max_display_mode,
+                const std::filesystem::path& snapshot_directory, const std::filesystem::path& resume_file,
+                managed_process_connection* managed_connection)
         {
             application_settings app_settings{
                 .application = args.empty() ? std::u8string{} : std::u8string(args[0].begin(), args[0].end()),
@@ -156,19 +158,7 @@ namespace sogen::sandbox
             }
             if (managed_connection)
             {
-                const auto& request = managed_connection->request();
-                app_settings.argument0 = u8_to_u16(request.argument0);
-                app_settings.command_line = u8_to_u16(request.command_line);
-                app_settings.process_id = request.process_id;
-                app_settings.thread_id = request.thread_id;
-                if (!request.working_directory.empty())
-                {
-                    app_settings.working_directory = windows_path(u8_to_u16(request.working_directory));
-                }
-                for (const auto& [name, value] : request.environment)
-                {
-                    app_settings.environment.insert_or_assign(u8_to_u16(name), u8_to_u16(value));
-                }
+                apply_managed_request(app_settings, managed_connection->request());
             }
 
 #ifdef _WIN32
@@ -196,6 +186,7 @@ namespace sogen::sandbox
                 .network = network_mode,
                 .spoof_gpu_features = spoof_gpu_features,
                 .elevated = elevated,
+                .max_display_mode = max_display_mode,
             };
 
             if (!emulation_root.empty())
@@ -227,6 +218,11 @@ namespace sogen::sandbox
                                                            if (elevated)
                                                            {
                                                                arguments.emplace_back("--elevated");
+                                                           }
+                                                           if (max_display_mode)
+                                                           {
+                                                               arguments.emplace_back("--max-display-mode");
+                                                               arguments.push_back(to_string(*max_display_mode));
                                                            }
                                                            if (!settings.emulation_root.empty())
                                                            {
@@ -262,6 +258,16 @@ namespace sogen::sandbox
                                                            }
                                                            return arguments;
                                                        }};
+
+            // Declared before the emulator, so the guest's windows are gone while this process waits for its children. Any
+            // other way out leaves the children to the process manager's destructor.
+            bool guest_exited = false;
+            const auto children_guard = utils::finally([&] {
+                if (guest_exited)
+                {
+                    process_manager.wait_for_processes();
+                }
+            });
 
             emulator_callbacks callbacks{};
             callbacks.on_stdout = [](const std::string_view data) {
@@ -306,23 +312,7 @@ namespace sogen::sandbox
             std::unique_ptr<emulator_process_target> managed_target{};
             if (managed_connection)
             {
-                if (!managed_connection->request().registry_state.empty())
-                {
-                    utils::buffer_deserializer state{managed_connection->request().registry_state};
-                    win_emu.registry.deserialize_runtime_state(state);
-                }
-                win_emu.setup_process_if_necessary();
-                win_emu.process.parent_process_id = managed_connection->request().parent_process_id;
-                if (managed_connection->request().debugged)
-                {
-                    win_emu.attach_debugger();
-                }
-                install_inherited_pipes(win_emu, managed_connection->request(), managed_connection->take_inherited_pipes());
-                managed_target = std::make_unique<emulator_process_target>(win_emu);
-                if (!managed_connection->wait_for_resume(*managed_target))
-                {
-                    throw std::runtime_error("Acknowledging managed process startup failed");
-                }
+                managed_target = start_managed_process(win_emu, *managed_connection);
             }
             const auto managed_process_guard = utils::finally([&] {
                 if (managed_connection)
@@ -395,6 +385,7 @@ namespace sogen::sandbox
                 throw std::runtime_error("Reporting managed process exit failed");
             }
 
+            guest_exited = true;
             return static_cast<int>(*exit_status);
         }
 
@@ -455,6 +446,13 @@ namespace sogen::sandbox
 
             app.add_flag("--spoof-gpu-features", spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
+            std::string max_display_mode_name{};
+            app.add_option("--max-display-mode", max_display_mode_name,
+                           "The largest display mode the guest sees, e.g. 1280x720. Games sized by the display then render fewer pixels")
+                ->type_name("WIDTHxHEIGHT")
+                ->check([](const std::string& value) {
+                    return parse_display_mode(value) ? std::string{} : "Not one of the display's modes: " + value; //
+                });
             std::filesystem::path snapshot_directory{"snapshots"};
             std::filesystem::path resume_file{};
             app.add_option("--snapshot-dir", snapshot_directory, "Where Ctrl+Alt+Shift+S saves the process")
@@ -532,7 +530,8 @@ namespace sogen::sandbox
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_root_mode(root_mode).value(), root_layer, std::move(mounts), directory_mounts, document_mounts,
                            emulation_root, registry_directory, registry_files, environment, network::parse_network_mode(network_name),
-                           spoof_gpu_features, elevated, snapshot_directory, resume_file, managed_process ? &*managed_process : nullptr);
+                           spoof_gpu_features, elevated, parse_display_mode(max_display_mode_name), snapshot_directory, resume_file,
+                           managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {

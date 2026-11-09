@@ -37,6 +37,15 @@ abstract interface class StoreSignIn implements Listenable {
   StoreService get service;
   bool get isSignedIn;
 
+  /// The store's id of the signed-in user, once the store named it.
+  String? get userId;
+
+  /// The name the store shows for the user, once known.
+  String? get displayName;
+
+  /// Asks the store who is signed in, when it has not said so yet.
+  Future<void> identify();
+
   /// Completes with false when the user left the sign-in without finishing it.
   Future<bool> signIn();
   Future<void> signOut();
@@ -70,6 +79,8 @@ abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
   Future<String>? _refreshing;
   int _session = 0;
   Future<void> _secretChanges = Future.value();
+  String? _userId;
+  String? _displayName;
 
   @override
   StoreService get service;
@@ -96,6 +107,21 @@ abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
 
   @protected
   SignedOutException signedOut();
+
+  /// Who a token answer of the store was issued for.
+  @protected
+  ({String? userId, String? displayName}) identityOf(Map<String, Object?> body);
+
+  /// Looks up who is signed in, for stores whose token answer does not say so completely.
+  @protected
+  Future<({String? userId, String? displayName})> fetchIdentity(String accessToken) async =>
+      (userId: null, displayName: null);
+
+  @override
+  String? get userId => _userId;
+
+  @override
+  String? get displayName => _displayName;
 
   @override
   bool get isSignedIn => _refreshToken != null;
@@ -125,13 +151,36 @@ abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
 
   @override
   Future<bool> signIn() async {
+    // The login page would otherwise sign in to the account it remembers instead of letting the user pick another.
+    await _forgetLoginPage();
     final grant = await authorize();
     if (grant == null) {
       return false;
     }
 
-    await _redeem(grant);
+    final accessToken = await _redeem(grant);
+    if (_userId == null || _displayName == null) {
+      await _learnIdentity(accessToken);
+    }
     return true;
+  }
+
+  @override
+  Future<void> identify() async {
+    if (!isSignedIn || _userId != null) {
+      return;
+    }
+    final accessToken = await this.accessToken();
+    if (_userId == null) {
+      await _learnIdentity(accessToken);
+    }
+  }
+
+  Future<void> _learnIdentity(String accessToken) async {
+    final identity = await fetchIdentity(accessToken);
+    _userId ??= identity.userId;
+    _displayName ??= identity.displayName;
+    notifyListeners();
   }
 
   @override
@@ -220,6 +269,9 @@ abstract class StoreAccount extends ChangeNotifier implements StoreSignIn {
       throw signedOut();
     }
 
+    final identity = identityOf(body);
+    _userId = identity.userId ?? _userId;
+    _displayName = identity.displayName ?? _displayName;
     _refreshToken = refreshToken;
     _accessToken = accessToken;
     _accessTokenExpiry = _now().add(Duration(seconds: expiresIn));

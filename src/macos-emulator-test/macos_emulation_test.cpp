@@ -97,6 +97,112 @@ namespace sogen::macos_test
             '/',  'd',  'a',  't',  'a',  '\0',       // path
         });
 
+        // A pipe whose write end is not where XNU returns it fails the write and exits instead of blocking on the read.
+        constexpr auto PIPE_ROUND_TRIP_CODE = std::to_array<uint8_t>({
+            0xBA, 0xFF, 0xFF, 0xFF, 0xFF, // mov edx, -1
+            0xB8, 0x2A, 0x00, 0x00, 0x02, // mov eax, 0x200002A (pipe)
+            0x0F, 0x05,                   // syscall
+            0x89, 0xC3,                   // mov ebx, eax (read end)
+            0x41, 0x89, 0xD4,             // mov r12d, edx (write end)
+            0xC6, 0x04, 0x24, 0x5A,       // mov byte [rsp], 'Z'
+            0x44, 0x89, 0xE7,             // mov edi, r12d
+            0x48, 0x89, 0xE6,             // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00, // mov edx, 1
+            0xB8, 0x04, 0x00, 0x00, 0x02, // mov eax, 0x2000004 (write)
+            0x0F, 0x05,                   // syscall
+            0x89, 0xC7,                   // mov edi, eax
+            0x83, 0xFF, 0x01,             // cmp edi, 1
+            0x75, 0x19,                   // jne exit
+            0xC6, 0x04, 0x24, 0x00,       // mov byte [rsp], 0
+            0x89, 0xDF,                   // mov edi, ebx
+            0x48, 0x89, 0xE6,             // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00, // mov edx, 1
+            0xB8, 0x03, 0x00, 0x00, 0x02, // mov eax, 0x2000003 (read)
+            0x0F, 0x05,                   // syscall
+            0x0F, 0xB6, 0x3C, 0x24,       // movzx edi, byte [rsp]
+            0xB8, 0x01, 0x00, 0x00, 0x02, // exit: mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                   // syscall
+        });
+
+        constexpr auto PIPE_FIONREAD_CODE = std::to_array<uint8_t>({
+            0xB8, 0x2A, 0x00, 0x00, 0x02,                   // mov eax, 0x200002A (pipe)
+            0x0F, 0x05,                                     // syscall
+            0x89, 0xC3,                                     // mov ebx, eax (read end)
+            0x89, 0xD7,                                     // mov edi, edx (write end)
+            0xC6, 0x04, 0x24, 0x5A,                         // mov byte [rsp], 'Z'
+            0x48, 0x89, 0xE6,                               // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00,                   // mov edx, 1
+            0xB8, 0x04, 0x00, 0x00, 0x02,                   // mov eax, 0x2000004 (write)
+            0x0F, 0x05,                                     // syscall
+            0xC7, 0x44, 0x24, 0x08, 0xFF, 0xFF, 0xFF, 0xFF, // mov dword [rsp + 8], -1
+            0x89, 0xDF,                                     // mov edi, ebx
+            0xBE, 0x7F, 0x66, 0x04, 0x40,                   // mov esi, 0x4004667F (FIONREAD)
+            0x48, 0x8D, 0x54, 0x24, 0x08,                   // lea rdx, [rsp + 8]
+            0xB8, 0x36, 0x00, 0x00, 0x02,                   // mov eax, 0x2000036 (ioctl)
+            0x0F, 0x05,                                     // syscall
+            0x8B, 0x7C, 0x24, 0x08,                         // mov edi, dword [rsp + 8]
+            0xB8, 0x01, 0x00, 0x00, 0x02,                   // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                     // syscall
+        });
+
+        constexpr auto PIPE_FIONBIO_READ_CODE = std::to_array<uint8_t>({
+            0xB8, 0x2A, 0x00, 0x00, 0x02,                   // mov eax, 0x200002A (pipe)
+            0x0F, 0x05,                                     // syscall
+            0x89, 0xC3,                                     // mov ebx, eax (read end)
+            0xC7, 0x44, 0x24, 0x08, 0x01, 0x00, 0x00, 0x00, // mov dword [rsp + 8], 1
+            0x89, 0xDF,                                     // mov edi, ebx
+            0xBE, 0x7E, 0x66, 0x04, 0x80,                   // mov esi, 0x8004667E (FIONBIO)
+            0x48, 0x8D, 0x54, 0x24, 0x08,                   // lea rdx, [rsp + 8]
+            0xB8, 0x36, 0x00, 0x00, 0x02,                   // mov eax, 0x2000036 (ioctl)
+            0x0F, 0x05,                                     // syscall
+            0x89, 0xDF,                                     // mov edi, ebx
+            0x48, 0x89, 0xE6,                               // mov rsi, rsp
+            0xBA, 0x01, 0x00, 0x00, 0x00,                   // mov edx, 1
+            0xB8, 0x03, 0x00, 0x00, 0x02,                   // mov eax, 0x2000003 (read)
+            0x0F, 0x05,                                     // syscall
+            0x89, 0xC7,                                     // mov edi, eax
+            0x11, 0xFF,                                     // adc edi, edi
+            0xB8, 0x01, 0x00, 0x00, 0x02,                   // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                     // syscall
+        });
+
+        constexpr auto FIOCLEX_GETFD_CODE = std::to_array<uint8_t>({
+            0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
+            0xBE, 0x01, 0x66, 0x00, 0x20, // mov esi, 0x20006601 (FIOCLEX)
+            0xB8, 0x36, 0x00, 0x00, 0x02, // mov eax, 0x2000036 (ioctl)
+            0x0F, 0x05,                   // syscall
+            0xBF, 0x01, 0x00, 0x00, 0x00, // mov edi, 1
+            0xBE, 0x01, 0x00, 0x00, 0x00, // mov esi, 1 (F_GETFD)
+            0xB8, 0x5C, 0x00, 0x00, 0x02, // mov eax, 0x200005C (fcntl)
+            0x0F, 0x05,                   // syscall
+            0x89, 0xC7,                   // mov edi, eax
+            0x11, 0xFF,                   // adc edi, edi
+            0xB8, 0x01, 0x00, 0x00, 0x02, // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                   // syscall
+        });
+
+        // mmap(NULL, length, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0), exiting with errno * 2 + carry.
+        constexpr std::array<uint8_t, 47> make_anonymous_mmap_code(const std::array<uint8_t, 4> length)
+        {
+            return {
+                0x31, 0xFF,                                                   // xor edi, edi
+                0x48, 0xC7, 0xC6, length[0], length[1], length[2], length[3], // mov rsi, length
+                0xBA, 0x03, 0x00, 0x00,      0x00,                            // mov edx, 3
+                0x41, 0xBA, 0x02, 0x10,      0x00,      0x00,                 // mov r10d, 0x1002
+                0x41, 0xB8, 0xFF, 0xFF,      0xFF,      0xFF,                 // mov r8d, -1
+                0x45, 0x31, 0xC9,                                             // xor r9d, r9d
+                0xB8, 0xC5, 0x00, 0x00,      0x02,                            // mov eax, 0x20000C5 (mmap)
+                0x0F, 0x05,                                                   // syscall
+                0x89, 0xC7,                                                   // mov edi, eax
+                0x11, 0xFF,                                                   // adc edi, edi
+                0xB8, 0x01, 0x00, 0x00,      0x02,                            // mov eax, 0x2000001 (exit)
+                0x0F, 0x05,                                                   // syscall
+            };
+        }
+
+        constexpr auto WRAPPING_MMAP_LENGTH_CODE = make_anonymous_mmap_code({0x01, 0xF0, 0xFF, 0xFF});
+        constexpr auto ADDRESS_SPACE_MMAP_LENGTH_CODE = make_anonymous_mmap_code({0x00, 0xF0, 0xFF, 0xFF});
+
         constexpr auto OVERSIZED_WRITE_CODE = std::to_array<uint8_t>({
             0xB8, 0x04, 0x00, 0x00, 0x02,                               // mov eax, 0x2000004 (write)
             0xBF, 0x01, 0x00, 0x00, 0x00,                               // mov edi, 1
@@ -546,6 +652,52 @@ namespace sogen::macos_test
         EXPECT_EQ(result.stderr_data, "hello\n");
         EXPECT_TRUE(result.stdout_data.empty());
         EXPECT_EQ(result.exit_status, 0);
+    }
+
+    TEST(MacosEmulationTest, ReturnsBothPipeEndsInRegisters)
+    {
+        const auto result = run_image(make_test_image(PIPE_ROUND_TRIP_CODE));
+
+        EXPECT_EQ(result.exit_status, 'Z');
+    }
+
+    TEST(MacosEmulationTest, ReportsBytesQueuedInPipe)
+    {
+        const auto result = run_image(make_test_image(PIPE_FIONREAD_CODE));
+
+        EXPECT_EQ(result.exit_status, 1);
+    }
+
+    TEST(MacosEmulationTest, ReadOfEmptyPipeMadeNonBlockingByIoctlFailsWithAgain)
+    {
+        const auto result = run_image(make_test_image(PIPE_FIONBIO_READ_CODE));
+
+        constexpr int eagain = 35;
+        EXPECT_EQ(result.exit_status, (eagain * 2) + 1);
+    }
+
+    TEST(MacosEmulationTest, MarksDescriptorCloseOnExecThroughIoctl)
+    {
+        const auto result = run_image(make_test_image(FIOCLEX_GETFD_CODE));
+
+        constexpr int fd_cloexec = 1;
+        EXPECT_EQ(result.exit_status, fd_cloexec * 2);
+    }
+
+    TEST(MacosEmulationTest, FailsMmapWhoseLengthWrapsWhenRoundedToAPage)
+    {
+        const auto result = run_image(make_test_image(WRAPPING_MMAP_LENGTH_CODE));
+
+        constexpr int einval = 22;
+        EXPECT_EQ(result.exit_status, (einval * 2) + 1);
+    }
+
+    TEST(MacosEmulationTest, FailsMmapLongerThanTheAddressSpace)
+    {
+        const auto result = run_image(make_test_image(ADDRESS_SPACE_MMAP_LENGTH_CODE));
+
+        constexpr int enomem = 12;
+        EXPECT_EQ(result.exit_status, (enomem * 2) + 1);
     }
 
     TEST(MacosEmulationTest, FailsReadIntoUnwritableRangeWithoutConsumingInput)

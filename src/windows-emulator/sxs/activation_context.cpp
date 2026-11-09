@@ -1081,19 +1081,42 @@ namespace sogen::sxs
             }
         }
 
-        std::vector<std::u16string> directory_entries(const file_system& file_system, const windows_path& directory)
+        struct manifest_entry
         {
-            std::vector<std::u16string> entries{};
-            for (auto& entry : file_system.list_directory(directory))
+            std::u16string name;
+            std::string filename;
+        };
+
+        class manifest_directory
+        {
+          public:
+            const std::vector<manifest_entry>& entries(const file_system& file_system, const windows_path& directory)
             {
-                entries.push_back(std::move(entry.name));
+                if (!this->entries_)
+                {
+                    auto names = file_system.list_directory_names(directory);
+                    std::ranges::sort(names);
+                    std::vector<manifest_entry> entries{};
+                    entries.reserve(names.size());
+                    for (auto& name : names)
+                    {
+                        auto filename = to_lower(u16_to_u8(name));
+                        if (filename.ends_with(".manifest"))
+                        {
+                            entries.push_back({.name = std::move(name), .filename = std::move(filename)});
+                        }
+                    }
+                    this->entries_ = std::move(entries);
+                }
+                return *this->entries_;
             }
-            std::ranges::sort(entries);
-            return entries;
-        }
+
+          private:
+            std::optional<std::vector<manifest_entry>> entries_{};
+        };
 
         void apply_system_policy(const file_system& file_system, const windows_path& manifests_path, assembly_identity& identity,
-                                 const mapped_module& executable)
+                                 const mapped_module& executable, manifest_directory& manifests)
         {
             const auto name_fragment = winsxs_name(identity.name);
             const auto token_fragment = to_lower(identity.public_key_token);
@@ -1101,15 +1124,14 @@ namespace sogen::sxs
             const auto version_prefix =
                 std::to_string(identity.assembly_version.parts[0]) + "." + std::to_string(identity.assembly_version.parts[1]) + ".";
             const auto prefix = architecture + "_policy." + version_prefix + name_fragment + "_";
-            for (const auto& entry_name : directory_entries(file_system, manifests_path))
+            for (const auto& entry : manifests.entries(file_system, manifests_path))
             {
-                const auto filename = to_lower(u16_to_u8(entry_name));
-                if (!filename.starts_with(prefix) || (!token_fragment.empty() && filename.find(token_fragment) == std::string::npos) ||
-                    !filename.ends_with(".manifest"))
+                const auto& filename = entry.filename;
+                if (!filename.starts_with(prefix) || (!token_fragment.empty() && filename.find(token_fragment) == std::string::npos))
                 {
                     continue;
                 }
-                if (const auto policy = read_text_file(file_system, manifests_path / windows_path(entry_name)))
+                if (const auto policy = read_text_file(file_system, manifests_path / windows_path(entry.name)))
                 {
                     apply_binding_redirects(*policy, identity);
                 }
@@ -1191,22 +1213,23 @@ namespace sogen::sxs
 
         std::optional<resolved_assembly> resolve_winsxs_assembly(const file_system& file_system, const windows_path& manifests_path,
                                                                  const windows_path& winsxs_path, const assembly_identity& identity,
-                                                                 const mapped_module& executable, const std::string_view preferred_language)
+                                                                 const mapped_module& executable, const std::string_view preferred_language,
+                                                                 manifest_directory& manifests)
         {
             const auto architecture = architecture_name(identity, executable);
             const auto prefix = architecture + "_" + winsxs_name(identity.name) + "_";
             const auto token_fragment = "_" + to_lower(identity.public_key_token) + "_";
             std::optional<resolved_assembly> exact{};
             std::optional<resolved_assembly> compatible{};
-            for (const auto& entry_name : directory_entries(file_system, manifests_path))
+            for (const auto& entry : manifests.entries(file_system, manifests_path))
             {
-                const auto filename = to_lower(u16_to_u8(entry_name));
-                if (!filename.starts_with(prefix) || !filename.ends_with(".manifest") ||
+                const auto& filename = entry.filename;
+                if (!filename.starts_with(prefix) ||
                     (!identity.public_key_token.empty() && filename.find(token_fragment) == std::string::npos))
                 {
                     continue;
                 }
-                const auto xml = read_text_file(file_system, manifests_path / windows_path(entry_name));
+                const auto xml = read_text_file(file_system, manifests_path / windows_path(entry.name));
                 if (!xml)
                 {
                     continue;
@@ -1216,7 +1239,7 @@ namespace sogen::sxs
                 {
                     continue;
                 }
-                const auto stem = std::filesystem::path(entry_name).stem().u16string();
+                const auto stem = std::filesystem::path(entry.name).stem().u16string();
                 const auto assembly_directory = file_system.stat(winsxs_path / windows_path(stem));
                 if (!assembly_directory || (assembly_directory->st_mode & S_IFMT) != S_IFDIR)
                 {
@@ -1224,7 +1247,7 @@ namespace sogen::sxs
                 }
                 resolved_assembly result{};
                 result.identity = std::move(*manifest.identity);
-                result.manifest_path = (manifests_path / windows_path(entry_name)).u16string();
+                result.manifest_path = (manifests_path / windows_path(entry.name)).u16string();
                 result.directory_name = stem;
                 result.files = std::move(manifest.files);
                 result.dependencies = std::move(manifest.dependencies);
@@ -1602,6 +1625,7 @@ namespace sogen::sxs
             auto manifest = parse_manifest(manifest_source.contents);
             const auto winsxs_path = system_root / windows_path(u"WinSxS");
             const auto manifests_path = winsxs_path / windows_path(u"Manifests");
+            manifest_directory manifests{};
 
             resolved_assembly root{};
             if (manifest.identity)
@@ -1631,7 +1655,7 @@ namespace sogen::sxs
 
                 if (!config || allows_publisher_policy(config->contents, identity))
                 {
-                    apply_system_policy(file_system, manifests_path, identity, executable);
+                    apply_system_policy(file_system, manifests_path, identity, executable, manifests);
                 }
                 if (config)
                 {
@@ -1641,7 +1665,8 @@ namespace sogen::sxs
                 auto resolved = resolve_private_assembly(file_system, executable, identity);
                 if (!resolved)
                 {
-                    resolved = resolve_winsxs_assembly(file_system, manifests_path, winsxs_path, identity, executable, preferred_language);
+                    resolved = resolve_winsxs_assembly(file_system, manifests_path, winsxs_path, identity, executable, preferred_language,
+                                                       manifests);
                 }
                 if (!resolved)
                 {

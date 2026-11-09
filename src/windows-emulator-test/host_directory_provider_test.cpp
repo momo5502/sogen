@@ -69,6 +69,9 @@ namespace sogen::test
                     names.insert(entry.name);
                 }
 
+                const auto listed_names = provider.list_names(guest({}));
+                EXPECT_EQ(names, (std::set<std::u16string>{listed_names.begin(), listed_names.end()}));
+
                 return names;
             }
 
@@ -117,6 +120,28 @@ namespace sogen::test
                 EXPECT_FALSE(std::filesystem::exists(root / "source.bin"));
                 EXPECT_EQ(STATUS_SUCCESS, provider.remove(guest({u"renamed.bin"})));
                 EXPECT_FALSE(std::filesystem::exists(root / "renamed.bin"));
+            }
+
+            std::error_code ec{};
+            std::filesystem::remove_all(root, ec);
+        }
+
+        TEST(HostDirectoryProviderTest, KeepsThousandsOfFilesOpen)
+        {
+            const auto root =
+                std::filesystem::temp_directory_path() /
+                ("sogen-host-provider-test-" + std::to_string(std::random_device{}()) + std::to_string(std::random_device{}()));
+            write_host_file(root / "package.pkg", "data");
+
+            {
+                host_directory_provider provider{root};
+                std::vector<std::unique_ptr<i_file>> handles{};
+                for (size_t i = 0; i < 2000; ++i)
+                {
+                    auto result = provider.open(guest({u"package.pkg"}), u"rb");
+                    ASSERT_EQ(result.status, STATUS_SUCCESS) << "open " << i;
+                    handles.push_back(std::move(result.file));
+                }
             }
 
             std::error_code ec{};

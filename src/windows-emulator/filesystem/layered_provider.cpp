@@ -576,6 +576,32 @@ namespace sogen
         return entries;
     }
 
+    std::vector<std::u16string> layered_provider::list_names(const windows_path& path) const
+    {
+        this->journal_.refresh();
+        auto entries = this->upper_->list_names(path);
+        const auto lower_directory = this->lower_stat(path);
+        if (!lower_directory || !is_directory(*lower_directory) || this->journal_.hides_lower_children(path))
+        {
+            return entries;
+        }
+
+        std::unordered_set<std::u16string> names{};
+        for (const auto& entry : entries)
+        {
+            names.insert(utils::string::to_lower(entry));
+        }
+        for (auto& entry : this->lower_->list_names(path))
+        {
+            const auto name = utils::string::to_lower(entry);
+            if (!names.contains(name) && !this->journal_.is_hidden(path / windows_path{std::filesystem::path{name}}))
+            {
+                entries.push_back(std::move(entry));
+            }
+        }
+        return entries;
+    }
+
     NTSTATUS layered_provider::create_upper_parents(const windows_path& path)
     {
         for (const auto& ancestor : ancestors_of(path.parent()))

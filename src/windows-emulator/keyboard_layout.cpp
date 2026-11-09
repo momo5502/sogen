@@ -88,11 +88,9 @@ namespace sogen
         }
     }
 
-    char16_t key_character(const uint32_t virtual_key, const std::array<uint8_t, 256>& keys)
+    char16_t key_character(const uint32_t virtual_key, const key_modifiers modifiers)
     {
-        const auto down = [&keys](const uint32_t key) { return (keys[key] & 0x80) != 0; };
-
-        if (down(VK_CONTROL) && !down(VK_MENU))
+        if (modifiers.control && !modifiers.alt)
         {
             if (virtual_key >= 'A' && virtual_key <= 'Z')
             {
@@ -109,11 +107,23 @@ namespace sogen
             return 0;
         }
 
-        if (down(VK_CONTROL))
+        if (modifiers.control)
         {
             return 0;
         }
 
-        return us_layout_character(virtual_key, down(VK_SHIFT), (keys[VK_CAPITAL] & 0x01) != 0);
+        return us_layout_character(virtual_key, modifiers.shift, modifiers.caps_lock);
+    }
+
+    char16_t key_character(const uint32_t virtual_key, const std::array<uint8_t, 256>& keys)
+    {
+        const auto down = [&keys](const uint32_t key) { return (keys[key] & 0x80) != 0; };
+        const key_modifiers modifiers{
+            .shift = down(VK_SHIFT),
+            .control = down(VK_CONTROL),
+            .alt = down(VK_MENU),
+            .caps_lock = (keys[VK_CAPITAL] & 0x01) != 0,
+        };
+        return key_character(virtual_key, modifiers);
     }
 }

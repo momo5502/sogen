@@ -28,6 +28,7 @@ void main() {
       executable: 'test.exe',
       arguments: ['-windowed'],
       liveNetwork: true,
+      maxDisplayMode: DisplayMode(1280, 720),
       settings: GameSettings(trackpad: true, mouseSensitivity: 1.5, orientation: ScreenOrientation.landscape),
     );
 
@@ -38,6 +39,35 @@ void main() {
   test('entries saved before settings existed get the defaults', () {
     final decoded = Game.fromJson({'id': '1', 'name': 'Test', 'directory': '/sdcard/Test', 'executable': 'test.exe'});
     expect(decoded.settings.toJson(), const GameSettings().toJson());
+  });
+
+  test('a display mode the emulator does not offer is dropped instead of failing the start', () {
+    final decoded = Game.fromJson({
+      'id': '1',
+      'name': 'Test',
+      'directory': '/sdcard/Test',
+      'executable': 'test.exe',
+      'maxDisplayMode': '1000x700',
+    });
+    expect(decoded.maxDisplayMode, isNull);
+  });
+
+  test('a stored standard display mode reads as no cap, like the editor stores it', () {
+    final decoded = Game.fromJson({
+      'id': '1',
+      'name': 'Test',
+      'directory': '/sdcard/Test',
+      'executable': 'test.exe',
+      'maxDisplayMode': DisplayMode.standard.name,
+    });
+    expect(decoded.maxDisplayMode, isNull);
+  });
+
+  test('a display mode fits a screen held in either orientation', () {
+    const mode = DisplayMode(1600, 900);
+    expect(mode.fitsOn(1920, 1200), isTrue);
+    expect(mode.fitsOn(1200, 1920), isTrue);
+    expect(mode.fitsOn(1280, 800), isFalse);
   });
 
   test('copyWith keeps the id that names the suspended state', () {

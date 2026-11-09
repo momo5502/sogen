@@ -1,6 +1,7 @@
 #pragma once
 
 #include "macos_syscall_context.hpp"
+#include "macos_syscall_numbers.generated.hxx"
 
 #include <array>
 #include <string>
@@ -22,11 +23,11 @@ namespace sogen
         instruction_hook_continuation dispatch(macos_emulator& emu) const;
 
       private:
-        std::array<macos_syscall_entry, 600> unix_handlers_{};
+        std::array<macos_syscall_entry, MACOS_UNIX_SYSCALL_NAMES.size()> unix_handlers_{};
         std::array<macos_syscall_entry, 128> mach_handlers_{};
         std::array<macos_syscall_entry, 8> machdep_handlers_{};
 
-        void register_unix_handler(uint64_t number, macos_syscall_handler handler, std::string_view name);
+        void register_unix_handler(uint64_t number, macos_syscall_handler handler);
         void register_mach_handler(uint64_t number, macos_syscall_handler handler, std::string_view name);
         void register_machdep_handler(uint64_t number, macos_syscall_handler handler, std::string_view name);
         const macos_syscall_entry* find_entry(uint64_t syscall_class, uint64_t number) const;

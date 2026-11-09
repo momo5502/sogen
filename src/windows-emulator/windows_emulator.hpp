@@ -26,6 +26,7 @@
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
 #include <platform/audio_backend.hpp>
+#include "steam_backend.hpp"
 #include <platform/crypt_protect_backend.hpp>
 #include <platform/console_backend.hpp>
 #include <platform/ui_backend.hpp>
@@ -126,6 +127,12 @@ namespace sogen
         bool intercept_rdtsc{true};
         bool intercept_kusd{true};
 
+        // Whether snapshots keep the guest's time: its steady time (interrupt time, tick count, waits and timers) and
+        // timestamp counter stand still while the process is saved, written or loaded, and continue from the save. A
+        // game that times out without its server wants that; a guest that talks to the outside world wants the host's
+        // time, the default.
+        bool keep_guest_time_across_snapshots{false};
+
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
 
@@ -151,6 +158,10 @@ namespace sogen
         // Gives the process an elevated administrator token. Windows then starts elevation requests such as
         // ShellExecute "runas" directly instead of going through the consent service, which is not emulated.
         bool elevated{false};
+
+        // The largest display mode the guest sees, one of display_modes. The display starts in it and offers no larger
+        // one, so games that size their rendering by the display draw fewer pixels.
+        std::optional<display_mode> max_display_mode{};
     };
 
     struct provider_mount
@@ -167,6 +178,7 @@ namespace sogen
         std::unique_ptr<network::socket_factory> socket_factory{};
         std::unique_ptr<ui_backend> ui{};
         std::unique_ptr<audio_backend> audio{};
+        std::unique_ptr<steam_backend> steam{};
         std::unique_ptr<crypt_protect_backend> crypt_protect{};
         process_manager* processes{};
         std::unique_ptr<console_backend> console{};
@@ -250,6 +262,7 @@ namespace sogen
         std::unique_ptr<ui_backend> ui_backend_{};
         frame_pacer frame_pacer_{};
         std::unique_ptr<audio_backend> audio_backend_{};
+        std::unique_ptr<steam_backend> steam_backend_{};
         std::unique_ptr<crypt_protect_backend> crypt_protect_backend_{};
         process_manager* process_manager_{};
         debug_port debugger_{};
@@ -281,6 +294,9 @@ namespace sogen
 
         windows_emulator(std::unique_ptr<guest_machine> emu, const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
                          emulator_interfaces interfaces = {});
+        // Expands %VAR% references the way the guest process's environment would; unknown ones stay as they are.
+        std::function<std::u16string(std::u16string_view)> environment_string_expander();
+
         windows_emulator(std::unique_ptr<guest_machine> emu, application_settings app_settings, const emulator_settings& settings = {},
                          emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
 
@@ -332,6 +348,38 @@ namespace sogen
             return *this->clock_;
         }
 
+        // The guest's clocks at one moment, which a snapshot keeps so the process goes on from there.
+        struct guest_time
+        {
+            utils::clock::steady_time_point steady{};
+            utils::clock::system_time_point system{};
+            uint64_t timestamp_counter{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->steady.time_since_epoch().count());
+                buffer.write(this->system.time_since_epoch().count());
+                buffer.write(this->timestamp_counter);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                this->steady =
+                    utils::clock::steady_time_point{utils::clock::steady_duration{buffer.read<utils::clock::steady_duration::rep>()}};
+                this->system =
+                    utils::clock::system_time_point{utils::clock::system_duration{buffer.read<utils::clock::system_duration::rep>()}};
+                buffer.read(this->timestamp_counter);
+            }
+        };
+
+        guest_time current_guest_time() const;
+
+        // With keep_guest_time_across_snapshots, the guest's steady time (interrupt time, tick count, timeouts) and its
+        // timestamp counter go on from a saved point: the time a snapshot took to write or to load stays out of what the
+        // guest sees. System time stays the host's, and deadlines the guest gave as system times move with it. Without
+        // the option the guest's clocks stay the host's.
+        void continue_time_at(const guest_time& time);
+
         network::network_mode network_mode() const
         {
             return this->network_mode_;
@@ -380,6 +428,12 @@ namespace sogen
         const audio_backend& audio() const
         {
             return *this->audio_backend_;
+        }
+
+        // The Steam backend the embedder provided, or null when the Steam device picks its own.
+        steam_backend* steam()
+        {
+            return this->steam_backend_.get();
         }
 
         crypt_protect_backend& crypt_protect()
@@ -432,6 +486,7 @@ namespace sogen
         void update_key_state(const ui_event& event);
         ui_event resolve_injected_event(const ui_event& event) const;
         void apply_cursor_capture();
+        void apply_cursor_shape();
         void set_foreground_window(hwnd window);
 
         // The highest address the process's own code can reach: 32-bit code only reaches the low 2GB unless the
@@ -563,6 +618,9 @@ namespace sogen
         }
 
         void wake_idle_vcpu();
+        // Wakes an idle vCPU, or the next one to go idle, to look for threads that can run. For host threads that make a
+        // parked guest thread runnable, such as one ending a GPU wait.
+        void credit_idle_wakeup();
 
         uint64_t get_executed_instructions() const
         {
@@ -582,6 +640,11 @@ namespace sogen
         bool spoofs_gpu_features() const
         {
             return this->spoof_gpu_features_;
+        }
+
+        const std::optional<display_mode>& max_display_mode() const
+        {
+            return this->max_display_mode_;
         }
 
         bool runs_elevated() const
@@ -684,7 +747,7 @@ namespace sogen
         void yield_thread(vcpu_context& vcpu, bool alertable = false);
         bool perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock);
         bool perform_thread_switch(vcpu_context& vcpu);
-        void commit_thread_stacks_if_page_protection_was_lost();
+        void commit_thread_stacks_without_guarded_growth();
         bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
         // Runs f with the kernel lock released, for host calls that can block for a long time (e.g. a GPU present)
@@ -738,7 +801,8 @@ namespace sogen
 
         // Swaps the registers of the outgoing thread on a vCPU for the incoming one. With more than one vCPU the
         // hypercalls run with the kernel lock released: they only touch this vCPU, but cost tens of microseconds and
-        // would otherwise serialize every other vCPU behind each thread switch. Both threads are marked as in transit
+        // would otherwise serialize every other vCPU behind each thread switch. That includes pointing the vCPU's GDTR
+        // at its own GDT and writing the incoming thread's pending wait status. Both threads are marked as in transit
         // meanwhile. Requires the kernel lock, and incoming must already be the vCPU's active thread.
         void transfer_thread_registers(vcpu_context& vcpu, emulator_thread* outgoing, emulator_thread& incoming);
 
@@ -767,8 +831,10 @@ namespace sogen
         bool instruction_precision_{true};
         bool intercept_rdtsc_{true};
         bool intercept_kusd_{true};
+        bool keep_guest_time_across_snapshots_{false};
         bool spoof_gpu_features_{false};
         bool elevated_{false};
+        std::optional<display_mode> max_display_mode_{};
         uint32_t vcpu_count_{1};
         std::atomic_bool suspend_requested_{false};
         std::atomic_bool should_stop{false};
@@ -782,7 +848,6 @@ namespace sogen
         // Notified under the kernel lock whenever a thread's registers become saved or leave transit.
         std::condition_variable_any thread_registers_saved_{};
 
-        void credit_idle_wakeup();
         bool wait_for_idle_wakeup(std::chrono::milliseconds timeout);
 
         // The vCPU currently running a handler under the kernel lock; drives

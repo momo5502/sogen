@@ -313,12 +313,24 @@ namespace sogen
         constexpr auto critical_section_timeout = static_cast<uint64_t>(-25920000000000LL);
     }
 
+    std::function<std::u16string(std::u16string_view)> windows_emulator::environment_string_expander()
+    {
+        return [environment = get_environment_variables(this->registry, this->version, this->application_settings_)](
+                   const std::u16string_view text) { return expand_environment_string(std::u16string{text}, environment); };
+    }
+
     void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
                                 const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
     {
         this->process_id = app_settings.process_id;
         this->initial_thread_id = app_settings.thread_id;
         this->processes.get(GUEST_PROCESS_HANDLE)->id = this->process_id;
+
+        const auto initial_mode = win_emu.max_display_mode().value_or(default_display_mode);
+        this->display_width = initial_mode.width;
+        this->display_height = initial_mode.height;
+        this->registry_display_width = initial_mode.width;
+        this->registry_display_height = initial_mode.height;
 
         auto& emu = win_emu.emu();
         const auto& version = win_emu.version;
@@ -767,12 +779,21 @@ namespace sogen
         }
     }
 
-    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name)
+    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name,
+                                                          const uint32_t class_extra)
     {
+        // The zeroed extra bytes start at user_class_extra_offset, inside USER_CLASS's padding for small ones; the ANSI name
+        // comes after both.
         const auto ansi_class_name = u16_to_cp1252(class_name);
-        const auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS) + ansi_class_name.size() + 1));
+        const auto name_offset = std::max<uint64_t>(sizeof(USER_CLASS), user_class_extra_offset + class_extra);
+        const auto cls_size = static_cast<size_t>(page_align_up(name_offset + ansi_class_name.size() + 1));
         const auto cls_ptr = memory.allocate_memory(cls_size, memory_permission::read);
-        const auto ansi_class_name_ptr = cls_ptr + sizeof(USER_CLASS);
+        if (!cls_ptr)
+        {
+            return 0;
+        }
+
+        const auto ansi_class_name_ptr = cls_ptr + name_offset;
 
         memory.write_memory(ansi_class_name_ptr, ansi_class_name.c_str(), ansi_class_name.size() + 1);
 
@@ -786,6 +807,11 @@ namespace sogen
     {
         this->mouse_capture_window = window;
         this->user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) { server_info.captureCount = window != 0 ? 1 : 0; });
+    }
+
+    void process_context::key_state_changed() const
+    {
+        this->user_handles.get_server_info().access([](USER_SERVERINFO& server_info) { ++server_info.keyStateGeneration; });
     }
 
     void process_context::release_mouse_capture(const hwnd window)
@@ -861,6 +887,8 @@ namespace sogen
         buffer.write_map(this->audio_render_events_by_stream);
         buffer.write_map(this->pending_audio_render_events);
         buffer.write(this->next_audio_stream_id);
+        buffer.write_map(this->wnf_states);
+        buffer.write_map(this->service_status_state_names);
 
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
@@ -994,6 +1022,8 @@ namespace sogen
         buffer.read_map(this->audio_render_events_by_stream);
         buffer.read_map(this->pending_audio_render_events);
         buffer.read(this->next_audio_stream_id);
+        buffer.read_map(this->wnf_states);
+        buffer.read_map(this->service_status_state_names);
 
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);
@@ -1104,6 +1134,30 @@ namespace sogen
         }
     }
 
+    void process_context::move_absolute_deadlines(const std::chrono::steady_clock::duration system_time_ahead)
+    {
+        for (auto& thread : this->threads | std::views::values)
+        {
+            thread.move_absolute_deadlines(system_time_ahead);
+        }
+
+        for (auto& timer : this->timers | std::views::values)
+        {
+            utils::follow_system_time(timer.due_time, timer.absolute, system_time_ahead);
+        }
+
+        // The handles of one file share its device (a duplicated handle), whose deadlines move once.
+        std::unordered_set<const io_device*> moved{};
+        for (const auto& container : this->devices | std::views::values)
+        {
+            auto* device = container.get_internal_device();
+            if (device && moved.insert(device).second)
+            {
+                device->move_absolute_deadlines(system_time_ahead);
+            }
+        }
+    }
+
     void process_context::restore_windows_after_state_restore(windows_emulator& win_emu)
     {
         std::vector<const window*> pending{};
@@ -1129,7 +1183,7 @@ namespace sogen
         };
 
         const auto create_window = [&](const window& win) {
-            const auto child = (win.style & WS_CHILD) != 0;
+            const auto child = !this->is_surface_root(win);
             uint32_t control_id = 0;
             if (child)
             {
@@ -1185,7 +1239,7 @@ namespace sogen
         for (const auto& [index, win] : this->windows)
         {
             (void)index;
-            if (!win.host_surface_window || (win.style & WS_CHILD) != 0)
+            if (!win.host_surface_window || !this->is_surface_root(win))
             {
                 continue;
             }
@@ -1303,6 +1357,58 @@ namespace sogen
         }
 
         return nullptr;
+    }
+
+    bool process_context::is_surface_root(const window& win) const
+    {
+        const bool child_style = (win.style & WS_CHILD) != 0 && (win.style & WS_POPUP) == 0;
+        return !child_style || win.parent_handle == 0 || win.parent_handle == this->default_desktop_window_handle.bits;
+    }
+
+    POINT process_context::window_screen_origin(const window& win) const
+    {
+        POINT origin{.x = win.x, .y = win.y};
+        const auto* current = &win;
+        for (size_t depth = 0; depth < this->windows.size() && !this->is_surface_root(*current); ++depth)
+        {
+            const auto* parent = this->windows.get(current->parent_handle);
+            if (!parent)
+            {
+                break;
+            }
+
+            origin.x += parent->client_x();
+            origin.y += parent->client_y();
+            current = parent;
+        }
+        return origin;
+    }
+
+    void process_context::sync_guest_window_rects(window& win)
+    {
+        win.sync_guest_rects(this->window_screen_origin(win));
+
+        const auto descends_from_win = [&](const window& candidate) {
+            const auto* current = &candidate;
+            for (size_t depth = 0; current && depth < this->windows.size(); ++depth)
+            {
+                if (current->parent_handle == win.handle)
+                {
+                    return true;
+                }
+                current = this->windows.get(current->parent_handle);
+            }
+            return false;
+        };
+
+        for (auto& [index, candidate] : this->windows)
+        {
+            (void)index;
+            if (&candidate != &win && descends_from_win(candidate))
+            {
+                candidate.sync_guest_rects(this->window_screen_origin(candidate));
+            }
+        }
     }
 
     bool process_context::is_window_effectively_visible(const hwnd window) const
