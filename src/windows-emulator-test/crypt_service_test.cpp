@@ -12,6 +12,10 @@ namespace sogen::test
         constexpr std::u16string_view driver_subsystem = u"{F750E6C3-38EE-11D1-85E5-00C04FC295EE}";
         constexpr uint32_t sha1_hash_type = 0;
         constexpr uint32_t sha256_hash_type = 1;
+        constexpr std::array<uint8_t, 16> cert_protect_interface{0xd4, 0xa7, 0x72, 0x0d, 0x48, 0x61, 0xd1, 0x11,
+                                                                 0xb4, 0xaa, 0x00, 0xc0, 0x4f, 0xb6, 0x6e, 0xa0};
+        constexpr uint32_t cert_protect_procedure = 0;
+        constexpr uint32_t trigger_prefetch_function = 1000;
 
         class CryptServiceTest : public RpcProtocolTest
         {
@@ -42,6 +46,18 @@ namespace sogen::test
                 const auto reply = this->call(enum_catalogs_procedure, this->enum_catalogs_request(subsystem, hash_type, hash));
                 EXPECT_EQ(STATUS_SUCCESS, reply.status);
                 return reply.payload.value_or(std::vector<uint8_t>{});
+            }
+
+            std::vector<uint8_t> cert_protect_request(const uint32_t function_id) const
+            {
+                std::vector<uint8_t> request{};
+                utils::aligned_binary_writer writer(request, this->pointer_size);
+                writer.write(function_id);
+                writer.write<uint32_t>(0);
+                writer.write_ndr_u16string(u"");
+                writer.write_pointer_sized(0);
+                writer.write<uint32_t>(0);
+                return request;
             }
 
             uint32_t prepare_for_call(const std::u16string_view subsystem)
@@ -87,6 +103,25 @@ namespace sogen::test
         this->expect_no_catalogs(this->enum_catalogs(driver_subsystem, sha256_hash_type, sha1), error_bad_arguments);
         this->expect_no_catalogs(this->enum_catalogs(driver_subsystem, 2, sha1), error_bad_arguments);
         this->expect_no_catalogs(this->enum_catalogs(u"F750E6C3-38EE-11D1-85E5-00C04FC295EE", sha1_hash_type, sha1), error_bad_arguments);
+    }
+
+    TEST_F(CryptServiceTest, PrefetchTriggerSucceedsWithoutOutput)
+    {
+        for (const auto width : {utils::aligned_binary_writer::pointer_size_32, utils::aligned_binary_writer::pointer_size_64})
+        {
+            this->bind(u"\\RPC Control\\keysvc", cert_protect_interface, width);
+            const auto reply = this->call(cert_protect_procedure, this->cert_protect_request(trigger_prefetch_function));
+            ASSERT_EQ(STATUS_SUCCESS, reply.status);
+            ASSERT_TRUE(reply.payload.has_value());
+
+            const auto& payload = *reply.payload;
+            const auto output_offset = reply_header_size + width;
+            EXPECT_EQ(0u, width == utils::aligned_binary_writer::pointer_size_32 ? read<uint32_t>(payload, reply_header_size)
+                                                                                 : read<uint64_t>(payload, reply_header_size));
+            EXPECT_EQ(0u, read<uint32_t>(payload, output_offset));
+            EXPECT_EQ(0u, read<uint32_t>(payload, output_offset + sizeof(uint32_t)));
+            EXPECT_EQ(output_offset + 2 * sizeof(uint32_t), payload.size());
+        }
     }
 
     TEST_F(CryptServiceTest, PrepareForCallRejectsMalformedSubsystems)
