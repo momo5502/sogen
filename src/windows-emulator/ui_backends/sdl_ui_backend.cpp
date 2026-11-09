@@ -104,6 +104,11 @@ namespace sogen
                 return;
             }
 
+            // TODO: SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN may not be honored on all platforms,
+            //       and hiding a host window may deactivate it even when not requested
+            //       (e.g., toggling WS_VISIBLE via SetWindowLong), causing spurious
+            //       WM_ACTIVATE/WM_KILLFOCUS messages in the guest.
+
             constexpr auto* hint = SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN;
             SDL_SetHintWithPriority(hint, "0", SDL_HINT_OVERRIDE);
             SDL_ShowWindow(window);
