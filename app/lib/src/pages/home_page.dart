@@ -50,12 +50,33 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
   late final TabController _tabs = TabController(length: _tabIcons.length, vsync: this)..addListener(_onTabChanged);
   bool _installing = false;
+
+  /// While the root's version is being checked, a game started now could have the root replaced under it.
+  bool _checkingRoot = true;
   double? _progress;
   String? _error;
 
   final Map<String, GameSession> _saving = {};
 
   void _onTabChanged() => setState(() {});
+
+  @override
+  void initState() {
+    super.initState();
+    _updateOutdatedRoot();
+  }
+
+  /// A root built for other emulator code can break games, so a newer published one replaces it right away.
+  Future<void> _updateOutdatedRoot() async {
+    final outdated = await widget.root.isOutdated();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _checkingRoot = false);
+    if (outdated && !_installing && _saving.isEmpty) {
+      await _installRoot();
+    }
+  }
 
   @override
   void dispose() {
@@ -199,7 +220,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     edit: _edit,
     remove: _confirmRemove,
     isBusy: (game) => _saving.containsKey(game.id),
-    canPlay: !_installing,
+    canPlay: !_installing && !_checkingRoot,
   );
 
   Future<void> _confirmRemove(Game game) async {
