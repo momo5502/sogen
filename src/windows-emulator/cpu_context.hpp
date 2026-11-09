@@ -26,6 +26,11 @@ namespace sogen
         // Bit 1 of EFlags, which the processor always holds set; a trap frame holds it clear.
         constexpr uint32_t eflags_always_one = 0x2;
 
+        // PspCreateUserContext's FltSave.ControlWord and MxCsr for a new thread, and PspWow64InitThreadGuestx86's for a
+        // 32-bit one: every x87 and SSE exception masked, rounding to nearest and the x87's 53-bit precision.
+        constexpr uint16_t initial_x87_control = 0x27F;
+        constexpr uint32_t initial_mxcsr = 0x1F80;
+
         // What KxContextToKframes keeps of a user context's x87 control word: the exception masks, the precision and
         // rounding controls and the infinity bit.
         constexpr uint16_t x87_control_legal = 0x1F3F;
