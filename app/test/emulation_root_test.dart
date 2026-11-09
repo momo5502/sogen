@@ -1,6 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:sogen_app/src/emulation_root.dart';
 
@@ -95,5 +98,61 @@ void main() {
     await root.restoreInterruptedSwap();
 
     expect(marker(), 'new');
+  });
+
+  group('findUpdate', () {
+    var requests = 0;
+
+    String manifest(String version) => jsonEncode({'version': version, 'directories': [], 'files': []});
+
+    MockClient publishing(String? version) => MockClient((request) async {
+      requests++;
+      expect(request.url.path, EmulationRoot.manifestUrl.path);
+      return version == null ? http.Response('', 404) : http.Response(manifest(version), 200);
+    });
+
+    void install(String? version) {
+      rootTree('emulation', 'installed');
+      if (version != null) {
+        File(p.join(base.path, 'root', 'manifest.json')).writeAsStringSync(manifest(version));
+      }
+    }
+
+    setUp(() => requests = 0);
+
+    test('a root built for this app is current without asking sogen.dev', () async {
+      install('abc');
+
+      expect(await root.findUpdate(appCommit: 'abc', client: publishing('def')), isNull);
+      expect(requests, 0);
+    });
+
+    test('an app built off the published commits keeps the published root', () async {
+      install('abc');
+
+      expect(await root.findUpdate(appCommit: 'local', client: publishing('abc')), isNull);
+    });
+
+    test('a newer published root replaces the installed one', () async {
+      install('abc');
+
+      expect((await root.findUpdate(appCommit: 'def', client: publishing('def')))?.manifest.version, 'def');
+    });
+
+    test('a root from before roots named their commit is outdated', () async {
+      install(null);
+
+      expect((await root.findUpdate(appCommit: 'def', client: publishing('def')))?.manifest.version, 'def');
+    });
+
+    test('without an answer from sogen.dev the installed root stays', () async {
+      install('abc');
+
+      expect(await root.findUpdate(appCommit: 'def', client: publishing(null)), isNull);
+      expect(
+        await root.findUpdate(appCommit: 'def', client: MockClient((_) => throw http.ClientException('offline'))),
+        isNull,
+      );
+    });
   });
 }

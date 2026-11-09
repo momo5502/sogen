@@ -41,9 +41,23 @@ namespace sogen
             return utils::get_current_executable_path().parent_path();
         }
 
-#ifndef OS_EMSCRIPTEN
-        std::filesystem::path get_sandbox_executable()
+        const std::map<std::string, backend_type>& get_backend_names()
         {
+            static const std::map<std::string, backend_type> backends{
+                {"unicorn", backend_type::unicorn}, {"icicle", backend_type::icicle}, {"whp", backend_type::whp},
+                {"kvm", backend_type::kvm},         {"fex", backend_type::fex},       {"hvf", backend_type::hvf},
+            };
+            return backends;
+        }
+
+#ifndef OS_EMSCRIPTEN
+        // The sandbox runner is only built for WHP and KVM hosts; on the others the analyzer runs child processes itself.
+        std::filesystem::path get_managed_process_executable(const bool use_sandbox)
+        {
+            if (!use_sandbox)
+            {
+                return utils::get_current_executable_path();
+            }
 #ifdef _WIN32
             return get_current_binary_dir() / "sandbox.exe";
 #else
@@ -82,7 +96,7 @@ namespace sogen
             std::string whp_execution_hook_mode{"auto"};
             std::optional<backend_type> backend{};
             network::network_mode network{network::network_mode::offline};
-            bool disable_instruction_precision{false};
+            std::optional<bool> instruction_precision{};
             bool native_timing{false};
             bool keep_guest_time{false};
             uint32_t vcpu_count{1};
@@ -136,6 +150,16 @@ namespace sogen
                     arguments.insert(arguments.end(), {"--ignore", function});
                 }
             }
+            else if (options.backend)
+            {
+                const auto& names = get_backend_names();
+                const auto name = std::ranges::find(names, *options.backend, [](const auto& entry) { return entry.second; });
+                if (name != names.end())
+                {
+                    arguments.emplace_back("--backend");
+                    arguments.push_back(name->first);
+                }
+            }
             arguments.emplace_back("--network");
             arguments.emplace_back(network::to_string(options.network));
             if (options.spoof_gpu_features)
@@ -145,6 +169,14 @@ namespace sogen
             if (options.elevated)
             {
                 arguments.emplace_back("--elevated");
+            }
+            if (options.reproducible)
+            {
+                arguments.emplace_back("--reproducible");
+            }
+            if (options.instruction_precision)
+            {
+                arguments.emplace_back(*options.instruction_precision ? "--inst-precision" : "--no-inst-precision");
             }
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
@@ -156,6 +188,7 @@ namespace sogen
             };
             add_path("--emulation", options.emulation_root);
             add_path("--registry", options.registry_path);
+            add_path("--snapshot-dir", options.snapshot_directory);
             for (const auto& registry_file : options.registry_files)
             {
                 arguments.emplace_back("--reg-file");
@@ -641,6 +674,33 @@ namespace sogen
             return wide_args;
         }
 
+        backend_type backend_from_environment_for(const PEMachineType machine)
+        {
+            return get_machine_type(machine) == machine_type::arm64 ? get_arm64_emulator_backend_from_environment()
+                                                                    : get_x86_64_emulator_backend_from_environment();
+        }
+
+        // Under a hypervisor, precision turns every guest instruction into a VM exit, so it has to be asked for there.
+        // Reproducible runs keep it: their clock advances with the executed instruction count. Without --backend the
+        // backend comes from the environment, and which environment answers depends on the guest machine, so a run
+        // whose machine is not known yet keeps precision.
+        bool uses_instruction_precision(const analysis_options& options, const std::optional<PEMachineType> machine)
+        {
+            if (options.instruction_precision)
+            {
+                return *options.instruction_precision;
+            }
+
+            if (options.reproducible || !machine)
+            {
+                return true;
+            }
+
+            const auto backend = options.backend ? *options.backend : backend_from_environment_for(*machine);
+
+            return backend != backend_type::hvf;
+        }
+
 #ifdef __APPLE__
         // KUSER_SHARED_DATA lies inside the __PAGEZERO segment of every 64-bit macOS process, so it cannot be mapped as plain
         // memory and every read has to be emulated; there --native-timing only drops the rdtsc trap, as in the sandbox.
@@ -649,11 +709,12 @@ namespace sogen
         constexpr bool kusd_needs_intercept = false;
 #endif
 
-        emulator_settings create_emulator_settings(const analysis_options& options)
+        emulator_settings create_emulator_settings(const analysis_options& options,
+                                                   const std::optional<PEMachineType> machine = std::nullopt)
         {
             return {
                 .use_relative_time = options.reproducible,
-                .use_instruction_precision = !options.disable_instruction_precision,
+                .use_instruction_precision = uses_instruction_precision(options, machine),
                 .intercept_rdtsc = !options.native_timing,
                 .intercept_kusd = kusd_needs_intercept || !options.native_timing,
                 .keep_guest_time_across_snapshots = options.keep_guest_time,
@@ -744,7 +805,7 @@ namespace sogen
         std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options, emulator_interfaces interfaces = {},
                                                                 const PEMachineType machine = PEMachineType::AMD64)
         {
-            const auto settings = create_emulator_settings(options);
+            const auto settings = create_emulator_settings(options, machine);
             return std::make_unique<windows_emulator>(create_configured_backend(options, machine), settings, emulator_callbacks{},
                                                       std::move(interfaces));
         }
@@ -754,8 +815,8 @@ namespace sogen
                                                                       emulator_interfaces interfaces = {})
         {
             auto app_settings = create_application_settings(options, args);
-            const auto settings = create_emulator_settings(options);
-            const auto machine = get_application_machine(settings, app_settings);
+            const auto machine = get_application_machine(create_emulator_settings(options), app_settings);
+            const auto settings = create_emulator_settings(options, machine);
             return std::make_unique<windows_emulator>(create_configured_backend(options, machine), std::move(app_settings), settings,
                                                       emulator_callbacks{}, std::move(interfaces));
         }
@@ -832,19 +893,16 @@ namespace sogen
 
 #ifndef OS_EMSCRIPTEN
             const auto is_x86_64_target = get_target_machine(options, args) != PEMachineType::ARM64;
-            const auto supports_managed_processes =
+            const auto use_sandbox =
                 is_x86_64_target && options.backend.value_or(get_x86_64_emulator_backend_from_environment()) == backend_type::whp;
-            if (options.trace_children && !supports_managed_processes)
+            if (options.trace_children && !use_sandbox)
             {
                 throw std::runtime_error("--trace-children requires an x86 or x64 target with the WHP backend");
             }
-            if (supports_managed_processes)
-            {
-                const auto child_executable = options.trace_children ? utils::get_current_executable_path() : get_sandbox_executable();
-                manager = std::make_unique<subprocess_process_manager>(child_executable, [&](const auto port, const auto& token) {
+            manager = std::make_unique<subprocess_process_manager>(
+                get_managed_process_executable(use_sandbox && !options.trace_children), [&](const auto port, const auto& token) {
                     return create_managed_process_arguments(options, port, token, ++child_counter);
                 });
-            }
 #endif
             // Declared before the emulator, so the guest's windows are gone while this process waits for its children. Any
             // other way out leaves the children to the process manager's destructor.
@@ -965,6 +1023,7 @@ namespace sogen
 
             const auto& exe = *win_emu->mod_manager.executable;
             const auto is_whp = win_emu->emu().get_name() == "Windows Hypervisor Platform";
+            const auto runs_sse4_and_avx = is_whp || win_emu->emu().get_name().starts_with("FEX");
 
             if (auto* x64 = dynamic_cast<x86_64_emulator*>(&win_emu->emu()))
             {
@@ -981,7 +1040,7 @@ namespace sogen
                             context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
                         }
 
-                        if (leaf == 1 && !is_whp)
+                        if (leaf == 1 && !runs_sse4_and_avx)
                         {
                             // NOTE: We hard-code these values to disable SSE4.x and AVX
                             //       See: https://github.com/momo5502/sogen/issues/560
@@ -1204,8 +1263,8 @@ namespace sogen
             app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
             app.add_flag("--elevated", options.elevated, "Run the process with an elevated administrator token");
-            app.add_flag("--no-inst-precision", options.disable_instruction_precision,
-                         "Disable per-instruction precision (faster, less precise)");
+            app.add_flag("--inst-precision,!--no-inst-precision", options.instruction_precision,
+                         "Enable or disable per-instruction precision (default: on, off on HVF unless --reproducible)");
             app.add_flag("--call-count", options.prepend_call_count, "Prefix function and syscall lines with a traced-call count");
 #ifndef OS_EMSCRIPTEN
             app.add_flag("--trace-children", options.trace_children, "Run managed child processes in the analyzer with tracing enabled");
@@ -1297,11 +1356,7 @@ namespace sogen
 
                 if (!backend_name.empty())
                 {
-                    static const std::map<std::string, backend_type> backends{
-                        {"unicorn", backend_type::unicorn}, {"icicle", backend_type::icicle}, {"whp", backend_type::whp},
-                        {"kvm", backend_type::kvm},         {"fex", backend_type::fex},       {"hvf", backend_type::hvf},
-                    };
-                    options.backend = backends.at(backend_name);
+                    options.backend = get_backend_names().at(backend_name);
                 }
 
                 for (auto& module_name : tracked_modules)

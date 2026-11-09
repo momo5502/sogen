@@ -1279,8 +1279,13 @@ jobs:
       - name: Copy Sample
         run: cp ./build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
+      # The manifest names the commit a root was built for, which the app compares with its own and with the published
+      # one to find out when to update its root. It downloads only the files that changed, from the blobs; root.zip
+      # installs the first root.
       - name: Create Emulation Root zip
-        run: cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/public/root.zip" ./root
+        run: |
+          python3 ./src/tools/create-root-blobs.py ./build/release/artifacts/root ./page/public/root "${{ github.sha }}"
+          cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/public/root.zip" ./root
 
       - name: Create Linux Emulation Root zip
         run: cd ./deps/sogen-linux-files && zip -r "${{github.workspace}}/page/public/linux-root.zip" ./root
@@ -1430,7 +1435,7 @@ jobs:
 
       - name: Build APK
         working-directory: app
-        run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }}
+        run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }}
 
       # Building the APK generates the Gradle wrapper the native unit tests run with. The Android Gradle Plugin only
       # creates unit test tasks for the debug build type.
@@ -1448,7 +1453,7 @@ jobs:
       - name: Build App Bundle
         if: steps.signing.outputs.signed == 'true'
         working-directory: app
-        run: flutter build appbundle --release --build-number=${{ steps.version.outputs.build_number }}
+        run: flutter build appbundle --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }}
 
       - name: Upload App Bundle
         if: steps.signing.outputs.signed == 'true'
