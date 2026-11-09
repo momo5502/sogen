@@ -107,10 +107,15 @@ namespace sogen
                 native.reg<uint16_t>(x86_register::fpcw, 0x037F);
                 native.reg<uint32_t>(x86_register::mxcsr, 0x1F80);
                 native.reg(x86_register::rsp, initial_sp);
+                // KiInitializeContextThread puts a new thread's context, whose EFlags is 0, through KxContextToKframes:
+                // its trap frame's EFlags holds IF only. PspInitializeThunkContext hands LdrInitializeThunk that frame
+                // as its CONTEXT.
+                native.reg<uint32_t>(x86_register::eflags, cpu_context::eflags_interrupt | cpu_context::eflags_always_one);
 
                 CONTEXT64 context{};
                 context.ContextFlags = CONTEXT64_ALL;
                 cpu_context::save(native, context);
+                context.EFlags = cpu_context::eflags_interrupt;
                 context.Rip = bootstrap.rtl_user_thread_start;
                 context.Rcx = bootstrap.start_address;
                 context.Rdx = bootstrap.argument;
