@@ -562,6 +562,7 @@ namespace sogen
                 LARGE_INTEGER timeout{};
                 timeout.QuadPart = factory->timeout;
                 wait.timeout = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout);
+                wait.timeout_absolute = utils::is_absolute_due_time(timeout);
 
                 constexpr auto infinite = std::chrono::steady_clock::time_point::min();
                 if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < c.win_emu.clock().steady_now())

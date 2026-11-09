@@ -10,6 +10,7 @@
 #include <serialization_helper.hpp>
 #include <cinttypes>
 #include <vector>
+#include <new>
 
 namespace sogen
 {
@@ -257,9 +258,10 @@ namespace sogen
     // PE32 Mapping Strategy Implementation
     mapped_module pe32_mapping_strategy::map_from_data(memory_manager& memory, const std::span<const std::byte> data,
                                                        std::filesystem::path identity, windows_path module_path,
-                                                       const uint64_t relocation_base)
+                                                       const uint64_t relocation_base, const uint64_t highest_address, NTSTATUS* status)
     {
-        return map_module_from_data<std::uint32_t>(memory, data, std::move(identity), std::move(module_path), relocation_base);
+        return map_module_from_data<std::uint32_t>(memory, data, std::move(identity), std::move(module_path), relocation_base,
+                                                   highest_address, status);
     }
 
     mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -271,9 +273,10 @@ namespace sogen
     // PE64 Mapping Strategy Implementation
     mapped_module pe64_mapping_strategy::map_from_data(memory_manager& memory, const std::span<const std::byte> data,
                                                        std::filesystem::path identity, windows_path module_path,
-                                                       const uint64_t relocation_base)
+                                                       const uint64_t relocation_base, const uint64_t highest_address, NTSTATUS* status)
     {
-        return map_module_from_data<std::uint64_t>(memory, data, std::move(identity), std::move(module_path), relocation_base);
+        return map_module_from_data<std::uint64_t>(memory, data, std::move(identity), std::move(module_path), relocation_base,
+                                                   highest_address, status);
     }
 
     mapped_module pe64_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -326,7 +329,8 @@ namespace sogen
     }
 
     mapped_module* module_manager::map_module_core(const pe_detection_result& detection_result,
-                                                   const std::function<mapped_module()>& mapper, const logger& logger, bool is_static)
+                                                   const std::function<mapped_module()>& mapper, const logger& logger, bool is_static,
+                                                   NTSTATUS* status)
     {
         if (!detection_result.is_valid())
         {
@@ -358,9 +362,22 @@ namespace sogen
             this->callbacks_->on_module_load(entry.first->second);
             return &entry.first->second;
         }
+        catch (const std::bad_alloc& e)
+        {
+            logger.error("Failed to map module: %s\n", e.what());
+            if (status)
+            {
+                *status = STATUS_NO_MEMORY;
+            }
+            return nullptr;
+        }
         catch (const std::exception& e)
         {
             logger.error("Failed to map module: %s\n", e.what());
+            if (status)
+            {
+                *status = STATUS_FILE_INVALID;
+            }
             return nullptr;
         }
     }
@@ -618,8 +635,12 @@ namespace sogen
     }
 
     mapped_module* module_manager::map_module(windows_path file, const logger& logger, const bool is_static, bool allow_duplicate,
-                                              const uint64_t relocation_base)
+                                              const uint64_t relocation_base, const uint64_t highest_address, NTSTATUS* status)
     {
+        if (status)
+        {
+            *status = STATUS_FILE_INVALID;
+        }
         if (utils::string::to_lower(file.leaf()) == u"win32u.dll")
         {
             allow_duplicate = false;
@@ -633,6 +654,18 @@ namespace sogen
             {
                 if (mod.path == identity)
                 {
+                    if (highest_address && (mod.image_base > highest_address || mod.size_of_image - 1 > highest_address - mod.image_base))
+                    {
+                        if (status)
+                        {
+                            *status = STATUS_NO_MEMORY;
+                        }
+                        return nullptr;
+                    }
+                    if (status)
+                    {
+                        *status = STATUS_SUCCESS;
+                    }
                     return &mod;
                 }
             }
@@ -651,9 +684,10 @@ namespace sogen
             detection_result,
             [&]() {
                 auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-                return strategy.map_from_data(*this->memory_, data, std::move(identity), std::move(file), relocation_base);
+                return strategy.map_from_data(*this->memory_, data, std::move(identity), std::move(file), relocation_base, highest_address,
+                                              status);
             },
-            logger, is_static);
+            logger, is_static, status);
     }
 
     mapped_module* module_manager::map_module_or_throw(const windows_path& file, const logger& logger, const bool is_static,

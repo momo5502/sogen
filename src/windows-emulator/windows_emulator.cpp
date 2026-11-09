@@ -832,6 +832,7 @@ namespace sogen
           socket_factory_(get_socket_factory(interfaces, settings.network)),
           ui_backend_(get_ui_backend(interfaces)),
           audio_backend_(get_audio_backend(interfaces)),
+          steam_backend_(std::move(interfaces.steam)),
           crypt_protect_backend_(get_crypt_protect_backend(
               interfaces, settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root))),
           process_manager_(interfaces.processes),
@@ -865,6 +866,7 @@ namespace sogen
                                  this->emu_->supports_global_memory_execution_hooks()),
           intercept_rdtsc_(settings.intercept_rdtsc),
           intercept_kusd_(settings.intercept_kusd),
+          keep_guest_time_across_snapshots_(settings.keep_guest_time_across_snapshots),
           spoof_gpu_features_(settings.spoof_gpu_features),
           elevated_(settings.elevated),
           max_display_mode_(settings.max_display_mode),
@@ -2583,7 +2585,7 @@ namespace sogen
         m.wParam = event.wParam;
         m.lParam = event.lParam;
 
-        if (event.injected && is_keyboard_message(event.message) && thread->focus_window != 0)
+        if ((is_keyboard_message(event.message) || is_character_message(event.message)) && thread->focus_window != 0)
         {
             if (const auto* focus = this->process.windows.get(thread->focus_window); focus && focus->thread_id == win->thread_id)
             {
@@ -3108,6 +3110,7 @@ namespace sogen
         buffer.write(this->executed_instructions_);
         buffer.write_atomic(this->vcpus_[0]->switch_thread);
         buffer.write(this->use_relative_time_);
+        this->current_guest_time().serialize(buffer);
 
         this->version.serialize(buffer);
         this->registry.serialize_runtime_state(buffer);
@@ -3136,6 +3139,15 @@ namespace sogen
         if (old_relative_time != this->use_relative_time_)
         {
             throw std::runtime_error("Can not deserialize emulator with different time dimensions");
+        }
+
+        // With keep_guest_time_across_snapshots, the guest's interrupt time (timeGetTime), tick count, timeouts and
+        // timestamp counter continue from the save, not from the time that passed on the host until the load.
+        guest_time saved_time{};
+        saved_time.deserialize(buffer);
+        if (this->keep_guest_time_across_snapshots_)
+        {
+            this->clock_->continue_time_at(saved_time.steady, saved_time.timestamp_counter);
         }
 
         this->version.deserialize(buffer);
@@ -3168,6 +3180,35 @@ namespace sogen
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
         this->release_held_input();
+
+        // Steady time stood still while the state was loaded too, so the guest goes on from the save when it runs again.
+        this->continue_time_at(saved_time);
+    }
+
+    windows_emulator::guest_time windows_emulator::current_guest_time() const
+    {
+        return {.steady = this->clock_->steady_now(),
+                .system = this->clock_->system_now(),
+                .timestamp_counter = this->clock_->timestamp_counter()};
+    }
+
+    void windows_emulator::continue_time_at(const guest_time& time)
+    {
+        if (!this->keep_guest_time_across_snapshots_)
+        {
+            return;
+        }
+
+        this->clock_->continue_time_at(time.steady, time.timestamp_counter);
+
+        // The host's system time went on meanwhile, or is behind the save on another machine.
+        const auto system_time_ahead = std::chrono::duration_cast<utils::clock::steady_duration>(this->clock_->system_now() - time.system);
+        if (system_time_ahead != utils::clock::steady_duration::zero())
+        {
+            this->process.move_absolute_deadlines(system_time_ahead);
+        }
+
+        this->process.kusd.refresh();
     }
 
     // Nothing is held when a saved process continues, so what was held when it was saved is released, the way the guest
@@ -3259,10 +3300,15 @@ namespace sogen
 
     void windows_emulator::save_snapshot()
     {
+        // As with a snapshot file: the guest's time stands still while the snapshot is taken, and a restore goes on from it.
+        const auto time = this->current_guest_time();
+        const auto continue_time = utils::finally([&] { this->continue_time_at(time); });
+
         this->prepare_serialization();
 
         utils::buffer_serializer buffer{};
 
+        time.serialize(buffer);
         buffer.write(this->setup_completed_);
         buffer.write(this->executed_instructions_);
         buffer.write_atomic(this->vcpus_[0]->switch_thread);
@@ -3292,6 +3338,13 @@ namespace sogen
         utils::buffer_deserializer buffer{this->process_snapshot_};
 
         this->register_factories(buffer);
+
+        guest_time saved_time{};
+        saved_time.deserialize(buffer);
+        if (this->keep_guest_time_across_snapshots_)
+        {
+            this->clock_->continue_time_at(saved_time.steady, saved_time.timestamp_counter);
+        }
 
         buffer.read(this->setup_completed_);
         buffer.read(this->executed_instructions_);
@@ -3323,6 +3376,7 @@ namespace sogen
         this->apply_cursor_shape();
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
+        this->continue_time_at(saved_time);
     }
 
 } // namespace sogen

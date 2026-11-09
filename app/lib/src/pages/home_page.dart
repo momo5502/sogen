@@ -7,17 +7,12 @@ import 'package:simple_icons/simple_icons.dart';
 
 import '../ads.dart';
 import '../emulation_root.dart';
-import '../epic/epic_account.dart';
-import '../epic/epic_library.dart';
 import '../game_library.dart';
-import '../gog/gog_account.dart';
-import '../gog/gog_library.dart';
 import '../session.dart';
 import '../settings.dart';
-import '../steam/steam_account.dart';
-import '../steam/steam_catalog.dart';
 import '../store/cover_cache.dart';
-import '../store/store_catalog.dart';
+import '../store/store_accounts.dart';
+import '../store/store_http.dart';
 import '../store/store_installer.dart';
 import '../support.dart';
 import '../theme.dart';
@@ -25,8 +20,8 @@ import '../widgets/game_row.dart';
 import '../widgets/sogen_widgets.dart';
 import 'game_editor_page.dart';
 import 'game_page.dart';
+import 'library_tab.dart';
 import 'settings_tab.dart';
-import 'store_tab.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({
@@ -35,12 +30,7 @@ class HomePage extends StatefulWidget {
     required this.library,
     required this.settings,
     required this.ads,
-    required this.gog,
-    required this.gogCatalog,
-    required this.epic,
-    required this.epicCatalog,
-    required this.steam,
-    required this.steamCatalog,
+    required this.accounts,
     required this.installer,
     required this.covers,
   });
@@ -49,12 +39,7 @@ class HomePage extends StatefulWidget {
   final GameLibrary library;
   final AppSettings settings;
   final Ads ads;
-  final GogAccount gog;
-  final StoreCatalog gogCatalog;
-  final EpicAccount epic;
-  final StoreCatalog epicCatalog;
-  final SteamAccount steam;
-  final StoreCatalog steamCatalog;
+  final StoreAccounts accounts;
   final StoreInstaller installer;
   final CoverCache covers;
 
@@ -63,7 +48,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
-  late final TabController _tabs = TabController(length: 5, vsync: this)..addListener(_onTabChanged);
+  late final TabController _tabs = TabController(length: _tabIcons.length, vsync: this)..addListener(_onTabChanged);
   bool _installing = false;
   double? _progress;
   String? _error;
@@ -105,6 +90,41 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
       await widget.library.add(game);
     }
     await widget.library.releaseUnusedFolders();
+  }
+
+  Future<void> _signIn() async {
+    final provider = await showModalBottomSheet<StoreProvider>(
+      context: context,
+      backgroundColor: SogenColors.card,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final provider in widget.accounts.providers)
+              ListTile(
+                leading: Icon(_storeIcons[provider.store] ?? LucideIcons.store),
+                title: Text('Sign in to ${provider.name}'),
+                subtitle: Text(
+                  provider.signInDescription,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+                ),
+                onTap: () => Navigator.of(context).pop(provider),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (provider == null) {
+      return;
+    }
+
+    try {
+      await widget.accounts.signIn(provider);
+    } on StoreException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
   }
 
   /// The download shows its progress on the Installed tab.
@@ -206,15 +226,23 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     final installed = widget.root.isInstalled;
 
     return Scaffold(
-      floatingActionButton: _tabs.index == 0 && installed
-          ? FloatingActionButton(
-              tooltip: 'Add game',
-              backgroundColor: SogenColors.neutral100,
-              foregroundColor: SogenColors.neutral900,
-              onPressed: _addGame,
-              child: const Icon(LucideIcons.plus),
-            )
-          : null,
+      floatingActionButton: switch (_tabs.index) {
+        0 when installed => FloatingActionButton(
+          tooltip: 'Add game',
+          backgroundColor: SogenColors.neutral100,
+          foregroundColor: SogenColors.neutral900,
+          onPressed: _addGame,
+          child: const Icon(LucideIcons.plus),
+        ),
+        1 => FloatingActionButton(
+          tooltip: 'Sign in',
+          backgroundColor: SogenColors.neutral100,
+          foregroundColor: SogenColors.neutral900,
+          onPressed: _signIn,
+          child: const Icon(LucideIcons.logIn),
+        ),
+        _ => null,
+      },
       bottomNavigationBar: DecoratedBox(
         decoration: const BoxDecoration(
           color: SogenColors.background,
@@ -250,39 +278,18 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                 controller: _tabs,
                 children: [
                   _buildInstalled(installed),
-                  StoreTab(
-                    account: widget.gog,
-                    catalog: widget.gogCatalog,
+                  LibraryTab(
+                    accounts: widget.accounts,
                     installer: widget.installer,
                     library: widget.library,
                     canInstall: installed && !_installing,
-                    color: SogenColors.accents[6],
                     covers: widget.covers,
                     commands: _commands,
-                  ),
-                  StoreTab(
-                    account: widget.steam,
-                    catalog: widget.steamCatalog,
-                    installer: widget.installer,
-                    library: widget.library,
-                    canInstall: installed && !_installing,
-                    color: const Color(0xFF66C0F4),
-                    covers: widget.covers,
-                    commands: _commands,
-                  ),
-                  StoreTab(
-                    account: widget.epic,
-                    catalog: widget.epicCatalog,
-                    installer: widget.installer,
-                    library: widget.library,
-                    canInstall: installed && !_installing,
-                    color: SogenColors.neutral100,
-                    covers: widget.covers,
-                    commands: _commands,
+                    onSignIn: _signIn,
                   ),
                   SettingsTab(
                     settings: widget.settings,
-                    accounts: [widget.gog, widget.steam, widget.epic],
+                    accounts: widget.accounts,
                     onRedownloadRoot: installed && !_installing ? _redownloadRoot : null,
                   ),
                 ],
@@ -302,7 +309,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     return GameRow(
       art: GameArt(source: icon == null ? null : LocalArt(icon), color: placeholderColor(index)),
       title: game.name,
-      subtitle: switch (_storeNames[game.source?.store]) {
+      subtitle: switch (_sourceLabel(game.source)) {
         _ when saving => Text(
           'Suspending…',
           maxLines: 1,
@@ -328,9 +335,18 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     );
   }
 
+  /// The account a downloaded game belongs to, or its store when Sogen no longer knows the account.
+  String? _sourceLabel(GameSource? source) {
+    if (source == null) {
+      return null;
+    }
+    return widget.accounts.ownerOf(source)?.label ??
+        widget.accounts.providers.where((provider) => provider.store == source.store).firstOrNull?.name;
+  }
+
   Widget _buildInstalled(bool installed) {
     return ListenableBuilder(
-      listenable: Listenable.merge([widget.library, widget.settings]),
+      listenable: Listenable.merge([widget.library, widget.settings, widget.accounts]),
       builder: (context, _) {
         final games = widget.library.games;
 
@@ -528,16 +544,12 @@ class _EmptyLibrary extends StatelessWidget {
   }
 }
 
-/// The stores a library game can come from, by the names the user knows them by.
-const _storeNames = {GogLibrary.store: 'GOG', SteamCatalog.store: 'Steam', EpicLibrary.store: 'Epic'};
+const _storeIcons = {'gog': SimpleIcons.gogdotcom, 'steam': SimpleIcons.steam, 'epic': SimpleIcons.epicgames};
 
-/// How each tab's icon looks once its tab is active. Steam's and Epic's brand colors are black, which would vanish on
-/// the dark tab bar, so they use the light blue of Steam's client and white.
+/// How each tab's icon looks once its tab is active.
 const _tabIcons = [
   (label: 'Installed', icon: _TabIcon.sogen()),
-  (label: 'GOG', icon: _TabIcon(SimpleIcons.gogdotcom, Color(0xFFB65FD0))),
-  (label: 'Steam', icon: _TabIcon(SimpleIcons.steam, Color(0xFF66C0F4))),
-  (label: 'Epic', icon: _TabIcon(SimpleIcons.epicgames, Colors.white)),
+  (label: 'Library', icon: _TabIcon(LucideIcons.library, Color(0xFF66C0F4))),
   (label: 'Settings', icon: _TabIcon(LucideIcons.settings, SogenColors.neutral100)),
 ];
 

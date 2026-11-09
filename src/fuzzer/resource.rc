@@ -81,7 +81,7 @@ END
 // Binary Data
 //
 
-GLFW_ICON       ICON   "resources/icon.ico"
+GLFW_ICON       ICON   "../tools/sandbox/resources/icon.ico"
 
 
 #endif    // English (United States) resources

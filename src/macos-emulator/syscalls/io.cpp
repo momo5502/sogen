@@ -3,13 +3,13 @@
 
 #include <posix_descriptor_syscalls.hpp>
 #include <posix_io_syscalls.hpp>
+#include <posix_ioctl.hpp>
 #include <posix_open.hpp>
 #include <posix_pipe.hpp>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
-#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -52,34 +52,45 @@ namespace sogen
             };
         }
 
-        std::optional<uint64_t> readable_bytes(const posix_fd& file)
+        std::optional<posix_file_ioctl> file_ioctl(const uint64_t request)
         {
-            std::error_code ec{};
-            const uint64_t size = std::filesystem::file_size(path_from_utf8(file.host_path), ec);
-            const auto position = file.seek(0, SEEK_CUR);
-            if (ec || !position)
+            constexpr uint64_t fioclex = 0x20006601;
+            constexpr uint64_t fionclex = 0x20006602;
+            constexpr uint64_t fionread = 0x4004667F;
+            constexpr uint64_t fionbio = 0x8004667E;
+            constexpr uint64_t fioasync = 0x8004667D;
+
+            switch (request)
             {
+            case fioclex:
+                return posix_file_ioctl::set_close_on_exec;
+            case fionclex:
+                return posix_file_ioctl::clear_close_on_exec;
+            case fionread:
+                return posix_file_ioctl::read_queued_bytes;
+            case fionbio:
+                return posix_file_ioctl::set_nonblocking;
+            case fioasync:
+                return posix_file_ioctl::set_async;
+            default:
                 return std::nullopt;
             }
-
-            return size - std::min(size, *position);
         }
 
-        // XNU queues a pipe's data on its read end, so the write end and the standard streams, which are presented
-        // as pipes, have nothing to read.
-        std::optional<uint64_t> queued_bytes(const posix_fd& file)
+        bool takes_file_ioctl(const posix_fd& file, const posix_file_ioctl request)
         {
-            if (file.type == fd_type::pipe_read)
+            switch (request)
             {
-                return posix_pipe_queued_bytes(file);
+            case posix_file_ioctl::set_close_on_exec:
+            case posix_file_ioctl::clear_close_on_exec:
+            case posix_file_ioctl::set_nonblocking:
+                return true;
+            case posix_file_ioctl::set_async:
+            case posix_file_ioctl::read_queued_bytes:
+                return posix_has_file_ioctls(file);
             }
 
-            if (file.type == fd_type::pipe_write || file.is_standard_stream())
-            {
-                return 0;
-            }
-
-            return readable_bytes(file);
+            return false;
         }
 
         int open_socket(posix_fd_table& fds)
@@ -301,72 +312,30 @@ namespace sogen
         write_macos_syscall_error(c, name ? macos_errno::MACOS_ENOENT : macos_errno::MACOS_EFAULT);
     }
 
-    // Close-on-exec is handled by the syscall layer for every descriptor. Pipes and the standard streams then
-    // behave as XNU's pipe_ioctl and files as its vn_ioctl: non-blocking, async and readable-byte queries succeed,
-    // and everything else is ENOTTY.
+    // XNU's ioctl() sets close-on-exec and non-blocking mode for every descriptor. Pipes and the standard streams then
+    // behave as its pipe_ioctl and files as its vn_ioctl: async and readable-byte queries succeed, and everything else
+    // is ENOTTY.
     void sys_ioctl(const macos_syscall_context& c)
     {
-        constexpr uint64_t fioclex = 0x20006601;
-        constexpr uint64_t fionclex = 0x20006602;
-        constexpr uint64_t fionread = 0x4004667F;
-        constexpr uint64_t fionbio = 0x8004667E;
-        constexpr uint64_t fioasync = 0x8004667D;
-
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         const auto request = get_macos_syscall_argument(c.emu, 1);
         const auto argument = get_macos_syscall_argument(c.emu, 2);
 
-        auto* file = c.emu_ref.fds.get(fd);
+        const auto* file = c.emu_ref.fds.get(fd);
         if (file == nullptr)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EBADF);
             return;
         }
 
-        const auto has_file_ioctls = file->type == fd_type::file || file->type == fd_type::pipe_read || file->type == fd_type::pipe_write;
-        if (request == fioclex || request == fionclex || (has_file_ioctls && request == fioasync))
+        const auto file_request = file_ioctl(request);
+        if (file_request && takes_file_ioctl(*file, *file_request))
         {
-            write_macos_syscall_success(c, 0);
+            write_macos_syscall_result(c, posix_ioctl(io_context(c.emu_ref), fd, *file_request, argument));
             return;
         }
 
-        if (has_file_ioctls && request == fionbio)
-        {
-            int32_t nonblocking{};
-            if (!c.emu_ref.memory.is_readable_range(argument, sizeof(nonblocking)) ||
-                !c.emu.try_read_memory(argument, &nonblocking, sizeof(nonblocking)))
-            {
-                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-                return;
-            }
-
-            posix_set_nonblocking(*file, MACOS_O_NONBLOCK, nonblocking != 0);
-            write_macos_syscall_success(c, 0);
-            return;
-        }
-
-        if (has_file_ioctls && request == fionread)
-        {
-            const auto available = queued_bytes(*file);
-            if (!available)
-            {
-                write_macos_syscall_error(c, macos_errno::MACOS_EIO);
-                return;
-            }
-
-            const auto reported = static_cast<int32_t>(std::min<uint64_t>(*available, INT32_MAX));
-            if (!c.emu_ref.memory.is_writable_range(argument, sizeof(reported)) ||
-                !c.emu.try_write_memory(argument, &reported, sizeof(reported)))
-            {
-                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
-                return;
-            }
-
-            write_macos_syscall_success(c, 0);
-            return;
-        }
-
-        if (has_file_ioctls)
+        if (posix_has_file_ioctls(*file))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_ENOTTY);
             return;

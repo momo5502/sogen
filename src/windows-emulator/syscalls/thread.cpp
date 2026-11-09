@@ -973,6 +973,7 @@ namespace sogen
                 const auto interval = delay_interval.read();
                 t.await_time = interval.QuadPart == 0 ? std::chrono::steady_clock::time_point{}
                                                       : utils::convert_delay_interval_to_time_point(c.win_emu.clock(), interval);
+                t.await_time_absolute = utils::is_absolute_due_time(interval);
             }
             c.win_emu.yield_thread(c.vcpu, alertable);
 
@@ -1026,7 +1027,9 @@ namespace sogen
 
             if (timeout.value() && !t.await_time.has_value())
             {
-                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
+                const auto due = timeout.read();
+                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), due);
+                t.await_time_absolute = utils::is_absolute_due_time(due);
             }
 
             c.win_emu.yield_thread(c.vcpu);
