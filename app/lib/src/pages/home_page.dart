@@ -74,7 +74,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     }
     setState(() => _checkingRoot = false);
     if (outdated && !_installing && _saving.isEmpty) {
-      await _installRoot();
+      await _installRoot(update: true);
     }
   }
 
@@ -87,7 +87,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     super.dispose();
   }
 
-  Future<void> _installRoot() async {
+  /// An update downloads only the files the installed root lacks; an install downloads all of it.
+  Future<void> _installRoot({bool update = false}) async {
     setState(() {
       _installing = true;
       _progress = 0;
@@ -95,7 +96,8 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
     });
 
     try {
-      await widget.root.install(onProgress: (progress) => setState(() => _progress = progress));
+      void onProgress(double? progress) => setState(() => _progress = progress);
+      await (update ? widget.root.update(onProgress: onProgress) : widget.root.install(onProgress: onProgress));
     } on Exception catch (e) {
       _error = e.toString();
     } finally {
