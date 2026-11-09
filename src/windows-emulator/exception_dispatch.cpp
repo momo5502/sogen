@@ -695,6 +695,13 @@ namespace sogen
     void dispatch_single_step(windows_emulator& win_emu, vcpu_context& vcpu)
     {
         dispatch_exception(win_emu, vcpu, STATUS_SINGLE_STEP, {});
+
+        // The step's DR6 bits stay in its CONTEXT only: KiExceptionDispatch returns to user mode through
+        // KiRestoreDebugRegisterState, which clears DR6.
+        if (auto* x64 = dynamic_cast<x86_64_cpu*>(&vcpu.cpu))
+        {
+            x64->reg(x86_register::dr6, uint64_t{0});
+        }
     }
 
     void dispatch_breakpoint(windows_emulator& win_emu, vcpu_context& vcpu)
