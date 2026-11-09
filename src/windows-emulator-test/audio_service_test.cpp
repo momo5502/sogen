@@ -15,6 +15,8 @@ namespace sogen::test
                                                                        0x98, 0xb4, 0xa1, 0x98, 0x0d, 0x00, 0xd2, 0x34};
         constexpr std::array<uint8_t, 16> audio_client_interface_26100{0x11, 0xd1, 0x74, 0xd5, 0x26, 0x61, 0xd7, 0x49,
                                                                        0x9b, 0x86, 0x4d, 0xe6, 0xb6, 0x50, 0xd4, 0xfc};
+        constexpr std::array<uint8_t, 16> audio_client_interface_26100_9549{0x75, 0x2e, 0x68, 0xcd, 0x49, 0x37, 0x4d, 0x4a,
+                                                                            0xa6, 0xb1, 0xc0, 0x27, 0xed, 0x8a, 0x4c, 0x13};
         constexpr std::array<uint8_t, 16> audio_client_interface_19041{0x76, 0x52, 0x93, 0x5f, 0x7b, 0x1c, 0xf5, 0x46,
                                                                        0xac, 0x77, 0x07, 0x77, 0x59, 0x00, 0x1d, 0x2b};
 
@@ -285,6 +287,12 @@ namespace sogen::test
     {
         this->expect_format_accepted(audio_client_interface_26100, 8, 336, 392);
         this->expect_format_accepted(audio_client_interface_26100, 4, 308, 356);
+    }
+
+    TEST_F(AudioServiceTest, ReadsUpdatedWindows11IsFormatSupportedFormat)
+    {
+        this->expect_format_accepted(audio_client_interface_26100_9549, 8, 336, 392);
+        this->expect_format_accepted(audio_client_interface_26100_9549, 4, 308, 356);
     }
 
     TEST_F(AudioServiceTest, AnswersServer2022SessionOpnums)

@@ -88,6 +88,20 @@ namespace sogen::test
         EXPECT_EQ(this->thread->await_file_io, storage);
     }
 
+    TEST_F(IdleSchedulerTest, PendingHostConditionDoesNotBusyPoll)
+    {
+        this->create();
+        size_t polls{};
+        this->thread->await_host_condition = [&polls] {
+            ++polls;
+            return false;
+        };
+        this->stop_after(std::chrono::milliseconds(50));
+        EXPECT_FALSE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_GT(polls, 0u);
+        EXPECT_LT(polls, 1000u);
+    }
+
     TEST_F(IdleSchedulerTest, HostConditionMakesParkedThreadRunnable)
     {
         this->create();

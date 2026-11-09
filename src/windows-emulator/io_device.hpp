@@ -194,6 +194,12 @@ namespace sogen
             (void)win_emu;
         }
 
+        // See process_context::move_absolute_deadlines.
+        virtual void move_absolute_deadlines(const std::chrono::steady_clock::duration system_time_ahead)
+        {
+            (void)system_time_ahead;
+        }
+
         virtual bool supports_serialization() const
         {
             return true;

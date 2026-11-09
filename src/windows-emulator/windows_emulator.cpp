@@ -76,6 +76,19 @@ namespace sogen
             int y{};
         };
 
+        // Static controls without SS_NOTIFY and group boxes answer WM_NCHITTEST with HTTRANSPARENT, so the mouse reaches
+        // the window beneath them: dialogs handle clicks on image statics, and controls inside a group box get theirs.
+        bool is_transparent_to_mouse(const window& win)
+        {
+            constexpr uint32_t ss_notify = 0x100;
+            constexpr uint32_t bs_type_mask = 0xF;
+            constexpr uint32_t bs_groupbox = 0x7;
+
+            const auto class_name = normalize_builtin_window_class_name(win.class_name);
+            return (class_name == u"Static" && (win.style & ss_notify) == 0) ||
+                   (class_name == u"Button" && (win.style & bs_type_mask) == bs_groupbox);
+        }
+
         std::optional<child_hit_test_result> find_child_window_at(const process_context& process, const hwnd parent, const int x,
                                                                   const int y)
         {
@@ -96,7 +109,7 @@ namespace sogen
                     {
                         result = descendant;
                     }
-                    else
+                    else if (!is_transparent_to_mouse(child))
                     {
                         result = child_hit_test_result{.win = &child, .x = child_x, .y = child_y};
                     }
@@ -385,19 +398,6 @@ namespace sogen
             }
 
             return {.window = top_level, .x = x, .y = y};
-        }
-
-        bool has_pending_host_wait(const process_context& process)
-        {
-            for (const auto& thread_entry : process.threads)
-            {
-                if (thread_entry.second.await_host_condition)
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         void perform_context_switch_work(windows_emulator& win_emu, vcpu_context& vcpu)
@@ -832,6 +832,7 @@ namespace sogen
           socket_factory_(get_socket_factory(interfaces, settings.network)),
           ui_backend_(get_ui_backend(interfaces)),
           audio_backend_(get_audio_backend(interfaces)),
+          steam_backend_(std::move(interfaces.steam)),
           crypt_protect_backend_(get_crypt_protect_backend(
               interfaces, settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root))),
           process_manager_(interfaces.processes),
@@ -864,6 +865,7 @@ namespace sogen
                                  this->emu_->supports_global_memory_execution_hooks()),
           intercept_rdtsc_(settings.intercept_rdtsc),
           intercept_kusd_(settings.intercept_kusd),
+          keep_guest_time_across_snapshots_(settings.keep_guest_time_across_snapshots),
           spoof_gpu_features_(settings.spoof_gpu_features),
           elevated_(settings.elevated),
           max_display_mode_(settings.max_display_mode),
@@ -875,6 +877,7 @@ namespace sogen
         }
 
         this->memory.set_execute_implies_read(guest_architecture_of(*this->emu_) == windows_guest_architecture::x86_64);
+        this->thread_stacks_committed_in_full_ = !this->memory.supports_guarded_stack_growth();
 
         if (this->max_display_mode_ && std::ranges::find(display_modes, *this->max_display_mode_) == display_modes.end())
         {
@@ -996,10 +999,11 @@ namespace sogen
 
     // Stacks created while the backend could fault on single pages keep their guard pages; once it no longer can (a
     // debugger took the watchpoints), those guard pages would never fault and the stacks would run into reserved
-    // memory, so they are committed in full like the stacks created afterwards.
-    void windows_emulator::commit_thread_stacks_if_page_protection_was_lost()
+    // memory, so they are committed in full like the stacks created afterwards. A restored process can bring guarded
+    // stacks to a backend that cannot grow them at all.
+    void windows_emulator::commit_thread_stacks_without_guarded_growth()
     {
-        if (this->thread_stacks_committed_in_full_ || this->memory.supports_page_granular_protection())
+        if (this->thread_stacks_committed_in_full_ || this->memory.supports_guarded_stack_growth())
         {
             return;
         }
@@ -1014,7 +1018,7 @@ namespace sogen
 
         if (this->page_protection_check_due_.exchange(false))
         {
-            this->commit_thread_stacks_if_page_protection_was_lost();
+            this->commit_thread_stacks_without_guarded_growth();
         }
 
         const auto needed_switch = vcpu.switch_thread.exchange(false);
@@ -1048,8 +1052,6 @@ namespace sogen
                 }
             }
 
-            const auto host_wait_pending = has_pending_host_wait(this->process);
-
             ++this->idle_vcpus_;
 
             // Idle: nothing is ready. Release the kernel lock while pumping UI events
@@ -1066,11 +1068,6 @@ namespace sogen
             if (this->use_relative_time_)
             {
                 this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
-            }
-            else if (host_wait_pending)
-            {
-                // A host wait (e.g. a GPU semaphore) is parked - re-poll immediately to wake it promptly.
-                std::this_thread::yield();
             }
             else
             {
@@ -1169,6 +1166,11 @@ namespace sogen
         }
         incoming.registers_in_transit = true;
 
+        // Nothing changes the incoming thread's wait status while it is in transit, so it is written with its
+        // registers. A thread that is not set up yet gets it from setup_if_necessary, after its initial registers.
+        const std::optional<NTSTATUS> wait_status =
+            incoming.setup_done ? std::exchange(incoming.pending_status, std::nullopt) : std::nullopt;
+
         {
             this->kernel_lock_.unlock();
             const auto _ = utils::finally([&] {
@@ -1187,9 +1189,23 @@ namespace sogen
             }
 
             incoming.load_registers(vcpu.cpu);
+
+            // A WOW64 thread's refresh also writes this vCPU's GDT in guest memory, which needs the kernel lock.
+            if (!incoming.teb32.has_value())
+            {
+                incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
+            }
+
+            if (wait_status.has_value())
+            {
+                this->abi().return_value(vcpu.cpu, static_cast<uint64_t>(*wait_status));
+            }
         }
 
-        incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
+        if (incoming.teb32.has_value())
+        {
+            incoming.refresh_execution_context(vcpu.cpu, this->process.gdt_base);
+        }
     }
 
     bool windows_emulator::wait_for_thread_registers(vcpu_context& vcpu, emulator_thread& thread)
@@ -1729,6 +1745,10 @@ namespace sogen
             case 6:
                 this->callbacks.on_suspicious_activity("Illegal instruction");
                 dispatch_illegal_instruction_violation(*this, vcpu);
+                return;
+            case 13:
+                this->callbacks.on_suspicious_activity("General protection fault");
+                dispatch_general_protection_fault(*this, vcpu);
                 return;
             case 41:
                 this->callbacks.on_fast_fail(acting.reg<uint32_t>(x86_register::ecx));
@@ -2473,6 +2493,9 @@ namespace sogen
                 this->process.key_state[generic] = any_down ? 0x80 : 0;
             }
         }
+
+        // Every caller changes the key state here, injected input without a window to receive it included.
+        this->process.key_state_changed();
     }
 
     ui_event windows_emulator::resolve_injected_event(const ui_event& event) const
@@ -2561,7 +2584,7 @@ namespace sogen
         m.wParam = event.wParam;
         m.lParam = event.lParam;
 
-        if (event.injected && is_keyboard_message(event.message) && thread->focus_window != 0)
+        if ((is_keyboard_message(event.message) || is_character_message(event.message)) && thread->focus_window != 0)
         {
             if (const auto* focus = this->process.windows.get(thread->focus_window); focus && focus->thread_id == win->thread_id)
             {
@@ -2661,6 +2684,7 @@ namespace sogen
                 {
                     this->process.key_state[virtual_key] = 0;
                 }
+                this->process.key_state_changed();
             }
             break;
         }
@@ -2718,7 +2742,7 @@ namespace sogen
 
         win->x = x;
         win->y = y;
-        win->sync_guest_rects();
+        this->process.sync_guest_window_rects(*win);
 
         msg m{};
         m.window = window_handle;
@@ -2754,7 +2778,7 @@ namespace sogen
         win->height = client_height + insets.top + insets.bottom;
         win->style = maximized ? (win->style | WS_MAXIMIZE) : (win->style & ~WS_MAXIMIZE);
         win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win->style; });
-        win->sync_guest_rects();
+        this->process.sync_guest_window_rects(*win);
 
         win->update_rect = RECT{.left = 0, .top = 0, .right = win->client_width(), .bottom = win->client_height()};
         win->update_pending = true;
@@ -3085,6 +3109,7 @@ namespace sogen
         buffer.write(this->executed_instructions_);
         buffer.write_atomic(this->vcpus_[0]->switch_thread);
         buffer.write(this->use_relative_time_);
+        this->current_guest_time().serialize(buffer);
 
         this->version.serialize(buffer);
         this->registry.serialize_runtime_state(buffer);
@@ -3115,6 +3140,15 @@ namespace sogen
             throw std::runtime_error("Can not deserialize emulator with different time dimensions");
         }
 
+        // With keep_guest_time_across_snapshots, the guest's interrupt time (timeGetTime), tick count, timeouts and
+        // timestamp counter continue from the save, not from the time that passed on the host until the load.
+        guest_time saved_time{};
+        saved_time.deserialize(buffer);
+        if (this->keep_guest_time_across_snapshots_)
+        {
+            this->clock_->continue_time_at(saved_time.steady, saved_time.timestamp_counter);
+        }
+
         this->version.deserialize(buffer);
         this->registry.deserialize_runtime_state(buffer);
 
@@ -3137,18 +3171,50 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->thread_stacks_committed_in_full_ = false;
+        this->commit_thread_stacks_without_guarded_growth();
         // A state saved while vCPU 0 was idle, without prepare_serialization, has no running thread.
         this->occupy_idle_first_vcpu(nullptr);
         this->apply_cursor_shape();
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
         this->release_held_input();
+
+        // Steady time stood still while the state was loaded too, so the guest goes on from the save when it runs again.
+        this->continue_time_at(saved_time);
+    }
+
+    windows_emulator::guest_time windows_emulator::current_guest_time() const
+    {
+        return {.steady = this->clock_->steady_now(),
+                .system = this->clock_->system_now(),
+                .timestamp_counter = this->clock_->timestamp_counter()};
+    }
+
+    void windows_emulator::continue_time_at(const guest_time& time)
+    {
+        if (!this->keep_guest_time_across_snapshots_)
+        {
+            return;
+        }
+
+        this->clock_->continue_time_at(time.steady, time.timestamp_counter);
+
+        // The host's system time went on meanwhile, or is behind the save on another machine.
+        const auto system_time_ahead = std::chrono::duration_cast<utils::clock::steady_duration>(this->clock_->system_now() - time.system);
+        if (system_time_ahead != utils::clock::steady_duration::zero())
+        {
+            this->process.move_absolute_deadlines(system_time_ahead);
+        }
+
+        this->process.kusd.refresh();
     }
 
     // Nothing is held when a saved process continues, so what was held when it was saved is released, the way the guest
     // would have seen it happen.
     void windows_emulator::release_held_input()
     {
+        bool released = false;
         for (uint32_t key = 0; key < this->process.key_state.size(); ++key)
         {
             if ((this->process.key_state[key] & 0x80) == 0)
@@ -3156,6 +3222,7 @@ namespace sogen
                 continue;
             }
 
+            released = true;
             if (key == VK_LBUTTON || key == VK_RBUTTON || key == VK_MBUTTON || key == VK_XBUTTON1 || key == VK_XBUTTON2)
             {
                 this->process.key_state[key] = 0;
@@ -3173,6 +3240,13 @@ namespace sogen
 
             // Delivering the release does not clear the key when there is no window to deliver it to.
             this->process.key_state[key] &= 0x01;
+        }
+
+        // The buttons and the keys that could not be delivered were cleared here directly. The CLIENTINFO caches and the
+        // generation are restored with guest memory, so a cache stamped before the save would still pass for current.
+        if (released)
+        {
+            this->process.key_state_changed();
         }
     }
 
@@ -3225,10 +3299,15 @@ namespace sogen
 
     void windows_emulator::save_snapshot()
     {
+        // As with a snapshot file: the guest's time stands still while the snapshot is taken, and a restore goes on from it.
+        const auto time = this->current_guest_time();
+        const auto continue_time = utils::finally([&] { this->continue_time_at(time); });
+
         this->prepare_serialization();
 
         utils::buffer_serializer buffer{};
 
+        time.serialize(buffer);
         buffer.write(this->setup_completed_);
         buffer.write(this->executed_instructions_);
         buffer.write_atomic(this->vcpus_[0]->switch_thread);
@@ -3259,6 +3338,13 @@ namespace sogen
 
         this->register_factories(buffer);
 
+        guest_time saved_time{};
+        saved_time.deserialize(buffer);
+        if (this->keep_guest_time_across_snapshots_)
+        {
+            this->clock_->continue_time_at(saved_time.steady, saved_time.timestamp_counter);
+        }
+
         buffer.read(this->setup_completed_);
         buffer.read(this->executed_instructions_);
         buffer.read_atomic(this->vcpus_[0]->switch_thread);
@@ -3284,9 +3370,12 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->thread_stacks_committed_in_full_ = false;
+        this->commit_thread_stacks_without_guarded_growth();
         this->apply_cursor_shape();
         this->ui().set_cursor_visibility(this->process.cursor_show_count >= 0 && this->process.cursor_shape_visible);
         this->apply_cursor_capture();
+        this->continue_time_at(saved_time);
     }
 
 } // namespace sogen

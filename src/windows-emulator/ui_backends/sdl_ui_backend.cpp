@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "surface_alpha.hpp"
 #include "window_geometry.hpp"
+#include "../keyboard_layout.hpp"
 #include "../vulkan_handle_utils.hpp"
 #include <platform/ui_backend.hpp>
 
@@ -674,7 +675,10 @@ namespace sogen
                 ui_surface_format texture_format{ui_surface_format::bgra8};
                 bool has_surface{};
                 bool translucent{};
+                bool popup{};
                 std::vector<uint32_t> blended_pixels{};
+                ui_surface_desc popup_surface{};
+                std::vector<uint8_t> popup_pixels{};
                 std::optional<std::pair<int, int>> placed_position{};
             };
 
@@ -792,7 +796,8 @@ namespace sogen
                     // A host window sits where its guest window's frame is, so a user move moves the guest window.
                     case SDL_EVENT_WINDOW_MOVED:
                         if (const auto guest = this->resolve_guest(event.window.windowID);
-                            guest != 0 && !this->consume_own_placement(guest, event.window.data1, event.window.data2))
+                            guest != 0 && !this->is_popup(guest) &&
+                            !this->consume_own_placement(guest, event.window.data1, event.window.data2))
                         {
                             const auto position = (static_cast<uint64_t>(static_cast<uint16_t>(event.window.data2)) << 16) |
                                                   static_cast<uint16_t>(event.window.data1);
@@ -829,9 +834,9 @@ namespace sogen
                             break;
                         }
 
-                        const auto modifiers = event.key.mod;
-                        if (event.key.key == SDLK_S && (modifiers & SDL_KMOD_CTRL) != 0 && (modifiers & SDL_KMOD_ALT) != 0 &&
-                            (modifiers & SDL_KMOD_SHIFT) != 0 && this->snapshot_request_sink_)
+                        const auto keymod = event.key.mod;
+                        if (event.key.key == SDLK_S && (keymod & SDL_KMOD_CTRL) != 0 && (keymod & SDL_KMOD_ALT) != 0 &&
+                            (keymod & SDL_KMOD_SHIFT) != 0 && this->snapshot_request_sink_)
                         {
                             if (!event.key.repeat)
                             {
@@ -875,8 +880,20 @@ namespace sogen
                         }
 
                         const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYDOWN : WM_KEYDOWN;
-
                         this->post_event(guest, message, vk, scan);
+
+                        if (message == WM_KEYDOWN)
+                        {
+                            const key_modifiers modifiers{.shift = (event.key.mod & SDL_KMOD_SHIFT) != 0,
+                                                          .control = (event.key.mod & SDL_KMOD_CTRL) != 0,
+                                                          .alt = (event.key.mod & SDL_KMOD_ALT) != 0,
+                                                          .caps_lock = (event.key.mod & SDL_KMOD_CAPS) != 0};
+                            const auto character = key_character(static_cast<uint32_t>(vk), modifiers);
+                            if (character != 0 && (character < 0x20 || character == 0x7f))
+                            {
+                                this->post_event(guest, WM_CHAR, character, scan);
+                            }
+                        }
                         break;
                     }
 
@@ -1103,6 +1120,14 @@ namespace sogen
                     return;
                 }
 
+                if (is_promoted_child(desc))
+                {
+                    auto& state = this->windows_[desc.handle];
+                    state.desc = desc;
+                    this->create_popup_host(state);
+                    return;
+                }
+
                 auto flags = host_window_flags(desc);
                 const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left) - desc.client_insets.left -
                                                         desc.client_insets.right);
@@ -1146,12 +1171,184 @@ namespace sogen
                 render_window(state);
             }
 
+            // A child window moved under the desktop window, like a combo box's drop-down list, is top-level but keeps
+            // WS_CHILD. It belongs to the window that opened it and never takes activation from it.
+            static bool is_promoted_child(const ui_window_desc& desc)
+            {
+                return desc.top_level && (desc.style & WS_CHILD) != 0 && (desc.style & WS_POPUP) == 0;
+            }
+
             // Only WS_EX_NOACTIVATE makes a window never activated. Menus and tooltips stay inactive through how they
             // are shown (SW_SHOWNA, SWP_NOACTIVATE) or through MA_NOACTIVATE instead, and a borderless popup with
             // WS_EX_TOOLWINDOW is the usual way to keep a window that does need the keyboard off the taskbar.
             static bool is_never_activated(const ui_window_desc& desc)
             {
-                return (desc.ex_style & WS_EX_NOACTIVATE) != 0;
+                return (desc.ex_style & WS_EX_NOACTIVATE) != 0 || is_promoted_child(desc);
+            }
+
+            static int client_width(const ui_window_desc& desc)
+            {
+                return std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left) - desc.client_insets.left -
+                                            desc.client_insets.right);
+            }
+
+            static int client_height(const ui_window_desc& desc)
+            {
+                return std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top) - desc.client_insets.top -
+                                            desc.client_insets.bottom);
+            }
+
+            // SDL places a popup relative to its parent host window, which shows the owner's client area.
+            static std::pair<int, int> popup_offset(const ui_window_desc& popup, const ui_window_desc& owner)
+            {
+                return {popup.rect.left - (owner.rect.left + owner.client_insets.left),
+                        popup.rect.top - (owner.rect.top + owner.client_insets.top)};
+            }
+
+            window_state* popup_owner(const window_state& state)
+            {
+                auto* owner = this->resolve_window(this->get_top_level_ancestor(state.desc.owner));
+                return owner && owner->window && !owner->popup ? owner : nullptr;
+            }
+
+            // Without an owner on screen there is nothing to attach a popup to, so the window gets a plain borderless host at
+            // its screen position instead; it still never takes the keyboard or activation.
+            void create_unowned_host(window_state& state)
+            {
+                const Uint64 flags =
+                    SDL_WINDOW_BORDERLESS | SDL_WINDOW_UTILITY | SDL_WINDOW_NOT_FOCUSABLE | (state.desc.visible ? 0 : SDL_WINDOW_HIDDEN);
+                auto* window = create_host_window(state.desc, flags, client_width(state.desc), client_height(state.desc));
+                auto* renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
+                if (!renderer)
+                {
+                    if (window)
+                    {
+                        SDL_DestroyWindow(window);
+                    }
+                    return;
+                }
+
+                place_host_window(window, state.placed_position,
+                                  [&] { SDL_SetWindowPosition(window, state.desc.rect.left, state.desc.rect.top); });
+                state.window = window;
+                state.renderer = renderer;
+                this->guest_by_window_id_[SDL_GetWindowID(window)] = state.desc.handle;
+                render_window(state);
+            }
+
+            void create_popup_host(window_state& state)
+            {
+                auto* owner = this->popup_owner(state);
+                if (!owner)
+                {
+                    this->create_unowned_host(state);
+                    return;
+                }
+
+                const auto [x, y] = popup_offset(state.desc, owner->desc);
+                const Uint64 flags = SDL_WINDOW_POPUP_MENU | SDL_WINDOW_NOT_FOCUSABLE | (state.desc.visible ? 0 : SDL_WINDOW_HIDDEN);
+                auto* window = SDL_CreatePopupWindow(owner->window, x, y, client_width(state.desc), client_height(state.desc), flags);
+                if (!window)
+                {
+                    return;
+                }
+
+                auto* renderer = SDL_CreateRenderer(window, nullptr);
+                if (!renderer)
+                {
+                    SDL_DestroyWindow(window);
+                    return;
+                }
+
+                state.window = window;
+                state.renderer = renderer;
+                state.popup = true;
+                this->guest_by_window_id_[SDL_GetWindowID(window)] = state.desc.handle;
+                render_window(state);
+            }
+
+            void destroy_host(window_state& state)
+            {
+                if (state.window)
+                {
+                    SDL_StopTextInput(state.window);
+                    this->guest_by_window_id_.erase(SDL_GetWindowID(state.window));
+                }
+                destroy_window_resources(state);
+                state.has_surface = false;
+                state.popup = false;
+            }
+
+            // SDL_DestroyWindow takes a window's popups and their renderers with it, so they have to go first and come back
+            // once the owner's host has been replaced.
+            std::vector<hwnd> release_owned_popups(const window_state& owner)
+            {
+                std::vector<hwnd> popups{};
+                for (auto& [handle, state] : this->windows_)
+                {
+                    if (state.popup && this->popup_owner(state) == &owner)
+                    {
+                        this->destroy_host(state);
+                        popups.push_back(handle);
+                    }
+                }
+                return popups;
+            }
+
+            // A popup's texture dies with its renderer, and nothing makes the guest paint it again, so it shows its last
+            // frame from a copy.
+            void restore_popups(const std::vector<hwnd>& popups)
+            {
+                for (const auto handle : popups)
+                {
+                    auto* state = this->resolve_window(handle);
+                    if (!state)
+                    {
+                        continue;
+                    }
+
+                    this->create_popup_host(*state);
+                    if (state->renderer && !state->popup_pixels.empty())
+                    {
+                        auto surface = state->popup_surface;
+                        surface.pixels = state->popup_pixels.data();
+                        update_surface_texture(*state, surface);
+                        render_window(*state);
+                    }
+                }
+            }
+
+            void set_window_relationship(const hwnd window, const hwnd parent, const hwnd owner, const bool top_level) override
+            {
+                this->queue_or_run([this, window, parent, owner, top_level] {
+                    auto* state = this->resolve_window(window);
+                    if (!state)
+                    {
+                        return;
+                    }
+
+                    const auto previous_root = this->get_top_level_ancestor(window);
+                    state->desc.parent = parent;
+                    state->desc.owner = owner;
+                    state->desc.top_level = top_level;
+
+                    if (!top_level && state->window)
+                    {
+                        this->destroy_host(*state);
+                        state->popup_surface = {};
+                        state->popup_pixels = {};
+                    }
+                    else if (is_promoted_child(state->desc) && !state->window)
+                    {
+                        this->create_popup_host(*state);
+                    }
+
+                    if (previous_root != window)
+                    {
+                        this->redraw_related(previous_root);
+                    }
+                    this->redraw_related(window);
+                });
             }
 
             static Uint64 host_window_flags(const ui_window_desc& desc)
@@ -1196,13 +1393,35 @@ namespace sogen
                 return SDL_CreateWindow(title.c_str(), width, height, flags);
             }
 
+            // A guest window at the top of its screen would put the host title bar above the display, where it cannot be
+            // grabbed. The frame of a host window with a title bar is kept inside the display's usable area, a little below
+            // its top edge. A borderless one (a guest window without a full WS_CAPTION) has no title bar to keep reachable
+            // and stays where the guest put it.
+            static void set_host_window_position(SDL_Window* window, int x, int y)
+            {
+                constexpr int top_margin = 20;
+                const SDL_Point point{.x = x, .y = y};
+                SDL_Rect usable{};
+                int border_top{};
+                int border_left{};
+                if ((SDL_GetWindowFlags(window) & SDL_WINDOW_BORDERLESS) == 0 &&
+                    SDL_GetDisplayUsableBounds(SDL_GetDisplayForPoint(&point), &usable) &&
+                    SDL_GetWindowBordersSize(window, &border_top, &border_left, nullptr, nullptr))
+                {
+                    x = std::max(x, usable.x + border_left);
+                    y = std::max(y, usable.y + top_margin + border_top);
+                }
+
+                SDL_SetWindowPosition(window, x, y);
+            }
+
             static void finish_host_window(SDL_Window* window, const int x, const int y, const Uint64 flags)
             {
 #ifdef _WIN32
                 apply_application_icon(window);
 #endif
 
-                SDL_SetWindowPosition(window, x, y);
+                set_host_window_position(window, x, y);
                 SDL_StartTextInput(window);
                 if ((flags & SDL_WINDOW_HIDDEN) == 0)
                 {
@@ -1231,12 +1450,14 @@ namespace sogen
 
                 place_host_window(window, state.placed_position, [&] { finish_host_window(window, x, y, flags); });
 
+                const auto popups = this->release_owned_popups(state);
                 SDL_StopTextInput(old_window);
                 this->guest_by_window_id_.erase(SDL_GetWindowID(old_window));
                 SDL_DestroyWindow(old_window);
 
                 state.window = window;
                 this->guest_by_window_id_[SDL_GetWindowID(window)] = state.desc.handle;
+                this->restore_popups(popups);
                 this->apply_cursor_capture();
                 return true;
             }
@@ -1259,6 +1480,7 @@ namespace sogen
                         });
 
                         auto* focus_fallback = this->find_focus_fallback(it->second);
+                        const auto popups = this->release_owned_popups(it->second);
                         // Child (non-top-level) windows have no SDL window; only top-level windows do.
                         if (it->second.window)
                         {
@@ -1267,6 +1489,7 @@ namespace sogen
                         }
                         destroy_window_resources(it->second);
                         this->windows_.erase(it);
+                        this->restore_popups(popups);
                         if (focus_fallback)
                         {
                             apply_x11_focus_fallback(focus_fallback);
@@ -1281,11 +1504,20 @@ namespace sogen
                     if (auto* state = this->resolve_window(window))
                     {
                         state->desc.rect = rect;
-                        if (state->desc.top_level)
+                        if (state->popup)
+                        {
+                            if (const auto* owner = this->popup_owner(*state))
+                            {
+                                const auto [x, y] = popup_offset(state->desc, owner->desc);
+                                SDL_SetWindowPosition(state->window, x, y);
+                                SDL_SetWindowSize(state->window, client_width(state->desc), client_height(state->desc));
+                            }
+                        }
+                        else if (state->desc.top_level)
                         {
                             const auto& insets = state->desc.client_insets;
                             place_host_window(state->window, state->placed_position, [&] {
-                                SDL_SetWindowPosition(state->window, rect.left, rect.top);
+                                set_host_window_position(state->window, rect.left, rect.top);
                                 SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
                                                   std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
                             });
@@ -1302,7 +1534,18 @@ namespace sogen
                     if (auto* state = this->resolve_window(window))
                     {
                         state->desc.visible = visible;
-                        if (state->desc.top_level)
+                        if (state->popup)
+                        {
+                            if (visible)
+                            {
+                                SDL_ShowWindow(state->window);
+                            }
+                            else
+                            {
+                                SDL_HideWindow(state->window);
+                            }
+                        }
+                        else if (state->desc.top_level)
                         {
                             if (visible)
                             {
@@ -1379,6 +1622,11 @@ namespace sogen
                     {
                         update_surface_texture(*state, copy);
                         render_window(*state);
+                        if (state->popup)
+                        {
+                            state->popup_surface = copy;
+                            state->popup_pixels = std::move(pixels);
+                        }
                     }
                 });
             }
@@ -1684,6 +1932,12 @@ namespace sogen
                 }
 
                 return nullptr;
+            }
+
+            bool is_popup(const hwnd window) const
+            {
+                const auto* state = this->resolve_window(window);
+                return state && state->popup;
             }
 
             hwnd get_top_level_ancestor(hwnd window) const

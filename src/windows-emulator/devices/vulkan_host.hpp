@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -189,6 +190,12 @@ namespace sogen
         int32_t get_semaphore_counter_value(uint64_t device, uint64_t semaphore, uint64_t& out_value);
         int32_t signal_semaphore(uint64_t device, uint64_t semaphore, uint64_t value);
         int32_t wait_semaphores(uint64_t device, uint32_t flags, const void* entries, uint32_t count, uint64_t timeout);
+        // Waits as wait_semaphores does with no timeout, but on a host thread, so the caller's locks stay free while the
+        // GPU works. The result reads VK_TIMEOUT until the wait ends; on_done runs on that thread once it is in.
+        // Destroying the device or a waited semaphore ends the wait first, with VK_ERROR_INITIALIZATION_FAILED, as
+        // wait_semaphores reports objects that are gone.
+        std::shared_ptr<const std::atomic<int32_t>> wait_semaphores_async(uint64_t device, uint32_t flags, const void* entries,
+                                                                          uint32_t count, std::function<void()> on_done);
         uint64_t get_buffer_device_address(uint64_t device, uint64_t buffer);
 
         // Non-blocking: returns VK_SUCCESS if signaled, VK_NOT_READY otherwise. Never waits.
@@ -330,6 +337,11 @@ namespace sogen
                                              uint64_t& out_array_pitch, uint64_t& out_depth_pitch);
         int32_t get_image_memory_requirements(uint64_t device, uint64_t image, uint64_t& out_size, uint64_t& out_alignment,
                                               uint32_t& out_memory_type_bits);
+        // The memory requirements of the image create_image would make from the same parameters, without making it.
+        int32_t get_device_image_memory_requirements(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage,
+                                                     uint32_t tiling, uint32_t samples, uint32_t image_type, uint32_t depth,
+                                                     uint32_t mip_levels, uint32_t array_layers, uint32_t flags, uint64_t& out_size,
+                                                     uint64_t& out_alignment, uint32_t& out_memory_type_bits);
         int32_t bind_image_memory(uint64_t device, uint64_t image, uint64_t memory, uint64_t offset);
 
         // Records a single image memory barrier into the (recording) command buffer.

@@ -1,9 +1,14 @@
 #include "emulation_test_utils.hpp"
 
+#include <network/tcp_client_socket.hpp>
+
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace sogen::test
@@ -12,7 +17,12 @@ namespace sogen::test
     {
         constexpr ULONG ioctl_afd_bind = 0x12003;
         constexpr ULONG ioctl_afd_start_listen = 0x1200B;
+        constexpr ULONG ioctl_afd_wait_for_listen = 0x1200C;
+        constexpr ULONG ioctl_afd_accept = 0x12010;
+        constexpr ULONG ioctl_afd_receive = 0x12017;
+        constexpr ULONG ioctl_afd_send = 0x1201F;
         constexpr ULONG ioctl_afd_super_connect = 0x120C7;
+        constexpr ULONG ioctl_afd_get_address = 0x1202F;
         constexpr ULONG ioctl_afd_get_remote_address = 0x1203F;
         constexpr ULONG ioctl_afd_set_context = 0x12047;
 
@@ -255,18 +265,19 @@ namespace sogen::test
                 return this->emu->process.devices.get(this->endpoint)->execute_ioctl(*this->emu, request);
             }
 
-            NTSTATUS bind()
+            NTSTATUS bind(const guest_sockaddr_in& address = {.family = 2})
             {
                 std::array<std::byte, 20> info{};
-                const guest_sockaddr_in any{.family = 2};
-                memcpy(info.data() + 4, &any, sizeof(any));
+                memcpy(info.data() + 4, &address, sizeof(address));
                 this->emu->memory.write_memory(this->storage + input_offset, info.data(), info.size());
                 return this->ioctl(ioctl_afd_bind, this->storage + input_offset, static_cast<ULONG>(info.size()), 0, 0);
             }
 
-            NTSTATUS listen()
+            NTSTATUS listen(const ULONG backlog = 0)
             {
-                const std::array<std::byte, 12> info{};
+                // AFD_LISTEN_INFO: SanActive, MaximumConnectionQueue at 4, UseDelayedAcceptance.
+                std::array<std::byte, 12> info{};
+                memcpy(info.data() + 4, &backlog, sizeof(backlog));
                 this->emu->memory.write_memory(this->storage + input_offset, info.data(), info.size());
                 return this->ioctl(ioctl_afd_start_listen, this->storage + input_offset, static_cast<ULONG>(info.size()), 0, 0);
             }
@@ -331,6 +342,227 @@ namespace sogen::test
             std::shared_ptr<send_limit> send_budget{};
             handle endpoint{};
             uint64_t storage{};
+        };
+
+        // Endpoints driven through their AFD requests, on host sockets as in a game run or on the in-process network that
+        // runs without network access (the default).
+        class AfdConnectionRestoreTest : public testing::TestWithParam<network::network_mode>
+        {
+          protected:
+            void SetUp() override
+            {
+                emulator_interfaces interfaces{};
+                interfaces.ui = std::make_unique<null_ui_backend>();
+                interfaces.audio = std::make_unique<null_audio_backend>();
+                interfaces.console = std::make_unique<null_console_backend>();
+                interfaces.socket_factory = network::create_socket_factory(GetParam());
+                this->emu = std::make_unique<windows_emulator>(
+                    create_x86_64_emulator_from_environment(),
+                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                    emulator_callbacks{}, std::move(interfaces));
+                this->storage = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            }
+
+            handle open()
+            {
+                const endpoint_creation_data creation{};
+                this->emu->memory.write_memory(this->storage + input_offset, &creation, sizeof(creation));
+                return this->emu->process.devices.store(io_device_container{
+                    u"Afd\\Endpoint", *this->emu, {.buffer = this->storage + input_offset, .length = sizeof(creation)}});
+            }
+
+            template <typename T>
+            static void put(std::vector<std::byte>& bytes, const size_t offset, const T& value)
+            {
+                bytes.resize(std::max(bytes.size(), offset + sizeof(T)));
+                memcpy(bytes.data() + offset, &value, sizeof(T));
+            }
+
+            // Runs a request to its end: one that pends is worked on until its status block is written.
+            NTSTATUS request(const handle endpoint, const ULONG code, const std::span<const std::byte> input, const ULONG output_length = 0)
+            {
+                this->emu->memory.write_memory(this->storage + input_offset, input.data(), input.size());
+                const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> status_block{this->emu->memory,
+                                                                                           this->storage + status_offset};
+                auto block = status_block.read();
+                block.Status = STATUS_PENDING;
+                status_block.write(block);
+
+                io_device_context context{this->emu->memory};
+                context.source_handle = endpoint;
+                context.io_control_code = code;
+                context.io_status_block = status_block;
+                context.input_buffer = this->storage + input_offset;
+                context.input_buffer_length = static_cast<ULONG>(input.size());
+                context.output_buffer = this->storage + output_offset;
+                context.output_buffer_length = output_length;
+
+                auto* device = this->emu->process.devices.get(endpoint);
+                auto status = device->execute_ioctl(*this->emu, context);
+                for (int i = 0; status == STATUS_PENDING && i < 2000; ++i)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    device->work(*this->emu);
+                    status = status_block.read().Status;
+                }
+
+                this->information = status_block.read().Information;
+                return status;
+            }
+
+            NTSTATUS bind(const handle endpoint, const guest_sockaddr_in& address)
+            {
+                std::vector<std::byte> info{};
+                put(info, 4, address);
+                return this->request(endpoint, ioctl_afd_bind, info);
+            }
+
+            NTSTATUS listen(const handle endpoint)
+            {
+                std::vector<std::byte> info{};
+                put(info, 4, ULONG{4});
+                put(info, 8, ULONG{0});
+                return this->request(endpoint, ioctl_afd_start_listen, info);
+            }
+
+            NTSTATUS connect(const handle endpoint, const guest_sockaddr_in& target)
+            {
+                std::vector<std::byte> info{};
+                put(info, 4, LONG{1});
+                put(info, 8, USHORT{14});
+                put(info, 10, target);
+                info.resize(super_connect_info_size);
+                return this->request(endpoint, ioctl_afd_super_connect, info);
+            }
+
+            // The sequence of the connection the listener has waiting.
+            std::optional<LONG> wait_for_listen(const handle listener)
+            {
+                if (this->request(listener, ioctl_afd_wait_for_listen, {}, 20) != STATUS_SUCCESS)
+                {
+                    return std::nullopt;
+                }
+
+                return this->emu->memory.read_memory<LONG>(this->storage + output_offset);
+            }
+
+            NTSTATUS accept(const handle listener, const LONG sequence, const handle accepted)
+            {
+                std::vector<std::byte> info{};
+                put(info, 4, sequence);
+                put(info, 8, accepted.bits);
+                return this->request(listener, ioctl_afd_accept, info);
+            }
+
+            // AFD_SEND_INFO and AFD_RECV_INFO: the WSABUF array, its count and the AFD and TDI flags.
+            std::vector<std::byte> one_buffer(const ULONG length)
+            {
+                std::vector<std::byte> wsabuf{};
+                put(wsabuf, 0, length);
+                put(wsabuf, 8, this->storage + data_offset);
+                this->emu->memory.write_memory(this->storage + wsabuf_offset, wsabuf.data(), wsabuf.size());
+
+                std::vector<std::byte> info{};
+                put(info, 0, this->storage + wsabuf_offset);
+                put(info, 8, ULONG{1});
+                put(info, 16, ULONG{0});
+                info.resize(24);
+                return info;
+            }
+
+            NTSTATUS send(const handle endpoint, const std::string_view text)
+            {
+                this->emu->memory.write_memory(this->storage + data_offset, text.data(), text.size());
+                return this->request(endpoint, ioctl_afd_send, this->one_buffer(static_cast<ULONG>(text.size())));
+            }
+
+            std::string receive(const handle endpoint)
+            {
+                const auto status = this->request(endpoint, ioctl_afd_receive, this->one_buffer(64));
+                if (status != STATUS_SUCCESS)
+                {
+                    return "status " + std::to_string(static_cast<uint32_t>(status));
+                }
+
+                std::string text(static_cast<size_t>(this->information), '\0');
+                this->emu->memory.read_memory(this->storage + data_offset, text.data(), text.size());
+                return text;
+            }
+
+            uint16_t local_port(const handle endpoint)
+            {
+                EXPECT_EQ(STATUS_SUCCESS, this->request(endpoint, ioctl_afd_get_address, {}, sizeof(guest_sockaddr_in)));
+                return ntohs(this->emu->memory.read_memory<guest_sockaddr_in>(this->storage + output_offset).port);
+            }
+
+            // A listener on the port the host assigns for a bind to port 0, a client connected to it and the end the
+            // listener accepted, with "PING" waiting unread at the accepted end and "PONG" at the client.
+            void connect_pair(handle& listener, handle& client, handle& server, uint16_t& port)
+            {
+                listener = this->open();
+                ASSERT_EQ(STATUS_SUCCESS, this->bind(listener, loopback(0)));
+                ASSERT_EQ(STATUS_SUCCESS, this->listen(listener));
+                port = this->local_port(listener);
+                ASSERT_NE(0, port);
+
+                client = this->open();
+                ASSERT_EQ(STATUS_SUCCESS, this->bind(client, {.family = 2}));
+                ASSERT_EQ(STATUS_SUCCESS, this->connect(client, loopback(port)));
+
+                server = this->open();
+                const auto sequence = this->wait_for_listen(listener);
+                ASSERT_TRUE(sequence);
+                ASSERT_EQ(STATUS_SUCCESS, this->accept(listener, *sequence, server));
+
+                ASSERT_EQ(STATUS_SUCCESS, this->send(client, "PING"));
+                ASSERT_EQ(STATUS_SUCCESS, this->send(server, "PONG"));
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+
+            // Saves the endpoints, drops them with their host sockets as the end of the saving run does, and loads them
+            // again in the same order.
+            std::vector<handle> save_and_load(const std::vector<handle>& endpoints)
+            {
+                utils::buffer_serializer snapshot{};
+                for (const auto endpoint : endpoints)
+                {
+                    this->emu->process.devices.get(endpoint)->serialize(snapshot);
+                }
+
+                for (const auto endpoint : endpoints)
+                {
+                    EXPECT_TRUE(this->emu->process.devices.erase(endpoint));
+                }
+
+                utils::buffer_deserializer input{snapshot};
+                input.register_factory<socket_factory_wrapper>([&] { return socket_factory_wrapper{this->emu->socket_factory()}; });
+                input.register_factory<memory_manager_wrapper>([&] { return memory_manager_wrapper{this->emu->memory}; });
+
+                std::vector<handle> restored{};
+                for (size_t i = 0; i < endpoints.size(); ++i)
+                {
+                    io_device_container container{};
+                    container.deserialize(input);
+                    restored.push_back(this->emu->process.devices.store(std::move(container)));
+                }
+
+                for (const auto endpoint : restored)
+                {
+                    this->emu->process.devices.get(endpoint)->restore_after_state_restore(*this->emu);
+                }
+
+                return restored;
+            }
+
+            static constexpr uint64_t status_offset = 0x000;
+            static constexpr uint64_t input_offset = 0x100;
+            static constexpr uint64_t output_offset = 0x200;
+            static constexpr uint64_t wsabuf_offset = 0x300;
+            static constexpr uint64_t data_offset = 0x400;
+
+            std::unique_ptr<windows_emulator> emu{};
+            uint64_t storage{};
+            uint64_t information{};
         };
     }
 
@@ -498,6 +730,141 @@ namespace sogen::test
         EXPECT_EQ(STATUS_BUFFER_TOO_SMALL, this->query_remote_address(8));
         EXPECT_EQ(STATUS_BUFFER_TOO_SMALL, this->query_remote_address(0));
     }
+
+    // A load gives every socket a new host socket. A listening one takes its address and backlog again, so a server the
+    // guest runs (Destiny 2's server listens on 127.0.0.1:30974) accepts connections after the load as before the save.
+    TEST_F(AfdConnectTest, ListeningSocketListensAgainAfterARestore)
+    {
+#ifdef __EMSCRIPTEN__
+        GTEST_SKIP() << "WebAssembly has no host sockets to listen on";
+#else
+        constexpr uint16_t restored_port = 28973;
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(loopback(restored_port)));
+        ASSERT_EQ(STATUS_SUCCESS, this->listen(4));
+
+        utils::buffer_serializer snapshot{};
+        this->emu->process.devices.get(this->endpoint)->serialize(snapshot);
+
+        // The saving run is gone before the load, and its host socket with it.
+        ASSERT_TRUE(this->emu->process.devices.erase(this->endpoint));
+
+        // The load uses host sockets, as a game run does. (The in-process network the fixture saves with keeps a closed
+        // listener's queue, so it would accept the connection without a restore.)
+        const auto host_sockets = network::create_socket_factory(network::network_mode::live);
+        utils::buffer_deserializer input{snapshot};
+        input.register_factory<socket_factory_wrapper>([&] { return socket_factory_wrapper{*host_sockets}; });
+        input.register_factory<memory_manager_wrapper>([&] { return memory_manager_wrapper{this->emu->memory}; });
+        io_device_container restored{};
+        restored.deserialize(input);
+
+        network::tcp_client_socket client{AF_INET};
+        EXPECT_TRUE(client.connect(network::address{"127.0.0.1", restored_port}));
+#endif
+    }
+
+    // A listener bound to port 0 tells its clients the port the host assigned, so a load listens on that port again.
+    TEST_F(AfdConnectTest, ListenerOnPortZeroListensOnItsAssignedPortAfterARestore)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(loopback(0)));
+        ASSERT_EQ(STATUS_SUCCESS, this->listen(4));
+        ASSERT_EQ(STATUS_SUCCESS,
+                  this->ioctl(ioctl_afd_get_address, 0, 0, this->storage + output_offset, static_cast<ULONG>(sizeof(guest_sockaddr_in))));
+        const auto assigned = this->emu->memory.read_memory<guest_sockaddr_in>(this->storage + output_offset);
+        ASSERT_NE(0, assigned.port);
+
+        utils::buffer_serializer snapshot{};
+        this->emu->process.devices.get(this->endpoint)->serialize(snapshot);
+        ASSERT_TRUE(this->emu->process.devices.erase(this->endpoint));
+
+        // A new in-process network, whose first ports go to sockets made before the load: the restored socket gets a port of
+        // its own past the assigned one, so only a socket that binds the assigned port again accepts there.
+        const auto sockets = network::create_static_socket_factory();
+        for (uint16_t port = 0; port < ntohs(assigned.port); ++port)
+        {
+            (void)sockets->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        }
+
+        utils::buffer_deserializer input{snapshot};
+        input.register_factory<socket_factory_wrapper>([&] { return socket_factory_wrapper{*sockets}; });
+        input.register_factory<memory_manager_wrapper>([&] { return memory_manager_wrapper{this->emu->memory}; });
+        io_device_container restored{};
+        restored.deserialize(input);
+
+        const auto client = sockets->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        EXPECT_TRUE(client->connect(network::address{"127.0.0.1", ntohs(assigned.port)}));
+    }
+
+    // The host connection ends with the run that saved it. When both ends are sockets of the process (Destiny 2's BAP
+    // client and the server it runs), a load connects them again, and the bytes each had waiting unread are there to be
+    // read as before.
+    TEST_P(AfdConnectionRestoreTest, ConnectionBetweenTwoGuestSocketsIsMadeAgainWithItsUnreadBytes)
+    {
+        handle listener{};
+        handle client{};
+        handle server{};
+        uint16_t port{};
+        ASSERT_NO_FATAL_FAILURE(this->connect_pair(listener, client, server, port));
+
+        const auto restored = this->save_and_load({listener, client, server});
+        EXPECT_EQ("PING", this->receive(restored[2]));
+        EXPECT_EQ("PONG", this->receive(restored[1]));
+        ASSERT_EQ(STATUS_SUCCESS, this->send(restored[1], "MORE"));
+        EXPECT_EQ("MORE", this->receive(restored[2]));
+
+        // The listener is back on the port the host assigned it.
+        const auto another = this->emu->socket_factory().create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        (void)another->connect(network::address{"127.0.0.1", port});
+        EXPECT_TRUE(this->wait_for_listen(restored[0]));
+    }
+
+    // A connection outlives its listener, as with a server that accepts one connection and closes its listening socket:
+    // the accepted end listens at its own address while the other end connects again.
+    TEST_P(AfdConnectionRestoreTest, ConnectionWhoseListenerWasClosedIsMadeAgain)
+    {
+        handle listener{};
+        handle client{};
+        handle server{};
+        uint16_t port{};
+        ASSERT_NO_FATAL_FAILURE(this->connect_pair(listener, client, server, port));
+        ASSERT_TRUE(this->emu->process.devices.erase(listener));
+
+        const auto restored = this->save_and_load({client, server});
+        EXPECT_EQ("PING", this->receive(restored[1]));
+        EXPECT_EQ("PONG", this->receive(restored[0]));
+        ASSERT_EQ(STATUS_SUCCESS, this->send(restored[0], "MORE"));
+        EXPECT_EQ("MORE", this->receive(restored[1]));
+    }
+
+    // A peer outside the process lost its state with the saving run: the socket comes back unconnected, and bound to its
+    // address again, as a socket that was not connected does.
+    TEST_P(AfdConnectionRestoreTest, ConnectedSocketWhosePeerIsOutsideTheProcessIsBoundAgain)
+    {
+        const auto outside = this->emu->socket_factory().create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        ASSERT_TRUE(outside->bind(network::address{"127.0.0.1", 0}));
+        ASSERT_TRUE(outside->listen(1));
+        const auto port = outside->get_local_address()->get_port();
+
+        const auto client = this->open();
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(client, loopback(0)));
+        ASSERT_EQ(STATUS_SUCCESS, this->connect(client, loopback(port)));
+
+        const auto restored = this->save_and_load({client});
+        ASSERT_EQ(STATUS_SUCCESS, this->request(restored[0], ioctl_afd_get_address, {}, sizeof(guest_sockaddr_in)));
+        const auto local = this->emu->memory.read_memory<guest_sockaddr_in>(this->storage + output_offset);
+        EXPECT_EQ((std::array<uint8_t, 4>{127, 0, 0, 1}), local.address);
+    }
+
+    // WebAssembly's host sockets are HTTP requests, which cannot listen, so there only the in-process network is restored.
+#ifdef __EMSCRIPTEN__
+    constexpr std::array restore_networks{network::network_mode::offline};
+#else
+    constexpr std::array restore_networks{network::network_mode::live, network::network_mode::offline};
+#endif
+
+    INSTANTIATE_TEST_SUITE_P(Networks, AfdConnectionRestoreTest, testing::ValuesIn(restore_networks),
+                             [](const testing::TestParamInfo<network::network_mode>& info) {
+                                 return info.param == network::network_mode::live ? "HostSockets" : "InProcessNetwork";
+                             });
 
     TEST_F(AfdConnectTest, RemoteAddressWithoutAPeerIsRejected)
     {

@@ -41,6 +41,8 @@ class SteamPlanner {
   final SteamClient _client;
   final http.Client _http;
 
+  void close() => _http.close();
+
   Future<(PlannedInstall, String)?> plan(int appId, LanguageChooser chooseLanguage) async {
     final info = (await _client.appInfo([appId]))[appId];
     if (info == null) {

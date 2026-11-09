@@ -536,6 +536,16 @@ namespace sogen
         return !this->page_granular_protection_lost_;
     }
 
+    bool memory_manager::supports_restartable_faults() const
+    {
+        return this->memory_->supports_restartable_faults();
+    }
+
+    bool memory_manager::supports_guarded_stack_growth() const
+    {
+        return this->supports_page_granular_protection() && this->supports_restartable_faults();
+    }
+
     bool memory_manager::can_alias_host_memory_anywhere() const
     {
         return this->memory_->supports_host_memory_mapping() && !this->memory_->host_memory_mapping_requires_identity();

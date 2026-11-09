@@ -13,6 +13,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
 #include <cstring>
 #include <deque>
@@ -283,6 +284,140 @@ namespace sogen
                 if (*this->references_)
                 {
                     (*this->references_)->insert(id);
+                }
+            }
+        };
+
+        // A vkWaitSemaphores resolved to the driver's handles, so it can run on any thread while they live.
+        struct native_semaphore_wait
+        {
+            PFN_vkWaitSemaphores wait_semaphores{};
+            VkDevice device{};
+            VkSemaphoreWaitFlags flags{};
+            std::vector<VkSemaphore> semaphores{};
+            std::vector<uint64_t> values{};
+
+            VkResult wait(const uint64_t timeout) const
+            {
+                VkSemaphoreWaitInfo info{};
+                info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+                info.flags = this->flags;
+                info.semaphoreCount = static_cast<uint32_t>(this->semaphores.size());
+                info.pSemaphores = this->semaphores.data();
+                info.pValues = this->values.data();
+                return this->wait_semaphores(this->device, &info, timeout);
+            }
+        };
+
+        struct async_semaphore_wait
+        {
+            uint64_t device_id{};
+            std::vector<uint64_t> semaphore_ids{};
+            native_semaphore_wait native{};
+            std::function<void()> on_done{};
+            std::shared_ptr<std::atomic<int32_t>> result = std::make_shared<std::atomic<int32_t>>(VK_TIMEOUT);
+            std::atomic_bool ended{};
+        };
+
+        // Runs one async_semaphore_wait at a time on a thread of its own. It waits in the driver in bounded slices, so
+        // that ending a wait whose objects are being destroyed takes at most one.
+        class semaphore_waiter
+        {
+          public:
+            semaphore_waiter()
+                : thread_([this] { this->run(); })
+            {
+            }
+
+            semaphore_waiter(const semaphore_waiter&) = delete;
+            semaphore_waiter& operator=(const semaphore_waiter&) = delete;
+
+            ~semaphore_waiter()
+            {
+                {
+                    const std::scoped_lock lock{this->mutex_};
+                    this->exiting_ = true;
+                    if (this->job_)
+                    {
+                        this->job_->ended = true;
+                    }
+                }
+
+                this->changed_.notify_all();
+                this->thread_.join();
+            }
+
+            bool idle()
+            {
+                const std::scoped_lock lock{this->mutex_};
+                return !this->job_;
+            }
+
+            void start(std::unique_ptr<async_semaphore_wait> job)
+            {
+                {
+                    const std::scoped_lock lock{this->mutex_};
+                    this->job_ = std::move(job);
+                }
+
+                this->changed_.notify_all();
+            }
+
+            // Returns once the driver no longer waits for a matching wait in flight, which then reports
+            // VK_ERROR_INITIALIZATION_FAILED.
+            template <typename Predicate>
+            void end_if(const Predicate& matches)
+            {
+                std::unique_lock lock{this->mutex_};
+                if (this->job_ && matches(*this->job_))
+                {
+                    this->job_->ended = true;
+                    this->changed_.wait(lock, [this] { return !this->job_; });
+                }
+            }
+
+          private:
+            static constexpr uint64_t slice_ns = 10'000'000;
+
+            std::mutex mutex_{};
+            std::condition_variable changed_{};
+            std::unique_ptr<async_semaphore_wait> job_{};
+            bool exiting_{};
+            std::thread thread_{};
+
+            void run()
+            {
+                std::unique_lock lock{this->mutex_};
+                while (true)
+                {
+                    this->changed_.wait(lock, [this] { return this->job_ || this->exiting_; });
+                    if (!this->job_)
+                    {
+                        return;
+                    }
+
+                    auto& job = *this->job_;
+                    lock.unlock();
+
+                    VkResult result{};
+                    do
+                    {
+                        result = job.native.wait(slice_ns);
+                    } while (result == VK_TIMEOUT && !job.ended);
+
+                    job.result->store(result == VK_TIMEOUT ? VK_ERROR_INITIALIZATION_FAILED : result, std::memory_order_release);
+                    const auto on_done = std::move(job.on_done);
+
+                    lock.lock();
+                    this->job_.reset();
+                    this->changed_.notify_all();
+                    lock.unlock();
+
+                    if (on_done)
+                    {
+                        on_done();
+                    }
+                    lock.lock();
                 }
             }
         };
@@ -560,6 +695,7 @@ namespace sogen
             PFN_vkCreateImage create_image{};
             PFN_vkDestroyImage destroy_image{};
             PFN_vkGetImageMemoryRequirements get_image_memory_requirements{};
+            PFN_vkGetDeviceImageMemoryRequirements get_device_image_memory_requirements{};
             PFN_vkGetImageSubresourceLayout get_image_subresource_layout{};
             PFN_vkBindImageMemory bind_image_memory{};
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
@@ -1978,6 +2114,57 @@ namespace sogen
         object_table<fence_data> fences{&this->recording_references};
         object_table<event_data> events{&this->recording_references};
         object_table<semaphore_data> semaphores{&this->recording_references};
+
+        // ponytail: one thread per wait in flight at once, kept for later waits; a pool cap if guests ever park many.
+        std::vector<std::unique_ptr<semaphore_waiter>> semaphore_waiters{};
+
+        std::optional<native_semaphore_wait> resolve_semaphore_wait(const uint64_t device, const uint32_t flags,
+                                                                    const gpu_bridge::wait_semaphore_entry* entries, const uint32_t count)
+        {
+            const auto dev = this->devices.find(device);
+            if (dev == this->devices.end() || !dev->second.wait_semaphores)
+            {
+                return std::nullopt;
+            }
+
+            native_semaphore_wait wait{.wait_semaphores = dev->second.wait_semaphores, .device = dev->second.handle, .flags = flags};
+            wait.semaphores.reserve(count);
+            wait.values.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto it = this->semaphores.find(entries[i].semaphore);
+                if (it == this->semaphores.end() || it->second.device_id != device)
+                {
+                    return std::nullopt;
+                }
+                wait.semaphores.push_back(it->second.handle);
+                wait.values.push_back(entries[i].value);
+            }
+            return wait;
+        }
+
+        semaphore_waiter& idle_semaphore_waiter()
+        {
+            for (const auto& waiter : this->semaphore_waiters)
+            {
+                if (waiter->idle())
+                {
+                    return *waiter;
+                }
+            }
+
+            return *this->semaphore_waiters.emplace_back(std::make_unique<semaphore_waiter>());
+        }
+
+        template <typename Predicate>
+        void end_semaphore_waits(const Predicate& matches)
+        {
+            for (const auto& waiter : this->semaphore_waiters)
+            {
+                waiter->end_if(matches);
+            }
+        }
+
         object_table<memory_data> memories{&this->recording_references};
         object_table<buffer_data> buffers{&this->recording_references};
         object_table<image_data> images{&this->recording_references};
@@ -2989,6 +3176,77 @@ namespace sogen
                    image.arrayLayers <= limits.maxArrayLayers && (limits.sampleCounts & image.samples) != 0;
         }
 
+        // The create-info a guest image is made with: the guest's parameters, with a BC format the device cannot sample
+        // swapped for its decoded substitute, plus transfer usage where the format allows it (the bridge copies images)
+        // and the host-allocation handle type where host memory can back the image. external_info is chained into info,
+        // and copyable says whether the image can be copied. A BC image the emulation cannot serve fails with
+        // VK_ERROR_FORMAT_NOT_SUPPORTED.
+        VkResult fill_image_create_info(const device_data& dev, const image_create_params& params, VkImageCreateInfo& info,
+                                        VkExternalMemoryImageCreateInfo& external_info, bool& copyable)
+        {
+            const auto sample_count = params.samples != 0 ? params.samples : static_cast<uint32_t>(VK_SAMPLE_COUNT_1_BIT);
+            info = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .pNext = nullptr,
+                .flags = params.flags,
+                .imageType = static_cast<VkImageType>(params.image_type),
+                .format = static_cast<VkFormat>(params.format),
+                .extent = {.width = params.width, .height = params.height, .depth = params.depth ? params.depth : 1},
+                .mipLevels = params.mip_levels ? params.mip_levels : 1,
+                .arrayLayers = params.array_layers ? params.array_layers : 1,
+                .samples = static_cast<VkSampleCountFlagBits>(sample_count),
+                .tiling = static_cast<VkImageTiling>(params.tiling),
+                .usage = params.usage,
+                .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+                .queueFamilyIndexCount = 0,
+                .pQueueFamilyIndices = nullptr,
+                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            };
+
+            if (const auto emulated = dev.bc_emulation ? get_bc_emulated_format(params.format) : std::nullopt)
+            {
+                if (!is_bc_emulation_supported(params.tiling, params.usage, params.flags) || info.samples != VK_SAMPLE_COUNT_1_BIT)
+                {
+                    return VK_ERROR_FORMAT_NOT_SUPPORTED;
+                }
+                info.format = static_cast<VkFormat>(emulated->substitute);
+                info.usage |= bc_emulated_usage;
+            }
+
+            // Multisampled images are read by sampling them and written by rendering to them.
+            const VkImageUsageFlags transfer_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                     (info.samples > VK_SAMPLE_COUNT_1_BIT ? VK_IMAGE_USAGE_SAMPLED_BIT : 0);
+            constexpr VkImageUsageFlags attachment_usage =
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+            copyable = (info.usage & transfer_usage) == transfer_usage;
+            if (!copyable)
+            {
+                auto with_transfer = info;
+                with_transfer.usage |= transfer_usage;
+                if (this->image_usage_supported(dev, with_transfer) &&
+                    this->image_supports_host_import(dev, with_transfer) == this->image_supports_host_import(dev, info))
+                {
+                    info.usage = with_transfer.usage;
+                    copyable = true;
+                }
+            }
+
+            if (info.samples > VK_SAMPLE_COUNT_1_BIT && (info.usage & attachment_usage) == 0)
+            {
+                copyable = false;
+            }
+
+            external_info = {};
+            if (this->image_supports_host_import(dev, info))
+            {
+                external_info.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+                external_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+                info.pNext = &external_info;
+            }
+
+            return VK_SUCCESS;
+        }
+
         template <typename Map, typename Pred>
         void erase_owned(Map& map, Pred pred)
         {
@@ -3503,6 +3761,7 @@ namespace sogen
 
             const auto presents = it->second.presents;
             const std::unique_lock presents_done(*presents);
+            this->end_semaphore_waits([&](const async_semaphore_wait& wait) { return wait.device_id == device_id; });
 
             // Descriptor pools (which free their sets) before descriptor set layouts those sets used.
             for (auto& [id, pool] : this->descriptor_pools)
@@ -5322,6 +5581,13 @@ namespace sogen
             data.destroy_image = reinterpret_cast<PFN_vkDestroyImage>(resolve("vkDestroyImage"));
             data.get_image_memory_requirements =
                 reinterpret_cast<PFN_vkGetImageMemoryRequirements>(resolve("vkGetImageMemoryRequirements"));
+            data.get_device_image_memory_requirements =
+                reinterpret_cast<PFN_vkGetDeviceImageMemoryRequirements>(resolve("vkGetDeviceImageMemoryRequirements"));
+            if (!data.get_device_image_memory_requirements)
+            {
+                data.get_device_image_memory_requirements =
+                    reinterpret_cast<PFN_vkGetDeviceImageMemoryRequirements>(resolve("vkGetDeviceImageMemoryRequirementsKHR"));
+            }
             data.get_image_subresource_layout = reinterpret_cast<PFN_vkGetImageSubresourceLayout>(resolve("vkGetImageSubresourceLayout"));
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
@@ -6006,35 +6272,34 @@ namespace sogen
 
     int32_t vulkan_host::wait_semaphores(uint64_t device, uint32_t flags, const void* entries, uint32_t count, uint64_t timeout)
     {
-        const auto dev = this->impl_->devices.find(device);
-        if (dev == this->impl_->devices.end() || !dev->second.wait_semaphores)
+        const auto wait =
+            this->impl_->resolve_semaphore_wait(device, flags, static_cast<const gpu_bridge::wait_semaphore_entry*>(entries), count);
+        return wait ? wait->wait(timeout) : VK_ERROR_INITIALIZATION_FAILED;
+    }
+
+    std::shared_ptr<const std::atomic<int32_t>> vulkan_host::wait_semaphores_async(uint64_t device, uint32_t flags, const void* entries,
+                                                                                   uint32_t count, std::function<void()> on_done)
+    {
+        const auto* records = static_cast<const gpu_bridge::wait_semaphore_entry*>(entries);
+        auto native = this->impl_->resolve_semaphore_wait(device, flags, records, count);
+        if (!native)
         {
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return std::make_shared<std::atomic<int32_t>>(VK_ERROR_INITIALIZATION_FAILED);
         }
 
-        const auto* records = static_cast<const gpu_bridge::wait_semaphore_entry*>(entries);
-        std::vector<VkSemaphore> handles;
-        std::vector<uint64_t> values;
-        handles.reserve(count);
-        values.reserve(count);
+        auto job = std::make_unique<async_semaphore_wait>();
+        job->device_id = device;
+        job->semaphore_ids.reserve(count);
         for (uint32_t i = 0; i < count; ++i)
         {
-            const auto it = this->impl_->semaphores.find(records[i].semaphore);
-            if (it == this->impl_->semaphores.end() || it->second.device_id != device)
-            {
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            handles.push_back(it->second.handle);
-            values.push_back(records[i].value);
+            job->semaphore_ids.push_back(records[i].semaphore);
         }
+        job->native = std::move(*native);
+        job->on_done = std::move(on_done);
 
-        VkSemaphoreWaitInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
-        info.flags = flags;
-        info.semaphoreCount = count;
-        info.pSemaphores = handles.data();
-        info.pValues = values.data();
-        return dev->second.wait_semaphores(dev->second.handle, &info, timeout);
+        auto result = job->result;
+        this->impl_->idle_semaphore_waiter().start(std::move(job));
+        return result;
     }
 
     uint64_t vulkan_host::get_buffer_device_address(uint64_t device, uint64_t buffer)
@@ -6060,6 +6325,9 @@ namespace sogen
         {
             return;
         }
+
+        this->impl_->end_semaphore_waits(
+            [&](const async_semaphore_wait& wait) { return std::ranges::find(wait.semaphore_ids, semaphore) != wait.semaphore_ids.end(); });
 
         if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_semaphore)
         {
@@ -7142,63 +7410,28 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        const impl::image_create_params params{.format = format,
+                                               .width = width,
+                                               .height = height,
+                                               .depth = depth,
+                                               .mip_levels = mip_levels,
+                                               .array_layers = array_layers,
+                                               .samples = samples,
+                                               .usage = usage,
+                                               .tiling = tiling,
+                                               .image_type = image_type,
+                                               .flags = flags};
         // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkImageCreateInfo info{};
-        info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        info.flags = flags;
-        info.imageType = static_cast<VkImageType>(image_type);
-        info.format = static_cast<VkFormat>(format);
-        info.extent = {.width = width, .height = height, .depth = depth ? depth : 1};
-        info.mipLevels = mip_levels ? mip_levels : 1;
-        info.arrayLayers = array_layers ? array_layers : 1;
-        const auto sample_count = samples != 0 ? samples : static_cast<uint32_t>(VK_SAMPLE_COUNT_1_BIT);
-        info.samples = static_cast<VkSampleCountFlagBits>(sample_count);
-        info.tiling = static_cast<VkImageTiling>(tiling);
-        info.usage = usage;
-        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        VkExternalMemoryImageCreateInfo external_info{};
+        bool copyable{};
+        if (const VkResult filled = this->impl_->fill_image_create_info(dev->second, params, info, external_info, copyable);
+            filled != VK_SUCCESS)
+        {
+            return filled;
+        }
 
         const auto emulated = dev->second.bc_emulation ? get_bc_emulated_format(format) : std::nullopt;
-        if (emulated)
-        {
-            if (!impl::is_bc_emulation_supported(tiling, usage, flags) || info.samples != VK_SAMPLE_COUNT_1_BIT)
-            {
-                return VK_ERROR_FORMAT_NOT_SUPPORTED;
-            }
-            info.format = static_cast<VkFormat>(emulated->substitute);
-            info.usage |= impl::bc_emulated_usage;
-        }
-
-        // Multisampled images are read by sampling them and written by rendering to them.
-        const VkImageUsageFlags transfer_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                                                 (info.samples > VK_SAMPLE_COUNT_1_BIT ? VK_IMAGE_USAGE_SAMPLED_BIT : 0);
-        constexpr VkImageUsageFlags attachment_usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-        bool copyable = (info.usage & transfer_usage) == transfer_usage;
-        if (!copyable)
-        {
-            auto with_transfer = info;
-            with_transfer.usage |= transfer_usage;
-            if (this->impl_->image_usage_supported(dev->second, with_transfer) &&
-                this->impl_->image_supports_host_import(dev->second, with_transfer) ==
-                    this->impl_->image_supports_host_import(dev->second, info))
-            {
-                info.usage = with_transfer.usage;
-                copyable = true;
-            }
-        }
-
-        if (info.samples > VK_SAMPLE_COUNT_1_BIT && (info.usage & attachment_usage) == 0)
-        {
-            copyable = false;
-        }
-
-        VkExternalMemoryImageCreateInfo external_info{};
-        if (this->impl_->image_supports_host_import(dev->second, info))
-        {
-            external_info.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
-            external_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
-            info.pNext = &external_info;
-        }
 
         VkImage image{};
         const VkResult result = dev->second.create_image(dev->second.handle, &info, nullptr, &image);
@@ -7280,6 +7513,70 @@ namespace sogen
         out_size = requirements.size;
         out_alignment = requirements.alignment;
         out_memory_type_bits = dev->second.memory_types.to_guest_bits(requirements.memoryTypeBits);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_device_image_memory_requirements(uint64_t device, uint32_t format, uint32_t width, uint32_t height,
+                                                              uint32_t usage, uint32_t tiling, uint32_t samples, uint32_t image_type,
+                                                              uint32_t depth, uint32_t mip_levels, uint32_t array_layers, uint32_t flags,
+                                                              uint64_t& out_size, uint64_t& out_alignment, uint32_t& out_memory_type_bits)
+    {
+        out_size = 0;
+        out_alignment = 0;
+        out_memory_type_bits = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (!dev->second.get_device_image_memory_requirements)
+        {
+            // Neither Vulkan 1.3 nor VK_KHR_maintenance4: measure a throwaway image instead.
+            uint64_t image = 0;
+            const int32_t result = this->create_image(device, format, width, height, usage, tiling, samples, image_type, depth, mip_levels,
+                                                      array_layers, flags, image);
+            if (result != VK_SUCCESS)
+            {
+                return result;
+            }
+
+            const int32_t query = this->get_image_memory_requirements(device, image, out_size, out_alignment, out_memory_type_bits);
+            this->destroy_image(device, image);
+            return query;
+        }
+
+        const impl::image_create_params params{.format = format,
+                                               .width = width,
+                                               .height = height,
+                                               .depth = depth,
+                                               .mip_levels = mip_levels,
+                                               .array_layers = array_layers,
+                                               .samples = samples,
+                                               .usage = usage,
+                                               .tiling = tiling,
+                                               .image_type = image_type,
+                                               .flags = flags};
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+        VkImageCreateInfo info{};
+        VkExternalMemoryImageCreateInfo external_info{};
+        bool copyable{};
+        if (const VkResult filled = this->impl_->fill_image_create_info(dev->second, params, info, external_info, copyable);
+            filled != VK_SUCCESS)
+        {
+            return filled;
+        }
+
+        const VkDeviceImageMemoryRequirements query{
+            .sType = VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS, .pNext = nullptr, .pCreateInfo = &info, .planeAspect = {}};
+        VkMemoryRequirements2 requirements{};
+        requirements.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+        dev->second.get_device_image_memory_requirements(dev->second.handle, &query, &requirements);
+
+        out_size = requirements.memoryRequirements.size;
+        out_alignment = requirements.memoryRequirements.alignment;
+        out_memory_type_bits = dev->second.memory_types.to_guest_bits(requirements.memoryRequirements.memoryTypeBits);
         return VK_SUCCESS;
     }
 

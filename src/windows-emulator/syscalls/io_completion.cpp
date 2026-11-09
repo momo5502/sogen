@@ -13,6 +13,7 @@ namespace sogen
             {
                 io_completion_wait::release_handle_reference(c.proc, wait_packet.io_completion_handle);
                 io_completion_wait::release_handle_reference(c.proc, wait_packet.target_object_handle);
+                wait_packet.target_object = nullptr;
                 wait_packet.associated = false;
             }
         }
@@ -187,7 +188,9 @@ namespace sogen
 
             if (timeout)
             {
-                wait.timeout = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
+                const auto due = timeout.read();
+                wait.timeout = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), due);
+                wait.timeout_absolute = utils::is_absolute_due_time(due);
 
                 constexpr auto infinite = std::chrono::steady_clock::time_point::min();
                 if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < c.win_emu.clock().steady_now())
@@ -256,7 +259,9 @@ namespace sogen
 
             if (timeout)
             {
-                wait.timeout = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
+                const auto due = timeout.read();
+                wait.timeout = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), due);
+                wait.timeout_absolute = utils::is_absolute_due_time(due);
 
                 constexpr auto infinite = std::chrono::steady_clock::time_point::min();
                 if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < c.win_emu.clock().steady_now())

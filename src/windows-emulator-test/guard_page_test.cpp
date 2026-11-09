@@ -80,7 +80,13 @@ namespace sogen::test
                 return this->page_granular_protection;
             }
 
+            bool supports_restartable_faults() const override
+            {
+                return this->restartable_faults;
+            }
+
             bool page_granular_protection{false};
+            bool restartable_faults{true};
 
           private:
             using page = std::array<std::byte, page_size>;
@@ -240,9 +246,9 @@ namespace sogen::test
             void SetUp() override
             {
                 GuardPageTest::SetUp();
-                if (!this->emu->memory.supports_page_granular_protection())
+                if (!this->emu->memory.supports_guarded_stack_growth())
                 {
-                    GTEST_SKIP() << "Backend commits thread stacks in full without page-granular protection";
+                    GTEST_SKIP() << "Backend commits thread stacks in full without guarded stack growth";
                 }
             }
         };
@@ -336,9 +342,9 @@ namespace sogen::test
                     return;
                 }
 
-                if (!this->emu->memory.supports_page_granular_protection())
+                if (!this->emu->memory.supports_guarded_stack_growth())
                 {
-                    GTEST_SKIP() << "Backend commits thread stacks in full without page-granular protection";
+                    GTEST_SKIP() << "Backend commits thread stacks in full without guarded stack growth";
                 }
 
                 this->stack_thread =
@@ -823,6 +829,25 @@ namespace sogen::test
         EXPECT_TRUE(wow64_stack.is_committed);
         EXPECT_EQ(0x40000u, wow64_stack.length);
         EXPECT_FALSE(wow64_stack.permissions.is_guarded());
+    }
+
+    TEST_F(GuardPageTest, ThreadStacksAreCommittedInFullWithoutRestartableFaults)
+    {
+        coarse_page_memory backend{};
+        backend.page_granular_protection = true;
+        backend.restartable_faults = false;
+        memory_manager memory{backend};
+
+        const emulator_thread native_thread{memory, this->emu->process, 0, 0, 0x40000, 0, 12, false, page_size};
+        const auto native_teb = native_thread.teb64->read();
+        EXPECT_EQ(native_teb.DeallocationStack, native_teb.NtTib.StackLimit);
+        EXPECT_FALSE(memory.get_region_info(native_teb.DeallocationStack).permissions.is_guarded());
+
+        this->emu->process.is_wow64_process = true;
+        const emulator_thread wow64_thread{memory, this->emu->process, 0, 0, 0x40000, 0, 16, false, page_size};
+        const auto wow64_teb = wow64_thread.teb32->read();
+        EXPECT_EQ(wow64_teb.DeallocationStack, wow64_teb.NtTib.StackLimit);
+        EXPECT_FALSE(memory.get_region_info(wow64_teb.DeallocationStack).permissions.is_guarded());
     }
 
     TEST_F(GuardPageTest, GuardedStacksAreCommittedInFullOncePageGranularProtectionIsLost)

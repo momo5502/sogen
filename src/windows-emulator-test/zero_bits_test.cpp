@@ -38,6 +38,22 @@ namespace sogen::test
         EXPECT_EQ(check_zero_bits_of_allocation(0xFFFF), STATUS_CONFLICTING_ADDRESSES);
     }
 
+    TEST(ZeroBitsTest, SectionViewsAcceptEncodableConstraintsEvenWhenNoAddressCanFit)
+    {
+        for (const auto bits : std::array<uint64_t, 10>{0, 1, 16, 17, 20, 21, 0x400, 0x10000, 0x1FFFF, 0xFFFEFFFF})
+        {
+            EXPECT_EQ(check_zero_bits_of_section(bits), STATUS_SUCCESS) << std::hex << bits;
+        }
+    }
+
+    TEST(ZeroBitsTest, SectionViewsRejectMoreThan21EffectiveZeroBits)
+    {
+        for (const uint64_t bits : {22, 23, 31, 32, 33, 63, 0x3FF})
+        {
+            EXPECT_EQ(check_zero_bits_of_section(bits), STATUS_INVALID_PARAMETER) << std::hex << bits;
+        }
+    }
+
     TEST(ZeroBitsTest, AllocationRejectsWhatEndsBelow64KiB)
     {
         EXPECT_EQ(check_zero_bits_of_allocation(17), STATUS_INVALID_PARAMETER);
