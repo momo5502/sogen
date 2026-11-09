@@ -93,7 +93,15 @@ namespace sogen
             // smaller than a CONTEXT64 and reading the larger one can run off the end of its mapping.
             auto* arm64 = dynamic_cast<arm64_cpu*>(&c.emu);
             const auto arm64_raising_context = arm64 ? c.emu.read_memory<arm64_context>(thread_context.value()) : arm64_context{};
-            const auto context = arm64 ? CONTEXT64{} : thread_context.read();
+            auto context = arm64 ? CONTEXT64{} : thread_context.read();
+
+            // KiRaiseException puts the raising context in the trap frame (KeContextToKframes, unverified) before
+            // KiDispatchException, which gives the debugger and the handlers the trap frame's registers: with a debugger or
+            // without one, they see the control registers as KxContextToKframes keeps them.
+            if (!arm64 && (context.ContextFlags & CONTEXT_CONTROL_64) == CONTEXT_CONTROL_64)
+            {
+                cpu_context::sanitize_control(context, c.proc.is_wow64_process, cpu_context::context_verification::unverified);
+            }
 
             // The raising context becomes the thread's state before the debugger is told, as it already is on the
             // hardware exception path. Otherwise the debugger's GetThreadContext shows this syscall's stub registers,
@@ -106,7 +114,7 @@ namespace sogen
                 }
                 else
                 {
-                    cpu_context::restore(c.x64_cpu(), context);
+                    cpu_context::restore(c.x64_cpu(), context, c.proc.is_wow64_process, cpu_context::context_verification::unverified);
                 }
             }
 

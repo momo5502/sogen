@@ -285,7 +285,7 @@ namespace sogen
                         thread->restore(c.emu, c.proc.gdt_base);
                     }
 
-                    cpu_context::restore(c.x64_cpu(), widened_wow64_debug_registers(new_wow64_context));
+                    cpu_context::restore(c.x64_cpu(), widened_wow64_debug_registers(new_wow64_context), c.proc.is_wow64_process);
 
                     if (needs_switch)
                     {
@@ -1324,7 +1324,7 @@ namespace sogen
             }
             else
             {
-                cpu_context::restore(c.x64_cpu(), c.emu.read_memory<CONTEXT64>(thread_context));
+                cpu_context::restore(c.x64_cpu(), c.emu.read_memory<CONTEXT64>(thread_context), c.proc.is_wow64_process);
             }
 
             if (argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT)
@@ -1387,14 +1387,14 @@ namespace sogen
             return STATUS_NO_MORE_ENTRIES;
         }
 
-        void load_context(guest_cpu& cpu, const CONTEXT64& context)
+        void load_context(const syscall_context& c, const CONTEXT64& context)
         {
-            cpu_context::restore(dynamic_cast<x86_64_cpu&>(cpu), context);
+            cpu_context::restore(dynamic_cast<x86_64_cpu&>(c.emu), context, c.proc.is_wow64_process);
         }
 
-        void load_context(guest_cpu& cpu, const arm64_context& context)
+        void load_context(const syscall_context& c, const arm64_context& context)
         {
-            cpu_context::restore(dynamic_cast<arm64_cpu&>(cpu), context);
+            cpu_context::restore(dynamic_cast<arm64_cpu&>(c.emu), context);
         }
 
         void store_context(guest_cpu& cpu, CONTEXT64& context)
@@ -1469,7 +1469,7 @@ namespace sogen
             if (!c.proc.is_wow64_process && c.win_emu.abi().instruction_pointer(c.emu) == c.proc.ldr_initialize_thunk)
             {
                 initial_context = c.win_emu.abi().function_argument(c.emu, 0);
-                load_context(c.emu, c.emu.read_memory<Context>(*initial_context));
+                load_context(c, c.emu.read_memory<Context>(*initial_context));
             }
 
             // Windows shows a thread inside a syscall after the syscall instruction. Its saved registers keep the
@@ -1607,7 +1607,7 @@ namespace sogen
                 }
 
                 const auto accessed = access_thread_context<arm64_context>(c, *thread, [&] {
-                    load_context(c.emu, context);
+                    load_context(c, context);
                     // X18 always addresses the thread's TEB; the kernel does not take it from a user context.
                     c.win_emu.abi().install_thread_environment(c.emu, thread->teb64->value());
                     return true;
@@ -1627,7 +1627,7 @@ namespace sogen
 
             const auto context = thread_context.read();
             const auto accessed = access_thread_context<CONTEXT64>(c, *thread, [&] {
-                load_context(c.emu, context);
+                load_context(c, context);
                 return true;
             });
             if (!accessed)
@@ -1943,7 +1943,7 @@ namespace sogen
             }
             memcpy(&context, bytes.data(), sizeof(context));
             syscalls::access_thread_context<Context>(c, thread, [&] {
-                syscalls::load_context(c.emu, context);
+                syscalls::load_context(c, context);
                 if constexpr (std::is_same_v<Context, arm64_context>)
                 {
                     // X18 always addresses the thread's TEB; the kernel does not take it from a user context.
@@ -2030,7 +2030,7 @@ namespace sogen
                     return false;
                 }
 
-                cpu_context::restore(c.x64_cpu(), syscalls::widened_wow64_debug_registers(update));
+                cpu_context::restore(c.x64_cpu(), syscalls::widened_wow64_debug_registers(update), c.proc.is_wow64_process);
                 return true;
             }
 
@@ -2056,7 +2056,7 @@ namespace sogen
             native.Dr3 = merged.Dr3;
             native.Dr6 = merged.Dr6;
             native.Dr7 = merged.Dr7;
-            syscalls::load_context(c.emu, native);
+            syscalls::load_context(c, native);
             in_registers = true;
             return true;
         });
