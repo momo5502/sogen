@@ -1330,11 +1330,17 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - uses: nttld/setup-ndk@v1
-        id: setup-ndk
-        with:
-          ndk-version: r29
-          add-to-path: false
+      # Gradle installs a missing NDK itself, but only tries once and fails the build on a truncated download.
+      - name: Install Android NDK
+        id: ndk
+        run: |
+          ndk=$(sed -n 's/^ *ndkVersion = "\(.*\)"$/\1/p' app/android/app/build.gradle.kts)
+          echo "path=$ANDROID_HOME/ndk/${ndk:?}" >> "$GITHUB_OUTPUT"
+          for _ in 1 2 3; do
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk" > /dev/null && exit 0
+            rm -rf "$ANDROID_HOME/ndk/$ndk" && sleep 30
+          done
+          exit 1
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -1346,7 +1352,7 @@ jobs:
 
       - name: Build Native Libraries
         env:
-          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.path }}
           ANDROID_ABI: arm64-v8a
         run: |
           cmake --preset=release -DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_ENABLE_FEX=On -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake
@@ -1419,16 +1425,6 @@ jobs:
       - name: Compute Build Number
         id: version
         run: echo "build_number=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
-
-      # Gradle installs a missing NDK itself, but only tries once and fails the build on a truncated download.
-      - name: Install Android NDK
-        run: |
-          ndk=$(sed -n 's/.*val ndkVersion: String = "\(.*\)".*/\1/p' "$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt")
-          for _ in 1 2 3; do
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${ndk:?}" > /dev/null && exit 0
-            rm -rf "$ANDROID_HOME/ndk/$ndk" && sleep 30
-          done
-          exit 1
 
       # Gradle retries a download that fails with a 5xx, 408, 429 or a dropped connection, but only three times within
       # seconds, while GitHub's release CDN, which Maven Central redirects some artifacts to, answers 504 for minutes.

@@ -100,7 +100,8 @@ androidComponents {
 android {
     namespace = "dev.sogen.app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // The NDK r29 the native libraries in jniLibs are built with, so that CI installs only one.
+    ndkVersion = "29.0.14206865"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
