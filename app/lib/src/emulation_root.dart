@@ -155,7 +155,7 @@ class EmulationRoot {
   /// The query keeps a cache from answering with the list of an earlier root.
   static Future<(RootManifest, String)> _fetchManifest(http.Client client) async {
     final url = manifestUrl.replace(queryParameters: {'t': '${DateTime.now().microsecondsSinceEpoch}'});
-    final response = await client.get(url);
+    final response = await client.get(url).timeout(rootDownloadStall);
     if (response.statusCode != HttpStatus.ok) {
       throw HttpException('Download failed with status ${response.statusCode}', uri: url);
     }
@@ -238,7 +238,7 @@ class EmulationRoot {
   Future<void> _download(File target, void Function(double? progress) onProgress, http.Client? injected) async {
     final client = injected ?? http.Client();
     try {
-      final response = await client.send(http.Request('GET', downloadUrl));
+      final response = await client.send(http.Request('GET', downloadUrl)).timeout(rootDownloadStall);
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException('Download failed with status ${response.statusCode}', uri: downloadUrl);
       }
@@ -247,7 +247,7 @@ class EmulationRoot {
       var received = 0;
       final sink = target.openWrite();
       try {
-        await for (final chunk in response.stream) {
+        await for (final chunk in response.stream.timeout(rootDownloadStall)) {
           sink.add(chunk);
           received += chunk.length;
           onProgress(total != null && total > 0 ? received / total : null);

@@ -6,6 +6,10 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
+/// How long a root download may wait for a response or its next bytes before it gives up, so that a dead connection
+/// ends in an error instead of keeping games from starting.
+const rootDownloadStall = Duration(seconds: 30);
+
 /// The files of an emulation root, as sogen.dev publishes them next to their contents.
 class RootManifest {
   const RootManifest({required this.version, required this.directories, required this.files});
@@ -129,7 +133,7 @@ class RootStager {
 
   Future<void> _download(RootFile file, File target) async {
     final url = blobsUrl.resolve(file.sha256);
-    final response = await client.send(http.Request('GET', url));
+    final response = await client.send(http.Request('GET', url)).timeout(rootDownloadStall);
     if (response.statusCode == HttpStatus.notFound) {
       await response.stream.drain<void>();
       throw StaleRootManifest('${file.path} is no longer published');
@@ -144,7 +148,7 @@ class RootStager {
     var size = 0;
     final sink = target.openWrite();
     try {
-      await for (final chunk in response.stream.transform(gzip.decoder)) {
+      await for (final chunk in response.stream.timeout(rootDownloadStall).transform(gzip.decoder)) {
         size += chunk.length;
         if (size > file.size) {
           throw StaleRootManifest('${file.path} is larger than the manifest says');
