@@ -1318,27 +1318,44 @@ jobs:
           path: "*"
           retention-days: 1
 
+  # Builds the app's native libraries itself instead of waiting for the whole build matrix.
   build-android-app:
     name: Build Android App
     runs-on: ubuntu-24.04
-    needs: [build]
     steps:
       # The full history provides the commit count for the version code.
       - name: Checkout Source
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          submodules: recursive
 
-      - name: Download Android arm64 Artifacts
-        uses: pyTooling/download-artifact@v8
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
         with:
-          name: Android arm64 Release Artifacts
-          path: build/android/arm64-v8a
+          ndk-version: r29
+          add-to-path: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Native Build Prerequisites (Python)
+        run: python -m pip install --disable-pip-version-check libclang packaging
+
+      - name: Build Native Libraries
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_ABI: arm64-v8a
+        run: |
+          cmake --preset=release -DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_ENABLE_FEX=On -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake
+          cmake --build --preset=release --target android-runtime sandbox
 
       - name: Stage Native Libraries
         run: |
           mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
-          cp build/android/arm64-v8a/*.so app/android/app/src/main/jniLibs/arm64-v8a/
+          cp build/release/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 
       # Mesa's Turnip, loaded through libadrenotools in place of Adreno's stock driver.
       - name: Download Turnip Driver
