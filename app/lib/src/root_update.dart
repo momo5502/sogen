@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
-import 'package:ffi/ffi.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
@@ -19,7 +17,7 @@ class RootManifest {
       'directories': final List<Object?> directories,
       'files': final List<Object?> files,
     }) {
-      return RootManifest(
+      final manifest = RootManifest(
         version: version,
         directories: [for (final directory in directories) _relativePath(directory)],
         files: [
@@ -31,6 +29,15 @@ class RootManifest {
               throw const FormatException('The emulation root manifest lists a malformed file'),
         ],
       );
+      // Two entries for one file would be downloaded into it at the same time.
+      final directoryPaths = manifest.directories.toSet();
+      final filePaths = <String>{};
+      for (final file in manifest.files) {
+        if (!filePaths.add(file.path) || directoryPaths.contains(file.path)) {
+          throw const FormatException('The emulation root manifest lists a path twice');
+        }
+      }
+      return manifest;
     }
     throw const FormatException('The emulation root manifest is malformed');
   }
@@ -42,7 +49,7 @@ class RootManifest {
     if (path is! String || path.isEmpty || p.posix.isAbsolute(path) || path.contains(r'\')) {
       throw const FormatException('The emulation root manifest lists an invalid path');
     }
-    if (p.posix.split(path).any((part) => part == '..' || part == '.')) {
+    if (path == '.' || p.posix.normalize(path) != path || p.posix.split(path).any((part) => part == '..')) {
       throw const FormatException('The emulation root manifest lists an invalid path');
     }
     return path;
@@ -99,7 +106,8 @@ class RootStager {
       if (existing == null) {
         missing.add(file);
       } else {
-        await _reuse(File(p.join(installedRoot.path, existing)), target);
+        // Android does not let apps hard-link files, so even the unchanged ones are copied.
+        await File(p.join(installedRoot.path, existing)).copy(target.path);
       }
     }
 
@@ -112,18 +120,11 @@ class RootStager {
         final file = queue.removeLast();
         await _download(file, File(p.join(staging.path, file.path)));
         received += file.size;
-        onProgress(received / total);
+        onProgress(total == 0 ? 1 : received / total);
       }
     }
 
     await Future.wait([for (var i = 0; i < _parallelDownloads; i++) worker()]);
-  }
-
-  /// The installed root is never written to, so the staged one can share its files.
-  static Future<void> _reuse(File source, File target) async {
-    if (!_hardLink(source.path, target.path)) {
-      await source.copy(target.path);
-    }
   }
 
   Future<void> _download(RootFile file, File target) async {
@@ -169,34 +170,4 @@ class _DigestSink implements Sink<Digest> {
 
   @override
   void close() {}
-}
-
-typedef _LinkNative = Int32 Function(Pointer<Utf8>, Pointer<Utf8>);
-typedef _LinkDart = int Function(Pointer<Utf8>, Pointer<Utf8>);
-
-final _LinkDart? _link = () {
-  if (!Platform.isAndroid && !Platform.isLinux && !Platform.isMacOS) {
-    return null;
-  }
-  try {
-    return DynamicLibrary.process().lookupFunction<_LinkNative, _LinkDart>('link');
-  } on ArgumentError {
-    return null;
-  }
-}();
-
-/// Whether [target] now names the same file as [source], without copying its contents.
-bool _hardLink(String source, String target) {
-  final link = _link;
-  if (link == null) {
-    return false;
-  }
-  final from = source.toNativeUtf8();
-  final to = target.toNativeUtf8();
-  try {
-    return link(from, to) == 0;
-  } finally {
-    malloc.free(from);
-    malloc.free(to);
-  }
 }

@@ -112,6 +112,50 @@ void main() {
     expect(Directory('${base.path}.staging').existsSync(), isFalse);
   });
 
+  test('an update whose new files are all empty completes its progress', () async {
+    install(manifest('old', {'registry/SOFTWARE': 'old hive'}), {'registry/SOFTWARE': 'old hive'});
+    final progress = <double?>[];
+
+    await root.update(
+      onProgress: progress.add,
+      client: sogenDev(
+        [
+          manifest('new', {'registry/SOFTWARE': 'old hive', 'filesys/empty.log': ''}),
+        ],
+        blobsOf(['']),
+        [],
+      ),
+    );
+
+    expect(read('filesys/empty.log'), '');
+    expect(progress.whereType<double>(), everyElement(1.0));
+  });
+
+  test('a manifest that names one file twice is rejected', () {
+    for (final files in [
+      ['filesys/x', 'filesys/x'],
+      ['filesys/x', 'filesys//x'],
+      ['filesys/x', 'filesys/./x'],
+    ]) {
+      final text = jsonEncode({
+        'version': 'v',
+        'directories': <String>[],
+        'files': [
+          for (final path in files) {'path': path, 'sha256': hash(''), 'size': 0},
+        ],
+      });
+      expect(() => RootManifest.parse(text), throwsFormatException, reason: '$files');
+    }
+    final collision = jsonEncode({
+      'version': 'v',
+      'directories': ['filesys/x'],
+      'files': [
+        {'path': 'filesys/x', 'sha256': hash(''), 'size': 0},
+      ],
+    });
+    expect(() => RootManifest.parse(collision), throwsFormatException);
+  });
+
   test('a manifest cannot place files outside the root', () {
     for (final path in ['../escape', '/etc/passwd', r'filesys\..\..\escape', 'filesys/../../escape']) {
       final text = jsonEncode({
