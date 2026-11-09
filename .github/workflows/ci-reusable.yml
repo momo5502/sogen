@@ -1340,8 +1340,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install FEXCore Build Prerequisites (Python)
-        run: python -m pip install --disable-pip-version-check packaging
+      # libclang generates the Steam provider's interface tables at configure time; FEXCore's build needs packaging.
+      - name: Install Native Build Prerequisites (Python)
+        run: python -m pip install --disable-pip-version-check libclang packaging
 
       - name: Build Native Libraries
         env:

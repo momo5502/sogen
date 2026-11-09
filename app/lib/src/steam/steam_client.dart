@@ -266,6 +266,22 @@ class SteamClient {
     return Uint8List.fromList(key);
   }
 
+  /// The app ownership ticket Steam signs for the account and [appId], or null when Steam refuses it.
+  Future<Uint8List?> appOwnershipTicket(int appId) async {
+    final answer = await _withConnection(
+      (connection) => connection.request(EMsg.clientGetAppOwnershipTicket, ProtoWriter()..varint(1, appId)),
+    );
+    final response = ProtoMessage.parse(answer.body);
+    final ticket = response.bytes(3);
+    if (response.integerOr(1, EResult.fail) != EResult.ok ||
+        response.integer(2) != appId ||
+        ticket == null ||
+        ticket.isEmpty) {
+      return null;
+    }
+    return Uint8List.fromList(ticket);
+  }
+
   Future<int> manifestRequestCode(int appId, int depotId, int manifestId, String branch) async {
     final response = await _withConnection(
       (connection) => connection.callService(

@@ -18,6 +18,7 @@ abstract final class EMsg {
   static const clientLogOnResponse = 751;
   static const clientLoggedOff = 757;
   static const clientLicenseList = 780;
+  static const clientGetAppOwnershipTicket = 857;
   static const clientGetDepotDecryptionKey = 5438;
   static const clientGetDepotDecryptionKeyResponse = 5439;
   static const clientLogon = 5514;
