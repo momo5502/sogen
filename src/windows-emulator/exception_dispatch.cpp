@@ -271,6 +271,7 @@ namespace sogen
                             const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters)
     {
         auto& thread = vcpu.thread();
+        thread.next_branch_step.reset();
 
         win_emu.record_exception_trace({
             .status = static_cast<uint32_t>(status),
@@ -692,13 +693,258 @@ namespace sogen
         dispatch_exception(win_emu, vcpu, STATUS_INTEGER_DIVIDE_BY_ZERO, {});
     }
 
-    void dispatch_single_step(windows_emulator& win_emu, vcpu_context& vcpu)
+    namespace
     {
-        dispatch_exception(win_emu, vcpu, STATUS_SINGLE_STEP, {});
+        constexpr uint32_t eflags_carry = 0x1;
+        constexpr uint32_t eflags_parity = 0x4;
+        constexpr uint32_t eflags_zero = 0x40;
+        constexpr uint32_t eflags_sign = 0x80;
+        constexpr uint32_t eflags_overflow = 0x800;
+
+        constexpr uint64_t dr6_single_step = 0x4000;
+        constexpr uint64_t dr7_last_branch = 0x100;
+        constexpr uint64_t dr7_branch_trace = 0x200;
+        constexpr uint64_t dr7_enable_bits = 0x3;
+        constexpr int debug_address_register_count = 4;
+
+        // KiSaveDebugRegisterState reads the last branch from the LBR MSRs, which read 0 on 19045 under Hyper-V.
+        constexpr EmulatorTraits<Emu64>::ULONG_PTR unrecorded_branch = 0;
+
+        constexpr uint8_t rex_prefix_mask = 0xF0;
+        constexpr uint8_t rex_prefix = 0x40;
+        constexpr uint8_t address_size_prefix = 0x67;
+        constexpr uint8_t two_byte_escape = 0x0F;
+        constexpr uint8_t opcode_jcc_short_first = 0x70;
+        constexpr uint8_t opcode_jcc_short_last = 0x7F;
+        constexpr uint8_t escaped_opcode_jcc_near_first = 0x80;
+        constexpr uint8_t escaped_opcode_jcc_near_last = 0x8F;
+        constexpr uint8_t opcode_call_far = 0x9A;
+        constexpr uint8_t opcode_ret_imm16 = 0xC2;
+        constexpr uint8_t opcode_ret = 0xC3;
+        constexpr uint8_t opcode_retf_imm16 = 0xCA;
+        constexpr uint8_t opcode_retf = 0xCB;
+        constexpr uint8_t opcode_iret = 0xCF;
+        constexpr uint8_t opcode_loopne = 0xE0;
+        constexpr uint8_t opcode_loope = 0xE1;
+        constexpr uint8_t opcode_loop = 0xE2;
+        constexpr uint8_t opcode_jrcxz = 0xE3;
+        constexpr uint8_t opcode_call = 0xE8;
+        constexpr uint8_t opcode_jmp = 0xE9;
+        constexpr uint8_t opcode_jmp_far = 0xEA;
+        constexpr uint8_t opcode_jmp_short = 0xEB;
+        constexpr uint8_t opcode_group5 = 0xFF;
+        constexpr uint8_t group5_first_branch = 2;
+        constexpr uint8_t group5_last_branch = 5;
+        constexpr uint8_t jcc_condition_mask = 0xF;
+        constexpr uint8_t jcc_negated = 1;
+
+        enum class jcc_condition : uint8_t
+        {
+            overflow,
+            below,
+            equal,
+            below_or_equal,
+            sign,
+            parity,
+            less,
+            less_or_equal,
+        };
+
+        bool hits_an_enabled_breakpoint(const uint64_t dr6, const uint64_t dr7)
+        {
+            for (int i = 0; i < debug_address_register_count; ++i)
+            {
+                if ((dr6 & (1ull << i)) != 0 && ((dr7 >> (i * 2)) & dr7_enable_bits) != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool jcc_condition_holds(const uint8_t condition, const uint32_t eflags)
+        {
+            const auto carry = (eflags & eflags_carry) != 0;
+            const auto parity = (eflags & eflags_parity) != 0;
+            const auto zero = (eflags & eflags_zero) != 0;
+            const auto sign = (eflags & eflags_sign) != 0;
+            const auto overflow = (eflags & eflags_overflow) != 0;
+
+            bool holds{};
+            switch (static_cast<jcc_condition>(condition >> 1))
+            {
+            case jcc_condition::overflow:
+                holds = overflow;
+                break;
+            case jcc_condition::below:
+                holds = carry;
+                break;
+            case jcc_condition::equal:
+                holds = zero;
+                break;
+            case jcc_condition::below_or_equal:
+                holds = carry || zero;
+                break;
+            case jcc_condition::sign:
+                holds = sign;
+                break;
+            case jcc_condition::parity:
+                holds = parity;
+                break;
+            case jcc_condition::less:
+                holds = sign != overflow;
+                break;
+            case jcc_condition::less_or_equal:
+                holds = zero || sign != overflow;
+                break;
+            }
+
+            return (condition & jcc_negated) != 0 ? !holds : holds;
+        }
+
+        stepped_instruction read_stepped_instruction(memory_manager& memory, const uint64_t address, const bool is_32bit)
+        {
+            stepped_instruction instruction{.address = address, .is_32bit = is_32bit};
+            while (instruction.length < instruction.bytes.size() &&
+                   memory.try_read_memory(address + instruction.length, &instruction.bytes[instruction.length], 1))
+            {
+                ++instruction.length;
+            }
+
+            return instruction;
+        }
+    }
+
+    // A Jcc or a LOOP leaves the flags as they were, and a LOOP has counted RCX down.
+    bool is_taken_branch(const std::span<const uint8_t> instruction, const uint32_t eflags, const uint64_t rcx, const bool is_32bit)
+    {
+        size_t offset = 0;
+        bool address_size_override = false;
+        for (; offset < instruction.size(); ++offset)
+        {
+            const auto value = instruction[offset];
+            const auto is_rex = !is_32bit && (value & rex_prefix_mask) == rex_prefix;
+            if (!is_rex && !find_instruction_prefix(value))
+            {
+                break;
+            }
+
+            address_size_override |= value == address_size_prefix;
+        }
+
+        if (offset >= instruction.size())
+        {
+            return false;
+        }
+
+        const auto opcode = instruction[offset];
+        const auto next = offset + 1 < instruction.size() ? std::optional{instruction[offset + 1]} : std::nullopt;
+
+        const auto counter = [&] {
+            const auto counter_bits = (is_32bit ? 32 : 64) >> (address_size_override ? 1 : 0);
+            return counter_bits == 64 ? rcx : rcx & ((uint64_t{1} << counter_bits) - 1);
+        };
+
+        switch (opcode)
+        {
+        case opcode_call:
+        case opcode_jmp:
+        case opcode_jmp_short:
+        case opcode_ret_imm16:
+        case opcode_ret:
+        case opcode_retf_imm16:
+        case opcode_retf:
+        case opcode_iret:
+            return true;
+        case opcode_call_far:
+        case opcode_jmp_far:
+            return is_32bit;
+        case opcode_loopne:
+        case opcode_loope:
+        case opcode_loop:
+            return counter() != 0 && (opcode == opcode_loop || (opcode == opcode_loope) == ((eflags & eflags_zero) != 0));
+        case opcode_jrcxz:
+            return counter() == 0;
+        case opcode_group5: {
+            const auto operation = next ? (*next >> 3) & 7 : 0;
+            return operation >= group5_first_branch && operation <= group5_last_branch;
+        }
+        case two_byte_escape:
+            return next && *next >= escaped_opcode_jcc_near_first && *next <= escaped_opcode_jcc_near_last &&
+                   jcc_condition_holds(*next & jcc_condition_mask, eflags);
+        default:
+            return opcode >= opcode_jcc_short_first && opcode <= opcode_jcc_short_last &&
+                   jcc_condition_holds(opcode & jcc_condition_mask, eflags);
+        }
+    }
+
+    // With DR7.GE set, KiRestoreDebugRegisterState sets DEBUGCTL.BTF: the trap flag traps only after a taken branch.
+    bool continue_branch_step(windows_emulator& win_emu, vcpu_context& vcpu)
+    {
+        auto* cpu = dynamic_cast<x86_64_cpu*>(&vcpu.cpu);
+        if (!cpu)
+        {
+            return false;
+        }
+
+        auto& thread = vcpu.thread();
+        const auto stepped = std::exchange(thread.next_branch_step, std::nullopt);
+        const auto dr6 = cpu->reg(x86_register::dr6);
+        const auto dr7 = cpu->reg(x86_register::dr7);
+        if (!stepped || (dr7 & dr7_branch_trace) == 0 || (dr6 & dr6_single_step) == 0 || hits_an_enabled_breakpoint(dr6, dr7))
+        {
+            return false;
+        }
+
+        if (is_taken_branch({stepped->bytes.data(), stepped->length}, cpu->reg<uint32_t>(x86_register::eflags), cpu->reg(x86_register::rcx),
+                            stepped->is_32bit))
+        {
+            return false;
+        }
+
+        // No debug exception, and so no DR6.BS: the processor sets it only for one it raises.
+        cpu->reg(x86_register::dr6, dr6 & ~dr6_single_step);
+        // With instruction precision the execution hook takes the next instruction before it runs.
+        if (!win_emu.uses_instruction_precision())
+        {
+            remember_branch_step(win_emu, thread, *cpu, cpu->read_instruction_pointer());
+        }
+
+        return true;
+    }
+
+    void remember_branch_step(windows_emulator& win_emu, emulator_thread& thread, x86_64_cpu& cpu, const uint64_t address)
+    {
+        thread.steps_on_branches = (cpu.reg(x86_register::dr7) & dr7_branch_trace) != 0;
+        if (!thread.steps_on_branches || (cpu.reg<uint32_t>(x86_register::eflags) & cpu_context::eflags_trap) == 0)
+        {
+            thread.next_branch_step.reset();
+            return;
+        }
+
+        const auto is_32bit = cpu.reg<uint16_t>(x86_register::cs) == cpu_context::wow64_code_selector;
+        thread.next_branch_step = read_stepped_instruction(win_emu.memory, address, is_32bit);
+    }
+
+    void dispatch_single_step(windows_emulator& win_emu, vcpu_context& vcpu, const bool raised_by_trap_flag)
+    {
+        auto* x64 = dynamic_cast<x86_64_cpu*>(&vcpu.cpu);
+
+        // KxDebugTrapOrFault reports a trap flag step under DR7.LE and DR7.GE as a branch trace, with the source and the
+        // target of the last branch KiSaveDebugRegisterState read.
+        std::vector<EmulatorTraits<Emu64>::ULONG_PTR> parameters{};
+        constexpr auto branch_trace = dr7_last_branch | dr7_branch_trace;
+        if (raised_by_trap_flag && x64 && (x64->reg(x86_register::dr7) & branch_trace) == branch_trace)
+        {
+            parameters = {unrecorded_branch, unrecorded_branch};
+        }
+
+        dispatch_exception(win_emu, vcpu, STATUS_SINGLE_STEP, parameters);
 
         // The step's DR6 bits stay in its CONTEXT only: KiExceptionDispatch returns to user mode through
         // KiRestoreDebugRegisterState, which clears DR6.
-        if (auto* x64 = dynamic_cast<x86_64_cpu*>(&vcpu.cpu))
+        if (x64)
         {
             x64->reg(x86_register::dr6, uint64_t{0});
         }

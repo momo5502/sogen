@@ -115,6 +115,7 @@ namespace sogen
                 else
                 {
                     cpu_context::restore(c.x64_cpu(), context, c.proc.is_wow64_process, cpu_context::context_verification::unverified);
+                    remember_branch_step(c.win_emu, c.thread(), c.x64_cpu(), c.x64_cpu().read_instruction_pointer());
                 }
             }
 

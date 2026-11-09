@@ -1653,11 +1653,16 @@ namespace sogen
 
         if (this->uses_instruction_precision())
         {
-            this->emu().hook_memory_execution([&](cpu_interface& cpu, const uint64_t address) {
+            auto* x64 = dynamic_cast<x86_64_emulator*>(this->emu_.get());
+            this->emu().hook_memory_execution([&, x64](cpu_interface& cpu, const uint64_t address) {
                 const std::scoped_lock lock(this->kernel_lock_);
                 auto& vcpu = this->vcpu(cpu.index());
                 const scoped_dispatch dispatch(*this, vcpu);
-                this->on_instruction_execution(vcpu, address); //
+                this->on_instruction_execution(vcpu, address);
+                if (x64 && vcpu.thread().steps_on_branches)
+                {
+                    remember_branch_step(*this, vcpu.thread(), x64->get_cpu(cpu.index()), address);
+                }
             });
         }
         else if (!this->emu().get_guest_cpu(0).is_stop_thread_safe())
@@ -1774,7 +1779,22 @@ namespace sogen
             const std::scoped_lock lock(this->kernel_lock_);
             auto& vcpu = this->vcpu(cpu.index());
             const scoped_dispatch dispatch(*this, vcpu);
+
+            // A branch step that remembers another instruction than this system call ended before the call ran (on a
+            // backend that runs it from its own syscall page), so the next one begins where the call returns. The call
+            // can remember an instruction itself, so this is decided before it runs.
+            auto* thread = vcpu.active_thread;
+            const auto syscall_address = vcpu.cpu.read_instruction_pointer();
+            const auto step_ended_before_call = thread && thread->next_branch_step && thread->next_branch_step->address != syscall_address;
+
             this->dispatcher.dispatch(*this, vcpu);
+
+            if (step_ended_before_call && vcpu.active_thread == thread)
+            {
+                const auto resume_address = vcpu.cpu.read_instruction_pointer() + this->abi().syscall_abi().syscall_instruction_size();
+                remember_branch_step(*this, *thread, vcpu.x64_cpu(), resume_address);
+            }
+
             return instruction_hook_continuation::skip_instruction;
         });
 
@@ -1847,13 +1867,18 @@ namespace sogen
                 dispatch_integer_division_by_zero(*this, vcpu);
                 return;
             case 1:
-                if ((eflags & 0x100) != 0)
+                if (continue_branch_step(*this, vcpu))
                 {
-                    acting.reg(x86_register::eflags, eflags & ~0x100);
+                    return;
+                }
+
+                if ((eflags & cpu_context::eflags_trap) != 0)
+                {
+                    acting.reg(x86_register::eflags, eflags & ~cpu_context::eflags_trap);
                 }
 
                 this->callbacks.on_suspicious_activity("Singlestep");
-                dispatch_single_step(*this, vcpu);
+                dispatch_single_step(*this, vcpu, (eflags & cpu_context::eflags_trap) != 0);
                 return;
             case 3:
                 this->callbacks.on_suspicious_activity("Breakpoint");
