@@ -137,21 +137,24 @@ namespace sogen
             const auto attributes = object_attributes.read();
             auto key = read_unicode_string(c.emu, attributes.ObjectName);
 
+            const registry_key* parent_handle = nullptr;
+            std::u16string relative_key{};
             if (attributes.RootDirectory)
             {
-                const auto* parent_handle = c.proc.registry_keys.get(attributes.RootDirectory);
+                parent_handle = c.proc.registry_keys.get(attributes.RootDirectory);
                 if (const auto status = validate_key(c, parent_handle); status != STATUS_SUCCESS)
                 {
                     return status;
                 }
 
-                const std::filesystem::path full_path = parent_handle->hive.get() / parent_handle->path.get() / key;
+                relative_key = std::move(key);
+                const std::filesystem::path full_path = parent_handle->hive.get() / parent_handle->path.get() / relative_key;
                 key = full_path.u16string();
             }
 
             c.win_emu.callbacks.on_generic_access("Registry key", key);
 
-            auto entry = c.win_emu.registry.get_key({key});
+            auto entry = parent_handle ? c.win_emu.registry.get_sub_key(*parent_handle, relative_key) : c.win_emu.registry.get_key({key});
             if (!entry.has_value())
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -952,7 +955,7 @@ namespace sogen
 
             if (key_information_class == KeyNodeInformation)
             {
-                const auto sub_key = c.win_emu.registry.get_key(utils::path_key{key->hive.get() / key->path.get() / subkey_name_u16});
+                const auto sub_key = c.win_emu.registry.get_sub_key(*key, subkey_name_u16);
                 const auto class_name = sub_key ? c.win_emu.registry.get_class_name(*sub_key) : std::vector<std::byte>{};
                 return write_key_node_information(c, key_information, length, result_length, subkey_name_u16, class_name);
             }
