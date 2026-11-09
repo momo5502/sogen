@@ -30,8 +30,15 @@ namespace sogen
     }
 }
 
+namespace sogen
+{
+    class subprocess_process_manager;
+}
+
 namespace sogen::android
 {
+    class android_process_launcher;
+
     // A Storage Access Framework tree, listed by the app before the session starts, mounted copy-on-write.
     struct document_tree
     {
@@ -56,12 +63,25 @@ namespace sogen::android
         std::string backend{};
         bool live_network{};
         std::optional<display_mode> max_display_mode{};
+        uint32_t steam_app_id{};
+        uint64_t steam_id{};
+        std::string steam_language{};
+        std::vector<uint8_t> steam_ownership_ticket{};
+        std::string steam_ownership_ticket_digest{};
         std::filesystem::path sandbox_executable{};
         vulkan_driver vulkan{};
         // Where a suspend without a destination saves the process.
         std::filesystem::path snapshot_directory{};
         // A saved process to continue instead of starting the application.
         std::filesystem::path resume_file{};
+        // Registry values imported into a fresh session over the saved registry state.
+        std::vector<std::filesystem::path> registry_files{};
+        // Like registry_files, but their strings refer to the guest's environment variables, such as %USERPROFILE%.
+        std::vector<std::filesystem::path> expanded_registry_files{};
+        // Where the guest's registry changes are kept between sessions; empty keeps none.
+        std::filesystem::path registry_state{};
+        // What the parent's process manager passed to this child process; empty for the game itself.
+        std::vector<std::string> managed_arguments{};
     };
 
     class session final : public ui_host
@@ -92,6 +112,10 @@ namespace sogen::android
         void console_input(std::string_view data) const;
         void console_resize(uint16_t columns, uint16_t rows) const;
 
+        // The app's answers to a child process this session asked it to start.
+        void child_started(uint64_t request, int32_t process_id);
+        void child_exited(uint64_t request, int32_t exit_status);
+
         void on_window_created(hwnd window, int32_t width, int32_t height, std::u16string_view title, bool visible) override;
         void on_window_destroyed(hwnd window) override;
         void on_window_resized(hwnd window, int32_t width, int32_t height) override;
@@ -103,7 +127,10 @@ namespace sogen::android
       private:
         int run_emulator(const run_config& config);
         void report_snapshot(const snapshot::snapshot_outcome& outcome);
+        void report_guest_exit();
         unique_fd open_document(const std::string& tree, const std::string& document_id);
+        void start_child(uint64_t request, const std::vector<std::string>& arguments);
+        void kill_child(uint64_t request);
 
         struct listener_methods
         {
@@ -117,7 +144,10 @@ namespace sogen::android
             jmethodID on_cursor_moved{};
             jmethodID on_relative_mouse_changed{};
             jmethodID on_snapshot{};
+            jmethodID on_guest_exited{};
             jmethodID open_document{};
+            jmethodID start_child{};
+            jmethodID kill_child{};
         };
 
         jobject listener_{};
@@ -128,8 +158,12 @@ namespace sogen::android
         windows_emulator* emulator_{};
         snapshot::controller* snapshots_{};
         android_ui_backend* ui_{};
+        android_process_launcher* launcher_{};
+        subprocess_process_manager* processes_{};
         bool stop_requested_{};
         uint32_t frame_limit_{};
+        // The Steam provider's interfaces live outside the saved process, so a Steam game cannot be suspended yet.
+        bool runs_steam_game_{};
 
         std::optional<pseudo_terminal> terminal_{};
 

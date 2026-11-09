@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:xterm/xterm.dart';
 
 import 'game_library.dart';
+import 'steam/install_script.dart';
 
 class GuestWindow {
   GuestWindow({
@@ -134,7 +136,13 @@ class GameSession extends ChangeNotifier {
   final Stopwatch _sinceReport = Stopwatch();
 
   /// Returns false if another game is still running. Any other failure ends the session with [error] set.
-  Future<bool> start(Game game, {required String emulationRoot, String? resumeFile}) async {
+  Future<bool> start(
+    Game game, {
+    required String emulationRoot,
+    int steamId = 0,
+    Uint8List? steamOwnershipTicket,
+    String? resumeFile,
+  }) async {
     _windows.clear();
     _output.clear();
     exitCode = null;
@@ -161,12 +169,17 @@ class GameSession extends ChangeNotifier {
 
     final layers = await layerDirectory(game);
     final mount = {guestGameDirectory: installed?.path ?? game.directory};
+    final installScriptRegistryFiles = [if (installed != null) ?await _writeInstallScriptRegistry(game, installed)];
     final started =
         await _methods.invokeMethod<bool>('start', {
           'emulationRoot': emulationRoot,
           'application': game.guestExecutable,
           'arguments': game.arguments,
-          'environment': game.environment,
+          // The Steam client starts its games with these, and steam_api.dll relaunches a game through Steam without them.
+          'environment': {
+            ...game.environment,
+            if (game.steamAppId != 0) ...{'SteamAppId': '${game.steamAppId}', 'SteamGameId': '${game.steamAppId}'},
+          },
           if (installId == null) 'documentMounts': mount else 'directoryMounts': mount,
           'layerDirectory': layers.path,
           'rootLayerDirectory': (await rootLayerDirectory(game)).path,
@@ -174,7 +187,16 @@ class GameSession extends ChangeNotifier {
           'backend': 'fex',
           'liveNetwork': game.liveNetwork,
           'maxDisplayMode': game.maxDisplayMode?.name ?? '',
+          'steamAppId': game.steamAppId,
+          'steamId': game.steamAppId != 0 ? steamId : 0,
+          'steamLanguage': game.steamAppId != 0 ? game.source!.language : '',
+          'steamOwnershipTicket': steamOwnershipTicket ?? Uint8List(0),
+          'steamOwnershipTicketDigest': steamOwnershipTicket == null
+              ? ''
+              : sha256.convert(steamOwnershipTicket).toString(),
           'resumeFile': resumeFile ?? '',
+          'expandedRegistryFiles': installScriptRegistryFiles,
+          'registryState': (await registryStateFile(game)).path,
         }) ??
         false;
 
@@ -188,6 +210,34 @@ class GameSession extends ChangeNotifier {
     }
     notifyListeners();
     return started;
+  }
+
+  /// Writes the registry values the game's Steam install script sets, as Steam does when it installs the game. Later
+  /// sessions start from the registry state the game saved, so its own changes to these values are kept.
+  Future<String?> _writeInstallScriptRegistry(Game game, Directory installed) async {
+    final script = File(p.join(installed.path, 'installscript.vdf'));
+    if (!script.existsSync() || (await registryStateFile(game)).existsSync()) {
+      return null;
+    }
+
+    final String? registry;
+    try {
+      registry = installScriptRegistry(
+        await script.readAsString(),
+        guestGameDirectory,
+        language: game.source?.language ?? 'english',
+      );
+    } on FormatException {
+      return null;
+    }
+    if (registry == null) {
+      return null;
+    }
+
+    final file = await startupRegistryFile(game);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(registry);
+    return file.path;
   }
 
   Future<void> stop() {

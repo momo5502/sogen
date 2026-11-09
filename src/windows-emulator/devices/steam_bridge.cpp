@@ -25,43 +25,20 @@ namespace sogen
         // above any real Steamworks call (the guest marshaller caps each variable payload at 16 MiB).
         constexpr uint32_t max_bridge_payload_bytes = 64u << 20;
 
-        // Abstracts whatever answers Steamworks calls, so the transport is independent of the responder.
-        // SECURITY: `args` is guest-controlled and must be treated as hostile; every implementation bounds
-        // its reads and caps its allocations.
-        struct steam_backend
-        {
-            virtual ~steam_backend() = default;
-            virtual sb::interface_handle create_interface(std::string_view version) = 0;
-            virtual void release_interface(sb::interface_handle handle) = 0;
-            // `out_cap` is the caller's reply capacity (the guest-sized output buffer). The reply is bounded to
-            // it and never truncated silently: a reply that does not fit leaves `out` empty and returns
-            // output_too_small, so the guest sees a failed call rather than corrupted data.
-            virtual int32_t invoke(sb::interface_handle handle, uint32_t method_index, std::span<const std::byte> args,
-                                   std::vector<std::byte>& out, uint64_t& ret, uint32_t out_cap) = 0;
-            // Drains pending host callbacks for `pipe`. `out` receives the normal-record blob (bytes in
-            // `normal_bytes`, count `normal_count`) followed by the reverse-record blob (count `reverse_count`).
-            virtual void run_callbacks(int32_t pipe, std::vector<std::byte>& out, uint32_t& normal_count, uint32_t& normal_bytes,
-                                       uint32_t& reverse_count) = 0;
-            // Fetches a completed async-call result; returns true if available (out = result bytes).
-            virtual bool get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id, uint32_t data_bytes,
-                                             std::vector<std::byte>& out, bool& io_failure) = 0;
-        };
-
         // Fallback when the real host Steam backend is unavailable (no SDK at build time, or Steam not
         // running): every call fails cleanly so the guest sees "no interface" rather than a crash.
         struct null_backend : steam_backend
         {
-            sb::interface_handle create_interface(std::string_view) override
+            uint64_t create_interface(std::string_view) override
             {
                 return sb::null_interface;
             }
 
-            void release_interface(sb::interface_handle) override
+            void release_interface(uint64_t) override
             {
             }
 
-            int32_t invoke(sb::interface_handle, uint32_t, std::span<const std::byte>, std::vector<std::byte>&, uint64_t& ret,
-                           uint32_t) override
+            int32_t invoke(uint64_t, uint32_t, std::span<const std::byte>, std::vector<std::byte>&, uint64_t& ret, uint32_t) override
             {
                 ret = 0;
                 return static_cast<int32_t>(sb::invoke_status::unknown_interface);
@@ -85,19 +62,19 @@ namespace sogen
         // steamclient64.dll connection, and the generated marshalling thunks.
         struct real_backend : steam_backend
         {
-            sb::interface_handle create_interface(std::string_view version) override
+            uint64_t create_interface(std::string_view version) override
             {
                 const std::string v{version};
                 return sogen_steam_backend_create_interface(v.c_str());
             }
 
-            void release_interface(const sb::interface_handle handle) override
+            void release_interface(const uint64_t handle) override
             {
                 sogen_steam_backend_release(handle);
             }
 
-            int32_t invoke(const sb::interface_handle handle, const uint32_t method_index, std::span<const std::byte> args,
-                           std::vector<std::byte>& out, uint64_t& ret, const uint32_t out_cap) override
+            int32_t invoke(const uint64_t handle, const uint32_t method_index, std::span<const std::byte> args, std::vector<std::byte>& out,
+                           uint64_t& ret, const uint32_t out_cap) override
             {
                 // Size the reply buffer to the guest's own output capacity: the backend writes at most this
                 // much and reports the reply's true length, so nothing is ever truncated behind our back.
@@ -207,15 +184,19 @@ namespace sogen
             }
 
           private:
-            std::unique_ptr<steam_backend> backend_{};
+            std::unique_ptr<steam_backend> default_backend_{};
 
             steam_backend& backend(windows_emulator& win_emu)
             {
-                if (!this->backend_)
+                if (auto* provided = win_emu.steam())
                 {
-                    this->backend_ = make_backend(win_emu);
+                    return *provided;
                 }
-                return *this->backend_;
+                if (!this->default_backend_)
+                {
+                    this->default_backend_ = make_backend(win_emu);
+                }
+                return *this->default_backend_;
             }
 
             static void set_information(const io_device_context& context, const ULONG bytes)

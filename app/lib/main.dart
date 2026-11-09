@@ -25,7 +25,7 @@ import 'src/steam/steam_catalog.dart';
 import 'src/steam/steam_client.dart';
 import 'src/steam/steam_install_source.dart';
 import 'src/store/cover_cache.dart';
-import 'src/store/store_catalog.dart';
+import 'src/store/store_accounts.dart';
 import 'src/store/store_installer.dart';
 import 'src/theme.dart';
 
@@ -39,23 +39,9 @@ Future<void> main() async {
     library.releaseUnusedFolders().catchError((Object error) => debugPrint('Could not release unused folders: $error')),
   );
   final settings = await AppSettings.load();
-  final gog = await GogAccount.load();
-  final gogContent = GogContent(gog);
-  final epic = await EpicAccount.load();
-  final epicApi = EpicApi(epic);
-  final epicContent = EpicContent(epicApi);
   final navigator = GlobalKey<NavigatorState>();
-  final steam = await SteamAccount.load(
-    (auth) => navigator.currentState!.push<SteamAuthPoll>(
-      MaterialPageRoute(builder: (context) => SteamSignInPage(auth: auth)),
-    ),
-  );
-  final steamClient = SteamClient(steam);
-  final installer = StoreInstaller(library, {
-    GogLibrary.store: GogInstallSource(gogContent),
-    EpicLibrary.store: EpicInstallSource(epicContent),
-    SteamCatalog.store: SteamInstallSource(steamClient),
-  });
+  final accounts = await StoreAccounts.load(_storeProviders(navigator));
+  final installer = StoreInstaller(library, accounts);
   await installer.restore().catchError((Object error) => debugPrint('Could not restore downloads: $error'));
   final covers = await CoverCache.open();
 
@@ -65,18 +51,102 @@ Future<void> main() async {
       library: library,
       settings: settings,
       ads: Ads(settings),
-      gog: gog,
-      gogCatalog: GogCatalog(gog, gogContent),
-      epic: epic,
-      epicCatalog: EpicCatalog(epicApi, epicContent),
-      steam: steam,
-      steamCatalog: SteamCatalog(steamClient),
+      accounts: accounts,
       installer: installer,
       covers: covers,
       navigator: navigator,
     ),
   );
 }
+
+List<StoreProvider> _storeProviders(GlobalKey<NavigatorState> navigator) => [
+  StoreProvider(
+    store: GogLibrary.store,
+    name: 'GOG',
+    signInDescription:
+        "Sign in to see the Windows games you own on GOG. You sign in on GOG's own page, so Sogen never sees your "
+        'password.',
+    open: (secretName) {
+      final account = GogAccount(
+        secrets: const DeviceSecretStorage(),
+        secretName: secretName,
+        loginPage: showGogLoginPage,
+        forgetLoginPage: forgetGogLoginPage,
+      );
+      final content = GogContent(account);
+      final catalog = GogCatalog(account, content);
+      return StoreConnection(
+        signIn: account,
+        catalog: catalog,
+        installSource: GogInstallSource(content),
+        restore: account.restore,
+        close: () async {
+          catalog.close();
+          content.close();
+          account.dispose();
+        },
+      );
+    },
+  ),
+  StoreProvider(
+    store: SteamCatalog.store,
+    name: 'Steam',
+    signInDescription:
+        'Sign in to see the Windows games you own on Steam, by approving it in the Steam mobile app or with your '
+        'password, which Sogen sends only to Steam and does not keep.',
+    open: (secretName) {
+      final account = SteamAccount(
+        secrets: const DeviceSecretStorage(),
+        secretName: secretName,
+        present: (auth) => navigator.currentState!.push<SteamAuthPoll>(
+          MaterialPageRoute(builder: (context) => SteamSignInPage(auth: auth)),
+        ),
+      );
+      final client = SteamClient(account);
+      final catalog = SteamCatalog(client);
+      return StoreConnection(
+        signIn: account,
+        catalog: catalog,
+        installSource: SteamInstallSource(client),
+        restore: account.restore,
+        ownershipTicket: client.appOwnershipTicket,
+        close: () async {
+          catalog.close();
+          await client.close();
+          account.dispose();
+        },
+      );
+    },
+  ),
+  StoreProvider(
+    store: EpicLibrary.store,
+    name: 'Epic',
+    signInDescription:
+        "Sign in to see the Windows games you own on Epic. You sign in on Epic's own page, so Sogen never sees your "
+        'password.',
+    open: (secretName) {
+      final account = EpicAccount(
+        secrets: const DeviceSecretStorage(),
+        secretName: secretName,
+        loginPage: showEpicLoginPage,
+        forgetLoginPage: forgetEpicLoginPage,
+      );
+      final api = EpicApi(account);
+      final content = EpicContent(api);
+      return StoreConnection(
+        signIn: account,
+        catalog: EpicCatalog(api, content),
+        installSource: EpicInstallSource(content),
+        restore: account.restore,
+        close: () async {
+          content.close();
+          api.close();
+          account.dispose();
+        },
+      );
+    },
+  ),
+];
 
 class SogenApp extends StatelessWidget {
   const SogenApp({
@@ -85,12 +155,7 @@ class SogenApp extends StatelessWidget {
     required this.library,
     required this.settings,
     required this.ads,
-    required this.gog,
-    required this.gogCatalog,
-    required this.epic,
-    required this.epicCatalog,
-    required this.steam,
-    required this.steamCatalog,
+    required this.accounts,
     required this.installer,
     required this.covers,
     required this.navigator,
@@ -100,16 +165,11 @@ class SogenApp extends StatelessWidget {
   final GameLibrary library;
   final AppSettings settings;
   final Ads ads;
-  final GogAccount gog;
-  final StoreCatalog gogCatalog;
-  final EpicAccount epic;
-  final StoreCatalog epicCatalog;
-  final SteamAccount steam;
-  final StoreCatalog steamCatalog;
+  final StoreAccounts accounts;
   final StoreInstaller installer;
   final CoverCache covers;
 
-  /// Lets the Steam account show its sign-in page, which it opens outside of any widget.
+  /// Lets Steam accounts show their sign-in page, which it opens outside of any widget.
   final GlobalKey<NavigatorState> navigator;
 
   @override
@@ -126,12 +186,7 @@ class SogenApp extends StatelessWidget {
           library: library,
           settings: settings,
           ads: ads,
-          gog: gog,
-          gogCatalog: gogCatalog,
-          epic: epic,
-          epicCatalog: epicCatalog,
-          steam: steam,
-          steamCatalog: steamCatalog,
+          accounts: accounts,
           installer: installer,
           covers: covers,
         ),

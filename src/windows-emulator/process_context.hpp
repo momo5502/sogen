@@ -441,6 +441,9 @@ namespace sogen
         void prepare_for_state_restore(windows_emulator& win_emu);
         void restore_after_state_restore(windows_emulator& win_emu);
         void restore_windows_after_state_restore(windows_emulator& win_emu);
+        // Deadlines the guest gave as absolute system times move earlier by the system time that went on while steady
+        // time did not.
+        void move_absolute_deadlines(std::chrono::steady_clock::duration system_time_ahead);
 
         generic_handle_store* get_handle_store(handle handle);
         size_t handle_count() const;

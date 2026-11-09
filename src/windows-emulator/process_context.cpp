@@ -313,6 +313,12 @@ namespace sogen
         constexpr auto critical_section_timeout = static_cast<uint64_t>(-25920000000000LL);
     }
 
+    std::function<std::u16string(std::u16string_view)> windows_emulator::environment_string_expander()
+    {
+        return [environment = get_environment_variables(this->registry, this->version, this->application_settings_)](
+                   const std::u16string_view text) { return expand_environment_string(std::u16string{text}, environment); };
+    }
+
     void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
                                 const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
     {
@@ -1125,6 +1131,30 @@ namespace sogen
         for (auto& port : this->ports | std::views::values)
         {
             port.restore_after_state_restore(win_emu);
+        }
+    }
+
+    void process_context::move_absolute_deadlines(const std::chrono::steady_clock::duration system_time_ahead)
+    {
+        for (auto& thread : this->threads | std::views::values)
+        {
+            thread.move_absolute_deadlines(system_time_ahead);
+        }
+
+        for (auto& timer : this->timers | std::views::values)
+        {
+            utils::follow_system_time(timer.due_time, timer.absolute, system_time_ahead);
+        }
+
+        // The handles of one file share its device (a duplicated handle), whose deadlines move once.
+        std::unordered_set<const io_device*> moved{};
+        for (const auto& container : this->devices | std::views::values)
+        {
+            auto* device = container.get_internal_device();
+            if (device && moved.insert(device).second)
+            {
+                device->move_absolute_deadlines(system_time_ahead);
+            }
         }
     }
 
