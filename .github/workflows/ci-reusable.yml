@@ -1413,6 +1413,17 @@ jobs:
           done
           exit 1
 
+      # Gradle retries a download that fails with a 5xx, 408, 429 or a dropped connection, but only three times within
+      # seconds, while GitHub's release CDN, which Maven Central redirects some artifacts to, answers 504 for minutes.
+      # Waiting 15s and doubling, nine attempts span about an hour.
+      - name: Retry Gradle Downloads
+        run: |
+          mkdir -p ~/.gradle
+          {
+            echo "systemProp.org.gradle.internal.network.retry.max.attempts=9"
+            echo "systemProp.org.gradle.internal.network.retry.initial.backOff=15000"
+          } >> ~/.gradle/gradle.properties
+
       - name: Build APK
         working-directory: app
         run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }}
