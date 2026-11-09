@@ -32,4 +32,8 @@ if(TARGET adrenotools)
   add_dependencies(android-runtime main_hook file_redirect_hook gsl_alloc_hook)
 endif()
 
+if(SOGEN_ENABLE_STEAM_LOCAL_PROVIDER AND TARGET steam-host-backend)
+  target_link_libraries(android-runtime PRIVATE steam-host-backend)
+endif()
+
 sogen_strip_target(android-runtime)

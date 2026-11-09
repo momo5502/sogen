@@ -258,6 +258,7 @@ namespace sogen
                 {
                     object.field("ic", event.header.instruction_count);
                     object.field("tid", event.execution.thread_id);
+                    object.field("vcpu", event.execution.vcpu);
                     object.hex_field("rip", event.execution.rip);
                     object.field("mod", event.execution.rip_module);
                     object.optional_hex_field("prev", event.execution.previous_ip);

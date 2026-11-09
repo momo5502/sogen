@@ -604,6 +604,7 @@ namespace sogen
         BOOL handle_NtUserTransformPoint(const syscall_context& c, emulator_pointer point, uint32_t from_dpi, uint32_t to_dpi,
                                          uint32_t flags);
         int32_t handle_NtUserShowCursor(const syscall_context& c, BOOL show);
+        NTSTATUS handle_NtUserHideCursorNoCapture();
         uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
         uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, int32_t virtual_key);
         BOOL handle_NtUserClipCursor(const syscall_context& c, emulator_pointer rect);
@@ -821,6 +822,7 @@ namespace sogen
         int32_t handle_NtUserCheckMenuItem(const syscall_context& c, hmenu menu, UINT item, UINT check);
         BOOL handle_NtUserCreateCaret();
         BOOL handle_NtUserDestroyCaret();
+        BOOL handle_NtUserGetCaretPos(const syscall_context& c, emulator_object<POINT> point);
         BOOL handle_NtUserSetCaretPos();
         BOOL handle_NtUserShowCaret();
         BOOL handle_NtUserHideCaret();
@@ -2044,6 +2046,7 @@ namespace sogen
         add_handler(NtUserGetClipCursor);
         add_handler(NtUserTransformPoint);
         add_handler(NtUserShowCursor);
+        add_handler(NtUserHideCursorNoCapture);
         add_handler(NtUserClipCursor);
         add_handler(NtUserGetWindowCompositionAttribute);
         add_handler(NtUserSetCursorPos);
@@ -2301,6 +2304,7 @@ namespace sogen
         add_handler(NtUserSetWindowPlacement);
         add_handler(NtUserCreateCaret);
         add_handler(NtUserDestroyCaret);
+        add_handler(NtUserGetCaretPos);
         add_handler(NtUserSetCaretPos);
         add_handler(NtUserShowCaret);
         add_handler(NtUserHideCaret);

@@ -62,12 +62,9 @@ namespace sogen
             return pipe_name;
         }
 
-        std::optional<std::chrono::steady_clock::time_point> wait_deadline(windows_emulator& win_emu,
-                                                                           const file_pipe_wait_for_buffer& header,
-                                                                           const LARGE_INTEGER default_timeout)
+        std::optional<std::chrono::steady_clock::time_point> wait_deadline(windows_emulator& win_emu, const LARGE_INTEGER timeout)
         {
             constexpr auto infinite = std::chrono::steady_clock::time_point::min();
-            const auto timeout = header.timeout_specified ? header.timeout : default_timeout;
             const auto deadline = utils::convert_delay_interval_to_time_point(win_emu.clock(), timeout);
             if (deadline == infinite)
             {
@@ -321,7 +318,10 @@ namespace sogen
         {
             return STATUS_OBJECT_NAME_NOT_FOUND;
         }
-        awaited = {.name = std::move(*awaited_name), .deadline = wait_deadline(win_emu, *header, instances.any->default_timeout)};
+        const auto timeout = header->timeout_specified ? header->timeout : instances.any->default_timeout;
+        awaited = {.name = std::move(*awaited_name),
+                   .deadline = wait_deadline(win_emu, timeout),
+                   .deadline_absolute = utils::is_absolute_due_time(timeout)};
         return STATUS_PENDING;
     }
 
@@ -477,6 +477,14 @@ namespace sogen
         }
     }
 
+    void named_pipe::move_absolute_deadlines(const std::chrono::steady_clock::duration system_time_ahead)
+    {
+        for (auto& pending : this->pending_)
+        {
+            utils::follow_system_time(pending.awaited.deadline, pending.awaited.deadline_absolute, system_time_ahead);
+        }
+    }
+
     bool named_pipe::has_pending_io(const uint32_t issuing_thread_id) const
     {
         return std::ranges::any_of(this->pending_, [issuing_thread_id](const auto& operation) {
@@ -567,6 +575,7 @@ namespace sogen
             buffer.write(pending.kind);
             buffer.write(pending.awaited.name);
             buffer.write_optional(pending.awaited.deadline);
+            buffer.write(pending.awaited.deadline_absolute);
             buffer.write(pending.decided_status);
         }
     }
@@ -601,6 +610,7 @@ namespace sogen
             buffer.read(pending.kind);
             buffer.read(pending.awaited.name);
             buffer.read_optional(pending.awaited.deadline);
+            buffer.read(pending.awaited.deadline_absolute);
             buffer.read(pending.decided_status);
             this->pending_.push_back(std::move(pending));
         }

@@ -1,7 +1,6 @@
 #include <windows_emulator.hpp>
 #include <subprocess_process_manager.hpp>
-#include <emulator_process_target.hpp>
-#include <inherited_pipes.hpp>
+#include <managed_process_start.hpp>
 #include <registry/registry_file.hpp>
 #include <filesystem/directory_mount.hpp>
 #include <filesystem/document_mount.hpp>
@@ -159,19 +158,7 @@ namespace sogen::sandbox
             }
             if (managed_connection)
             {
-                const auto& request = managed_connection->request();
-                app_settings.argument0 = u8_to_u16(request.argument0);
-                app_settings.command_line = u8_to_u16(request.command_line);
-                app_settings.process_id = request.process_id;
-                app_settings.thread_id = request.thread_id;
-                if (!request.working_directory.empty())
-                {
-                    app_settings.working_directory = windows_path(u8_to_u16(request.working_directory));
-                }
-                for (const auto& [name, value] : request.environment)
-                {
-                    app_settings.environment.insert_or_assign(u8_to_u16(name), u8_to_u16(value));
-                }
+                apply_managed_request(app_settings, managed_connection->request());
             }
 
 #ifdef _WIN32
@@ -325,23 +312,7 @@ namespace sogen::sandbox
             std::unique_ptr<emulator_process_target> managed_target{};
             if (managed_connection)
             {
-                if (!managed_connection->request().registry_state.empty())
-                {
-                    utils::buffer_deserializer state{managed_connection->request().registry_state};
-                    win_emu.registry.deserialize_runtime_state(state);
-                }
-                win_emu.setup_process_if_necessary();
-                win_emu.process.parent_process_id = managed_connection->request().parent_process_id;
-                if (managed_connection->request().debugged)
-                {
-                    win_emu.attach_debugger();
-                }
-                install_inherited_pipes(win_emu, managed_connection->request(), managed_connection->take_inherited_pipes());
-                managed_target = std::make_unique<emulator_process_target>(win_emu);
-                if (!managed_connection->wait_for_resume(*managed_target))
-                {
-                    throw std::runtime_error("Acknowledging managed process startup failed");
-                }
+                managed_target = start_managed_process(win_emu, *managed_connection);
             }
             const auto managed_process_guard = utils::finally([&] {
                 if (managed_connection)

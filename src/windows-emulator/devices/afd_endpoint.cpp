@@ -389,6 +389,7 @@ namespace sogen
         {
             io_device_context context;
             std::optional<std::chrono::steady_clock::time_point> timeout{};
+            bool timeout_absolute{};
             handle retained_completion_port{};
 
             pending_poll(memory_interface& emu)
@@ -396,9 +397,11 @@ namespace sogen
             {
             }
 
-            pending_poll(const io_device_context& context, const std::optional<std::chrono::steady_clock::time_point> timeout)
+            pending_poll(const io_device_context& context, const std::optional<std::chrono::steady_clock::time_point> timeout,
+                         const bool timeout_absolute)
                 : context(context),
-                  timeout(timeout)
+                  timeout(timeout),
+                  timeout_absolute(timeout_absolute)
             {
             }
 
@@ -411,6 +414,7 @@ namespace sogen
             {
                 this->context.serialize(buffer);
                 buffer.write_optional(this->timeout);
+                buffer.write(this->timeout_absolute);
                 buffer.write(this->retained_completion_port);
             }
 
@@ -418,6 +422,7 @@ namespace sogen
             {
                 this->context.deserialize(buffer);
                 buffer.read_optional(this->timeout);
+                buffer.read(this->timeout_absolute);
                 buffer.read(this->retained_completion_port);
             }
         };
@@ -524,6 +529,14 @@ namespace sogen
                 if (this->s_)
                 {
                     this->s_->set_blocking(false);
+                }
+            }
+
+            void move_absolute_deadlines(const std::chrono::steady_clock::duration system_time_ahead) override
+            {
+                for (auto& poll : this->pending_polls_)
+                {
+                    utils::follow_system_time(poll.timeout, poll.timeout_absolute, system_time_ahead);
                 }
             }
 
@@ -1819,7 +1832,7 @@ namespace sogen
                                                                           {.QuadPart = std::numeric_limits<int64_t>::max()});
                 }
 
-                pending_poll poll{c, timeout};
+                pending_poll poll{c, timeout, timeout && utils::is_absolute_due_time(info.Timeout)};
                 this->pending_polls_.reserve(this->pending_polls_.size() + 1);
 
                 handle retained_port{};

@@ -37,6 +37,11 @@ namespace sogen::test
         class pipe_wait_test_clock : public utils::clock
         {
           public:
+            system_time_point system_now() override
+            {
+                return system_time_point{std::chrono::seconds(1'700'000'000)} + std::chrono::duration_cast<system_duration>(this->elapsed);
+            }
+
             steady_time_point steady_now() override
             {
                 return steady_time_point{} + this->elapsed;
@@ -256,6 +261,30 @@ namespace sogen::test
         EXPECT_EQ(STATUS_IO_TIMEOUT, this->iosb().read().Status);
         EXPECT_EQ(0u, this->iosb().read().Information);
         EXPECT_TRUE(this->emu->vcpu(0).thread().is_thread_ready(*this->emu));
+    }
+
+    // A wait the guest reaches through two handles, as after a DuplicateHandle, is one wait: when the system time moves
+    // ahead of the guest's steady time, its absolute deadline moves once.
+    TEST_F(NamedPipeWaitTest, AbsoluteDeadlineOfAWaitWithTwoHandlesMovesOnce)
+    {
+        this->create_server(u"\\Device\\NamedPipe\\twice");
+        ASSERT_EQ(STATUS_SUCCESS, this->open(u"\\Device\\NamedPipe\\twice"));
+        const auto root = this->open_root(FILE_SYNCHRONOUS_IO_NONALERT);
+        const auto due = std::chrono::duration_cast<std::chrono::duration<LONGLONG, std::ratio<1, 10'000'000>>>(
+                             (this->clock->system_now() + std::chrono::milliseconds(300)).time_since_epoch())
+                             .count() +
+                         WINDOWS_EPOCH_DIFFERENCE;
+        ASSERT_EQ(STATUS_PENDING, this->wait(root, {.name = u"twice", .timeout = due}));
+
+        // NtDuplicateObject gives a file's new handle a container that shares its device.
+        auto& devices = this->emu->process.devices;
+        (void)devices.store(devices.get(root)->duplicate(GENERIC_READ, false));
+        this->emu->process.move_absolute_deadlines(std::chrono::milliseconds(100));
+
+        this->advance_and_work(root, std::chrono::milliseconds(199));
+        EXPECT_EQ(STATUS_PENDING, this->iosb().read().Status);
+        this->advance_and_work(root, std::chrono::milliseconds(200));
+        EXPECT_EQ(STATUS_IO_TIMEOUT, this->iosb().read().Status);
     }
 
     TEST_F(NamedPipeWaitTest, UnspecifiedTimeoutUsesThePipeDefault)

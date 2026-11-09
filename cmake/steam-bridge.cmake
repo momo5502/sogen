@@ -10,17 +10,33 @@ set(SOGEN_STEAMWORKS_PROTON_REPO "https://github.com/ValveSoftware/Proton.git"
     CACHE STRING "Repo carrying vendored steamworks_sdk_* header snapshots")
 set(SOGEN_STEAMWORKS_PROTON_TAG "proton_11.0" CACHE STRING "Ref of SOGEN_STEAMWORKS_PROTON_REPO to fetch")
 
+# Answers the guest's Steam calls from a provider inside the emulator instead of a host Steam client, for
+# hosts without one (Android).
+option(SOGEN_ENABLE_STEAM_LOCAL_PROVIDER "Answer guest Steam calls from a built-in provider instead of a Steam client" OFF)
+if(SOGEN_ENABLE_STEAM_LOCAL_PROVIDER AND NOT SOGEN_ENABLE_STEAM)
+  message(FATAL_ERROR "SOGEN_ENABLE_STEAM_LOCAL_PROVIDER needs SOGEN_ENABLE_STEAM.")
+endif()
+
 # Desktop hosts where a real Steam client exists (macOS = Darwin, excluding iOS).
 set(SOGEN_STEAM_HOST_PLATFORM FALSE)
-if(WIN32 OR LINUX OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+if(WIN32 OR LINUX OR CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR SOGEN_ENABLE_STEAM_LOCAL_PROVIDER)
   set(SOGEN_STEAM_HOST_PLATFORM TRUE)
 endif()
+
+# A build that asked for the provider must not quietly come out without Steam.
+function(sogen_steam_unavailable reason)
+  if(SOGEN_ENABLE_STEAM_LOCAL_PROVIDER)
+    message(FATAL_ERROR "${reason}")
+  else()
+    message(WARNING "${reason}")
+  endif()
+endfunction()
 
 set(SOGEN_STEAM_ENABLED FALSE)
 if(SOGEN_ENABLE_STEAM AND SOGEN_STEAM_HOST_PLATFORM)
   find_package(Python3 COMPONENTS Interpreter)
   if(NOT Python3_Interpreter_FOUND)
-    message(WARNING "SOGEN_ENABLE_STEAM: Python3 not found; Steam bridge disabled.")
+    sogen_steam_unavailable("SOGEN_ENABLE_STEAM: Python3 not found; Steam bridge disabled.")
   else()
     include(FetchContent)
     # Headers only: shallow, no submodules; SOURCE_SUBDIR points at a nonexistent path so the checkout is
@@ -52,7 +68,7 @@ if(SOGEN_ENABLE_STEAM AND SOGEN_STEAM_HOST_PLATFORM)
     endforeach()
 
     if(NOT SOGEN_STEAM_TAG_LIST)
-      message(WARNING "Steam: no steamworks_sdk_* snapshots under '${_snap_root}'; Steam bridge disabled.")
+      sogen_steam_unavailable("Steam: no steamworks_sdk_* snapshots under '${_snap_root}'; Steam bridge disabled.")
     else()
       math(EXPR _bits "${CMAKE_SIZEOF_VOID_P} * 8")
       set(SOGEN_STEAM_GEN_DIR "${CMAKE_BINARY_DIR}/steam-generated")
@@ -85,8 +101,8 @@ if(SOGEN_ENABLE_STEAM AND SOGEN_STEAM_HOST_PLATFORM)
                   ${_gen_args} --out-dir "${SOGEN_STEAM_GEN_DIR}" --bits "${_bits}"
           RESULT_VARIABLE _gen_res ERROR_VARIABLE _gen_err)
         if(NOT _gen_res EQUAL 0)
-          message(WARNING "Steam bridge generator failed (is the 'libclang' pip package installed?):\n${_gen_err}\n"
-                          "Steam bridge disabled.")
+          sogen_steam_unavailable("Steam bridge generator failed (is the 'libclang' pip package installed?):\n${_gen_err}\n"
+                                  "Steam bridge disabled.")
         else()
           file(WRITE "${_gen_stamp_file}" "${_gen_stamp}")
           message(STATUS "Steam bridge enabled (base ${SOGEN_STEAM_BASE_DIR}).")

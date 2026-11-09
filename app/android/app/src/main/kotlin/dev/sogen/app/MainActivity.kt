@@ -216,8 +216,16 @@ class MainActivity : FlutterActivity() {
         backend = call.argument<String>("backend").orEmpty(),
         liveNetwork = call.argument<Boolean>("liveNetwork") == true,
         maxDisplayMode = call.argument<String>("maxDisplayMode").orEmpty(),
+        steamAppId = call.argument<Int>("steamAppId") ?: 0,
+        steamId = call.argument<Number>("steamId")?.toLong() ?: 0L,
+        steamLanguage = call.argument<String>("steamLanguage").orEmpty(),
+        steamOwnershipTicket = call.argument<ByteArray>("steamOwnershipTicket") ?: ByteArray(0),
+        steamOwnershipTicketDigest = call.argument<String>("steamOwnershipTicketDigest").orEmpty(),
         snapshotDirectory = File(filesDir, "snapshots").path,
         resumeFile = call.argument<String>("resumeFile").orEmpty(),
+        registryFiles = call.argument<List<String>>("registryFiles").orEmpty(),
+        expandedRegistryFiles = call.argument<List<String>>("expandedRegistryFiles").orEmpty(),
+        registryState = call.argument<String>("registryState").orEmpty(),
     )
 
     /** Completes with the tree URI of the chosen folder, which stays readable across restarts, or null. */

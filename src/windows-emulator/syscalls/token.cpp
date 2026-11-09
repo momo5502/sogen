@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../token.hpp"
 
 #include <limits>
 
@@ -29,12 +30,7 @@ namespace sogen
                 1, 3, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, token_authentication_id & 0xFF, token_authentication_id >> 8, 0, 0,
             };
 
-            // S-1-5-32-544, BUILTIN\Administrators
-            constexpr std::array<uint8_t, 16> administrators_sid = {
-                0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00,
-            };
-
-            constexpr ULONG se_group_default = 0x7;
+            constexpr ULONG se_group_default = 0x7; // SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED
             constexpr ULONG se_group_owner = 0x8;
             constexpr ULONG se_group_logon_id = 0xC0000000;
 
@@ -516,7 +512,7 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                emulator_object<ULONG>{c.emu, token_information}.write(1);
+                emulator_object<ULONG>{c.emu, token_information}.write(token_session_id);
                 return STATUS_SUCCESS;
             }
 
@@ -1048,6 +1044,107 @@ namespace sogen
         {
             return STATUS_NOT_SUPPORTED;
         }
+    }
+
+    bool token_holds_sid(const windows_emulator& win_emu, const handle token, const std::span<const uint8_t> sid)
+    {
+        if (token == ANONYMOUS_IMPERSONATION_TOKEN)
+        {
+            return std::ranges::equal(sid, syscalls::anonymous_sid);
+        }
+
+        return std::ranges::equal(sid, win_emu.process.sid) || std::ranges::equal(sid, syscalls::interactive_sid) ||
+               (win_emu.runs_elevated() && std::ranges::equal(sid, administrators_sid));
+    }
+
+    bool token_grants_access(const windows_emulator& win_emu, const handle token, const std::span<const std::byte> descriptor,
+                             const ACCESS_MASK desired_access)
+    {
+        constexpr size_t sid_header_size = offsetof(SID, SubAuthority);
+        constexpr size_t ace_sid_offset = offsetof(ACCESS_ALLOWED_ACE, SidStart);
+
+        SECURITY_DESCRIPTOR_RELATIVE header{};
+        if (descriptor.size() < sizeof(header))
+        {
+            return false;
+        }
+
+        memcpy(&header, descriptor.data(), sizeof(header));
+        if ((header.Control & SE_SELF_RELATIVE) == 0)
+        {
+            return false;
+        }
+
+        if ((header.Control & SE_DACL_PRESENT) == 0 || header.Dacl == 0)
+        {
+            return true;
+        }
+
+        ACL acl{};
+        if (header.Dacl > descriptor.size() - sizeof(acl))
+        {
+            return false;
+        }
+
+        memcpy(&acl, descriptor.data() + header.Dacl, sizeof(acl));
+        if (acl.AclSize < sizeof(acl) || acl.AclSize > descriptor.size() - header.Dacl)
+        {
+            return false;
+        }
+
+        const auto aces = descriptor.subspan(header.Dacl, acl.AclSize);
+        auto remaining = desired_access;
+        size_t offset = sizeof(acl);
+        for (USHORT index = 0; index < acl.AceCount && remaining != 0; ++index)
+        {
+            ACCESS_ALLOWED_ACE ace{};
+            if (aces.size() - offset < ace_sid_offset)
+            {
+                return false;
+            }
+
+            memcpy(&ace, aces.data() + offset, ace_sid_offset);
+            if (ace.Header.AceSize < ace_sid_offset || ace.Header.AceSize > aces.size() - offset)
+            {
+                return false;
+            }
+
+            const auto type = ace.Header.AceType;
+            if ((type == ACCESS_ALLOWED_ACE_TYPE || type == ACCESS_DENIED_ACE_TYPE) && (ace.Header.AceFlags & INHERIT_ONLY_ACE) == 0)
+            {
+                const std::span sid{reinterpret_cast<const uint8_t*>(aces.data() + offset + ace_sid_offset),
+                                    ace.Header.AceSize - ace_sid_offset};
+                if (sid.size() < sid_header_size)
+                {
+                    return false;
+                }
+
+                SID sid_header{};
+                memcpy(&sid_header, sid.data(), sid_header_size);
+                const auto sid_size = sid_header_size + (sid_header.SubAuthorityCount * sizeof(DWORD));
+                if (sid.size() < sid_size)
+                {
+                    return false;
+                }
+
+                if (token_holds_sid(win_emu, token, sid.first(sid_size)))
+                {
+                    if (type == ACCESS_DENIED_ACE_TYPE && (ace.Mask & remaining) != 0)
+                    {
+                        return false;
+                    }
+
+                    if (type == ACCESS_ALLOWED_ACE_TYPE)
+                    {
+                        remaining &= ~ace.Mask;
+                    }
+                }
+            }
+
+            offset += ace.Header.AceSize;
+        }
+
+        return remaining == 0;
     }
 
 } // namespace sogen

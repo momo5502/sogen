@@ -3,8 +3,7 @@
 #include <CLI/CLI.hpp>
 
 #include <windows_emulator.hpp>
-#include <emulator_process_target.hpp>
-#include <inherited_pipes.hpp>
+#include <managed_process_start.hpp>
 #include <backend_selection.hpp>
 #include <win_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
@@ -75,6 +74,7 @@ namespace sogen
 #endif
             std::optional<uint64_t> break_call{};
             std::filesystem::path dump{};
+            std::filesystem::path snapshot_directory{"snapshots"};
             std::filesystem::path minidump_path{};
             std::filesystem::path report_path{};
             std::filesystem::path stdout_path{};
@@ -84,6 +84,7 @@ namespace sogen
             network::network_mode network{network::network_mode::offline};
             bool disable_instruction_precision{false};
             bool native_timing{false};
+            bool keep_guest_time{false};
             uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::vector<std::filesystem::path> registry_files{};
@@ -453,6 +454,60 @@ namespace sogen
             }
         }
 
+#ifndef OS_EMSCRIPTEN
+        // Runs the process until it exits or is interrupted. Ctrl+Alt+Shift+S in its window saves it to the directory
+        // meanwhile, and it keeps running.
+        void run_with_snapshot_hotkey(windows_emulator& win_emu, const std::filesystem::path& directory,
+                                      const std::atomic_uint32_t& signals_received)
+        {
+            snapshot::controller snapshots{win_emu,
+                                           {},
+                                           directory,
+                                           [&](const snapshot::snapshot_outcome& outcome) {
+                                               if (outcome.error.empty())
+                                               {
+                                                   win_emu.log.force_print(color::green, "Saved the process to %s\n",
+                                                                           outcome.path.string().c_str());
+                                               }
+                                               else
+                                               {
+                                                   win_emu.log.error("Saving the process failed: %s\n", outcome.error.c_str());
+                                               }
+                                           },
+                                           true};
+            win_emu.ui().set_snapshot_request_sink([&] { snapshots.request(); });
+            const auto snapshot_sink_guard = utils::finally([&] { win_emu.ui().set_snapshot_request_sink({}); });
+
+            // The interrupt handler only stops the emulator, which does not end a run between two saves, and it cannot take
+            // the controller's locks: this thread stops the controller for it.
+            std::mutex mutex{};
+            std::condition_variable changed{};
+            bool watching = true;
+            std::thread watcher([&] {
+                std::unique_lock lock(mutex);
+                while (watching)
+                {
+                    changed.wait_for(lock, std::chrono::milliseconds(50));
+                    if (signals_received > 0)
+                    {
+                        snapshots.stop();
+                        return;
+                    }
+                }
+            });
+            const auto watcher_guard = utils::finally([&] {
+                {
+                    const std::scoped_lock lock(mutex);
+                    watching = false;
+                }
+                changed.notify_all();
+                watcher.join();
+            });
+
+            snapshots.run();
+        }
+#endif
+
         bool run_emulation(const analysis_context& c, const analysis_options& options)
         {
             auto& win_emu = *c.win_emu;
@@ -520,7 +575,11 @@ namespace sogen
                         debugger::enter_breakpoint(win_emu, win_emu.mod_manager.executable->entry_point);
                     }
 #endif
+#ifdef OS_EMSCRIPTEN
                     win_emu.start();
+#else
+                    run_with_snapshot_hotkey(win_emu, options.snapshot_directory, signals_received);
+#endif
                 }
 
                 if (signals_received > 0)
@@ -597,6 +656,7 @@ namespace sogen
                 .use_instruction_precision = !options.disable_instruction_precision,
                 .intercept_rdtsc = !options.native_timing,
                 .intercept_kusd = kusd_needs_intercept || !options.native_timing,
+                .keep_guest_time_across_snapshots = options.keep_guest_time,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
                 .root_mode = options.root_mode,
@@ -825,23 +885,7 @@ namespace sogen
             std::unique_ptr<emulator_process_target> managed_target{};
             if (options.managed_process)
             {
-                if (!options.managed_process->request().registry_state.empty())
-                {
-                    utils::buffer_deserializer state{options.managed_process->request().registry_state};
-                    win_emu->registry.deserialize_runtime_state(state);
-                }
-                win_emu->setup_process_if_necessary();
-                win_emu->process.parent_process_id = options.managed_process->request().parent_process_id;
-                if (options.managed_process->request().debugged)
-                {
-                    win_emu->attach_debugger();
-                }
-                install_inherited_pipes(*win_emu, options.managed_process->request(), options.managed_process->take_inherited_pipes());
-                managed_target = std::make_unique<emulator_process_target>(*win_emu);
-                if (!options.managed_process->wait_for_resume(*managed_target))
-                {
-                    throw std::runtime_error("Acknowledging managed process startup failed");
-                }
+                managed_target = start_managed_process(*win_emu, *options.managed_process);
             }
             const auto managed_process_guard = utils::finally([&] {
                 if (options.managed_process)
@@ -1154,6 +1198,9 @@ namespace sogen
                          "Let the guest read the host TSC and a periodically refreshed KUSER_SHARED_DATA without trapping (faster, "
                          "timing is no longer exact); on macOS KUSER_SHARED_DATA stays trapped and only rdtsc runs natively")
                 ->excludes(reproducible_option);
+            app.add_flag("--keep-guest-time", options.keep_guest_time,
+                         "Keep the guest's time across snapshots: its clocks stand still while the process is saved or loaded "
+                         "and continue from the save, as a game that times out without its server needs");
             app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
                          "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
             app.add_flag("--elevated", options.elevated, "Run the process with an elevated administrator token");
@@ -1172,6 +1219,10 @@ namespace sogen
             app.add_option("--managed-process-port", options.managed_process_port)->group("");
             app.add_option("--managed-process-token", options.managed_process_token)->group("");
             app.add_option("-a,--snapshot", options.dump, "Load snapshot dump from path");
+#ifndef OS_EMSCRIPTEN
+            app.add_option("--snapshot-dir", options.snapshot_directory, "Where Ctrl+Alt+Shift+S saves the process, which keeps running")
+                ->capture_default_str();
+#endif
             app.add_option("--minidump", options.minidump_path, "Load minidump from path");
             app.add_option("--report", options.report_path, "Write machine-readable analysis events to a file");
             app.add_option("--report-format", options.report_format, "Report format (supported: jsonl)")->capture_default_str();

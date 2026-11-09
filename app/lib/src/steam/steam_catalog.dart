@@ -14,13 +14,7 @@ class SteamCatalog implements StoreCatalog {
   final SteamClient _client;
   final SteamPlanner _planner;
 
-  @override
-  String get name => 'Steam';
-
-  @override
-  String get signInDescription =>
-      'Sign in to see the Windows games you own on Steam, by approving it in the Steam mobile app or with your '
-      'password, which Sogen sends only to Steam and does not keep.';
+  void close() => _planner.close();
 
   @override
   Future<List<StoreGame>> games() async {

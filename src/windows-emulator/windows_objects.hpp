@@ -97,6 +97,8 @@ namespace sogen
         bool synchronization{};
         bool signaled{};
         std::optional<std::chrono::steady_clock::time_point> due_time{};
+        // The due time was an absolute system time; a periodic timer's later expirations are intervals.
+        bool absolute{};
         int64_t period_nanoseconds{};
 
         bool is_signaled(utils::clock& clock)
@@ -111,6 +113,7 @@ namespace sogen
                 this->signaled = true;
                 if (this->period_nanoseconds > 0)
                 {
+                    this->absolute = false;
                     const auto period = std::chrono::nanoseconds(this->period_nanoseconds);
                     const auto elapsed = now - *this->due_time;
                     const auto remaining = period - elapsed % period;
@@ -156,6 +159,7 @@ namespace sogen
             buffer.write(this->synchronization);
             buffer.write(this->signaled);
             buffer.write_optional(this->due_time);
+            buffer.write(this->absolute);
             buffer.write(this->period_nanoseconds);
         }
 
@@ -166,6 +170,7 @@ namespace sogen
             buffer.read(this->synchronization);
             buffer.read(this->signaled);
             buffer.read_optional(this->due_time);
+            buffer.read(this->absolute);
             buffer.read(this->period_nanoseconds);
         }
     };

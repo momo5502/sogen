@@ -15,6 +15,31 @@ extern "C"
     // (not running / not logged in / DLL missing). Safe to call repeatedly.
     int sogen_steam_backend_init(void);
 
+    // What a provider that answers inside the emulator knows about the account and the game at launch. A later
+    // version only appends fields, so `version` tells which ones the caller filled.
+    struct sogen_steam_launch_state
+    {
+        uint32_t version;
+        uint32_t app_id;
+        uint64_t steam_id;
+        // Steam's language token, such as "english" or "german"; empty when the game has no language of its own.
+        char language[32];
+        // The app ownership ticket Steam signed for the account and the app, or null. The provider copies it.
+        const uint8_t* ownership_ticket;
+        uint32_t ownership_ticket_size;
+    };
+
+    enum
+    {
+        sogen_steam_launch_state_version = 4
+    };
+
+    // Starts a provider session with the given launch state, discarding the previous session's interfaces.
+    void sogen_steam_backend_start_session(const struct sogen_steam_launch_state* state);
+
+    // Ends the provider session: forgets its interfaces and identity, and overwrites the ownership ticket.
+    void sogen_steam_backend_end_session(void);
+
     // Resolves a versioned interface (e.g. "SteamUser023") to an opaque handle; 0 if unknown.
     uint64_t sogen_steam_backend_create_interface(const char* version);
 

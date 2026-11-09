@@ -12,12 +12,7 @@ class GogCatalog implements StoreCatalog {
   final GogLibrary _library;
   final GogPlanner _planner;
 
-  @override
-  String get name => 'GOG';
-
-  @override
-  String get signInDescription =>
-      "Sign in to see the Windows games you own on GOG. You sign in on GOG's own page, so Sogen never sees your password.";
+  void close() => _library.close();
 
   @override
   Future<List<StoreGame>> games() => _library.games();

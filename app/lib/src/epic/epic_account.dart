@@ -24,18 +24,14 @@ Future<void> forgetEpicLoginPage() => _epicChannel.invokeMethod<void>('forgetLog
 
 /// The Epic Games account the user signed in with.
 class EpicAccount extends StoreAccount {
-  EpicAccount({required super.secrets, required this._loginPage, super.forgetLoginPage, super.client, super.now})
-    : super(secretName: 'epic');
-
-  static Future<EpicAccount> load() async {
-    final account = EpicAccount(
-      secrets: const DeviceSecretStorage(),
-      loginPage: showEpicLoginPage,
-      forgetLoginPage: forgetEpicLoginPage,
-    );
-    await account.restore();
-    return account;
-  }
+  EpicAccount({
+    required super.secrets,
+    required super.secretName,
+    required this._loginPage,
+    super.forgetLoginPage,
+    super.client,
+    super.now,
+  });
 
   // Epic registers no clients for other applications, so this is the published client of the Epic Games Launcher
   // that open source Epic clients sign in with. Its login page hands the code to this redirect, which shows it as JSON.
@@ -81,6 +77,16 @@ class EpicAccount extends StoreAccount {
 
   @override
   SignedOutException signedOut() => const EpicSignedOutException();
+
+  @override
+  ({String? userId, String? displayName}) identityOf(Map<String, Object?> body) {
+    final userId = body['account_id'];
+    final displayName = body['displayName'];
+    return (
+      userId: userId is String && userId.isNotEmpty ? userId : null,
+      displayName: displayName is String && displayName.isNotEmpty ? displayName : null,
+    );
+  }
 }
 
 class EpicSignedOutException extends EpicException implements SignedOutException {

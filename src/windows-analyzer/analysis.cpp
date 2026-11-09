@@ -650,6 +650,12 @@ namespace sogen
 
         emulator_callbacks::continuation handle_syscall(analysis_context& c, const uint32_t syscall_id, const std::string_view syscall_name)
         {
+            if (syscall_name != "NtQuerySystemInformation" && syscall_name != "NtQueryInformationProcess" &&
+                syscall_name != "NtRaiseException" && syscall_name != "NtContinue" && syscall_name != "NtContinueEx")
+            {
+                c.mapping_violation = {};
+            }
+
             if (c.settings->ignored_functions.contains(syscall_name))
             {
                 return instruction_hook_continuation::run_instruction;
@@ -848,6 +854,7 @@ namespace sogen
 
         execution_context context{
             .thread_id = 0,
+            .vcpu = static_cast<uint32_t>(emu.index()),
             .rip = rip,
             .rip_module = rip_module ? rip_module : "<N/A>",
         };

@@ -5,6 +5,14 @@
 
 namespace sogen
 {
+    struct key_modifiers
+    {
+        bool shift{};
+        bool control{};
+        bool alt{};
+        bool caps_lock{};
+    };
+
     inline constexpr std::array<std::array<uint8_t, 3>, 3> modifier_sides{{
         {VK_SHIFT, VK_LSHIFT, VK_RSHIFT},
         {VK_CONTROL, VK_LCONTROL, VK_RCONTROL},
@@ -19,4 +27,5 @@ namespace sogen
 
     // The character a key produces under the given key state, as ToUnicode reports it.
     char16_t key_character(uint32_t virtual_key, const std::array<uint8_t, 256>& keys);
+    char16_t key_character(uint32_t virtual_key, key_modifiers modifiers);
 }

@@ -2,6 +2,7 @@
 #include "module_mapping.hpp"
 #include <address_utils.hpp>
 #include <algorithm>
+#include <new>
 
 #include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
@@ -60,7 +61,7 @@ namespace sogen
             }
         }
 
-        bool must_map_module_below_4gb(const std::string& module_name, const PEMachineType machine, const uint64_t image_base)
+        bool must_map_module_below_4gb(const std::string& module_name, const PEMachineType machine)
         {
             if (machine != PEMachineType::AMD64)
             {
@@ -73,7 +74,7 @@ namespace sogen
                 return false;
             }
 
-            return image_base > std::numeric_limits<uint32_t>::max();
+            return true;
         }
 
         template <typename T>
@@ -371,8 +372,9 @@ namespace sogen
             uint64_t max_end = 0;
             bool has_fixup = false;
 
-            for (const auto entry : entries)
+            for (size_t index = 0; index < entries.size(); ++index)
             {
+                const auto entry = entries[index];
                 const int type = entry >> 12;
                 const auto offset = static_cast<uint16_t>(entry & 0xfff);
                 const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
@@ -382,6 +384,16 @@ namespace sogen
                 {
                 case IMAGE_REL_BASED_ABSOLUTE:
                     continue;
+                case IMAGE_REL_BASED_HIGHADJ:
+                    if (++index >= entries.size())
+                    {
+                        throw std::runtime_error("Missing HIGHADJ relocation addend");
+                    }
+                    [[fallthrough]];
+                case IMAGE_REL_BASED_HIGH:
+                case IMAGE_REL_BASED_LOW:
+                    width = sizeof(WORD);
+                    break;
                 case IMAGE_REL_BASED_HIGHLOW:
                     width = sizeof(DWORD);
                     break;
@@ -415,17 +427,35 @@ namespace sogen
 
             const utils::safe_buffer_accessor<std::byte> block{block_buffer};
 
-            for (const auto entry : entries)
+            for (size_t index = 0; index < entries.size(); ++index)
             {
+                const auto entry = entries[index];
                 const int type = entry >> 12;
                 const auto offset = static_cast<uint16_t>(entry & 0xfff);
                 const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
-                const auto local_offset = total_offset - min_offset;
+                const auto local_offset = static_cast<size_t>(total_offset - min_offset);
 
                 switch (type)
                 {
                 case IMAGE_REL_BASED_ABSOLUTE:
                     break;
+
+                case IMAGE_REL_BASED_HIGH:
+                    apply_relocation<WORD>(block, local_offset, delta >> 16);
+                    break;
+
+                case IMAGE_REL_BASED_LOW:
+                    apply_relocation<WORD>(block, local_offset, delta);
+                    break;
+
+                case IMAGE_REL_BASED_HIGHADJ: {
+                    const auto high = block.as<WORD>(local_offset);
+                    const auto low = static_cast<int16_t>(entries[++index]);
+                    const uint32_t adjusted =
+                        (static_cast<uint32_t>(high.get()) << 16) + static_cast<uint32_t>(low) + static_cast<uint32_t>(delta) + 0x8000u;
+                    high.set(static_cast<WORD>(adjusted >> 16));
+                    break;
+                }
 
                 case IMAGE_REL_BASED_HIGHLOW:
                     apply_relocation<DWORD>(block, local_offset, delta);
@@ -528,7 +558,7 @@ namespace sogen
                 const auto size_in_image = mapped_as_one_region ? size_of_data : section_size;
                 if (section.VirtualAddress + size_in_image > binary.size_of_image)
                 {
-                    return false;
+                    throw std::runtime_error("Section extends beyond the image");
                 }
 
                 if (!mapped_as_one_region && !memory.commit_image_memory(target_ptr, section_size, memory_permission::read_write))
@@ -593,7 +623,7 @@ namespace sogen
             const auto image_size = static_cast<size_t>(binary.size_of_image);
             if (optional_header.SizeOfHeaders > image_size)
             {
-                return false;
+                throw std::runtime_error("Headers extend beyond the image");
             }
 
             if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::all, true, memory_region_kind::section_image))
@@ -658,7 +688,8 @@ namespace sogen
 
     template <typename T>
     mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file,
-                                       windows_path module_path, const uint64_t relocation_base)
+                                       windows_path module_path, const uint64_t relocation_base, const uint64_t highest_address,
+                                       NTSTATUS* status)
     {
         mapped_module binary{};
         binary.path = std::move(file);
@@ -670,7 +701,22 @@ namespace sogen
         const auto dos_header = buffer.as<PEDosHeader_t>(0).get();
         const auto nt_headers_offset = dos_header.e_lfanew;
 
-        const auto nt_headers = buffer.as<PENTHeaders_t<T>>(nt_headers_offset).get();
+        PENTHeaders_t<T> nt_headers{};
+        constexpr auto optional_offset = offsetof(PENTHeaders_t<T>, OptionalHeader);
+        std::memcpy(&nt_headers, buffer.get_pointer_for_range(nt_headers_offset, optional_offset), optional_offset);
+        constexpr auto directories_offset = offsetof(PEOptionalHeader_t<T>, DataDirectory);
+        const auto optional_size = nt_headers.FileHeader.SizeOfOptionalHeader;
+        if (optional_size < directories_offset)
+        {
+            throw std::runtime_error("Optional header is too small");
+        }
+        const auto* optional_data = buffer.get_pointer_for_range(nt_headers_offset + optional_offset, optional_size);
+        std::memcpy(&nt_headers.OptionalHeader, optional_data, std::min<size_t>(optional_size, sizeof(nt_headers.OptionalHeader)));
+        auto& directories = nt_headers.OptionalHeader.DataDirectory;
+        const auto directory_count = std::min<size_t>({nt_headers.OptionalHeader.NumberOfRvaAndSizes, std::size(directories),
+                                                       (optional_size - directories_offset) / sizeof(directories[0])});
+        std::fill(std::begin(directories) + directory_count, std::end(directories), PEDirectory_t2{});
+        nt_headers.OptionalHeader.NumberOfRvaAndSizes = static_cast<uint32_t>(directory_count);
         const auto& optional_header = nt_headers.OptionalHeader;
 
         validate_image_machine(nt_headers);
@@ -678,14 +724,21 @@ namespace sogen
         binary.image_base = optional_header.ImageBase;
         binary.image_base_file = optional_header.ImageBase;
         binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
+        if (!binary.size_of_image)
+        {
+            throw std::runtime_error("Invalid image size");
+        }
 
-        const bool force_wow64cpu_32bit_va = must_map_module_below_4gb(binary.name, nt_headers.FileHeader.Machine, binary.image_base);
+        const bool force_wow64cpu_32bit_va = must_map_module_below_4gb(binary.name, nt_headers.FileHeader.Machine);
         constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
+        const bool is_32bit = (nt_headers.FileHeader.Machine == PEMachineType::I386);
+        const auto architecture_limit = is_32bit || force_wow64cpu_32bit_va ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
+        const auto address_limit = std::min(highest_address ? highest_address : MAX_ALLOCATION_ADDRESS, architecture_limit);
 
-        if (force_wow64cpu_32bit_va)
+        if (force_wow64cpu_32bit_va && binary.image_base > below_4gb_ceiling)
         {
             binary.image_base = memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image),
-                                                                      DEFAULT_ALLOCATION_ADDRESS_32BIT, below_4gb_ceiling);
+                                                                      DEFAULT_ALLOCATION_ADDRESS_32BIT, address_limit);
         }
 
         // Store PE header fields
@@ -697,25 +750,44 @@ namespace sogen
         binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
         binary.size_of_heap_commit = optional_header.SizeOfHeapCommit;
 
-        const bool is_32bit = (nt_headers.FileHeader.Machine == PEMachineType::I386);
         const auto is_dll = nt_headers.FileHeader.Characteristics & IMAGE_FILE_DLL;
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
-        const auto is_relocatable = is_dll || has_dynamic_base;
+        const auto relocations_stripped = nt_headers.FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED;
+        const auto is_relocatable = (is_dll || has_dynamic_base) && !relocations_stripped;
 
-        if (!binary.image_base || !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
-                                                                  relocation_base ? relocation_base : binary.image_base))
+        const auto is_x64 = nt_headers.FileHeader.Machine == PEMachineType::AMD64;
+        const bool prefers_below_4gb = is_x64 && is_dll && optional_header.ImageBase <= below_4gb_ceiling;
+        const auto& relocations = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+        const bool has_relocations = relocations.Size != 0 && !(nt_headers.FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED);
+        if (!relocation_base && !force_wow64cpu_32bit_va && !prefers_below_4gb && (is_32bit || is_x64) && is_dll && has_dynamic_base &&
+            has_relocations)
+        {
+            const uint64_t image_arena_start = is_32bit ? 0x70000000ULL : 0x00007FF000000000ULL;
+            const uint64_t image_arena_end = std::min(is_32bit ? 0x7FFDFFFFULL : MAX_ALLOCATION_ADDRESS, address_limit);
+            binary.image_base =
+                image_arena_start <= image_arena_end
+                    ? memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image), image_arena_start, image_arena_end)
+                    : 0;
+        }
+
+        const auto preferred_base = relocation_base ? relocation_base : binary.image_base;
+        const bool preferred_fits = binary.image_base && binary.size_of_image && binary.image_base <= address_limit &&
+                                    binary.size_of_image - 1 <= address_limit - binary.image_base;
+        if (!preferred_fits || !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                               relocation_base ? relocation_base : binary.image_base))
         {
             if (!is_relocatable && relocation_base == 0)
             {
-                throw std::runtime_error("Memory range not allocatable");
+                throw std::bad_alloc{};
             }
 
             // The ceiling is explicit because an unbounded search can pick a base above 4 GB for a
             // 32-bit module once the low arena fills; WOW64 pointer marshaling then truncates it to 32
             // bits, aliasing the module onto whatever unrelated allocation sits at the truncated address.
-            const bool needs_below_4gb = force_wow64cpu_32bit_va || is_32bit;
-            const uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
-            const uint64_t highest_address = needs_below_4gb ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
+            const bool needs_below_4gb = address_limit < DEFAULT_ALLOCATION_ADDRESS_64BIT;
+            // Windows prefers low addresses for low-based PE64 images because they may truncate pointers.
+            uint64_t fallback_start =
+                needs_below_4gb || prefers_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
             const auto image_size = static_cast<size_t>(binary.size_of_image);
 
             // The preferred base was taken, so relocate. On backends sharing the address space with the
@@ -726,20 +798,23 @@ namespace sogen
             // exhausted address space terminates rather than spins.
             constexpr int max_host_relocation_retries = 8;
             bool mapped = false;
-            // Also applies when the caller passed a relocation_base: that only expresses a preferred
-            // target (e.g. mapping another view of an already-loaded image at its current base), not a
-            // hard requirement - real Windows itself falls back to relocating such a view elsewhere and
-            // reports STATUS_IMAGE_NOT_AT_BASE rather than failing the map outright.
             for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)
             {
-                binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, highest_address);
+                binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, address_limit);
+                if (!binary.image_base && fallback_start == DEFAULT_ALLOCATION_ADDRESS_64BIT)
+                {
+                    fallback_start = DEFAULT_ALLOCATION_ADDRESS_32BIT;
+                    binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, address_limit);
+                }
                 if (!binary.image_base)
                 {
                     break;
                 }
 
+                // A secondary view may occupy another address while its relocation fixups
+                // continue to reference the original loaded image.
                 if (try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
-                                                   binary.image_base))
+                                                   relocation_base ? relocation_base : binary.image_base))
                 {
                     mapped = true;
                     break;
@@ -748,11 +823,15 @@ namespace sogen
 
             if (!mapped)
             {
-                throw std::runtime_error("Memory range not allocatable");
+                throw std::bad_alloc{};
             }
         }
 
         binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;
+        if (status)
+        {
+            *status = binary.image_base == preferred_base ? STATUS_SUCCESS : STATUS_IMAGE_NOT_AT_BASE;
+        }
 
         return binary;
     }
@@ -851,10 +930,10 @@ namespace sogen
 
     template mapped_module map_module_from_data<std::uint32_t>(memory_manager& memory, const std::span<const std::byte> data,
                                                                std::filesystem::path file, windows_path module_path,
-                                                               uint64_t relocation_base);
+                                                               uint64_t relocation_base, uint64_t highest_address, NTSTATUS* status);
     template mapped_module map_module_from_data<std::uint64_t>(memory_manager& memory, const std::span<const std::byte> data,
                                                                std::filesystem::path file, windows_path module_path,
-                                                               uint64_t relocation_base);
+                                                               uint64_t relocation_base, uint64_t highest_address, NTSTATUS* status);
 
     template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                                                  windows_path module_path);
