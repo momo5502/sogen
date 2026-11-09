@@ -34,9 +34,13 @@ namespace sogen::test
                 this->windows[desc.handle] = {.visible = desc.visible, .enabled = desc.enabled};
             }
 
-            void set_window_visible(const hwnd window, const bool visible) override
+            void set_window_visible(const hwnd window, const bool visible, const bool activate) override
             {
                 this->windows.at(window).visible = visible;
+                if (!activate)
+                {
+                    ++this->nonactivating_visibility_changes;
+                }
             }
 
             void set_window_enabled(const hwnd window, const bool enabled) override
@@ -54,6 +58,8 @@ namespace sogen::test
                 return this->windows.at(window).enabled;
             }
 
+            size_t nonactivating_visibility_changes{};
+
           private:
             struct window_state
             {
@@ -70,9 +76,8 @@ namespace sogen::test
             void SetUp() override
             {
                 emulator_interfaces interfaces{};
-                auto ui = std::make_unique<RecordingWindowUiBackend>();
-                this->ui = ui.get();
-                interfaces.ui = std::move(ui);
+                interfaces.ui = std::make_unique<RecordingWindowUiBackend>();
+                this->ui = dynamic_cast<RecordingWindowUiBackend*>(interfaces.ui.get());
                 interfaces.audio = std::make_unique<null_audio_backend>();
                 interfaces.console = std::make_unique<null_console_backend>();
                 this->emu = std::make_unique<windows_emulator>(
@@ -252,6 +257,7 @@ namespace sogen::test
         EXPECT_NE(0u, this->guest_window().style & WS_VISIBLE);
         EXPECT_NE(0u, this->guest_window().guest.read().dwStyle & WS_VISIBLE);
         EXPECT_TRUE(this->ui->is_visible(this->guest_window().handle));
+        EXPECT_EQ(1u, this->ui->nonactivating_visibility_changes);
         EXPECT_FALSE(this->guest_window().update_pending);
 
         const auto hidden = visible & ~static_cast<uint32_t>(WS_VISIBLE);
@@ -259,6 +265,7 @@ namespace sogen::test
         EXPECT_EQ(0u, this->guest_window().style & WS_VISIBLE);
         EXPECT_EQ(0u, this->guest_window().guest.read().dwStyle & WS_VISIBLE);
         EXPECT_FALSE(this->ui->is_visible(this->guest_window().handle));
+        EXPECT_EQ(2u, this->ui->nonactivating_visibility_changes);
         EXPECT_FALSE(this->guest_window().update_pending);
     }
 

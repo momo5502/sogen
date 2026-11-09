@@ -6735,7 +6735,7 @@ namespace sogen
                 {
                     if (win->host_surface_window)
                     {
-                        c.win_emu.ui().set_window_visible(win->handle, is_visible);
+                        c.win_emu.ui().set_window_visible(win->handle, is_visible, false);
                     }
                 }
             }

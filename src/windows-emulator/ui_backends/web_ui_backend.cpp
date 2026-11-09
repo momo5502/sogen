@@ -323,7 +323,7 @@ namespace sogen
                 post_ui_relationship_message(window, parent, owner, top_level);
             }
 
-            void set_window_visible(const hwnd window, const bool visible) override
+            void set_window_visible(const hwnd window, const bool visible, const bool /*activate*/) override
             {
                 post_ui_visibility_message("set_visible", window, visible);
             }

@@ -668,7 +668,7 @@ namespace sogen::android
         this->host_->on_cursor_moved(top_level, x, y);
     }
 
-    void android_ui_backend::set_window_visible(const hwnd window, const bool visible)
+    void android_ui_backend::set_window_visible(const hwnd window, const bool visible, const bool activate_on_show)
     {
         bool activated{};
         bool host_window{};
@@ -689,7 +689,7 @@ namespace sogen::android
             {
                 owner = this->popup_owner_handle(window);
             }
-            else if (visible)
+            else if (visible && activate_on_show)
             {
                 activated = this->activate(window);
             }
