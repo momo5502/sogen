@@ -1234,6 +1234,9 @@ namespace sogen
                 break;
             }
 
+            // Returning to user mode replaces what the thread's trap frame held with what the processor reads.
+            vcpu.thread().trap_frame.reset();
+
             // Guest code executes with the kernel lock released; hook callbacks
             // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.
             lock.unlock();
@@ -2179,6 +2182,9 @@ namespace sogen
                     break;
                 }
             }
+
+            // Returning to user mode replaces what the thread's trap frame held with what the processor reads.
+            vcpu.thread().trap_frame.reset();
 
             // Guest code executes with the kernel lock released; hook callbacks
             // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.

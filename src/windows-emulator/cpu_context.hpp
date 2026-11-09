@@ -9,6 +9,8 @@ namespace sogen
     {
         // DR7_LEGAL: what a user-mode context may set in DR7 (L0-L3, LE, GE and the breakpoint conditions).
         constexpr uint32_t dr7_legal = 0xFFFF0355;
+        // DR7_ACTIVE: the enables of DR7 (L0-L3, LE, GE) that make the debug registers part of a thread's state.
+        constexpr uint64_t dr7_active = 0x355;
 
         // KGDT64_R3_CMCODE, KGDT64_R3_DATA and KGDT64_R3_CODE with RPL 3.
         constexpr uint16_t wow64_code_selector = 0x23;

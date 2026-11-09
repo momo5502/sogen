@@ -346,6 +346,29 @@ namespace sogen
         }
     };
 
+    // What a thread's trap frame holds of the registers the processor reads differently from how they were written:
+    // EFlags bit 1, DR6's reserved bits and DR7 bit 10 read as 1.
+    struct trap_frame_registers
+    {
+        uint32_t eflags{};
+        uint64_t dr6{};
+        uint64_t dr7{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->eflags);
+            buffer.write(this->dr6);
+            buffer.write(this->dr7);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->eflags);
+            buffer.read(this->dr6);
+            buffer.read(this->dr7);
+        }
+    };
+
     enum class callback_id : uint32_t
     {
         Invalid = 0,
@@ -636,6 +659,9 @@ namespace sogen
         hwnd focus_window{};
 
         std::vector<std::byte> last_registers{};
+        // Set while the thread has not run since it was created or a context was written to it: what KxContextToKframes
+        // left in its trap frame, which its context shows until it returns to user mode.
+        std::optional<trap_frame_registers> trap_frame{};
 
         bool debugger_hide{false};
 
@@ -873,6 +899,7 @@ namespace sogen
             buffer.write(this->focus_window);
 
             buffer.write_vector(this->last_registers);
+            buffer.write_optional(this->trap_frame);
 
             buffer.write(this->debugger_hide);
 
@@ -971,6 +998,7 @@ namespace sogen
             buffer.read(this->focus_window);
 
             buffer.read_vector(this->last_registers);
+            buffer.read_optional(this->trap_frame);
 
             buffer.read(this->debugger_hide);
 
