@@ -7,6 +7,7 @@ endif()
 
 add_executable(ui-cursor-diagnostic
   main.cpp
+  ../windows-emulator/keyboard_layout.cpp
   ../windows-emulator/ui_backends/sdl_ui_backend.cpp
 )
 target_link_libraries(ui-cursor-diagnostic PRIVATE emulator-common vulkan-headers SDL3::SDL3)

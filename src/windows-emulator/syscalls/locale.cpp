@@ -213,7 +213,7 @@ namespace sogen
 
         NTSTATUS handle_NtIsUILanguageComitted()
         {
-            return STATUS_NOT_SUPPORTED;
+            return STATUS_SUCCESS;
         }
 
         uint64_t handle_NtUserActivateKeyboardLayout(const syscall_context& c, const uint64_t keyboard_layout, const uint32_t /*flags*/)

@@ -74,11 +74,12 @@ namespace sogen::test
             };
         }
 
-        std::vector<std::byte> compress_streamed(const std::span<const std::byte> data)
+        std::vector<std::byte> compress_streamed(const std::span<const std::byte> data, const unsigned workers = 0)
         {
             std::vector<std::byte> compressed{};
             utils::compression::zstd::stream_compressor compressor{
-                [&](const std::span<const std::byte> chunk) { compressed.insert(compressed.end(), chunk.begin(), chunk.end()); }, 1, 0};
+                [&](const std::span<const std::byte> chunk) { compressed.insert(compressed.end(), chunk.begin(), chunk.end()); }, 1,
+                workers};
             compressor.write(data);
             compressor.finish();
             return compressed;
@@ -142,6 +143,14 @@ namespace sogen::test
         decompressor.read(streamed);
         decompressor.finish();
         EXPECT_EQ(streamed, data);
+    }
+
+    // Snapshot files ask for compression workers. A stream of unknown size gets them however small it is, so this takes
+    // the same path; where zstd cannot run workers it has to reject them and compress on the calling thread.
+    TEST(StreamSerializationTest, FrameCompressedWithWorkersDecompresses)
+    {
+        const auto data = serialize_buffered();
+        EXPECT_EQ(utils::compression::zstd::decompress(compress_streamed(data, 2), data.size()), data);
     }
 
     TEST(StreamSerializationTest, EmptyStateRoundTrips)

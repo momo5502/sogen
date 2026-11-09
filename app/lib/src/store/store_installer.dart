@@ -27,11 +27,20 @@ abstract interface class InstallSource {
   Future<Map<String, Object>> links(String productId, Map<String, Object?> plan);
 }
 
-/// A download as a store tab shows it.
+/// The accounts games are downloaded with.
+abstract interface class DownloadAccounts {
+  /// The id of the account [source] is downloaded with, or null when Sogen no longer knows it.
+  String? accountOf(GameSource source);
+
+  InstallSource? installSource(String accountId);
+}
+
+/// A download as the library shows it.
 @immutable
 class GameDownload {
   const GameDownload({
     required this.installId,
+    required this.accountId,
     required this.store,
     required this.productId,
     required this.status,
@@ -41,6 +50,7 @@ class GameDownload {
   });
 
   final String installId;
+  final String accountId;
   final String store;
   final String productId;
   final DownloadStatus status;
@@ -52,6 +62,7 @@ class GameDownload {
 
   GameDownload copyWith({DownloadStatus? status, int? written, int? total, int? required}) => GameDownload(
     installId: installId,
+    accountId: accountId,
     store: store,
     productId: productId,
     status: status ?? this.status,
@@ -107,7 +118,7 @@ class _PendingInstall {
 /// Installs games of every store through the native downloader, one at a time, and adds them to the library once
 /// complete.
 class StoreInstaller extends ChangeNotifier {
-  StoreInstaller(this._library, this._sources, {this._supportDirectory = getApplicationSupportDirectory});
+  StoreInstaller(this._library, this._accounts, {this._supportDirectory = getApplicationSupportDirectory});
 
   final Future<Directory> Function() _supportDirectory;
 
@@ -118,7 +129,7 @@ class StoreInstaller extends ChangeNotifier {
   static const _maxCoverBytes = 8 * 1024 * 1024;
 
   final GameLibrary _library;
-  final Map<String, InstallSource> _sources;
+  final DownloadAccounts _accounts;
   final _pending = <String, _PendingInstall>{};
   final _downloads = <String, GameDownload>{};
   final _refreshedLinks = <String>{};
@@ -128,10 +139,17 @@ class StoreInstaller extends ChangeNotifier {
   final _approvedMetered = <String>{};
   StreamSubscription<Object?>? _subscription;
 
-  /// The download of a game, including a paused one left from an earlier run.
-  GameDownload? download(String store, String productId) => _downloads[_key(store, productId)];
+  /// The download of a game, including a paused one left from an earlier run. A game is downloaded with one account at
+  /// a time, whether or not that account is still signed in.
+  GameDownload? download(String store, String productId) =>
+      _downloads.values.where((download) => download.store == store && download.productId == productId).firstOrNull;
 
-  static String _key(String store, String productId) => '$store/$productId';
+  static String _key(String accountId, String store, String productId) => '$accountId/$store/$productId';
+
+  /// A download whose account Sogen no longer knows is listed under no account, and can only be cancelled.
+  String _accountOf(GameSource source) => _accounts.accountOf(source) ?? '';
+
+  String _keyOf(GameSource source) => _key(_accountOf(source), source.store, source.productId);
 
   /// Set from the moment a start is accepted until the native side runs it, which takes fetching fresh links.
   String? _starting;
@@ -182,8 +200,9 @@ class StoreInstaller extends ChangeNotifier {
   void _track(_PendingInstall pending, DownloadStatus status) {
     final source = pending.game.source!;
     _pending[pending.installId] = pending;
-    _downloads[_key(source.store, source.productId)] = GameDownload(
+    _downloads[_keyOf(source)] = GameDownload(
       installId: pending.installId,
+      accountId: _accountOf(source),
       store: source.store,
       productId: source.productId,
       status: status,
@@ -191,9 +210,10 @@ class StoreInstaller extends ChangeNotifier {
   }
 
   InstallSource _sourceOf(_PendingInstall pending) {
-    final source = _sources[pending.game.source!.store];
+    final accountId = _accounts.accountOf(pending.game.source!);
+    final source = accountId == null ? null : _accounts.installSource(accountId);
     if (source == null) {
-      throw const StoreException('Sogen cannot download games from this store.');
+      throw const StoreException('Sogen no longer knows the account this game was downloading with.');
     }
     return source;
   }
@@ -201,6 +221,7 @@ class StoreInstaller extends ChangeNotifier {
   Future<void> install(
     StoreGame game,
     PlannedInstall planned, {
+    required String accountId,
     required String language,
     required bool allowMetered,
   }) async {
@@ -228,6 +249,7 @@ class StoreInstaller extends ChangeNotifier {
             productId: game.productId,
             buildId: planned.plan.buildId,
             language: language,
+            accountId: accountId,
           ),
         ),
         script: planned.script.actions,
@@ -244,9 +266,8 @@ class StoreInstaller extends ChangeNotifier {
   }
 
   /// Signed links expire, so every start asks the store for fresh ones.
-  Future<void> resume(String store, String productId, {required bool allowMetered}) async {
-    final download = _downloads[_key(store, productId)];
-    final pending = download == null ? null : _pending[download.installId];
+  Future<void> resume(GameDownload download, {required bool allowMetered}) async {
+    final pending = _pending[download.installId];
     if (pending == null) {
       return;
     }
@@ -259,12 +280,7 @@ class StoreInstaller extends ChangeNotifier {
   Future<void> pause() => _channel.invokeMethod<void>('pause');
 
   /// A start that is still fetching links is called off first, so it never starts a download whose files are gone.
-  Future<void> cancel(String store, String productId) async {
-    final download = _downloads[_key(store, productId)];
-    if (download == null) {
-      return;
-    }
-
+  Future<void> cancel(GameDownload download) async {
     final starting = _startInProgress;
     if (_starting == download.installId && starting != null) {
       _cancelledStarts.add(download.installId);
@@ -324,7 +340,7 @@ class StoreInstaller extends ChangeNotifier {
     }
     final source = pending.game.source!;
     // The native side reports the state from here on; a download it already reported on keeps that state.
-    if (_downloads[_key(source.store, source.productId)]?.installId != pending.installId) {
+    if (_downloads[_keyOf(source)]?.installId != pending.installId) {
       _track(pending, DownloadStatus.running);
     }
     notifyListeners();
@@ -342,7 +358,7 @@ class StoreInstaller extends ChangeNotifier {
     }
 
     final source = pending.game.source!;
-    final key = _key(source.store, source.productId);
+    final key = _keyOf(source);
     final status = switch (event['status']) {
       'running' => DownloadStatus.running,
       'metered' => DownloadStatus.metered,
@@ -361,7 +377,13 @@ class StoreInstaller extends ChangeNotifier {
     } else {
       final download =
           _downloads[key] ??
-          GameDownload(installId: pending.installId, store: source.store, productId: source.productId, status: status);
+          GameDownload(
+            installId: pending.installId,
+            accountId: _accountOf(source),
+            store: source.store,
+            productId: source.productId,
+            status: status,
+          );
       _downloads[key] = download.copyWith(
         status: status,
         written: (event['written'] as num?)?.toInt(),
@@ -390,7 +412,7 @@ class StoreInstaller extends ChangeNotifier {
     try {
       await _commit(pending);
     } catch (error) {
-      _fail(_key(pending.game.source!.store, pending.game.source!.productId), error);
+      _fail(_keyOf(pending.game.source!), error);
     } finally {
       _finishing.remove(pending.installId);
     }
@@ -417,7 +439,7 @@ class StoreInstaller extends ChangeNotifier {
     );
 
     _pending.remove(pending.installId);
-    _downloads.remove(_key(pending.game.source!.store, pending.game.source!.productId));
+    _downloads.remove(_keyOf(pending.game.source!));
     _approvedMetered.remove(pending.installId);
     notifyListeners();
   }

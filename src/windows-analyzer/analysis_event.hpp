@@ -26,6 +26,7 @@ namespace sogen
     struct execution_context
     {
         uint32_t thread_id{};
+        uint32_t vcpu{};
         uint64_t rip{};
         std::string rip_module{"<N/A>"};
         std::optional<uint64_t> previous_ip{};

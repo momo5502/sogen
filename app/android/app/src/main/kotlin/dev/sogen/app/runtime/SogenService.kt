@@ -22,7 +22,7 @@ import kotlin.concurrent.thread
  * Each process runs exactly one game and is killed once the launcher unbinds, so the next game starts with fresh
  * native state.
  */
-class SogenService : Service() {
+open class SogenService : Service() {
     @Volatile
     private var native: SogenNative? = null
 
@@ -47,6 +47,7 @@ class SogenService : Service() {
                     callbackListener = listener
                     this@SogenService.callback = callback
                     native = SogenNative(listener)
+                    callback.onProcessStarted(Process.myPid())
                 } catch (e: UnsatisfiedLinkError) {
                     Log.e(TAG, "Could not load the emulator library", e)
                     try {
@@ -64,6 +65,24 @@ class SogenService : Service() {
 
         override fun stop() {
             native?.stop()
+        }
+
+        override fun prepare() {
+            thread(name = "sogen-prepare") {
+                try {
+                    SogenNative.load()
+                } catch (e: UnsatisfiedLinkError) {
+                    Log.e(TAG, "Could not load the emulator library", e)
+                }
+            }
+        }
+
+        override fun childStarted(request: Long, processId: Int) {
+            native?.childStarted(request, processId)
+        }
+
+        override fun childExited(request: Long, exitStatus: Int) {
+            native?.childExited(request, exitStatus)
         }
 
         override fun suspend(destination: String) {
@@ -296,7 +315,13 @@ class SogenService : Service() {
 
         override fun onSnapshot(path: String, error: String) = deliver { callback.onSnapshot(path, error) }
 
+        override fun onGuestExited() = deliver { callback.onGuestExited() }
+
         override fun openDocument(tree: String, documentId: String): Int = DocumentTree.open(resolver, tree, documentId)
+
+        override fun startChild(request: Long, arguments: Array<String>) = deliver { callback.startChild(request, arguments) }
+
+        override fun killChild(request: Long) = deliver { callback.killChild(request) }
 
         private inline fun deliver(action: () -> Unit) {
             try {

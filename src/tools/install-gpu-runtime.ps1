@@ -12,10 +12,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# GitHub's API and release CDN occasionally answer with an HTTP error such as 504; retry those before failing the job.
+# GitHub's API and release CDN answer with HTTP errors such as 504 for minutes at a time, while other jobs of the same
+# run get through; keep retrying for up to an hour before failing the job.
 foreach ($cmdlet in 'Invoke-WebRequest', 'Invoke-RestMethod') {
-    $PSDefaultParameterValues["${cmdlet}:MaximumRetryCount"] = 5
-    $PSDefaultParameterValues["${cmdlet}:RetryIntervalSec"] = 10
+    $PSDefaultParameterValues["${cmdlet}:MaximumRetryCount"] = 60
+    $PSDefaultParameterValues["${cmdlet}:RetryIntervalSec"] = 60
 }
 
 $system32 = Join-Path $WindowsDir 'system32'

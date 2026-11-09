@@ -181,7 +181,13 @@ class GameSettings {
 /// The store a game was installed from, kept to tell which owned games are installed and which build they run.
 @immutable
 class GameSource {
-  const GameSource({required this.store, required this.productId, required this.buildId, required this.language});
+  const GameSource({
+    required this.store,
+    required this.productId,
+    required this.buildId,
+    required this.language,
+    this.accountId,
+  });
 
   static GameSource? fromJson(Object? json) {
     if (json is! Map<String, dynamic>) {
@@ -192,10 +198,21 @@ class GameSource {
     final productId = json['productId'];
     final buildId = json['buildId'];
     final language = json['language'];
-    if (store is! String || productId is! String || buildId is! String || language is! String) {
+    final accountId = json['accountId'];
+    if (store is! String ||
+        productId is! String ||
+        buildId is! String ||
+        language is! String ||
+        (accountId != null && accountId is! String)) {
       return null;
     }
-    return GameSource(store: store, productId: productId, buildId: buildId, language: language);
+    return GameSource(
+      store: store,
+      productId: productId,
+      buildId: buildId,
+      language: language,
+      accountId: accountId as String?,
+    );
   }
 
   final String store;
@@ -203,7 +220,17 @@ class GameSource {
   final String buildId;
   final String language;
 
-  Map<String, dynamic> toJson() => {'store': store, 'productId': productId, 'buildId': buildId, 'language': language};
+  /// The account the game was downloaded with, which is the one that owns it. Games downloaded before Sogen knew
+  /// several accounts have none; they belong to the account of their store that Sogen knew then.
+  final String? accountId;
+
+  Map<String, dynamic> toJson() => {
+    'store': store,
+    'productId': productId,
+    'buildId': buildId,
+    'language': language,
+    'accountId': ?accountId,
+  };
 }
 
 @immutable
@@ -403,6 +430,16 @@ Future<Directory> layerDirectory(Game game) async {
 /// downloaded. They outlive choosing another folder for the game.
 Future<Directory> rootLayerDirectory(Game game) async {
   return Directory(p.join((await _gameLayers(game)).path, 'root'));
+}
+
+/// Where the game's registry changes are kept between sessions. They outlive choosing another folder for the game.
+Future<File> registryStateFile(Game game) async {
+  return File(p.join((await _gameLayers(game)).path, 'registry.state'));
+}
+
+/// The registry values a game's install script sets, written for its first session.
+Future<File> startupRegistryFile(Game game) async {
+  return File(p.join((await _gameLayers(game)).path, 'startup.reg'));
 }
 
 /// Everything that is kept for the game besides its folder.

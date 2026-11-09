@@ -98,15 +98,18 @@ void main() {
 
   test('a second start while the first one fetches its links is refused', () async {
     final links = _SlowLinks();
-    final installer = StoreInstaller(GameLibrary.at(File(p.join(support.path, 'games.json')), []), {
-      'gog': GogInstallSource(links),
-    }, supportDirectory: () async => support);
+    final installer = StoreInstaller(
+      GameLibrary.at(File(p.join(support.path, 'games.json')), []),
+      _OneAccount(GogInstallSource(links)),
+      supportDirectory: () async => support,
+    );
     await installer.restore();
-    expect(installer.download('gog', '42')?.status, DownloadStatus.paused);
+    final download = installer.download('gog', '42')!;
+    expect(download.status, DownloadStatus.paused);
 
-    final first = installer.resume('gog', '42', allowMetered: false);
+    final first = installer.resume(download, allowMetered: false);
     expect(installer.isBusy, isTrue);
-    await expectLater(installer.resume('gog', '42', allowMetered: false), throwsA(isA<StoreException>()));
+    await expectLater(installer.resume(download, allowMetered: false), throwsA(isA<StoreException>()));
 
     links.release();
     await first;
@@ -115,13 +118,16 @@ void main() {
 
   test('cancelling while a start fetches its links calls the start off before it reaches the downloader', () async {
     final links = _SlowLinks();
-    final installer = StoreInstaller(GameLibrary.at(File(p.join(support.path, 'games.json')), []), {
-      'gog': GogInstallSource(links),
-    }, supportDirectory: () async => support);
+    final installer = StoreInstaller(
+      GameLibrary.at(File(p.join(support.path, 'games.json')), []),
+      _OneAccount(GogInstallSource(links)),
+      supportDirectory: () async => support,
+    );
     await installer.restore();
 
-    final resume = installer.resume('gog', '42', allowMetered: false);
-    final cancel = installer.cancel('gog', '42');
+    final download = installer.download('gog', '42')!;
+    final resume = installer.resume(download, allowMetered: false);
+    final cancel = installer.cancel(download);
     links.release();
 
     await resume;
@@ -130,4 +136,19 @@ void main() {
     expect(cancels, [installId]);
     expect(File(p.join(support.path, 'downloads', installId, 'links.json')).existsSync(), isFalse);
   });
+}
+
+/// The account every download of these tests belongs to.
+class _OneAccount implements DownloadAccounts {
+  const _OneAccount(this._source);
+
+  static const id = '0123456789abcdef';
+
+  final InstallSource _source;
+
+  @override
+  String? accountOf(GameSource source) => id;
+
+  @override
+  InstallSource? installSource(String accountId) => accountId == id ? _source : null;
 }

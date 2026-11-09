@@ -23,20 +23,15 @@ class SteamCredentials {
 /// The Steam account the user signed in with. Only the refresh token of a Steam client sign-in is stored; it is what
 /// logs on to Steam's connection managers.
 class SteamAccount extends ChangeNotifier implements StoreSignIn {
-  SteamAccount({required this._secrets, required this._present, SteamAuth? auth}) : _auth = auth ?? SteamAuth();
-
-  static Future<SteamAccount> load(SteamSignInPresenter present) async {
-    final account = SteamAccount(secrets: const DeviceSecretStorage(), present: present);
-    await account.restore();
-    return account;
-  }
-
-  static const _secretName = 'steam';
+  SteamAccount({required this._secrets, required this._secretName, required this._present, SteamAuth? auth})
+    : _auth = auth ?? SteamAuth();
 
   final SecretStorage _secrets;
+  final String _secretName;
   final SteamSignInPresenter _present;
   final SteamAuth _auth;
   SteamCredentials? _credentials;
+  String? _accountName;
   int _session = 0;
 
   /// Changes whenever the signed-in account changes, so that what was learned in one session is not used in another.
@@ -50,6 +45,16 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
 
   SteamCredentials get credentials => _credentials ?? (throw const SteamSignedOutException());
 
+  @override
+  String? get userId => _credentials == null ? null : '${_credentials!.steamId}';
+
+  @override
+  String? get displayName => _accountName;
+
+  /// A Steam session names its user in its refresh token.
+  @override
+  Future<void> identify() async {}
+
   Future<void> restore() async {
     String? stored;
     try {
@@ -58,6 +63,7 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
       debugPrint('Could not read the Steam account: ${e.message}');
     }
     _credentials = stored == null ? null : _parseStored(stored);
+    _accountName = stored == null ? null : _parseAccountName(stored);
     _session++;
     notifyListeners();
   }
@@ -66,6 +72,17 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
     try {
       final token = (jsonDecode(stored) as Map<String, Object?>)['refreshToken'];
       return token is String ? credentialsOf(token) : null;
+    } on FormatException {
+      return null;
+    } on TypeError {
+      return null;
+    }
+  }
+
+  static String? _parseAccountName(String stored) {
+    try {
+      final name = (jsonDecode(stored) as Map<String, Object?>)['accountName'];
+      return name is String && name.isNotEmpty ? name : null;
     } on FormatException {
       return null;
     } on TypeError {
@@ -111,8 +128,10 @@ class SteamAccount extends ChangeNotifier implements StoreSignIn {
     if (credentials == null) {
       throw const SteamException('Steam sent a sign-in Sogen cannot use. Please try again.');
     }
-    await _secrets.write(_secretName, jsonEncode({'refreshToken': token}));
+    final accountName = approved?.accountName;
+    await _secrets.write(_secretName, jsonEncode({'refreshToken': token, 'accountName': ?accountName}));
     _credentials = credentials;
+    _accountName = accountName;
     _session++;
     notifyListeners();
     return true;
