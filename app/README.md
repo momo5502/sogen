@@ -12,7 +12,8 @@ with `libsandbox.so`, which runs a game's child processes, and the shared librar
 on arm64, FEXCore). All `.so` files from the build's artifacts directory go into `android/app/src/main/jniLibs/<abi>/`,
 which is not checked in. CI builds them this way in the `build-android-app` job.
 
-Building them locally needs a Linux host, since parts of the dependency tree configure through shell scripts:
+Building them locally needs a Linux host, since parts of the dependency tree configure through shell scripts, and NDK
+r29 or later, since FEXCore uses `std::atomic_ref`:
 
 ```sh
 export ANDROID_NDK_ROOT=/path/to/ndk

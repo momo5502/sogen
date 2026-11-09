@@ -100,7 +100,8 @@ androidComponents {
 android {
     namespace = "dev.sogen.app"
     compileSdk = flutter.compileSdkVersion
-    // The NDK r29 the native libraries in jniLibs are built with, so that CI installs only one.
+    // The NDK the native libraries in jniLibs are built with, so that CI installs only one. It has to be r29 or later:
+    // FEXCore uses std::atomic_ref, which the libc++ of r28 lacks.
     ndkVersion = "29.0.14206865"
 
     compileOptions {
