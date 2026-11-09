@@ -90,6 +90,20 @@
             }
         },
         {
+            "name": "android-arm64",
+            "inherits": [
+                "release"
+            ],
+            "cacheVariables": {
+                "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchain/android-ndk.cmake",
+                "SOGEN_ENABLE_RUST_CODE": "OFF",
+                "SOGEN_ENABLE_FEX": "ON"
+            },
+            "environment": {
+                "ANDROID_ABI": "arm64-v8a"
+            }
+        },
+        {
             "name": "vs2022",
             "generator": "Visual Studio 17 2022",
             "inherits": "build"
@@ -131,6 +145,14 @@
             "targets": [
                 "analyzer",
                 "linux-analyzer"
+            ]
+        },
+        {
+            "name": "android-app",
+            "configurePreset": "android-arm64",
+            "targets": [
+                "android-runtime",
+                "sandbox"
             ]
         }
     ],
@@ -197,6 +219,19 @@
                 {
                     "type": "build",
                     "name": "emscripten64"
+                }
+            ]
+        },
+        {
+            "name": "android-app",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "android-arm64"
+                },
+                {
+                    "type": "build",
+                    "name": "android-app"
                 }
             ]
         }

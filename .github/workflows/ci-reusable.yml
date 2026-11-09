@@ -296,7 +296,6 @@ jobs:
           #- macOS x86_64
           #- iOS arm64
           - Android x86_64
-          - Android arm64
           - Emscripten Web
           - Emscripten Web Memory 64
           - Emscripten Node.js
@@ -347,11 +346,6 @@ jobs:
             rust-target: x86_64-linux-android
             ndk-version: r26d
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
-          - platform: Android arm64
-            runner: ubuntu-24.04
-            abi: arm64-v8a
-            ndk-version: r29
-            cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_ENABLE_FEX=On -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
           - platform: Emscripten Web
             runner: ubuntu-24.04
             cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
@@ -482,10 +476,9 @@ jobs:
 
       # deps/FEX/CMakeLists.txt invokes aarch64_fit_native.py via execute_process(COMMAND python3 ...),
       # which resolves through PATH - the interpreter Set up Python just configured, not a system one.
-      # Needed on every platform where this workflow enables FEX: Linux arm64 Clang, macOS arm64,
-      # and Android arm64.
+      # Needed on every platform where this workflow enables FEX: Linux arm64 Clang and macOS arm64.
       - name: Install FEXCore Build Prerequisites (Python)
-        if: "${{ matrix.platform == 'Linux arm64 Clang' || matrix.platform == 'macOS arm64' || matrix.platform == 'Android arm64' }}"
+        if: "${{ matrix.platform == 'Linux arm64 Clang' || matrix.platform == 'macOS arm64' }}"
         run: python -m pip install --disable-pip-version-check packaging
 
       - name: CMake Build
@@ -1353,15 +1346,12 @@ jobs:
       - name: Build Native Libraries
         env:
           ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.path }}
-          ANDROID_ABI: arm64-v8a
-        run: |
-          cmake --preset=release -DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_ENABLE_FEX=On -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake
-          cmake --build --preset=release --target android-runtime sandbox
+        run: cmake --workflow --preset=android-app
 
       - name: Stage Native Libraries
         run: |
           mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
-          cp build/release/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
+          cp build/android-arm64/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 
       # Mesa's Turnip, loaded through libadrenotools in place of Adreno's stock driver.
       - name: Download Turnip Driver

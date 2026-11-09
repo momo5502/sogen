@@ -15,13 +15,11 @@ which is not checked in. CI builds them this way in the `build-android-app` job.
 Building them locally needs a Linux host, since parts of the dependency tree configure through shell scripts:
 
 ```sh
-export ANDROID_NDK_ROOT=/path/to/ndk ANDROID_ABI=arm64-v8a
-cmake --preset=release -DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_ENABLE_FEX=On \
-  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/toolchain/android-ndk.cmake
-cmake --build --preset=release --target android-runtime sandbox
+export ANDROID_NDK_ROOT=/path/to/ndk
+cmake --workflow --preset=android-app
 
 mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
-cp build/release/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
+cp build/android-arm64/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 ```
 
 ## Turnip
