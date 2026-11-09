@@ -1341,8 +1341,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Native Build Prerequisites (Python)
-        run: python -m pip install --disable-pip-version-check libclang packaging
+      - name: Install FEXCore Build Prerequisites (Python)
+        run: python -m pip install --disable-pip-version-check packaging
 
       - name: Build Native Libraries
         env:
