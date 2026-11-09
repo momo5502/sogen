@@ -58,6 +58,19 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   void _onTabChanged() => setState(() {});
 
   @override
+  void initState() {
+    super.initState();
+    _updateOutdatedRoot();
+  }
+
+  /// A root built for other emulator code can break games, so a newer published one replaces it right away.
+  Future<void> _updateOutdatedRoot() async {
+    if (await widget.root.isOutdated() && mounted && !_installing) {
+      await _installRoot();
+    }
+  }
+
+  @override
   void dispose() {
     _tabs.dispose();
     for (final session in _saving.values) {

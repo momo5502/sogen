@@ -16,6 +16,12 @@ class EmulationRoot {
 
   static final Uri downloadUrl = Uri.parse('https://sogen.dev/root.zip');
 
+  /// The commit the published root.zip was built for, which root.zip also carries as `root/version.txt`.
+  static final Uri versionUrl = Uri.parse('https://sogen.dev/version.txt');
+
+  /// The commit this app was built from, which CI passes in; empty for a local build.
+  static const buildCommit = String.fromEnvironment('SOGEN_COMMIT');
+
   final Directory _baseDirectory;
 
   static Future<EmulationRoot> open() async {
@@ -29,6 +35,37 @@ class EmulationRoot {
   String get path => p.join(_baseDirectory.path, 'root');
 
   bool get isInstalled => _containsRoot(_baseDirectory);
+
+  /// The commit the installed root was built for, or null for a root from before roots named one.
+  String? get installedVersion {
+    final file = File(p.join(path, 'version.txt'));
+    return file.existsSync() ? file.readAsStringSync().trim() : null;
+  }
+
+  /// Whether sogen.dev publishes a root other than the installed one. A root built for this app's commit is current;
+  /// any other one is current only while it is also the published one, since an app built off the published commits
+  /// would otherwise download the same root again on every start. Without an answer from sogen.dev the installed root
+  /// stays.
+  Future<bool> isOutdated({String appCommit = buildCommit, http.Client? client}) async {
+    final installed = installedVersion;
+    if (!isInstalled || (installed != null && installed == appCommit)) {
+      return false;
+    }
+
+    final httpClient = client ?? http.Client();
+    try {
+      final response = await httpClient.get(versionUrl);
+      final published = response.body.trim();
+      return response.statusCode == HttpStatus.ok && published.isNotEmpty && published != installed;
+    } on Exception catch (e) {
+      debugPrint('Could not check the emulation root version: $e');
+      return false;
+    } finally {
+      if (client == null) {
+        httpClient.close();
+      }
+    }
+  }
 
   static bool _containsRoot(Directory base) =>
       Directory(p.join(base.path, 'root', 'filesys')).existsSync() &&
