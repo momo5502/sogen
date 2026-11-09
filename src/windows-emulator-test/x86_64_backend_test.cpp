@@ -376,6 +376,23 @@ namespace sogen::test
         EXPECT_EQ(machine->reg(x86_register::r15), 0x55u);
     }
 
+    // Every backend gives the x87 tag word in FXSAVE's abridged form, one bit for each register in use, whatever form its
+    // processor keeps: fninit leaves every register empty, and an abridged word written in reads back as it was.
+    TEST_F(X8664BackendTest, TheX87TagWordHasOneBitForEachRegisterInUse)
+    {
+        constexpr uint16_t all_registers_empty = 0;
+        constexpr uint16_t only_register_7_in_use = 0x80;
+
+        // fninit; syscall
+        load_code(std::array<uint8_t, 4>{0xDB, 0xE3, 0x0F, 0x05});
+        stop_on_syscall();
+        machine->start();
+        EXPECT_EQ(machine->reg<uint16_t>(x86_register::fptag), all_registers_empty);
+
+        machine->reg<uint16_t>(x86_register::fptag, only_register_7_in_use);
+        EXPECT_EQ(machine->reg<uint16_t>(x86_register::fptag), only_register_7_in_use);
+    }
+
     TEST_F(X8664BackendTest, GuestAccessesMemoryThroughItsTranslationsAcrossRuns)
     {
         if constexpr (!host_reaches_high_addresses)

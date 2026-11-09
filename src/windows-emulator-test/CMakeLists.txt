@@ -65,6 +65,7 @@ target_link_libraries(windows-emulator-test PRIVATE
   gtest
   gtest_main
   windows-emulator
+  windows-gdb-stub
   backend-selection
   gpu-bridge-protocol
   vulkan-bridge-marshal
