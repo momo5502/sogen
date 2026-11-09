@@ -22,6 +22,9 @@ class EmulationRoot {
   /// The commit this app was built from, which CI passes in; empty for a local build.
   static const buildCommit = String.fromEnvironment('SOGEN_COMMIT');
 
+  /// Games cannot start until the check answers, so a network that does not answer must not hold them up for long.
+  static const versionTimeout = Duration(seconds: 5);
+
   final Directory _baseDirectory;
 
   static Future<EmulationRoot> open() async {
@@ -54,7 +57,7 @@ class EmulationRoot {
 
     final httpClient = client ?? http.Client();
     try {
-      final response = await httpClient.get(versionUrl);
+      final response = await httpClient.get(versionUrl).timeout(versionTimeout);
       final published = response.body.trim();
       return response.statusCode == HttpStatus.ok && published.isNotEmpty && published != installed;
     } on Exception catch (e) {
