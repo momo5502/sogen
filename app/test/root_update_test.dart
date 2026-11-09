@@ -72,7 +72,12 @@ void main() {
       directories: ['filesys/empty'],
     );
 
-    await root.update(onProgress: (_) {}, client: sogenDev([published], blobsOf(['new hive']), requests));
+    final client = sogenDev([published], blobsOf(['new hive']), requests);
+    await root.update(
+      (await root.findUpdate(appCommit: 'app', client: client))!,
+      onProgress: (_) {},
+      client: client,
+    );
 
     expect(read('filesys/kept.dll'), 'kept');
     expect(read('filesys/elsewhere/moved'), 'moved');
@@ -82,6 +87,7 @@ void main() {
     expect(root.installedVersion, 'new');
     expect(root.installedManifest?.version, 'new');
     expect(requests.where((path) => path.contains('/blobs/')), [p.posix.join('/root/blobs', hash('new hive'))]);
+    expect(requests.where((path) => path == EmulationRoot.manifestUrl.path), hasLength(1));
   });
 
   test('a file the published list no longer has makes the update follow the newer list', () async {
@@ -90,7 +96,12 @@ void main() {
     final replaced = manifest('replaced', {'registry/SOFTWARE': 'replaced hive'});
     final latest = manifest('latest', {'registry/SOFTWARE': 'latest hive'});
 
-    await root.update(onProgress: (_) {}, client: sogenDev([replaced, latest], blobsOf(['latest hive']), requests));
+    final client = sogenDev([replaced, latest], blobsOf(['latest hive']), requests);
+    await root.update(
+      (await root.findUpdate(appCommit: 'app', client: client))!,
+      onProgress: (_) {},
+      client: client,
+    );
 
     expect(read('registry/SOFTWARE'), 'latest hive');
     expect(root.installedVersion, 'latest');
@@ -102,10 +113,9 @@ void main() {
     final corrupt = {hash('new hive'): 'something else'};
 
     // After the file-by-file update fails, root.zip is downloaded instead, which this server does not have either.
-    await expectLater(
-      root.update(onProgress: (_) {}, client: sogenDev([published], corrupt, [])),
-      throwsA(isA<HttpException>()),
-    );
+    final client = sogenDev([published], corrupt, []);
+    final update = (await root.findUpdate(appCommit: 'app', client: client))!;
+    await expectLater(root.update(update, onProgress: (_) {}, client: client), throwsA(isA<HttpException>()));
 
     expect(read('registry/SOFTWARE'), 'old hive');
     expect(root.installedManifest?.version, 'old');
@@ -116,15 +126,17 @@ void main() {
     install(manifest('old', {'registry/SOFTWARE': 'old hive'}), {'registry/SOFTWARE': 'old hive'});
     final progress = <double?>[];
 
+    final client = sogenDev(
+      [
+        manifest('new', {'registry/SOFTWARE': 'old hive', 'filesys/empty.log': ''}),
+      ],
+      blobsOf(['']),
+      [],
+    );
     await root.update(
+      (await root.findUpdate(appCommit: 'app', client: client))!,
       onProgress: progress.add,
-      client: sogenDev(
-        [
-          manifest('new', {'registry/SOFTWARE': 'old hive', 'filesys/empty.log': ''}),
-        ],
-        blobsOf(['']),
-        [],
-      ),
+      client: client,
     );
 
     expect(read('filesys/empty.log'), '');

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -99,19 +100,21 @@ void main() {
     expect(marker(), 'new');
   });
 
-  group('isOutdated', () {
+  group('findUpdate', () {
     var requests = 0;
+
+    String manifest(String version) => jsonEncode({'version': version, 'directories': [], 'files': []});
 
     MockClient publishing(String? version) => MockClient((request) async {
       requests++;
-      expect(request.url, EmulationRoot.versionUrl);
-      return version == null ? http.Response('', 404) : http.Response('$version\n', 200);
+      expect(request.url.path, EmulationRoot.manifestUrl.path);
+      return version == null ? http.Response('', 404) : http.Response(manifest(version), 200);
     });
 
     void install(String? version) {
       rootTree('emulation', 'installed');
       if (version != null) {
-        File(p.join(base.path, 'root', 'version.txt')).writeAsStringSync('$version\n');
+        File(p.join(base.path, 'root', 'manifest.json')).writeAsStringSync(manifest(version));
       }
     }
 
@@ -120,35 +123,35 @@ void main() {
     test('a root built for this app is current without asking sogen.dev', () async {
       install('abc');
 
-      expect(await root.isOutdated(appCommit: 'abc', client: publishing('def')), isFalse);
+      expect(await root.findUpdate(appCommit: 'abc', client: publishing('def')), isNull);
       expect(requests, 0);
     });
 
     test('an app built off the published commits keeps the published root', () async {
       install('abc');
 
-      expect(await root.isOutdated(appCommit: 'local', client: publishing('abc')), isFalse);
+      expect(await root.findUpdate(appCommit: 'local', client: publishing('abc')), isNull);
     });
 
     test('a newer published root replaces the installed one', () async {
       install('abc');
 
-      expect(await root.isOutdated(appCommit: 'def', client: publishing('def')), isTrue);
+      expect((await root.findUpdate(appCommit: 'def', client: publishing('def')))?.manifest.version, 'def');
     });
 
     test('a root from before roots named their commit is outdated', () async {
       install(null);
 
-      expect(await root.isOutdated(appCommit: 'def', client: publishing('def')), isTrue);
+      expect((await root.findUpdate(appCommit: 'def', client: publishing('def')))?.manifest.version, 'def');
     });
 
     test('without an answer from sogen.dev the installed root stays', () async {
       install('abc');
 
-      expect(await root.isOutdated(appCommit: 'def', client: publishing(null)), isFalse);
+      expect(await root.findUpdate(appCommit: 'def', client: publishing(null)), isNull);
       expect(
-        await root.isOutdated(appCommit: 'def', client: MockClient((_) => throw http.ClientException('offline'))),
-        isFalse,
+        await root.findUpdate(appCommit: 'def', client: MockClient((_) => throw http.ClientException('offline'))),
+        isNull,
       );
     });
   });

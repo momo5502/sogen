@@ -9,6 +9,7 @@ import '../ads.dart';
 import '../emulation_root.dart';
 import '../game_library.dart';
 import '../session.dart';
+import '../root_update.dart';
 import '../settings.dart';
 import '../store/cover_cache.dart';
 import '../store/store_accounts.dart';
@@ -68,13 +69,13 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
   /// A root built for other emulator code can break games, so a newer published one replaces it right away.
   Future<void> _updateOutdatedRoot() async {
-    final outdated = await widget.root.isOutdated();
+    final published = await widget.root.findUpdate();
     if (!mounted) {
       return;
     }
     setState(() => _checkingRoot = false);
-    if (outdated && !_installing && _saving.isEmpty) {
-      await _installRoot(update: true);
+    if (published != null && !_installing && _saving.isEmpty) {
+      await _installRoot(update: published);
     }
   }
 
@@ -88,7 +89,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
   }
 
   /// An update downloads only the files the installed root lacks; an install downloads all of it.
-  Future<void> _installRoot({bool update = false}) async {
+  Future<void> _installRoot({PublishedRoot? update}) async {
     setState(() {
       _installing = true;
       _progress = 0;
@@ -97,7 +98,9 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
 
     try {
       void onProgress(double? progress) => setState(() => _progress = progress);
-      await (update ? widget.root.update(onProgress: onProgress) : widget.root.install(onProgress: onProgress));
+      await (update == null
+          ? widget.root.install(onProgress: onProgress)
+          : widget.root.update(update, onProgress: onProgress));
     } on Exception catch (e) {
       _error = e.toString();
     } finally {

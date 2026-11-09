@@ -10,6 +10,9 @@ import 'package:path/path.dart' as p;
 /// ends in an error instead of keeping games from starting.
 const rootDownloadStall = Duration(seconds: 30);
 
+/// The manifest sogen.dev publishes, and its text as the updated root keeps it.
+typedef PublishedRoot = ({RootManifest manifest, String text});
+
 /// The files of an emulation root, as sogen.dev publishes them next to their contents.
 class RootManifest {
   const RootManifest({required this.version, required this.directories, required this.files});

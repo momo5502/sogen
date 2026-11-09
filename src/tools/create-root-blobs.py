@@ -13,8 +13,8 @@ import json
 import os
 from pathlib import Path
 
-# Written by this script or next to it; they describe the root rather than belong to it.
-METADATA = {'manifest.json', 'version.txt'}
+# Written by this script; it describes the root rather than belongs to it.
+METADATA = {'manifest.json'}
 
 
 def main():

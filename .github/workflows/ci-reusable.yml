@@ -1279,13 +1279,11 @@ jobs:
       - name: Copy Sample
         run: cp ./build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
-      # The app compares the commit a root was built for with its own and with the published one, to find out when to
-      # download it again. It downloads only the files that changed since its root, from the blobs; root.zip installs
-      # the first root.
+      # The manifest names the commit a root was built for, which the app compares with its own and with the published
+      # one to find out when to update its root. It downloads only the files that changed, from the blobs; root.zip
+      # installs the first root.
       - name: Create Emulation Root zip
         run: |
-          echo "${{ github.sha }}" > ./build/release/artifacts/root/version.txt
-          cp ./build/release/artifacts/root/version.txt ./page/public/version.txt
           python3 ./src/tools/create-root-blobs.py ./build/release/artifacts/root ./page/public/root "${{ github.sha }}"
           cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/public/root.zip" ./root
 
