@@ -1775,6 +1775,13 @@ namespace sogen::fex
             return true;
         }
 
+        // Of the x87 state only the control word is mapped (register_mapping): ST0-ST7 and the status and tag words read as
+        // 0 and drop a write.
+        bool supports_x87_registers() const override
+        {
+            return false;
+        }
+
         // request_thread_stop() mprotects InterruptFaultPage to PROT_NONE, which is safe to call from
         // any host thread - the software-quantum watchdog thread in windows_emulator::start() relies on
         // exactly this when instruction precision is off.
@@ -2106,6 +2113,11 @@ namespace sogen::fex
         bool supports_instruction_counting() const override
         {
             return this->vcpus_[0]->supports_instruction_counting();
+        }
+
+        bool supports_x87_registers() const override
+        {
+            return this->vcpus_[0]->supports_x87_registers();
         }
 
         bool is_stop_thread_safe() const override

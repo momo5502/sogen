@@ -110,6 +110,13 @@ namespace sogen
         virtual void notify_process_bitness(bool /*is_wow64_process*/)
         {
         }
+
+        // Whether reg() reaches the x87 registers: ST0-ST7 and the control, status and tag words. A backend without them
+        // reads them as 0 and drops a write.
+        virtual bool supports_x87_registers() const
+        {
+            return true;
+        }
     };
 
     template <typename Traits>

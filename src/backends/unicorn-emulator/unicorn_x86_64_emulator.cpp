@@ -2,6 +2,8 @@
 #include "unicorn_x86_64_emulator.hpp"
 #include "unicorn_emulator.hpp"
 
+#include <x87_tag_word.hpp>
+
 namespace sogen::unicorn
 {
     namespace
@@ -11,6 +13,21 @@ namespace sogen::unicorn
         constexpr auto IA32_FS_BASE_MSR = 0xC0000100;
         constexpr auto IA32_GS_BASE_MSR = 0xC0000101;
         constexpr uint64_t syscall_instruction_size = 2;
+
+        // QEMU keeps the x87 tag word in FSAVE's full form, and a write of it looks only at which registers are empty.
+        uint16_t full_x87_tag(const uint16_t abridged_tag)
+        {
+            uint16_t full{};
+            for (int i = 0; i < x87::register_count; ++i)
+            {
+                if ((abridged_tag & (1u << i)) == 0)
+                {
+                    full |= static_cast<uint16_t>(x87::full_tag_empty << (i * x87::full_tag_bits));
+                }
+            }
+
+            return full;
+        }
 
         struct msr_value
         {
@@ -41,6 +58,34 @@ namespace sogen::unicorn
             unicorn_x86_64_emulator()
                 : unicorn_emulator(UC_ARCH_X86, UC_MODE_64)
             {
+            }
+
+            size_t read_raw_register(const int reg, void* value, const size_t size) override
+            {
+                if (reg != static_cast<int>(x86_register::fptag))
+                {
+                    return unicorn_emulator::read_raw_register(reg, value, size);
+                }
+
+                uint16_t full_tag{};
+                const auto result_size = unicorn_emulator::read_raw_register(reg, &full_tag, sizeof(full_tag));
+                const auto abridged = x87::abridged_tag(full_tag);
+                memset(value, 0, size);
+                memcpy(value, &abridged, (std::min)(size, sizeof(abridged)));
+                return result_size;
+            }
+
+            size_t write_raw_register(const int reg, const void* value, const size_t size) override
+            {
+                if (reg != static_cast<int>(x86_register::fptag))
+                {
+                    return unicorn_emulator::write_raw_register(reg, value, size);
+                }
+
+                uint16_t abridged{};
+                memcpy(&abridged, value, (std::min)(size, sizeof(abridged)));
+                const auto full_tag = full_x87_tag(abridged);
+                return unicorn_emulator::write_raw_register(reg, &full_tag, sizeof(full_tag));
             }
 
             void load_gdt(const pointer_type address, const uint32_t limit) override

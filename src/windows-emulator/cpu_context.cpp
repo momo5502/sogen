@@ -60,13 +60,15 @@ namespace sogen
             {
                 emu.reg<uint16_t>(x86_register::fpcw, context.FltSave.ControlWord);
                 emu.reg<uint16_t>(x86_register::fpsw, context.FltSave.StatusWord);
-                emu.reg<uint16_t>(x86_register::fptag, context.FltSave.TagWord);
 
                 for (int i = 0; i < 8; i++)
                 {
                     const auto reg = static_cast<x86_register>(static_cast<int>(x86_register::st0) + i);
                     emu.reg<M128A>(reg, context.FltSave.FloatRegisters[i]);
                 }
+
+                // After the registers: a backend that keeps FSAVE's full tag word classifies the values they now hold.
+                emu.reg<uint16_t>(x86_register::fptag, context.FltSave.TagWord);
             }
 
             if ((context.ContextFlags & CONTEXT_XSTATE_64) == CONTEXT_XSTATE_64)

@@ -22,6 +22,60 @@ const FOREIGN_READ: u8 = 1 << 0;
 const FOREIGN_WRITE: u8 = 1 << 1;
 const FOREIGN_EXEC: u8 = 1 << 2;
 
+// The x87 tag word (x87_tag_word.hpp). FSAVE's full form gives each physical register two bits; FXSAVE's abridged form,
+// the one every backend gives, gives it one bit, set while the register holds a value.
+const X87_REGISTER_COUNT: u16 = 8;
+const X87_FULL_TAG_BITS: u16 = 2;
+const X87_FULL_TAG_VALID: u16 = 0b00;
+const X87_FULL_TAG_ZERO: u16 = 0b01;
+const X87_FULL_TAG_SPECIAL: u16 = 0b10;
+const X87_FULL_TAG_EMPTY: u16 = 0b11;
+
+// FSW.TOP, the physical register that holds ST(0).
+const X87_STATUS_TOP_SHIFT: u16 = 11;
+
+// An 80-bit register: a 64-bit significand whose top bit is the integer (J) bit, then the sign and a 15-bit exponent.
+const X87_INTEGER_BIT: u64 = 1 << 63;
+const X87_EXPONENT_MASK: u16 = 0x7FFF;
+
+const X87_STACK: [registers::X86Register; 8] = [
+    registers::X86Register::St0,
+    registers::X86Register::St1,
+    registers::X86Register::St2,
+    registers::X86Register::St3,
+    registers::X86Register::St4,
+    registers::X86Register::St5,
+    registers::X86Register::St6,
+    registers::X86Register::St7,
+];
+
+// FXSAVE keeps a 1 for a valid, zero or special tag and a 0 for an empty one.
+fn x87_abridged_tag(full: u16) -> u16 {
+    let mut abridged = 0;
+    for i in 0..X87_REGISTER_COUNT {
+        if (full >> (i * X87_FULL_TAG_BITS)) & X87_FULL_TAG_EMPTY != X87_FULL_TAG_EMPTY {
+            abridged |= 1 << i;
+        }
+    }
+
+    return abridged;
+}
+
+// The full tag of a register in use, from its value, as the SDM's table for recreating FSAVE's format gives it.
+fn x87_full_tag_of(value: &[u8; 10]) -> u16 {
+    let significand = u64::from_ne_bytes(value[..8].try_into().unwrap());
+    let exponent = u16::from_ne_bytes(value[8..].try_into().unwrap()) & X87_EXPONENT_MASK;
+    if exponent == 0 && significand == 0 {
+        return X87_FULL_TAG_ZERO;
+    }
+
+    if exponent == 0 || exponent == X87_EXPONENT_MASK || significand & X87_INTEGER_BIT == 0 {
+        return X87_FULL_TAG_SPECIAL;
+    }
+
+    return X87_FULL_TAG_VALID;
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct IcicleStopInfo {
@@ -837,11 +891,61 @@ impl IcicleEmulator {
         return limit;
     }
 
+    // SLEIGH keeps the x87 tag word in FSAVE's full form and stores it as it is given; the backends give FXSAVE's
+    // abridged form. A written word keeps each register in use with the class FSAVE would report for its value.
+    fn read_tag_word(&mut self, data: &mut [u8]) -> usize {
+        let mut full = [0u8; 2];
+        let size = self.read_generic_register(registers::X86Register::Fptag, &mut full);
+        let abridged = x87_abridged_tag(u16::from_ne_bytes(full)).to_ne_bytes();
+
+        data.fill(0);
+        let copy_size = std::cmp::min(data.len(), abridged.len());
+        data[..copy_size].copy_from_slice(&abridged[..copy_size]);
+
+        return size;
+    }
+
+    fn write_tag_word(&mut self, data: &[u8]) -> usize {
+        let mut abridged = [0u8; 2];
+        let copy_size = std::cmp::min(data.len(), abridged.len());
+        abridged[..copy_size].copy_from_slice(&data[..copy_size]);
+
+        let full = self.x87_full_tag(u16::from_ne_bytes(abridged));
+        return self.write_generic_register(registers::X86Register::Fptag, &full.to_ne_bytes());
+    }
+
+    // FSAVE's form of an abridged tag word, from the registers. The abridged form is in physical register order, so
+    // physical register i is classified from ST((i - TOP) mod 8).
+    fn x87_full_tag(&mut self, abridged: u16) -> u16 {
+        let mut status = [0u8; 2];
+        self.read_generic_register(registers::X86Register::Fpsw, &mut status);
+        let top = (u16::from_ne_bytes(status) >> X87_STATUS_TOP_SHIFT) % X87_REGISTER_COUNT;
+
+        let mut full = 0;
+        for i in 0..X87_REGISTER_COUNT {
+            let mut tag = X87_FULL_TAG_EMPTY;
+            if abridged & (1 << i) != 0 {
+                let mut stack_register = [0u8; 10];
+                let stack_index = (i + X87_REGISTER_COUNT - top) % X87_REGISTER_COUNT;
+                self.read_generic_register(
+                    X87_STACK[usize::from(stack_index)],
+                    &mut stack_register,
+                );
+                tag = x87_full_tag_of(&stack_register);
+            }
+
+            full |= tag << (i * X87_FULL_TAG_BITS);
+        }
+
+        return full;
+    }
+
     pub fn read_register(&mut self, reg: registers::X86Register, data: &mut [u8]) -> usize {
         match reg {
             registers::X86Register::Rflags => self.read_flags::<u64>(data),
             registers::X86Register::Eflags => self.read_flags::<u32>(data),
             registers::X86Register::Flags => self.read_flags::<u16>(data),
+            registers::X86Register::Fptag => self.read_tag_word(data),
             _ => self.read_generic_register(reg, data),
         }
     }
@@ -882,6 +986,7 @@ impl IcicleEmulator {
             registers::X86Register::Rflags => self.write_flags::<u64>(data),
             registers::X86Register::Eflags => self.write_flags::<u32>(data),
             registers::X86Register::Flags => self.write_flags::<u16>(data),
+            registers::X86Register::Fptag => self.write_tag_word(data),
             _ => self.write_generic_register(reg, data),
         }
     }
