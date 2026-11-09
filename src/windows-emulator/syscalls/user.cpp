@@ -7894,8 +7894,12 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserGetCaretPos()
+        BOOL handle_NtUserGetCaretPos(const syscall_context&, const emulator_object<POINT> point)
         {
+            if (point)
+            {
+                point.write(POINT{});
+            }
             return TRUE;
         }
 

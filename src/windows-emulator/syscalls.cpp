@@ -814,7 +814,7 @@ namespace sogen
         int32_t handle_NtUserCheckMenuItem(const syscall_context& c, hmenu menu, UINT item, UINT check);
         BOOL handle_NtUserCreateCaret();
         BOOL handle_NtUserDestroyCaret();
-        BOOL handle_NtUserGetCaretPos();
+        BOOL handle_NtUserGetCaretPos(const syscall_context& c, emulator_object<POINT> point);
         BOOL handle_NtUserSetCaretPos();
         BOOL handle_NtUserShowCaret();
         BOOL handle_NtUserHideCaret();
