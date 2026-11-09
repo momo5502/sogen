@@ -135,11 +135,11 @@ class RootStager {
     final url = blobsUrl.resolve(file.sha256);
     final response = await client.send(http.Request('GET', url)).timeout(rootDownloadStall);
     if (response.statusCode == HttpStatus.notFound) {
-      await response.stream.drain<void>();
+      await response.stream.timeout(rootDownloadStall).drain<void>();
       throw StaleRootManifest('${file.path} is no longer published');
     }
     if (response.statusCode != HttpStatus.ok) {
-      await response.stream.drain<void>();
+      await response.stream.timeout(rootDownloadStall).drain<void>();
       throw HttpException('Download failed with status ${response.statusCode}', uri: url);
     }
 
