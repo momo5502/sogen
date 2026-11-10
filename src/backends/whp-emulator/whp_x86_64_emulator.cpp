@@ -2346,7 +2346,8 @@ namespace sogen::whp
                 this->ensure_virtual_mapping(this->syscall_hook_page_);
             }
 
-            // Hot path: reads only registers and the setup-frozen syscall hook, so it takes no lock.
+            // Hot path: reads only registers and the setup-frozen syscall hook, so it takes no lock unless a step of the
+            // backend's own is pending.
             bool handle_syscall_halt(whp_vcpu& vcpu)
             {
                 if (!this->syscall_hook_)
@@ -2362,7 +2363,14 @@ namespace sogen::whp
 
                 const auto post_syscall_rcx = entry_values[1].Reg64;
                 const auto post_syscall_r10 = entry_values[2].Reg64;
-                const auto saved_rflags = entry_values[3].Reg64;
+                auto saved_rflags = entry_values[3].Reg64;
+                if (vcpu.pending_execution_step_ && !vcpu.pending_execution_step_->had_trap_flag)
+                {
+                    // SYSCALL saved the guest's flags in R11 with the trap flag of the backend's own step.
+                    saved_rflags &= ~trap_flag_bit;
+                    entry_values[3].Reg64 = saved_rflags;
+                    vcpu.set_register(WHvX64RegisterR11, entry_values[3]);
+                }
 
                 const auto pre_syscall_rip = post_syscall_rcx - syscall_instruction_size;
 
@@ -2379,6 +2387,7 @@ namespace sogen::whp
                     entry_values[0], entry_values[1], entry_values[4], entry_values[5], entry_values[6],
                 };
                 vcpu.set_registers(pre_hook_names, pre_hook_values);
+                this->end_step_of_performed_instruction(vcpu, pre_syscall_rip);
 
                 const auto continuation = this->syscall_hook_->callback(vcpu, 0);
 
@@ -3141,8 +3150,9 @@ namespace sogen::whp
             }
 
             // An instruction at rip that the hypervisor or the emulator performed itself (an RDTSC, RDTSCP or CPUID exit, a
-            // software interrupt, an invalid opcode a hook skipped): the processor raises no single-step trap for it, so a step
-            // of sogen's own over it ends here, as its #DB would end it. The caller does not hold partition_mutex_.
+            // software interrupt, an invalid opcode a hook skipped, a syscall): the processor raises no single-step trap for
+            // it, so a step of sogen's own over it ends here, as its #DB would end it. The caller does not hold
+            // partition_mutex_.
             void end_step_of_performed_instruction(whp_vcpu& vcpu, const uint64_t rip)
             {
                 if (!vcpu.pending_execution_step_ || vcpu.pending_execution_step_->rip != rip)
@@ -3162,6 +3172,22 @@ namespace sogen::whp
             {
                 std::unique_lock lock(this->partition_mutex_);
                 (void)this->complete_execution_step(vcpu);
+            }
+
+            // A trap flag that was set when an instruction began raises the single-step trap once it completes, with DR6.BS
+            // set, before the next instruction (Intel SDM Vol. 3, 20.3.1.4). The exits in which the hypervisor hands CPUID
+            // and RDTSC over leave no such trap pending (28.1, 30.3.4), so the backend raises it.
+            void raise_single_step_trap(whp_vcpu& vcpu)
+            {
+                constexpr uint64_t dr6_single_step = 1ull << 14; // DR6.BS
+                auto dr6 = vcpu.get_register(WHvX64RegisterDr6);
+                dr6.Reg64 |= dr6_single_step;
+                vcpu.set_register(WHvX64RegisterDr6, dr6);
+
+                if (const auto hook = this->copy_first_interrupt_hook())
+                {
+                    hook(vcpu, WHvX64ExceptionTypeDebugTrapOrFault);
+                }
             }
 
             // Assumes partition_mutex_ is held.
@@ -3901,6 +3927,8 @@ namespace sogen::whp
             bool handle_instruction_exit(whp_vcpu& vcpu, const x86_hookable_instructions type, const WHV_RUN_VP_EXIT_CONTEXT& exit_context,
                                          const uint64_t instruction_size)
             {
+                const bool trap_flag = vcpu.pending_execution_step_ ? vcpu.pending_execution_step_->had_trap_flag
+                                                                    : (exit_context.VpContext.Rflags & trap_flag_bit) != 0;
                 const auto callbacks = this->copy_instruction_hooks(type);
                 const bool handled = !callbacks.empty();
                 bool skip = false;
@@ -3920,6 +3948,11 @@ namespace sogen::whp
 
                 vcpu.advance_rip(instruction_size);
                 this->end_step_of_performed_instruction(vcpu, exit_context.VpContext.Rip);
+
+                if (trap_flag)
+                {
+                    this->raise_single_step_trap(vcpu);
+                }
 
                 return handled || type == x86_hookable_instructions::cpuid || type == x86_hookable_instructions::rdtsc ||
                        type == x86_hookable_instructions::rdtscp;
@@ -4331,6 +4364,17 @@ namespace sogen::whp
                 {
                     {
                         std::unique_lock lock(this->partition_mutex_);
+                        // SYSCALL traps once it is in the syscall page, before the backend makes the call: a step of the
+                        // backend's own goes on through the call and ends with it in handle_syscall_halt.
+                        if (vcpu.pending_execution_step_ && !vcpu.pending_execution_step_->had_trap_flag && this->syscall_hook_ &&
+                            exit_context.VpContext.Rip == this->syscall_hook_page_)
+                        {
+                            auto rflags = vcpu.get_register(WHvX64RegisterRflags);
+                            rflags.Reg64 &= ~trap_flag_bit;
+                            vcpu.set_register(WHvX64RegisterRflags, rflags);
+                            return true;
+                        }
+
                         if (this->complete_execution_step(vcpu))
                         {
                             return true;
