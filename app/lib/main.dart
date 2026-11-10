@@ -25,6 +25,7 @@ import 'src/steam/steam_catalog.dart';
 import 'src/steam/steam_client.dart';
 import 'src/steam/steam_install_source.dart';
 import 'src/store/cover_cache.dart';
+import 'src/store/owned_games.dart';
 import 'src/store/store_accounts.dart';
 import 'src/store/store_installer.dart';
 import 'src/theme.dart';
@@ -41,6 +42,7 @@ Future<void> main() async {
   final settings = await AppSettings.load();
   final navigator = GlobalKey<NavigatorState>();
   final accounts = await StoreAccounts.load(_storeProviders(navigator));
+  final owned = await OwnedGames.load(accounts);
   final installer = StoreInstaller(library, accounts);
   await installer.restore().catchError((Object error) => debugPrint('Could not restore downloads: $error'));
   final covers = await CoverCache.open();
@@ -52,6 +54,7 @@ Future<void> main() async {
       settings: settings,
       ads: Ads(settings),
       accounts: accounts,
+      owned: owned,
       installer: installer,
       covers: covers,
       navigator: navigator,
@@ -157,6 +160,7 @@ class SogenApp extends StatelessWidget {
     required this.ads,
     required this.accounts,
     required this.installer,
+    required this.owned,
     required this.covers,
     required this.navigator,
   });
@@ -166,6 +170,7 @@ class SogenApp extends StatelessWidget {
   final AppSettings settings;
   final Ads ads;
   final StoreAccounts accounts;
+  final OwnedGames owned;
   final StoreInstaller installer;
   final CoverCache covers;
 
@@ -187,6 +192,7 @@ class SogenApp extends StatelessWidget {
           settings: settings,
           ads: ads,
           accounts: accounts,
+          owned: owned,
           installer: installer,
           covers: covers,
         ),

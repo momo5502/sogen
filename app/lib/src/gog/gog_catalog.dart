@@ -18,6 +18,9 @@ class GogCatalog implements StoreCatalog {
   Future<List<StoreGame>> games() => _library.games();
 
   @override
+  StoreGame? restore(Object? json) => StoreGame.fromJson(GogLibrary.store, json);
+
+  @override
   Future<(PlannedInstall, String)?> plan(StoreGame game, LanguageChooser chooseLanguage) async {
     final release = await _planner.release(game.productId);
     final language = await chooseLanguage(release.languages);
