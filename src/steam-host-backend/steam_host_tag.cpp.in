@@ -16,6 +16,13 @@ extern "C" uint32_t sogen_steam_method_count_@STEAM_TAG@(const char* version)
     return version ? sogen::steam_bridge::gen::@STEAM_TAG@::method_count(version) : 0;
 }
 
+// The name of method `index` of this snapshot's `version` interface, or null if it has none.
+extern "C" const char* sogen_steam_method_name_@STEAM_TAG@(const char* version, uint32_t index)
+{
+    const auto name = version ? sogen::steam_bridge::gen::@STEAM_TAG@::method_name(version, index) : std::string_view{};
+    return name.empty() ? nullptr : name.data();
+}
+
 extern "C" int sogen_steam_dispatch_@STEAM_TAG@(const char* version, void* iface, uint32_t method,
                                                 const unsigned char* in, uint32_t in_len, unsigned char* out,
                                                 uint32_t out_cap, uint32_t* out_len, uint64_t* ret)

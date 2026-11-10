@@ -16,8 +16,8 @@ Phase 1 fully marshals "simple" methods (params: by-value scalar / CSteamID / co
 void / scalar / CSteamID / const char*). Other methods get compiling stub overrides (so the class stays
 concrete) and are reported.
 
-LICENSING: SDK headers / steam_api.json and generated code derived from them are Valve-licensed and NOT
-redistributable. Generate locally; keep output out of the tree.
+The SDK headers / steam_api.json are fetched at configure time and, like the code generated from them, are
+never committed: generate locally and keep output out of the tree.
 
 Usage: python generate.py --sdk <sdk/public/steam> --out-dir generated
 """
@@ -776,7 +776,7 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
 
 def emit_versions(interfaces: list[Interface], tag: str) -> str:
     L = ["#pragma once", "", "// GENERATED -- interface class <-> version string + method count.", "",
-         "#include <cstdint>", "#include <string_view>", "", f"namespace sogen::steam_bridge::gen::{tag}", "{",
+         "#include <cstdint>", "#include <iterator>", "#include <string_view>", "", f"namespace sogen::steam_bridge::gen::{tag}", "{",
          "    struct interface_version { std::string_view classname; std::string_view version; uint32_t method_count; };",
          "    inline constexpr interface_version interfaces[] = {"]
     for i in interfaces:
@@ -796,6 +796,21 @@ def emit_versions(interfaces: list[Interface], tag: str) -> str:
           "            }",
           "        }",
           "        return 0;",
+          "    }",
+          "",
+          "    // The name of method `index` of this snapshot's `version` interface, or an empty view if it has none."]
+    L.append("    inline std::string_view method_name(std::string_view version, uint32_t index)")
+    L.append("    {")
+    for i in interfaces:
+        if not i.version:
+            continue
+        names = ", ".join(f'"{m.name}"' for m in sorted(i.methods, key=lambda m: m.index))
+        L.append(f'        if (version == "{i.version}")')
+        L.append("        {")
+        L.append(f"            constexpr std::string_view names[] = {{{names}}};")
+        L.append("            return index < std::size(names) ? names[index] : std::string_view{};")
+        L.append("        }")
+    L += ["        return {};",
           "    }",
           "} // namespace", ""]
     return "\n".join(L)

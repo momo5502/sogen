@@ -8,7 +8,15 @@ endif()
 
 # Base TU: the C ABI + host client bring-up + reverse-callback proxies (stable response interfaces), built
 # against the newest snapshot. It does not include any version's thunks -- those live in the per-tag TUs.
-add_library(steam-host-backend STATIC steam_host_backend.cpp steam_reverse.cpp)
+if(SOGEN_ENABLE_STEAM_LOCAL_PROVIDER)
+  add_library(steam-host-backend STATIC steam_local_backend.cpp steam_reverse.cpp)
+  target_compile_definitions(steam-host-backend PUBLIC SOGEN_HAS_STEAM_LOCAL_PROVIDER=1)
+  if(ANDROID)
+    target_link_libraries(steam-host-backend PRIVATE log)
+  endif()
+else()
+  add_library(steam-host-backend STATIC steam_host_backend.cpp steam_reverse.cpp)
+endif()
 sogen_target_disable_warnings(steam-host-backend)  # SDK headers + generated code are not warning-clean
 target_link_libraries(steam-host-backend PRIVATE ${CMAKE_DL_LIBS})  # dlopen/dlsym on Linux/macOS
 target_link_libraries(steam-host-backend PRIVATE steam-bridge-protocol)  # shared response_type ids

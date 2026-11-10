@@ -8,20 +8,34 @@ textures, and touch, mouse and keyboard input is forwarded to the guest.
 ## Native libraries
 
 The emulator itself is `libsogen.so` (`src/android-runtime`), built by the regular CMake build for Android, together
-with the shared libraries it links (the CPU backends and, on arm64, FEXCore). All `.so` files from the build's
-artifacts directory go into `android/app/src/main/jniLibs/<abi>/`, which is not checked in. CI does this in the `build-android-app` job from the `Android arm64` build artifacts.
+with `libsandbox.so`, which runs a game's child processes, and the shared libraries they link (the CPU backends and,
+on arm64, FEXCore). All `.so` files from the build's artifacts directory go into `android/app/src/main/jniLibs/<abi>/`,
+which is not checked in. CI builds them this way in the `build-android-app` job.
 
-Building them locally needs a Linux host, since parts of the dependency tree configure through shell scripts:
+Building them locally needs a Linux host, since parts of the dependency tree configure through shell scripts, NDK r29
+or later, since FEXCore uses `std::atomic_ref`, and the `libclang` and `packaging` Python packages:
 
 ```sh
-export ANDROID_NDK_ROOT=/path/to/ndk ANDROID_ABI=arm64-v8a
-cmake --preset=release -DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_ENABLE_FEX=On \
-  -DCMAKE_TOOLCHAIN_FILE=$PWD/cmake/toolchain/android-ndk.cmake
-cmake --build --preset=release --target android-runtime
+export ANDROID_NDK_ROOT=/path/to/ndk
+cmake --workflow --preset=android-app
 
 mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
-cp build/release/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
+cp build/android-arm64/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 ```
+
+## Steam
+
+Android has no Steam client, so the `android-app` preset builds the runtime with a Steam provider
+(`SOGEN_ENABLE_STEAM_LOCAL_PROVIDER`) that answers a game's Steam calls inside the emulator. It plays games the signed-in
+Steam account owns:
+
+- Steam only lets the account download games it owns, and Sogen distributes no game content.
+- A game runs as the account it was downloaded with. Its DRM is neither removed nor bypassed: it checks the app
+  ownership ticket Steam's servers signed for that account and game. Without such a ticket, the provider withholds
+  the ticket interface, and a protected game fails its own check. DRM-free games stay DRM-free.
+- Calls the provider does not implement are reported as unsupported instead of being answered.
+
+Sogen is not affiliated with or endorsed by Valve. Steam is a trademark of Valve Corporation.
 
 ## Turnip
 

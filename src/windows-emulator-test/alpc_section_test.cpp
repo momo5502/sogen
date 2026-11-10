@@ -330,6 +330,15 @@ namespace sogen::test
 
     TEST_F(AlpcSectionTest, SendReadsWow64ViewAttributesAtWow64SecurityOffset)
     {
+        try
+        {
+            this->emu->x64_emu().notify_process_bitness(true);
+        }
+        catch (const std::runtime_error& error)
+        {
+            GTEST_SKIP() << error.what();
+        }
+
         this->emu->process.is_wow64_process = true;
         ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x10000));
         view_attributes view{};
