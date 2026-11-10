@@ -30,7 +30,7 @@ class OwnedGames extends ChangeNotifier {
   final File _file;
   final StoreAccounts _accounts;
   final _known = <String, AccountGames>{};
-  final _refreshes = <String, Future<void>>{};
+  final _refreshes = <String, ({StoreConnection connection, Future<void> done})>{};
   Future<void> _writes = Future.value();
 
   static Future<OwnedGames> load(StoreAccounts accounts) async {
@@ -56,23 +56,36 @@ class OwnedGames extends ChangeNotifier {
     await _writes;
   }
 
-  Future<void> _refresh(KnownAccount account) => _refreshes[account.id] ??= _ask(account).whenComplete(() {
-    // whenComplete would wait for a returned future, which here is the one it completes.
-    _refreshes.remove(account.id);
-  });
+  /// A request made with a session that was replaced since answers for nobody; the new session asks again.
+  Future<void> _refresh(KnownAccount account) {
+    final connection = account.connection;
+    final running = _refreshes[account.id];
+    if (running != null && running.connection == connection) {
+      return running.done;
+    }
 
-  Future<void> _ask(KnownAccount account) async {
+    late final Future<void> done;
+    done = _ask(account, connection).whenComplete(() {
+      if (_refreshes[account.id]?.done == done) {
+        _refreshes.remove(account.id);
+      }
+    });
+    _refreshes[account.id] = (connection: connection, done: done);
+    return done;
+  }
+
+  Future<void> _ask(KnownAccount account, StoreConnection connection) async {
     _known[account.id] = AccountGames(games: _known[account.id]?.games, refreshing: true);
     notifyListeners();
     try {
-      final games = await account.connection.catalog.games();
-      if (!_isSignedIn(account)) {
+      final games = await connection.catalog.games();
+      if (!_isCurrent(account, connection)) {
         return;
       }
       _known[account.id] = AccountGames(games: games);
       _save();
     } catch (error) {
-      if (!_isSignedIn(account)) {
+      if (!_isCurrent(account, connection)) {
         return;
       }
       debugPrint('Could not load the games of ${account.label}: $error');
@@ -81,7 +94,8 @@ class OwnedGames extends ChangeNotifier {
     notifyListeners();
   }
 
-  bool _isSignedIn(KnownAccount account) => _accounts.signedIn.any((signedIn) => signedIn.id == account.id);
+  bool _isCurrent(KnownAccount account, StoreConnection connection) =>
+      account.isSignedIn && account.connection == connection && _accounts.byId(account.id) == account;
 
   /// An account that signs out takes its games with it; one that signs in is asked for its games.
   void _onAccountsChanged() {
@@ -94,7 +108,7 @@ class OwnedGames extends ChangeNotifier {
       notifyListeners();
     }
     for (final account in signedIn) {
-      if (_known[account.id]?.refreshing != false && !_refreshes.containsKey(account.id)) {
+      if (_known[account.id]?.refreshing != false && _refreshes[account.id]?.connection != account.connection) {
         unawaited(_refresh(account));
       }
     }

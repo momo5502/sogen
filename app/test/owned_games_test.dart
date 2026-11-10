@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -18,9 +19,13 @@ void main() {
   late Directory directory;
   late _Store store;
 
+  /// The session the next sign-in opens, instead of [store]'s.
+  _Store? next;
+
   setUp(() {
     directory = Directory.systemTemp.createTempSync('sogen-owned-');
     store = _Store();
+    next = null;
   });
 
   tearDown(() => directory.deleteSync(recursive: true));
@@ -38,13 +43,17 @@ void main() {
       store: EpicLibrary.store,
       name: 'Epic',
       signInDescription: '',
-      open: (_) => StoreConnection(
-        signIn: store.signIn,
-        catalog: store,
-        installSource: const _NoSource(),
-        restore: () async {},
-        close: () async {},
-      ),
+      open: (_) {
+        final session = next ?? store;
+        next = null;
+        return StoreConnection(
+          signIn: session.signIn,
+          catalog: session,
+          installSource: const _NoSource(),
+          restore: () async {},
+          close: () async {},
+        );
+      },
     );
     final accounts = await StoreAccounts.open(File(p.join(directory.path, 'accounts.json')), [
       provider,
@@ -73,6 +82,22 @@ void main() {
     expect(owned.of(account).error, isA<StoreException>());
   });
 
+  test('signing in again while the earlier session is still asking lists the games of the new session', () async {
+    final earlier = Completer<List<StoreGame>>();
+    store.pending = earlier.future;
+    final (accounts, owned) = await start();
+    final account = accounts.signedIn.single;
+
+    await accounts.signOut(account);
+    next = _Store()..listed = [game];
+    await accounts.signIn(accounts.providers.single);
+    earlier.completeError(const StoreException('closed'));
+    await pumpEventQueue();
+
+    expect(owned.of(account).games?.single.productId, game.productId);
+    expect(owned.of(account).error, isNull);
+  });
+
   test('the games of an account that signed out are forgotten', () async {
     store.listed = [game];
     final (accounts, first) = await start();
@@ -85,7 +110,7 @@ void main() {
     store
       ..listed = null
       ..signIn.signedIn = true;
-    final (_, owned) = await start();
+    final owned = await OwnedGames.open(File(p.join(directory.path, 'owned_games.json')), accounts);
     await owned.refresh();
 
     expect(owned.of(accounts.signedIn.single).games, isNull);
@@ -98,8 +123,12 @@ class _Store implements StoreCatalog {
   /// What the store lists, or null while it cannot be reached.
   List<StoreGame>? listed;
 
+  /// An answer the store has not given yet, which takes the place of [listed].
+  Future<List<StoreGame>>? pending;
+
   @override
-  Future<List<StoreGame>> games() async => listed ?? (throw const StoreException('unreachable'));
+  Future<List<StoreGame>> games() =>
+      pending ?? Future.sync(() => listed ?? (throw const StoreException('unreachable')));
 
   @override
   StoreGame? restore(Object? json) => EpicGame.fromJson(json);
