@@ -825,6 +825,23 @@ namespace sogen::test
         EXPECT_TRUE(registry().get_value(*second, "Keep").has_value());
     }
 
+    TEST_F(RegistryFileTest, OpensHiveRootsByName)
+    {
+        for (const auto* name : {uR"(\Registry\Machine\System)", uR"(\REGISTRY\MACHINE\SYSTEM\)"})
+        {
+            const auto root = registry().get_key(utils::path_key{std::filesystem::path{name}});
+            ASSERT_TRUE(root.has_value()) << u16_to_u8(name);
+            EXPECT_TRUE(registry_manager::is_root_key(*root));
+            ASSERT_EQ(1u, registry().get_sub_key_count(*root));
+            EXPECT_EQ("ControlSet001", registry().get_sub_key_name(*root, 0).value_or(""));
+        }
+
+        const auto software = registry().create_key(uR"(\Registry\Machine\Software)");
+        ASSERT_TRUE(software.has_value());
+        ASSERT_EQ(1u, registry().get_sub_key_count(*software));
+        EXPECT_EQ("Microsoft", registry().get_sub_key_name(*software, 0).value_or(""));
+    }
+
     TEST_F(RegistryFileTest, RejectsKeyOutsideAnyLoadedHive)
     {
         const std::filesystem::path path{uR"(\Registry\NoSuchHive\Key)"};
@@ -1064,6 +1081,18 @@ namespace sogen::test
         handle reopened{};
         EXPECT_EQ(STATUS_SUCCESS, this->open_key(uR"(\Registry\Machine\Software)", reopened));
         EXPECT_EQ(STATUS_SUCCESS, this->open_key(profile_list_path, reopened));
+    }
+
+    TEST_F(RegistrySyscallTest, HiveRootsOpenRelativeToTheMachineKey)
+    {
+        handle machine{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(uR"(\Registry\Machine)", machine));
+
+        handle software{};
+        ASSERT_EQ(STATUS_SUCCESS, this->open_key(u"SOFTWARE", software, machine));
+
+        handle microsoft{};
+        EXPECT_EQ(STATUS_SUCCESS, this->open_key(u"Microsoft", microsoft, software));
     }
 
     TEST_F(RegistrySyscallTest, DeletedKeyHandleTagsCanStillBeSetAndQueried)
