@@ -138,7 +138,7 @@ namespace sogen
         {
         }
 
-        virtual void set_window_visible(const hwnd /*window*/, const bool /*visible*/)
+        virtual void set_window_visible(const hwnd /*window*/, const bool /*visible*/, const bool /*activate*/ = true)
         {
         }
 

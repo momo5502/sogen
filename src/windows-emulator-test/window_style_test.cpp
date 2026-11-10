@@ -3,6 +3,7 @@
 #include <syscall_utils.hpp>
 
 #include <tuple>
+#include <unordered_map>
 
 namespace sogen::syscalls
 {
@@ -17,13 +18,66 @@ namespace sogen::test
 {
     namespace
     {
+        class RecordingWindowUiBackend final : public ui_backend
+        {
+          public:
+            void set_event_sink(event_sink /*sink*/) override
+            {
+            }
+
+            void pump_events() override
+            {
+            }
+
+            void create_window(const ui_window_desc& desc) override
+            {
+                this->windows[desc.handle] = {.visible = desc.visible, .enabled = desc.enabled};
+            }
+
+            void set_window_visible(const hwnd window, const bool visible, const bool activate) override
+            {
+                this->windows.at(window).visible = visible;
+                if (!activate)
+                {
+                    ++this->nonactivating_visibility_changes;
+                }
+            }
+
+            void set_window_enabled(const hwnd window, const bool enabled) override
+            {
+                this->windows.at(window).enabled = enabled;
+            }
+
+            bool is_visible(const hwnd window) const
+            {
+                return this->windows.at(window).visible;
+            }
+
+            bool is_enabled(const hwnd window) const
+            {
+                return this->windows.at(window).enabled;
+            }
+
+            size_t nonactivating_visibility_changes{};
+
+          private:
+            struct window_state
+            {
+                bool visible{};
+                bool enabled{};
+            };
+
+            std::unordered_map<hwnd, window_state> windows{};
+        };
+
         class WindowStyleTest : public testing::TestWithParam<std::tuple<bool, bool>>
         {
           protected:
             void SetUp() override
             {
                 emulator_interfaces interfaces{};
-                interfaces.ui = std::make_unique<null_ui_backend>();
+                interfaces.ui = std::make_unique<RecordingWindowUiBackend>();
+                this->ui = dynamic_cast<RecordingWindowUiBackend*>(interfaces.ui.get());
                 interfaces.audio = std::make_unique<null_audio_backend>();
                 interfaces.console = std::make_unique<null_console_backend>();
                 this->emu = std::make_unique<windows_emulator>(
@@ -71,6 +125,17 @@ namespace sogen::test
             window& guest_window()
             {
                 return *this->emu->process.windows.get(this->window_handle);
+            }
+
+            void attach_host_window()
+            {
+                auto& win = this->guest_window();
+                win.host_surface_window = true;
+                this->ui->create_window({
+                    .handle = win.handle,
+                    .visible = (win.style & WS_VISIBLE) != 0,
+                    .enabled = (win.style & WS_DISABLED) == 0,
+                });
             }
 
             callback_frame finish_callback()
@@ -135,6 +200,7 @@ namespace sogen::test
             }
 
             std::unique_ptr<windows_emulator> emu{};
+            RecordingWindowUiBackend* ui{};
             handle window_handle{};
             uint64_t stack_top{};
         };
@@ -177,6 +243,52 @@ namespace sogen::test
             this->change_style(index, original ^ rejected_bit, original, original);
             this->change_style(index, original ^ rejected_bit, original ^ rejected_bit, original);
         }
+    }
+
+    TEST_P(WindowStyleTest, VisibilityStyleChangesDoNotRunShowSequenceOrInvalidate)
+    {
+        const auto original = this->guest_window().style;
+        ASSERT_FALSE(this->guest_window().update_pending);
+        this->attach_host_window();
+        EXPECT_FALSE(this->ui->is_visible(this->guest_window().handle));
+
+        const auto visible = original | WS_VISIBLE;
+        this->change_style(GWL_STYLE, visible, visible, visible);
+        EXPECT_NE(0u, this->guest_window().style & WS_VISIBLE);
+        EXPECT_NE(0u, this->guest_window().guest.read().dwStyle & WS_VISIBLE);
+        EXPECT_TRUE(this->ui->is_visible(this->guest_window().handle));
+        EXPECT_EQ(1u, this->ui->nonactivating_visibility_changes);
+        EXPECT_FALSE(this->guest_window().update_pending);
+
+        const auto hidden = visible & ~static_cast<uint32_t>(WS_VISIBLE);
+        this->change_style(GWL_STYLE, hidden, hidden, hidden);
+        EXPECT_EQ(0u, this->guest_window().style & WS_VISIBLE);
+        EXPECT_EQ(0u, this->guest_window().guest.read().dwStyle & WS_VISIBLE);
+        EXPECT_FALSE(this->ui->is_visible(this->guest_window().handle));
+        EXPECT_EQ(2u, this->ui->nonactivating_visibility_changes);
+        EXPECT_FALSE(this->guest_window().update_pending);
+    }
+
+    TEST_P(WindowStyleTest, DisabledStyleChangesDoNotRunEnableSequenceOrInvalidate)
+    {
+        const auto original = this->guest_window().style;
+        ASSERT_FALSE(this->guest_window().update_pending);
+        this->attach_host_window();
+        EXPECT_TRUE(this->ui->is_enabled(this->guest_window().handle));
+
+        const auto disabled = original | WS_DISABLED;
+        this->change_style(GWL_STYLE, disabled, disabled, disabled);
+        EXPECT_NE(0u, this->guest_window().style & WS_DISABLED);
+        EXPECT_NE(0u, this->guest_window().guest.read().dwStyle & WS_DISABLED);
+        EXPECT_FALSE(this->ui->is_enabled(this->guest_window().handle));
+        EXPECT_FALSE(this->guest_window().update_pending);
+
+        const auto enabled = disabled & ~static_cast<uint32_t>(WS_DISABLED);
+        this->change_style(GWL_STYLE, enabled, enabled, enabled);
+        EXPECT_EQ(0u, this->guest_window().style & WS_DISABLED);
+        EXPECT_EQ(0u, this->guest_window().guest.read().dwStyle & WS_DISABLED);
+        EXPECT_TRUE(this->ui->is_enabled(this->guest_window().handle));
+        EXPECT_FALSE(this->guest_window().update_pending);
     }
 
     INSTANTIATE_TEST_SUITE_P(WindowKindsAndSetters, WindowStyleTest, testing::Combine(testing::Bool(), testing::Bool()));
