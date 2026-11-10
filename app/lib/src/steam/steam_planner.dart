@@ -49,7 +49,8 @@ class SteamPlanner {
       throw const SteamException('Steam sent no information about this game.');
     }
 
-    final depots = windowsDepots(appId, info);
+    final lenders = lendingApps(appId, info);
+    final depots = windowsDepots(appId, info, lenders: lenders.isEmpty ? const {} : await _client.appInfo(lenders));
     final languages = {for (final depot in depots) ?depot.language}.toList()
       ..sort((a, b) => a == 'english' ? -1 : (b == 'english' ? 1 : a.compareTo(b)));
     final language = languages.isEmpty ? '' : await chooseLanguage(languages);
@@ -113,37 +114,37 @@ class SteamPlanner {
     throw failure ?? const SteamException('Steam lists no content server to download from.');
   }
 
+  /// The apps whose app info names the manifests of depots [info] borrows from them. A depot another app installs
+  /// into the same folder, like the singleplayer files a multiplayer app shares, is listed without a manifest, which
+  /// only the app that owns it names.
+  static Set<int> lendingApps(int appId, KeyValues info) => {
+    for (final MapEntry(value: depot) in _installedDepots(info))
+      if (_lender(appId, depot) case final lender? when _manifestId(depot) == null) lender,
+  };
+
   /// The depots of [info] that install into the game folder on Windows. Where an app offers 64-bit depots, its 32-bit
-  /// ones are left out.
-  static List<SteamDepot> windowsDepots(int appId, KeyValues info) {
+  /// ones are left out. [lenders] holds the app info of the [lendingApps].
+  static List<SteamDepot> windowsDepots(int appId, KeyValues info, {Map<int, KeyValues> lenders = const {}}) {
     final depots = <SteamDepot>[];
-    for (final MapEntry(:key, value: depot) in info['depots']?.sections ?? const <MapEntry<String, KeyValues>>[]) {
+    for (final MapEntry(:key, value: depot) in _installedDepots(info)) {
       final id = int.tryParse(key);
-      final config = depot['config'];
-      if (id == null || depot.value('sharedinstall') == '1') {
+      if (id == null) {
         continue;
       }
-      final oslist = config?.value('oslist') ?? '';
-      if (oslist.isNotEmpty && !oslist.split(',').contains('windows')) {
-        continue;
-      }
-      if (config?.value('lowviolence') == '1') {
-        continue;
-      }
-      final manifests = depot['manifests'];
-      final manifestId = parseUint64(manifests?[branch]?.value('gid') ?? manifests?.value(branch) ?? '');
+      final lender = _lender(appId, depot);
+      final manifestId = _manifestId(depot) ?? _manifestId(lenders[lender]?['depots']?[key]);
       if (manifestId == null) {
         continue;
       }
 
-      final language = config?.value('language');
+      final language = depot['config']?.value('language');
       depots.add(
         SteamDepot(
           id: id,
-          appId: int.tryParse(depot.value('depotfromapp') ?? '') ?? appId,
+          appId: lender ?? appId,
           manifestId: manifestId,
           language: language == null || language.isEmpty ? null : language,
-          architecture: config?.value('osarch'),
+          architecture: depot['config']?.value('osarch'),
         ),
       );
     }
@@ -153,6 +154,30 @@ class SteamPlanner {
       for (final depot in depots)
         if (!has64Bit || depot.architecture != '32') depot,
     ];
+  }
+
+  static Iterable<MapEntry<String, KeyValues>> _installedDepots(KeyValues info) sync* {
+    for (final entry in info['depots']?.sections ?? const <MapEntry<String, KeyValues>>[]) {
+      final depot = entry.value;
+      final config = depot['config'];
+      final oslist = config?.value('oslist') ?? '';
+      if (depot.value('sharedinstall') == '1' ||
+          (oslist.isNotEmpty && !oslist.split(',').contains('windows')) ||
+          config?.value('lowviolence') == '1') {
+        continue;
+      }
+      yield entry;
+    }
+  }
+
+  static int? _lender(int appId, KeyValues depot) {
+    final app = int.tryParse(depot.value('depotfromapp') ?? '');
+    return app == appId ? null : app;
+  }
+
+  static int? _manifestId(KeyValues? depot) {
+    final manifests = depot?['manifests'];
+    return parseUint64(manifests?[branch]?.value('gid') ?? manifests?.value(branch) ?? '');
   }
 
   /// Plans the files of [manifests], given in the order the app info lists their depots. Steam installs every depot
