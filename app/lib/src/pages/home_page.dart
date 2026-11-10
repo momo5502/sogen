@@ -12,6 +12,7 @@ import '../session.dart';
 import '../root_update.dart';
 import '../settings.dart';
 import '../store/cover_cache.dart';
+import '../store/owned_games.dart';
 import '../store/store_accounts.dart';
 import '../store/store_http.dart';
 import '../store/store_installer.dart';
@@ -32,6 +33,7 @@ class HomePage extends StatefulWidget {
     required this.settings,
     required this.ads,
     required this.accounts,
+    required this.owned,
     required this.installer,
     required this.covers,
   });
@@ -41,6 +43,7 @@ class HomePage extends StatefulWidget {
   final AppSettings settings;
   final Ads ads;
   final StoreAccounts accounts;
+  final OwnedGames owned;
   final StoreInstaller installer;
   final CoverCache covers;
 
@@ -310,6 +313,7 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
                   _buildInstalled(installed),
                   LibraryTab(
                     accounts: widget.accounts,
+                    owned: widget.owned,
                     installer: widget.installer,
                     library: widget.library,
                     canInstall: installed && !_installing,

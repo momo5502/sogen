@@ -15,6 +15,9 @@ class EpicCatalog implements StoreCatalog {
   Future<List<StoreGame>> games() => _library.games();
 
   @override
+  StoreGame? restore(Object? json) => EpicGame.fromJson(json);
+
+  @override
   Future<(PlannedInstall, String)?> plan(StoreGame game, LanguageChooser chooseLanguage) async =>
       (await _planner.plan(game as EpicGame), '');
 }

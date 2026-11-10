@@ -253,6 +253,9 @@ class _NoCatalog implements StoreCatalog {
   Future<List<StoreGame>> games() async => const [];
 
   @override
+  StoreGame? restore(Object? json) => null;
+
+  @override
   Future<(PlannedInstall, String)?> plan(StoreGame game, LanguageChooser chooseLanguage) async => null;
 }
 

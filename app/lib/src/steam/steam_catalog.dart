@@ -48,6 +48,9 @@ class SteamCatalog implements StoreCatalog {
   }
 
   @override
+  StoreGame? restore(Object? json) => StoreGame.fromJson(store, json);
+
+  @override
   Future<(PlannedInstall, String)?> plan(StoreGame game, LanguageChooser chooseLanguage) =>
       _planner.plan(int.parse(game.productId), chooseLanguage);
 }
