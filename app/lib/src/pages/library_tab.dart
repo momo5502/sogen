@@ -5,6 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../game_library.dart';
 import '../store/cover_cache.dart';
+import '../store/owned_games.dart';
 import '../store/store_accounts.dart';
 import '../store/store_game.dart';
 import '../store/store_http.dart';
@@ -18,6 +19,7 @@ class LibraryTab extends StatefulWidget {
   const LibraryTab({
     super.key,
     required this.accounts,
+    required this.owned,
     required this.installer,
     required this.library,
     required this.canInstall,
@@ -27,6 +29,7 @@ class LibraryTab extends StatefulWidget {
   });
 
   final StoreAccounts accounts;
+  final OwnedGames owned;
   final StoreInstaller installer;
   final GameLibrary library;
 
@@ -68,42 +71,10 @@ class _Entry {
 
 class _LibraryTabState extends State<LibraryTab> with AutomaticKeepAliveClientMixin {
   final _preparing = <String>{};
-  final _games = <String, Future<List<StoreGame>>>{};
-  Future<List<(KnownAccount, List<StoreGame>?, Object?)>>? _loads;
   String _search = '';
 
   @override
   bool get wantKeepAlive => true;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.accounts.addListener(_onAccountsChanged);
-  }
-
-  @override
-  void dispose() {
-    widget.accounts.removeListener(_onAccountsChanged);
-    super.dispose();
-  }
-
-  /// An account that signed out takes its games with it; one that signed in loads its games on the next build.
-  void _onAccountsChanged() {
-    final signedIn = {for (final account in widget.accounts.signedIn) account.id};
-    setState(() {
-      _games.removeWhere((id, _) => !signedIn.contains(id));
-      _loads = null;
-    });
-  }
-
-  Future<List<StoreGame>> _gamesOf(KnownAccount account) => _games[account.id] ??= account.connection.catalog.games();
-
-  void _reload(KnownAccount account) {
-    setState(() {
-      _games.remove(account.id);
-      _loads = null;
-    });
-  }
 
   void _showError(Object error) {
     if (mounted) {
@@ -315,31 +286,24 @@ class _LibraryTabState extends State<LibraryTab> with AutomaticKeepAliveClientMi
   Widget build(BuildContext context) {
     super.build(context);
 
-    final accounts = widget.accounts.signedIn;
-    if (accounts.isEmpty) {
-      return _SignedOut(onSignIn: widget.onSignIn);
-    }
-
-    // A changed future keeps the games of the previous one on screen until it completes.
-    _loads ??= Future.wait([
-      for (final account in accounts)
-        _gamesOf(account).then<(KnownAccount, List<StoreGame>?, Object?)>(
-          (games) => (account, games, null),
-          onError: (Object error) => (account, null, error),
-        ),
-    ]);
-    return FutureBuilder(
-      future: _loads,
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Center(child: SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2)));
+    return ListenableBuilder(
+      listenable: Listenable.merge([widget.accounts, widget.owned]),
+      builder: (context, _) {
+        final accounts = widget.accounts.signedIn;
+        if (accounts.isEmpty) {
+          return _SignedOut(onSignIn: widget.onSignIn);
         }
 
         final entries = <String, _Entry>{};
         final failed = <(KnownAccount, Object)>[];
-        for (final (account, games, error) in snapshot.requireData) {
+        var refreshing = false;
+        for (final account in accounts) {
+          final AccountGames(:games, :error, refreshing: asking) = widget.owned.of(account);
+          refreshing |= asking;
           if (games == null) {
-            failed.add((account, error!));
+            if (error != null) {
+              failed.add((account, error));
+            }
             continue;
           }
           for (final game in games) {
@@ -352,24 +316,19 @@ class _LibraryTabState extends State<LibraryTab> with AutomaticKeepAliveClientMi
                 .add(_Owned(account, game));
           }
         }
+        if (entries.isEmpty && failed.isEmpty && refreshing) {
+          return const Center(child: SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2)));
+        }
 
         return _OwnedGames(
           games: entries.values.toList()..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase())),
           failed: failed,
           listenable: Listenable.merge([widget.installer, widget.library]),
           rowBuilder: _row,
-          onRetry: _reload,
+          onRetry: (account) => widget.owned.refresh([account]),
           search: _search,
           onSearch: (search) => setState(() => _search = search),
-          onRefresh: () async {
-            setState(() {
-              _games.clear();
-              _loads = null;
-            });
-            await Future.wait([
-              for (final account in accounts) _gamesOf(account).catchError((Object _) => <StoreGame>[]),
-            ]);
-          },
+          onRefresh: widget.owned.refresh,
         );
       },
     );

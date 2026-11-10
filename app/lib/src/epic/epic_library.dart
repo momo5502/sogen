@@ -23,6 +23,26 @@ class EpicGame extends StoreGame {
   final String catalogItemId;
 
   String get appName => productId;
+
+  @override
+  Map<String, Object?> toJson() => {...super.toJson(), 'namespace': namespace, 'catalogItemId': catalogItemId};
+
+  static EpicGame? fromJson(Object? json) => switch (json) {
+    {
+      'productId': final String productId,
+      'title': final String title,
+      'namespace': final String namespace,
+      'catalogItemId': final String catalogItemId,
+    } =>
+      EpicGame(
+        productId: productId,
+        title: title,
+        imageUrl: StoreGame.imageUrlFromJson(json),
+        namespace: namespace,
+        catalogItemId: catalogItemId,
+      ),
+    _ => null,
+  };
 }
 
 /// Authorized requests to Epic's services, replacing an access token Epic rejected once.

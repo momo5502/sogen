@@ -770,22 +770,24 @@ namespace sogen
                         return STATUS_INVALID_PARAMETER;
                     }
 
-                    const auto ace_mask = map_generic_access(ace.Mask, mapping);
                     const auto ace_sid = ace_address + offsetof(ACCESS_ALLOWED_ACE, SidStart);
                     const auto anonymous = client_token == ANONYMOUS_IMPERSONATION_TOKEN;
                     const auto user_sid = anonymous ? std::span<const uint8_t>{anonymous_sid} : std::span<const uint8_t>{c.proc.sid};
+                    // SepNormalAccessCheck skips inherit-only ACEs and compares the masks as stored: an ACE's generic bits are
+                    // not mapped, so they match no specific right.
                     const auto applies =
-                        sid_matches(c.emu.memory(), ace_sid, user_sid) ||
-                        std::ranges::any_of(get_token_groups(user_sid, anonymous, c.win_emu.runs_elevated()),
-                                            [&](const token_group& group) { return sid_matches(c.emu.memory(), ace_sid, group.sid); });
-                    if (applies && ace.Header.AceType == 1 && (ace_mask & remaining) != 0)
+                        (ace.Header.AceFlags & INHERIT_ONLY_ACE) == 0 &&
+                        (sid_matches(c.emu.memory(), ace_sid, user_sid) ||
+                         std::ranges::any_of(get_token_groups(user_sid, anonymous, c.win_emu.runs_elevated()),
+                                             [&](const token_group& group) { return sid_matches(c.emu.memory(), ace_sid, group.sid); }));
+                    if (applies && ace.Header.AceType == ACCESS_DENIED_ACE_TYPE && (ace.Mask & remaining) != 0)
                     {
                         denied = true;
                         break;
                     }
-                    if (applies && ace.Header.AceType == 0)
+                    if (applies && ace.Header.AceType == ACCESS_ALLOWED_ACE_TYPE)
                     {
-                        const auto allowed = ace_mask & remaining;
+                        const auto allowed = ace.Mask & remaining;
                         granted |= allowed;
                         remaining &= ~allowed;
                     }
