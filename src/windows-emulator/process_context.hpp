@@ -416,7 +416,7 @@ namespace sogen
         // A class's extra bytes follow its 0x58-byte tagCLS (win32kfull's InternalRegisterClassEx allocates 0x58 + cbClsExtra),
         // where user32's GetClassLongPtr reads positive indexes and xxxSetClassLongPtr writes them.
         static constexpr uint64_t user_class_extra_offset = 0x58;
-        static emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name, uint32_t class_extra = 0);
+        emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name, uint32_t class_extra = 0);
 
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                              bool initial_thread = false, uint64_t stack_commit_size = 0);
@@ -503,6 +503,8 @@ namespace sogen
         emulator_object<PEB64> peb64;
         emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_params64;
         kusd_mmio kusd;
+        code_page ansi_code_page{};
+        std::optional<code_page> oem_code_page{};
 
         uint64_t ntdll_image_base{};
         uint64_t ldr_initialize_thunk{};

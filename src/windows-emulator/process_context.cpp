@@ -336,6 +336,8 @@ namespace sogen
         const auto& version = win_emu.version;
         const auto& fake_env = win_emu.fake_env;
 
+        initialize_process_code_pages(win_emu);
+
         io_device_container console{u"Console", win_emu, {}};
         this->console_handle = this->devices.store(std::move(console));
 
@@ -430,6 +432,15 @@ namespace sogen
             proc_params.MaximumLength = proc_params.Length;
         });
 
+        const auto ansi_code_page_data = map_nls_data(win_emu, this->ansi_code_page.data());
+        const auto oem_code_page_data = this->oem_code_page->id() == this->ansi_code_page.id()
+                                            ? ansi_code_page_data
+                                            : map_nls_data(win_emu, this->oem_code_page->data());
+        if (ansi_code_page_data == 0 || oem_code_page_data == 0)
+        {
+            throw std::runtime_error("Cannot map ANSI/OEM NLS data");
+        }
+
         this->peb64.access([&](PEB64& p) {
             p.BeingDebugged = 0;
             p.ImageBaseAddress = executable.image_base;
@@ -454,8 +465,8 @@ namespace sogen
             p.OSMinorVersion = version.get_minor_version();
             p.OSBuildNumber = static_cast<USHORT>(version.get_windows_build_number());
 
-            // p.AnsiCodePageData = allocator.reserve<CPTABLEINFO>().value();
-            // p.OemCodePageData = allocator.reserve<CPTABLEINFO>().value();
+            p.AnsiCodePageData = ansi_code_page_data;
+            p.OemCodePageData = oem_code_page_data;
             p.UnicodeCaseTableData = allocator.reserve<NLSTABLEINFO>().value();
 
             // ntdll only requests the l_intl.nls case tables (NtGetNlsSectionPtr type 14) when this is non-zero.
@@ -550,6 +561,9 @@ namespace sogen
                 p32.OSMajorVersion = version.get_major_version();
                 p32.OSMinorVersion = version.get_minor_version();
                 p32.OSBuildNumber = static_cast<USHORT>(version.get_windows_build_number());
+
+                p32.AnsiCodePageData = static_cast<uint32_t>(ansi_code_page_data);
+                p32.OemCodePageData = static_cast<uint32_t>(oem_code_page_data);
 
                 // Initialize NLS tables for 32-bit processes
                 // These need to be in 32-bit addressable space
@@ -784,10 +798,13 @@ namespace sogen
     {
         // The zeroed extra bytes start at user_class_extra_offset, inside USER_CLASS's padding for small ones; the ANSI name
         // comes after both.
-        const auto ansi_class_name = u16_to_cp1252(class_name);
+        const auto ansi_class_name = this->ansi_code_page.encode(class_name);
         const auto name_offset = std::max<uint64_t>(sizeof(USER_CLASS), user_class_extra_offset + class_extra);
         const auto cls_size = static_cast<size_t>(page_align_up(name_offset + ansi_class_name.size() + 1));
-        const auto cls_ptr = memory.allocate_memory(cls_size, memory_permission::read);
+        const auto start = this->is_wow64_process ? DEFAULT_ALLOCATION_ADDRESS_32BIT : 0;
+        const auto highest_address = this->is_wow64_process ? uint64_t{0xFFFFFFFF} : MAX_ALLOCATION_ADDRESS;
+        const auto cls_ptr = memory.allocate_memory(cls_size, memory_permission::read, false, start, memory_region_kind::private_allocation,
+                                                    highest_address);
         if (!cls_ptr)
         {
             return 0;
@@ -837,6 +854,8 @@ namespace sogen
         buffer.write(this->process_params64);
         buffer.write_optional(this->process_params32);
         buffer.write(this->kusd);
+        buffer.write(this->ansi_code_page);
+        buffer.write_optional(this->oem_code_page);
 
         buffer.write(this->is_wow64_process);
         buffer.write(this->gdt_base);
@@ -967,6 +986,8 @@ namespace sogen
         buffer.read(this->process_params64);
         buffer.read_optional(this->process_params32);
         buffer.read(this->kusd);
+        buffer.read(this->ansi_code_page);
+        buffer.read_optional(this->oem_code_page);
 
         buffer.read(this->is_wow64_process);
         buffer.read(this->gdt_base);
