@@ -583,6 +583,128 @@ namespace sogen::test
         EXPECT_EQ(machine->reg<uint16_t>(x86_register::fptag), only_register_7_in_use);
     }
 
+    TEST_F(X8664BackendTest, SavedStatesCarryTheirOwnDebugRegisters)
+    {
+        constexpr std::array debug_registers{x86_register::dr0, x86_register::dr1, x86_register::dr2,
+                                             x86_register::dr3, x86_register::dr6, x86_register::dr7};
+        // Local enables for breakpoints 0 and 1, which watch instruction fetches at data addresses no test executes.
+        constexpr uint64_t dr7_breakpoints_0_and_1 = 0x5;
+
+        const auto read_debug_registers = [&] {
+            std::array<uint64_t, debug_registers.size()> values{};
+            for (size_t i = 0; i < debug_registers.size(); ++i)
+            {
+                values[i] = machine->reg(debug_registers[i]);
+            }
+            return values;
+        };
+
+        machine->reg(x86_register::dr0, data_address);
+        machine->reg(x86_register::dr1, data_address + 8);
+        machine->reg(x86_register::dr7, dr7_breakpoints_0_and_1);
+        const auto armed = read_debug_registers();
+        const auto armed_state = machine->save_registers();
+
+        machine->reg(x86_register::dr0, 0u);
+        machine->reg(x86_register::dr1, 0u);
+        machine->reg(x86_register::dr7, 0u);
+        const auto clear = read_debug_registers();
+        const auto clear_state = machine->save_registers();
+        ASSERT_NE(armed, clear);
+
+        machine->restore_registers(armed_state);
+        EXPECT_EQ(read_debug_registers(), armed);
+        machine->restore_registers(clear_state);
+        EXPECT_EQ(read_debug_registers(), clear);
+        machine->restore_registers(clear_state);
+        EXPECT_EQ(read_debug_registers(), clear);
+        machine->restore_registers(armed_state);
+        EXPECT_EQ(read_debug_registers(), armed);
+    }
+
+    TEST_F(X8664BackendTest, SavedStatesRestoreDr6AfterTheGuestTakesADebugException)
+    {
+        // pushfq; or qword ptr [rsp], 0x100 (TF); popfq; nop; nop; syscall
+        load_code(std::array<uint8_t, 14>{0x9C, 0x48, 0x81, 0x0C, 0x24, 0x00, 0x01, 0x00, 0x00, 0x9D, 0x90, 0x90, 0x0F, 0x05});
+        constexpr int debug_exception = 1;
+        std::vector<int> interrupts{};
+        machine->hook_interrupt([&](cpu_interface& cpu, const int interrupt) {
+            interrupts.push_back(interrupt);
+            cpu.stop();
+        });
+
+        const auto dr6 = machine->reg(x86_register::dr6);
+        const auto saved = machine->save_registers();
+        machine->start();
+        ASSERT_EQ(interrupts, (std::vector<int>{debug_exception}));
+        ASSERT_NE(machine->reg(x86_register::dr6), dr6);
+
+        machine->restore_registers(saved);
+        EXPECT_EQ(machine->reg(x86_register::dr6), dr6);
+    }
+
+    TEST_F(X8664BackendTest, SavedStatesCarryTheirOwnFloatingPointState)
+    {
+        const auto make_state = [](const uint16_t control_word, const uint32_t mxcsr, const uint8_t pattern) {
+            x86_64_cpu::floating_point_state state{};
+            state.control_word = control_word;
+            state.mxcsr = mxcsr;
+            for (size_t i = 0; i < state.xmm.size(); ++i)
+            {
+                state.xmm[i].fill(static_cast<std::byte>(pattern + i));
+            }
+            return state;
+        };
+
+        const auto same = [](const x86_64_cpu::floating_point_state& a, const x86_64_cpu::floating_point_state& b) {
+            return a.control_word == b.control_word && a.status_word == b.status_word && a.tag_word == b.tag_word && a.mxcsr == b.mxcsr &&
+                   a.st == b.st && a.xmm == b.xmm;
+        };
+
+        x86_64_cpu::floating_point_state first{};
+        machine->write_floating_point_state(make_state(0x27F, 0x1F80, 0x10));
+        machine->read_floating_point_state(first);
+        const auto first_state = machine->save_registers();
+
+        x86_64_cpu::floating_point_state second{};
+        machine->write_floating_point_state(make_state(0x37F, 0x9FC0, 0x80));
+        machine->read_floating_point_state(second);
+        const auto second_state = machine->save_registers();
+        ASSERT_FALSE(same(first, second));
+
+        x86_64_cpu::floating_point_state observed{};
+        machine->restore_registers(first_state);
+        machine->read_floating_point_state(observed);
+        EXPECT_TRUE(same(observed, first));
+        machine->restore_registers(second_state);
+        machine->read_floating_point_state(observed);
+        EXPECT_TRUE(same(observed, second));
+    }
+
+    TEST_F(X8664BackendTest, GdtLoadsTakeEffectAroundSavedStates)
+    {
+        constexpr uint32_t gdt_limit = 0x7F;
+        const auto gdt_base = [&] {
+            x86_64_cpu::descriptor_table_register gdtr{};
+            EXPECT_TRUE(machine->read_descriptor_table(static_cast<int>(x86_register::gdtr), gdtr));
+            EXPECT_EQ(gdtr.limit, gdt_limit);
+            return gdtr.base;
+        };
+
+        machine->load_gdt(data_address, gdt_limit);
+        const auto saved = machine->save_registers();
+
+        machine->load_gdt(data_address + 0x80, gdt_limit);
+        machine->restore_registers(saved);
+        machine->load_gdt(data_address + 0x80, gdt_limit);
+        EXPECT_EQ(gdt_base(), data_address + 0x80);
+
+        machine->load_gdt(data_address, gdt_limit);
+        EXPECT_EQ(gdt_base(), data_address);
+        machine->load_gdt(data_address, gdt_limit);
+        EXPECT_EQ(gdt_base(), data_address);
+    }
+
     TEST_F(X8664BackendTest, GuestAccessesMemoryThroughItsTranslationsAcrossRuns)
     {
         if constexpr (!host_reaches_high_addresses)

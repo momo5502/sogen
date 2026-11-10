@@ -18,6 +18,7 @@
 #include <optional>
 #include <set>
 #include <shared_mutex>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -327,6 +328,142 @@ namespace sogen::whp
             throw std::runtime_error(stream.str());
         }
 
+        // A thread switch saves and restores these through the virtual processor's register page, which WHP reads and writes
+        // without a hypercall. XMM0-XMM5 sit there too, and an XSAVE image restored after a write to them leaves the written
+        // values in place, so they move with the general registers rather than with the image.
+        constexpr std::array<WHV_REGISTER_NAME, 30> page_register_names{{
+            WHvX64RegisterRax,  WHvX64RegisterRbx,  WHvX64RegisterRcx,  WHvX64RegisterRdx,  WHvX64RegisterRsi,  WHvX64RegisterRdi,
+            WHvX64RegisterRbp,  WHvX64RegisterRsp,  WHvX64RegisterR8,   WHvX64RegisterR9,   WHvX64RegisterR10,  WHvX64RegisterR11,
+            WHvX64RegisterR12,  WHvX64RegisterR13,  WHvX64RegisterR14,  WHvX64RegisterR15,  WHvX64RegisterRip,  WHvX64RegisterRflags,
+            WHvX64RegisterCs,   WHvX64RegisterSs,   WHvX64RegisterDs,   WHvX64RegisterEs,   WHvX64RegisterFs,   WHvX64RegisterGs,
+            WHvX64RegisterXmm0, WHvX64RegisterXmm1, WHvX64RegisterXmm2, WHvX64RegisterXmm3, WHvX64RegisterXmm4, WHvX64RegisterXmm5,
+        }};
+
+        constexpr std::array<WHV_REGISTER_NAME, 20> xsave_register_names{{
+            WHvX64RegisterFpControlStatus,
+            WHvX64RegisterXmmControlStatus,
+            WHvX64RegisterFpMmx0,
+            WHvX64RegisterFpMmx1,
+            WHvX64RegisterFpMmx2,
+            WHvX64RegisterFpMmx3,
+            WHvX64RegisterFpMmx4,
+            WHvX64RegisterFpMmx5,
+            WHvX64RegisterFpMmx6,
+            WHvX64RegisterFpMmx7,
+            WHvX64RegisterXmm6,
+            WHvX64RegisterXmm7,
+            WHvX64RegisterXmm8,
+            WHvX64RegisterXmm9,
+            WHvX64RegisterXmm10,
+            WHvX64RegisterXmm11,
+            WHvX64RegisterXmm12,
+            WHvX64RegisterXmm13,
+            WHvX64RegisterXmm14,
+            WHvX64RegisterXmm15,
+        }};
+
+        constexpr std::array<WHV_REGISTER_NAME, 7> thread_debug_register_names{{
+            WHvX64RegisterDr0,
+            WHvX64RegisterDr1,
+            WHvX64RegisterDr2,
+            WHvX64RegisterDr3,
+            WHvX64RegisterDr6,
+            WHvX64RegisterDr7,
+            WHvX64RegisterCr2,
+        }};
+
+        // A user-mode guest cannot write these, so a virtual processor keeps them for every thread it runs.
+        constexpr std::array<WHV_REGISTER_NAME, 7> processor_register_names{{
+            WHvX64RegisterCr0,
+            WHvX64RegisterCr3,
+            WHvX64RegisterCr4,
+            WHvX64RegisterGdtr,
+            WHvX64RegisterIdtr,
+            WHvX64RegisterEfer,
+            WHvX64RegisterXCr0,
+        }};
+
+        constexpr size_t processor_gdtr =
+            static_cast<size_t>(std::ranges::find(processor_register_names, WHvX64RegisterGdtr) - processor_register_names.begin());
+
+        template <size_t N>
+        constexpr std::array<size_t, N> snapshot_slots(const std::array<WHV_REGISTER_NAME, N>& names)
+        {
+            const auto snapshot = snapshot_register_names();
+            std::array<size_t, N> slots{};
+            for (size_t i = 0; i < N; ++i)
+            {
+                const auto entry = std::ranges::find(snapshot, names[i]);
+                if (entry == snapshot.end())
+                {
+                    throw std::logic_error("Register missing from the saved register state");
+                }
+
+                slots[i] = static_cast<size_t>(entry - snapshot.begin());
+            }
+
+            return slots;
+        }
+
+        constexpr auto page_register_slots = snapshot_slots(page_register_names);
+        constexpr auto thread_debug_register_slots = snapshot_slots(thread_debug_register_names);
+        constexpr auto processor_register_slots = snapshot_slots(processor_register_names);
+        constexpr auto xsave_register_slots = snapshot_slots(xsave_register_names);
+
+        constexpr bool register_groups_cover_the_saved_state()
+        {
+            std::array<bool, snapshot_register_names().size()> covered{};
+            size_t count = 0;
+            const auto cover = [&](const auto& slots) {
+                for (const auto slot : slots)
+                {
+                    covered[slot] = true;
+                    ++count;
+                }
+            };
+
+            cover(page_register_slots);
+            cover(thread_debug_register_slots);
+            cover(processor_register_slots);
+            cover(xsave_register_slots);
+            return count == covered.size() && std::ranges::all_of(covered, [](const bool slot) { return slot; });
+        }
+
+        static_assert(register_groups_cover_the_saved_state());
+
+        constexpr size_t snapshot_register_count = snapshot_register_names().size();
+        using snapshot_register_values = std::array<WHV_REGISTER_VALUE, snapshot_register_count>;
+        using snapshot_register_slots = std::array<size_t, snapshot_register_count>;
+
+        template <size_t N>
+        std::array<WHV_REGISTER_VALUE, N> copy_from_slots(const snapshot_register_values& values, const std::array<size_t, N>& slots)
+        {
+            std::array<WHV_REGISTER_VALUE, N> group{};
+            std::ranges::transform(slots, group.begin(), [&](const size_t slot) { return values[slot]; });
+            return group;
+        }
+
+        template <size_t N>
+        void copy_to_slots(const std::array<WHV_REGISTER_VALUE, N>& group, const std::array<size_t, N>& slots,
+                           snapshot_register_values& values)
+        {
+            for (size_t i = 0; i < N; ++i)
+            {
+                values[slots[i]] = group[i];
+            }
+        }
+
+        template <size_t N>
+        void track_group_write(std::optional<std::array<WHV_REGISTER_VALUE, N>>& held, const std::array<WHV_REGISTER_NAME, N>& names,
+                               const WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value)
+        {
+            const auto entry = std::ranges::find(names, name);
+            if (held && entry != names.end())
+            {
+                (*held)[static_cast<size_t>(entry - names.begin())] = value;
+            }
+        }
+
         class whp_x86_64_emulator;
 
         // The B0-B3 flags of the breakpoints that DR7 enables.
@@ -410,6 +547,16 @@ namespace sogen::whp
                 WHV_REGISTER_VALUE value{};
                 value.Table.Base = address;
                 value.Table.Limit = static_cast<UINT16>(limit);
+
+                if (this->held_processor_registers_)
+                {
+                    const auto& held = (*this->held_processor_registers_)[processor_gdtr].Table;
+                    if (held.Base == value.Table.Base && held.Limit == value.Table.Limit)
+                    {
+                        return;
+                    }
+                }
+
                 this->set_register(WHvX64RegisterGdtr, value);
             }
 
@@ -684,14 +831,9 @@ namespace sogen::whp
 
             std::vector<std::byte> save_registers() const override
             {
-                auto names = snapshot_register_names();
-                std::vector<WHV_REGISTER_VALUE> values(names.size());
-                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
-                                                             static_cast<UINT32>(names.size()), values.data()));
-
-                const auto register_bytes = sizeof(WHV_REGISTER_VALUE) * values.size();
+                snapshot_register_values values{};
+                const auto register_bytes = sizeof(values);
                 std::vector<std::byte> bytes(register_bytes + sizeof(UINT32));
-                std::memcpy(bytes.data(), values.data(), register_bytes);
 
                 UINT32 xsave_size = 0;
                 if (this->xsave_enabled_)
@@ -720,6 +862,31 @@ namespace sogen::whp
 #pragma warning(pop)
                 }
 
+                // WHP answers from the register page only when a call asks for nothing else, so the page is read on its own.
+                this->read_slots(page_register_slots, values);
+                snapshot_register_slots slots{};
+                auto slots_end = std::ranges::copy(thread_debug_register_slots, slots.begin()).out;
+                if (!this->held_processor_registers_)
+                {
+                    slots_end = std::ranges::copy(processor_register_slots, slots_end).out;
+                }
+                if (xsave_size == 0)
+                {
+                    slots_end = std::ranges::copy(xsave_register_slots, slots_end).out;
+                }
+                this->read_slots({slots.begin(), slots_end}, values);
+
+                if (this->held_processor_registers_)
+                {
+                    copy_to_slots(*this->held_processor_registers_, processor_register_slots, values);
+                }
+                else
+                {
+                    this->held_processor_registers_ = copy_from_slots(values, processor_register_slots);
+                }
+                this->held_thread_debug_registers_ = copy_from_slots(values, thread_debug_register_slots);
+
+                std::memcpy(bytes.data(), values.data(), register_bytes);
                 std::memcpy(bytes.data() + register_bytes, &xsave_size, sizeof(xsave_size));
                 bytes.resize(register_bytes + sizeof(xsave_size) + xsave_size);
                 return bytes;
@@ -727,14 +894,13 @@ namespace sogen::whp
 
             void restore_registers(const std::vector<std::byte>& register_data) override
             {
-                auto names = snapshot_register_names();
-                const auto register_bytes = sizeof(WHV_REGISTER_VALUE) * names.size();
+                snapshot_register_values values{};
+                const auto register_bytes = sizeof(values);
                 if (register_data.size() < register_bytes + sizeof(UINT32))
                 {
                     throw std::runtime_error("Unexpected WHP register snapshot size");
                 }
 
-                std::vector<WHV_REGISTER_VALUE> values(names.size());
                 std::memcpy(values.data(), register_data.data(), register_bytes);
 
                 UINT32 xsave_size = 0;
@@ -744,8 +910,36 @@ namespace sogen::whp
                     throw std::runtime_error("Unexpected WHP register snapshot size");
                 }
 
-                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
-                                                             static_cast<UINT32>(names.size()), values.data()));
+                // The register page goes first, on its own, which keeps the segment registers ahead of CR0 and EFER. The
+                // virtual processor keeps its own processor registers for every thread (its GDTR points at its own GDT), so
+                // saved ones only apply to one that has none yet.
+                this->write_slots(page_register_slots, values);
+                snapshot_register_slots slots{};
+                auto slots_end = slots.begin();
+                if (!this->held_processor_registers_)
+                {
+                    slots_end = std::ranges::copy(processor_register_slots, slots_end).out;
+                }
+                if (!this->held_thread_debug_registers_ ||
+                    !std::ranges::equal(
+                        *this->held_thread_debug_registers_, thread_debug_register_slots,
+                        [&](const WHV_REGISTER_VALUE& held, const size_t slot) { return held.Reg64 == values[slot].Reg64; }))
+                {
+                    slots_end = std::ranges::copy(thread_debug_register_slots, slots_end).out;
+                }
+                if (xsave_size == 0)
+                {
+                    slots_end = std::ranges::copy(xsave_register_slots, slots_end).out;
+                }
+                std::ranges::sort(slots.begin(), slots_end);
+                this->write_slots({slots.begin(), slots_end}, values);
+
+                if (!this->held_processor_registers_)
+                {
+                    this->held_processor_registers_ = copy_from_slots(values, processor_register_slots);
+                }
+                this->held_thread_debug_registers_ = copy_from_slots(values, thread_debug_register_slots);
+
                 if (xsave_size != 0)
                 {
 #pragma warning(push)
@@ -754,6 +948,41 @@ namespace sogen::whp
                                                                   register_data.data() + register_bytes + sizeof(xsave_size), xsave_size));
 #pragma warning(pop)
                 }
+            }
+
+            void read_slots(const std::span<const size_t> slots, snapshot_register_values& values) const
+            {
+                if (slots.empty())
+                {
+                    return;
+                }
+
+                const auto names = snapshot_register_names();
+                std::array<WHV_REGISTER_NAME, snapshot_register_count> slot_names{};
+                snapshot_register_values slot_values{};
+                std::ranges::transform(slots, slot_names.begin(), [&](const size_t slot) { return names[slot]; });
+                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, this->vp_index_, slot_names.data(),
+                                                             static_cast<UINT32>(slots.size()), slot_values.data()));
+                for (size_t i = 0; i < slots.size(); ++i)
+                {
+                    values[slots[i]] = slot_values[i];
+                }
+            }
+
+            void write_slots(const std::span<const size_t> slots, const snapshot_register_values& values)
+            {
+                if (slots.empty())
+                {
+                    return;
+                }
+
+                const auto names = snapshot_register_names();
+                std::array<WHV_REGISTER_NAME, snapshot_register_count> slot_names{};
+                snapshot_register_values slot_values{};
+                std::ranges::transform(slots, slot_names.begin(), [&](const size_t slot) { return names[slot]; });
+                std::ranges::transform(slots, slot_values.begin(), [&](const size_t slot) { return values[slot]; });
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, this->vp_index_, slot_names.data(),
+                                                             static_cast<UINT32>(slots.size()), slot_values.data()));
             }
 
             bool has_violation() const override
@@ -795,6 +1024,7 @@ namespace sogen::whp
             void set_register(const WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value)
             {
                 WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, this->vp_index_, &name, 1, &value));
+                this->track_register_write(name, value);
             }
 
             template <size_t N>
@@ -802,6 +1032,16 @@ namespace sogen::whp
             {
                 WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
                                                              static_cast<UINT32>(names.size()), values.data()));
+                for (size_t i = 0; i < N; ++i)
+                {
+                    this->track_register_write(names[i], values[i]);
+                }
+            }
+
+            void track_register_write(const WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value)
+            {
+                track_group_write(this->held_processor_registers_, processor_register_names, name, value);
+                track_group_write(this->held_thread_debug_registers_, thread_debug_register_names, name, value);
             }
 
             void advance_rip(const uint64_t amount)
@@ -834,6 +1074,9 @@ namespace sogen::whp
             UINT32 vp_index_{};
             virtual_processor_handle vp_;
             bool xsave_enabled_{};
+
+            mutable std::optional<std::array<WHV_REGISTER_VALUE, processor_register_names.size()>> held_processor_registers_{};
+            mutable std::optional<std::array<WHV_REGISTER_VALUE, thread_debug_register_names.size()>> held_thread_debug_registers_{};
 
             std::atomic_bool stop_requested_{false};
             std::atomic_bool run_active_{false};
@@ -1842,6 +2085,7 @@ namespace sogen::whp
 
                 WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vcpu.vp_index_, names.data(),
                                                              static_cast<UINT32>(names.size()), values.data()));
+                vcpu.held_processor_registers_.reset();
             }
 
             void initialize_syscall_intercept_page()
@@ -3333,6 +3577,8 @@ namespace sogen::whp
                         continue;
                     }
 
+                    // A #DB sets DR6, and a page fault CR2, while the guest runs.
+                    vcpu.held_thread_debug_registers_.reset();
                     const auto run_hr = WHvRunVirtualProcessor(this->partition_, vcpu.vp_index_, &exit_context, sizeof(exit_context));
                     vcpu.run_active_ = false;
                     if (FAILED(run_hr))

@@ -138,6 +138,34 @@ namespace sogen::test
         dump_and_expect_equal("DeserializedEmulatorBehavesLikeSource", serializer1.get_buffer(), serializer2.get_buffer());
     }
 
+    TEST(SerializationTest, RestorePointsEveryVcpuAtTheRestoredGdt)
+    {
+        utils::buffer_serializer serializer{};
+        uint64_t gdt_base{};
+
+        {
+            auto source = create_sample_emulator();
+            source.setup_process_if_necessary();
+            gdt_base = source.process.gdt_base;
+            source.serialize(serializer);
+        }
+
+        auto receiver = create_sample_emulator();
+        ASSERT_TRUE(receiver.memory.allocate_memory(gdt_base, receiver.vcpu_count() * GDT_LIMIT, memory_permission::read_write));
+        receiver.setup_process_if_necessary();
+        ASSERT_NE(gdt_base, receiver.process.gdt_base);
+
+        utils::buffer_deserializer deserializer{serializer};
+        receiver.deserialize(deserializer);
+
+        for (uint32_t i = 0; i < receiver.vcpu_count(); ++i)
+        {
+            x86_64_cpu::descriptor_table_register gdtr{};
+            ASSERT_TRUE(receiver.vcpu(i).x64_cpu().read_descriptor_table(static_cast<int>(x86_register::gdtr), gdtr));
+            EXPECT_EQ(gdt_base + i * GDT_LIMIT, gdtr.base) << "vCPU " << i;
+        }
+    }
+
     namespace
     {
         // A host clock that moves only when the test moves it; its counter runs at 1 GHz.
