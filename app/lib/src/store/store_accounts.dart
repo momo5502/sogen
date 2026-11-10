@@ -21,6 +21,7 @@ class StoreConnection {
     required this.installSource,
     required this.restore,
     required this.close,
+    this.ownershipTicket,
   });
 
   final StoreSignIn signIn;
@@ -32,6 +33,10 @@ class StoreConnection {
 
   /// Releases the sign-in and every client the account's catalog and downloads use.
   final Future<void> Function() close;
+
+  /// Asks the store for the ticket a game's DRM checks at startup to prove the account owns it, for stores that have
+  /// one.
+  final Future<Uint8List?> Function(int appId)? ownershipTicket;
 }
 
 /// A store Sogen can sign in to.

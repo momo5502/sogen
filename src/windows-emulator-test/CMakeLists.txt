@@ -8,7 +8,28 @@ list(SORT SRC_FILES)
 list(REMOVE_ITEM SRC_FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/windows_architecture_test.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/arm64_backend_test.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/x86_64_backend_test.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/fex_hvf_spike_test.cpp"
 )
+
+if(SOGEN_ENABLE_FEX AND SOGEN_ENABLE_HVF)
+  add_executable(fex-hvf-spike-test fex_hvf_spike_test.cpp)
+  target_link_libraries(fex-hvf-spike-test PRIVATE windows-emulator hvf-arm64-emulator fexcore gtest gtest_main)
+  add_dependencies(fex-hvf-spike-test fex_external)
+  add_test(NAME fex-hvf-spike-test COMMAND fex-hvf-spike-test)
+  set_tests_properties(fex-hvf-spike-test PROPERTIES TIMEOUT 30)
+  sogen_targets_set_folder("tests" fex-hvf-spike-test)
+  sogen_enable_hypervisor_entitlement(fex-hvf-spike-test)
+  sogen_target_skip_clang_tidy(fex-hvf-spike-test)
+endif()
+
+add_executable(x86-64-backend-test x86_64_backend_test.cpp)
+target_link_libraries(x86-64-backend-test PRIVATE windows-emulator backend-selection gtest gtest_main)
+add_test(NAME x86-64-backend-test COMMAND x86-64-backend-test)
+set_tests_properties(x86-64-backend-test PROPERTIES TIMEOUT 30)
+sogen_targets_set_folder("tests" x86-64-backend-test)
+sogen_enable_hypervisor_entitlement(x86-64-backend-test)
+sogen_target_skip_clang_tidy(x86-64-backend-test)
 
 add_executable(arm64-backend-test arm64_backend_test.cpp)
 target_link_libraries(arm64-backend-test PRIVATE windows-emulator backend-selection gtest gtest_main)
