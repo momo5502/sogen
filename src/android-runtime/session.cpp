@@ -5,6 +5,7 @@
 #include <iterator>
 
 #include "android_process_launcher.hpp"
+#include "local_steam_backend.hpp"
 
 #include <backend_selection.hpp>
 #include <managed_process_start.hpp>
@@ -101,7 +102,10 @@ namespace sogen::android
         {
             std::string configuration = "emulation-root=" + config.emulation_root.string() + "\nroot-layer=" + config.root_layer.string() +
                                         "\nbackend=" + config.backend + "\nnetwork=" + (config.live_network ? "live" : "offline") +
-                                        "\nmax-display-mode=" + (config.max_display_mode ? to_string(*config.max_display_mode) : "") + "\n";
+                                        "\nmax-display-mode=" + (config.max_display_mode ? to_string(*config.max_display_mode) : "") +
+                                        "\nsteam-app-id=" + std::to_string(config.steam_app_id) +
+                                        "\nsteam-id=" + std::to_string(config.steam_id) + "\nsteam-language=" + config.steam_language +
+                                        "\nsteam-ownership-ticket=" + config.steam_ownership_ticket_digest + "\n";
             for (const auto& mount : config.directory_mounts)
             {
                 configuration += "directory=" + mount.host_directory.string() + ":" + mount.guest_path.string() + ":" +
@@ -287,6 +291,16 @@ namespace sogen::android
 
             auto emulator = create_x86_64_emulator(parse_backend(config.backend));
             emulator_interfaces interfaces{.ui = std::move(ui), .processes = processes.get(), .mounts = std::move(mounts)};
+            if (config.steam_app_id != 0)
+            {
+                interfaces.steam = create_local_steam_backend(steam_launch{
+                    .app_id = config.steam_app_id,
+                    .steam_id = config.steam_id,
+                    .language = config.steam_language,
+                    .ownership_ticket = config.steam_ownership_ticket,
+                });
+            }
+            const bool runs_steam_provider = interfaces.steam != nullptr;
             auto win_emu_ptr = config.resume_file.empty()
                                    ? std::make_unique<windows_emulator>(std::move(emulator),
                                                                         parent ? create_child_application_settings(parent->request())
@@ -317,6 +331,11 @@ namespace sogen::android
                 config.registry_state.empty() ? nullptr : std::make_unique<registry_state_file>(config.registry_state);
             if (!config.resume_file.empty())
             {
+                if (runs_steam_provider)
+                {
+                    throw std::runtime_error("A suspended Steam game cannot be resumed yet. Start it over.");
+                }
+
                 snapshot::load_emulator_snapshot(win_emu, config.resume_file, configuration);
             }
             else
@@ -364,6 +383,7 @@ namespace sogen::android
 
                 this->emulator_ = &win_emu;
                 this->snapshots_ = &snapshots;
+                this->runs_steam_game_ = runs_steam_provider;
                 win_emu.frames().set_limit(this->frame_limit_);
             }
 
@@ -484,6 +504,12 @@ namespace sogen::android
     bool session::suspend(std::filesystem::path destination)
     {
         const std::lock_guard lock{this->mutex_};
+        if (this->snapshots_ && this->runs_steam_game_)
+        {
+            this->report_snapshot({.path = std::move(destination), .error = "Steam games cannot be suspended yet."});
+            return true;
+        }
+
         return this->snapshots_ && this->snapshots_->request(std::move(destination));
     }
 
