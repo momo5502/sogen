@@ -26,6 +26,7 @@
 #include <address_utils.hpp>
 #include <utils/object.hpp>
 #include <utils/cpu_features.hpp>
+#include <utils/finally.hpp>
 
 namespace sogen::whp
 {
@@ -3746,6 +3747,7 @@ namespace sogen::whp
                 }
 
                 vcpu.stop_requested_ = false;
+                const auto end_pending_step = utils::finally([&] { this->end_own_step_left_pending(vcpu); });
 
                 {
                     std::unique_lock lock(this->partition_mutex_);
@@ -3786,7 +3788,10 @@ namespace sogen::whp
                     }
                 }
 
-                while (!vcpu.stop_requested_)
+                // A stop ends the run, but not between a step of the backend's own and its instruction: the instruction's hooks
+                // already ran, so it runs now, once, and the stop takes effect right after it. Ended there, the run left the
+                // step on the vCPU for the next thread run there (end_own_step_left_pending).
+                while (!vcpu.stop_requested_ || this->own_step_waits(vcpu))
                 {
                     if (vcpu.pending_tlb_flush_.exchange(false))
                     {
@@ -3815,7 +3820,7 @@ namespace sogen::whp
                     switch (exit_context.ExitReason)
                     {
                     case WHvRunVpExitReasonCanceled: {
-                        if (vcpu.stop_requested_)
+                        if (vcpu.stop_requested_ && !this->own_step_waits(vcpu))
                         {
                             return;
                         }
@@ -3824,6 +3829,7 @@ namespace sogen::whp
                         // (another vCPU changed the shared page tables) - never from a real stop, which
                         // always sets stop_requested_ first. Re-enter so the pending TLB flush is applied
                         // at the loop top; do not treat it as a stop regardless of whether rip advanced.
+                        // A stop with a step of the backend's own on its way re-enters too, to make the step first.
                         continue;
                     }
                     case WHvRunVpExitReasonX64Halt:
@@ -4133,6 +4139,38 @@ namespace sogen::whp
                 }
 
                 return true;
+            }
+
+            // A step of the backend's own still on its way: one armed after its instruction's hooks ran (it opens a hooked
+            // page or steps over a patched breakpoint) whose instruction stands at RIP, or the SYSCALL a step runs going on
+            // through the call, where the step ends (handle_syscall_halt). A stop waits for it (run). A one-instruction run's
+            // own step is armed before the instruction's hooks run, so a hook's stop there ends the run before the
+            // instruction; the hook's step is deferred to the next run. Waiting for it re-entered the instruction, whose hook
+            // ran and stopped again, and the run never ended.
+            bool own_step_waits(whp_vcpu& vcpu) const
+            {
+                const auto& step = vcpu.pending_execution_step_;
+                if (!step)
+                {
+                    return false;
+                }
+                const auto rip = vcpu.read_instruction_pointer();
+                const auto hooks_ran = step->page_base.has_value() || step->patched_breakpoint.has_value();
+                return (hooks_ran && rip == step->rip) || (this->syscall_hook_ && rip == this->syscall_hook_page_ && !step->had_trap_flag);
+            }
+
+            // A step of the backend's own still pending when run() ends (on an exit that ends the run other than a stop, which
+            // waits for the step) ends here: its trap flag is restored and its pages are narrowed again. Left on the vCPU, the
+            // next thread run there took it over without its trap flag, and the thread kept the trap flag (its #DB on another
+            // vCPU goes to the guest as a single-step exception).
+            void end_own_step_left_pending(whp_vcpu& vcpu)
+            {
+                if (!vcpu.pending_execution_step_)
+                {
+                    return;
+                }
+                std::unique_lock lock(this->partition_mutex_);
+                (void)this->complete_execution_step(vcpu);
             }
 
             bool handle_memory_access(whp_vcpu& vcpu, const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
