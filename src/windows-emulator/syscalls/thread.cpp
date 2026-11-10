@@ -74,19 +74,46 @@ namespace sogen
                            : STATUS_UNSUCCESSFUL;
             }
 
+            // RtlpWow64CtxToAmd64 widens a 32-bit context's debug registers and sets DR7.LE when DR7 enables none of L0-L3
+            // while DR0-DR3 hold an address, so a breakpoint staged before it is enabled reads back: RtlpWow64CtxFromAmd64
+            // reports them only while DR7 sets an L, LE or GE bit.
+            uint32_t widened_wow64_dr7(const WOW64_CONTEXT& context)
+            {
+                constexpr uint32_t dr7_local_enables = 0x55; // L0-L3
+                constexpr uint32_t dr7_local_exact = 0x100;  // LE
+                const bool holds_address = context.Dr0 != 0 || context.Dr1 != 0 || context.Dr2 != 0 || context.Dr3 != 0;
+                return (context.Dr7 & dr7_local_enables) == 0 && holds_address ? context.Dr7 | dr7_local_exact : context.Dr7;
+            }
+
+            // A 32-bit context's debug registers as RtlpWow64CtxToAmd64 widens them, for cpu_context::restore to keep what
+            // PspSetContextThreadInternal keeps.
+            CONTEXT64 widened_wow64_debug_registers(const WOW64_CONTEXT& context)
+            {
+                CONTEXT64 debug_registers{};
+                debug_registers.ContextFlags = CONTEXT_DEBUG_REGISTERS_64;
+                debug_registers.Dr0 = context.Dr0;
+                debug_registers.Dr1 = context.Dr1;
+                debug_registers.Dr2 = context.Dr2;
+                debug_registers.Dr3 = context.Dr3;
+                debug_registers.Dr7 = widened_wow64_dr7(context);
+                return debug_registers;
+            }
+
             // Takes the parts of new_wow64_context that its ContextFlags select, as SetThreadContext does.
             void merge_wow64_context(WOW64_CONTEXT& merged_context, const WOW64_CONTEXT& new_wow64_context)
             {
                 merged_context.ContextFlags = new_wow64_context.ContextFlags;
 
+                // PspWow64SetContextThread sets them through PspSetContextThreadInternal, as a 64-bit context's
+                // (cpu_context::restore); a 32-bit breakpoint address is always a user one.
                 if ((new_wow64_context.ContextFlags & CONTEXT_DEBUG_REGISTERS_32) == CONTEXT_DEBUG_REGISTERS_32)
                 {
                     merged_context.Dr0 = new_wow64_context.Dr0;
                     merged_context.Dr1 = new_wow64_context.Dr1;
                     merged_context.Dr2 = new_wow64_context.Dr2;
                     merged_context.Dr3 = new_wow64_context.Dr3;
-                    merged_context.Dr6 = new_wow64_context.Dr6;
-                    merged_context.Dr7 = new_wow64_context.Dr7;
+                    merged_context.Dr6 = 0;
+                    merged_context.Dr7 = widened_wow64_dr7(new_wow64_context) & cpu_context::dr7_legal;
                 }
 
                 if ((new_wow64_context.ContextFlags & CONTEXT_FLOATING_POINT_32) == CONTEXT_FLOATING_POINT_32 &&
@@ -235,12 +262,7 @@ namespace sogen
                         thread->restore(c.emu, c.proc.gdt_base);
                     }
 
-                    c.x64_cpu().reg(x86_register::dr0, static_cast<uint64_t>(new_wow64_context.Dr0));
-                    c.x64_cpu().reg(x86_register::dr1, static_cast<uint64_t>(new_wow64_context.Dr1));
-                    c.x64_cpu().reg(x86_register::dr2, static_cast<uint64_t>(new_wow64_context.Dr2));
-                    c.x64_cpu().reg(x86_register::dr3, static_cast<uint64_t>(new_wow64_context.Dr3));
-                    c.x64_cpu().reg(x86_register::dr6, static_cast<uint64_t>(new_wow64_context.Dr6));
-                    c.x64_cpu().reg(x86_register::dr7, static_cast<uint64_t>(new_wow64_context.Dr7));
+                    cpu_context::restore(c.x64_cpu(), widened_wow64_debug_registers(new_wow64_context));
 
                     if (needs_switch)
                     {
@@ -1904,7 +1926,15 @@ namespace sogen
         syscalls::access_thread_context<CONTEXT64>(c, thread, [&] {
             if (!runs_x86_code(c.emu))
             {
-                return false;
+                // wow64cpu reloads the saved copy below without the debug registers, so PspWow64SetContextThread sets
+                // them on the native context of a thread outside 32-bit code too, as the direct setter does.
+                if ((update.ContextFlags & CONTEXT_DEBUG_REGISTERS_32) != CONTEXT_DEBUG_REGISTERS_32)
+                {
+                    return false;
+                }
+
+                cpu_context::restore(c.x64_cpu(), syscalls::widened_wow64_debug_registers(update));
+                return true;
             }
 
             CONTEXT64 native{};
