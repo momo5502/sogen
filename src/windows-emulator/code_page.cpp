@@ -342,6 +342,33 @@ namespace sogen
         return address;
     }
 
+    void configure_process_code_pages(registry_manager& registry, const uint32_t ansi_id, const uint32_t oem_id)
+    {
+        for (const auto id : {ansi_id, oem_id})
+        {
+            if (id <= 3 || id > std::numeric_limits<uint16_t>::max())
+            {
+                throw std::invalid_argument("Invalid code-page identifier " + std::to_string(id));
+            }
+            if (id == 65000 || id == 65001)
+            {
+                throw std::invalid_argument("Unsupported ANSI/OEM code page " + std::to_string(id));
+            }
+        }
+
+        const auto key = registry.create_key(R"(\Registry\Machine\System\CurrentControlSet\Control\Nls\CodePage)");
+        if (!key)
+        {
+            throw std::runtime_error("Cannot configure ANSI/OEM code pages without the SYSTEM registry hive");
+        }
+        const auto write_code_page = [&](const std::string_view name, const uint32_t id) {
+            const auto text = u8_to_u16(std::to_string(id));
+            registry.set_value(*key, std::string{name}, REG_SZ, std::as_bytes(std::span{text.c_str(), text.size() + 1}));
+        };
+        write_code_page("ACP", ansi_id);
+        write_code_page("OEMCP", oem_id);
+    }
+
     void initialize_process_code_pages(windows_emulator& win_emu)
     {
         const auto ansi_id = get_code_page(win_emu.registry, "ACP", 1252);

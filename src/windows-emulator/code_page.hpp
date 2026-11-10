@@ -13,6 +13,7 @@
 namespace sogen
 {
     class windows_emulator;
+    class registry_manager;
 
     namespace utils
     {
@@ -56,6 +57,7 @@ namespace sogen
 
     std::optional<ansi_oem_tables> build_ansi_oem_tables(std::span<const std::byte> ansi, std::span<const std::byte> oem);
     uint64_t map_nls_data(windows_emulator& win_emu, std::span<const std::byte> data);
+    void configure_process_code_pages(registry_manager& registry, uint32_t ansi_id, uint32_t oem_id);
     void initialize_process_code_pages(windows_emulator& win_emu);
     void initialize_user_code_page_tables(windows_emulator& win_emu);
 }
