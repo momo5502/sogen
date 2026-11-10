@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -135,7 +136,13 @@ class GameSession extends ChangeNotifier {
   final Stopwatch _sinceReport = Stopwatch();
 
   /// Returns false if another game is still running. Any other failure ends the session with [error] set.
-  Future<bool> start(Game game, {required String emulationRoot, String? resumeFile}) async {
+  Future<bool> start(
+    Game game, {
+    required String emulationRoot,
+    int steamId = 0,
+    Uint8List? steamOwnershipTicket,
+    String? resumeFile,
+  }) async {
     _windows.clear();
     _output.clear();
     exitCode = null;
@@ -168,7 +175,11 @@ class GameSession extends ChangeNotifier {
           'emulationRoot': emulationRoot,
           'application': game.guestExecutable,
           'arguments': game.arguments,
-          'environment': game.environment,
+          // The Steam client starts its games with these, and steam_api.dll relaunches a game through Steam without them.
+          'environment': {
+            ...game.environment,
+            if (game.steamAppId != 0) ...{'SteamAppId': '${game.steamAppId}', 'SteamGameId': '${game.steamAppId}'},
+          },
           if (installId == null) 'documentMounts': mount else 'directoryMounts': mount,
           'layerDirectory': layers.path,
           'rootLayerDirectory': (await rootLayerDirectory(game)).path,
@@ -176,6 +187,13 @@ class GameSession extends ChangeNotifier {
           'backend': 'fex',
           'liveNetwork': game.liveNetwork,
           'maxDisplayMode': game.maxDisplayMode?.name ?? '',
+          'steamAppId': game.steamAppId,
+          'steamId': game.steamAppId != 0 ? steamId : 0,
+          'steamLanguage': game.steamAppId != 0 ? game.source!.language : '',
+          'steamOwnershipTicket': steamOwnershipTicket ?? Uint8List(0),
+          'steamOwnershipTicketDigest': steamOwnershipTicket == null
+              ? ''
+              : sha256.convert(steamOwnershipTicket).toString(),
           'resumeFile': resumeFile ?? '',
           'expandedRegistryFiles': installScriptRegistryFiles,
           'registryState': (await registryStateFile(game)).path,

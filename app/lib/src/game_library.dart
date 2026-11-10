@@ -300,6 +300,9 @@ class Game {
 
   String get guestExecutable => _toGuestPath(executable);
 
+  /// The Steam app a game installed from Steam runs as, or 0.
+  int get steamAppId => source?.store == 'steam' ? int.tryParse(source!.productId) ?? 0 : 0;
+
   bool get hasFolderAccess => isFolderUri(directory) || installIdOf(directory) != null;
 
   String get guestWorkingDirectory => _toGuestPath(workingDirectory ?? p.posix.dirname(executable));

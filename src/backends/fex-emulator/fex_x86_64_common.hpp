@@ -13,20 +13,17 @@ namespace sogen::fex::detail
 {
     // FEXCore::Core::CPUState::gregs[] is indexed by the x86 hardware register encoding:
     //   0=RAX 1=RCX 2=RDX 3=RBX 4=RSP 5=RBP 6=RSI 7=RDI 8..15=R8..R15
-    enum : int
-    {
-        greg_rax = 0,
-        greg_rcx = 1,
-        greg_rdx = 2,
-        greg_rbx = 3,
-        greg_rsp = 4,
-        greg_rbp = 5,
-        greg_rsi = 6,
-        greg_rdi = 7,
-        greg_r8 = 8,
-        greg_count = 16,
-        greg_invalid = -1,
-    };
+    constexpr int greg_rax = 0;
+    constexpr int greg_rcx = 1;
+    constexpr int greg_rdx = 2;
+    constexpr int greg_rbx = 3;
+    constexpr int greg_rsp = 4;
+    constexpr int greg_rbp = 5;
+    constexpr int greg_rsi = 6;
+    constexpr int greg_rdi = 7;
+    constexpr int greg_r8 = 8;
+    constexpr int greg_count = 16;
+    constexpr int greg_invalid = -1;
 
     enum class register_kind : uint8_t
     {
@@ -66,149 +63,149 @@ namespace sogen::fex::detail
         {
         // 64 bit
         case x86_register::rax:
-            return gpr_access{greg_rax, 0, 8};
+            return gpr_access{.index = greg_rax, .byte_offset = 0, .width = 8};
         case x86_register::rcx:
-            return gpr_access{greg_rcx, 0, 8};
+            return gpr_access{.index = greg_rcx, .byte_offset = 0, .width = 8};
         case x86_register::rdx:
-            return gpr_access{greg_rdx, 0, 8};
+            return gpr_access{.index = greg_rdx, .byte_offset = 0, .width = 8};
         case x86_register::rbx:
-            return gpr_access{greg_rbx, 0, 8};
+            return gpr_access{.index = greg_rbx, .byte_offset = 0, .width = 8};
         case x86_register::rsp:
-            return gpr_access{greg_rsp, 0, 8};
+            return gpr_access{.index = greg_rsp, .byte_offset = 0, .width = 8};
         case x86_register::rbp:
-            return gpr_access{greg_rbp, 0, 8};
+            return gpr_access{.index = greg_rbp, .byte_offset = 0, .width = 8};
         case x86_register::rsi:
-            return gpr_access{greg_rsi, 0, 8};
+            return gpr_access{.index = greg_rsi, .byte_offset = 0, .width = 8};
         case x86_register::rdi:
-            return gpr_access{greg_rdi, 0, 8};
+            return gpr_access{.index = greg_rdi, .byte_offset = 0, .width = 8};
         case x86_register::r8:
-            return gpr_access{greg_r8 + 0, 0, 8};
+            return gpr_access{.index = greg_r8 + 0, .byte_offset = 0, .width = 8};
         case x86_register::r9:
-            return gpr_access{greg_r8 + 1, 0, 8};
+            return gpr_access{.index = greg_r8 + 1, .byte_offset = 0, .width = 8};
         case x86_register::r10:
-            return gpr_access{greg_r8 + 2, 0, 8};
+            return gpr_access{.index = greg_r8 + 2, .byte_offset = 0, .width = 8};
         case x86_register::r11:
-            return gpr_access{greg_r8 + 3, 0, 8};
+            return gpr_access{.index = greg_r8 + 3, .byte_offset = 0, .width = 8};
         case x86_register::r12:
-            return gpr_access{greg_r8 + 4, 0, 8};
+            return gpr_access{.index = greg_r8 + 4, .byte_offset = 0, .width = 8};
         case x86_register::r13:
-            return gpr_access{greg_r8 + 5, 0, 8};
+            return gpr_access{.index = greg_r8 + 5, .byte_offset = 0, .width = 8};
         case x86_register::r14:
-            return gpr_access{greg_r8 + 6, 0, 8};
+            return gpr_access{.index = greg_r8 + 6, .byte_offset = 0, .width = 8};
         case x86_register::r15:
-            return gpr_access{greg_r8 + 7, 0, 8};
+            return gpr_access{.index = greg_r8 + 7, .byte_offset = 0, .width = 8};
 
         // 32 bit (writes zero-extend to 64 bit)
         case x86_register::eax:
-            return gpr_access{greg_rax, 0, 4, true};
+            return gpr_access{.index = greg_rax, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::ecx:
-            return gpr_access{greg_rcx, 0, 4, true};
+            return gpr_access{.index = greg_rcx, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::edx:
-            return gpr_access{greg_rdx, 0, 4, true};
+            return gpr_access{.index = greg_rdx, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::ebx:
-            return gpr_access{greg_rbx, 0, 4, true};
+            return gpr_access{.index = greg_rbx, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::esp:
-            return gpr_access{greg_rsp, 0, 4, true};
+            return gpr_access{.index = greg_rsp, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::ebp:
-            return gpr_access{greg_rbp, 0, 4, true};
+            return gpr_access{.index = greg_rbp, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::esi:
-            return gpr_access{greg_rsi, 0, 4, true};
+            return gpr_access{.index = greg_rsi, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::edi:
-            return gpr_access{greg_rdi, 0, 4, true};
+            return gpr_access{.index = greg_rdi, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::r8d:
-            return gpr_access{greg_r8 + 0, 0, 4, true};
+            return gpr_access{.index = greg_r8 + 0, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::r9d:
-            return gpr_access{greg_r8 + 1, 0, 4, true};
+            return gpr_access{.index = greg_r8 + 1, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::r10d:
-            return gpr_access{greg_r8 + 2, 0, 4, true};
+            return gpr_access{.index = greg_r8 + 2, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::r11d:
-            return gpr_access{greg_r8 + 3, 0, 4, true};
+            return gpr_access{.index = greg_r8 + 3, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::r12d:
-            return gpr_access{greg_r8 + 4, 0, 4, true};
+            return gpr_access{.index = greg_r8 + 4, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::r13d:
-            return gpr_access{greg_r8 + 5, 0, 4, true};
+            return gpr_access{.index = greg_r8 + 5, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::r14d:
-            return gpr_access{greg_r8 + 6, 0, 4, true};
+            return gpr_access{.index = greg_r8 + 6, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
         case x86_register::r15d:
-            return gpr_access{greg_r8 + 7, 0, 4, true};
+            return gpr_access{.index = greg_r8 + 7, .byte_offset = 0, .width = 4, .zero_extend_32 = true};
 
         // 16 bit
         case x86_register::ax:
-            return gpr_access{greg_rax, 0, 2};
+            return gpr_access{.index = greg_rax, .byte_offset = 0, .width = 2};
         case x86_register::cx:
-            return gpr_access{greg_rcx, 0, 2};
+            return gpr_access{.index = greg_rcx, .byte_offset = 0, .width = 2};
         case x86_register::dx:
-            return gpr_access{greg_rdx, 0, 2};
+            return gpr_access{.index = greg_rdx, .byte_offset = 0, .width = 2};
         case x86_register::bx:
-            return gpr_access{greg_rbx, 0, 2};
+            return gpr_access{.index = greg_rbx, .byte_offset = 0, .width = 2};
         case x86_register::sp:
-            return gpr_access{greg_rsp, 0, 2};
+            return gpr_access{.index = greg_rsp, .byte_offset = 0, .width = 2};
         case x86_register::bp:
-            return gpr_access{greg_rbp, 0, 2};
+            return gpr_access{.index = greg_rbp, .byte_offset = 0, .width = 2};
         case x86_register::si:
-            return gpr_access{greg_rsi, 0, 2};
+            return gpr_access{.index = greg_rsi, .byte_offset = 0, .width = 2};
         case x86_register::di:
-            return gpr_access{greg_rdi, 0, 2};
+            return gpr_access{.index = greg_rdi, .byte_offset = 0, .width = 2};
         case x86_register::r8w:
-            return gpr_access{greg_r8 + 0, 0, 2};
+            return gpr_access{.index = greg_r8 + 0, .byte_offset = 0, .width = 2};
         case x86_register::r9w:
-            return gpr_access{greg_r8 + 1, 0, 2};
+            return gpr_access{.index = greg_r8 + 1, .byte_offset = 0, .width = 2};
         case x86_register::r10w:
-            return gpr_access{greg_r8 + 2, 0, 2};
+            return gpr_access{.index = greg_r8 + 2, .byte_offset = 0, .width = 2};
         case x86_register::r11w:
-            return gpr_access{greg_r8 + 3, 0, 2};
+            return gpr_access{.index = greg_r8 + 3, .byte_offset = 0, .width = 2};
         case x86_register::r12w:
-            return gpr_access{greg_r8 + 4, 0, 2};
+            return gpr_access{.index = greg_r8 + 4, .byte_offset = 0, .width = 2};
         case x86_register::r13w:
-            return gpr_access{greg_r8 + 5, 0, 2};
+            return gpr_access{.index = greg_r8 + 5, .byte_offset = 0, .width = 2};
         case x86_register::r14w:
-            return gpr_access{greg_r8 + 6, 0, 2};
+            return gpr_access{.index = greg_r8 + 6, .byte_offset = 0, .width = 2};
         case x86_register::r15w:
-            return gpr_access{greg_r8 + 7, 0, 2};
+            return gpr_access{.index = greg_r8 + 7, .byte_offset = 0, .width = 2};
 
         // 8 bit low
         case x86_register::al:
-            return gpr_access{greg_rax, 0, 1};
+            return gpr_access{.index = greg_rax, .byte_offset = 0, .width = 1};
         case x86_register::cl:
-            return gpr_access{greg_rcx, 0, 1};
+            return gpr_access{.index = greg_rcx, .byte_offset = 0, .width = 1};
         case x86_register::dl:
-            return gpr_access{greg_rdx, 0, 1};
+            return gpr_access{.index = greg_rdx, .byte_offset = 0, .width = 1};
         case x86_register::bl:
-            return gpr_access{greg_rbx, 0, 1};
+            return gpr_access{.index = greg_rbx, .byte_offset = 0, .width = 1};
         case x86_register::spl:
-            return gpr_access{greg_rsp, 0, 1};
+            return gpr_access{.index = greg_rsp, .byte_offset = 0, .width = 1};
         case x86_register::bpl:
-            return gpr_access{greg_rbp, 0, 1};
+            return gpr_access{.index = greg_rbp, .byte_offset = 0, .width = 1};
         case x86_register::sil:
-            return gpr_access{greg_rsi, 0, 1};
+            return gpr_access{.index = greg_rsi, .byte_offset = 0, .width = 1};
         case x86_register::dil:
-            return gpr_access{greg_rdi, 0, 1};
+            return gpr_access{.index = greg_rdi, .byte_offset = 0, .width = 1};
         case x86_register::r8b:
-            return gpr_access{greg_r8 + 0, 0, 1};
+            return gpr_access{.index = greg_r8 + 0, .byte_offset = 0, .width = 1};
         case x86_register::r9b:
-            return gpr_access{greg_r8 + 1, 0, 1};
+            return gpr_access{.index = greg_r8 + 1, .byte_offset = 0, .width = 1};
         case x86_register::r10b:
-            return gpr_access{greg_r8 + 2, 0, 1};
+            return gpr_access{.index = greg_r8 + 2, .byte_offset = 0, .width = 1};
         case x86_register::r11b:
-            return gpr_access{greg_r8 + 3, 0, 1};
+            return gpr_access{.index = greg_r8 + 3, .byte_offset = 0, .width = 1};
         case x86_register::r12b:
-            return gpr_access{greg_r8 + 4, 0, 1};
+            return gpr_access{.index = greg_r8 + 4, .byte_offset = 0, .width = 1};
         case x86_register::r13b:
-            return gpr_access{greg_r8 + 5, 0, 1};
+            return gpr_access{.index = greg_r8 + 5, .byte_offset = 0, .width = 1};
         case x86_register::r14b:
-            return gpr_access{greg_r8 + 6, 0, 1};
+            return gpr_access{.index = greg_r8 + 6, .byte_offset = 0, .width = 1};
         case x86_register::r15b:
-            return gpr_access{greg_r8 + 7, 0, 1};
+            return gpr_access{.index = greg_r8 + 7, .byte_offset = 0, .width = 1};
 
         // 8 bit high
         case x86_register::ah:
-            return gpr_access{greg_rax, 1, 1};
+            return gpr_access{.index = greg_rax, .byte_offset = 1, .width = 1};
         case x86_register::ch:
-            return gpr_access{greg_rcx, 1, 1};
+            return gpr_access{.index = greg_rcx, .byte_offset = 1, .width = 1};
         case x86_register::dh:
-            return gpr_access{greg_rdx, 1, 1};
+            return gpr_access{.index = greg_rdx, .byte_offset = 1, .width = 1};
         case x86_register::bh:
-            return gpr_access{greg_rbx, 1, 1};
+            return gpr_access{.index = greg_rbx, .byte_offset = 1, .width = 1};
 
         default:
             return std::nullopt;
