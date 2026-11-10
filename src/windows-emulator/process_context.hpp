@@ -146,6 +146,8 @@ namespace sogen
     struct gdi_dc_state
     {
         uint32_t selected_bitmap{};
+        // gdi32 可先写共享字体槽；这里保存批处理同步后的内核选择，用于返回旧字体。
+        uint32_t selected_font{};
         hwnd target_window{};
         int32_t current_x{};
         int32_t current_y{};
@@ -156,6 +158,7 @@ namespace sogen
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->selected_bitmap);
+            buffer.write(this->selected_font);
             buffer.write(this->target_window);
             buffer.write(this->current_x);
             buffer.write(this->current_y);
@@ -166,6 +169,7 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->selected_bitmap);
+            buffer.read(this->selected_font);
             buffer.read(this->target_window);
             buffer.read(this->current_x);
             buffer.read(this->current_y);

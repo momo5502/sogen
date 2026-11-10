@@ -3,6 +3,7 @@
 #include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
 #include "../gdi_clip.hpp"
+#include "../gdi_charset.hpp"
 #include "../gdi_font_signature.hpp"
 #include "../syscall_utils.hpp"
 
@@ -35,6 +36,9 @@ namespace sogen
             constexpr int32_t k_gdi_dc_object_pen = 0x300000;
 
             constexpr uint32_t k_gdi_dc_attr_size = 0x130;
+            constexpr uint32_t k_gdi_dc_attr_charset_offset = 0x04;
+            constexpr uint32_t k_gdi_dc_attr_dirty_offset = 0x98;
+            constexpr uint32_t k_gdi_dirty_charset = 0x10;
             constexpr uint32_t k_gdi_brush_attr_size = 0x20;
             constexpr uint32_t k_gdi_pen_attr_size = 0x20;
             constexpr uint32_t k_gdi_bitmap_attr_size = 0x20;
@@ -128,6 +132,7 @@ namespace sogen
             constexpr int16_t k_gdi_batch_cmd_text_out = 2;
             constexpr int16_t k_gdi_batch_cmd_text_out_rect = 3;
             constexpr int16_t k_gdi_batch_cmd_poly_pat_blt = 1;
+            constexpr int16_t k_gdi_batch_cmd_select_font = 6;
             constexpr int16_t k_gdi_batch_cmd_delete_object = 7;
             constexpr int16_t k_gdi_batch_cmd_delete_region = 8;
             constexpr uint32_t k_gdibs_no_rect = 0x80000000u;
@@ -196,6 +201,15 @@ namespace sogen
                 int16_t size{};
                 int16_t cmd{};
             };
+
+            struct gdi_batch_select_font
+            {
+                gdi_batch_header header{};
+                uint64_t font{};
+            };
+
+            static_assert(offsetof(gdi_batch_select_font, font) == 8);
+            static_assert(sizeof(gdi_batch_select_font) == 16);
 
             struct gdi_batch_text_out
             {
@@ -631,6 +645,61 @@ namespace sogen
 
                 addr = entry.Object;
                 return addr != 0;
+            }
+
+            // native 与 WoW64 gdi32 都使用 64 位字体槽；WoW64 写入的是符号扩展后的句柄。
+            void write_dc_font(const syscall_context& c, const uint64_t dc_attr, const uint32_t font)
+            {
+                const auto value = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(font)));
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_font_offset, &value, sizeof(value));
+                auto dirty = c.emu.read_memory<uint32_t>(dc_attr + k_gdi_dc_attr_dirty_offset);
+                dirty = (dirty & ~0x30u) | k_gdi_dirty_charset;
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_dirty_offset, &dirty, sizeof(dirty));
+            }
+
+            std::optional<uint32_t> select_dc_font(const syscall_context& c, const hdc dc, const uint32_t font)
+            {
+                uint64_t dc_attr = 0;
+                uint64_t font_attr = 0;
+                const auto state = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+                if (state == c.proc.gdi_dc_states.end() || !get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr) ||
+                    !get_gdi_object_address(c, font, k_gdi_font_type, font_attr) || !c.proc.gdi_fonts.contains(font))
+                {
+                    return std::nullopt;
+                }
+
+                const auto previous = state->second.selected_font;
+                state->second.selected_font = font;
+                write_dc_font(c, dc_attr, font);
+                return previous;
+            }
+
+            std::optional<gdi::charset_info> get_dc_charset(const syscall_context& c, const hdc dc)
+            {
+                uint64_t dc_attr = 0;
+                if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    return std::nullopt;
+                }
+                uint64_t font = 0;
+                if (!c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_font_offset, &font, sizeof(font)))
+                {
+                    return std::nullopt;
+                }
+                const auto logfont = c.proc.gdi_fonts.find(static_cast<uint32_t>(font));
+                if (logfont == c.proc.gdi_fonts.end())
+                {
+                    return std::nullopt;
+                }
+
+                const auto& oem = c.proc.oem_code_page;
+                const auto info =
+                    gdi::resolve_charset(logfont->second.lfCharSet, c.proc.ansi_code_page.id(), oem ? oem->id() : uint16_t{437});
+                const auto packed = info.packed();
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_charset_offset, &packed, sizeof(packed));
+                const auto dirty = c.emu.read_memory<uint32_t>(dc_attr + k_gdi_dc_attr_dirty_offset) & ~k_gdi_dirty_charset;
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_dirty_offset, &dirty, sizeof(dirty));
+                return info;
             }
 
             // RGNATTR. gdi32 answers simple and null regions from it in user mode and edits it in place
@@ -1776,8 +1845,14 @@ namespace sogen
                         break;
                     }
 
-                    if ((header->cmd == k_gdi_batch_cmd_delete_object || header->cmd == k_gdi_batch_cmd_delete_region) &&
-                        static_cast<size_t>(header->size) >= sizeof(gdi_batch_delete_object))
+                    if (header->cmd == k_gdi_batch_cmd_select_font && static_cast<size_t>(header->size) >= sizeof(gdi_batch_select_font))
+                    {
+                        gdi_batch_select_font selection{};
+                        std::memcpy(&selection, bytes + offset, sizeof(selection));
+                        (void)select_dc_font(c, dc, static_cast<uint32_t>(selection.font));
+                    }
+                    else if ((header->cmd == k_gdi_batch_cmd_delete_object || header->cmd == k_gdi_batch_cmd_delete_region) &&
+                             static_cast<size_t>(header->size) >= sizeof(gdi_batch_delete_object))
                     {
                         gdi_batch_delete_object delete_object{};
                         std::memcpy(&delete_object, bytes + offset, sizeof(delete_object));
@@ -2150,6 +2225,7 @@ namespace sogen
             {
                 std::array<uint8_t, k_gdi_dc_attr_size> zeroed{};
                 c.emu.write_memory(dc_attr, zeroed.data(), zeroed.size());
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_dirty_offset, &k_gdi_dirty_charset, sizeof(k_gdi_dirty_charset));
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_rop2_offset, &k_r2_copypen, sizeof(k_r2_copypen));
 
                 constexpr uint32_t white = 0x00FFFFFFu;
@@ -2189,7 +2265,9 @@ namespace sogen
                 const auto handle_value = allocate_gdi_handle(c, k_gdi_dc_type, dc_attr, dc_attr);
                 if (handle_value != 0)
                 {
-                    c.proc.gdi_dc_states[handle_value] = {};
+                    auto& state = c.proc.gdi_dc_states[handle_value];
+                    state = {};
+                    c.emu.read_memory(dc_attr + k_gdi_dc_attr_font_offset, &state.selected_font, sizeof(state.selected_font));
                 }
                 else
                 {
@@ -3145,6 +3223,10 @@ namespace sogen
                 target_index = static_cast<size_t>(saved_dc) - 1;
             }
 
+            if (!select_dc_font(c, dc, stack[target_index].selected_font))
+            {
+                return FALSE;
+            }
             c.proc.gdi_dc_states[dc_value] = stack[target_index];
             stack.resize(target_index);
             return TRUE;
@@ -3789,9 +3871,15 @@ namespace sogen
             return old;
         }
 
-        uint64_t handle_NtGdiSelectFont(const syscall_context&, const hdc dc, const uint64_t font)
+        uint64_t handle_NtGdiSelectFont(const syscall_context& c, const hdc dc, const uint64_t font)
         {
-            return dc != 0 ? font : 0;
+            const auto previous = select_dc_font(c, dc, static_cast<uint32_t>(font));
+            if (!previous)
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+                return 0;
+            }
+            return static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(*previous)));
         }
 
         BOOL handle_NtGdiFillRgn(const syscall_context& c, const hdc dc, const handle region, const hbrush brush)
@@ -4125,7 +4213,7 @@ namespace sogen
             return TRUE;
         }
 
-        uint32_t handle_NtGdiGetTextCharsetInfo(const syscall_context& c, const hdc /*dc*/, const emulator_pointer sig,
+        uint32_t handle_NtGdiGetTextCharsetInfo(const syscall_context& c, const hdc dc, const emulator_pointer sig,
                                                 const uint32_t /*flags*/)
         {
             if (sig != 0)
@@ -4134,7 +4222,13 @@ namespace sogen
                 c.emu.write_memory(sig, zeroed.data(), zeroed.size());
             }
 
-            return 1;
+            const auto info = get_dc_charset(c, dc);
+            if (!info)
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+                return DEFAULT_CHARSET;
+            }
+            return info->charset;
         }
 
         uint32_t handle_NtGdiQueryFontAssocInfo(const syscall_context&, const hdc /*dc*/)
@@ -4183,7 +4277,8 @@ namespace sogen
             write_u16(0x2E, 0x7E);
             write_u16(0x30, 0x3F);
             write_u16(0x32, 0x20);
-            write_u8(0x38, 0x01);
+            const auto charset = get_dc_charset(c, dc);
+            write_u8(0x38, charset ? charset->charset : DEFAULT_CHARSET);
 
             return 1;
         }
@@ -4830,9 +4925,15 @@ namespace sogen
             return (visible_left < visible_right && visible_top < visible_bottom) ? TRUE : FALSE;
         }
 
-        uint32_t handle_NtGdiGetCharSet(const syscall_context&, const hdc dc)
+        uint32_t handle_NtGdiGetCharSet(const syscall_context& c, const hdc dc)
         {
-            return dc != 0 ? 1 : 0;
+            const auto info = get_dc_charset(c, dc);
+            if (!info)
+            {
+                set_guest_last_error(c, k_error_invalid_handle);
+                return static_cast<uint32_t>(DEFAULT_CHARSET) << 16;
+            }
+            return info->packed();
         }
 
         int32_t handle_NtGdiExtSelectClipRgn(const syscall_context&, const hdc dc, const uint64_t /*region*/, const LONG /*mode*/)
