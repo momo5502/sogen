@@ -31,6 +31,9 @@ class OwnedGames extends ChangeNotifier {
   final StoreAccounts _accounts;
   final _known = <String, AccountGames>{};
   final _refreshes = <String, ({StoreConnection connection, Future<void> done})>{};
+
+  /// The session each account's games were last asked for with; a sign-in that replaces it asks again.
+  final _askedWith = <String, StoreConnection>{};
   Future<void> _writes = Future.value();
 
   static Future<OwnedGames> load(StoreAccounts accounts) async {
@@ -71,6 +74,7 @@ class OwnedGames extends ChangeNotifier {
       }
     });
     _refreshes[account.id] = (connection: connection, done: done);
+    _askedWith[account.id] = connection;
     return done;
   }
 
@@ -103,12 +107,13 @@ class OwnedGames extends ChangeNotifier {
     final ids = {for (final account in signedIn) account.id};
     final before = _known.length;
     _known.removeWhere((id, _) => !ids.contains(id));
+    _askedWith.removeWhere((id, _) => !ids.contains(id));
     if (_known.length != before) {
       _save();
       notifyListeners();
     }
     for (final account in signedIn) {
-      if (_known[account.id]?.refreshing != false && _refreshes[account.id]?.connection != account.connection) {
+      if (_askedWith[account.id] != account.connection) {
         unawaited(_refresh(account));
       }
     }

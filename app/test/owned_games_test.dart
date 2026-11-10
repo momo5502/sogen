@@ -92,10 +92,25 @@ void main() {
     next = _Store()..listed = [game];
     await accounts.signIn(accounts.providers.single);
     earlier.completeError(const StoreException('closed'));
-    await pumpEventQueue();
+    await owned.refresh(const []);
 
     expect(owned.of(account).games?.single.productId, game.productId);
     expect(owned.of(account).error, isNull);
+  });
+
+  test('signing in again after the earlier session listed its games lists those of the new session', () async {
+    store.listed = [];
+    final (accounts, owned) = await start();
+    await owned.refresh();
+    final account = accounts.signedIn.single;
+    await store.signIn.identify();
+
+    next = _Store()..listed = [game];
+    await accounts.signIn(accounts.providers.single);
+    await pumpEventQueue();
+    await owned.refresh(const []);
+
+    expect(owned.of(account).games?.single.productId, game.productId);
   });
 
   test('the games of an account that signed out are forgotten', () async {
@@ -153,7 +168,7 @@ class _SignIn extends ChangeNotifier implements StoreSignIn {
   String? get displayName => 'alice';
 
   @override
-  Future<void> identify() async {}
+  Future<void> identify() async => notifyListeners();
 
   @override
   Future<bool> signIn() async => true;
