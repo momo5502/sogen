@@ -109,6 +109,7 @@ List<StoreProvider> _storeProviders(GlobalKey<NavigatorState> navigator) => [
         catalog: catalog,
         installSource: SteamInstallSource(client),
         restore: account.restore,
+        ownershipTicket: client.appOwnershipTicket,
         close: () async {
           catalog.close();
           await client.close();

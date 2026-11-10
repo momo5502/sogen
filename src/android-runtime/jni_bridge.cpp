@@ -210,9 +210,11 @@ extern "C"
     JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(
         JNIEnv* env, jobject /*self*/, const jlong handle, jstring root, jstring application, jobjectArray arguments,
         jobjectArray environment, jstring root_layer, jobjectArray directory_mounts, jobjectArray document_trees, jstring working_directory,
-        jstring backend, const jboolean live_network, jstring max_display_mode, jstring sandbox_executable, jstring vulkan_hook_directory,
-        jstring vulkan_driver_directory, jstring vulkan_driver_name, jstring snapshot_directory, jstring resume_file,
-        jobjectArray registry_files, jobjectArray expanded_registry_files, jstring registry_state, jobjectArray managed_arguments)
+        jstring backend, const jboolean live_network, jstring max_display_mode, const jint steam_app_id, const jlong steam_id,
+        jstring steam_language, jbyteArray steam_ownership_ticket, jstring steam_ownership_ticket_digest, jstring sandbox_executable,
+        jstring vulkan_hook_directory, jstring vulkan_driver_directory, jstring vulkan_driver_name, jstring snapshot_directory,
+        jstring resume_file, jobjectArray registry_files, jobjectArray expanded_registry_files, jstring registry_state,
+        jobjectArray managed_arguments)
     {
         sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -223,6 +225,10 @@ extern "C"
             .working_directory = to_string(*env, working_directory),
             .backend = to_string(*env, backend),
             .live_network = live_network == JNI_TRUE,
+            .steam_app_id = static_cast<uint32_t>(std::max(steam_app_id, 0)),
+            .steam_id = static_cast<uint64_t>(steam_id),
+            .steam_language = to_string(*env, steam_language),
+            .steam_ownership_ticket_digest = to_string(*env, steam_ownership_ticket_digest),
             .sandbox_executable = to_string(*env, sandbox_executable),
             .vulkan =
                 {
@@ -238,6 +244,12 @@ extern "C"
 
         try
         {
+            if (steam_ownership_ticket)
+            {
+                config.steam_ownership_ticket.resize(static_cast<size_t>(env->GetArrayLength(steam_ownership_ticket)));
+                env->GetByteArrayRegion(steam_ownership_ticket, 0, static_cast<jsize>(config.steam_ownership_ticket.size()),
+                                        reinterpret_cast<jbyte*>(config.steam_ownership_ticket.data()));
+            }
             config.directory_mounts = to_directory_mounts(*env, directory_mounts);
             std::ranges::move(to_strings(*env, registry_files), std::back_inserter(config.registry_files));
             std::ranges::move(to_strings(*env, expanded_registry_files), std::back_inserter(config.expanded_registry_files));

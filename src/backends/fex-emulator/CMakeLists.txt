@@ -22,4 +22,9 @@ target_link_libraries(fex-emulator PRIVATE emulator-common)
 target_link_libraries(fex-emulator PRIVATE fexcore)
 add_dependencies(fex-emulator fex_external)
 
+if(SOGEN_ENABLE_HVF)
+  target_link_libraries(fex-emulator PRIVATE hvf-arm64-emulator)
+  target_compile_definitions(fex-emulator PRIVATE SOGEN_FEX_HYPERVISOR=1)
+endif()
+
 sogen_strip_target(fex-emulator)

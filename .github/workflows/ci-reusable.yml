@@ -296,7 +296,6 @@ jobs:
           #- macOS x86_64
           #- iOS arm64
           - Android x86_64
-          - Android arm64
           - Emscripten Web
           - Emscripten Web Memory 64
           - Emscripten Node.js
@@ -347,11 +346,6 @@ jobs:
             rust-target: x86_64-linux-android
             ndk-version: r26d
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
-          - platform: Android arm64
-            runner: ubuntu-24.04
-            abi: arm64-v8a
-            ndk-version: r29
-            cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_ENABLE_FEX=On -DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
           - platform: Emscripten Web
             runner: ubuntu-24.04
             cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
@@ -482,10 +476,9 @@ jobs:
 
       # deps/FEX/CMakeLists.txt invokes aarch64_fit_native.py via execute_process(COMMAND python3 ...),
       # which resolves through PATH - the interpreter Set up Python just configured, not a system one.
-      # Needed on every platform where this workflow enables FEX: Linux arm64 Clang, macOS arm64,
-      # and Android arm64.
+      # Needed on every platform where this workflow enables FEX: Linux arm64 Clang and macOS arm64.
       - name: Install FEXCore Build Prerequisites (Python)
-        if: "${{ matrix.platform == 'Linux arm64 Clang' || matrix.platform == 'macOS arm64' || matrix.platform == 'Android arm64' }}"
+        if: "${{ matrix.platform == 'Linux arm64 Clang' || matrix.platform == 'macOS arm64' }}"
         run: python -m pip install --disable-pip-version-check packaging
 
       - name: CMake Build
@@ -1286,8 +1279,13 @@ jobs:
       - name: Copy Sample
         run: cp ./build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
+      # The manifest names the commit a root was built for, which the app compares with its own and with the published
+      # one to find out when to update its root. It downloads only the files that changed, from the blobs; root.zip
+      # installs the first root.
       - name: Create Emulation Root zip
-        run: cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/public/root.zip" ./root
+        run: |
+          python3 ./src/tools/create-root-blobs.py ./build/release/artifacts/root ./page/public/root "${{ github.sha }}"
+          cd ./build/release/artifacts && zip -r "${{github.workspace}}/page/public/root.zip" ./root
 
       - name: Create Linux Emulation Root zip
         run: cd ./deps/sogen-linux-files && zip -r "${{github.workspace}}/page/public/linux-root.zip" ./root
@@ -1318,27 +1316,48 @@ jobs:
           path: "*"
           retention-days: 1
 
+  # Builds the app's native libraries itself instead of waiting for the whole build matrix.
   build-android-app:
     name: Build Android App
     runs-on: ubuntu-24.04
-    needs: [build]
     steps:
       # The full history provides the commit count for the version code.
       - name: Checkout Source
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          submodules: recursive
 
-      - name: Download Android arm64 Artifacts
-        uses: pyTooling/download-artifact@v8
+      # Gradle installs a missing NDK itself, but only tries once and fails the build on a truncated download.
+      - name: Install Android NDK
+        id: ndk
+        run: |
+          ndk=$(sed -n 's/^ *ndkVersion = "\(.*\)"$/\1/p' app/android/app/build.gradle.kts)
+          echo "path=$ANDROID_HOME/ndk/${ndk:?}" >> "$GITHUB_OUTPUT"
+          for _ in 1 2 3; do
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ndk" > /dev/null && exit 0
+            rm -rf "$ANDROID_HOME/ndk/$ndk" && sleep 30
+          done
+          exit 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
-          name: Android arm64 Release Artifacts
-          path: build/android/arm64-v8a
+          python-version: "3.12"
+
+      # libclang generates the Steam provider's interface tables at configure time; FEXCore's build needs packaging.
+      - name: Install Native Build Prerequisites (Python)
+        run: python -m pip install --disable-pip-version-check libclang packaging
+
+      - name: Build Native Libraries
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.ndk.outputs.path }}
+        run: cmake --workflow --preset=android-app
 
       - name: Stage Native Libraries
         run: |
           mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
-          cp build/android/arm64-v8a/*.so app/android/app/src/main/jniLibs/arm64-v8a/
+          cp build/android-arm64/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 
       # Mesa's Turnip, loaded through libadrenotools in place of Adreno's stock driver.
       - name: Download Turnip Driver
@@ -1403,19 +1422,20 @@ jobs:
         id: version
         run: echo "build_number=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
 
-      # Gradle installs a missing NDK itself, but only tries once and fails the build on a truncated download.
-      - name: Install Android NDK
+      # Gradle retries a download that fails with a 5xx, 408, 429 or a dropped connection, but only three times within
+      # seconds, while GitHub's release CDN, which Maven Central redirects some artifacts to, answers 504 for minutes.
+      # Waiting 15s and doubling, nine attempts span about an hour.
+      - name: Retry Gradle Downloads
         run: |
-          ndk=$(sed -n 's/.*val ndkVersion: String = "\(.*\)".*/\1/p' "$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt")
-          for _ in 1 2 3; do
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${ndk:?}" > /dev/null && exit 0
-            rm -rf "$ANDROID_HOME/ndk/$ndk" && sleep 30
-          done
-          exit 1
+          mkdir -p ~/.gradle
+          {
+            echo "systemProp.org.gradle.internal.network.retry.max.attempts=9"
+            echo "systemProp.org.gradle.internal.network.retry.initial.backOff=15000"
+          } >> ~/.gradle/gradle.properties
 
       - name: Build APK
         working-directory: app
-        run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }}
+        run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }}
 
       # Building the APK generates the Gradle wrapper the native unit tests run with. The Android Gradle Plugin only
       # creates unit test tasks for the debug build type.
@@ -1433,7 +1453,7 @@ jobs:
       - name: Build App Bundle
         if: steps.signing.outputs.signed == 'true'
         working-directory: app
-        run: flutter build appbundle --release --build-number=${{ steps.version.outputs.build_number }}
+        run: flutter build appbundle --release --build-number=${{ steps.version.outputs.build_number }} --dart-define=SOGEN_COMMIT=${{ github.sha }}
 
       - name: Upload App Bundle
         if: steps.signing.outputs.signed == 'true'

@@ -63,6 +63,11 @@ namespace sogen::android
         std::string backend{};
         bool live_network{};
         std::optional<display_mode> max_display_mode{};
+        uint32_t steam_app_id{};
+        uint64_t steam_id{};
+        std::string steam_language{};
+        std::vector<uint8_t> steam_ownership_ticket{};
+        std::string steam_ownership_ticket_digest{};
         std::filesystem::path sandbox_executable{};
         vulkan_driver vulkan{};
         // Where a suspend without a destination saves the process.
@@ -157,6 +162,8 @@ namespace sogen::android
         subprocess_process_manager* processes_{};
         bool stop_requested_{};
         uint32_t frame_limit_{};
+        // The Steam provider's interfaces live outside the saved process, so a Steam game cannot be suspended yet.
+        bool runs_steam_game_{};
 
         std::optional<pseudo_terminal> terminal_{};
 
