@@ -1,5 +1,6 @@
 #include "emulation_test_utils.hpp"
 #include <syscall_utils.hpp>
+#include <token.hpp>
 
 namespace sogen::syscalls
 {
@@ -16,8 +17,26 @@ namespace sogen::test
 {
     namespace
     {
-        constexpr std::array<uint8_t, 16> administrators_sid = {
-            0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00,
+        // S-1-5-4, NT AUTHORITY\INTERACTIVE
+        constexpr std::array<uint8_t, 12> interactive_sid{0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x04, 0x00, 0x00, 0x00};
+
+        constexpr uint8_t object_inherit_ace = 0x1;
+        constexpr ACCESS_MASK generic_read = 0x80000000;
+        constexpr ACCESS_MASK generic_all = 0x10000000;
+        constexpr ACCESS_MASK file_generic_read = 0x00120089;
+        constexpr EMU_GENERIC_MAPPING file_generic_mapping{
+            .GenericRead = file_generic_read,
+            .GenericWrite = 0x00120116,
+            .GenericExecute = 0x001200A0,
+            .GenericAll = 0x001F01FF,
+        };
+
+        struct test_ace
+        {
+            uint8_t type{ACCESS_ALLOWED_ACE_TYPE};
+            uint8_t flags{};
+            ACCESS_MASK mask{};
+            std::span<const uint8_t> sid{};
         };
 
         class ElevatedTokenTest : public testing::TestWithParam<bool>
@@ -63,52 +82,67 @@ namespace sogen::test
                 return emulator_object<ULONG>{this->emu->memory, this->storage}.read();
             }
 
-            // A self-relative descriptor with a single allow ACE for the given SID.
-            uint64_t build_descriptor(const std::span<const uint8_t> sid, const ACCESS_MASK mask)
+            // A self-relative descriptor owned by LocalSystem whose DACL holds the ACEs in order.
+            uint64_t build_descriptor(const std::initializer_list<test_ace> aces)
             {
                 const auto descriptor_address = this->storage + 0x1000;
-                const auto dacl_offset = static_cast<uint32_t>(sizeof(SECURITY_DESCRIPTOR_RELATIVE));
-                const auto ace_offset = dacl_offset + static_cast<uint32_t>(sizeof(ACL));
-                const auto ace_size = static_cast<uint16_t>(offsetof(ACCESS_ALLOWED_ACE, SidStart) + sid.size());
+                const auto owner_offset = static_cast<uint32_t>(sizeof(SECURITY_DESCRIPTOR_RELATIVE));
+                const auto group_offset = owner_offset + static_cast<uint32_t>(local_system_sid.size());
+                const auto dacl_offset = group_offset + static_cast<uint32_t>(local_system_sid.size());
 
                 SECURITY_DESCRIPTOR_RELATIVE descriptor{};
                 descriptor.Revision = 1;
                 descriptor.Control = SE_SELF_RELATIVE | SE_DACL_PRESENT;
+                descriptor.Owner = owner_offset;
+                descriptor.Group = group_offset;
                 descriptor.Dacl = dacl_offset;
                 emulator_object<SECURITY_DESCRIPTOR_RELATIVE>{this->emu->memory, descriptor_address}.write(descriptor);
+                this->emu->memory.write_memory(descriptor_address + owner_offset, local_system_sid.data(), local_system_sid.size());
+                this->emu->memory.write_memory(descriptor_address + group_offset, local_system_sid.data(), local_system_sid.size());
+
+                auto ace_address = descriptor_address + dacl_offset + sizeof(ACL);
+                for (const auto& entry : aces)
+                {
+                    ACCESS_ALLOWED_ACE ace{};
+                    ace.Header.AceType = entry.type;
+                    ace.Header.AceFlags = entry.flags;
+                    ace.Header.AceSize = static_cast<uint16_t>(offsetof(ACCESS_ALLOWED_ACE, SidStart) + entry.sid.size());
+                    ace.Mask = entry.mask;
+                    emulator_object<ACCESS_ALLOWED_ACE>{this->emu->memory, ace_address}.write(ace);
+                    this->emu->memory.write_memory(ace_address + offsetof(ACCESS_ALLOWED_ACE, SidStart), entry.sid.data(),
+                                                   entry.sid.size());
+                    ace_address += ace.Header.AceSize;
+                }
 
                 ACL acl{};
                 acl.AclRevision = 2;
-                acl.AclSize = static_cast<uint16_t>(sizeof(ACL) + ace_size);
-                acl.AceCount = 1;
+                acl.AclSize = static_cast<uint16_t>(ace_address - (descriptor_address + dacl_offset));
+                acl.AceCount = static_cast<uint16_t>(aces.size());
                 emulator_object<ACL>{this->emu->memory, descriptor_address + dacl_offset}.write(acl);
-
-                ACCESS_ALLOWED_ACE ace{};
-                ace.Header.AceType = 0;
-                ace.Header.AceSize = ace_size;
-                ace.Mask = mask;
-                emulator_object<ACCESS_ALLOWED_ACE>{this->emu->memory, descriptor_address + ace_offset}.write(ace);
-                this->emu->memory.write_memory(descriptor_address + ace_offset + offsetof(ACCESS_ALLOWED_ACE, SidStart), sid.data(),
-                                               sid.size());
 
                 return descriptor_address;
             }
 
-            NTSTATUS check_access(const handle token, const std::span<const uint8_t> sid, const ACCESS_MASK mask)
+            NTSTATUS check_access(const handle token, const std::initializer_list<test_ace> aces, const ACCESS_MASK desired_access)
             {
-                const auto descriptor = this->build_descriptor(sid, mask);
+                const auto descriptor = this->build_descriptor(aces);
 
                 const emulator_object<EMU_GENERIC_MAPPING> mapping{this->emu->memory, this->storage + 0x800};
-                mapping.write(EMU_GENERIC_MAPPING{});
+                mapping.write(file_generic_mapping);
 
                 const emulator_object<ULONG> privilege_set_length{this->emu->memory, this->storage + 0x820};
                 const emulator_object<ACCESS_MASK> granted{this->emu->memory, this->storage + 0x830};
                 const emulator_object<NTSTATUS> status{this->emu->memory, this->storage + 0x840};
 
-                const auto result = syscalls::handle_NtAccessCheck(this->context(), descriptor, token, mask, mapping, 0,
+                const auto result = syscalls::handle_NtAccessCheck(this->context(), descriptor, token, desired_access, mapping, 0,
                                                                    privilege_set_length, granted, status);
                 EXPECT_EQ(STATUS_SUCCESS, result);
                 return status.read();
+            }
+
+            NTSTATUS check_access(const handle token, const std::span<const uint8_t> sid, const ACCESS_MASK mask)
+            {
+                return this->check_access(token, {test_ace{.mask = mask, .sid = sid}}, mask);
             }
 
             std::unique_ptr<windows_emulator> emu{};
@@ -170,6 +204,30 @@ namespace sogen::test
         EXPECT_EQ(0x20u, this->emu->memory.read_memory<uint8_t>(label.Label.Sid + 9));
 
         EXPECT_EQ(STATUS_ACCESS_DENIED, this->check_access(CURRENT_THREAD_EFFECTIVE_TOKEN, administrators_sid, 1));
+    }
+
+    TEST_P(ElevatedTokenTest, AceMasksAreComparedWithoutGenericMapping)
+    {
+        EXPECT_EQ(STATUS_ACCESS_DENIED,
+                  this->check_access(CURRENT_PROCESS_TOKEN, {{.mask = generic_read, .sid = interactive_sid}}, file_generic_read));
+        EXPECT_EQ(STATUS_SUCCESS, this->check_access(CURRENT_PROCESS_TOKEN,
+                                                     {{.type = ACCESS_DENIED_ACE_TYPE, .mask = generic_all, .sid = interactive_sid},
+                                                      {.mask = file_generic_read, .sid = interactive_sid}},
+                                                     file_generic_read));
+    }
+
+    TEST_P(ElevatedTokenTest, InheritOnlyAcesAreSkipped)
+    {
+        constexpr uint8_t inherit_only = object_inherit_ace | INHERIT_ONLY_ACE;
+        EXPECT_EQ(STATUS_ACCESS_DENIED,
+                  this->check_access(CURRENT_PROCESS_TOKEN, {{.flags = inherit_only, .mask = file_generic_read, .sid = interactive_sid}},
+                                     file_generic_read));
+        EXPECT_EQ(
+            STATUS_SUCCESS,
+            this->check_access(CURRENT_PROCESS_TOKEN,
+                               {{.type = ACCESS_DENIED_ACE_TYPE, .flags = inherit_only, .mask = file_generic_read, .sid = interactive_sid},
+                                {.mask = file_generic_read, .sid = interactive_sid}},
+                               file_generic_read));
     }
 
     INSTANTIATE_TEST_SUITE_P(Elevation, ElevatedTokenTest, testing::Values(false, true),
