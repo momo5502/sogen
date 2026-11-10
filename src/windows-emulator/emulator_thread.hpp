@@ -471,9 +471,10 @@ namespace sogen
         // bridge to wait on a Vulkan semaphore cooperatively (other guest threads run while the GPU works)
         // instead of blocking the single VP. Polled by is_thread_ready and completed via
         // mark_as_ready(STATUS_SUCCESS). Idle vCPUs poll it once a millisecond unless woken, so whatever makes it
-        // true calls windows_emulator::credit_idle_wakeup. Not serialized: the only user (GPU bridge) is not
-        // snapshotable.
+        // true calls windows_emulator::credit_idle_wakeup. A predicate cannot be saved: a snapshot keeps only
+        // awaits_restored_host_condition, and the device that set it sets it again once the state is restored.
         std::function<bool()> await_host_condition{};
+        bool awaits_restored_host_condition{false};
 
         bool apc_alertable{false};
         std::vector<pending_apc> pending_apcs{};
@@ -648,6 +649,7 @@ namespace sogen
             buffer.write_optional(this->await_debug_event);
             buffer.write_optional(this->await_file_io);
             buffer.write(this->ended_waits);
+            buffer.write(this->await_host_condition || this->awaits_restored_host_condition);
 
             buffer.write(this->apc_alertable);
             buffer.write_vector(this->pending_apcs);
@@ -734,6 +736,8 @@ namespace sogen
             buffer.read_optional(this->await_debug_event, [] { return pending_debug_event_wait{}; });
             buffer.read_optional(this->await_file_io);
             buffer.read(this->ended_waits);
+            buffer.read(this->awaits_restored_host_condition);
+            this->await_host_condition = {};
 
             buffer.read(this->apc_alertable);
             buffer.read_vector(this->pending_apcs);

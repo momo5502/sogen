@@ -314,8 +314,9 @@ namespace sogen
             uint64_t device_id{};
             std::vector<uint64_t> semaphore_ids{};
             native_semaphore_wait native{};
+            uint64_t timeout{UINT64_MAX};
             std::function<void()> on_done{};
-            std::shared_ptr<std::atomic<int32_t>> result = std::make_shared<std::atomic<int32_t>>(VK_TIMEOUT);
+            std::shared_ptr<std::atomic<int32_t>> result = std::make_shared<std::atomic<int32_t>>(vulkan_host::semaphore_wait_pending);
             std::atomic_bool ended{};
         };
 
@@ -400,12 +401,21 @@ namespace sogen
                     lock.unlock();
 
                     VkResult result{};
+                    auto remaining = job.timeout;
                     do
                     {
-                        result = job.native.wait(slice_ns);
-                    } while (result == VK_TIMEOUT && !job.ended);
+                        const auto slice_start = std::chrono::steady_clock::now();
+                        result = job.native.wait(std::min(slice_ns, remaining));
+                        if (remaining != UINT64_MAX)
+                        {
+                            const auto elapsed =
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - slice_start);
+                            remaining -= std::min(remaining, static_cast<uint64_t>(elapsed.count()));
+                        }
+                    } while (result == VK_TIMEOUT && !job.ended && remaining != 0);
 
-                    job.result->store(result == VK_TIMEOUT ? VK_ERROR_INITIALIZATION_FAILED : result, std::memory_order_release);
+                    job.result->store(result == VK_TIMEOUT && job.ended ? VK_ERROR_INITIALIZATION_FAILED : result,
+                                      std::memory_order_release);
                     const auto on_done = std::move(job.on_done);
 
                     lock.lock();
@@ -6278,7 +6288,8 @@ namespace sogen
     }
 
     std::shared_ptr<const std::atomic<int32_t>> vulkan_host::wait_semaphores_async(uint64_t device, uint32_t flags, const void* entries,
-                                                                                   uint32_t count, std::function<void()> on_done)
+                                                                                   uint32_t count, uint64_t timeout,
+                                                                                   std::function<void()> on_done)
     {
         const auto* records = static_cast<const gpu_bridge::wait_semaphore_entry*>(entries);
         auto native = this->impl_->resolve_semaphore_wait(device, flags, records, count);
@@ -6295,6 +6306,7 @@ namespace sogen
             job->semaphore_ids.push_back(records[i].semaphore);
         }
         job->native = std::move(*native);
+        job->timeout = timeout;
         job->on_done = std::move(on_done);
 
         auto result = job->result;
