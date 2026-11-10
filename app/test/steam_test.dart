@@ -224,6 +224,30 @@ void main() {
       expect(depots.firstWhere((depot) => depot.id == 485).appId, 1007);
     });
 
+    test('depots borrowed into the game folder take their manifest from the app that owns them', () {
+      // Like Modern Warfare 2's multiplayer app, which installs the singleplayer app's files next to its own.
+      final info = KeyValues.parseText(
+        '"2" { "depots" { '
+        '"3" { "manifests" { "public" { "gid" "30" } } } '
+        '"11" { "depotfromapp" "1" "sharedinstall" "2" } '
+        '"12" { "depotfromapp" "1" "sharedinstall" "2" "config" { "language" "german" } } '
+        '"13" { "depotfromapp" "1" "sharedinstall" "2" "config" { "oslist" "macos" } } '
+        '"228988" { "depotfromapp" "228980" "sharedinstall" "1" } } }',
+      );
+      final lender = KeyValues.parseText(
+        '"1" { "depots" { "11" { "manifests" { "public" { "gid" "110" } } } '
+        '"12" { "manifests" { "public" { "gid" "120" } } } "13" { "manifests" { "public" { "gid" "130" } } } } }',
+      );
+
+      expect(SteamPlanner.lendingApps(2, info), {1});
+      final depots = SteamPlanner.windowsDepots(2, info, lenders: {1: lender});
+
+      expect(
+        [for (final depot in depots) (depot.id, depot.appId, depot.manifestId, depot.language)],
+        [(3, 2, 30, null), (11, 1, 110, null), (12, 1, 120, 'german')],
+      );
+    });
+
     test('manifest ids above the signed 64-bit range are kept', () {
       final info = KeyValues.parseText(
         '"1" { "depots" { "2" { "manifests" { "public" { "gid" "18446744073709551615" } } } '
