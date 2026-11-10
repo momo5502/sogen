@@ -243,6 +243,14 @@ namespace sogen
             return std::nullopt;
         }
 
+        // Ends a single step the backend made of its own over the current instruction (an execution hook's, a patched
+        // breakpoint's, a run of one instruction's), as that instruction raises an exception: the trap flag and debug
+        // status go back to the guest's own, so the exception's context shows nothing of the step. Nothing where none is
+        // made.
+        virtual void end_own_single_step()
+        {
+        }
+
         // Guest memory is shared by every vCPU, so a CPU can stand in wherever a
         // memory_interface is expected (emulator_object, read_string, ...). Only
         // register state is per-CPU.
