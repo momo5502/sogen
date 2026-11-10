@@ -85,12 +85,21 @@ namespace sogen
         {
             if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
             {
-                context.Dr0 = emu.reg(x86_register::dr0);
-                context.Dr1 = emu.reg(x86_register::dr1);
-                context.Dr2 = emu.reg(x86_register::dr2);
-                context.Dr3 = emu.reg(x86_register::dr3);
-                context.Dr6 = emu.reg(x86_register::dr6);
-                context.Dr7 = emu.reg(x86_register::dr7);
+                // KeContextFromKframes reports the debug registers only while DR7 enables a breakpoint (DR7_ACTIVE: L0-L3,
+                // LE, GE), and KeCopyLastBranchInformation the last-branch records only once DR7.LE recorded some.
+                constexpr uint64_t dr7_active = 0x355;
+                const auto dr7 = emu.reg(x86_register::dr7);
+                const auto active = (dr7 & dr7_active) != 0;
+                context.Dr0 = active ? emu.reg(x86_register::dr0) : 0;
+                context.Dr1 = active ? emu.reg(x86_register::dr1) : 0;
+                context.Dr2 = active ? emu.reg(x86_register::dr2) : 0;
+                context.Dr3 = active ? emu.reg(x86_register::dr3) : 0;
+                context.Dr6 = active ? emu.reg(x86_register::dr6) : 0;
+                context.Dr7 = active ? dr7 : 0;
+                context.LastBranchToRip = 0;
+                context.LastBranchFromRip = 0;
+                context.LastExceptionToRip = 0;
+                context.LastExceptionFromRip = 0;
             }
 
             if ((context.ContextFlags & CONTEXT_CONTROL_64) == CONTEXT_CONTROL_64)
