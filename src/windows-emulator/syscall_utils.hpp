@@ -11,6 +11,20 @@
 namespace sogen
 {
 
+    template <typename Traits>
+    handle_attributes get_handle_attributes(const emulator_object<OBJECT_ATTRIBUTES<Traits>>& object_attributes)
+    {
+        handle_attributes attributes{};
+        if (object_attributes)
+        {
+            const auto value = object_attributes.read();
+            attributes.inherit = (value.Attributes & OBJ_INHERIT) != 0;
+            attributes.protect_from_close = (value.Attributes & OBJ_PROTECT_CLOSE) != 0;
+        }
+
+        return attributes;
+    }
+
     struct completion_state;
 
     struct user_callback_result

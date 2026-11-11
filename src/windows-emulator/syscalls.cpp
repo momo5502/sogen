@@ -1334,7 +1334,7 @@ namespace sogen
                 {
                     if (entry.second.name == job.name)
                     {
-                        job_handle.write(c.proc.jobs.open_by_index(entry.first));
+                        job_handle.write(c.proc.jobs.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }

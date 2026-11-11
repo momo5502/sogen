@@ -133,7 +133,8 @@ namespace sogen
                         }
 
                         c.win_emu.callbacks.on_generic_access("Opening private namespace", boundary_name);
-                        namespace_handle.write(c.proc.private_namespaces.open_by_index(entry.first));
+                        namespace_handle.write(
+                            c.proc.private_namespaces.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_SUCCESS;
                     }
                 }

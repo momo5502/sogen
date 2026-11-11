@@ -216,7 +216,8 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        worker_factory_handle.write(c.proc.worker_factories.open_by_index(entry.first));
+                        worker_factory_handle.write(
+                            c.proc.worker_factories.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }

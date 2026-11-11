@@ -766,8 +766,8 @@ namespace sogen::test
 
     TEST_F(NamedPipeTest, StdioDoesNotBypassDisabledInheritance)
     {
-        this->emu->process.devices.get(this->reader)->inherit = true;
-        this->emu->process.devices.get(this->writer)->inherit = true;
+        this->emu->process.devices.set_attributes(this->reader, {.inherit = true});
+        this->emu->process.devices.set_attributes(this->writer, {.inherit = true});
         this->create_child(0);
         EXPECT_TRUE(this->manager.request->inherited_pipes.empty());
         EXPECT_EQ(this->manager.request->standard_input, 0u);
@@ -777,7 +777,7 @@ namespace sogen::test
 
     TEST_F(InheritedPipeTest, GeneralInheritanceSelectsOnlyInheritableHandles)
     {
-        this->emu->process.devices.get(this->writer)->inherit = true;
+        this->emu->process.devices.set_attributes(this->writer, {.inherit = true});
         this->create_child(4);
         ASSERT_EQ(this->manager.request->inherited_pipes.size(), 1u);
         EXPECT_EQ(this->manager.request->inherited_pipes.front().guest_handle, this->writer.bits);
@@ -788,8 +788,8 @@ namespace sogen::test
 
     TEST_F(InheritedPipeTest, ExplicitHandleListExcludesOtherStdio)
     {
-        this->emu->process.devices.get(this->reader)->inherit = true;
-        this->emu->process.devices.get(this->writer)->inherit = true;
+        this->emu->process.devices.set_attributes(this->reader, {.inherit = true});
+        this->emu->process.devices.set_attributes(this->writer, {.inherit = true});
         this->create_child(4, std::vector{this->reader});
         ASSERT_EQ(this->manager.request->inherited_pipes.size(), 1u);
         EXPECT_EQ(this->manager.request->inherited_pipes.front().guest_handle, this->reader.bits);
@@ -800,7 +800,7 @@ namespace sogen::test
 
     TEST_F(NamedPipeTest, ExplicitHandleListCannotEnableInheritance)
     {
-        this->emu->process.devices.get(this->reader)->inherit = true;
+        this->emu->process.devices.set_attributes(this->reader, {.inherit = true});
         this->create_child(0, std::vector{this->reader});
         EXPECT_TRUE(this->manager.request->inherited_pipes.empty());
         EXPECT_EQ(this->manager.request->standard_input, 0u);
@@ -808,7 +808,7 @@ namespace sogen::test
 
     TEST_F(NamedPipeTest, EmptyExplicitHandleListDoesNotInheritStdio)
     {
-        this->emu->process.devices.get(this->writer)->inherit = true;
+        this->emu->process.devices.set_attributes(this->writer, {.inherit = true});
         this->create_child(4, std::vector<handle>{});
         EXPECT_TRUE(this->manager.request->inherited_pipes.empty());
         EXPECT_EQ(this->manager.request->standard_output, 0u);
@@ -818,7 +818,7 @@ namespace sogen::test
     {
         this->pipe(this->reader).pipe_type = 1;
         this->pipe(this->reader).read_mode = 1;
-        this->emu->process.devices.get(this->reader)->inherit = true;
+        this->emu->process.devices.set_attributes(this->reader, {.inherit = true});
         EXPECT_EQ(this->pipe(this->reader).start_io(*this->emu, this->request(this->reader, 16), true), STATUS_NOT_SUPPORTED);
         this->create_child(4, {}, false);
     }

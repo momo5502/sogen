@@ -3771,6 +3771,10 @@ namespace sogen
                 if (existing != interactive_window_station)
                 {
                     const auto duplicated = c.proc.window_stations.duplicate(make_handle(existing));
+                    if (duplicated)
+                    {
+                        (void)c.proc.window_stations.set_attributes(*duplicated, get_handle_attributes(object_attributes));
+                    }
                     return duplicated ? duplicated->bits : 0;
                 }
 
@@ -3831,6 +3835,10 @@ namespace sogen
             if (const auto existing = find_desktop(c, station, name); existing != 0)
             {
                 const auto duplicated = c.proc.desktops.duplicate(make_handle(existing));
+                if (duplicated)
+                {
+                    (void)c.proc.desktops.set_attributes(*duplicated, get_handle_attributes(object_attributes));
+                }
                 return duplicated ? duplicated->bits : 0;
             }
 
@@ -7995,7 +8003,9 @@ namespace sogen
                 // WSF_VISIBLE, which only the interactive station has. A process moved to a noninteractive station
                 // reads 0 here, which is how .NET's Environment.UserInteractive decides.
                 constexpr uint32_t wsf_visible = 1;
-                const user_object_flags flags{.inherit = desktop_object && desktop_object->inherit,
+                const auto inheritable =
+                    window_station ? c.proc.window_stations.attributes_of(object).inherit : c.proc.desktops.attributes_of(object).inherit;
+                const user_object_flags flags{.inherit = inheritable,
                                               .reserved = FALSE,
                                               .flags = (window_station && object.bits == interactive_window_station) ? wsf_visible : 0u};
                 return write(&flags, sizeof(flags));

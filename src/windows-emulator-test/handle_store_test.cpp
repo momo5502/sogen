@@ -60,16 +60,18 @@ namespace sogen::test
         ASSERT_NE(nullptr, object);
         auto reference = store.retain(original);
         ASSERT_TRUE(reference);
+        ASSERT_TRUE(store.erase(original));
+        EXPECT_EQ(nullptr, store.get(original));
+
         const auto internal = store.internal_handle(*object);
         ASSERT_NE(0u, internal.bits);
         EXPECT_EQ(object, store.get(internal));
-        EXPECT_EQ(1u, store.handle_count());
-
-        ASSERT_TRUE(store.erase(original));
-        EXPECT_EQ(nullptr, store.get(original));
-        EXPECT_EQ(object, store.get(internal));
         EXPECT_EQ(0u, store.handle_count());
         EXPECT_EQ(1u, object->ref_count);
+
+        const auto stale_guest_value = make_handle(static_cast<uint32_t>(original.value.id), handle_types::event, false);
+        ASSERT_EQ(stale_guest_value.value.id, internal.value.id);
+        EXPECT_EQ(nullptr, store.get(stale_guest_value));
 
         store.release(*reference);
         EXPECT_EQ(nullptr, store.get(internal));

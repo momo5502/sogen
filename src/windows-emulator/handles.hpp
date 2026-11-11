@@ -366,15 +366,14 @@ namespace sogen
 
         // Opens another handle for the object at index, as opening a named object does. The caller must have verified
         // that the object is open to guest handles or is otherwise still alive.
-        handle open_by_index(const index_type index)
+        handle open_by_index(const index_type index, const handle_attributes& attributes = {})
         {
-            const auto* object = this->get_by_index(index);
-            if (!object)
+            if (!this->get_by_index(index))
             {
                 return {};
             }
 
-            return this->open_index(index, true, {.inherit = object->inherit, .protect_from_close = object->protect_from_close});
+            return this->open_index(index, true, attributes);
         }
 
         // A stable value for emulator-internal resolution when the guest has closed every value naming the object. It is
@@ -784,19 +783,14 @@ namespace sogen
             }
 
             const auto id = static_cast<handle_id_type>(h.id);
+            if (h.is_system)
+            {
+                const auto internal = this->internal_handles_.find(id);
+                return internal == this->internal_handles_.end() ? std::nullopt : std::optional<index_type>{internal->second};
+            }
+
             const auto entry = this->handles_.find(id);
-            if (entry != this->handles_.end())
-            {
-                return entry->second;
-            }
-
-            const auto internal = this->internal_handles_.find(id);
-            if (internal != this->internal_handles_.end())
-            {
-                return internal->second;
-            }
-
-            return std::nullopt;
+            return entry == this->handles_.end() ? std::nullopt : std::optional<index_type>{entry->second};
         }
 
         std::optional<object_reference> retain_index(const index_type index)

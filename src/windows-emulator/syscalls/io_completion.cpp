@@ -39,7 +39,8 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        io_completion_handle.write(c.proc.io_completions.open_by_index(entry.first));
+                        io_completion_handle.write(
+                            c.proc.io_completions.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -296,7 +297,8 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        wait_packet_handle.write(c.proc.wait_completion_packets.open_by_index(entry.first));
+                        wait_packet_handle.write(
+                            c.proc.wait_completion_packets.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }

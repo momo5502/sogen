@@ -18,6 +18,7 @@ namespace sogen
 
         constexpr ULONG duplicate_close_source = 1;
         constexpr ULONG duplicate_same_access = 2;
+        constexpr ULONG duplicate_same_attributes = 4;
 
         void resume_state_change_suspensions(const syscall_context& c, const thread_state_change& state)
         {
@@ -223,14 +224,24 @@ namespace sogen
             }
 
             auto* store = c.proc.get_handle_store(resolved_source_handle);
+            const auto same_attributes = (options & duplicate_same_attributes) != 0;
+            auto requested_attributes = sogen::handle_attributes{.inherit = (handle_attributes & OBJ_INHERIT) != 0,
+                                                                 .protect_from_close = (handle_attributes & OBJ_PROTECT_CLOSE) != 0};
+            if (same_attributes)
+            {
+                requested_attributes = store ? store->attributes_of(resolved_source_handle) : sogen::handle_attributes{};
+            }
+
             if (const auto* source = c.proc.devices.get(resolved_source_handle))
             {
                 if (source->get_internal_device<named_pipe>())
                 {
                     auto duplicate = source->duplicate((options & duplicate_same_access) ? source->granted_access : desired_access,
-                                                       (handle_attributes & OBJ_INHERIT) != 0);
-                    target_handle.write(c.proc.devices.store(std::move(duplicate)));
-                    if (options & duplicate_close_source)
+                                                       requested_attributes.inherit);
+                    const auto new_handle = c.proc.devices.store(std::move(duplicate));
+                    (void)c.proc.devices.set_attributes(new_handle, requested_attributes);
+                    target_handle.write(new_handle);
+                    if ((options & duplicate_close_source) && !resolved_source_handle.value.is_system)
                     {
                         return handle_NtClose(c, resolved_source_handle);
                     }
@@ -248,11 +259,18 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            auto attributes = store->attributes_of(resolved_source_handle);
-            attributes.inherit = (handle_attributes & OBJ_INHERIT) != 0;
+            auto attributes = requested_attributes;
+            if (same_attributes)
+            {
+                attributes = store->attributes_of(resolved_source_handle);
+            }
             (void)store->set_attributes(*new_handle, attributes);
 
             target_handle.write(*new_handle);
+            if ((options & duplicate_close_source) && !resolved_source_handle.value.is_system)
+            {
+                return handle_NtClose(c, resolved_source_handle);
+            }
             return STATUS_SUCCESS;
         }
 

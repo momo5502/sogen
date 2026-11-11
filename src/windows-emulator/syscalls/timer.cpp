@@ -139,7 +139,7 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        timer_handle.write(c.proc.timers.open_by_index(entry.first));
+                        timer_handle.write(c.proc.timers.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -211,7 +211,7 @@ namespace sogen
             {
                 if (entry.second.name == name)
                 {
-                    timer_handle.write(c.proc.timers.open_by_index(entry.first));
+                    timer_handle.write(c.proc.timers.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }

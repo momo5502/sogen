@@ -33,7 +33,7 @@ namespace sogen
             {
                 if (semaphore.second.name == name)
                 {
-                    semaphore_handle.write(c.proc.semaphores.open_by_index(semaphore.first));
+                    semaphore_handle.write(c.proc.semaphores.open_by_index(semaphore.first, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }
@@ -105,7 +105,7 @@ namespace sogen
                 {
                     if (entry.second.name == s.name)
                     {
-                        semaphore_handle.write(c.proc.semaphores.open_by_index(entry.first));
+                        semaphore_handle.write(c.proc.semaphores.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }

@@ -44,13 +44,15 @@ namespace sogen::test
                 return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
             }
 
-            emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> named_attributes(const std::u16string_view name)
+            emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> named_attributes(const std::u16string_view name,
+                                                                                       const ULONG flags = 0)
             {
                 emulator_allocator allocator{this->emu->memory, this->storage, 0x1000};
                 const auto string = allocator.make_unicode_string(name);
                 const auto attributes = allocator.reserve<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>();
                 OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>> values{};
                 values.Length = sizeof(values);
+                values.Attributes = flags;
                 values.ObjectName = string.value();
                 attributes.write(values);
                 return attributes;
@@ -86,6 +88,29 @@ namespace sogen::test
 
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), opened));
         EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, syscalls::handle_NtOpenSemaphore(this->context(), this->handle_slot(), 0, attributes));
+    }
+
+    TEST_F(NamedObjectOpenTest, OpeningByNameUsesTheOpenersHandleAttributes)
+    {
+        const auto create_attributes = this->named_attributes(u"\\BaseNamedObjects\\sogen_inherit_semaphore", OBJ_INHERIT);
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateSemaphore(this->context(), this->handle_slot(), 0, create_attributes, 1, 5));
+        const auto creator = this->handle_slot().read();
+        EXPECT_TRUE(this->emu->process.semaphores.attributes_of(creator).inherit);
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtOpenSemaphore(this->context(), this->handle_slot(), 0,
+                                                                   this->named_attributes(u"\\BaseNamedObjects\\sogen_inherit_semaphore")));
+        const auto plain_open = this->handle_slot().read();
+        EXPECT_FALSE(this->emu->process.semaphores.attributes_of(plain_open).inherit);
+
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtOpenSemaphore(this->context(), this->handle_slot(), 0,
+                                                   this->named_attributes(u"\\BaseNamedObjects\\sogen_inherit_semaphore", OBJ_INHERIT)));
+        const auto inheritable_open = this->handle_slot().read();
+        EXPECT_TRUE(this->emu->process.semaphores.attributes_of(inheritable_open).inherit);
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), creator));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), plain_open));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), inheritable_open));
     }
 
     TEST_F(NamedObjectOpenTest, OpeningAnEventThatDoesNotExistReportsTheNameAsNotFound)

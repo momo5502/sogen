@@ -841,7 +841,7 @@ namespace sogen
         }
 
         NTSTATUS handle_NtOpenThread(const syscall_context& c, const emulator_object<handle> thread_handle, ACCESS_MASK /*desired_access*/,
-                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                      emulator_object<CLIENT_ID64> client_id)
         {
             if (!client_id)
@@ -857,7 +857,7 @@ namespace sogen
                 {
                     if (thread.id == id.UniqueThread)
                     {
-                        thread_handle.write(c.proc.threads.open_by_index(index));
+                        thread_handle.write(c.proc.threads.open_by_index(index, get_handle_attributes(object_attributes)));
                         return STATUS_SUCCESS;
                     }
                 }
@@ -867,7 +867,7 @@ namespace sogen
             {
                 if (thread.thread_id == id.UniqueThread && (id.UniqueProcess == 0 || thread.process_id == id.UniqueProcess))
                 {
-                    thread_handle.write(c.proc.managed_threads.open_by_index(index));
+                    thread_handle.write(c.proc.managed_threads.open_by_index(index, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }
@@ -1241,7 +1241,7 @@ namespace sogen
         }
 
         NTSTATUS handle_NtGetNextThread(const syscall_context& c, const handle process_handle, const handle thread_handle,
-                                        const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG flags,
+                                        const ACCESS_MASK /*desired_access*/, const ULONG handle_attributes, const ULONG flags,
                                         const emulator_object<handle> new_thread_handle)
         {
             if (!new_thread_handle.try_write(NULL_HANDLE))
@@ -1272,7 +1272,9 @@ namespace sogen
             {
                 if (return_next_thread && !t.second.is_terminated())
                 {
-                    new_thread_handle.write(c.proc.threads.open_by_index(t.first));
+                    new_thread_handle.write(
+                        c.proc.threads.open_by_index(t.first, {.inherit = (handle_attributes & OBJ_INHERIT) != 0,
+                                                               .protect_from_close = (handle_attributes & OBJ_PROTECT_CLOSE) != 0}));
                     return STATUS_SUCCESS;
                 }
 

@@ -328,6 +328,7 @@ namespace sogen
                         return STATUS_NOT_SUPPORTED;
                     }
                     const auto [file, inserted] = inherited_files.try_emplace(pipe, h.bits);
+                    const auto inheritable = c.proc.devices.attributes_of(h).inherit;
                     request.inherited_pipes.push_back(
                         {.guest_handle = h.bits,
                          .file_id = file->second,
@@ -340,7 +341,7 @@ namespace sogen
                          .create_options = pipe->create_options,
                          .completion_notification_flags =
                              container->prepare_io_context(io_device_context{c.emu}).completion_notification_flags,
-                         .inherit = container->inherit});
+                         .inherit = inheritable});
                 }
                 return STATUS_SUCCESS;
             };
@@ -396,11 +397,11 @@ namespace sogen
             }
             if (!explicit_handle_list && (process_flags & process_create_flags_inherit_handles))
             {
-                for (const auto& [index, device] : c.proc.devices)
+                for (const auto& [handle, device] : c.proc.devices.handle_entries())
                 {
-                    if (device.get_internal_device<named_pipe>() && device.inherit)
+                    if (device->get_internal_device<named_pipe>() && c.proc.devices.attributes_of(handle).inherit)
                     {
-                        const auto status = inherit_pipe(c.proc.devices.make_handle(index));
+                        const auto status = inherit_pipe(handle);
                         if (!NT_SUCCESS(status))
                         {
                             return status;
@@ -1247,7 +1248,7 @@ namespace sogen
 
         NTSTATUS handle_NtOpenProcess(const syscall_context& c, const emulator_object<handle> process_handle,
                                       const ACCESS_MASK /*desired_access*/,
-                                      const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                      const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                       const emulator_object<CLIENT_ID64> client_id)
         {
             if (!process_handle || !client_id)
@@ -1268,7 +1269,7 @@ namespace sogen
             {
                 if (process.process && process.id == id.UniqueProcess)
                 {
-                    process_handle.write(c.proc.processes.open_by_index(index));
+                    process_handle.write(c.proc.processes.open_by_index(index, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }

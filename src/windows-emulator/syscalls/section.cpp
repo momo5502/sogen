@@ -480,7 +480,7 @@ namespace sogen
             {
                 if (!section.name.empty() && utils::string::equals_ignore_case(section.name, filename))
                 {
-                    section_handle.write(c.proc.sections.open_by_index(handle));
+                    section_handle.write(c.proc.sections.open_by_index(handle, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }

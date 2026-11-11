@@ -947,6 +947,7 @@ namespace sogen
         buffer.write(this->parent_process_id);
         buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
+        buffer.write(this->initial_thread_handle);
         buffer.write(this->threads);
 
         buffer.write(active_thread ? this->threads.index_of(*active_thread).value_or(0) : 0);
@@ -1082,6 +1083,7 @@ namespace sogen
         buffer.read(this->parent_process_id);
         buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
+        buffer.read(this->initial_thread_handle);
 
         for (auto& thread : this->threads | std::views::values)
         {
@@ -1403,14 +1405,20 @@ namespace sogen
 
     size_t process_context::handle_count() const
     {
-        return this->threads.handle_count() + this->processes.handle_count() + this->managed_threads.handle_count() +
-               this->debug_objects.handle_count() + this->events.handle_count() + this->files.handle_count() +
-               this->devices.handle_count() + this->semaphores.handle_count() + this->io_completions.handle_count() +
-               this->wait_completion_packets.handle_count() + this->worker_factories.handle_count() + this->jobs.handle_count() +
-               this->thread_state_changes.handle_count() + this->registry_keys.handle_count() + this->mutants.handle_count() +
-               this->timers.handle_count() + this->desktops.handle_count() + this->window_stations.handle_count() +
-               this->ports.handle_count() + this->sections.handle_count() + this->private_namespaces.handle_count() +
-               this->deferred_window_position_batches.handle_count();
+        auto thread_handles = this->threads.handle_count();
+        if (const auto* thread = this->threads.get(this->initial_thread_handle);
+            thread && thread->id == this->initial_thread_id && thread_handles > 0)
+        {
+            --thread_handles;
+        }
+
+        return thread_handles + this->processes.handle_count() + this->managed_threads.handle_count() + this->debug_objects.handle_count() +
+               this->events.handle_count() + this->files.handle_count() + this->devices.handle_count() + this->semaphores.handle_count() +
+               this->io_completions.handle_count() + this->wait_completion_packets.handle_count() + this->worker_factories.handle_count() +
+               this->jobs.handle_count() + this->thread_state_changes.handle_count() + this->registry_keys.handle_count() +
+               this->mutants.handle_count() + this->timers.handle_count() + this->desktops.handle_count() +
+               this->window_stations.handle_count() + this->ports.handle_count() + this->sections.handle_count() +
+               this->private_namespaces.handle_count() + this->deferred_window_position_batches.handle_count();
     }
 
     emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id)
@@ -1588,6 +1596,10 @@ namespace sogen
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread, stack_commit_size};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
+        if (initial_thread)
+        {
+            this->initial_thread_handle = h;
+        }
 
         // The desktop window is created during process setup, before any thread exists, so it has no owning
         // thread. GetWindowThreadProcessId(GetDesktopWindow()) must return a real thread id (DirectSound, for
