@@ -553,6 +553,13 @@ namespace sogen
 
         vcpu_context* find_vcpu_running_thread(windows_emulator& win_emu, const emulator_thread& thread)
         {
+            // Only the vCPU that loaded the thread last can hold it (vcpu_context::set_active_thread). A thread made active
+            // without that, as some tests make theirs, is looked for on every vCPU.
+            if (thread.last_vcpu)
+            {
+                return thread.last_vcpu->active_thread == &thread ? thread.last_vcpu : nullptr;
+            }
+
             for (uint32_t i = 0; i < win_emu.vcpu_count(); ++i)
             {
                 auto& vcpu = win_emu.vcpu(i);

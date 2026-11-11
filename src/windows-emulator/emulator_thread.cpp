@@ -372,6 +372,71 @@ namespace sogen
             return wait_state::not_signaled;
         }
 
+        // Every scheduler pass checks every waiting thread, so a wait keeps its objects as their stores gave them and looks
+        // each up again only once its store has changed (handle_store::get_cached). It reads what observe_object_signal
+        // reads; anything else, a missing object included, goes to observe_object_signal itself.
+        wait_state observe_cached_object_signal(windows_emulator& win_emu, const handle h, cached_wait_object& cached,
+                                                const uint32_t current_thread_id)
+        {
+            if (cached.object_handle != h)
+            {
+                cached = {.object_handle = h};
+            }
+
+            const auto get = [&](auto& store) {
+                return h.value.is_pseudo ? nullptr : store.get_cached(h, cached.object, cached.generation);
+            };
+
+            auto& c = win_emu.process;
+            switch (h.value.type)
+            {
+            case handle_types::event:
+                if (const auto* e = get(c.events))
+                {
+                    return e->signaled ? wait_state::signaled : wait_state::not_signaled;
+                }
+                break;
+
+            case handle_types::semaphore:
+                if (const auto* s = get(c.semaphores))
+                {
+                    return s->current_count > 0 ? wait_state::signaled : wait_state::not_signaled;
+                }
+                break;
+
+            case handle_types::mutant:
+                if (const auto* m = get(c.mutants))
+                {
+                    if (!m->is_signaled(current_thread_id))
+                    {
+                        return wait_state::not_signaled;
+                    }
+
+                    return m->abandoned ? wait_state::abandoned : wait_state::signaled;
+                }
+                break;
+
+            case handle_types::timer:
+                if (auto* t = get(c.timers))
+                {
+                    return t->is_signaled(win_emu.clock()) ? wait_state::signaled : wait_state::not_signaled;
+                }
+                break;
+
+            case handle_types::thread:
+                if (const auto* t = get(c.threads))
+                {
+                    return t->is_terminated() ? wait_state::signaled : wait_state::not_signaled;
+                }
+                break;
+
+            default:
+                break;
+            }
+
+            return observe_object_signal(win_emu, h, current_thread_id);
+        }
+
         std::optional<wait_state> consume_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
         {
             auto& c = win_emu.process;
@@ -1404,11 +1469,12 @@ namespace sogen
             if (!this->await_objects.empty())
             {
                 all_signaled = true;
+                this->await_object_cache.resize(this->await_objects.size());
                 for (uint32_t i = 0; i < this->await_objects.size(); ++i)
                 {
                     const auto& obj = this->await_objects[i];
 
-                    const auto state = observe_object_signal(win_emu, obj, this->id);
+                    const auto state = observe_cached_object_signal(win_emu, obj, this->await_object_cache[i], this->id);
                     const auto signaled = state != wait_state::not_signaled;
                     all_signaled &= signaled;
 
@@ -1527,8 +1593,9 @@ namespace sogen
                 return wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < clock.steady_now();
             };
 
-            const auto& wait = *this->await_io_completion;
-            auto* completion = process.io_completions.get(wait.io_completion_handle);
+            auto& wait = *this->await_io_completion;
+            auto* completion =
+                process.io_completions.get_cached(wait.io_completion_handle, wait.io_completion_object, wait.io_completion_generation);
             if (!completion)
             {
                 this->mark_as_ready(STATUS_INVALID_HANDLE);

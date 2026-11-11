@@ -57,6 +57,19 @@ namespace sogen::test
                 this->thread->setup_if_necessary(this->emu->vcpu(0).cpu, this->emu->process);
             }
 
+            bool check_ready()
+            {
+                return this->emu->synchronize([this] { return this->thread->is_thread_ready(*this->emu); });
+            }
+
+            handle store_event(const bool signaled)
+            {
+                event e{};
+                e.type = SynchronizationEvent;
+                e.signaled = signaled;
+                return this->emu->process.events.store(std::move(e));
+            }
+
             void stop_after(std::chrono::milliseconds duration)
             {
                 const auto deadline = std::chrono::steady_clock::now() + duration;
@@ -230,6 +243,55 @@ namespace sogen::test
         EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
         EXPECT_EQ(polls, "cab|ca");
         EXPECT_EQ(this->emu->vcpu(0).active_thread, second);
+    }
+
+    // A waiting thread keeps the objects it waits for between checks (handle_store::get_cached); each check still reads
+    // their state as it is then.
+    TEST_F(IdleSchedulerTest, ObjectWaitSeesAnEventSetAfterAnEarlierCheck)
+    {
+        this->create();
+        const auto event_handle = this->store_event(false);
+        this->thread->await_objects = {event_handle};
+        this->thread->await_any = true;
+
+        EXPECT_FALSE(this->check_ready());
+        this->emu->process.events.get(event_handle)->signaled = true;
+        EXPECT_TRUE(this->check_ready());
+        EXPECT_EQ(std::optional<NTSTATUS>{STATUS_WAIT_0}, this->thread->pending_status);
+        EXPECT_FALSE(this->emu->process.events.get(event_handle)->signaled);
+    }
+
+    // What a wait keeps belongs to the handle it was found for: a wait that names another object in the same place reads
+    // that object.
+    TEST_F(IdleSchedulerTest, ObjectWaitOnAnotherHandleReadsItsObject)
+    {
+        this->create();
+        const auto unsignaled = this->store_event(false);
+        const auto signaled = this->store_event(true);
+        this->thread->await_objects = {unsignaled};
+        this->thread->await_any = true;
+
+        EXPECT_FALSE(this->check_ready());
+        this->thread->await_objects = {signaled};
+        EXPECT_TRUE(this->check_ready());
+        EXPECT_EQ(std::optional<NTSTATUS>{STATUS_WAIT_0}, this->thread->pending_status);
+    }
+
+    // A thread gone from its store terminated, so a wait for it ends, also when an earlier check found it running.
+    TEST_F(IdleSchedulerTest, ObjectWaitForAThreadEndsOnceTheThreadIsGone)
+    {
+        this->create();
+        auto& threads = this->emu->process.threads;
+        const auto other = threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 12, true});
+        this->thread->await_objects = {other};
+        this->thread->await_any = true;
+
+        EXPECT_FALSE(this->check_ready());
+        threads.get(other)->exit_status = STATUS_SUCCESS;
+        threads.erase(other);
+        ASSERT_EQ(nullptr, threads.get(other));
+        EXPECT_TRUE(this->check_ready());
+        EXPECT_EQ(std::optional<NTSTATUS>{STATUS_WAIT_0}, this->thread->pending_status);
     }
 
     TEST_F(IdleSchedulerTest, ContextAccessWaitsForAnInFlightRegisterTransfer)
