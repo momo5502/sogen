@@ -2,7 +2,9 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 #include <arch_emulator.hpp>
 #include <serialization.hpp>
 
@@ -241,25 +243,47 @@ namespace sogen
 
     bool needs_32_bit_devices(const windows_emulator& win_emu);
 
-    // Everything a device factory needs to construct its device. Only the WoW64 flag for now; grows as
-    // more construction-time context is required, without touching every factory signature again.
     struct device_creation_context
     {
         bool is_32_bit{};
+        std::shared_ptr<void> provider{};
     };
 
     using device_factory = std::unique_ptr<io_device> (*)(const device_creation_context& context);
 
-    std::unique_ptr<io_device> create_device(std::u16string_view device, const device_creation_context& context);
-
-    // Single source of truth for the emulator's IO devices: NT device name -> factory. Several names may
-    // map to the same factory (e.g. the transport stub serves Tcp/Tcp6/Udp/RawIp). create_device() looks a
-    // name up here, and consumers that need every device type (e.g. the handler fuzzer) enumerate it and
-    // dedupe by factory, so a newly added device is visible everywhere without a second list to update.
-    // Ordered so the fuzzer's enumeration is deterministic across runs.
+    // Ordered built-in factories; aliases share a factory so the handler fuzzer can deduplicate them.
     const std::map<std::u16string_view, device_factory>& get_device_registry();
 
-    bool is_device_supported(std::u16string_view device);
+    using device_open_validator = NTSTATUS (*)(const device_creation_context& context);
+
+    struct device_registration
+    {
+        std::u16string name{};
+        device_factory factory{};
+        bool dos_alias{};
+        device_open_validator validate_open{};
+        std::shared_ptr<void> lifetime{};
+    };
+
+    class device_registry
+    {
+      public:
+        struct entry
+        {
+            device_factory factory{};
+            bool dos_alias{};
+            device_open_validator validate_open{};
+            std::shared_ptr<void> lifetime{};
+            bool external{};
+        };
+
+        explicit device_registry(std::vector<device_registration> registrations = {});
+        const entry* find(std::u16string_view name) const;
+        bool is_dos_alias(std::u16string_view name) const;
+
+      private:
+        std::map<std::u16string, entry, std::less<>> entries_{};
+    };
 
     struct device_completion_association
     {
@@ -278,13 +302,7 @@ namespace sogen
       public:
         io_device_container() = default;
 
-        io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data)
-            : is_32_bit_(needs_32_bit_devices(win_emu)),
-              device_name_(std::move(device))
-        {
-            this->setup();
-            this->file_->device->create(win_emu, data);
-        }
+        io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data);
 
         ACCESS_MASK granted_access{GENERIC_ALL};
 
@@ -341,19 +359,16 @@ namespace sogen
 
         struct file_state
         {
+            std::shared_ptr<void> provider{};
             std::unique_ptr<io_device> device{};
+            bool external{};
             std::optional<device_completion_association> completion_association{};
             ULONG completion_notification_flags{};
+
+            void create(const device_registry::entry& registration, device_creation_context context);
         };
 
         std::shared_ptr<file_state> file_{};
-
-        void setup()
-        {
-            const device_creation_context context{.is_32_bit = this->is_32_bit_};
-            this->file_ = std::make_shared<file_state>();
-            this->file_->device = create_device(this->device_name_, context);
-        }
 
         void assert_validity() const
         {

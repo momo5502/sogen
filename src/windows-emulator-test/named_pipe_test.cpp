@@ -324,6 +324,7 @@ namespace sogen::test
         this->emu->process.devices.get(this->reader)->serialize(snapshot);
         utils::buffer_deserializer input{snapshot};
         input.register_factory<guest_machine_wrapper>([&] { return guest_machine_wrapper{this->emu->emu()}; });
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         this->emu->process.devices.get(this->reader)->deserialize(input);
         auto& restored = this->pipe(this->reader);
         restored.work(*this->emu);
@@ -661,6 +662,7 @@ namespace sogen::test
         io_device_container restored_original;
         io_device_container restored_duplicate;
         utils::buffer_deserializer input{buffer};
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         restored_original.deserialize(input);
         restored_duplicate.deserialize(input);
         EXPECT_EQ(restored_original.get_internal_device(), restored_duplicate.get_internal_device());
@@ -721,6 +723,7 @@ namespace sogen::test
         original.serialize(snapshot);
         utils::buffer_deserializer input{snapshot};
         io_device_container restored;
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         restored.deserialize(input);
         auto* restored_pipe = restored.get_internal_device<named_pipe>();
         ASSERT_NE(restored_pipe->endpoint, nullptr);
@@ -746,6 +749,7 @@ namespace sogen::test
         this->emu->process.devices.get(this->writer)->serialize(snapshot);
         utils::buffer_deserializer input{snapshot};
         input.register_factory<guest_machine_wrapper>([&] { return guest_machine_wrapper{this->emu->emu()}; });
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         this->emu->process.devices.get(this->reader)->deserialize(input);
         this->emu->process.devices.get(this->writer)->deserialize(input);
         EXPECT_FALSE(this->pipe(this->reader).signaled);

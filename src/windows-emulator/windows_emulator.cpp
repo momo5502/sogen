@@ -837,6 +837,7 @@ namespace sogen
               interfaces, settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root))),
           process_manager_(interfaces.processes),
           console_backend_(get_console_backend(interfaces)),
+          device_registry_(std::move(interfaces.devices)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),

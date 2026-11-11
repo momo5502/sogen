@@ -2174,7 +2174,7 @@ namespace sogen
             return {};
         }
 
-        std::optional<std::u16string_view> get_io_device_name(const std::u16string_view filename)
+        std::optional<std::u16string_view> get_io_device_name(const std::u16string_view filename, const device_registry& registry)
         {
             constexpr std::u16string_view device_prefix = u"\\Device\\";
             if (filename.starts_with(device_prefix))
@@ -2190,14 +2190,7 @@ namespace sogen
 
             const auto path = filename.substr(unc_prefix.size());
 
-            const std::set<std::u16string, std::less<>> devices{
-                u"Nsi",
-                u"MountPointManager",
-                u"SogenGpu",
-                u"SogenSteam",
-            };
-
-            if (devices.contains(path))
+            if (registry.is_dos_alias(path))
             {
                 return path;
             }
@@ -2333,14 +2326,25 @@ namespace sogen
                 c.win_emu.callbacks.on_generic_access("Opening file", filename); //
             });
 
-            const auto io_device_name = get_io_device_name(filename);
+            const auto io_device_name = get_io_device_name(filename, c.win_emu.device_factories());
             if (io_device_name.has_value())
             {
-                if (!is_device_supported(*io_device_name))
+                const auto* registration = c.win_emu.device_factories().find(*io_device_name);
+                if (!registration)
                 {
                     printer.cancel();
                     c.win_emu.callbacks.on_generic_access("Opening unsupported device", filename);
                     return STATUS_NO_SUCH_DEVICE;
+                }
+
+                if (registration->validate_open)
+                {
+                    const auto status =
+                        registration->validate_open({.is_32_bit = needs_32_bit_devices(c.win_emu), .provider = registration->lifetime});
+                    if (status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
                 }
 
                 const io_device_creation_data data{
