@@ -18,10 +18,14 @@ namespace sogen::syscalls
                                  emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                  emulator_object<LARGE_INTEGER> allocation_size, ULONG file_attributes, ULONG share_access,
                                  ULONG create_disposition, ULONG create_options, uint64_t ea_buffer, ULONG ea_length);
+    NTSTATUS handle_NtClose(const syscall_context& c, handle h);
     NTSTATUS handle_NtLockFile(const syscall_context& c, handle file_handle, handle event_handle, uint64_t apc_routine,
                                uint64_t apc_context, emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                emulator_object<LARGE_INTEGER> byte_offset, emulator_object<LARGE_INTEGER> length, ULONG key,
                                BOOLEAN fail_immediately, BOOLEAN exclusive_lock);
+    NTSTATUS handle_NtUnlockFile(const syscall_context& c, handle file_handle,
+                                 emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                 emulator_object<LARGE_INTEGER> byte_offset, emulator_object<LARGE_INTEGER> length, ULONG key);
     NTSTATUS handle_NtSetInformationFile(const syscall_context& c, handle file_handle,
                                          emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, uint64_t file_information,
                                          ULONG length, FILE_INFORMATION_CLASS info_class);
@@ -159,6 +163,38 @@ namespace sogen::test
         length.write(LARGE_INTEGER{.QuadPart = 1});
 
         EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtLockFile(context, file_handle, {}, 0, 0, status, offset, length, 0, TRUE, FALSE));
+    }
+
+    TEST(FileWriteTest, LocksBelongToTheFileObjectAcrossDuplicateHandles)
+    {
+        const auto directory = create_test_directory();
+        const auto cleanup = utils::finally([&] {
+            std::error_code error{};
+            std::filesystem::remove_all(directory, error);
+        });
+
+        auto emu = create_empty_emulator();
+        emu.file_sys.map(windows_path{'x', {}}, directory, filesystem_mode::read_write);
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        const auto file_handle = create_guest_file(emu, context, storage, u"\\??\\x:\\locked.bin", GENERIC_READ | GENERIC_WRITE);
+        const auto duplicate = emu.process.files.duplicate(file_handle);
+        ASSERT_TRUE(duplicate);
+
+        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> status{emu.memory, storage + 0x10};
+        const emulator_object<LARGE_INTEGER> offset{emu.memory, storage + 0x20};
+        const emulator_object<LARGE_INTEGER> length{emu.memory, storage + 0x30};
+        offset.write(LARGE_INTEGER{.QuadPart = 0});
+        length.write(LARGE_INTEGER{.QuadPart = 10});
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtLockFile(context, file_handle, {}, 0, 0, status, offset, length, 0, TRUE, FALSE));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(context, file_handle));
+        ASSERT_FALSE(emu.process.file_locks.empty());
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtUnlockFile(context, *duplicate, status, offset, length, 0));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtLockFile(context, *duplicate, {}, 0, 0, status, offset, length, 0, TRUE, FALSE));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(context, *duplicate));
+        EXPECT_TRUE(emu.process.file_locks.empty());
     }
 
     TEST(FileWriteTest, CompletedWritesAreVisibleThroughOtherHandles)

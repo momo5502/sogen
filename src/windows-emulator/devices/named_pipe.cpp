@@ -219,10 +219,30 @@ namespace sogen
         {
             return STATUS_NOT_SUPPORTED;
         }
-        if ((context.event && !win_emu.process.get_object_as<sogen::event>(context.event)) ||
-            (context.completion_port && !win_emu.process.get_object_as<sogen::io_completion>(context.completion_port)))
+        if (context.event)
         {
-            return STATUS_INVALID_HANDLE;
+            if (context.event.object_type() != handle_types::event)
+            {
+                return STATUS_OBJECT_TYPE_MISMATCH;
+            }
+
+            if (!win_emu.process.get_object_as<sogen::event>(context.event))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+        }
+
+        if (context.completion_port)
+        {
+            if (context.completion_port.object_type() != handle_types::io_completion)
+            {
+                return STATUS_OBJECT_TYPE_MISMATCH;
+            }
+
+            if (!win_emu.process.get_object_as<sogen::io_completion>(context.completion_port))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
         }
         if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
         {
@@ -375,7 +395,7 @@ namespace sogen
                                   .kind = kind,
                                   .awaited = std::move(awaited),
                                   .decided_status = decided_status};
-        const auto issuing_thread = win_emu.process.threads.find_handle(&context.thread());
+        const auto issuing_thread = win_emu.process.threads.internal_handle(context.thread());
         if (!io_completion_wait::retain_reference(win_emu.process, context.event, pending.context.event) ||
             !io_completion_wait::retain_reference(win_emu.process, context.completion_port, pending.context.completion_port) ||
             !io_completion_wait::retain_reference(win_emu.process, context.vcpu->active_thread, issuing_thread, pending.issuing_thread))

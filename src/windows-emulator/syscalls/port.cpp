@@ -147,7 +147,8 @@ namespace sogen
             {
                 return STATUS_PORT_DISCONNECTED;
             }
-            const auto key = static_cast<uint32_t>(port_handle.bits & 0xffffffff);
+            const auto port_reference = c.proc.ports.reference_of(port_handle);
+            const auto key = port_reference ? port_reference->index : 0;
             const auto replies = c.proc.pending_alpc_reply_views.find(key);
             if (replies != c.proc.pending_alpc_reply_views.end())
             {
@@ -678,7 +679,8 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto port_key = static_cast<uint32_t>(port_handle.bits & 0xFFFFFFFF);
+            const auto port_reference = c.proc.ports.reference_of(port_handle);
+            const auto port_key = port_reference ? port_reference->index : 0;
             if (send_message)
             {
                 const auto send_header = lpc_port_message::read(send_message);

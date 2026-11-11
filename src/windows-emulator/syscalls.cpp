@@ -1154,6 +1154,11 @@ namespace sogen
                                               const ULONG input_buffer_length, const emulator_pointer output_buffer,
                                               const ULONG output_buffer_length)
         {
+            if (event.bits != 0 && !event.value.is_pseudo && event.value.type != handle_types::event)
+            {
+                return STATUS_OBJECT_TYPE_MISMATCH;
+            }
+
             auto resolved_file_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
             if (file_handle == STDIN_HANDLE || file_handle == STDOUT_HANDLE)
             {

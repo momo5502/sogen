@@ -853,31 +853,21 @@ namespace sogen
 
             if (id.UniqueProcess == 0 || id.UniqueProcess == c.proc.process_id)
             {
-                for (auto& [h_val, t] : c.proc.threads)
+                for (auto& [index, thread] : c.proc.threads)
                 {
-                    if (t.id == id.UniqueThread)
+                    if (thread.id == id.UniqueThread)
                     {
-                        const auto handle = c.proc.threads.make_handle(h_val);
-                        if (!c.proc.threads.duplicate(handle))
-                        {
-                            return STATUS_INVALID_HANDLE;
-                        }
-                        thread_handle.write(handle);
+                        thread_handle.write(c.proc.threads.open_by_index(index));
                         return STATUS_SUCCESS;
                     }
                 }
             }
 
-            for (auto& [h_val, thread] : c.proc.managed_threads)
+            for (auto& [index, thread] : c.proc.managed_threads)
             {
                 if (thread.thread_id == id.UniqueThread && (id.UniqueProcess == 0 || thread.process_id == id.UniqueProcess))
                 {
-                    const auto handle = c.proc.managed_threads.make_handle(h_val);
-                    if (!c.proc.managed_threads.duplicate(handle))
-                    {
-                        return STATUS_INVALID_HANDLE;
-                    }
-                    thread_handle.write(handle);
+                    thread_handle.write(c.proc.managed_threads.open_by_index(index));
                     return STATUS_SUCCESS;
                 }
             }

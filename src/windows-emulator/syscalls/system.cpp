@@ -426,6 +426,7 @@ namespace sogen
             handle guest_handle{};
             handle_types::type type{};
             const ref_counted_object* object{}; // none for the process's fixed interactive window station
+            handle_attributes attributes{};
         };
 
         template <handle_types::type Type, typename T>
@@ -433,7 +434,7 @@ namespace sogen
         {
             for (const auto& [handle, object] : store.handle_entries())
             {
-                handles.push_back({.guest_handle = handle, .type = Type, .object = object});
+                handles.push_back({.guest_handle = handle, .type = Type, .object = object, .attributes = store.attributes_of(handle)});
             }
         }
 
@@ -554,7 +555,7 @@ namespace sogen
                 entry.GrantedAccess = type.generic_all;
                 entry.ObjectTypeIndex = type.index;
                 entry.HandleAttributes =
-                    h.object ? ((h.object->protect_from_close ? OBJ_PROTECT_CLOSE : 0) | (h.object->inherit ? OBJ_INHERIT : 0)) : 0;
+                    (h.attributes.protect_from_close ? OBJ_PROTECT_CLOSE : 0) | (h.attributes.inherit ? OBJ_INHERIT : 0);
                 c.emu.write_memory(next_entry, &entry, offsetof(entry_t, Reserved));
                 next_entry += sizeof(entry_t);
             }

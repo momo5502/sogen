@@ -582,11 +582,11 @@ namespace sogen::test
         EXPECT_EQ(copy->granted_access, FILE_WRITE_DATA);
         EXPECT_FALSE(original->inherit);
         EXPECT_TRUE(copy->inherit);
-        copy->protect_from_close = true;
+        this->emu->process.devices.set_attributes(duplicate, {.inherit = true, .protect_from_close = true});
         EXPECT_EQ(this->close(duplicate), STATUS_HANDLE_NOT_CLOSABLE);
         EXPECT_EQ(this->pipe(duplicate).start_io(*this->emu, this->request(duplicate, 1), true), STATUS_ACCESS_DENIED);
         EXPECT_EQ(this->close(this->reader), STATUS_SUCCESS);
-        copy->protect_from_close = false;
+        this->emu->process.devices.set_attributes(duplicate, {.inherit = true, .protect_from_close = false});
         EXPECT_EQ(this->close(duplicate), STATUS_SUCCESS);
     }
 
@@ -852,8 +852,8 @@ namespace sogen::test
     TEST_F(NamedPipeTest, WrongObjectTypeCannotBeUsedAsCompletionEvent)
     {
         auto context = this->request(this->writer, 1);
-        context.event = object_reference{.type = handle_types::event, .index = 0x7fffffff};
-        EXPECT_EQ(this->pipe(this->writer).start_io(*this->emu, context, false), STATUS_INVALID_HANDLE);
+        context.event = this->emu->process.reference_of(this->reader);
+        EXPECT_EQ(this->pipe(this->writer).start_io(*this->emu, context, false), STATUS_OBJECT_TYPE_MISMATCH);
         EXPECT_TRUE(this->pipe(this->writer).signaled);
     }
 }

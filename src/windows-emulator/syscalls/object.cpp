@@ -56,7 +56,7 @@ namespace sogen
 
             auto* handle_store = c.proc.get_handle_store(h);
             const auto* object = handle_store ? handle_store->get_object(h) : nullptr;
-            if (object && object->protect_from_close)
+            if (object && handle_store->attributes_of(h).protect_from_close)
             {
                 return STATUS_HANDLE_NOT_CLOSABLE;
             }
@@ -119,14 +119,18 @@ namespace sogen
                 {
                     port->get_internal_port()->release_sections(c.win_emu);
                     port->release_completion_port(c.proc);
-                    const auto port_key = static_cast<uint32_t>(h.bits & 0xFFFFFFFF);
-                    if (const auto views = c.proc.pending_alpc_reply_views.find(port_key); views != c.proc.pending_alpc_reply_views.end())
+                    const auto port_reference = c.proc.ports.reference_of(h);
+                    if (port_reference)
                     {
-                        for (const auto& view : views->second)
+                        if (const auto views = c.proc.pending_alpc_reply_views.find(port_reference->index);
+                            views != c.proc.pending_alpc_reply_views.end())
                         {
-                            c.win_emu.memory.release_memory(view[0], static_cast<size_t>(view[1]));
+                            for (const auto& view : views->second)
+                            {
+                                c.win_emu.memory.release_memory(view[0], static_cast<size_t>(view[1]));
+                            }
+                            c.proc.pending_alpc_reply_views.erase(views);
                         }
-                        c.proc.pending_alpc_reply_views.erase(views);
                     }
                 }
             }
@@ -138,10 +142,11 @@ namespace sogen
                 {
                     release_completion_association(c.proc, file->completion_association);
 
+                    const auto owner = c.proc.reference_of(h);
                     for (auto it = c.proc.file_locks.begin(); it != c.proc.file_locks.end();)
                     {
                         auto& locks = it->second.locks;
-                        std::erase_if(locks, [&](const file_lock_range& lock) { return lock.owner == h; });
+                        std::erase_if(locks, [&](const file_lock_range& lock) { return lock.owner == owner; });
 
                         if (locks.empty())
                         {
@@ -242,6 +247,10 @@ namespace sogen
             {
                 return STATUS_INVALID_HANDLE;
             }
+
+            auto attributes = store->attributes_of(resolved_source_handle);
+            attributes.inherit = (handle_attributes & OBJ_INHERIT) != 0;
+            (void)store->set_attributes(*new_handle, attributes);
 
             target_handle.write(*new_handle);
             return STATUS_SUCCESS;
@@ -685,8 +694,9 @@ namespace sogen
                     c.emu, object_information, object_information_length, return_length, [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
                         auto* store = c.proc.get_handle_store(effective_handle);
                         const auto* object = store ? store->get_object(effective_handle) : nullptr;
-                        info.Inherit = object && object->inherit;
-                        info.ProtectFromClose = object && object->protect_from_close;
+                        const auto attributes = store ? store->attributes_of(effective_handle) : handle_attributes{};
+                        info.Inherit = object && attributes.inherit;
+                        info.ProtectFromClose = object && attributes.protect_from_close;
                     });
             }
 
@@ -698,7 +708,8 @@ namespace sogen
         template <typename Store>
         void collect_wait32_candidate(Store& store, const uint32_t id, std::optional<handle>& resolved, uint32_t& candidate_count)
         {
-            if (!store.get_by_index(id))
+            const auto candidate = store.handle_for_id(id);
+            if (candidate.bits == 0)
             {
                 return;
             }
@@ -706,7 +717,7 @@ namespace sogen
             ++candidate_count;
             if (!resolved)
             {
-                resolved = store.make_handle(id);
+                resolved = candidate;
             }
         }
 
@@ -1139,8 +1150,7 @@ namespace sogen
 
             const emulator_object<OBJECT_HANDLE_FLAG_INFORMATION> info{c.emu, object_information};
             const auto flags = info.read();
-            object->inherit = flags.Inherit != 0;
-            object->protect_from_close = flags.ProtectFromClose != 0;
+            store->set_attributes(effective_handle, {.inherit = flags.Inherit != 0, .protect_from_close = flags.ProtectFromClose != 0});
 
             return STATUS_SUCCESS;
         }

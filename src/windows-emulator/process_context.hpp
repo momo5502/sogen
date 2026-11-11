@@ -54,7 +54,7 @@ namespace sogen
         uint64_t length{};
         ULONG key{};
         bool exclusive{};
-        handle owner{};
+        object_reference owner{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -458,9 +458,7 @@ namespace sogen
         template <typename T>
         T* get_object_as(const object_reference& reference)
         {
-            // The reference's type selects the store that owns the object.
-            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
-            return static_cast<T*>(this->get_object(reference));
+            return dynamic_cast<T*>(this->get_object(reference));
         }
 
         size_t handle_count() const;
@@ -480,7 +478,7 @@ namespace sogen
         bool is_current_process_handle(handle handle) const;
         bool is_current_thread_handle(handle handle, const emulator_thread* active_thread) const;
         bool is_object_pseudo_handle(handle handle) const;
-        handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread) const;
+        handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread);
 
         size_t get_live_thread_count() const;
         void commit_thread_stacks_in_full() const;
@@ -776,7 +774,7 @@ namespace sogen
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
         // rather than reading the handle attribute directly. Transient (valid only until the next reply).
         std::vector<alpc_reply_handle> pending_alpc_message_handles{};
-        std::map<uint32_t, std::vector<std::array<uint64_t, 2>>> pending_alpc_reply_views{};
+        std::map<uint64_t, std::vector<std::array<uint64_t, 2>>> pending_alpc_reply_views{};
 
         // Guest events WASAPI EVENTCALLBACK clients registered via SetEventHandle, keyed by the stream whose endpoint
         // port received them. The audio service hands each to its stream when the stream starts.

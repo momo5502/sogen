@@ -2034,12 +2034,13 @@ namespace sogen
             const auto range_length = static_cast<uint64_t>(lock_length.QuadPart);
             const auto is_exclusive = exclusive_lock != FALSE;
             const auto lock_key = f->handle.path().u16string();
+            const auto owner = c.proc.reference_of(file_handle);
 
             if (const auto lock_it = c.proc.file_locks.find(lock_key); lock_it != c.proc.file_locks.end())
             {
                 for (const auto& existing : lock_it->second.locks)
                 {
-                    if (existing.owner == file_handle || !does_lock_range_overlap(existing, offset, *lock_end))
+                    if (existing.owner == owner || !does_lock_range_overlap(existing, offset, *lock_end))
                     {
                         continue;
                     }
@@ -2061,7 +2062,7 @@ namespace sogen
                 .length = range_length,
                 .key = key,
                 .exclusive = is_exclusive,
-                .owner = file_handle,
+                .owner = owner,
             });
 
             write_lock_io_status(io_status_block, STATUS_SUCCESS);
@@ -2104,8 +2105,9 @@ namespace sogen
             }
 
             auto& locks = lock_it->second.locks;
+            const auto owner = c.proc.reference_of(file_handle);
             const auto entry = std::ranges::find_if(locks, [&](const file_lock_range& existing) {
-                return existing.owner == file_handle && existing.offset == offset && existing.length == range_length && existing.key == key;
+                return existing.owner == owner && existing.offset == offset && existing.length == range_length && existing.key == key;
             });
 
             if (entry == locks.end())
@@ -2965,6 +2967,11 @@ namespace sogen
 
                 c.win_emu.log.warn("NtFsControlFile on non-device handle (control code 0x%X)\n", static_cast<uint32_t>(fs_control_code));
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (event.bits != 0 && !event.value.is_pseudo && event.value.type != handle_types::event)
+            {
+                return STATUS_OBJECT_TYPE_MISMATCH;
             }
 
             if (const auto block = io_status_block.try_read(); !block || !io_status_block.try_write(*block))

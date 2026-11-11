@@ -51,6 +51,30 @@ namespace sogen::test
         EXPECT_EQ(0u, store.size());
     }
 
+    TEST(HandleStoreTest, InternalHandleResolvesWithoutBeingAReference)
+    {
+        handle_store<handle_types::event, event> store{};
+
+        const auto original = store.store(event{});
+        auto* object = store.get(original);
+        ASSERT_NE(nullptr, object);
+        auto reference = store.retain(original);
+        ASSERT_TRUE(reference);
+        const auto internal = store.internal_handle(*object);
+        ASSERT_NE(0u, internal.bits);
+        EXPECT_EQ(object, store.get(internal));
+        EXPECT_EQ(1u, store.handle_count());
+
+        ASSERT_TRUE(store.erase(original));
+        EXPECT_EQ(nullptr, store.get(original));
+        EXPECT_EQ(object, store.get(internal));
+        EXPECT_EQ(0u, store.handle_count());
+        EXPECT_EQ(1u, object->ref_count);
+
+        store.release(*reference);
+        EXPECT_EQ(nullptr, store.get(internal));
+    }
+
     TEST(HandleStoreTest, ClosingAnUnknownOrAlreadyClosedValueFails)
     {
         handle_store<handle_types::event, event> store{};

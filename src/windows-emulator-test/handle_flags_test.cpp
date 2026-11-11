@@ -90,6 +90,23 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), h));
     }
 
+    TEST_F(HandleFlagsTest, DuplicatesKeepIndependentFlags)
+    {
+        const auto original = this->emu->process.events.store(event{});
+        const auto duplicate = this->emu->process.events.duplicate(original);
+        ASSERT_TRUE(duplicate);
+        EXPECT_NE(original, *duplicate);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(*duplicate, true, true));
+        this->expect_flags(original, false, false);
+        this->expect_flags(*duplicate, true, true);
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), original));
+        EXPECT_EQ(STATUS_HANDLE_NOT_CLOSABLE, syscalls::handle_NtClose(this->context(), *duplicate));
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(*duplicate, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), *duplicate));
+    }
+
     TEST_F(HandleFlagsTest, RejectsInvalidObjectHandleWhenSettingFlags)
     {
         EXPECT_EQ(STATUS_INVALID_HANDLE, this->set_flags({}, true, true));
