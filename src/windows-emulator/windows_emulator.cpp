@@ -684,6 +684,18 @@ namespace sogen
             return switch_to_thread(win_emu, vcpu, *thread);
         }
 
+        // A thread parked in its wait stays waiting until something can end it, so the walk passes it by unchecked.
+        bool switch_to_thread_unless_parked(windows_emulator& win_emu, vcpu_context& vcpu, emulator_thread& thread,
+                                            const std::chrono::steady_clock::time_point now)
+        {
+            if (thread.is_parked(now, win_emu.process))
+            {
+                return false;
+            }
+
+            return switch_to_thread(win_emu, vcpu, thread);
+        }
+
         bool switch_to_next_thread(windows_emulator& win_emu, vcpu_context& vcpu)
         {
             const scheduler_clock::scope time_scope{win_emu.scheduling_clock()};
@@ -697,9 +709,12 @@ namespace sogen
                 ++resume_at;
             }
 
+            // One reading of the clock for the walk: it passes a parked thread by until something can end its wait.
+            const auto now = win_emu.clock().steady_now();
+
             for (auto it = resume_at; it != threads.end(); ++it)
             {
-                if (switch_to_thread(win_emu, vcpu, it->second))
+                if (switch_to_thread_unless_parked(win_emu, vcpu, it->second, now))
                 {
                     return true;
                 }
@@ -707,7 +722,7 @@ namespace sogen
 
             for (auto it = threads.begin(); it != resume_at; ++it)
             {
-                if (switch_to_thread(win_emu, vcpu, it->second))
+                if (switch_to_thread_unless_parked(win_emu, vcpu, it->second, now))
                 {
                     return true;
                 }

@@ -1871,6 +1871,49 @@ namespace sogen
         return true;
     }
 
+    bool emulator_thread::is_parked(const std::chrono::steady_clock::time_point now, const process_context& process) const
+    {
+        constexpr auto infinite = std::chrono::steady_clock::time_point::min();
+        const auto is_due = [&](const std::optional<std::chrono::steady_clock::time_point>& due_time) {
+            return due_time.has_value() && *due_time != infinite && *due_time < now;
+        };
+
+        // switch_to_thread runs a thread with an APC to deliver or a message hook to call, whatever it waits for.
+        if (this->message_wait_return_register.has_value() || this->has_pending_alertable_apc())
+        {
+            return false;
+        }
+
+        // The waits in the order is_thread_ready checks them.
+        if (this->waiting_for_alert)
+        {
+            return !this->alerted && !is_due(this->await_time);
+        }
+
+        if (this->await_msg_mask.has_value() || !this->await_objects.empty() || this->await_file_io.has_value())
+        {
+            return false;
+        }
+
+        if (this->await_time.has_value())
+        {
+            return !is_due(this->await_time);
+        }
+
+        if (this->await_host_condition || this->awaits_restored_host_condition || this->await_debug_event.has_value() ||
+            !this->await_io_completion.has_value())
+        {
+            return false;
+        }
+
+        // The port as the last check found it: closing any port since has moved its store's generation.
+        const auto& wait = *this->await_io_completion;
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+        const auto* completion = static_cast<const io_completion*>(wait.io_completion_object);
+        return completion && wait.io_completion_generation == process.io_completions.generation() && completion->queue.empty() &&
+               !is_due(wait.timeout);
+    }
+
     void emulator_thread::setup_if_necessary(cpu_interface& emu, const process_context& context)
     {
         if (!this->setup_done)
