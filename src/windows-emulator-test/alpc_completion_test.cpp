@@ -133,9 +133,9 @@ namespace sogen::test
         ASSERT_EQ(STATUS_SUCCESS, this->send_handshake().status);
 
         const auto retained = this->container().completion_port();
-        auto* completion = this->emu->process.get_object_as<io_completion>(retained);
-        ASSERT_NE(nullptr, completion);
-        EXPECT_EQ(1u, completion->queue.size());
+        auto* retained_completion = this->emu->process.get_object_as<io_completion>(retained);
+        ASSERT_NE(nullptr, retained_completion);
+        EXPECT_EQ(1u, retained_completion->queue.size());
 
         this->container().release_completion_port(this->emu->process);
         EXPECT_EQ(nullptr, this->emu->process.get_object_as<io_completion>(retained));
