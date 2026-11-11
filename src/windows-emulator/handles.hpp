@@ -346,8 +346,8 @@ namespace sogen
             {
                 throw std::runtime_error("Mutation of handle store is blocked!");
             }
-            if (h.value.type != Type || h.value.is_pseudo || h.value.id == 0 || this->handles_.contains(h.value.id) ||
-                this->internal_handles_.contains(h.value.id))
+            const auto id = static_cast<handle_id_type>(h.value.id);
+            if (h.value.type != Type || h.value.is_pseudo || id == 0 || this->handles_.contains(id) || this->internal_handles_.contains(id))
             {
                 return false;
             }
@@ -359,8 +359,8 @@ namespace sogen
                 return false;
             }
 
-            this->handles_.emplace(h.value.id, index);
-            this->attributes_[h.value.id] = {.inherit = entry->second.inherit, .protect_from_close = entry->second.protect_from_close};
+            this->handles_.emplace(id, index);
+            this->attributes_[id] = {.inherit = entry->second.inherit, .protect_from_close = entry->second.protect_from_close};
             return true;
         }
 
