@@ -101,6 +101,11 @@ namespace sogen::sandbox
                                  describe_path(mount.upper_directory) + "\n";
             }
 
+            for (const auto& image_override : settings.image_overrides)
+            {
+                configuration += "image-override=" + image_override.image.string() + ":" + describe_path(image_override.replacement) + "\n";
+            }
+
             for (const auto& file : registry_files)
             {
                 configuration += "reg-file=" + describe_path(file) + "\n";
@@ -141,8 +146,9 @@ namespace sogen::sandbox
 
         int run(const std::span<const std::string_view> args, const filesystem_mode root_mode, const std::filesystem::path& root_layer,
                 std::vector<mount_spec> mounts, const std::vector<directory_mount>& directory_mounts,
-                const std::vector<document_mount>& document_mounts, const std::filesystem::path& emulation_root,
-                const std::filesystem::path& registry_directory, const std::vector<std::filesystem::path>& registry_files,
+                const std::vector<document_mount>& document_mounts, std::vector<image_override> image_overrides,
+                const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
+                const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
                 const bool spoof_gpu_features, const bool elevated, const std::optional<display_mode>& max_display_mode,
                 const std::filesystem::path& snapshot_directory, const std::filesystem::path& resume_file,
@@ -201,6 +207,7 @@ namespace sogen::sandbox
             settings.root_mode = root_mode;
             settings.root_layer = root_layer;
             settings.mounts = std::move(mounts);
+            settings.image_overrides = std::move(image_overrides);
 
             subprocess_process_manager process_manager{utils::get_current_executable_path(), [&](const auto port, const auto& token) {
                                                            std::vector<std::string> arguments{"--managed-process-port",
@@ -250,6 +257,12 @@ namespace sogen::sandbox
                                                            {
                                                                arguments.emplace_back("--document-mount");
                                                                std::ranges::move(mount.to_arguments(), std::back_inserter(arguments));
+                                                           }
+                                                           for (const auto& image_override : settings.image_overrides)
+                                                           {
+                                                               arguments.emplace_back("--image-override");
+                                                               arguments.push_back(image_override.image.string());
+                                                               arguments.push_back(image_override.replacement.string());
                                                            }
                                                            for (const auto& file : registry_files)
                                                            {
@@ -416,6 +429,10 @@ namespace sogen::sandbox
                 ->expected(static_cast<int>(document_mount::argument_count))
                 ->allow_extra_args(false)
                 ->group("");
+            std::vector<std::pair<std::string, std::string>> image_override_values{};
+            app.add_option("--image-override", image_override_values, "Map the image at a guest path from a host file instead")
+                ->type_name("GUEST HOST")
+                ->allow_extra_args(false);
             std::string root_mode{to_string(default_root_mode)};
             app.add_option("--root-mode", root_mode, "Access mode of the emulation root drives")
                 ->capture_default_str()
@@ -527,10 +544,17 @@ namespace sogen::sandbox
                         document_mount::from_arguments(std::span(document_mount_values).subspan(i, document_mount::argument_count)));
                 }
 
+                std::vector<image_override> image_overrides{};
+                for (const auto& [image, replacement] : image_override_values)
+                {
+                    image_overrides.push_back({.image = windows_path{image}, .replacement = std::filesystem::absolute(replacement)});
+                }
+
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, parse_root_mode(root_mode).value(), root_layer, std::move(mounts), directory_mounts, document_mounts,
-                           emulation_root, registry_directory, registry_files, environment, network::parse_network_mode(network_name),
-                           spoof_gpu_features, elevated, parse_display_mode(max_display_mode_name), snapshot_directory, resume_file,
+                           std::move(image_overrides), emulation_root, registry_directory, registry_files, environment,
+                           network::parse_network_mode(network_name), spoof_gpu_features, elevated,
+                           parse_display_mode(max_display_mode_name), snapshot_directory, resume_file,
                            managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)

@@ -8,6 +8,7 @@
 #include "../process_context.hpp"
 
 #include <serialization_helper.hpp>
+#include <utils/io.hpp>
 #include <cinttypes>
 #include <vector>
 #include <new>
@@ -384,7 +385,9 @@ namespace sogen
 
     execution_mode module_manager::detect_execution_mode(const windows_path& executable_path, const logger& logger)
     {
-        auto detection_result = pe_architecture_detector::detect_from_file(*this->file_sys_, executable_path);
+        const auto* image_override = this->find_image_override(executable_path);
+        auto detection_result = image_override ? pe_architecture_detector::detect_from_file(image_override->replacement)
+                                               : pe_architecture_detector::detect_from_file(*this->file_sys_, executable_path);
 
         if (!detection_result.is_valid())
         {
@@ -624,6 +627,23 @@ namespace sogen
         return std::filesystem::path{utils::string::to_lower(path.lexically_normal().to_portable_path().u16string())};
     }
 
+    void module_manager::set_image_overrides(std::vector<image_override> overrides)
+    {
+        this->image_overrides_ = std::move(overrides);
+    }
+
+    const image_override* module_manager::find_image_override(const windows_path& image) const
+    {
+        const auto entry = std::ranges::find(this->image_overrides_, image, &image_override::image);
+        return entry == this->image_overrides_.end() ? nullptr : &*entry;
+    }
+
+    bool module_manager::read_image(const windows_path& file, std::vector<std::byte>& data) const
+    {
+        const auto* image_override = this->find_image_override(file);
+        return image_override ? utils::io::read_file(image_override->replacement, &data) : this->file_sys_->read_file(file, &data);
+    }
+
     std::optional<uint64_t> module_manager::get_module_load_count_by_path(const windows_path& path)
     {
         if (auto load_count_entry = modules_load_count.find(module_identity(path)); load_count_entry != modules_load_count.end())
@@ -672,7 +692,7 @@ namespace sogen
         }
 
         std::vector<std::byte> data{};
-        if (!this->file_sys_->read_file(file, &data) || data.empty())
+        if (!this->read_image(file, data) || data.empty())
         {
             logger.error("Failed to map module: %s does not resolve to a file\n", file.string().c_str());
             return nullptr;
