@@ -1591,7 +1591,9 @@ namespace sogen
             const auto stack_commit_size = stack_size != 0 ? stack_size : c.win_emu.mod_manager.executable->size_of_stack_commit;
             const auto h =
                 c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags, false, stack_commit_size);
-            c.proc.threads.get(h)->inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            const auto thread_attributes = get_handle_attributes(object_attributes);
+            (void)c.proc.threads.set_attributes(h, thread_attributes);
+            c.proc.threads.get(h)->inherit = thread_attributes.inherit;
 
             c.win_emu.report_debug_event({
                 .kind = process_debug_event_kind::create_thread,

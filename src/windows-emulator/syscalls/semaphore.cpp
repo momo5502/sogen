@@ -93,6 +93,7 @@ namespace sogen
             {
                 const auto attributes = object_attributes.read();
                 s.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                s.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 if (attributes.ObjectName)
                 {
                     s.name = read_unicode_string(c.emu, attributes.ObjectName);

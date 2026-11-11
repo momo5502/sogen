@@ -623,16 +623,27 @@ namespace sogen
                 return false;
             }
 
-            const auto entry = this->handles_.find(static_cast<handle_id_type>(h.id));
-            if (entry == this->handles_.end())
+            const auto index = this->resolve_index(h);
+            if (!index)
             {
                 return false;
             }
 
-            const auto index = entry->second;
+            if (h.is_system)
+            {
+                this->internal_handles_.erase(static_cast<handle_id_type>(h.id));
+                return true;
+            }
+
+            const auto entry = this->handles_.find(static_cast<handle_id_type>(h.id));
+            if (entry == this->handles_.end() || entry->second != *index)
+            {
+                return false;
+            }
+
             this->handles_.erase(entry);
             this->attributes_.erase(static_cast<handle_id_type>(h.id));
-            this->release_index(index);
+            this->release_index(*index);
             return true;
         }
 

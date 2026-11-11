@@ -252,6 +252,7 @@ namespace sogen
             }
             port_container container{std::move(port_name), c.win_emu, data};
             container.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            container.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
 
             const auto new_handle = c.proc.ports.store(std::move(container));
             port_handle.write(new_handle);
@@ -281,6 +282,7 @@ namespace sogen
             data.sequence_number = 1;
             port_container container{std::u16string(port_name), c.win_emu, data};
             container.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            container.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
             if (!(flags & alpc_sync_connect))
             {
                 container.queue_connection_reply(c.win_emu, c.proc.is_wow64_process);

@@ -55,6 +55,11 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (value.is_system)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
             auto* handle_store = c.proc.get_handle_store(h);
             const auto* object = handle_store ? handle_store->get_object(h) : nullptr;
             if (object && handle_store->attributes_of(h).protect_from_close)
@@ -243,7 +248,7 @@ namespace sogen
                     target_handle.write(new_handle);
                     if ((options & duplicate_close_source) && !resolved_source_handle.value.is_system)
                     {
-                        return handle_NtClose(c, resolved_source_handle);
+                        (void)handle_NtClose(c, resolved_source_handle);
                     }
                     return STATUS_SUCCESS;
                 }
@@ -269,7 +274,7 @@ namespace sogen
             target_handle.write(*new_handle);
             if ((options & duplicate_close_source) && !resolved_source_handle.value.is_system)
             {
-                return handle_NtClose(c, resolved_source_handle);
+                (void)handle_NtClose(c, resolved_source_handle);
             }
             return STATUS_SUCCESS;
         }

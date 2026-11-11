@@ -158,6 +158,7 @@ namespace sogen
             }
 
             entry->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+            entry->protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
             const auto handle = c.proc.registry_keys.store(std::move(entry.value()));
             key_handle.write(handle);
 
@@ -624,6 +625,7 @@ namespace sogen
             }
 
             entry->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+            entry->protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
             const auto new_handle = c.proc.registry_keys.store(std::move(entry.value()));
             key_handle.write(new_handle);
 

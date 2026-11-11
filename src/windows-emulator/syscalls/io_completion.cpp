@@ -50,6 +50,7 @@ namespace sogen
             completion.name = std::move(name);
             completion.number_of_concurrent_threads = number_of_concurrent_threads;
             completion.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            completion.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
 
             io_completion_handle.write(c.proc.io_completions.store(std::move(completion)));
             return STATUS_SUCCESS;
@@ -307,6 +308,7 @@ namespace sogen
             wait_completion_packet packet{};
             packet.name = std::move(name);
             packet.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            packet.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
             wait_packet_handle.write(c.proc.wait_completion_packets.store(std::move(packet)));
             return STATUS_SUCCESS;
         }

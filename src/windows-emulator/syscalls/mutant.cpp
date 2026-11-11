@@ -105,6 +105,7 @@ namespace sogen
             mutant e{};
             e.name = std::move(name);
             e.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            e.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
 
             if (initial_owner)
             {

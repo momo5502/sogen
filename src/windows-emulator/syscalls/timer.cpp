@@ -149,6 +149,7 @@ namespace sogen
             t.name = std::move(name);
             t.synchronization = timer_type == 1;
             t.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            t.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
 
             const auto h = c.proc.timers.store(std::move(t));
             timer_handle.write(h);

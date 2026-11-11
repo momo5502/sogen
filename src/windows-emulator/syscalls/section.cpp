@@ -329,6 +329,7 @@ namespace sogen
             {
                 const auto attributes = object_attributes.read();
                 s.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                s.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 if (attributes.ObjectName)
                 {
                     auto name = read_unicode_string(c.emu, attributes.ObjectName);
@@ -472,6 +473,7 @@ namespace sogen
                 }
 
                 section->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                section->protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 section_handle.write(c.proc.sections.store(std::move(*section)));
                 return STATUS_SUCCESS;
             }

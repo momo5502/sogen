@@ -2220,6 +2220,7 @@ namespace sogen
                 container.granted_access = desired_access;
                 pipe_device->create_options = create_options;
                 container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                container.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 if (windows_path(pipe_device->name) != windows_path(u"\\Device\\NamedPipe\\"))
                 {
                     const auto instances = find_named_pipe_instances(c.proc, pipe_device->name);
@@ -2284,6 +2285,7 @@ namespace sogen
                     container.granted_access = desired_access;
                     pipe_device->create_options = create_options;
                     container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                    container.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                     pipe_device->endpoint = std::move(root_pipe->unopened_peer);
 
                     file_handle.write(c.proc.devices.store(std::move(container)));
@@ -2385,6 +2387,7 @@ namespace sogen
             file f{};
             f.access_mask = desired_access;
             f.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+            f.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
             f.file_mode = create_options & FILE_MODE_MASK;
             f.name = std::move(filename);
 
@@ -2895,6 +2898,7 @@ namespace sogen
                 pipe_device->create_options = create_options;
                 pipe_device->server_end = true;
                 container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                container.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 pipe_device->default_timeout = default_timeout.read();
                 pipe_device->create_endpoints();
             }

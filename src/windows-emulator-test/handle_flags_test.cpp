@@ -154,6 +154,35 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), duplicate));
     }
 
+    TEST_F(HandleFlagsTest, ForgedSystemBitDoesNotCloseAProtectedGuestHandle)
+    {
+        const auto handle = this->emu->process.events.store(event{});
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(handle, false, true));
+
+        auto forged = handle;
+        forged.value.is_system = true;
+        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtClose(this->context(), forged));
+        ASSERT_NE(nullptr, this->emu->process.events.get(handle));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(handle, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), handle));
+    }
+
+    TEST_F(HandleFlagsTest, DuplicateCloseSourceIgnoresTheProtectedSourceCloseStatus)
+    {
+        constexpr ULONG duplicate_close_source = 1;
+        const auto source = this->emu->process.events.store(event{});
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(source, false, true));
+
+        const auto duplicate = this->duplicate(source, 0, duplicate_close_source);
+        ASSERT_NE(nullptr, this->emu->process.events.get(source));
+        ASSERT_NE(nullptr, this->emu->process.events.get(duplicate));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(source, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), source));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), duplicate));
+    }
+
     TEST_F(HandleFlagsTest, RejectsInvalidObjectHandleWhenSettingFlags)
     {
         EXPECT_EQ(STATUS_INVALID_HANDLE, this->set_flags({}, true, true));
