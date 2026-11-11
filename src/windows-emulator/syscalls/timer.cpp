@@ -118,6 +118,11 @@ namespace sogen
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                       const ULONG timer_type)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (timer_type > 1)
             {
                 return STATUS_INVALID_PARAMETER_4;
@@ -149,7 +154,6 @@ namespace sogen
             t.name = std::move(name);
             t.synchronization = timer_type == 1;
             t.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
-            t.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
 
             const auto h = c.proc.timers.store(std::move(t));
             timer_handle.write(h);
@@ -183,6 +187,11 @@ namespace sogen
         NTSTATUS handle_NtOpenTimer(const syscall_context& c, const emulator_object<handle> timer_handle, ACCESS_MASK /*desired_access*/,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!timer_handle)
             {
                 return STATUS_ACCESS_VIOLATION;

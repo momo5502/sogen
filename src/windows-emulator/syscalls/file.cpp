@@ -1380,6 +1380,11 @@ namespace sogen
                                                  const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                                  const uint64_t file_information, const uint32_t length, const uint32_t info_class)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!is_file_information_class(info_class))
             {
                 c.win_emu.log.error("Unsupported NtQueryInformationByName info class: 0x%X\n", info_class);
@@ -2220,7 +2225,6 @@ namespace sogen
                 container.granted_access = desired_access;
                 pipe_device->create_options = create_options;
                 container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-                container.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 if (windows_path(pipe_device->name) != windows_path(u"\\Device\\NamedPipe\\"))
                 {
                     const auto instances = find_named_pipe_instances(c.proc, pipe_device->name);
@@ -2247,6 +2251,11 @@ namespace sogen
                                      ULONG /*share_access*/, ULONG create_disposition, ULONG create_options, uint64_t ea_buffer,
                                      ULONG ea_length)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             constexpr ULONG file_opened = 1;
 
             if (create_options & FILE_DELETE_ON_CLOSE && !(desired_access & DELETE))
@@ -2285,7 +2294,6 @@ namespace sogen
                     container.granted_access = desired_access;
                     pipe_device->create_options = create_options;
                     container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-                    container.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                     pipe_device->endpoint = std::move(root_pipe->unopened_peer);
 
                     file_handle.write(c.proc.devices.store(std::move(container)));
@@ -2387,7 +2395,6 @@ namespace sogen
             file f{};
             f.access_mask = desired_access;
             f.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-            f.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
             f.file_mode = create_options & FILE_MODE_MASK;
             f.name = std::move(filename);
 
@@ -2560,6 +2567,11 @@ namespace sogen
                                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                   const emulator_object<FILE_NETWORK_OPEN_INFORMATION> file_information)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!object_attributes)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -2631,6 +2643,11 @@ namespace sogen
                                               const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                               const emulator_object<FILE_BASIC_INFORMATION> file_information)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!object_attributes)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -2701,6 +2718,11 @@ namespace sogen
                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG share_access,
                                    const ULONG open_options)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu.memory()}, 0,
                                        share_access, FILE_OPEN, open_options, 0, 0);
         }
@@ -2709,6 +2731,11 @@ namespace sogen
                                               const ACCESS_MASK /*desired_access*/,
                                               const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
             const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
@@ -2749,6 +2776,11 @@ namespace sogen
                                                 const ACCESS_MASK /*desired_access*/,
                                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
 
             if (attributes.ObjectName == 0)
@@ -2763,6 +2795,11 @@ namespace sogen
                                                  ACCESS_MASK /*desired_access*/,
                                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
             const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
@@ -2861,6 +2898,11 @@ namespace sogen
                                               ULONG completion_mode, ULONG maximum_instances, ULONG inbound_quota, ULONG outbound_quota,
                                               emulator_object<LARGE_INTEGER> default_timeout)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             constexpr ULONG file_created = 2;
 
             (void)share_access;
@@ -2898,7 +2940,6 @@ namespace sogen
                 pipe_device->create_options = create_options;
                 pipe_device->server_end = true;
                 container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-                container.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 pipe_device->default_timeout = default_timeout.read();
                 pipe_device->create_endpoints();
             }

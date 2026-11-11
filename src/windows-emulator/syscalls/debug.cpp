@@ -216,9 +216,14 @@ namespace sogen
     {
         NTSTATUS handle_NtCreateDebugObject(const syscall_context& c, const emulator_object<handle> debug_object_handle,
                                             const ACCESS_MASK /*desired_access*/,
-                                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                             const ULONG flags)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             debug_object object{};
             object.kill_on_close = (flags & DEBUG_KILL_ON_CLOSE) != 0;
             debug_object_handle.write(c.proc.debug_objects.store(std::move(object)));

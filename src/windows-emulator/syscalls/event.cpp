@@ -165,6 +165,11 @@ namespace sogen
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                       const EVENT_TYPE event_type, const BOOLEAN initial_state)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (event_type != NotificationEvent && event_type != SynchronizationEvent)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -198,7 +203,6 @@ namespace sogen
             e.signaled = initial_state != FALSE;
             e.name = std::move(name);
             e.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
-            e.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
 
             const auto handle = c.proc.events.store(std::move(e));
             event_handle.write(handle);
@@ -213,6 +217,11 @@ namespace sogen
                                     const ACCESS_MASK /*desired_access*/,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
             const auto name = read_unicode_string(c.emu, attributes.ObjectName);
             c.win_emu.callbacks.on_generic_access("Opening event", name);

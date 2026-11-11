@@ -113,6 +113,20 @@ namespace sogen::test
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), inheritable_open));
     }
 
+    TEST_F(NamedObjectOpenTest, ObjectAttributesRejectProtectFromClose)
+    {
+        const auto name = u"\\BaseNamedObjects\\sogen_protect_attributes";
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, syscalls::handle_NtCreateSemaphore(this->context(), this->handle_slot(), 0,
+                                                                               this->named_attributes(name, OBJ_PROTECT_CLOSE), 1, 5));
+
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtCreateSemaphore(this->context(), this->handle_slot(), 0, this->named_attributes(name), 1, 5));
+        const auto creator = this->handle_slot().read();
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, syscalls::handle_NtOpenSemaphore(this->context(), this->handle_slot(), 0,
+                                                                             this->named_attributes(name, OBJ_PROTECT_CLOSE)));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), creator));
+    }
+
     TEST_F(NamedObjectOpenTest, OpeningAnEventThatDoesNotExistReportsTheNameAsNotFound)
     {
         const auto attributes = this->named_attributes(u"\\BaseNamedObjects\\sogen_missing_event");

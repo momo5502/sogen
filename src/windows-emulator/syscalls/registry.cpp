@@ -134,6 +134,11 @@ namespace sogen
         NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<handle> key_handle, const ACCESS_MASK /*desired_access*/,
                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
             auto key = read_unicode_string(c.emu, attributes.ObjectName);
 
@@ -158,7 +163,6 @@ namespace sogen
             }
 
             entry->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-            entry->protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
             const auto handle = c.proc.registry_keys.store(std::move(entry.value()));
             key_handle.write(handle);
 
@@ -169,6 +173,11 @@ namespace sogen
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                     ULONG /*open_options*/)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             return handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
         }
 
@@ -581,6 +590,11 @@ namespace sogen
                                     const ULONG /*title_index*/, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class*/,
                                     const ULONG /*create_options*/, const emulator_object<ULONG> disposition)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto result = handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
 
             if (result == STATUS_SUCCESS)
@@ -625,7 +639,6 @@ namespace sogen
             }
 
             entry->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-            entry->protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
             const auto new_handle = c.proc.registry_keys.store(std::move(entry.value()));
             key_handle.write(new_handle);
 

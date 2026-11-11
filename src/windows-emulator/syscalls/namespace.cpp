@@ -162,6 +162,11 @@ namespace sogen
                                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                  const emulator_object<OBJECT_BOUNDARY_DESCRIPTOR> boundary_descriptor)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             return open_or_create_ns(c, namespace_handle, desired_access, object_attributes, boundary_descriptor, false);
         }
 
@@ -170,6 +175,11 @@ namespace sogen
                                                const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                const emulator_object<OBJECT_BOUNDARY_DESCRIPTOR> boundary_descriptor)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             return open_or_create_ns(c, namespace_handle, desired_access, object_attributes, boundary_descriptor, true);
         }
 

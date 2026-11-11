@@ -256,13 +256,23 @@ namespace sogen
         NTSTATUS handle_NtCreateUserProcess(const syscall_context& c, const emulator_object<handle> process_handle,
                                             const emulator_object<handle> thread_handle, const ACCESS_MASK /*process_desired_access*/,
                                             const ACCESS_MASK /*thread_desired_access*/,
-                                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*process_object_attributes*/,
-                                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*thread_object_attributes*/,
+                                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> process_object_attributes,
+                                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> thread_object_attributes,
                                             const ULONG process_flags, const ULONG /*thread_flags*/,
                                             const emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_parameters,
                                             const emulator_object<PS_CREATE_INFO<EmulatorTraits<Emu64>>> create_info,
                                             const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
         {
+            if (const auto status = validate_object_attributes(process_object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            if (const auto status = validate_object_attributes(thread_object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             auto* manager = c.win_emu.processes();
             if (!manager)
             {
@@ -1251,6 +1261,11 @@ namespace sogen
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                       const emulator_object<CLIENT_ID64> client_id)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!process_handle || !client_id)
             {
                 return STATUS_INVALID_PARAMETER;

@@ -844,6 +844,11 @@ namespace sogen
                                      emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                      emulator_object<CLIENT_ID64> client_id)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!client_id)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -1536,6 +1541,11 @@ namespace sogen
                                          const EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
                                          const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             constexpr ULONG valid_create_flags = 0x7F;
             if (create_flags & ~valid_create_flags)
             {

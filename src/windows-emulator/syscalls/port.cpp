@@ -224,6 +224,11 @@ namespace sogen
                                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                          const emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>> port_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!port_handle)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -252,7 +257,6 @@ namespace sogen
             }
             port_container container{std::move(port_name), c.win_emu, data};
             container.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
-            container.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
 
             const auto new_handle = c.proc.ports.store(std::move(container));
             port_handle.write(new_handle);
@@ -271,6 +275,11 @@ namespace sogen
                                           const emulator_pointer /*in_message_attributes*/,
                                           const emulator_object<LARGE_INTEGER> /*timeout*/)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             auto port_name = read_unicode_string(c.emu, server_port_name);
             c.win_emu.callbacks.on_generic_access("Connecting port", port_name);
             port_creation_data data{};
@@ -282,7 +291,6 @@ namespace sogen
             data.sequence_number = 1;
             port_container container{std::u16string(port_name), c.win_emu, data};
             container.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
-            container.protect_from_close = object_attributes && (object_attributes.read().Attributes & OBJ_PROTECT_CLOSE) != 0;
             if (!(flags & alpc_sync_connect))
             {
                 container.queue_connection_reply(c.win_emu, c.proc.is_wow64_process);
@@ -303,6 +311,16 @@ namespace sogen
             const emulator_object<EmulatorTraits<Emu64>::SIZE_T> buffer_length, const emulator_pointer out_message_attributes,
             const emulator_pointer in_message_attributes, const emulator_object<LARGE_INTEGER> timeout)
         {
+            if (const auto status = validate_object_attributes(connection_port_object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            if (const auto status = validate_object_attributes(client_port_object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!connection_port_object_attributes)
             {
                 return STATUS_INVALID_PARAMETER;

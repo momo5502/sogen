@@ -11,6 +11,11 @@ namespace sogen
                                         const ACCESS_MASK /*desired_access*/,
                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!object_attributes)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -80,6 +85,11 @@ namespace sogen
                                           const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                           const LONG initial_count, const LONG maximum_count)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (maximum_count <= 0 || initial_count < 0 || initial_count > maximum_count)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -93,7 +103,6 @@ namespace sogen
             {
                 const auto attributes = object_attributes.read();
                 s.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-                s.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 if (attributes.ObjectName)
                 {
                     s.name = read_unicode_string(c.emu, attributes.ObjectName);

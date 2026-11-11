@@ -314,6 +314,11 @@ namespace sogen
                                         const emulator_object<ULARGE_INTEGER> maximum_size, const ULONG section_page_protection,
                                         const ULONG allocation_attributes, const handle file_handle)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             section s{};
             s.section_page_protection = section_page_protection;
             s.allocation_attributes = allocation_attributes;
@@ -329,7 +334,6 @@ namespace sogen
             {
                 const auto attributes = object_attributes.read();
                 s.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-                s.protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 if (attributes.ObjectName)
                 {
                     auto name = read_unicode_string(c.emu, attributes.ObjectName);
@@ -374,6 +378,11 @@ namespace sogen
                                           const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
                                           const ULONG extended_parameter_count)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (const auto status = validate_section_extended_parameters(c, extended_parameters, extended_parameter_count);
                 status != STATUS_SUCCESS)
             {
@@ -388,6 +397,11 @@ namespace sogen
                                       const ACCESS_MASK /*desired_access*/,
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
 
             auto filename = read_unicode_string(c.emu, attributes.ObjectName);
@@ -473,7 +487,6 @@ namespace sogen
                 }
 
                 section->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
-                section->protect_from_close = (attributes.Attributes & OBJ_PROTECT_CLOSE) != 0;
                 section_handle.write(c.proc.sections.store(std::move(*section)));
                 return STATUS_SUCCESS;
             }

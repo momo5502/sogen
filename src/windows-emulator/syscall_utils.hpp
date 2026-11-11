@@ -12,14 +12,24 @@ namespace sogen
 {
 
     template <typename Traits>
+    NTSTATUS validate_object_attributes(const emulator_object<OBJECT_ATTRIBUTES<Traits>>& object_attributes)
+    {
+        constexpr uint32_t valid_object_attributes = 0x00001FF2;
+        if (object_attributes && (object_attributes.read().Attributes & ~valid_object_attributes) != 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    template <typename Traits>
     handle_attributes get_handle_attributes(const emulator_object<OBJECT_ATTRIBUTES<Traits>>& object_attributes)
     {
         handle_attributes attributes{};
         if (object_attributes)
         {
-            const auto value = object_attributes.read();
-            attributes.inherit = (value.Attributes & OBJ_INHERIT) != 0;
-            attributes.protect_from_close = (value.Attributes & OBJ_PROTECT_CLOSE) != 0;
+            attributes.inherit = (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
         }
 
         return attributes;
