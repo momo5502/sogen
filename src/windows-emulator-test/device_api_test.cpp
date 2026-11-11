@@ -1,6 +1,14 @@
 #include "emulation_test_utils.hpp"
 #include <io_device.hpp>
+#include <syscall_utils.hpp>
 #include <token.hpp>
+
+namespace sogen::syscalls
+{
+    NTSTATUS handle_NtNotifyChangeKey(const syscall_context& c, handle key_handle, handle event, uint64_t apc_routine, uint64_t apc_context,
+                                      uint64_t io_status_block, ULONG completion_filter, BOOLEAN watch_tree, uint64_t buffer,
+                                      ULONG buffer_size, BOOLEAN asynchronous);
+}
 
 namespace sogen::test
 {
@@ -35,6 +43,7 @@ namespace sogen::test
 
         constexpr std::u16string_view enum_path = uR"(\Registry\Machine\System\CurrentControlSet\Enum\)";
         constexpr std::u16string_view installer_classes_path = uR"(\Registry\Machine\System\CurrentControlSet\Control\Class\)";
+        constexpr std::u16string_view interface_classes_path = uR"(\Registry\Machine\System\CurrentControlSet\Control\DeviceClasses\)";
         constexpr std::u16string_view session_id_property = uR"(\Properties\{83da6326-97a6-4088-9453-a1923f573b29}\0006)";
         constexpr std::u16string_view restricted_sd_property = uR"(\Properties\{8c439ff0-9cf7-43cd-961e-9299a4c6c157}\0064)";
         constexpr uint32_t devprop_type_uint32 = 0xFFFF0007;
@@ -216,6 +225,31 @@ namespace sogen::test
             uint64_t handle;
         };
 
+        NTSTATUS send_open_class_key(windows_emulator& emu, io_device_context& context, const uint64_t storage, registry_input input,
+                                     const std::u16string_view class_name = {}, const uint64_t output = 0, uint64_t request = 0)
+        {
+            if (!class_name.empty())
+            {
+                const std::u16string terminated{class_name};
+                emu.memory.write_memory(storage + 0x100, terminated.c_str(), (terminated.size() + 1) * sizeof(char16_t));
+                input.class_name = storage + 0x100;
+                input.class_name_bytes = static_cast<uint32_t>((terminated.size() + 1) * sizeof(char16_t));
+            }
+
+            request = request ? request : storage;
+            emu.memory.write_memory(request, &input, sizeof(input));
+
+            context.io_control_code = ioctl_open_class_key;
+            context.io_status_block.set_address(storage + 0x300);
+            context.input_buffer = request;
+            context.input_buffer_length = sizeof(input);
+            context.output_buffer = output ? output : storage + 0x200;
+            context.output_buffer_length = sizeof(handle_result);
+
+            io_device_container device{u"DeviceApi\\CMApi", emu, {}};
+            return device.execute_ioctl(emu, context);
+        }
+
         constexpr ULONG ioctl_get_device_interface_list = 0x470807;
         constexpr std::array<uint8_t, 16> audio_interface_class{0x04, 0xad, 0x94, 0x69, 0xef, 0x93, 0xd0, 0x11,
                                                                 0xa3, 0xcc, 0x00, 0xa0, 0xc9, 0x22, 0x31, 0x96};
@@ -248,29 +282,10 @@ namespace sogen::test
                 this->storage = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
             }
 
-            NTSTATUS open_class_key(registry_input input, const std::u16string_view class_name = {}, const uint64_t output = 0,
-                                    uint64_t request = 0)
+            NTSTATUS open_class_key(const registry_input input, const std::u16string_view class_name = {}, const uint64_t output = 0,
+                                    const uint64_t request = 0)
             {
-                if (!class_name.empty())
-                {
-                    const std::u16string terminated{class_name};
-                    this->emu.memory.write_memory(this->storage + 0x100, terminated.c_str(), (terminated.size() + 1) * sizeof(char16_t));
-                    input.class_name = this->storage + 0x100;
-                    input.class_name_bytes = static_cast<uint32_t>((terminated.size() + 1) * sizeof(char16_t));
-                }
-
-                request = request ? request : this->storage;
-                this->emu.memory.write_memory(request, &input, sizeof(input));
-
-                this->context.io_control_code = ioctl_open_class_key;
-                this->context.io_status_block.set_address(this->storage + 0x300);
-                this->context.input_buffer = request;
-                this->context.input_buffer_length = sizeof(input);
-                this->context.output_buffer = output ? output : this->storage + 0x200;
-                this->context.output_buffer_length = sizeof(handle_result);
-
-                io_device_container device{u"DeviceApi\\CMApi", this->emu, {}};
-                return device.execute_ioctl(this->emu, this->context);
+                return send_open_class_key(this->emu, this->context, this->storage, input, class_name, output, request);
             }
 
             handle_result result()
@@ -518,6 +533,23 @@ namespace sogen::test
         EXPECT_EQ(0u, this->result().handle);
     }
 
+    TEST_F(DeviceApiTest, ClassNamesMustBeGuidStrings)
+    {
+        for (const auto* name : {u"Display", u"{4d36e968-e325-11ce-bfc1-08002be1031}", u"{4d36e968-e325-11ce-bfc1-08002be10318",
+                                 u"{4d36e968+e325-11ce-bfc1-08002be10318}", u"{4d36e968-e325-11ce-bfc1-08002be1031g}",
+                                 u"4d36e968-e325-11ce-bfc1-08002be10318"})
+        {
+            for (const auto disposition : {open_existing, open_always})
+            {
+                ASSERT_EQ(STATUS_SUCCESS, this->open_class_key({.key_type = installer_class, .disposition = disposition}, name));
+                EXPECT_EQ(STATUS_OBJECT_NAME_INVALID, this->result().status) << u16_to_u8(name);
+            }
+        }
+
+        ASSERT_EQ(STATUS_SUCCESS, this->open_class_key({.key_type = installer_class}, u"{4D36E968-E325-11CE-BFC1-08002BE10318}"));
+        EXPECT_EQ(STATUS_SUCCESS, this->result().status);
+    }
+
     TEST_F(DeviceApiTest, RejectsMalformedRequests)
     {
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->open_class_key({.size = 36}));
@@ -694,6 +726,86 @@ namespace sogen::test
         EXPECT_EQ(multi_sz({uR"(SOGENTEST\MONITOR\0000)"}), query_device_ids(emu, storage, list_by_enumerator, u"SOGENTEST").list);
         EXPECT_EQ(multi_sz({uR"(SOGENTEST\AUDIO\0000)", uR"(SOGENTEST\MONITOR\0000)"}),
                   query_device_ids(emu, storage, list_by_enumerator | list_unfiltered, u"SOGENTEST").list);
+    }
+
+    TEST(ElevatedDeviceApiTest, OpeningAMissingClassAlwaysCreatesIt)
+    {
+        emulator_interfaces interfaces{};
+        interfaces.socket_factory = network::create_static_socket_factory();
+        interfaces.dns_lookup = create_sample_dns_lookup();
+        auto emu = create_emulator({.use_relative_time = true, .elevated = true}, {}, std::move(interfaces));
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        io_device_context context{emu.memory};
+
+        constexpr std::u16string_view missing_class = u"{6a1f2b3c-4d5e-4f60-8a1b-2c3d4e5f6a7b}";
+        for (const auto& [key_type, root] : {std::pair{installer_class, std::u16string{installer_classes_path}},
+                                             std::pair{interface_class, std::u16string{interface_classes_path}}})
+        {
+            ASSERT_EQ(STATUS_SUCCESS, send_open_class_key(emu, context, storage, {.key_type = key_type}, missing_class));
+            EXPECT_EQ(STATUS_OBJECT_NAME_NOT_FOUND, emu.memory.read_memory<handle_result>(storage + 0x200).status);
+
+            ASSERT_EQ(STATUS_SUCCESS,
+                      send_open_class_key(emu, context, storage, {.key_type = key_type, .disposition = open_always}, missing_class));
+            const auto created = emu.memory.read_memory<handle_result>(storage + 0x200);
+            ASSERT_EQ(STATUS_SUCCESS, created.status);
+            EXPECT_NE(0u, created.handle);
+
+            const auto parent = emu.registry.get_key({root});
+            ASSERT_TRUE(parent.has_value());
+            std::vector<std::string> names{};
+            for (size_t index = 0; index < emu.registry.get_sub_key_count(*parent); ++index)
+            {
+                if (const auto name = emu.registry.get_sub_key_name(*parent, index))
+                {
+                    names.emplace_back(*name);
+                }
+            }
+            EXPECT_EQ(1, std::ranges::count(names, "{6A1F2B3C-4D5E-4F60-8A1B-2C3D4E5F6A7B}"));
+
+            ASSERT_EQ(STATUS_SUCCESS, send_open_class_key(emu, context, storage, {.key_type = key_type}, missing_class));
+            EXPECT_EQ(STATUS_SUCCESS, emu.memory.read_memory<handle_result>(storage + 0x200).status);
+        }
+    }
+
+    // PiCMOpenClassKey creates a class through ZwCreateKey, so a watch on the class root for new names completes then, and
+    // stays pending while the class it opens always exists already.
+    TEST(ElevatedDeviceApiTest, CreatingAClassCompletesAWatchOnTheClassRoot)
+    {
+        emulator_interfaces interfaces{};
+        interfaces.socket_factory = network::create_static_socket_factory();
+        interfaces.dns_lookup = create_sample_dns_lookup();
+        auto emu = create_emulator({.use_relative_time = true, .elevated = true}, {}, std::move(interfaces));
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto thread = emu.process.threads.store(emulator_thread{emu.memory, emu.process, 0, 0, 0x100000, 0, 8, true});
+        emu.vcpu(0).active_thread = emu.process.threads.get(thread);
+        io_device_context context{emu.memory};
+        context.vcpu = &emu.vcpu(0);
+        const syscall_context c{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+
+        constexpr std::u16string_view missing_class = u"{6a1f2b3c-4d5e-4f60-8a1b-2c3d4e5f6a7b}";
+        const auto status_block = storage + 0x400;
+        const auto watch = [&](const handle root) {
+            return syscalls::handle_NtNotifyChangeKey(c, root, {}, 0, 0, status_block, reg_notify_change_name, FALSE, 0, 0, TRUE);
+        };
+        const auto watch_status = [&] { return emu.memory.read_memory<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>(status_block).Status; };
+
+        for (const auto key_type : {installer_class, interface_class})
+        {
+            ASSERT_EQ(STATUS_SUCCESS, send_open_class_key(emu, context, storage, {.key_type = key_type}));
+            const auto root = make_handle(emu.memory.read_memory<handle_result>(storage + 0x200).handle);
+
+            ASSERT_EQ(STATUS_PENDING, watch(root));
+            ASSERT_EQ(STATUS_SUCCESS,
+                      send_open_class_key(emu, context, storage, {.key_type = key_type, .disposition = open_always}, missing_class));
+            EXPECT_EQ(STATUS_SUCCESS, emu.memory.read_memory<handle_result>(storage + 0x200).status);
+            EXPECT_EQ(STATUS_NOTIFY_ENUM_DIR, watch_status());
+
+            ASSERT_EQ(STATUS_PENDING, watch(root));
+            ASSERT_EQ(STATUS_SUCCESS,
+                      send_open_class_key(emu, context, storage, {.key_type = key_type, .disposition = open_always}, missing_class));
+            EXPECT_EQ(STATUS_SUCCESS, emu.memory.read_memory<handle_result>(storage + 0x200).status);
+            EXPECT_EQ(STATUS_PENDING, watch_status());
+        }
     }
 
     // An empty list is a lone terminator, so a reply under 22 bytes has no room for it. The emulator starts no devices:

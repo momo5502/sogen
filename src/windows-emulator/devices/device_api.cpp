@@ -496,9 +496,24 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            // PnpIsValidGuidString, which CmValidateInstallerClassName applies to every class name: the 38 characters
+            // RtlGUIDFromString reads, hex digits in either case.
+            static bool is_guid_string(const std::u16string_view name)
+            {
+                constexpr std::u16string_view layout = u"{00000000-0000-0000-0000-000000000000}";
+                const auto is_hex_digit = [](const char16_t c) {
+                    return (c >= u'0' && c <= u'9') || (c >= u'a' && c <= u'f') || (c >= u'A' && c <= u'F');
+                };
+
+                return name.size() == layout.size() && std::ranges::equal(name, layout, [&](const char16_t c, const char16_t expected) {
+                           return expected == u'0' ? is_hex_digit(c) : c == expected;
+                       });
+            }
+
             // PiCMOpenClassKey: opens Control\Class for installer classes or Control\DeviceClasses for interface classes,
-            // or the class's {GUID} key under it, and hands the caller its own handle. The reply carries the open's status,
-            // so the ioctl itself succeeds whenever the request is well formed and the reply fits.
+            // or the class's {GUID} key under it, which it creates for a caller with PnP write access that opens a missing
+            // class always, and hands the caller its own handle. The reply carries the open's status, so the ioctl itself
+            // succeeds whenever the request is well formed and the reply fits.
             static NTSTATUS open_class_key(windows_emulator& win_emu, const io_device_context& c)
             {
                 constexpr uint32_t installer_class = 2;
@@ -532,6 +547,10 @@ namespace sogen
                 {
                     result.status = STATUS_NAME_TOO_LONG;
                 }
+                else if (well_formed && request.class_name && !is_guid_string(*request.class_name))
+                {
+                    result.status = STATUS_OBJECT_NAME_INVALID;
+                }
                 else if (well_formed)
                 {
                     std::u16string path = input.key_type == interface_class
@@ -539,19 +558,36 @@ namespace sogen
                                               : u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class";
                     if (request.class_name)
                     {
-                        path += u"\\" + *request.class_name;
+                        // PiCMOpenClassKey upcases the name, so a class key it creates has an upper-case name.
+                        path += u'\\';
+                        std::ranges::transform(*request.class_name, std::back_inserter(path), [](const char16_t ch) {
+                            return ch >= u'a' && ch <= u'z' ? static_cast<char16_t>(ch - u'a' + u'A') : ch;
+                        });
                     }
 
-                    if (auto key = win_emu.registry.get_key({path}))
+                    auto key = win_emu.registry.get_key({path});
+                    const auto creates = !key && request.class_name && input.disposition == open_always;
+                    if (creates && has_pnp_write_access(win_emu, caller_token(c)))
+                    {
+                        // The class comes from ZwCreateKey (_RegRtlCreateKeyTransacted), which tells the watchers of its
+                        // parent as NtCreateKey does.
+                        key = win_emu.registry.create_key(path);
+                        auto& vcpu = c.vcpu ? *c.vcpu : win_emu.vcpu(0);
+                        const syscall_context call{.win_emu = win_emu, .emu = vcpu.cpu, .vcpu = vcpu, .proc = win_emu.process};
+                        if (key && registry_notification::has_watchers(call))
+                        {
+                            registry_notification::report_sub_key_change(call, *key);
+                        }
+                    }
+
+                    if (key)
                     {
                         result.status = STATUS_SUCCESS;
                         result.handle = win_emu.process.registry_keys.store(std::move(*key)).bits;
                     }
                     else
                     {
-                        // Creating a missing class needs PnP write access (PiAuDoesClientHaveAccess), which the
-                        // non-elevated emulated user lacks.
-                        result.status = input.disposition == open_always ? STATUS_ACCESS_DENIED : STATUS_OBJECT_NAME_NOT_FOUND;
+                        result.status = creates ? STATUS_ACCESS_DENIED : STATUS_OBJECT_NAME_NOT_FOUND;
                     }
                 }
 
@@ -665,9 +701,9 @@ namespace sogen
                 return thread && thread->impersonation_token.bits != 0 ? thread->impersonation_token : CURRENT_PROCESS_TOKEN;
             }
 
-            // PiAuDoesClientHaveAccess(2): PiAuSecurityObject allows that access to Administrators, then denies NETWORK all
-            // access, then allows LocalSystem all access.
-            static bool can_list_unfiltered(const windows_emulator& win_emu, const handle token)
+            // PiAuDoesClientHaveAccess(2), PnP write access: PiAuSecurityObject allows that access to Administrators, then
+            // denies NETWORK all access, then allows LocalSystem all access.
+            static bool has_pnp_write_access(const windows_emulator& win_emu, const handle token)
             {
                 return token_holds_sid(win_emu, token, administrators_sid) ||
                        (!token_holds_sid(win_emu, token, network_sid) && token_holds_sid(win_emu, token, local_system_sid));
@@ -1026,7 +1062,7 @@ namespace sogen
                     return return_buffer_result(win_emu, c, STATUS_INVALID_PARAMETER, 0, {}, input.result_size);
                 }
 
-                if ((input.flags & device_list_unfiltered) != 0 && !can_list_unfiltered(win_emu, caller_token(c)))
+                if ((input.flags & device_list_unfiltered) != 0 && !has_pnp_write_access(win_emu, caller_token(c)))
                 {
                     return return_buffer_result(win_emu, c, STATUS_ACCESS_DENIED, 0, {}, input.result_size);
                 }
