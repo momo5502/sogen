@@ -835,7 +835,7 @@ namespace sogen
             (void)this->erase_object(entry, false);
         }
 
-        iterator erase_object(const typename value_map::iterator& entry, const bool remove_guest_handles)
+        iterator erase_object(const value_map::iterator& entry, const bool remove_guest_handles)
         {
             const auto index = entry->first;
 
