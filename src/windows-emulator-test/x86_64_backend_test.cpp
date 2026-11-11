@@ -68,12 +68,27 @@ namespace sogen::test
                 machine->write_memory(code_address, code.data(), code.size());
             }
 
+            bool syscall_reached{};
+
             void stop_on_syscall()
             {
-                machine->hook_instruction(x86_hookable_instructions::syscall, [](cpu_interface& cpu, uint64_t) {
+                machine->hook_instruction(x86_hookable_instructions::syscall, [this](cpu_interface& cpu, uint64_t) {
+                    this->syscall_reached = true;
                     cpu.stop();
                     return instruction_hook_continuation::skip_instruction;
                 });
+            }
+
+            // A violation hook that moves the instruction pointer ends the run on some backends.
+            bool run_to_syscall()
+            {
+                this->syscall_reached = false;
+                for (int runs = 0; !this->syscall_reached && runs < 8; ++runs)
+                {
+                    machine->start();
+                }
+
+                return this->syscall_reached;
             }
         };
     }
@@ -312,6 +327,102 @@ namespace sogen::test
              .type = memory_violation_type::protection},
         };
         EXPECT_EQ(faults, expected);
+    }
+
+    TEST_F(X8664BackendTest, APageMadeWritableTakesAWriteFromAVcpuThatReadItWhileReadOnly)
+    {
+        // mov al, [rbx]; syscall; mov byte ptr [rbx], 1; syscall
+        load_code(std::array<uint8_t, 9>{0x8A, 0x03, 0x0F, 0x05, 0xC6, 0x03, 0x01, 0x0F, 0x05});
+        machine->reg(x86_register::rbx, data_address);
+        stop_on_syscall();
+        size_t faults{};
+        machine->hook_memory_violation([&](cpu_interface& cpu, uint64_t, size_t, memory_operation, memory_violation_type) {
+            ++faults;
+            cpu.stop();
+            return memory_violation_continuation::stop;
+        });
+
+        ASSERT_TRUE(memory.protect_memory(data_address, 0x1000, memory_permission::read));
+        machine->start();
+        ASSERT_TRUE(memory.protect_memory(data_address, 0x1000, memory_permission::read_write));
+        machine->start();
+        EXPECT_EQ(faults, 0u);
+        EXPECT_EQ(machine->read_memory<uint64_t>(data_address), 1u);
+    }
+
+    TEST_F(X8664BackendTest, AWriteAfterThePageIsReadOnlyAgainFaults)
+    {
+        // mov byte ptr [rbx], 1; syscall; mov byte ptr [rbx], 2; syscall
+        load_code(std::array<uint8_t, 10>{0xC6, 0x03, 0x01, 0x0F, 0x05, 0xC6, 0x03, 0x02, 0x0F, 0x05});
+        machine->reg(x86_register::rbx, data_address);
+        stop_on_syscall();
+
+        struct fault
+        {
+            uint64_t address;
+            memory_operation operation;
+            memory_violation_type type;
+            bool operator==(const fault&) const = default;
+        };
+
+        std::vector<fault> faults{};
+        machine->hook_memory_violation(
+            [&](cpu_interface& raw, const uint64_t address, size_t, const memory_operation operation, const memory_violation_type type) {
+                faults.push_back({.address = address, .operation = operation, .type = type});
+                auto& cpu = dynamic_cast<x86_64_cpu&>(raw);
+                cpu.reg(x86_register::rip, cpu.read_instruction_pointer() + 3);
+                return memory_violation_continuation::resume;
+            });
+
+        const std::vector<fault> expected{
+            {.address = data_address, .operation = memory_operation::write, .type = memory_violation_type::protection}};
+        constexpr uint64_t cleared{};
+        for (int round = 0; round < 3; ++round)
+        {
+            faults.clear();
+            machine->write_memory(data_address, &cleared, sizeof(cleared));
+            ASSERT_TRUE(memory.protect_memory(data_address, 0x1000, memory_permission::read));
+            ASSERT_TRUE(memory.protect_memory(data_address, 0x1000, memory_permission::read_write));
+            machine->reg(x86_register::rip, code_address);
+            ASSERT_TRUE(run_to_syscall());
+            EXPECT_EQ(machine->read_memory<uint64_t>(data_address), 1u) << "round " << round;
+            ASSERT_TRUE(memory.protect_memory(data_address, 0x1000, memory_permission::read));
+            ASSERT_TRUE(run_to_syscall());
+            EXPECT_EQ(faults, expected) << "round " << round;
+            EXPECT_EQ(machine->read_memory<uint64_t>(data_address), 1u) << "round " << round;
+        }
+    }
+
+    TEST_F(X8664BackendTest, ReadWriteCodeFaultsWhenRunUntilMadeExecutable)
+    {
+        constexpr std::array<uint8_t, 1> ret{0xC3};
+        ASSERT_TRUE(memory.allocate_memory(no_execute_address, 0x1000, memory_permission::read_exec));
+        machine->write_memory(no_execute_address, ret.data(), ret.size());
+        // call r8; syscall
+        load_code(std::array<uint8_t, 5>{0x41, 0xFF, 0xD0, 0x0F, 0x05});
+        machine->reg(x86_register::r8, no_execute_address);
+        stop_on_syscall();
+        std::vector<std::pair<uint64_t, memory_operation>> faults{};
+        machine->hook_memory_violation(
+            [&](cpu_interface& raw, const uint64_t address, size_t, const memory_operation operation, memory_violation_type) {
+                faults.emplace_back(address, operation);
+                auto& cpu = dynamic_cast<x86_64_cpu&>(raw);
+                const auto sp = cpu.reg(x86_register::rsp);
+                cpu.reg(x86_register::rip, cpu.read_memory<uint64_t>(sp));
+                cpu.reg(x86_register::rsp, sp + 8);
+                return memory_violation_continuation::resume;
+            });
+
+        ASSERT_TRUE(memory.protect_memory(no_execute_address, 0x1000, memory_permission::read_write));
+        ASSERT_TRUE(run_to_syscall());
+        EXPECT_EQ(faults, (std::vector<std::pair<uint64_t, memory_operation>>{{no_execute_address, memory_operation::exec}}));
+
+        faults.clear();
+        ASSERT_TRUE(memory.protect_memory(no_execute_address, 0x1000, memory_permission::read_exec));
+        machine->reg(x86_register::rip, code_address);
+        ASSERT_TRUE(run_to_syscall());
+        EXPECT_TRUE(faults.empty());
+        EXPECT_EQ(machine->read_instruction_pointer(), code_address + 5);
     }
 
     TEST_F(X8664BackendTest, ExecutionRangeHooksSeeEachInstructionOnceAndCanBeRemoved)
