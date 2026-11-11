@@ -1,6 +1,7 @@
 #pragma once
 #include "section_view_manager.hpp"
 #include "display_modes.hpp"
+#include "gdi_font_manager.hpp"
 #include "arch/windows_abi.hpp"
 
 #include "emulator_utils.hpp"
@@ -528,6 +529,7 @@ namespace sogen
         std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         std::map<uint32_t, EMU_LOGFONTW> gdi_fonts{};
+        gdi_font_manager gdi_font_resources{};
         std::map<uint32_t, std::vector<RECT>> gdi_regions{};
         std::map<uint32_t, std::vector<EMU_PALETTEENTRY>> gdi_palettes{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.

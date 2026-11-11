@@ -1,6 +1,8 @@
 #include "emulation_test_utils.hpp"
 #include "code_page_test_utils.hpp"
+#include "gdi_font_test_utils.hpp"
 
+#include <gdi_font_manager.hpp>
 #include <code_page.hpp>
 #include <registry/registry_file.hpp>
 #include <registry/registry_utils.hpp>
@@ -737,6 +739,35 @@ namespace sogen::test
         const std::filesystem::path path = R"(\Registry\Machine\System\CurrentControlSet\Control\Nls\CodePage)";
         EXPECT_EQ(registry_utils::read_registry_string(this->registry(), path, "ACP"), u"1252");
         EXPECT_EQ(registry_utils::read_registry_string(this->registry(), path, "OEMCP"), u"437");
+    }
+
+    TEST_F(RegistryFileTest, FontSubstitutesSelectGuestFaceAndCyclesFallBack)
+    {
+        const auto folder = this->directory() / "filesys" / "c" / "windows" / "Fonts";
+        ASSERT_TRUE(std::filesystem::create_directories(folder));
+        ASSERT_TRUE(write_hive(folder / "a.ttf", font_fixture::make_font(u"First")));
+        ASSERT_TRUE(write_hive(folder / "b.ttf", font_fixture::make_font(u"Second")));
+        import_registry_file_contents(this->registry(), encode_utf8_with_bom(R"reg(Windows Registry Editor Version 5.00
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes]
+"MS Shell Dlg"="Second"
+"Loop A"="Loop B"
+"Loop B"="Loop A"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts]
+"Second (TrueType)"="b.ttf"
+)reg"));
+        file_system files{this->directory() / "filesys"};
+        gdi_font_manager fonts{};
+        EMU_LOGFONTW request{};
+        request.lfHeight = -16;
+        request.lfWeight = FW_NORMAL;
+        utils::string::copy(request.lfFaceName, u"MS Shell Dlg");
+        const auto selected = fonts.resolve(files, this->registry(), windows_path{"C:\\Windows"}, request);
+        ASSERT_TRUE(selected);
+        EXPECT_EQ(fonts.family_name(*selected), u"Second");
+        utils::string::copy(request.lfFaceName, u"Loop A");
+        EXPECT_TRUE(fonts.resolve(files, this->registry(), windows_path{"C:\\Windows"}, request));
     }
 
     TEST_F(RegistryFileTest, ImportsUtf8BomStringsEscapesAndDword)

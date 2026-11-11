@@ -616,6 +616,7 @@ namespace sogen
         this->gdi_dc_save_states.clear();
         this->gdi_bitmap_surfaces.clear();
         this->gdi_fonts.clear();
+        this->gdi_font_resources.clear();
         this->gdi_regions.clear();
         this->gdi_palettes.clear();
         this->gdi_window_surfaces.clear();
@@ -880,6 +881,7 @@ namespace sogen
         buffer.write_map(this->gdi_dc_save_states);
         buffer.write_map(this->gdi_bitmap_surfaces);
         buffer.write_map(this->gdi_fonts);
+        buffer.write(this->gdi_font_resources);
         buffer.write_map(this->gdi_regions);
         buffer.write_map(this->gdi_palettes);
         buffer.write_map(this->gdi_window_surfaces);
@@ -1017,6 +1019,7 @@ namespace sogen
         buffer.read_map(this->gdi_dc_save_states);
         buffer.read_map(this->gdi_bitmap_surfaces);
         buffer.read_map(this->gdi_fonts);
+        buffer.read(this->gdi_font_resources);
         buffer.read_map(this->gdi_regions);
         buffer.read_map(this->gdi_palettes);
         buffer.read_map(this->gdi_window_surfaces);
