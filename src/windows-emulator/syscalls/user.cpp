@@ -3783,7 +3783,9 @@ namespace sogen
 
             window_station station{};
             station.name = std::move(name);
-            return c.proc.window_stations.store(std::move(station)).bits;
+            const auto handle = c.proc.window_stations.store(std::move(station));
+            (void)c.proc.window_stations.set_attributes(handle, get_handle_attributes(object_attributes));
+            return handle.bits;
         }
 
         BOOL handle_NtUserSetProcessWindowStation(const syscall_context& c, const handle station)
@@ -3846,7 +3848,9 @@ namespace sogen
             desk.name = std::move(name);
             desk.window_station = station;
 
-            return c.proc.desktops.store(std::move(desk)).bits;
+            const auto handle = c.proc.desktops.store(std::move(desk));
+            (void)c.proc.desktops.set_attributes(handle, get_handle_attributes(object_attributes));
+            return handle.bits;
         }
 
         hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, const DWORD /*flags*/, const BOOL inherit,

@@ -463,6 +463,7 @@ namespace sogen
             child.native_environment = result.native_environment;
             child.compatibility_environment = result.compatibility_environment;
             const auto child_process_handle = c.proc.processes.store(std::move(child));
+            (void)c.proc.processes.set_attributes(child_process_handle, get_handle_attributes(process_object_attributes));
 
             if (auto* debugger = c.proc.debug_objects.get(debug_object_handle))
             {
@@ -474,6 +475,7 @@ namespace sogen
             initial_thread.process_id = process_id;
             initial_thread.thread_id = thread_id;
             const auto child_thread_handle = c.proc.managed_threads.store(std::move(initial_thread));
+            (void)c.proc.managed_threads.set_attributes(child_thread_handle, get_handle_attributes(thread_object_attributes));
 
             process_handle.write(child_process_handle);
             thread_handle.write(child_thread_handle);

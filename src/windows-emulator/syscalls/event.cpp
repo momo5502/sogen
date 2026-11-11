@@ -271,7 +271,9 @@ namespace sogen
                 e.type = NotificationEvent;
                 e.signaled = *signaled;
                 e.name = name;
-                event_handle.write(c.proc.events.store(std::move(e)).bits);
+                const auto handle = c.proc.events.store(std::move(e));
+                (void)c.proc.events.set_attributes(handle, get_handle_attributes(object_attributes));
+                event_handle.write(handle.bits);
                 return STATUS_SUCCESS;
             }
 

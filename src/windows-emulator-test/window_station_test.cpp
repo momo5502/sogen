@@ -84,9 +84,9 @@ namespace sogen::test
                 return syscalls::handle_NtUserCreateWindowStation(this->context(), this->attributes(name, flags), 0);
             }
 
-            uint64_t create_desktop(const std::u16string_view name)
+            uint64_t create_desktop(const std::u16string_view name, const ULONG flags = obj_openif)
             {
-                return syscalls::handle_NtUserCreateDesktopEx(this->context(), this->attributes(name), 0, 0, 0, 0, 0);
+                return syscalls::handle_NtUserCreateDesktopEx(this->context(), this->attributes(name, flags), 0, 0, 0, 0, 0);
             }
 
             DWORD last_error()
@@ -140,6 +140,17 @@ namespace sogen::test
             uint64_t storage{};
             uint64_t default_desktop_handle{};
         };
+    }
+
+    TEST_F(WindowStationTest, CreatedStationAndDesktopUseTheRequestedInheritAttribute)
+    {
+        const auto station = this->create_station(u"InheritStation", obj_openif | OBJ_INHERIT);
+        ASSERT_NE(0u, station);
+        EXPECT_TRUE(this->object_flags(station).inherit);
+
+        const auto desktop = this->create_desktop(u"InheritDesktop", obj_openif | OBJ_INHERIT);
+        ASSERT_NE(0u, desktop);
+        EXPECT_TRUE(this->object_flags(desktop).inherit);
     }
 
     TEST_F(WindowStationTest, CreatingAnExistingStationOpensIt)

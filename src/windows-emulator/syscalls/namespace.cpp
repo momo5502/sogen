@@ -151,6 +151,7 @@ namespace sogen
                 ns.access_mask = desired_access;
 
                 const auto handle = c.proc.private_namespaces.store(std::move(ns));
+                (void)c.proc.private_namespaces.set_attributes(handle, get_handle_attributes(object_attributes));
                 namespace_handle.write(handle);
 
                 return STATUS_SUCCESS;

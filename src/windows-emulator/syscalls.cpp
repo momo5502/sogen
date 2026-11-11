@@ -1345,7 +1345,9 @@ namespace sogen
                 }
             }
 
-            job_handle.write(c.proc.jobs.store(std::move(job)));
+            const auto handle = c.proc.jobs.store(std::move(job));
+            (void)c.proc.jobs.set_attributes(handle, get_handle_attributes(object_attributes));
+            job_handle.write(handle);
             return STATUS_SUCCESS;
         }
 
@@ -1605,7 +1607,9 @@ namespace sogen
                 // TODO: This probably isn't 100% correct.
                 wait_completion_packet packet{};
                 packet.name = std::move(name);
-                memory_reserve_handle.write(c.proc.wait_completion_packets.store(std::move(packet)));
+                const auto handle = c.proc.wait_completion_packets.store(std::move(packet));
+                (void)c.proc.wait_completion_packets.set_attributes(handle, get_handle_attributes(object_attributes));
+                memory_reserve_handle.write(handle);
                 return STATUS_SUCCESS;
             }
             case 0:

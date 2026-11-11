@@ -226,7 +226,9 @@ namespace sogen
 
             debug_object object{};
             object.kill_on_close = (flags & DEBUG_KILL_ON_CLOSE) != 0;
-            debug_object_handle.write(c.proc.debug_objects.store(std::move(object)));
+            const auto handle = c.proc.debug_objects.store(std::move(object));
+            (void)c.proc.debug_objects.set_attributes(handle, get_handle_attributes(object_attributes));
+            debug_object_handle.write(handle);
             return STATUS_SUCCESS;
         }
 
