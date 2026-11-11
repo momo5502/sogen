@@ -76,6 +76,7 @@ namespace sogen
                 previous_count.write(static_cast<LONG>(old_count));
             }
 
+            release_semaphore_units(*mutant, old_count);
             c.win_emu.wake_idle_vcpu();
             return STATUS_SUCCESS;
         }

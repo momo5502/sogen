@@ -5,6 +5,7 @@
 #include "io_device.hpp"
 #include "memory_manager.hpp"
 #include "shared_sync_state.hpp"
+#include "object_wait_list.hpp"
 #include "filesystem/guest_file.hpp"
 
 #include <algorithm>
@@ -236,11 +237,15 @@ namespace sogen
             return this->shared->name();
         }
 
+        // A shared event keeps no waiters: another process can set it.
+        object_wait_list waiters{};
+
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->is_signaled());
             buffer.write(this->type);
             buffer.write(this->name);
+            this->waiters.serialize(buffer);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -248,6 +253,7 @@ namespace sogen
             buffer.read(this->signaled_);
             buffer.read(this->type);
             buffer.read(this->name);
+            this->waiters.deserialize(buffer);
             this->shared.reset();
         }
 
@@ -1034,6 +1040,8 @@ namespace sogen
         std::u16string name{};
         // Set once a handle to the mutant is passed to another process.
         std::optional<shared_sync_state> shared{};
+        // A shared mutant keeps no waiters: another process can release it.
+        object_wait_list waiters{};
 
         // Thread IDs are only unique within a process, so ownership names both.
         static uint64_t make_owner(const uint32_t process_id, const uint32_t thread_id)
@@ -1214,6 +1222,7 @@ namespace sogen
             buffer.write(current.owner);
             buffer.write(current.abandoned);
             buffer.write(this->name);
+            this->waiters.serialize(buffer);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1222,6 +1231,7 @@ namespace sogen
             buffer.read(this->local_.owner);
             buffer.read(this->local_.abandoned);
             buffer.read(this->name);
+            this->waiters.deserialize(buffer);
             this->shared.reset();
             this->local_.owner_host_process = 0;
         }
@@ -1477,6 +1487,7 @@ namespace sogen
         std::u16string name{};
         uint32_t current_count{};
         uint32_t max_count{};
+        object_wait_list waiters{};
 
         bool try_lock()
         {
@@ -1508,6 +1519,7 @@ namespace sogen
             buffer.write(this->name);
             buffer.write(this->current_count);
             buffer.write(this->max_count);
+            this->waiters.serialize(buffer);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1515,6 +1527,7 @@ namespace sogen
             buffer.read(this->name);
             buffer.read(this->current_count);
             buffer.read(this->max_count);
+            this->waiters.deserialize(buffer);
         }
     };
 

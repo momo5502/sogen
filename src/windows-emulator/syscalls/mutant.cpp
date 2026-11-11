@@ -36,6 +36,7 @@ namespace sogen
 
             if (old_count == 1)
             {
+                hand_over_mutant(*mutant, c.proc.process_id);
                 c.win_emu.wake_idle_vcpu();
             }
 

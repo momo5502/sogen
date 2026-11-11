@@ -1043,6 +1043,8 @@ namespace sogen
                 return std::nullopt;
             }
 
+            entry->waiters.clear();
+
             const auto attributes = this->events.attributes_of(object_handle);
             return process_shared_object{
                 .kind = process_shared_object_kind::event,
@@ -1059,6 +1061,8 @@ namespace sogen
             {
                 return std::nullopt;
             }
+
+            entry->waiters.clear();
 
             const auto attributes = this->mutants.attributes_of(object_handle);
             return process_shared_object{
@@ -1469,6 +1473,21 @@ namespace sogen
         {
             this->thread_handles_by_id[thread.id] = this->threads.make_handle(index);
             this->terminated_thread_count += thread.is_terminated() ? 1 : 0;
+        }
+
+        for (auto& e : this->events | std::views::values)
+        {
+            e.waiters.restore_links(*this);
+        }
+
+        for (auto& s : this->semaphores | std::views::values)
+        {
+            s.waiters.restore_links(*this);
+        }
+
+        for (auto& m : this->mutants | std::views::values)
+        {
+            m.waiters.restore_links(*this);
         }
 
         active_thread = this->threads.get_by_index(buffer.read<uint64_t>());
@@ -2143,10 +2162,12 @@ namespace sogen
         thread.active_sent_messages.clear();
         thread.sent_message_waits.clear();
         this->impersonate_token(thread, {});
+        thread.unlink_object_wait();
 
         for (auto& entry : this->mutants | std::views::values)
         {
             entry.abandon_if_owned_by(mutant::make_owner(this->process_id, thread.id));
+            hand_over_mutant(entry, this->process_id);
         }
 
         this->release_update_lock_of_thread(thread.id);

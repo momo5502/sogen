@@ -340,6 +340,7 @@ namespace sogen::test
 
         waiter->await_objects = {this->emu->process.reference_of(original)};
         waiter->await_any = true;
+        ASSERT_FALSE(waiter->is_thread_ready(*this->emu));
 
         // The pulse arrives through the duplicate's value; the waiter holds the original, so it must be matched by object.
         const emulator_object<LONG> previous{this->emu->memory, this->storage + 0x100};

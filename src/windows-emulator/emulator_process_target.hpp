@@ -224,10 +224,15 @@ namespace sogen
                 if (resume)
                 {
                     thread->suspended = previous > 0 ? previous - 1 : 0;
+                    if (previous == 1)
+                    {
+                        thread->resume_object_wait(this->emulator_);
+                    }
                 }
                 else
                 {
                     ++thread->suspended;
+                    thread->unlink_object_wait();
                 }
                 return process_suspend_result{.previous_count = previous};
             });

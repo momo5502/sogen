@@ -361,14 +361,45 @@ namespace sogen::test
         EXPECT_TRUE(this->check_parked());
     }
 
-    TEST_F(IdleSchedulerTest, ObjectWaitIsNotParked)
+    TEST_F(IdleSchedulerTest, ObjectWaitIsParkedOnItsObjectsListsUntilItsTimeIsUp)
     {
         this->create();
+        const auto now = this->emu->clock().steady_now();
         this->thread->await_objects = {this->emu->process.reference_of(this->store_event(false))};
-        this->thread->await_any = true;
+        this->thread->await_time = now + std::chrono::hours(1);
 
+        EXPECT_FALSE(this->check_parked(now));
+        EXPECT_FALSE(this->check_ready());
+        EXPECT_TRUE(this->check_parked(now));
+        EXPECT_FALSE(this->check_parked(now + std::chrono::hours(2)));
+    }
+
+    TEST_F(IdleSchedulerTest, ObjectWaitsTheListsCannotEndAreNotParked)
+    {
+        this->create();
+        const auto first = this->store_event(false);
+        const auto second = this->store_event(false);
+
+        this->thread->await_objects = {this->emu->process.reference_of(first), this->emu->process.reference_of(second)};
+        this->thread->await_any = false;
         EXPECT_FALSE(this->check_ready());
         EXPECT_FALSE(this->check_parked());
+
+        this->thread->await_any = true;
+        EXPECT_FALSE(this->check_ready());
+        EXPECT_TRUE(this->check_parked());
+
+        this->thread->await_msg_mask = QS_ALLINPUT;
+        EXPECT_FALSE(this->check_ready());
+        EXPECT_FALSE(this->check_parked());
+
+        this->thread->await_msg_mask.reset();
+        this->thread->await_objects = {this->emu->process.reference_of(first),
+                                       this->emu->process.reference_of(this->emu->process.timers.store(timer{}))};
+        EXPECT_FALSE(this->check_ready());
+        EXPECT_FALSE(this->check_parked());
+        EXPECT_EQ(1u, this->emu->process.events.get(first)->waiters.size());
+        EXPECT_TRUE(this->emu->process.events.get(second)->waiters.empty());
     }
 
     TEST_F(IdleSchedulerTest, AlertMakesParkedThreadRunnable)

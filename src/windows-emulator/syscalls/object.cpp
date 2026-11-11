@@ -45,6 +45,7 @@ namespace sogen
                 thread.suspended -= resumed;
                 if (resumed != 0 && thread.suspended == 0)
                 {
+                    thread.resume_object_wait(c.win_emu);
                     c.win_emu.wake_idle_vcpu();
                 }
                 return;
