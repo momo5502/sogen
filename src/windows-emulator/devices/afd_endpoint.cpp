@@ -390,7 +390,7 @@ namespace sogen
             io_device_context context;
             std::optional<std::chrono::steady_clock::time_point> timeout{};
             bool timeout_absolute{};
-            handle retained_completion_port{};
+            object_reference retained_completion_port{};
 
             pending_poll(memory_interface& emu)
                 : context(emu)
@@ -481,7 +481,7 @@ namespace sogen
             std::optional<afd_creation_data> creation_data{};
             std::optional<bool> require_poll_{};
             std::optional<io_device_context> delayed_ioctl_{};
-            handle retained_completion_port_{};
+            object_reference retained_completion_port_{};
             std::optional<std::chrono::steady_clock::time_point> timeout_{};
             std::optional<std::function<void(windows_emulator&, const io_device_context&)>> timeout_callback_{};
             std::vector<pending_poll> pending_polls_{};
@@ -563,7 +563,7 @@ namespace sogen
                     }
 
                     this->complete_io(win_emu, it->context, STATUS_CANCELLED);
-                    io_completion_wait::release_handle_reference(win_emu.process, it->retained_completion_port);
+                    io_completion_wait::release_reference(win_emu.process, it->retained_completion_port);
                     it = this->pending_polls_.erase(it);
                     cancelled = true;
                 }
@@ -581,17 +581,17 @@ namespace sogen
 
             void release_references(process_context& process) override
             {
-                io_completion_wait::release_handle_reference(process, this->retained_completion_port_);
+                io_completion_wait::release_reference(process, this->retained_completion_port_);
                 for (auto& poll : this->pending_polls_)
                 {
-                    io_completion_wait::release_handle_reference(process, poll.retained_completion_port);
+                    io_completion_wait::release_reference(process, poll.retained_completion_port);
                 }
             }
 
             void complete_io(windows_emulator& win_emu, const io_device_context& context, const NTSTATUS status)
             {
                 write_io_status(context, status);
-                if (auto* event = win_emu.process.events.get(context.event))
+                if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
                 {
                     event->signaled = true;
                     win_emu.wake_idle_vcpu();
@@ -634,9 +634,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                handle retained_port{};
-                const auto* active_thread = c.vcpu ? &c.thread() : nullptr;
-                if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, c.completion_port, retained_port))
+                object_reference retained_port{};
+                if (!io_completion_wait::retain_reference(win_emu.process, c.completion_port, retained_port))
                 {
                     return STATUS_INVALID_HANDLE;
                 }
@@ -652,7 +651,7 @@ namespace sogen
 
             void clear_pending_state(windows_emulator& win_emu)
             {
-                io_completion_wait::release_handle_reference(win_emu.process, this->retained_completion_port_);
+                io_completion_wait::release_reference(win_emu.process, this->retained_completion_port_);
                 this->timeout_callback_ = {};
                 this->timeout_ = {};
                 this->require_poll_ = {};
@@ -763,7 +762,7 @@ namespace sogen
                     }
 
                     this->complete_io(win_emu, it->context, status);
-                    io_completion_wait::release_handle_reference(win_emu.process, it->retained_completion_port);
+                    io_completion_wait::release_reference(win_emu.process, it->retained_completion_port);
                     it = this->pending_polls_.erase(it);
                 }
             }
@@ -1835,9 +1834,8 @@ namespace sogen
                 pending_poll poll{c, timeout, timeout && utils::is_absolute_due_time(info.Timeout)};
                 this->pending_polls_.reserve(this->pending_polls_.size() + 1);
 
-                handle retained_port{};
-                const auto* active_thread = c.vcpu ? &c.thread() : nullptr;
-                if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, c.completion_port, retained_port))
+                object_reference retained_port{};
+                if (!io_completion_wait::retain_reference(win_emu.process, c.completion_port, retained_port))
                 {
                     return STATUS_INVALID_HANDLE;
                 }

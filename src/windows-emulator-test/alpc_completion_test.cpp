@@ -129,16 +129,16 @@ namespace sogen::test
         ASSERT_EQ(STATUS_SUCCESS, this->associate());
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->associate());
 
-        auto original = this->completion;
-        io_completion_wait::release_handle_reference(this->emu->process, original);
+        ASSERT_TRUE(this->emu->process.io_completions.erase(this->completion));
         ASSERT_EQ(STATUS_SUCCESS, this->send_handshake().status);
 
         const auto retained = this->container().completion_port();
-        ASSERT_NE(nullptr, this->emu->process.io_completions.get(retained));
-        EXPECT_EQ(1u, this->emu->process.io_completions.get(retained)->queue.size());
+        auto* completion = this->emu->process.get_object_as<io_completion>(retained);
+        ASSERT_NE(nullptr, completion);
+        EXPECT_EQ(1u, completion->queue.size());
 
         this->container().release_completion_port(this->emu->process);
-        EXPECT_EQ(nullptr, this->emu->process.io_completions.get(retained));
-        EXPECT_EQ(0u, this->container().completion_port().bits);
+        EXPECT_EQ(nullptr, this->emu->process.get_object_as<io_completion>(retained));
+        EXPECT_FALSE(this->container().completion_port());
     }
 }

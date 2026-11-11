@@ -19,7 +19,7 @@ namespace sogen
                 return false;
             }
 
-            auto* completion = process.io_completions.get(factory->io_completion_handle);
+            auto* completion = process.get_object_as<io_completion>(factory->io_completion);
             if (!completion)
             {
                 return false;
@@ -30,7 +30,7 @@ namespace sogen
             message.io_status_block.Information = 0;
             message.worker_factory_handle = worker_factory_handle;
             message.worker_factory_release = true;
-            io_completion_wait::insert(win_emu, factory->io_completion_handle, *completion, message);
+            io_completion_wait::insert(win_emu, factory->io_completion, *completion, message);
             return true;
         }
 
@@ -158,8 +158,7 @@ namespace sogen
             {
                 return std::ranges::any_of(factory.worker_threads, [&](const handle thread_handle) {
                     const auto* thread = win_emu.process.threads.get(thread_handle);
-                    return thread && thread->await_io_completion &&
-                           thread->await_io_completion->io_completion_handle == factory.io_completion_handle;
+                    return thread && thread->await_io_completion && thread->await_io_completion->io_completion == factory.io_completion;
                 });
             }
 
@@ -182,7 +181,7 @@ namespace sogen
                     return;
                 }
 
-                const auto* completion = win_emu.process.io_completions.get(factory.io_completion_handle);
+                const auto* completion = win_emu.process.get_object_as<io_completion>(factory.io_completion);
                 const auto work_queued = factory.pending_release_count != 0 || (completion && !completion->queue.empty());
                 if (work_queued && !has_waiting_worker(win_emu, factory))
                 {
@@ -217,8 +216,7 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        worker_factory_handle.write(c.proc.worker_factories.make_handle(entry.first));
+                        worker_factory_handle.write(c.proc.worker_factories.open_by_index(entry.first));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -228,14 +226,13 @@ namespace sogen
             factory.name = name;
             factory.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
-            handle retained_io_completion_handle{};
-            if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, io_completion_handle,
-                                                             retained_io_completion_handle))
+            object_reference retained_io_completion{};
+            if (!io_completion_wait::retain_reference(c.proc, c.vcpu.active_thread, io_completion_handle, retained_io_completion))
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            factory.io_completion_handle = retained_io_completion_handle;
+            factory.io_completion = retained_io_completion;
             factory.worker_process_handle = worker_process_handle;
             factory.start_routine = start_routine;
             factory.start_parameter = start_parameter;
@@ -525,13 +522,13 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            auto* completion = c.proc.io_completions.get(factory->io_completion_handle);
+            auto* completion = c.proc.get_object_as<io_completion>(factory->io_completion);
             if (!completion)
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion_handle, count);
+            const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion, count);
             if (!messages.empty())
             {
                 // A worker taking work makes sure another one is coming for whatever is still queued.
@@ -551,7 +548,7 @@ namespace sogen
 
             auto& wait = *t.await_io_completion;
             wait.type = io_completion_wait_type::remove_multiple;
-            wait.io_completion_handle = factory->io_completion_handle;
+            wait.io_completion = factory->io_completion;
             wait.worker_factory_handle = worker_factory_handle;
             wait.completion_entries_ptr = mini_packets.value();
             wait.entries_removed_ptr = packets_returned.value();

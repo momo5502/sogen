@@ -132,10 +132,8 @@ namespace sogen
                             return STATUS_OBJECT_NAME_COLLISION;
                         }
 
-                        ++entry.second.ref_count;
-
                         c.win_emu.callbacks.on_generic_access("Opening private namespace", boundary_name);
-                        namespace_handle.write(c.proc.private_namespaces.make_handle(entry.first));
+                        namespace_handle.write(c.proc.private_namespaces.open_by_index(entry.first));
                         return STATUS_SUCCESS;
                     }
                 }

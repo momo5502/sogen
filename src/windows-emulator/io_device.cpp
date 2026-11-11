@@ -221,9 +221,9 @@ namespace sogen
         // A synchronously-completing IOCTL must signal the optional completion event the caller passed, so a
         // thread that issues the request and then waits on the event is released. Asynchronous devices return
         // STATUS_PENDING and signal the event themselves once the delayed operation completes.
-        if (result != STATUS_PENDING && request.event.bits)
+        if (result != STATUS_PENDING && request.event)
         {
-            if (auto* e = win_emu.process.events.get(request.event); e)
+            if (auto* e = win_emu.process.get_object_as<sogen::event>(request.event); e)
             {
                 e->signaled = true;
                 win_emu.wake_idle_vcpu();
@@ -242,12 +242,12 @@ namespace sogen
 
     void io_device::queue_io_completion(windows_emulator& win_emu, const io_device_context& context)
     {
-        if (!context.completion_port.bits || !context.io_status_block || context.suppresses_completion_packet())
+        if (!context.completion_port || !context.io_status_block || context.suppresses_completion_packet())
         {
             return;
         }
 
-        auto* completion = win_emu.process.io_completions.get(context.completion_port);
+        auto* completion = win_emu.process.get_object_as<sogen::io_completion>(context.completion_port);
         if (!completion)
         {
             return;
@@ -264,7 +264,7 @@ namespace sogen
     namespace
     {
         NTSTATUS retain_completion_port(process_context& process, const emulator_thread* active_thread, const handle completion_port,
-                                        handle& retained_port)
+                                        object_reference& retained_port)
         {
             const auto resolved_port = process.resolve_object_pseudo_handle(completion_port, active_thread);
             if (resolved_port.value.type != handle_types::io_completion || !process.io_completions.get(resolved_port))
@@ -273,7 +273,7 @@ namespace sogen
                 return store && store->get_object(resolved_port) ? STATUS_OBJECT_TYPE_MISMATCH : STATUS_INVALID_HANDLE;
             }
 
-            if (!io_completion_wait::retain_handle_reference(process, active_thread, resolved_port, retained_port))
+            if (!io_completion_wait::retain_reference(process, active_thread, resolved_port, retained_port))
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -291,7 +291,7 @@ namespace sogen
             return STATUS_INVALID_PARAMETER;
         }
 
-        handle retained_port{};
+        object_reference retained_port{};
         const auto status = retain_completion_port(process, active_thread, completion_port, retained_port);
         if (status == STATUS_SUCCESS)
         {
@@ -316,7 +316,7 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        handle retained_port{};
+        object_reference retained_port{};
         const auto status = retain_completion_port(process, active_thread, completion_port, retained_port);
         if (status != STATUS_SUCCESS)
         {
@@ -332,7 +332,7 @@ namespace sogen
     {
         if (association)
         {
-            io_completion_wait::release_handle_reference(process, association->completion_port);
+            io_completion_wait::release_reference(process, association->completion_port);
             association.reset();
         }
     }

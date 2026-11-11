@@ -168,7 +168,7 @@ namespace sogen
         }
         context.io_status_block.write({.Status = status, .Information = result.transferred});
         write_io_status(context, status);
-        if (auto* event = win_emu.process.events.get(context.event))
+        if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
         {
             event->signaled = true;
         }
@@ -182,7 +182,7 @@ namespace sogen
 
         if (context.apc_routine)
         {
-            if (auto* thread = win_emu.process.threads.get(operation.issuing_thread))
+            if (auto* thread = win_emu.process.get_object_as<emulator_thread>(operation.issuing_thread))
             {
                 thread->pending_apcs.push_back({.apc_routine = context.apc_routine,
                                                 .apc_argument1 = context.apc_context,
@@ -219,12 +219,12 @@ namespace sogen
         {
             return STATUS_NOT_SUPPORTED;
         }
-        if ((context.event.bits && !win_emu.process.events.get(context.event)) ||
-            (context.completion_port.bits && !win_emu.process.io_completions.get(context.completion_port)))
+        if ((context.event && !win_emu.process.get_object_as<sogen::event>(context.event)) ||
+            (context.completion_port && !win_emu.process.get_object_as<sogen::io_completion>(context.completion_port)))
         {
             return STATUS_INVALID_HANDLE;
         }
-        if (auto* event = win_emu.process.events.get(context.event))
+        if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
         {
             event->signaled = false;
         }
@@ -372,27 +372,18 @@ namespace sogen
         context.issuing_thread_id = context.thread().id;
         pending_operation pending{.context = context,
                                   .operation = std::move(operation),
-                                  .issuing_thread = win_emu.process.threads.find_handle(&context.thread()),
                                   .kind = kind,
                                   .awaited = std::move(awaited),
                                   .decided_status = decided_status};
-        std::array<handle, 3> retained_references{};
-        const std::array<handle*, 3> references{&pending.context.event, &pending.context.completion_port, &pending.issuing_thread};
-        for (size_t i = 0; i < references.size(); ++i)
+        const auto issuing_thread = win_emu.process.threads.find_handle(&context.thread());
+        if (!io_completion_wait::retain_reference(win_emu.process, context.event, pending.context.event) ||
+            !io_completion_wait::retain_reference(win_emu.process, context.completion_port, pending.context.completion_port) ||
+            !io_completion_wait::retain_reference(win_emu.process, context.vcpu->active_thread, issuing_thread, pending.issuing_thread))
         {
-            if (!io_completion_wait::retain_handle_reference(win_emu.process, context.vcpu->active_thread, *references[i],
-                                                             retained_references[i]))
-            {
-                for (auto& retained : retained_references)
-                {
-                    io_completion_wait::release_handle_reference(win_emu.process, retained);
-                }
-                return STATUS_INVALID_HANDLE;
-            }
-        }
-        for (size_t i = 0; i < references.size(); ++i)
-        {
-            *references[i] = retained_references[i];
+            io_completion_wait::release_reference(win_emu.process, pending.context.event);
+            io_completion_wait::release_reference(win_emu.process, pending.context.completion_port);
+            io_completion_wait::release_reference(win_emu.process, pending.issuing_thread);
+            return STATUS_INVALID_HANDLE;
         }
         bool queued{};
         const auto cleanup = utils::finally([&] {
@@ -413,7 +404,7 @@ namespace sogen
         pending.context.vcpu = nullptr;
         context.io_status_block.write({.Status = STATUS_PENDING, .Information = 0});
         write_io_status(context, STATUS_PENDING);
-        if (auto* event = win_emu.process.events.get(context.event))
+        if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
         {
             event->signaled = false;
         }
@@ -429,9 +420,9 @@ namespace sogen
 
     void named_pipe::release_operation(process_context& process, pending_operation& operation)
     {
-        io_completion_wait::release_handle_reference(process, operation.context.event);
-        io_completion_wait::release_handle_reference(process, operation.context.completion_port);
-        io_completion_wait::release_handle_reference(process, operation.issuing_thread);
+        io_completion_wait::release_reference(process, operation.context.event);
+        io_completion_wait::release_reference(process, operation.context.completion_port);
+        io_completion_wait::release_reference(process, operation.issuing_thread);
     }
 
     named_pipe::operation_result named_pipe::poll(windows_emulator& win_emu, const pending_operation& operation) const

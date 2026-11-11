@@ -1268,12 +1268,7 @@ namespace sogen
             {
                 if (process.process && process.id == id.UniqueProcess)
                 {
-                    const auto handle = c.proc.processes.make_handle(index);
-                    if (!c.proc.processes.duplicate(handle))
-                    {
-                        return STATUS_INVALID_HANDLE;
-                    }
-                    process_handle.write(handle);
+                    process_handle.write(c.proc.processes.open_by_index(index));
                     return STATUS_SUCCESS;
                 }
             }

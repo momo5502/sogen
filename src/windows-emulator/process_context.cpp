@@ -1257,7 +1257,12 @@ namespace sogen
 
     generic_handle_store* process_context::get_handle_store(const handle handle)
     {
-        switch (handle.value.type)
+        return this->get_handle_store(static_cast<handle_types::type>(handle.value.type));
+    }
+
+    generic_handle_store* process_context::get_handle_store(const handle_types::type type)
+    {
+        switch (type)
         {
         case handle_types::process:
             return &this->processes;
@@ -1308,15 +1313,104 @@ namespace sogen
         }
     }
 
+    object_reference process_context::reference_of(const handle h)
+    {
+        if (h.bits == 0)
+        {
+            return {};
+        }
+
+        if (h.value.is_pseudo)
+        {
+            return object_reference{.type = static_cast<handle_types::type>(h.value.type), .pseudo = h};
+        }
+
+        auto* store = this->get_handle_store(static_cast<handle_types::type>(h.value.type));
+        if (!store)
+        {
+            return {};
+        }
+
+        const auto reference = store->reference_of(h);
+        return reference.value_or(object_reference{});
+    }
+
+    std::optional<object_reference> process_context::retain_object(const handle h)
+    {
+        if (h.bits == 0)
+        {
+            return std::nullopt;
+        }
+
+        if (h.value.is_pseudo)
+        {
+            return object_reference{.type = static_cast<handle_types::type>(h.value.type), .pseudo = h};
+        }
+
+        auto* store = this->get_handle_store(static_cast<handle_types::type>(h.value.type));
+        return store ? store->retain(h) : std::nullopt;
+    }
+
+    std::optional<object_reference> process_context::retain_object(const object_reference& reference)
+    {
+        if (!reference)
+        {
+            return std::nullopt;
+        }
+
+        if (reference.is_pseudo())
+        {
+            return reference;
+        }
+
+        auto* store = this->get_handle_store(reference.type);
+        if (!store)
+        {
+            return std::nullopt;
+        }
+
+        return store->retain(reference.index);
+    }
+
+    void process_context::release_object(object_reference& reference)
+    {
+        if (reference.is_pseudo())
+        {
+            reference = {};
+            return;
+        }
+
+        if (auto* store = this->get_handle_store(reference.type))
+        {
+            store->release(reference);
+        }
+        else
+        {
+            reference = {};
+        }
+    }
+
+    ref_counted_object* process_context::get_object(const object_reference& reference)
+    {
+        if (reference.is_pseudo())
+        {
+            return nullptr;
+        }
+
+        auto* store = this->get_handle_store(reference.type);
+        return store ? store->get_object(reference) : nullptr;
+    }
+
     size_t process_context::handle_count() const
     {
         // Threads live in their store whether or not the guest holds a handle to them.
-        return this->processes.size() + this->managed_threads.size() + this->debug_objects.size() + this->events.size() +
-               this->files.size() + this->devices.size() + this->semaphores.size() + this->io_completions.size() +
-               this->wait_completion_packets.size() + this->worker_factories.size() + this->jobs.size() +
-               this->thread_state_changes.size() + this->registry_keys.size() + this->mutants.size() + this->timers.size() +
-               this->desktops.size() + this->window_stations.size() + this->ports.size() + this->sections.size() +
-               this->private_namespaces.size() + this->deferred_window_position_batches.size();
+        return this->processes.handle_count() + this->managed_threads.handle_count() + this->debug_objects.handle_count() +
+               this->events.handle_count() + this->files.handle_count() + this->devices.handle_count() + this->semaphores.handle_count() +
+               this->io_completions.handle_count() + this->wait_completion_packets.handle_count() + this->worker_factories.handle_count() +
+               this->jobs.handle_count() + this->thread_state_changes.handle_count() + this->registry_keys.handle_count() +
+               this->mutants.handle_count() + this->timers.handle_count() + this->desktops.handle_count() +
+               this->window_stations.handle_count() + this->ports.handle_count() + this->sections.handle_count() +
+               this->private_namespaces.handle_count() + this->deferred_window_position_batches.handle_count();
     }
 
     emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id)

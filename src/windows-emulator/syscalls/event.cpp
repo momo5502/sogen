@@ -187,8 +187,7 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        event_handle.write(c.proc.events.make_handle(entry.first));
+                        event_handle.write(c.proc.events.open_by_index(entry.first));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -251,8 +250,7 @@ namespace sogen
             {
                 if (entry.second.name == name)
                 {
-                    ++entry.second.ref_count;
-                    event_handle.write(c.proc.events.make_handle(entry.first).bits);
+                    event_handle.write(c.proc.events.open_by_index(entry.first).bits);
                     return STATUS_SUCCESS;
                 }
             }

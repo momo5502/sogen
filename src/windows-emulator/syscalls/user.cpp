@@ -2082,15 +2082,17 @@ namespace sogen
 
         handle default_desktop(const syscall_context& c)
         {
-            if (c.proc.default_desktop.bits == 0)
+            if (!c.proc.default_desktop)
             {
                 desktop desk{};
                 desk.name = u"Default";
                 desk.window_station = interactive_window_station;
-                c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
+                auto [handle, _] = c.proc.desktops.store_and_get(std::move(desk));
+                c.proc.default_desktop = c.proc.desktops.retain(handle).value_or(object_reference{});
+                return handle;
             }
 
-            return c.proc.default_desktop;
+            return c.proc.desktops.make_handle(c.proc.default_desktop.index);
         }
 
         handle resolve_desktop(const syscall_context& c, const handle desktop_handle)
@@ -3768,7 +3770,8 @@ namespace sogen
                 // other. The interactive station is not in the store and cannot be closed.
                 if (existing != interactive_window_station)
                 {
-                    c.proc.window_stations.duplicate(make_handle(existing));
+                    const auto duplicated = c.proc.window_stations.duplicate(make_handle(existing));
+                    return duplicated ? duplicated->bits : 0;
                 }
 
                 return existing;
@@ -3827,8 +3830,8 @@ namespace sogen
             const auto station = c.proc.process_window_station;
             if (const auto existing = find_desktop(c, station, name); existing != 0)
             {
-                c.proc.desktops.duplicate(make_handle(existing));
-                return existing;
+                const auto duplicated = c.proc.desktops.duplicate(make_handle(existing));
+                return duplicated ? duplicated->bits : 0;
             }
 
             desktop desk{};
@@ -3859,7 +3862,7 @@ namespace sogen
         BOOL handle_NtUserCloseDesktop(const syscall_context& c, const handle desktop_handle)
         {
             // A desktop that threads are using cannot be closed.
-            if (desktop_handle == c.proc.default_desktop)
+            if (c.proc.reference_of(desktop_handle) == c.proc.default_desktop)
             {
                 return FALSE;
             }
@@ -8021,7 +8024,7 @@ namespace sogen
                 {
                     return fail(error_invalid_parameter);
                 }
-                const BOOL receives_input = resolve_desktop(c, object) == c.proc.default_desktop;
+                const BOOL receives_input = c.proc.reference_of(resolve_desktop(c, object)) == c.proc.default_desktop;
                 return write(&receives_input, sizeof(receives_input));
             }
             default:

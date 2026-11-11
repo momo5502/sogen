@@ -639,7 +639,7 @@ namespace sogen
                                            handle completion_port);
         void release_completion_port(process_context& process);
 
-        [[nodiscard]] handle completion_port() const
+        [[nodiscard]] const object_reference& completion_port() const
         {
             return this->completion_port_;
         }
@@ -656,7 +656,7 @@ namespace sogen
         std::unique_ptr<port> port_{};
         std::vector<lpc_message_result> reply_queue_;
         uint64_t completion_key_{};
-        handle completion_port_{};
+        object_reference completion_port_{};
         ULONG last_message_id_{};
 
         void post_completion(windows_emulator& win_emu) const;

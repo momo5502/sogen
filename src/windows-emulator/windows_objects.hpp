@@ -1137,7 +1137,7 @@ namespace sogen
         uint64_t key_context{};
         uint64_t apc_context{};
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> io_status_block{};
-        handle wait_packet_handle{};
+        object_reference wait_packet_reference{};
 
         handle worker_factory_handle{};
         bool worker_factory_release{};
@@ -1147,7 +1147,7 @@ namespace sogen
             buffer.write(this->key_context);
             buffer.write(this->apc_context);
             buffer.write(this->io_status_block);
-            buffer.write(this->wait_packet_handle);
+            buffer.write(this->wait_packet_reference);
             buffer.write(this->worker_factory_handle);
             buffer.write(this->worker_factory_release);
         }
@@ -1157,7 +1157,7 @@ namespace sogen
             buffer.read(this->key_context);
             buffer.read(this->apc_context);
             buffer.read(this->io_status_block);
-            buffer.read(this->wait_packet_handle);
+            buffer.read(this->wait_packet_reference);
             buffer.read(this->worker_factory_handle);
             buffer.read(this->worker_factory_release);
         }
@@ -1189,19 +1189,20 @@ namespace sogen
             return true;
         }
 
-        bool remove_by_wait_packet(const handle wait_packet_handle)
+        std::optional<io_completion_message> remove_by_wait_packet(const object_reference& wait_packet_reference)
         {
             const auto entry = std::ranges::find_if(this->queue, [&](const io_completion_message& message) {
-                return message.wait_packet_handle == wait_packet_handle; //
+                return message.wait_packet_reference == wait_packet_reference; //
             });
 
             if (entry == this->queue.end())
             {
-                return false;
+                return std::nullopt;
             }
 
+            const auto message = *entry;
             this->queue.erase(entry);
-            return true;
+            return message;
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -1224,8 +1225,8 @@ namespace sogen
     struct wait_completion_packet : ref_counted_object
     {
         std::u16string name{};
-        handle io_completion_handle{};
-        handle target_object_handle{};
+        object_reference io_completion{};
+        object_reference target_object_reference{};
         // The target's object as last looked up, valid while its store's generation is still target_generation. Not
         // serialized; a restored packet looks it up again.
         ref_counted_object* target_object{};
@@ -1240,8 +1241,8 @@ namespace sogen
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
-            buffer.write(this->io_completion_handle);
-            buffer.write(this->target_object_handle);
+            buffer.write(this->io_completion);
+            buffer.write(this->target_object_reference);
             buffer.write(this->key_context);
             buffer.write(this->apc_context);
             buffer.write(this->io_status_block);
@@ -1253,8 +1254,8 @@ namespace sogen
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->name);
-            buffer.read(this->io_completion_handle);
-            buffer.read(this->target_object_handle);
+            buffer.read(this->io_completion);
+            buffer.read(this->target_object_reference);
             buffer.read(this->key_context);
             buffer.read(this->apc_context);
             buffer.read(this->io_status_block);
@@ -1267,7 +1268,7 @@ namespace sogen
     struct worker_factory : ref_counted_object
     {
         std::u16string name{};
-        handle io_completion_handle{};
+        object_reference io_completion{};
         handle worker_process_handle{};
         uint64_t start_routine{};
         uint64_t start_parameter{};
@@ -1299,7 +1300,7 @@ namespace sogen
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
-            buffer.write(this->io_completion_handle);
+            buffer.write(this->io_completion);
             buffer.write(this->worker_process_handle);
             buffer.write(this->start_routine);
             buffer.write(this->start_parameter);
@@ -1330,7 +1331,7 @@ namespace sogen
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->name);
-            buffer.read(this->io_completion_handle);
+            buffer.read(this->io_completion);
             buffer.read(this->worker_process_handle);
             buffer.read(this->start_routine);
             buffer.read(this->start_parameter);

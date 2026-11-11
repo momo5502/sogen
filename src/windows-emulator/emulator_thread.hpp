@@ -186,7 +186,7 @@ namespace sogen
 
     struct pending_io_completion_wait
     {
-        handle io_completion_handle{};
+        object_reference io_completion{};
         io_completion_wait_type type{io_completion_wait_type::remove_single};
         emulator_pointer key_context_ptr{};
         emulator_pointer apc_context_ptr{};
@@ -202,7 +202,7 @@ namespace sogen
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(static_cast<uint8_t>(this->type));
-            buffer.write(this->io_completion_handle);
+            buffer.write(this->io_completion);
             buffer.write(this->key_context_ptr);
             buffer.write(this->apc_context_ptr);
             buffer.write(this->io_status_block_ptr);
@@ -218,7 +218,7 @@ namespace sogen
         {
             const auto raw_type = buffer.read<uint8_t>();
             this->type = static_cast<io_completion_wait_type>(raw_type);
-            buffer.read(this->io_completion_handle);
+            buffer.read(this->io_completion);
             buffer.read(this->key_context_ptr);
             buffer.read(this->apc_context_ptr);
             buffer.read(this->io_status_block_ptr);

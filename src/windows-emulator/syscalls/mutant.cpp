@@ -66,8 +66,7 @@ namespace sogen
             {
                 if (entry.second.name == name)
                 {
-                    ++entry.second.ref_count;
-                    mutant_handle.write(c.proc.mutants.make_handle(entry.first));
+                    mutant_handle.write(c.proc.mutants.open_by_index(entry.first));
                     return STATUS_SUCCESS;
                 }
             }
@@ -97,8 +96,7 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        mutant_handle.write(c.proc.mutants.make_handle(entry.first));
+                        mutant_handle.write(c.proc.mutants.open_by_index(entry.first));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }

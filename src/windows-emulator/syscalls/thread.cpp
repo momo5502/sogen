@@ -1277,16 +1277,16 @@ namespace sogen
             }
 
             bool return_next_thread = resolved_thread_handle == NULL_HANDLE;
+            const auto* reference_thread = return_next_thread ? nullptr : c.proc.threads.get(resolved_thread_handle);
             for (auto& t : c.proc.threads)
             {
                 if (return_next_thread && !t.second.is_terminated())
                 {
-                    ++t.second.ref_count;
-                    new_thread_handle.write(c.proc.threads.make_handle(t.first));
+                    new_thread_handle.write(c.proc.threads.open_by_index(t.first));
                     return STATUS_SUCCESS;
                 }
 
-                if (t.first == resolved_thread_handle.value.id)
+                if (&t.second == reference_thread)
                 {
                     return_next_thread = true;
                 }

@@ -431,9 +431,9 @@ namespace sogen
         template <handle_types::type Type, typename T>
         void collect_kernel_handles(std::vector<kernel_handle>& handles, const handle_store<Type, T>& store)
         {
-            for (const auto& [index, object] : store)
+            for (const auto& [handle, object] : store.handle_entries())
             {
-                handles.push_back({.guest_handle = store.make_handle(index), .type = Type, .object = &object});
+                handles.push_back({.guest_handle = handle, .type = Type, .object = object});
             }
         }
 

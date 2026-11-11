@@ -93,7 +93,7 @@ namespace sogen
                 auto* factory = c.proc.worker_factories.get(h);
                 if (factory && factory->ref_count == 1)
                 {
-                    io_completion_wait::release_handle_reference(c.proc, factory->io_completion_handle);
+                    io_completion_wait::release_reference(c.proc, factory->io_completion);
                 }
             }
 

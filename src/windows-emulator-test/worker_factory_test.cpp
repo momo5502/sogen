@@ -62,7 +62,7 @@ namespace sogen::test
             {
                 this->port = this->emu->process.io_completions.store(io_completion{});
                 auto& factory = this->pool();
-                factory.io_completion_handle = this->port;
+                factory.io_completion = this->emu->process.io_completions.reference_of(this->port).value_or(object_reference{});
                 factory.start_routine = 0x10000;
                 factory.thread_maximum = thread_maximum;
             }
@@ -120,8 +120,9 @@ namespace sogen::test
 
         auto* worker = this->emu->process.threads.get(this->pool().worker_threads.front());
         ASSERT_NE(nullptr, worker);
-        worker->await_io_completion =
-            pending_io_completion_wait{.io_completion_handle = this->port, .type = io_completion_wait_type::remove_multiple};
+        worker->await_io_completion = pending_io_completion_wait{
+            .io_completion = this->emu->process.io_completions.reference_of(this->port).value_or(object_reference{}),
+            .type = io_completion_wait_type::remove_multiple};
 
         ASSERT_EQ(STATUS_SUCCESS, this->release());
         EXPECT_EQ(1u, this->pool().worker_threads.size());

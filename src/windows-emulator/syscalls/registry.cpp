@@ -805,7 +805,7 @@ namespace sogen
                 const registry_notify_request request{
                     .thread_id = c.thread().id,
                     .thread_ended_waits = c.thread().ended_waits,
-                    .event = asynchronous ? event : handle{},
+                    .event = asynchronous ? c.proc.reference_of(event) : object_reference{},
                     .apc_routine = asynchronous ? apc_routine : 0,
                     .apc_context = asynchronous ? apc_context : 0,
                     .io_status_block = thread_agnostic ? 0 : io_status_block,

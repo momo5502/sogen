@@ -1173,7 +1173,8 @@ namespace sogen
 
             io_device_context context{c.emu};
             context.source_handle = file_handle;
-            context.event = event;
+            context.event = c.proc.reference_of(event);
+            context.event_low_bit = (event.bits & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;
             context.io_status_block = io_status_block;
@@ -1328,8 +1329,7 @@ namespace sogen
                 {
                     if (entry.second.name == job.name)
                     {
-                        ++entry.second.ref_count;
-                        job_handle.write(c.proc.jobs.make_handle(entry.first));
+                        job_handle.write(c.proc.jobs.open_by_index(entry.first));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
