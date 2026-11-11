@@ -21,8 +21,8 @@ function(sogen_check_reflection_support)
   endif()
 
   set(CMAKE_REQUIRED_INCLUDES
-    "${CMAKE_SOURCE_DIR}/deps/reflect"
-    "${CMAKE_SOURCE_DIR}/src/windows-analyzer"
+    "${PROJECT_SOURCE_DIR}/deps/reflect"
+    "${PROJECT_SOURCE_DIR}/src/windows-analyzer"
   )
 
   set(CMAKE_REQUIRED_QUIET OFF)

@@ -15,5 +15,5 @@ target_sources(emulator-platform INTERFACE ${PLATFORM_FILES})
 
 target_include_directories(emulator-platform INTERFACE
   "${CMAKE_CURRENT_LIST_DIR}"
-  "${CMAKE_SOURCE_DIR}/src"
+  "${PROJECT_SOURCE_DIR}/src"
 )
