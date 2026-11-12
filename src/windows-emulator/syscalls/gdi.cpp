@@ -5,6 +5,7 @@
 #include "../gdi_clip.hpp"
 #include "../gdi_charset.hpp"
 #include "../gdi_font_signature.hpp"
+#include "../gdi_text.hpp"
 #include "../syscall_utils.hpp"
 
 #include <array>
@@ -67,6 +68,27 @@ namespace sogen
             constexpr uint32_t k_gdi_dc_attr_pt_current_offset = 0xD8;
             constexpr uint32_t k_gdi_dc_attr_text_align_offset = 0x110; // DC_ATTR.lTextAlign (SetTextAlign)
             constexpr uint32_t k_gdi_dc_attr_font_offset = 0x128;
+            // gdi32's GetBkMode reads the mode from DC_ATTR+0xE0 without a syscall.
+            constexpr uint32_t k_gdi_dc_attr_bk_mode_offset = 0xE0;
+
+            constexpr uint32_t k_eto_glyph_index = 0x10;
+            constexpr uint32_t k_eto_pdy = 0x2000;
+
+            constexpr uint32_t k_ta_updatecp = 0x1;
+            constexpr uint32_t k_ta_right = 0x2;
+            constexpr uint32_t k_ta_center = 0x6;
+            constexpr uint32_t k_ta_bottom = 0x8;
+            constexpr uint32_t k_ta_baseline = 0x18;
+
+            constexpr uint32_t k_gcw_indices = 0x08;
+            constexpr uint32_t k_gcw_int = 0x02;
+            constexpr uint32_t k_gcabcw_indices = 0x02;
+            constexpr uint32_t k_gcabcw_int = 0x01;
+            constexpr uint32_t k_ggi_mark_nonexisting_glyphs = 0x01;
+            constexpr uint32_t k_gte_ex_indices = 0x01;
+            constexpr uint32_t k_gte_indices = 0x02;
+            constexpr int32_t k_bk_mode_opaque = 2;
+            constexpr size_t k_maximum_text_out_chars = 0x10000;
 
             constexpr uint32_t k_error_invalid_handle = 6;
             constexpr uint8_t k_r2_copypen = 13;
@@ -700,6 +722,50 @@ namespace sogen
                 const auto dirty = c.emu.read_memory<uint32_t>(dc_attr + k_gdi_dc_attr_dirty_offset) & ~k_gdi_dirty_charset;
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_dirty_offset, &dirty, sizeof(dirty));
                 return info;
+            }
+
+            gdi_text::font_source make_font_source(const syscall_context& c)
+            {
+                return {c.proc.gdi_font_resources, c.win_emu.file_sys, c.win_emu.registry, c.win_emu.version.get_system_root()};
+            }
+
+            std::optional<uint32_t> current_dc_font_handle(const syscall_context& c, const hdc dc)
+            {
+                uint64_t dc_attr = 0;
+                uint64_t font = 0;
+                if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr) ||
+                    !c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_font_offset, &font, sizeof(font)) || font == 0)
+                {
+                    return std::nullopt;
+                }
+                return static_cast<uint32_t>(font);
+            }
+
+            std::optional<EMU_LOGFONTW> logfont_for_handle(const syscall_context& c, const uint32_t font)
+            {
+                const auto it = c.proc.gdi_fonts.find(font);
+                if (it == c.proc.gdi_fonts.end())
+                {
+                    return std::nullopt;
+                }
+                return it->second;
+            }
+
+            std::optional<EMU_LOGFONTW> logfont_for_dc(const syscall_context& c, const hdc dc)
+            {
+                const auto handle = current_dc_font_handle(c, dc);
+                return handle ? logfont_for_handle(c, *handle) : std::nullopt;
+            }
+
+            int32_t clamp_to_long(const int64_t value)
+            {
+                return static_cast<int32_t>(
+                    std::clamp<int64_t>(value, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max()));
+            }
+
+            uint32_t clamp_extent(const int64_t value)
+            {
+                return static_cast<uint32_t>(std::clamp<int64_t>(value, 0, std::numeric_limits<uint32_t>::max()));
             }
 
             // RGNATTR. gdi32 answers simple and null regions from it in user mode and edits it in place
@@ -1665,51 +1731,223 @@ namespace sogen
                 }
             }
 
+            void fill_rect(gdi_bitmap_surface& surface, const gdi::clip_region& visible, const int64_t left, const int64_t top,
+                           const int64_t right, const int64_t bottom, const uint32_t color)
+            {
+                visible.for_each_span(clamped_to_surface(surface, left, top, right, bottom),
+                                      [&](const LONG x_begin, const LONG x_end, const LONG y) {
+                                          auto* row = surface_row(surface, y);
+                                          std::fill(row + x_begin, row + x_end, color);
+                                      });
+            }
+
             void draw_text(gdi_bitmap_surface& surface, const gdi::clip_region& visible, const int x, const int y,
-                           const std::u16string_view text, const uint32_t color, const RECT* clip = nullptr, const uint32_t* dx = nullptr)
+                           const std::u16string_view text, const uint32_t color, const RECT* clip = nullptr, const int32_t* dx = nullptr)
             {
                 int pen_x = x;
                 for (size_t i = 0; i < text.size(); ++i)
                 {
                     draw_text_glyph(surface, visible, pen_x, y, static_cast<char32_t>(text[i]), color, clip);
-                    pen_x += dx != nullptr ? static_cast<int32_t>(dx[i]) : k_text_cell_width;
+                    pen_x += dx != nullptr ? dx[i] : k_text_cell_width;
                 }
             }
 
-            // SetTextAlign chooses which point of the text (x, y) names; draw_text starts at the top-left corner.
-            POINT text_top_left(const int x, const int y, const uint32_t text_align, const size_t count, const uint32_t* dx)
+            uint32_t blend_channel(const uint32_t source, const uint32_t destination, const uint32_t coverage)
             {
-                constexpr uint32_t ta_right = 2;
-                constexpr uint32_t ta_center = 6;
-                constexpr uint32_t ta_bottom = 8;
-                constexpr uint32_t ta_baseline = 24;
+                return (source * coverage + destination * (255 - coverage) + 127) / 255;
+            }
 
-                int width = 0;
-                for (size_t i = 0; i < count; ++i)
-                {
-                    width += dx != nullptr ? static_cast<int32_t>(dx[i]) : k_text_cell_width;
-                }
+            uint32_t blend_text_color(const uint32_t color, const uint32_t destination, const uint8_t coverage)
+            {
+                const auto blue = blend_channel(color & 0xFF, destination & 0xFF, coverage);
+                const auto green = blend_channel((color >> 8) & 0xFF, (destination >> 8) & 0xFF, coverage);
+                const auto red = blend_channel((color >> 16) & 0xFF, (destination >> 16) & 0xFF, coverage);
+                return 0xFF000000u | (red << 16) | (green << 8) | blue;
+            }
 
-                POINT origin{.x = x, .y = y};
-                if ((text_align & ta_center) == ta_center)
+            void blend_glyph_pixel(gdi_bitmap_surface& surface, const gdi::clip_region& visible, const int64_t x, const int64_t y,
+                                   const uint32_t color, const uint8_t coverage, const RECT* clip)
+            {
+                constexpr auto int_min = static_cast<int64_t>(std::numeric_limits<int>::min());
+                constexpr auto int_max = static_cast<int64_t>(std::numeric_limits<int>::max());
+                if (coverage == 0 || x < int_min || x > int_max || y < int_min || y > int_max ||
+                    !point_in_rect(static_cast<int>(x), static_cast<int>(y), clip))
                 {
-                    origin.x -= width / 2;
-                }
-                else if ((text_align & ta_right) != 0)
-                {
-                    origin.x -= width;
-                }
-
-                if ((text_align & ta_baseline) == ta_baseline)
-                {
-                    origin.y -= static_cast<int>(k_default_font_ascent);
-                }
-                else if ((text_align & ta_bottom) != 0)
-                {
-                    origin.y -= k_text_cell_height;
+                    return;
                 }
 
-                return origin;
+                const auto sx = static_cast<int>(x);
+                const auto sy = static_cast<int>(y);
+                if (!visible.contains(sx, sy) || sx < 0 || sy < 0 || sx >= static_cast<int>(surface.width) ||
+                    sy >= static_cast<int>(surface.height))
+                {
+                    return;
+                }
+
+                auto& pixel = surface.pixels[static_cast<size_t>(sy) * surface.width + static_cast<size_t>(sx)];
+                pixel = blend_text_color(color, pixel, coverage);
+            }
+
+            void draw_layout_cell(const syscall_context& c, gdi_bitmap_surface& surface, const gdi::clip_region& visible,
+                                  const gdi_text::run& run, const gdi_text::cell& cell, const POINT origin, const uint32_t color,
+                                  const RECT* clip)
+            {
+                std::shared_ptr<const gdi_glyph_bitmap> bitmap{};
+                try
+                {
+                    bitmap = c.proc.gdi_font_resources.rasterize(cell.font, cell.index);
+                }
+                catch (...)
+                {
+                }
+
+                const auto cell_x = static_cast<int64_t>(origin.x) + cell.origin;
+                const auto baseline = static_cast<int64_t>(origin.y) + run.ascent + cell.shift_y;
+                if (!bitmap || bitmap->width == 0 || bitmap->height == 0 ||
+                    bitmap->coverage.size() < static_cast<size_t>(bitmap->width) * bitmap->height)
+                {
+                    draw_text_glyph(surface, visible, clamp_to_long(cell_x), clamp_to_long(static_cast<int64_t>(origin.y)), U'?', color,
+                                    clip);
+                    return;
+                }
+
+                const auto left = cell_x + bitmap->left;
+                const auto top = baseline - bitmap->top;
+                for (uint32_t row = 0; row < bitmap->height; ++row)
+                {
+                    for (uint32_t column = 0; column < bitmap->width; ++column)
+                    {
+                        const auto coverage = bitmap->coverage[(static_cast<size_t>(row) * bitmap->width) + column];
+                        blend_glyph_pixel(surface, visible, left + column, top + row, color, coverage, clip);
+                    }
+                }
+            }
+
+            // Both the direct ExtTextOutW and the batched text_out land here: `origin` is the top-left of the run's
+            // em box, `run` carries the physical font cells (or physical == false, meaning the legacy 8x16 font).
+            void draw_text_run(const syscall_context& c, gdi_bitmap_surface& surface, const gdi::clip_region& visible,
+                               const gdi_text::run& run, const std::u16string_view text, std::span<const int32_t> advances,
+                               const POINT origin, const uint32_t foreground, const uint32_t background, const bool opaque,
+                               const RECT* clip)
+            {
+                const auto run_height = static_cast<int64_t>(run.ascent) + run.descent;
+                if (opaque && run.width > 0 && run_height > 0)
+                {
+                    fill_rect(surface, visible, origin.x, origin.y, origin.x + run.width, origin.y + run_height, background);
+                }
+
+                if (!run.physical)
+                {
+                    draw_text(surface, visible, origin.x, origin.y, text, foreground, clip, advances.empty() ? nullptr : advances.data());
+                    return;
+                }
+
+                for (const auto& cell : run.cells)
+                {
+                    draw_layout_cell(c, surface, visible, run, cell, origin, foreground, clip);
+                }
+            }
+
+            // SetTextAlign chooses which point of the text (x, y) names; the returned origin is the top-left corner
+            // of the run's em box.
+            POINT align_text_origin(const int64_t x, const int64_t y, const uint32_t text_align, const int64_t width, const int32_t ascent,
+                                    const int32_t descent)
+            {
+                auto origin_x = x;
+                if ((text_align & k_ta_center) == k_ta_center)
+                {
+                    origin_x -= width / 2;
+                }
+                else if ((text_align & k_ta_right) != 0)
+                {
+                    origin_x -= width;
+                }
+
+                auto origin_y = y;
+                if ((text_align & k_ta_baseline) == k_ta_baseline)
+                {
+                    origin_y -= ascent;
+                }
+                else if ((text_align & k_ta_bottom) != 0)
+                {
+                    origin_y -= static_cast<int64_t>(ascent) + descent;
+                }
+
+                return {.x = clamp_to_long(origin_x), .y = clamp_to_long(origin_y)};
+            }
+
+            gdi_text::run layout_for_logfont(const syscall_context& c, const std::optional<EMU_LOGFONTW>& logfont,
+                                             const std::u16string_view text, const gdi_text::glyph_input input,
+                                             const std::span<const int32_t> advances, const bool advances_have_y)
+            {
+                gdi_text::run result{};
+                if (logfont)
+                {
+                    try
+                    {
+                        result = gdi_text::layout(make_font_source(c), *logfont, text, input, advances, advances_have_y, k_text_cell_width);
+                    }
+                    catch (...)
+                    {
+                        result = {};
+                    }
+                }
+
+                if (!result.physical)
+                {
+                    result.ascent = static_cast<int32_t>(k_default_font_ascent);
+                    result.descent = static_cast<int32_t>(k_default_font_descent);
+                    result.em_height = static_cast<int32_t>(k_default_font_height);
+                    for (size_t i = 0; i < text.size(); ++i)
+                    {
+                        result.width += advances.empty() ? k_text_cell_width : advances[advances_have_y ? i * 2 : i];
+                    }
+                }
+
+                return result;
+            }
+
+            gdi_text::run layout_for_dc(const syscall_context& c, const hdc dc, const std::optional<uint32_t> font_override,
+                                        const std::u16string_view text, const gdi_text::glyph_input input,
+                                        const std::span<const int32_t> advances, const bool advances_have_y)
+            {
+                const auto handle = font_override ? *font_override : current_dc_font_handle(c, dc).value_or(0);
+                return layout_for_logfont(c, logfont_for_handle(c, handle), text, input, advances, advances_have_y);
+            }
+
+            struct measured_text
+            {
+                int64_t width{};
+                int32_t height = static_cast<int32_t>(k_default_font_height);
+                bool physical{false};
+            };
+
+            // Whole-unit share of a value amortized over a multi-unit cell, keeping the per-unit parts summing to it.
+            int64_t amortized_part(const int64_t whole, const uint32_t unit, const uint32_t unit_count)
+            {
+                return whole * static_cast<int64_t>(unit + 1) / unit_count - whole * static_cast<int64_t>(unit) / unit_count;
+            }
+
+            measured_text measure_text_for_dc(const syscall_context& c, const hdc dc, const std::u16string_view text,
+                                              const gdi_text::glyph_input input, const gdi_text::measure_visitor& visit)
+            {
+                measured_text result{};
+                try
+                {
+                    const auto measured =
+                        gdi_text::measure(make_font_source(c), logfont_for_dc(c, dc), text, input, {}, false, k_text_cell_width, visit);
+                    result.width = measured.width;
+                    result.physical = measured.physical;
+                    if (measured.physical)
+                    {
+                        result.height = measured.ascent + measured.descent;
+                    }
+                }
+                catch (...)
+                {
+                }
+
+                return result;
             }
 
             bool is_stock_object_selected(const syscall_context& c, const hdc dc, const uint32_t attr_offset, const uint32_t stock_index)
@@ -1723,16 +1961,6 @@ namespace sogen
                 uint32_t selected = 0;
                 c.win_emu.memory.try_read_memory(dc_attr + attr_offset, &selected, sizeof(selected));
                 return selected != 0 && selected == static_cast<uint32_t>(read_gdi_object_slot(c, stock_index));
-            }
-
-            void fill_rect(gdi_bitmap_surface& surface, const gdi::clip_region& visible, const int64_t left, const int64_t top,
-                           const int64_t right, const int64_t bottom, const uint32_t color)
-            {
-                visible.for_each_span(clamped_to_surface(surface, left, top, right, bottom),
-                                      [&](const LONG x_begin, const LONG x_end, const LONG y) {
-                                          auto* row = surface_row(surface, y);
-                                          std::fill(row + x_begin, row + x_end, color);
-                                      });
             }
 
             uint8_t get_dc_rop2(const syscall_context& c, const hdc dc)
@@ -1868,34 +2096,56 @@ namespace sogen
                                        .right = text_out->rect.right + origin_x,
                                        .bottom = text_out->rect.bottom + origin_y};
                         const auto has_rect = (text_out->options & k_gdibs_no_rect) == 0;
-                        if ((text_out->options & ETO_OPAQUE) != 0 && (text_out->options & k_gdibs_no_rect) == 0)
+                        if ((text_out->options & ETO_OPAQUE) != 0 && has_rect)
                         {
                             fill_rect(*surface, visible, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom,
                                       colorref_to_bgra(text_out->background));
                         }
 
-                        // The payload after `string` holds the text, then the advances. dx_offset is 0 without advances and
-                        // otherwise the text size rounded up to a ULONG (GDIBSTEXTOUT::Size). The guest controls the batch, so
-                        // both parts are checked to fit inside this command before being read.
+                        // The payload after `string` holds the text, then the advances; with ETO_PDY each character
+                        // contributes two LONGs (x and y), so the advance block doubles. dx_offset is 0 without
+                        // advances and otherwise the text size rounded up to a ULONG (GDIBSTEXTOUT::Size). The guest
+                        // controls the batch, so both parts are checked to fit inside this command before being read.
                         const auto payload_capacity = static_cast<size_t>(header->size) - offsetof(gdi_batch_text_out, string);
                         const auto dx_offset = static_cast<size_t>(text_out->dx_offset);
                         const auto text_bytes = static_cast<size_t>(text_out->count) * sizeof(char16_t);
-                        const auto dx_bytes = dx_offset != 0 ? static_cast<size_t>(text_out->count) * sizeof(uint32_t) : 0;
+                        const auto pdy = (text_out->options & k_eto_pdy) != 0;
+                        const auto advance_count = static_cast<size_t>(text_out->count) * (pdy ? 2 : 1);
+                        const auto dx_bytes = dx_offset != 0 ? advance_count * sizeof(int32_t) : 0;
                         if (text_bytes <= payload_capacity &&
                             (dx_offset == 0 ||
                              (dx_offset >= text_bytes && dx_offset <= payload_capacity && dx_bytes <= payload_capacity - dx_offset)))
                         {
-                            const auto* text = reinterpret_cast<const char16_t*>(text_out->string.data());
-                            const auto* advances = dx_offset != 0
-                                                       ? reinterpret_cast<const uint32_t*>(
-                                                             reinterpret_cast<const std::byte*>(text_out->string.data()) + dx_offset)
-                                                       : nullptr;
-                            const auto top_left = text_top_left(text_out->x + text_out->viewport_org.x + origin_x,
-                                                                text_out->y + text_out->viewport_org.y + origin_y, text_out->text_align,
-                                                                text_out->count, advances);
-                            draw_text(*surface, visible, top_left.x, top_left.y, std::u16string_view(text, text_out->count),
-                                      colorref_to_bgra(text_out->foreground),
-                                      has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr, advances);
+                            std::u16string text(text_out->count, u'\0');
+                            std::memcpy(text.data(), text_out->string.data(), text_bytes);
+                            std::vector<int32_t> advances{};
+                            if (dx_offset != 0)
+                            {
+                                advances.resize(advance_count);
+                                std::memcpy(advances.data(), reinterpret_cast<const std::byte*>(text_out->string.data()) + dx_offset,
+                                            dx_bytes);
+                            }
+
+                            try
+                            {
+                                // The record carries the font that was selected when the call was batched; only fall
+                                // back to the DC's current font when that handle no longer maps to a LOGFONT.
+                                const auto record_font = static_cast<uint32_t>(text_out->font);
+                                const auto font_override =
+                                    logfont_for_handle(c, record_font) ? std::optional<uint32_t>{record_font} : std::nullopt;
+                                const auto input = (text_out->options & k_eto_glyph_index) != 0 ? gdi_text::glyph_input::indices
+                                                                                                : gdi_text::glyph_input::characters;
+                                const auto run = layout_for_dc(c, dc, font_override, text, input, advances, pdy);
+                                const auto origin = align_text_origin(text_out->x + text_out->viewport_org.x + origin_x,
+                                                                      text_out->y + text_out->viewport_org.y + origin_y,
+                                                                      text_out->text_align, run.width, run.ascent, run.descent);
+                                draw_text_run(c, *surface, visible, run, text, advances, origin, colorref_to_bgra(text_out->foreground),
+                                              colorref_to_bgra(text_out->background), text_out->bk_mode == k_bk_mode_opaque,
+                                              has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr);
+                            }
+                            catch (...)
+                            {
+                            }
                         }
                     }
                     else if (surface && header->cmd == k_gdi_batch_cmd_text_out_rect &&
@@ -2234,6 +2484,9 @@ namespace sogen
                 // A new DC draws opaque text on white; gdi32 batches text with the realized background color.
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_background_color_offset, &white, sizeof(white));
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_realized_background_color_offset, &white, sizeof(white));
+
+                // gdi32 reads the background mode straight from DC_ATTR without a syscall; a new DC starts opaque.
+                c.emu.write_memory(dc_attr + k_gdi_dc_attr_bk_mode_offset, &k_bk_mode_opaque, sizeof(k_bk_mode_opaque));
 
                 const std::array<std::pair<uint32_t, uint32_t>, 3> default_objects{{
                     {k_stock_system_font_index, k_gdi_dc_attr_font_offset},
@@ -2727,20 +2980,19 @@ namespace sogen
             }
 
             template <typename Entry>
-            bool write_repeated_entries(const syscall_context& c, const emulator_pointer buffer, const UINT count, const Entry& entry)
+            bool write_entries_up_to_fault(const syscall_context& c, const emulator_pointer buffer, const Entry* entries, const UINT count)
             {
-                std::array<Entry, 0x100> chunk{};
-                chunk.fill(entry);
+                constexpr UINT chunk_capacity = 0x100;
                 for (UINT written = 0; written < count;)
                 {
-                    const auto chunk_count = std::min<size_t>(chunk.size(), count - written);
-                    if (!write_guest_bytes_up_to_fault(c, buffer + (static_cast<uint64_t>(written) * sizeof(Entry)), chunk.data(),
+                    const auto chunk_count = std::min<UINT>(chunk_capacity, count - written);
+                    if (!write_guest_bytes_up_to_fault(c, buffer + (static_cast<uint64_t>(written) * sizeof(Entry)), entries + written,
                                                        chunk_count * sizeof(Entry)))
                     {
                         return false;
                     }
 
-                    written += static_cast<UINT>(chunk_count);
+                    written += chunk_count;
                 }
 
                 return true;
@@ -2748,29 +3000,6 @@ namespace sogen
 
             // Windows measures at most this many characters, with or without a fit count or partial extents.
             constexpr uint64_t max_text_extent_chars = max_char_metric_output_size / (sizeof(char16_t) + sizeof(ULONG));
-
-            bool write_fixed_width_extents(const syscall_context& c, const emulator_pointer extents, const ULONG count)
-            {
-                std::array<ULONG, 0x100> chunk{};
-                for (ULONG written = 0; written < count;)
-                {
-                    const auto chunk_count = std::min<size_t>(chunk.size(), count - written);
-                    for (size_t i = 0; i < chunk_count; ++i)
-                    {
-                        chunk[i] = static_cast<ULONG>((written + i + 1) * k_default_font_width);
-                    }
-
-                    if (!write_guest_bytes_up_to_fault(c, extents + (static_cast<uint64_t>(written) * sizeof(ULONG)), chunk.data(),
-                                                       chunk_count * sizeof(ULONG)))
-                    {
-                        return false;
-                    }
-
-                    written += static_cast<ULONG>(chunk_count);
-                }
-
-                return true;
-            }
         }
 
         // Returns the surface a paint DC should be presented to, and (via present_handle) the host window handle it
@@ -2955,30 +3184,28 @@ namespace sogen
 
         BOOL handle_NtGdiFlush(const syscall_context& c)
         {
+            // A WoW64 thread has both TEBs; each batch must be consumed, not just the native one.
             auto& thread = c.thread();
+            BOOL result = TRUE;
             if (thread.teb64)
             {
-                BOOL result = TRUE;
                 thread.teb64->access([&](TEB64& teb) {
                     result = flush_gdi_text_batch(c, teb.GdiTebBatch) ? TRUE : FALSE;
                     teb.GdiTebBatch = {};
                     teb.GdiBatchCount = 0;
                 });
-                return result;
             }
 
             if (thread.teb32)
             {
-                BOOL result = TRUE;
                 thread.teb32->access([&](TEB32& teb) {
-                    result = flush_gdi_text_batch(c, teb.GdiTebBatch) ? TRUE : FALSE;
+                    result = flush_gdi_text_batch(c, teb.GdiTebBatch) ? result : FALSE;
                     teb.GdiTebBatch = {};
                     teb.GdiBatchCount = 0;
                 });
-                return result;
             }
 
-            return TRUE;
+            return result;
         }
 
         void flush_gdi_batch(const syscall_context& c)
@@ -2989,12 +3216,13 @@ namespace sogen
             {
                 c.emu.read_memory(thread.teb64->value() + offsetof(TEB64, GdiBatchCount), &batch_count, sizeof(batch_count));
             }
-            if (batch_count == 0 && thread.teb32)
+            ULONG batch_count32 = 0;
+            if (thread.teb32)
             {
-                c.emu.read_memory(thread.teb32->value() + offsetof(TEB32, GdiBatchCount), &batch_count, sizeof(batch_count));
+                c.emu.read_memory(thread.teb32->value() + offsetof(TEB32, GdiBatchCount), &batch_count32, sizeof(batch_count32));
             }
 
-            if (batch_count != 0)
+            if (batch_count != 0 || batch_count32 != 0)
             {
                 (void)handle_NtGdiFlush(c);
             }
@@ -4246,6 +4474,43 @@ namespace sogen
             std::array<uint8_t, k_textmetric_size> zeroed{};
             c.emu.write_memory(ptm, zeroed.data(), zeroed.size());
 
+            auto tm_height = static_cast<int32_t>(k_default_font_height);
+            auto tm_ascent = static_cast<int32_t>(k_default_font_ascent);
+            auto tm_descent = static_cast<int32_t>(k_default_font_descent);
+            auto tm_internal_leading = 0;
+            auto tm_external_leading = 0;
+            auto tm_ave_char_width = static_cast<int32_t>(k_default_font_width);
+            auto tm_max_char_width = static_cast<int32_t>(k_default_font_width);
+            auto tm_weight = static_cast<int32_t>(k_default_font_weight);
+            auto tm_italic = uint8_t{0};
+
+            if (const auto handle = current_dc_font_handle(c, dc))
+            {
+                if (const auto logfont = logfont_for_handle(c, *handle))
+                {
+                    try
+                    {
+                        const auto source = make_font_source(c);
+                        if (const auto font = source.select(*logfont))
+                        {
+                            const auto metrics = c.proc.gdi_font_resources.metrics(*font);
+                            tm_height = metrics.ascent + metrics.descent;
+                            tm_ascent = metrics.ascent;
+                            tm_descent = metrics.descent;
+                            tm_internal_leading = std::max(0, tm_height - static_cast<int32_t>(font->pixel_height));
+                            tm_external_leading = std::max(0, metrics.height - tm_height);
+                            tm_ave_char_width = metrics.average_width;
+                            tm_max_char_width = metrics.maximum_width;
+                            tm_weight = logfont->lfWeight;
+                            tm_italic = logfont->lfItalic;
+                        }
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            }
+
             const auto write_u32 = [&](const uint32_t offset, const uint32_t value) {
                 if (offset + sizeof(uint32_t) <= cj)
                 {
@@ -4267,16 +4532,19 @@ namespace sogen
                 }
             };
 
-            write_u32(0x00, k_default_font_height);
-            write_u32(0x04, k_default_font_ascent);
-            write_u32(0x08, k_default_font_descent);
-            write_u32(0x14, k_default_font_width);
-            write_u32(0x18, k_default_font_width);
-            write_u32(0x1C, k_default_font_weight);
+            write_u32(0x00, static_cast<uint32_t>(tm_height));
+            write_u32(0x04, static_cast<uint32_t>(tm_ascent));
+            write_u32(0x08, static_cast<uint32_t>(tm_descent));
+            write_u32(0x0C, static_cast<uint32_t>(tm_internal_leading));
+            write_u32(0x10, static_cast<uint32_t>(tm_external_leading));
+            write_u32(0x14, static_cast<uint32_t>(tm_ave_char_width));
+            write_u32(0x18, static_cast<uint32_t>(tm_max_char_width));
+            write_u32(0x1C, static_cast<uint32_t>(tm_weight));
             write_u16(0x2C, 0x20);
             write_u16(0x2E, 0x7E);
             write_u16(0x30, 0x3F);
             write_u16(0x32, 0x20);
+            write_u8(0x34, tm_italic);
             const auto charset = get_dc_charset(c, dc);
             write_u8(0x38, charset ? charset->charset : DEFAULT_CHARSET);
 
@@ -4291,9 +4559,29 @@ namespace sogen
                 return 0;
             }
 
-            static constexpr std::u16string_view k_default_font_name = u"Segoe UI";
-            const auto required = static_cast<int32_t>(k_default_font_name.size() + 1);
+            auto name = std::u16string{u"Segoe UI"};
+            if (const auto handle = current_dc_font_handle(c, dc))
+            {
+                if (const auto logfont = logfont_for_handle(c, *handle))
+                {
+                    try
+                    {
+                        const auto source = make_font_source(c);
+                        if (const auto font = source.select(*logfont))
+                        {
+                            if (const auto family = c.proc.gdi_font_resources.family_name(*font); !family.empty())
+                            {
+                                name = std::u16string{family};
+                            }
+                        }
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            }
 
+            const auto required = static_cast<int32_t>(name.size() + 1);
             if (face_name == 0)
             {
                 return required;
@@ -4304,10 +4592,10 @@ namespace sogen
                 return 0;
             }
 
-            const auto writable_chars = std::min<int32_t>(count - 1, static_cast<int32_t>(k_default_font_name.size()));
+            const auto writable_chars = std::min<int32_t>(count - 1, static_cast<int32_t>(name.size()));
             if (writable_chars > 0)
             {
-                c.emu.write_memory(face_name, k_default_font_name.data(), static_cast<size_t>(writable_chars) * sizeof(char16_t));
+                c.emu.write_memory(face_name, name.data(), static_cast<size_t>(writable_chars) * sizeof(char16_t));
             }
 
             const char16_t terminator = u'\0';
@@ -4321,25 +4609,48 @@ namespace sogen
             return 0;
         }
 
-        BOOL handle_NtGdiGetTextExtent(const syscall_context& c, const hdc dc, const emulator_pointer /*text*/, const int32_t char_count,
-                                       const emulator_pointer size, const ULONG /*flags*/)
+        BOOL handle_NtGdiGetTextExtent(const syscall_context& c, const hdc dc, const emulator_pointer text, const int32_t char_count,
+                                       const emulator_pointer size, const ULONG flags)
         {
             if (dc == 0 || size == 0 || char_count < 0)
             {
                 return FALSE;
             }
 
-            const SIZE text_size{
-                .cx = static_cast<LONG>(k_default_font_width * char_count),
-                .cy = static_cast<LONG>(k_default_font_height),
-            };
-            c.emu.write_memory(size, &text_size, sizeof(text_size));
-            return TRUE;
+            if (char_count == 0)
+            {
+                constexpr SIZE empty_size{};
+                return write_guest_block(c, size, &empty_size, sizeof(empty_size)) ? TRUE : FALSE;
+            }
+
+            if (static_cast<uint64_t>(char_count) > max_text_extent_chars ||
+                !is_readable_range(c.win_emu.memory, text, static_cast<uint64_t>(char_count) * sizeof(char16_t)))
+            {
+                return FALSE;
+            }
+
+            std::u16string glyphs(static_cast<size_t>(char_count), u'\0');
+            c.emu.read_memory(text, glyphs.data(), glyphs.size() * sizeof(char16_t));
+
+            try
+            {
+                const auto input = (flags & k_gte_indices) != 0 ? gdi_text::glyph_input::indices : gdi_text::glyph_input::characters;
+                const auto measured = measure_text_for_dc(c, dc, glyphs, input, {});
+                const SIZE text_size{
+                    .cx = clamp_to_long(measured.width),
+                    .cy = measured.height,
+                };
+                return write_guest_block(c, size, &text_size, sizeof(text_size)) ? TRUE : FALSE;
+            }
+            catch (...)
+            {
+                return FALSE;
+            }
         }
 
         BOOL handle_NtGdiGetTextExtentExW(const syscall_context& c, const hdc dc, const emulator_pointer text, const ULONG char_count,
                                           const ULONG max_extent, const emulator_object<ULONG> fit, const emulator_pointer extents,
-                                          const emulator_pointer size, const ULONG /*flags*/)
+                                          const emulator_pointer size, const ULONG flags)
         {
             // Windows answers an empty string without looking at the DC or the text.
             if (char_count == 0)
@@ -4359,63 +4670,178 @@ namespace sogen
                 return TRUE;
             }
 
-            // Windows reads the whole text before writing anything, although the fixed-width measure does not need it.
+            // Windows reads the whole text before writing anything.
             if (dc == 0 || size == 0 || char_count > max_text_extent_chars ||
                 !is_readable_range(c.win_emu.memory, text, static_cast<uint64_t>(char_count) * sizeof(char16_t)))
             {
                 return FALSE;
             }
 
-            const SIZE text_size{
-                .cx = static_cast<LONG>(k_default_font_width * char_count),
-                .cy = static_cast<LONG>(k_default_font_height),
-            };
-            if (!write_guest_block(c, size, &text_size, sizeof(text_size)))
+            std::u16string glyphs(char_count, u'\0');
+            c.emu.read_memory(text, glyphs.data(), glyphs.size() * sizeof(char16_t));
+
+            try
+            {
+                const auto input = (flags & k_gte_ex_indices) != 0 ? gdi_text::glyph_input::indices : gdi_text::glyph_input::characters;
+
+                // Collect the per-unit cumulative widths first; size, fit and extents are written in that order and
+                // Windows fails the call at the first output that faults, after writing the earlier ones.
+                std::vector<ULONG> cumulative{};
+                cumulative.reserve(glyphs.size());
+                const auto measured = measure_text_for_dc(c, dc, glyphs, input, [&](const gdi_text::measured_cell& cell) {
+                    for (uint32_t unit = 0; unit < cell.unit_count; ++unit)
+                    {
+                        cumulative.push_back(clamp_extent(cell.origin + amortized_part(cell.advance, unit, cell.unit_count)));
+                    }
+                });
+
+                const SIZE text_size{
+                    .cx = clamp_to_long(measured.width),
+                    .cy = measured.height,
+                };
+                if (!write_guest_block(c, size, &text_size, sizeof(text_size)))
+                {
+                    return FALSE;
+                }
+
+                const auto fitting =
+                    static_cast<ULONG>(std::distance(cumulative.begin(), std::ranges::upper_bound(cumulative, max_extent)));
+                if (fit && !write_guest_block(c, fit.value(), &fitting, sizeof(fitting)))
+                {
+                    return FALSE;
+                }
+
+                const auto extent_count = fit ? fitting : static_cast<ULONG>(glyphs.size());
+                if (extents != 0 && extent_count != 0 && !write_entries_up_to_fault(c, extents, cumulative.data(), extent_count))
+                {
+                    return FALSE;
+                }
+
+                return TRUE;
+            }
+            catch (...)
             {
                 return FALSE;
             }
-
-            const ULONG fitting = std::min<ULONG>(char_count, max_extent / k_default_font_width);
-            if (fit && !write_guest_block(c, fit.value(), &fitting, sizeof(fitting)))
-            {
-                return FALSE;
-            }
-
-            const ULONG extent_count = fit ? fitting : char_count;
-            if (extents != 0 && !write_fixed_width_extents(c, extents, extent_count))
-            {
-                return FALSE;
-            }
-
-            return TRUE;
         }
 
-        BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
-                                       const emulator_pointer chars, const UINT /*flags*/, const emulator_pointer buffer)
+        BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, const hdc dc, const UINT first_char, const UINT char_count,
+                                       const emulator_pointer chars, const UINT flags, const emulator_pointer buffer)
         {
             if (!is_char_metric_request_valid(c, dc, char_count, sizeof(int32_t), chars, buffer))
             {
                 return FALSE;
             }
 
-            const auto width = static_cast<int32_t>(k_default_font_width);
-            return write_repeated_entries(c, buffer, char_count, width) ? TRUE : FALSE;
+            std::u16string text(char_count, u'\0');
+            if (chars != 0)
+            {
+                if (!c.win_emu.memory.try_read_memory(chars, text.data(), text.size() * sizeof(char16_t)))
+                {
+                    return FALSE;
+                }
+            }
+            else
+            {
+                for (UINT i = 0; i < char_count; ++i)
+                {
+                    text[i] = static_cast<char16_t>(first_char + i);
+                }
+            }
+
+            try
+            {
+                const auto input = (flags & k_gcw_indices) != 0 ? gdi_text::glyph_input::indices : gdi_text::glyph_input::characters;
+                const auto as_integer = (flags & k_gcw_int) != 0;
+                std::vector<int32_t> widths{};
+                std::vector<float> float_widths{};
+                measure_text_for_dc(c, dc, text, input, [&](const gdi_text::measured_cell& cell) {
+                    for (uint32_t unit = 0; unit < cell.unit_count; ++unit)
+                    {
+                        const auto width = static_cast<int32_t>(amortized_part(cell.advance, unit, cell.unit_count));
+                        if (as_integer)
+                        {
+                            widths.push_back(width);
+                        }
+                        else
+                        {
+                            float_widths.push_back(static_cast<float>(width));
+                        }
+                    }
+                });
+
+                if (as_integer)
+                {
+                    return write_entries_up_to_fault(c, buffer, widths.data(), char_count) ? TRUE : FALSE;
+                }
+
+                return write_entries_up_to_fault(c, buffer, float_widths.data(), char_count) ? TRUE : FALSE;
+            }
+            catch (...)
+            {
+                return FALSE;
+            }
         }
 
-        BOOL handle_NtGdiGetCharABCWidthsW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
-                                           const emulator_pointer chars, const UINT /*flags*/, const emulator_pointer buffer)
+        BOOL handle_NtGdiGetCharABCWidthsW(const syscall_context& c, const hdc dc, const UINT first_char, const UINT char_count,
+                                           const emulator_pointer chars, const UINT flags, const emulator_pointer buffer)
         {
             if (!is_char_metric_request_valid(c, dc, char_count, sizeof(ABC), chars, buffer))
             {
                 return FALSE;
             }
 
-            const ABC metrics{
-                .abcA = 0,
-                .abcB = k_default_font_width,
-                .abcC = 0,
-            };
-            return write_repeated_entries(c, buffer, char_count, metrics) ? TRUE : FALSE;
+            std::u16string text(char_count, u'\0');
+            if (chars != 0)
+            {
+                if (!c.win_emu.memory.try_read_memory(chars, text.data(), text.size() * sizeof(char16_t)))
+                {
+                    return FALSE;
+                }
+            }
+            else
+            {
+                for (UINT i = 0; i < char_count; ++i)
+                {
+                    text[i] = static_cast<char16_t>(first_char + i);
+                }
+            }
+
+            try
+            {
+                const auto input = (flags & k_gcabcw_indices) != 0 ? gdi_text::glyph_input::indices : gdi_text::glyph_input::characters;
+                const auto as_integer = (flags & k_gcabcw_int) != 0;
+                std::vector<ABC> metrics{};
+                std::vector<ABCFLOAT> float_metrics{};
+                measure_text_for_dc(c, dc, text, input, [&](const gdi_text::measured_cell& cell) {
+                    for (uint32_t unit = 0; unit < cell.unit_count; ++unit)
+                    {
+                        const auto a = static_cast<int32_t>(amortized_part(cell.a, unit, cell.unit_count));
+                        const auto b = static_cast<int32_t>(amortized_part(cell.b, unit, cell.unit_count));
+                        const auto abc_c = static_cast<int32_t>(amortized_part(cell.c, unit, cell.unit_count));
+                        if (as_integer)
+                        {
+                            metrics.push_back({.abcA = a, .abcB = static_cast<UINT>(b), .abcC = abc_c});
+                        }
+                        else
+                        {
+                            float_metrics.push_back(
+                                {.abcfA = static_cast<float>(a), .abcfB = static_cast<float>(b), .abcfC = static_cast<float>(abc_c)});
+                        }
+                    }
+                });
+
+                if (as_integer)
+                {
+                    return write_entries_up_to_fault(c, buffer, metrics.data(), char_count) ? TRUE : FALSE;
+                }
+
+                return write_entries_up_to_fault(c, buffer, float_metrics.data(), char_count) ? TRUE : FALSE;
+            }
+            catch (...)
+            {
+                return FALSE;
+            }
         }
 
         uint32_t handle_NtGdiGetGlyphOutline(const syscall_context& c, const hdc dc, const UINT character, const UINT format,
@@ -5501,16 +5927,8 @@ namespace sogen
                 return FALSE;
             }
 
-            if (count == 0 || text == 0)
-            {
-                dc_state->current_x = x;
-                dc_state->current_y = y;
-                return TRUE;
-            }
-
-            std::u16string glyphs;
-            glyphs.resize(count);
-            c.emu.read_memory(text, glyphs.data(), count * sizeof(char16_t));
+            uint64_t dc_attr = 0;
+            const auto has_dc_attr = get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr);
 
             RECT clip_rect{};
             const auto has_rect = rect != 0 && (options & k_gdibs_no_rect) == 0;
@@ -5528,28 +5946,71 @@ namespace sogen
                 }
             }
 
-            std::vector<uint32_t> advances{};
+            if (count == 0)
+            {
+                return TRUE;
+            }
+
+            if (text == 0 || count > k_maximum_text_out_chars ||
+                !is_readable_range(c.win_emu.memory, text, static_cast<uint64_t>(count) * sizeof(char16_t)))
+            {
+                return FALSE;
+            }
+
+            std::u16string glyphs(count, u'\0');
+            c.emu.read_memory(text, glyphs.data(), count * sizeof(char16_t));
+
+            // lpDx holds one signed LONG per character, or two (x, y) with ETO_PDY.
+            const auto pdy = (options & k_eto_pdy) != 0;
+            const auto advance_count = static_cast<size_t>(count) * (pdy ? 2 : 1);
+            std::vector<int32_t> advances{};
             if (dx != 0)
             {
-                advances.resize(count);
-                c.emu.read_memory(dx, advances.data(), advances.size() * sizeof(uint32_t));
+                advances.resize(advance_count);
+                if (!c.win_emu.memory.try_read_memory(dx, advances.data(), advances.size() * sizeof(int32_t)))
+                {
+                    return FALSE;
+                }
             }
 
-            uint64_t dc_attr = 0;
             uint32_t text_align = 0;
-            if (get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+            auto bk_mode = k_bk_mode_opaque;
+            if (has_dc_attr)
             {
-                c.emu.read_memory(dc_attr + k_gdi_dc_attr_text_align_offset, &text_align, sizeof(text_align));
+                c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_text_align_offset, &text_align, sizeof(text_align));
+                c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_bk_mode_offset, &bk_mode, sizeof(bk_mode));
             }
 
-            const auto color = get_dc_text_color(c, dc);
-            const auto* dx_values = advances.empty() ? nullptr : advances.data();
-            const auto top_left = text_top_left(x + origin_x, y + origin_y, text_align, glyphs.size(), dx_values);
-            draw_text(*surface, visible, top_left.x, top_left.y, glyphs, color,
-                      has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr, dx_values);
+            // TA_UPDATECP names the current position instead of (x, y) and advances it by the run width.
+            auto ref_x = x;
+            auto ref_y = y;
+            const auto update_current_point = (text_align & k_ta_updatecp) != 0;
+            if (update_current_point && has_dc_attr)
+            {
+                c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_pt_current_offset, &ref_x, sizeof(ref_x));
+                c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_pt_current_offset + sizeof(int32_t), &ref_y, sizeof(ref_y));
+            }
 
-            dc_state->current_x = x + static_cast<int32_t>(count * k_text_cell_width);
-            dc_state->current_y = y;
+            int64_t run_width = 0;
+            try
+            {
+                const auto input = (options & k_eto_glyph_index) != 0 ? gdi_text::glyph_input::indices : gdi_text::glyph_input::characters;
+                const auto run = layout_for_dc(c, dc, std::nullopt, glyphs, input, advances, pdy);
+                run_width = run.width;
+                const auto origin = align_text_origin(ref_x + origin_x, ref_y + origin_y, text_align, run.width, run.ascent, run.descent);
+                draw_text_run(c, *surface, visible, run, glyphs, advances, origin, get_dc_text_color(c, dc), get_dc_background_color(c, dc),
+                              bk_mode == k_bk_mode_opaque, has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr);
+            }
+            catch (...)
+            {
+                return FALSE;
+            }
+
+            if (update_current_point)
+            {
+                set_dc_current_point(c, dc, clamp_to_long(static_cast<int64_t>(ref_x) + run_width), ref_y);
+            }
+
             return TRUE;
         }
 
@@ -7019,7 +7480,7 @@ namespace sogen
         }
 
         uint32_t handle_NtGdiGetGlyphIndicesW(const syscall_context& c, const hdc dc, const emulator_pointer text, const int32_t char_count,
-                                              const emulator_pointer glyph_indices, const uint32_t)
+                                              const emulator_pointer glyph_indices, const uint32_t flags)
         {
             constexpr uint32_t gdi_error = 0xFFFFFFFF;
             constexpr size_t max_glyph_count = 1 << 16;
@@ -7028,17 +7489,63 @@ namespace sogen
                 return gdi_error;
             }
 
-            std::array<char16_t, 256> characters{};
             const auto count = static_cast<size_t>(char_count);
-            for (size_t offset = 0; offset < count; offset += characters.size())
+            std::vector<char16_t> characters(count);
+            if (!c.win_emu.memory.try_read_memory(text, characters.data(), count * sizeof(char16_t)))
             {
-                const auto chunk_count = std::min(characters.size(), count - offset);
-                const auto byte_count = chunk_count * sizeof(char16_t);
-                if (!c.win_emu.memory.try_read_memory(text + offset * sizeof(char16_t), characters.data(), byte_count) ||
-                    !c.win_emu.memory.try_write_memory(glyph_indices + offset * sizeof(char16_t), characters.data(), byte_count))
+                return gdi_error;
+            }
+
+            // Without a resolvable font the historical behavior answers the UTF-16 units themselves.
+            std::vector<uint16_t> indices(count);
+            const auto logfont = logfont_for_dc(c, dc);
+            std::optional<gdi_font_reference> font{};
+            if (logfont)
+            {
+                try
                 {
-                    return gdi_error;
+                    font = make_font_source(c).select(*logfont);
                 }
+                catch (...)
+                {
+                    font = std::nullopt;
+                }
+            }
+
+            if (!font)
+            {
+                std::copy(characters.begin(), characters.end(), indices.begin());
+            }
+            else
+            {
+                const auto source = make_font_source(c);
+                const auto mark_missing = (flags & k_ggi_mark_nonexisting_glyphs) != 0;
+                for (size_t offset = 0; offset < count;)
+                {
+                    const auto decoded = gdi_text::decode_character(std::u16string_view(characters.data(), count), offset);
+                    uint32_t index = 0;
+                    try
+                    {
+                        index = c.proc.gdi_font_resources.glyph_index(*font, decoded.codepoint);
+                    }
+                    catch (...)
+                    {
+                        index = 0;
+                    }
+
+                    const auto value = static_cast<uint16_t>(index != 0 ? index : (mark_missing ? 0xFFFF : 0));
+                    for (uint32_t unit = 0; unit < decoded.units; ++unit)
+                    {
+                        indices[offset + unit] = value;
+                    }
+
+                    offset += decoded.units;
+                }
+            }
+
+            if (!write_guest_bytes_up_to_fault(c, glyph_indices, indices.data(), indices.size() * sizeof(uint16_t)))
+            {
+                return gdi_error;
             }
 
             return static_cast<uint32_t>(count);
