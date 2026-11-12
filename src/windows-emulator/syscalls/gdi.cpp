@@ -347,7 +347,7 @@ namespace sogen
                 }
 
                 const auto shared = c.proc.base_allocator.reserve<GDI_SHARED_MEMORY64>();
-                shared.access([](GDI_SHARED_MEMORY64& mem) { mem = {}; });
+                shared.write(*std::make_unique<GDI_SHARED_MEMORY64>());
                 table = shared.value();
 
                 c.proc.peb64.access([&](PEB64& peb) { peb.GdiSharedHandleTable = table; });
