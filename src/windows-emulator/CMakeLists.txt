@@ -44,8 +44,6 @@ if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
 endif()
 
-find_package(Freetype REQUIRED)
-
 target_link_libraries(windows-emulator PUBLIC emulator minidump process-manager)
 target_link_libraries(windows-emulator PRIVATE Freetype::Freetype gpu-bridge-protocol vulkan-headers steam-bridge-protocol sogen_mbedtls sogen-version)
 if(WIN32)
