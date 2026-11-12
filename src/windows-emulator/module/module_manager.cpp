@@ -385,9 +385,7 @@ namespace sogen
 
     execution_mode module_manager::detect_execution_mode(const windows_path& executable_path, const logger& logger)
     {
-        const auto* image_override = this->find_image_override(executable_path);
-        auto detection_result = image_override ? pe_architecture_detector::detect_from_file(image_override->replacement)
-                                               : pe_architecture_detector::detect_from_file(*this->file_sys_, executable_path);
+        auto detection_result = this->detect_image(executable_path);
 
         if (!detection_result.is_valid())
         {
@@ -636,6 +634,13 @@ namespace sogen
     {
         const auto entry = std::ranges::find(this->image_overrides_, image, &image_override::image);
         return entry == this->image_overrides_.end() ? nullptr : &*entry;
+    }
+
+    pe_detection_result module_manager::detect_image(const windows_path& file) const
+    {
+        const auto* image_override = this->find_image_override(file);
+        return image_override ? pe_architecture_detector::detect_from_file(image_override->replacement)
+                              : pe_architecture_detector::detect_from_file(*this->file_sys_, file);
     }
 
     bool module_manager::read_image(const windows_path& file, std::vector<std::byte>& data) const

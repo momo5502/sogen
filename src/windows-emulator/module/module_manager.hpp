@@ -127,6 +127,13 @@ namespace sogen
 
         void set_image_overrides(std::vector<image_override> overrides);
         bool read_image(const windows_path& file, std::vector<std::byte>& data) const;
+        pe_detection_result detect_image(const windows_path& file) const;
+
+        auto image_reader() const
+        {
+            return [this](const windows_path& file, std::vector<std::byte>& data) { return this->read_image(file, data); };
+        }
+
         mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,
                                          bool is_static = false, bool allow_duplicate = false);
 

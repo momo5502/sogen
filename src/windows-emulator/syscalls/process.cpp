@@ -434,7 +434,7 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            const auto image = pe_architecture_detector::detect_from_file(c.win_emu.file_sys, application_path);
+            const auto image = c.win_emu.mod_manager.detect_image(application_path);
             const auto child_is_wow64 = image.is_valid() && image.architecture == winpe::pe_arch::pe32;
 
             const auto result = manager->create_process(std::move(request));
