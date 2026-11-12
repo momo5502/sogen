@@ -39,7 +39,7 @@ namespace sogen::test
                 executable.module_path = windows_path{u"C:\\application\\program.exe"};
                 executable.machine = IMAGE_FILE_MACHINE_AMD64;
                 const sxs::image_reader read_image = [&](const windows_path& image, std::vector<std::byte>& data) {
-                    return files.read_file(image, &data); //
+                    return files.read_file(image, &data);
                 };
                 return sxs::build_activation_context(files, read_image, executable,
                                                      {.contents = std::as_bytes(std::span{manifest}), .path = executable.module_path},
