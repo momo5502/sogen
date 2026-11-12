@@ -545,6 +545,7 @@ namespace sogen::sandbox
                 }
 
                 std::vector<image_override> image_overrides{};
+                image_overrides.reserve(image_override_values.size());
                 for (const auto& [image, replacement] : image_override_values)
                 {
                     image_overrides.push_back({.image = windows_path{image}, .replacement = std::filesystem::absolute(replacement)});

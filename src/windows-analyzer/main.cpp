@@ -1399,6 +1399,7 @@ namespace sogen
                     options.mounts.push_back(std::move(spec));
                 }
 
+                options.image_overrides.reserve(image_overrides.size());
                 for (const auto& [image, replacement] : image_overrides)
                 {
                     options.image_overrides.push_back(
