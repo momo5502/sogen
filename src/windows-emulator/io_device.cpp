@@ -13,6 +13,7 @@
 #include "devices/steam_bridge.hpp"
 #include "devices/console.hpp"
 #include <iostream>
+#include <cwctype>
 
 namespace sogen
 {
@@ -120,27 +121,80 @@ namespace sogen
         return registry;
     }
 
-    bool is_device_supported(std::u16string_view device)
-    {
-        const auto& registry = get_device_registry();
-        return registry.contains(device);
-    }
-
     bool needs_32_bit_devices(const windows_emulator& win_emu)
     {
         return win_emu.process.is_wow64_process;
     }
 
-    std::unique_ptr<io_device> create_device(const std::u16string_view device, const device_creation_context& context)
+    device_registry::device_registry(std::vector<device_registration> registrations)
     {
-        const auto& registry = get_device_registry();
-        const auto it = registry.find(device);
-        if (it == registry.end())
+        for (const auto& [name, factory] : get_device_registry())
         {
-            throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
+            this->entries_.emplace(std::u16string(name), entry{.factory = factory,
+                                                               .dos_alias = name == u"Nsi" || name == u"MountPointManager" ||
+                                                                            name == u"SogenGpu" || name == u"SogenSteam"});
         }
+        for (auto& registration : registrations)
+        {
+            if (registration.name.empty() || !registration.factory || this->entries_.contains(registration.name))
+            {
+                throw std::invalid_argument("Invalid or duplicate device registration");
+            }
+            if (registration.dos_alias)
+            {
+                auto name = registration.name;
+                std::ranges::transform(name, name.begin(), ::towupper);
+                if (name == u"CON" || name == u"CONIN$" || name == u"CONOUT$" || name == u"NUL" || name == u"NAMEDPIPE" ||
+                    name.starts_with(u"NAMEDPIPE\\"))
+                {
+                    throw std::invalid_argument("Reserved device alias");
+                }
+            }
+            auto name = std::move(registration.name);
+            this->entries_.emplace(std::move(name), entry{.factory = registration.factory,
+                                                          .dos_alias = registration.dos_alias,
+                                                          .validate_open = registration.validate_open,
+                                                          .lifetime = std::move(registration.lifetime),
+                                                          .external = true});
+        }
+    }
 
-        return it->second(context);
+    const device_registry::entry* device_registry::find(const std::u16string_view name) const
+    {
+        const auto it = this->entries_.find(name);
+        return it == this->entries_.end() ? nullptr : &it->second;
+    }
+
+    bool device_registry::is_dos_alias(const std::u16string_view name) const
+    {
+        const auto* registration = this->find(name);
+        return registration && registration->dos_alias;
+    }
+
+    void io_device_container::file_state::create(const device_registry::entry& registration, device_creation_context context)
+    {
+        this->provider = registration.lifetime;
+        this->external = registration.external;
+        context.provider = this->provider;
+        this->device = registration.factory(context);
+        if (!this->device)
+        {
+            throw std::runtime_error("Device factory returned no device");
+        }
+    }
+
+    io_device_container::io_device_container(std::u16string device, windows_emulator& win_emu, const io_device_creation_data& data)
+        : is_32_bit_(needs_32_bit_devices(win_emu)),
+          device_name_(std::move(device)),
+          file_(std::make_shared<file_state>())
+    {
+        const auto* registration = win_emu.device_factories().find(this->device_name_);
+        if (!registration)
+        {
+            throw std::runtime_error("Unsupported device: " + u16_to_u8(this->device_name_));
+        }
+        this->file_->create(*registration, {.is_32_bit = this->is_32_bit_});
+        this->file_->device->create(win_emu, data);
     }
 
     emulator_thread& io_device_context::thread() const
@@ -368,7 +422,7 @@ namespace sogen
     bool io_device_container::supports_serialization() const
     {
         this->assert_validity();
-        return this->file_->device->supports_serialization();
+        return !this->file_->external && this->file_->device->supports_serialization();
     }
 
     void io_device_container::prepare_serialization(windows_emulator& win_emu)
@@ -386,6 +440,10 @@ namespace sogen
     void io_device_container::serialize_object(utils::buffer_serializer& buffer) const
     {
         this->assert_validity();
+        if (this->file_->external)
+        {
+            throw std::runtime_error("External devices do not support snapshots");
+        }
 
         buffer.write(this->is_32_bit_);
         buffer.write_string(this->device_name_);
@@ -405,7 +463,13 @@ namespace sogen
         buffer.read_shared(this->file_, [&](file_state& file) {
             buffer.read_optional(file.completion_association);
             buffer.read(file.completion_notification_flags);
-            file.device = create_device(this->device_name_, {.is_32_bit = this->is_32_bit_});
+            const auto emulator = buffer.read<windows_emulator_wrapper>();
+            const auto* registration = emulator.get().device_factories().find(this->device_name_);
+            if (!registration || registration->external)
+            {
+                throw std::runtime_error("Unsupported device in snapshot");
+            }
+            file.create(*registration, {.is_32_bit = this->is_32_bit_});
             file.device->deserialize(buffer);
         });
     }

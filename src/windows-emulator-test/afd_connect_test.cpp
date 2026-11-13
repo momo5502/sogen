@@ -535,6 +535,7 @@ namespace sogen::test
                 }
 
                 utils::buffer_deserializer input{snapshot};
+                input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
                 input.register_factory<socket_factory_wrapper>([&] { return socket_factory_wrapper{this->emu->socket_factory()}; });
                 input.register_factory<memory_manager_wrapper>([&] { return memory_manager_wrapper{this->emu->memory}; });
 
@@ -752,6 +753,7 @@ namespace sogen::test
         // listener's queue, so it would accept the connection without a restore.)
         const auto host_sockets = network::create_socket_factory(network::network_mode::live);
         utils::buffer_deserializer input{snapshot};
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         input.register_factory<socket_factory_wrapper>([&] { return socket_factory_wrapper{*host_sockets}; });
         input.register_factory<memory_manager_wrapper>([&] { return memory_manager_wrapper{this->emu->memory}; });
         io_device_container restored{};
@@ -785,6 +787,7 @@ namespace sogen::test
         }
 
         utils::buffer_deserializer input{snapshot};
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         input.register_factory<socket_factory_wrapper>([&] { return socket_factory_wrapper{*sockets}; });
         input.register_factory<memory_manager_wrapper>([&] { return memory_manager_wrapper{this->emu->memory}; });
         io_device_container restored{};

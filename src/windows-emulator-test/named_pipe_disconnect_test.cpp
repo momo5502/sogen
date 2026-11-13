@@ -366,6 +366,7 @@ namespace sogen::test
         this->emu->process.devices.get(client)->serialize(snapshot);
         utils::buffer_deserializer input{snapshot};
         input.register_factory<guest_machine_wrapper>([&] { return guest_machine_wrapper{this->emu->emu()}; });
+        input.register_factory<windows_emulator_wrapper>([&] { return windows_emulator_wrapper{*this->emu}; });
         this->emu->process.devices.get(server)->deserialize(input);
         this->emu->process.devices.get(client)->deserialize(input);
 
