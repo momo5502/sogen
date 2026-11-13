@@ -63,7 +63,7 @@ namespace sogen::test
         constexpr auto flags = die_on_unhandled_exception | breakaway_ok | silent_breakaway_ok | kill_on_job_close;
 
         ASSERT_EQ(STATUS_SUCCESS, this->set_limit_flags(flags));
-        EXPECT_EQ(flags, this->emu->process.jobs.get(this->job)->limit_flags);
+        EXPECT_EQ(flags, this->emu->process.jobs.get(this->job)->limit_flags());
     }
 
     TEST_F(JobObjectTest, RejectsLimitsThatAreNotEnforced)

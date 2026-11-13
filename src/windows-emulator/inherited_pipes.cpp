@@ -40,6 +40,14 @@ namespace sogen
                 throw std::runtime_error("Inherited guest pipe handle conflicts with child setup");
             }
         }
+        for (const auto& object : request.inherited_objects)
+        {
+            if (!emulator.process.install_shared_object(object, make_handle(object.guest_handle)))
+            {
+                throw std::runtime_error("Inherited guest object handle conflicts with child setup");
+            }
+        }
+
         // A standard handle the parent did not pass stays the console one the child set up, as on Windows, where a
         // child that inherits the console writes to it.
         const auto inherit = [](auto& standard, const uint64_t passed) {

@@ -9,6 +9,8 @@
 
 #include "module/module_manager.hpp"
 #include <utils/nt_handle.hpp>
+#include <utils/shared_host_buffer.hpp>
+#include <process_manager.hpp>
 
 #include <arch_emulator.hpp>
 #include <platform/ui_backend.hpp>
@@ -466,6 +468,8 @@ namespace sogen
         handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread) const;
 
         size_t get_live_thread_count() const;
+        // CPU cycles are not modeled; executed instructions are the closest measure.
+        uint64_t get_accumulated_cycles() const;
         void commit_thread_stacks_in_full() const;
 
         // WOW64 support flag - set during process setup based on executable architecture
@@ -700,6 +704,25 @@ namespace sogen
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
         void set_mouse_capture(hwnd window);
         void release_mouse_capture(hwnd window);
+        // The storage a pagefile section's views alias, created on first use. 0 when the section's views share one guest
+        // backing instead, because they cannot alias host memory or the section only reserves.
+        uint64_t section_view_storage(section& section_entry, bool can_alias_host_memory, bool shareable);
+        std::optional<process_shared_object> share_section(handle section_handle, bool can_alias_host_memory);
+        // Describes a pagefile section, event or mutant so another process can open the same object. Fails for objects that
+        // cannot be shared, such as file-backed sections or sections whose views share one guest backing.
+        std::optional<process_shared_object> share_object(handle object_handle, bool can_alias_host_memory);
+        // Mutants other processes hold handles to stay owned after this process ends unless they are abandoned, as Windows
+        // does when the owning thread exits.
+        void abandon_shared_mutants();
+        void post_job_notification(job_object& job, uint32_t message, uint32_t member_process_id);
+        // Posts the exit notifications of jobs associated with the completion port, whose member processes run elsewhere.
+        void post_exited_job_processes(windows_emulator& win_emu, std::optional<handle> io_completion_handle);
+        void mark_exited(NTSTATUS status);
+        std::optional<handle> install_shared_object(const process_shared_object& shared, std::optional<handle> at = std::nullopt);
+        // A job that kills its processes on close does so when its last handle is closed, which includes the owning
+        // process exiting.
+        static void terminate_job_processes(windows_emulator& win_emu, const job_object& job);
+        void terminate_kill_on_close_jobs(windows_emulator& win_emu) const;
         // Like win32k's ApplyKeyStateToQueue, after key_state changes: advances the key-state generation, so user32's
         // GetKeyState stops answering keys below 0x20 from a thread's CLIENTINFO cache until NtUserGetKeyState
         // refreshes it.
@@ -723,6 +746,8 @@ namespace sogen
         handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
         handle default_desktop{};
         handle_store<handle_types::desktop, desktop> desktops{};
+        handle_store<handle_types::token, token_object> tokens{};
+        std::vector<token_privilege> token_privileges{};
         handle_store<handle_types::window_station, window_station> window_stations{};
         // WinSta0, the interactive window station every process starts in, is the fixed handle 1.
         uint64_t process_window_station{1};
@@ -754,6 +779,9 @@ namespace sogen
         handle_store<handle_types::thread, emulator_thread> threads{};
         // Terminated threads that may still be in threads, the only ones the scheduler can delete.
         size_t terminated_thread_count{0};
+        // Every instruction a thread of this process runs, counted as it runs: PsQueryTotalCycleTimeProcess answers
+        // from a process total that keeps its exited threads, and a thread is removed by several paths.
+        uint64_t accumulated_thread_cycles{0};
 
         // Handles delivered with the most recent ALPC reply message (NtAlpcSendWaitReceivePort). rpcrt4's
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)

@@ -406,7 +406,8 @@ namespace sogen::android
             {
                 registry_state->save(win_emu.registry);
             }
-            if (parent && exit_status && !parent->notify_exit(static_cast<uint64_t>(static_cast<uint32_t>(*exit_status))))
+            if (parent && exit_status &&
+                !parent->notify_exit(static_cast<uint64_t>(static_cast<uint32_t>(*exit_status)), win_emu.process.get_accumulated_cycles()))
             {
                 throw std::runtime_error("Reporting the exit to the parent process failed");
             }

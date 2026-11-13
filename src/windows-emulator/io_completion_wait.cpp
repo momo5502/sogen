@@ -16,7 +16,7 @@ namespace sogen
                 switch (target_object_handle.value.type)
                 {
                 case handle_types::process: {
-                    if (target_object_handle == GUEST_PROCESS_HANDLE)
+                    if (process.is_current_process_handle(target_object_handle))
                     {
                         return process.exit_status.has_value();
                     }
@@ -40,7 +40,7 @@ namespace sogen
 
                 case handle_types::event: {
                     const auto* e = process.events.get(target_object_handle);
-                    return e && e->signaled;
+                    return e && e->is_signaled();
                 }
                 case handle_types::thread: {
                     const auto* thread = process.threads.get(target_object_handle);
@@ -59,7 +59,7 @@ namespace sogen
 
                 case handle_types::mutant: {
                     const auto* mutant = process.mutants.get(target_object_handle);
-                    return mutant && mutant->locked_count == 0;
+                    return mutant && !mutant->is_locked();
                 }
 
                 case handle_types::timer: {
@@ -86,26 +86,20 @@ namespace sogen
             // target's signal exactly like NtWaitForSingleObject would: an auto-reset event resets and a
             // semaphore decrements. Without this, an edge-triggered target stays signaled and floods the
             // completion port with spurious packets (e.g. a games's async scheduler busy-spins forever).
-            void consume_wait_completion_target(process_context& process, const handle target_object_handle)
+            // False when the signal was gone: a shared event can be taken by a thread of another process between the
+            // check and the take, and that one signal must satisfy only one wait.
+            bool consume_wait_completion_target(process_context& process, const handle target_object_handle)
             {
                 switch (target_object_handle.value.type)
                 {
                 case handle_types::event: {
-                    auto* e = process.events.get(target_object_handle);
-                    if (e && e->type == SynchronizationEvent)
-                    {
-                        e->signaled = false;
-                    }
-                    break;
+                    auto* entry = process.events.get(target_object_handle);
+                    return entry && entry->try_acquire();
                 }
 
                 case handle_types::semaphore: {
                     auto* semaphore = process.semaphores.get(target_object_handle);
-                    if (semaphore)
-                    {
-                        (void)semaphore->try_lock();
-                    }
-                    break;
+                    return semaphore && semaphore->try_lock();
                 }
 
                 case handle_types::timer: {
@@ -113,13 +107,13 @@ namespace sogen
                     {
                         entry->consume_signal();
                     }
-                    break;
+                    return true;
                 }
 
                 default:
                     // process/thread are terminal; ports and mutants are left
                     // untouched (a wait packet does not take mutant ownership).
-                    break;
+                    return true;
                 }
             }
 
@@ -147,7 +141,7 @@ namespace sogen
                 case handle_types::event:
                     if (const auto* target = wait_packet_target(process.events, wait_packet))
                     {
-                        return target->signaled;
+                        return target->is_signaled();
                     }
                     break;
                 case handle_types::semaphore:
@@ -159,7 +153,7 @@ namespace sogen
                 case handle_types::mutant:
                     if (const auto* target = wait_packet_target(process.mutants, wait_packet))
                     {
-                        return target->locked_count == 0;
+                        return !target->is_locked();
                     }
                     break;
                 case handle_types::timer:
@@ -220,6 +214,9 @@ namespace sogen
             void queue_signaled_wait_packets(windows_emulator& win_emu, const std::optional<handle> io_completion_handle)
             {
                 auto& process = win_emu.process;
+                // A port shared with another process is reached through a handle value of its own, so the packets of
+                // one port are those whose handle resolves to the same object.
+                const auto* target = io_completion_handle ? process.io_completions.get(*io_completion_handle) : nullptr;
                 std::vector<handle> signaled{};
 
                 for (auto& [packet_id, wait_packet] : process.wait_completion_packets)
@@ -229,7 +226,7 @@ namespace sogen
                         continue;
                     }
 
-                    if (io_completion_handle && wait_packet.io_completion_handle != *io_completion_handle)
+                    if (target != nullptr && process.io_completions.get(wait_packet.io_completion_handle) != target)
                     {
                         continue;
                     }
@@ -239,7 +236,11 @@ namespace sogen
                         continue;
                     }
 
-                    consume_wait_completion_target(process, wait_packet.target_object_handle);
+                    if (!consume_wait_completion_target(process, wait_packet.target_object_handle))
+                    {
+                        continue;
+                    }
+
                     wait_packet.queued_completion = true;
                     signaled.push_back(process.wait_completion_packets.make_handle(packet_id));
                 }
@@ -424,6 +425,10 @@ namespace sogen
             }
 
             retained_handle = *duplicated;
+            // A duplicate is a value of its own, but the low bits are the caller's: ntdll passes an event handle
+            // through verbatim and user mode tags it there, which is how a tagged event suppresses the completion
+            // packet. Losing the tag would queue a packet the caller asked to be left out.
+            retained_handle.value.reserved = resolved_source_handle.value.reserved;
             return true;
         }
 
@@ -481,7 +486,8 @@ namespace sogen
             {
                 if (auto* completion = process.io_completions.get(wait_packet->io_completion_handle))
                 {
-                    if (completion->remove_by_wait_packet(wait_packet_handle))
+                    if (completion->remove_by_wait_packet(
+                            [&](const handle queued) { return process.wait_completion_packets.get(queued) == wait_packet; }))
                     {
                         (void)process.wait_completion_packets.erase(wait_packet_handle);
                     }
@@ -494,6 +500,7 @@ namespace sogen
 
         void materialize_signaled_wait_packets(windows_emulator& win_emu, const handle io_completion_handle)
         {
+            win_emu.process.post_exited_job_processes(win_emu, io_completion_handle);
             if (win_emu.process.io_completions.get(io_completion_handle))
             {
                 queue_signaled_wait_packets(win_emu, io_completion_handle);
@@ -502,6 +509,7 @@ namespace sogen
 
         void materialize_all_signaled_wait_packets(windows_emulator& win_emu)
         {
+            win_emu.process.post_exited_job_processes(win_emu, std::nullopt);
             queue_signaled_wait_packets(win_emu, std::nullopt);
         }
 

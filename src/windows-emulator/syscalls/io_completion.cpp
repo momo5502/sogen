@@ -431,7 +431,8 @@ namespace sogen
 
                 if (auto* completion = c.proc.io_completions.get(wait_packet->io_completion_handle))
                 {
-                    if (completion->remove_by_wait_packet(wait_completion_packet_handle))
+                    if (completion->remove_by_wait_packet(
+                            [&](const handle queued) { return c.proc.wait_completion_packets.get(queued) == wait_packet; }))
                     {
                         (void)c.proc.wait_completion_packets.erase(wait_completion_packet_handle);
                     }

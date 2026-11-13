@@ -329,7 +329,7 @@ namespace sogen::test
             }
 
             io_completion_message message{};
-            target_event.signaled = c.signal_before_cancel;
+            target_event.set_signaled(c.signal_before_cancel);
             if (c.dequeue_before_cancel)
             {
                 ASSERT_TRUE(io_completion_wait::dequeue_io_completion_message(*this->emu, this->completion, message));
@@ -344,7 +344,7 @@ namespace sogen::test
 
             if (!c.signal_before_cancel)
             {
-                target_event.signaled = true;
+                target_event.set_signaled(true);
             }
 
             ULONG packets = 0;
@@ -353,7 +353,7 @@ namespace sogen::test
                 ++packets;
             }
             EXPECT_EQ(packets, c.packets_after);
-            EXPECT_EQ(target_event.signaled, !c.signal_before_cancel);
+            EXPECT_EQ(target_event.is_signaled(), !c.signal_before_cancel);
 
             EXPECT_EQ(syscalls::handle_NtClose(this->context(), wait_packet), STATUS_SUCCESS);
             EXPECT_EQ(syscalls::handle_NtClose(this->context(), target), STATUS_SUCCESS);
@@ -663,7 +663,7 @@ namespace sogen::test
         ASSERT_FALSE(already_signaled.read());
         ASSERT_EQ(STATUS_SUCCESS, this->remove(waiter, 0));
 
-        this->emu->process.events.get(target)->signaled = true;
+        this->emu->process.events.get(target)->set_signaled(true);
         EXPECT_TRUE(waiter.await_io_completion.has_value());
 
         EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
@@ -696,7 +696,7 @@ namespace sogen::test
 
             void set(const handle target)
             {
-                this->emu->process.events.get(target)->signaled = true;
+                this->emu->process.events.get(target)->set_signaled(true);
             }
 
             size_t queued()

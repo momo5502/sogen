@@ -156,16 +156,20 @@ namespace sogen::test
         ASSERT_EQ(STATUS_SUCCESS, this->query(CURRENT_PROCESS_TOKEN, TokenGroups, size));
 
         const auto groups = emulator_object<TOKEN_GROUPS64>{this->emu->memory, this->storage + 0x100}.read();
-        ASSERT_EQ(this->elevated() ? 3u : 2u, groups.GroupCount);
+
+        // The user, Interactive and logon groups are always there; Administrators is appended when elevated.
+        constexpr ULONG unelevated_group_count = 3;
+        ASSERT_EQ(this->elevated() ? unelevated_group_count + 1 : unelevated_group_count, groups.GroupCount);
 
         if (!this->elevated())
         {
             return;
         }
 
+        // Groups[0] lives in the header, so the last entry sits that many SID_AND_ATTRIBUTES64 past it.
         const auto administrators =
-            emulator_object<SID_AND_ATTRIBUTES64>{this->emu->memory,
-                                                  this->storage + 0x100 + sizeof(TOKEN_GROUPS64) + sizeof(SID_AND_ATTRIBUTES64)}
+            emulator_object<SID_AND_ATTRIBUTES64>{this->emu->memory, this->storage + 0x100 + sizeof(TOKEN_GROUPS64) +
+                                                                         (unelevated_group_count - 1) * sizeof(SID_AND_ATTRIBUTES64)}
                 .read();
 
         // SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED | SE_GROUP_OWNER
@@ -180,7 +184,7 @@ namespace sogen::test
     {
         ASSERT_EQ(STATUS_SUCCESS, this->query(CURRENT_PROCESS_TOKEN, TokenStatistics, sizeof(TOKEN_STATISTICS)));
         const auto stats = emulator_object<TOKEN_STATISTICS>{this->emu->memory, this->storage + 0x100}.read();
-        EXPECT_EQ(this->elevated() ? 3u : 2u, stats.GroupCount);
+        EXPECT_EQ(this->elevated() ? 4u : 3u, stats.GroupCount);
     }
 
     TEST_P(ElevatedTokenTest, AdministratorsMembershipFollowsTheElevatedFlag)
