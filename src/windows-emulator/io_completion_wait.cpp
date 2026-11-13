@@ -268,7 +268,7 @@ namespace sogen
 
                 // NtWaitForWorkViaWorkerFactory checks for more work after its wait, and a packet handed straight to its worker
                 // does not go back through that syscall.
-                worker_factory_support::check_create_worker(win_emu, wait.worker_factory_handle);
+                worker_factory_support::check_for_more_work(win_emu, wait.worker_factory_handle);
                 clear_wait_packet_completion_state(win_emu.process, message.wait_packet_handle);
                 win_emu.wake_idle_vcpu();
             }
@@ -306,6 +306,7 @@ namespace sogen
             }
 
             completion.enqueue(message);
+            worker_factory_support::on_io_completion_queued(win_emu, completion);
         }
 
         NTSTATUS probe_completion_entries(memory_manager& memory, const uint64_t entries, const ULONG count, const uint64_t entries_removed)
