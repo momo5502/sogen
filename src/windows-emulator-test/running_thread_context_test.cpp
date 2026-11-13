@@ -1545,4 +1545,20 @@ namespace sogen::test
         EXPECT_TRUE(still_saved);
         EXPECT_TRUE(second_vcpu.get());
     }
+
+    TEST_F(RunningThreadContextTest, ProcessCycleTotalKeepsWhatAClosedThreadRan)
+    {
+        auto& process = this->emu->process;
+        const auto worker = this->create_thread(20);
+        process.threads.get(worker)->executed_instructions = 1234;
+
+        // PsQueryTotalCycleTimeProcess answers from a total that keeps the process's exited threads, so closing the
+        // last handle of one must not lower what the process reports.
+        const auto before = process.get_accumulated_cycles();
+        process.terminate_thread(*process.threads.get(worker), STATUS_SUCCESS);
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(0), worker));
+        ASSERT_EQ(nullptr, process.threads.get(worker));
+
+        EXPECT_EQ(before, process.get_accumulated_cycles());
+    }
 }

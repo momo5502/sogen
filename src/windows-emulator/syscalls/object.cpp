@@ -184,8 +184,26 @@ namespace sogen
                 }
             }
 
+            uint64_t closing_thread_cycles = 0;
+            size_t threads_before = 0;
+            if (value.type == handle_types::thread)
+            {
+                threads_before = c.proc.threads.size();
+                if (const auto* thread = c.proc.threads.get(h))
+                {
+                    closing_thread_cycles = thread->executed_instructions;
+                }
+            }
+
             if (handle_store && handle_store->erase(h))
             {
+                // Closing the last handle of a terminated thread deletes it here rather than in the scheduler, and
+                // what it ran still has to count towards the process.
+                if (value.type == handle_types::thread && c.proc.threads.size() < threads_before)
+                {
+                    c.proc.reaped_thread_cycles += closing_thread_cycles;
+                }
+
                 if (section_view_storage_id != 0)
                 {
                     c.proc.section_views.release_storage(section_view_storage_id);
@@ -301,7 +319,10 @@ namespace sogen
                     return STATUS_ACCESS_DENIED;
                 }
 
+                // The exported object carries the source handle's protection so inheritance keeps it, but a duplicate
+                // takes its attributes from the request, which has no bit for protection.
                 shared->inherit = inherit;
+                shared->protect_from_close = false;
                 const auto installed = processes->install_object(target->process, *shared);
                 if (installed.error != process_error::none)
                 {
@@ -341,6 +362,7 @@ namespace sogen
                 }
 
                 exported.object.inherit = inherit;
+                exported.object.protect_from_close = false;
                 const auto installed = c.proc.install_shared_object(exported.object);
                 if (!installed)
                 {
