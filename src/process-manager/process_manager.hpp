@@ -116,6 +116,7 @@ namespace sogen
         uint32_t event_type{};
         uint32_t access{};
         bool inherit{};
+        bool protect_from_close{};
     };
 
     struct process_cycle_time_result

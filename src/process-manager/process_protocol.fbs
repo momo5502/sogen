@@ -71,6 +71,7 @@ table SharedObject {
     event_type: uint;
     access: uint;
     inherit: bool;
+    protect_from_close: bool;
 }
 
 table ProcessCreateRequest {

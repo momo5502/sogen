@@ -716,7 +716,7 @@ namespace sogen
         void abandon_shared_mutants();
         void post_job_notification(job_object& job, uint32_t message, uint32_t member_process_id);
         // Posts the exit notifications of jobs associated with the completion port, whose member processes run elsewhere.
-        void post_exited_job_processes(windows_emulator& win_emu, handle io_completion_handle);
+        void post_exited_job_processes(windows_emulator& win_emu, std::optional<handle> io_completion_handle);
         void mark_exited(NTSTATUS status);
         std::optional<handle> install_shared_object(const process_shared_object& shared, std::optional<handle> at = std::nullopt);
         // A job that kills its processes on close does so when its last handle is closed, which includes the owning
@@ -779,6 +779,9 @@ namespace sogen
         handle_store<handle_types::thread, emulator_thread> threads{};
         // Terminated threads that may still be in threads, the only ones the scheduler can delete.
         size_t terminated_thread_count{0};
+        // PsQueryTotalCycleTimeProcess answers from a process total that keeps its exited threads, so what a reaped
+        // thread ran has to outlive it here.
+        uint64_t reaped_thread_cycles{0};
 
         // Handles delivered with the most recent ALPC reply message (NtAlpcSendWaitReceivePort). rpcrt4's
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)

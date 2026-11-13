@@ -431,6 +431,7 @@ namespace sogen
                         vcpu.active_thread = nullptr;
                     }
 
+                    win_emu.process.reaped_thread_cycles += thread.executed_instructions;
                     it = threads.erase(it).first;
                 }
 

@@ -213,6 +213,7 @@ namespace sogen
             result->event_type = object.event_type;
             result->access = object.access;
             result->inherit = object.inherit;
+            result->protect_from_close = object.protect_from_close;
             return result;
         }
 
@@ -226,7 +227,8 @@ namespace sogen
                     .attributes = object.attributes,
                     .event_type = object.event_type,
                     .access = object.access,
-                    .inherit = object.inherit};
+                    .inherit = object.inherit,
+                    .protect_from_close = object.protect_from_close};
         }
 
         ProcessProtocol::ProcessCreateRequestT encode_create_request(const process_create_request& request,

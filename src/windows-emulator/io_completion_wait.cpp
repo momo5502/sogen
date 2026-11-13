@@ -86,25 +86,20 @@ namespace sogen
             // target's signal exactly like NtWaitForSingleObject would: an auto-reset event resets and a
             // semaphore decrements. Without this, an edge-triggered target stays signaled and floods the
             // completion port with spurious packets (e.g. a games's async scheduler busy-spins forever).
-            void consume_wait_completion_target(process_context& process, const handle target_object_handle)
+            // False when the signal was gone: a shared event can be taken by a thread of another process between the
+            // check and the take, and that one signal must satisfy only one wait.
+            bool consume_wait_completion_target(process_context& process, const handle target_object_handle)
             {
                 switch (target_object_handle.value.type)
                 {
                 case handle_types::event: {
-                    if (auto* e = process.events.get(target_object_handle))
-                    {
-                        (void)e->try_acquire();
-                    }
-                    break;
+                    auto* entry = process.events.get(target_object_handle);
+                    return entry && entry->try_acquire();
                 }
 
                 case handle_types::semaphore: {
                     auto* semaphore = process.semaphores.get(target_object_handle);
-                    if (semaphore)
-                    {
-                        (void)semaphore->try_lock();
-                    }
-                    break;
+                    return semaphore && semaphore->try_lock();
                 }
 
                 case handle_types::timer: {
@@ -112,13 +107,13 @@ namespace sogen
                     {
                         entry->consume_signal();
                     }
-                    break;
+                    return true;
                 }
 
                 default:
                     // process/thread are terminal; ports and mutants are left
                     // untouched (a wait packet does not take mutant ownership).
-                    break;
+                    return true;
                 }
             }
 
@@ -241,7 +236,11 @@ namespace sogen
                         continue;
                     }
 
-                    consume_wait_completion_target(process, wait_packet.target_object_handle);
+                    if (!consume_wait_completion_target(process, wait_packet.target_object_handle))
+                    {
+                        continue;
+                    }
+
                     wait_packet.queued_completion = true;
                     signaled.push_back(process.wait_completion_packets.make_handle(packet_id));
                 }
@@ -510,6 +509,7 @@ namespace sogen
 
         void materialize_all_signaled_wait_packets(windows_emulator& win_emu)
         {
+            win_emu.process.post_exited_job_processes(win_emu, std::nullopt);
             queue_signaled_wait_packets(win_emu, std::nullopt);
         }
 

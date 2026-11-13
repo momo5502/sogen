@@ -854,22 +854,29 @@ namespace sogen
         port->enqueue(notification);
     }
 
-    void process_context::post_exited_job_processes(windows_emulator& win_emu, const handle io_completion_handle)
+    // Without a port every job with one is posted to, so the scheduler reaches a thread already parked on it.
+    void process_context::post_exited_job_processes(windows_emulator& win_emu, const std::optional<handle> io_completion_handle)
     {
         constexpr uint32_t job_object_msg_active_process_zero = 4;
         constexpr uint32_t job_object_msg_exit_process = 7;
         constexpr uint32_t job_object_msg_abnormal_exit_process = 8;
 
         auto* manager = win_emu.processes();
-        const auto* port = this->io_completions.get(io_completion_handle);
         if (!manager)
+        {
+            return;
+        }
+
+        const auto* port = io_completion_handle ? this->io_completions.get(*io_completion_handle) : nullptr;
+        if (io_completion_handle && !port)
         {
             return;
         }
 
         for (auto& job : this->jobs | std::views::values)
         {
-            if (job.processes.empty() || !port || this->io_completions.get(job.completion_port) != port)
+            const auto* job_port = this->io_completions.get(job.completion_port);
+            if (job.processes.empty() || !job_port || (port && job_port != port))
             {
                 continue;
             }
@@ -960,6 +967,7 @@ namespace sogen
             return std::nullopt;
         }
 
+        const auto section_attributes = this->sections.attributes_of(section_handle);
         return process_shared_object{
             .kind = process_shared_object_kind::section,
             .guest_handle = section_handle.bits,
@@ -968,7 +976,8 @@ namespace sogen
             .protection = section_entry->section_page_protection,
             .attributes = section_entry->allocation_attributes,
             .access = section_entry->granted_access,
-            .inherit = this->sections.attributes_of(section_handle).inherit,
+            .inherit = section_attributes.inherit,
+            .protect_from_close = section_attributes.protect_from_close,
         };
     }
 
@@ -985,12 +994,14 @@ namespace sogen
                 return std::nullopt;
             }
 
+            const auto attributes = this->events.attributes_of(object_handle);
             return process_shared_object{
                 .kind = process_shared_object_kind::event,
                 .guest_handle = object_handle.bits,
                 .memory = entry->shared->name(),
                 .event_type = static_cast<uint32_t>(entry->type),
-                .inherit = this->events.attributes_of(object_handle).inherit,
+                .inherit = attributes.inherit,
+                .protect_from_close = attributes.protect_from_close,
             };
         }
         case handle_types::mutant: {
@@ -1000,11 +1011,13 @@ namespace sogen
                 return std::nullopt;
             }
 
+            const auto attributes = this->mutants.attributes_of(object_handle);
             return process_shared_object{
                 .kind = process_shared_object_kind::mutant,
                 .guest_handle = object_handle.bits,
                 .memory = entry->shared->name(),
-                .inherit = this->mutants.attributes_of(object_handle).inherit,
+                .inherit = attributes.inherit,
+                .protect_from_close = attributes.protect_from_close,
             };
         }
         default:
@@ -1016,6 +1029,7 @@ namespace sogen
     {
         const auto store = [&](auto& objects, auto object) -> std::optional<handle> {
             object.inherit = shared.inherit;
+            object.protect_from_close = shared.protect_from_close;
             if (!at)
             {
                 return objects.store(std::move(object));
@@ -1197,6 +1211,7 @@ namespace sogen
         buffer.write(this->parent_process_id);
         buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
+        buffer.write(this->reaped_thread_cycles);
         buffer.write(this->threads);
 
         buffer.write(this->threads.find_handle(active_thread).bits);
@@ -1334,6 +1349,7 @@ namespace sogen
         buffer.read(this->parent_process_id);
         buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
+        buffer.read(this->reaped_thread_cycles);
 
         for (auto& thread : this->threads | std::views::values)
         {
@@ -1736,7 +1752,7 @@ namespace sogen
 
     uint64_t process_context::get_accumulated_cycles() const
     {
-        uint64_t cycles{};
+        uint64_t cycles{this->reaped_thread_cycles};
         for (const auto& thread : this->threads | std::views::values)
         {
             cycles += thread.executed_instructions;

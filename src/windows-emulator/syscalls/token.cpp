@@ -145,9 +145,17 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            std::vector<luid_and_attributes> read_privilege_list(const syscall_context& c, const uint64_t address)
+            // SeCaptureLuidAndAttributesArray fails a larger count with STATUS_INVALID_PARAMETER before it allocates.
+            constexpr ULONG max_privilege_count = 66;
+
+            std::optional<std::vector<luid_and_attributes>> read_privilege_list(const syscall_context& c, const uint64_t address)
             {
                 const auto count = c.emu.read_memory<ULONG>(address);
+                if (count > max_privilege_count)
+                {
+                    return std::nullopt;
+                }
+
                 std::vector<luid_and_attributes> entries(count);
                 if (count != 0)
                 {
@@ -232,7 +240,13 @@ namespace sogen
             }
             if (privileges_to_delete)
             {
-                for (const auto& entry : read_privilege_list(c, privileges_to_delete))
+                const auto entries = read_privilege_list(c, privileges_to_delete);
+                if (!entries)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                for (const auto& entry : *entries)
                 {
                     std::erase_if(privileges, [&](const token_privilege& privilege) {
                         return entry.luid_high == 0 && privilege.luid == entry.luid_low;
@@ -812,8 +826,6 @@ namespace sogen
 
             constexpr ULONG privilege_set_all_necessary = 1;
             constexpr ULONG se_privilege_used_for_access = 0x80000000;
-            constexpr ULONG max_privilege_count = 66;
-
             // A real token handle is accepted as well as the pseudo handles that name a token. The effective token is
             // not one of them: it is resolved only by the query calls, so Windows rejects it here.
             if (!c.proc.tokens.get(client_token) && !is_modeled_token(client_token))
@@ -994,7 +1006,13 @@ namespace sogen
             }
             else
             {
-                for (const auto& entry : read_privilege_list(c, new_state))
+                const auto entries = read_privilege_list(c, new_state);
+                if (!entries)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                for (const auto& entry : *entries)
                 {
                     const auto privilege = std::ranges::find_if(*privileges, [&](const token_privilege& candidate) {
                         return entry.luid_high == 0 && candidate.luid == entry.luid_low;

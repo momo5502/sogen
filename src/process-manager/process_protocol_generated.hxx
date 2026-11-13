@@ -1517,6 +1517,7 @@ struct SharedObjectT : public ::flatbuffers::NativeTable {
   uint32_t event_type = 0;
   uint32_t access = 0;
   bool inherit = false;
+  bool protect_from_close = false;
 };
 
 struct SharedObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -1531,7 +1532,8 @@ struct SharedObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_ATTRIBUTES = 14,
     VT_EVENT_TYPE = 16,
     VT_ACCESS = 18,
-    VT_INHERIT = 20
+    VT_INHERIT = 20,
+    VT_PROTECT_FROM_CLOSE = 22
   };
   ProcessProtocol::SharedObjectKind kind() const {
     return static_cast<ProcessProtocol::SharedObjectKind>(GetField<uint8_t>(VT_KIND, 0));
@@ -1560,6 +1562,9 @@ struct SharedObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool inherit() const {
     return GetField<uint8_t>(VT_INHERIT, 0) != 0;
   }
+  bool protect_from_close() const {
+    return GetField<uint8_t>(VT_PROTECT_FROM_CLOSE, 0) != 0;
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -1573,6 +1578,7 @@ struct SharedObject FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_EVENT_TYPE, 4) &&
            VerifyField<uint32_t>(verifier, VT_ACCESS, 4) &&
            VerifyField<uint8_t>(verifier, VT_INHERIT, 1) &&
+           VerifyField<uint8_t>(verifier, VT_PROTECT_FROM_CLOSE, 1) &&
            verifier.EndTable();
   }
   SharedObjectT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -1611,6 +1617,9 @@ struct SharedObjectBuilder {
   void add_inherit(bool inherit) {
     fbb_.AddElement<uint8_t>(SharedObject::VT_INHERIT, static_cast<uint8_t>(inherit), 0);
   }
+  void add_protect_from_close(bool protect_from_close) {
+    fbb_.AddElement<uint8_t>(SharedObject::VT_PROTECT_FROM_CLOSE, static_cast<uint8_t>(protect_from_close), 0);
+  }
   explicit SharedObjectBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -1633,7 +1642,8 @@ inline ::flatbuffers::Offset<SharedObject> CreateSharedObject(
     uint32_t attributes = 0,
     uint32_t event_type = 0,
     uint32_t access = 0,
-    bool inherit = false) {
+    bool inherit = false,
+    bool protect_from_close = false) {
   SharedObjectBuilder builder_(_fbb);
   builder_.add_size(size);
   builder_.add_guest_handle(guest_handle);
@@ -1642,6 +1652,7 @@ inline ::flatbuffers::Offset<SharedObject> CreateSharedObject(
   builder_.add_attributes(attributes);
   builder_.add_protection(protection);
   builder_.add_memory(memory);
+  builder_.add_protect_from_close(protect_from_close);
   builder_.add_inherit(inherit);
   builder_.add_kind(kind);
   return builder_.Finish();
@@ -1657,7 +1668,8 @@ inline ::flatbuffers::Offset<SharedObject> CreateSharedObjectDirect(
     uint32_t attributes = 0,
     uint32_t event_type = 0,
     uint32_t access = 0,
-    bool inherit = false) {
+    bool inherit = false,
+    bool protect_from_close = false) {
   auto memory__ = memory ? _fbb.CreateString(memory) : 0;
   return ProcessProtocol::CreateSharedObject(
       _fbb,
@@ -1669,7 +1681,8 @@ inline ::flatbuffers::Offset<SharedObject> CreateSharedObjectDirect(
       attributes,
       event_type,
       access,
-      inherit);
+      inherit,
+      protect_from_close);
 }
 
 ::flatbuffers::Offset<SharedObject> CreateSharedObject(::flatbuffers::FlatBufferBuilder &_fbb, const SharedObjectT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -4946,6 +4959,7 @@ inline void SharedObject::UnPackTo(SharedObjectT *_o, const ::flatbuffers::resol
   { auto _e = event_type(); _o->event_type = _e; }
   { auto _e = access(); _o->access = _e; }
   { auto _e = inherit(); _o->inherit = _e; }
+  { auto _e = protect_from_close(); _o->protect_from_close = _e; }
 }
 
 inline ::flatbuffers::Offset<SharedObject> CreateSharedObject(::flatbuffers::FlatBufferBuilder &_fbb, const SharedObjectT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -4965,6 +4979,7 @@ inline ::flatbuffers::Offset<SharedObject> SharedObject::Pack(::flatbuffers::Fla
   auto _event_type = _o->event_type;
   auto _access = _o->access;
   auto _inherit = _o->inherit;
+  auto _protect_from_close = _o->protect_from_close;
   return ProcessProtocol::CreateSharedObject(
       _fbb,
       _kind,
@@ -4975,7 +4990,8 @@ inline ::flatbuffers::Offset<SharedObject> SharedObject::Pack(::flatbuffers::Fla
       _attributes,
       _event_type,
       _access,
-      _inherit);
+      _inherit,
+      _protect_from_close);
 }
 
 inline ProcessCreateRequestT::ProcessCreateRequestT(const ProcessCreateRequestT &o)
