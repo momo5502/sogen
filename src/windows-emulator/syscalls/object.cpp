@@ -18,6 +18,19 @@ namespace sogen
 
         constexpr ULONG duplicate_close_source = 1;
         constexpr ULONG duplicate_same_access = 2;
+        constexpr ULONG duplicate_same_attributes = 4;
+
+        // ObDuplicateObject takes the source handle's attributes with DUPLICATE_SAME_ATTRIBUTES, and otherwise the
+        // requested ones, which carry the protection as well as the inherit flag.
+        handle_attributes duplicate_attributes(const handle_attributes source, const ULONG requested, const ULONG options)
+        {
+            if (options & duplicate_same_attributes)
+            {
+                return source;
+            }
+
+            return {.inherit = (requested & OBJ_INHERIT) != 0, .protect_from_close = (requested & OBJ_PROTECT_CLOSE) != 0};
+        }
 
         void resume_state_change_suspensions(const syscall_context& c, const thread_state_change& state)
         {
@@ -184,26 +197,8 @@ namespace sogen
                 }
             }
 
-            uint64_t closing_thread_cycles = 0;
-            size_t threads_before = 0;
-            if (value.type == handle_types::thread)
-            {
-                threads_before = c.proc.threads.size();
-                if (const auto* thread = c.proc.threads.get(h))
-                {
-                    closing_thread_cycles = thread->executed_instructions;
-                }
-            }
-
             if (handle_store && handle_store->erase(h))
             {
-                // Closing the last handle of a terminated thread deletes it here rather than in the scheduler, and
-                // what it ran still has to count towards the process.
-                if (value.type == handle_types::thread && c.proc.threads.size() < threads_before)
-                {
-                    c.proc.reaped_thread_cycles += closing_thread_cycles;
-                }
-
                 if (section_view_storage_id != 0)
                 {
                     c.proc.section_views.release_storage(section_view_storage_id);
@@ -278,26 +273,23 @@ namespace sogen
             duplicate.allocation_attributes = source->allocation_attributes;
             duplicate.view_storage_id = storage;
             duplicate.granted_access = requested;
-            duplicate.inherit = (handle_attributes & OBJ_INHERIT) != 0;
+            const auto attributes = duplicate_attributes(c.proc.sections.attributes_of(source_handle), handle_attributes, options);
+            duplicate.inherit = attributes.inherit;
+            duplicate.protect_from_close = attributes.protect_from_close;
             c.proc.section_views.add_reference(storage);
 
             target_handle.write_if_valid(c.proc.sections.store(std::move(duplicate)));
-            return (options & duplicate_close_source) ? handle_NtClose(c, source_handle) : STATUS_SUCCESS;
+            return STATUS_SUCCESS;
         }
 
         // Only sections, events and mutants cross processes: their state lives in host shared memory the other process can open.
-        NTSTATUS duplicate_across_processes(const syscall_context& c, const handle source_process_handle, const handle source_handle,
-                                            const handle target_process_handle, const emulator_object<handle> target_handle,
-                                            const ACCESS_MASK desired_access, const ULONG handle_attributes, const ULONG options)
+        NTSTATUS duplicate_across_processes(const syscall_context& c, process_manager& processes_ref, const handle source_process_handle,
+                                            const handle source_handle, const handle target_process_handle,
+                                            const emulator_object<handle> target_handle, const ACCESS_MASK desired_access,
+                                            const ULONG handle_attributes, const ULONG options)
         {
-            auto* processes = c.win_emu.processes();
-            if (!processes)
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
-
+            auto* processes = &processes_ref;
             const bool close_source = (options & duplicate_close_source) != 0;
-            const bool inherit = (handle_attributes & OBJ_INHERIT) != 0;
 
             if (c.proc.is_current_process_handle(source_process_handle))
             {
@@ -319,10 +311,10 @@ namespace sogen
                     return STATUS_ACCESS_DENIED;
                 }
 
-                // The exported object carries the source handle's protection so inheritance keeps it, but a duplicate
-                // takes its attributes from the request, which has no bit for protection.
-                shared->inherit = inherit;
-                shared->protect_from_close = false;
+                const auto attributes = duplicate_attributes({.inherit = shared->inherit, .protect_from_close = shared->protect_from_close},
+                                                             handle_attributes, options);
+                shared->inherit = attributes.inherit;
+                shared->protect_from_close = attributes.protect_from_close;
                 const auto installed = processes->install_object(target->process, *shared);
                 if (installed.error != process_error::none)
                 {
@@ -334,7 +326,7 @@ namespace sogen
                     target_handle.write(handle{.bits = installed.handle});
                 }
 
-                return close_source ? handle_NtClose(c, resolved_source) : STATUS_SUCCESS;
+                return STATUS_SUCCESS;
             }
 
             const auto* source = c.proc.processes.get(source_process_handle);
@@ -361,8 +353,11 @@ namespace sogen
                     return STATUS_ACCESS_DENIED;
                 }
 
-                exported.object.inherit = inherit;
-                exported.object.protect_from_close = false;
+                const auto attributes =
+                    duplicate_attributes({.inherit = exported.object.inherit, .protect_from_close = exported.object.protect_from_close},
+                                         handle_attributes, options);
+                exported.object.inherit = attributes.inherit;
+                exported.object.protect_from_close = attributes.protect_from_close;
                 const auto installed = c.proc.install_shared_object(exported.object);
                 if (!installed)
                 {
@@ -375,20 +370,44 @@ namespace sogen
                 }
             }
 
-            return close_source ? map_process_error(processes->close_handle(source->process, source_handle.bits)) : STATUS_SUCCESS;
+            return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtDuplicateObject(const syscall_context& c, const handle source_process_handle, const handle source_handle,
-                                          const handle target_process_handle, const emulator_object<handle> target_handle,
-                                          const ACCESS_MASK desired_access, const ULONG handle_attributes, const ULONG options)
+        // ObDuplicateObject closes the source in its own process whatever the duplication returned, and ignores what the
+        // close itself reports, so a protected source no longer fails a duplication that succeeded.
+        NTSTATUS duplicate_across_processes_and_close_source(const syscall_context& c, const handle source_process_handle,
+                                                             const handle source_handle, const handle target_process_handle,
+                                                             const emulator_object<handle> target_handle, const ACCESS_MASK desired_access,
+                                                             const ULONG handle_attributes, const ULONG options)
         {
-            if (!c.proc.is_current_process_handle(source_process_handle) || !c.proc.is_current_process_handle(target_process_handle))
+            auto* processes = c.win_emu.processes();
+            if (!processes)
             {
-                return duplicate_across_processes(c, source_process_handle, source_handle, target_process_handle, target_handle,
-                                                  desired_access, handle_attributes, options);
+                return STATUS_NOT_SUPPORTED;
             }
 
-            const auto resolved_source_handle = c.proc.resolve_object_pseudo_handle(source_handle, c.vcpu.active_thread);
+            const auto status = duplicate_across_processes(c, *processes, source_process_handle, source_handle, target_process_handle,
+                                                           target_handle, desired_access, handle_attributes, options);
+
+            if (options & duplicate_close_source)
+            {
+                if (c.proc.is_current_process_handle(source_process_handle))
+                {
+                    std::ignore = handle_NtClose(c, c.proc.resolve_object_pseudo_handle(source_handle, c.vcpu.active_thread));
+                }
+                else if (const auto* source = c.proc.processes.get(source_process_handle); source && source->process)
+                {
+                    std::ignore = processes->close_handle(source->process, source_handle.bits);
+                }
+            }
+
+            return status;
+        }
+
+        NTSTATUS duplicate_in_process(const syscall_context& c, const handle resolved_source_handle,
+                                      const emulator_object<handle> target_handle, const ACCESS_MASK desired_access,
+                                      const ULONG handle_attributes, const ULONG options)
+        {
             const bool close_source = (options & duplicate_close_source) != 0;
 
             if (resolved_source_handle.value.is_pseudo)
@@ -417,7 +436,7 @@ namespace sogen
                         }
                     }
 
-                    return close_source ? handle_NtClose(c, resolved_source_handle) : STATUS_SUCCESS;
+                    return STATUS_SUCCESS;
                 }
             }
             if (!store)
@@ -439,7 +458,8 @@ namespace sogen
                     return STATUS_INVALID_HANDLE;
                 }
 
-                store->set_attributes(*new_handle, {.inherit = (handle_attributes & OBJ_INHERIT) != 0});
+                store->set_attributes(*new_handle,
+                                      duplicate_attributes(store->attributes_of(resolved_source_handle), handle_attributes, options));
 
                 if (target_handle)
                 {
@@ -447,7 +467,28 @@ namespace sogen
                 }
             }
 
-            return close_source ? handle_NtClose(c, resolved_source_handle) : STATUS_SUCCESS;
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtDuplicateObject(const syscall_context& c, const handle source_process_handle, const handle source_handle,
+                                          const handle target_process_handle, const emulator_object<handle> target_handle,
+                                          const ACCESS_MASK desired_access, const ULONG handle_attributes, const ULONG options)
+        {
+            if (!c.proc.is_current_process_handle(source_process_handle) || !c.proc.is_current_process_handle(target_process_handle))
+            {
+                return duplicate_across_processes_and_close_source(c, source_process_handle, source_handle, target_process_handle,
+                                                                   target_handle, desired_access, handle_attributes, options);
+            }
+
+            const auto resolved_source_handle = c.proc.resolve_object_pseudo_handle(source_handle, c.vcpu.active_thread);
+            const auto status = duplicate_in_process(c, resolved_source_handle, target_handle, desired_access, handle_attributes, options);
+
+            if (options & duplicate_close_source)
+            {
+                std::ignore = handle_NtClose(c, resolved_source_handle);
+            }
+
+            return status;
         }
 
         std::u16string get_type_name(const handle_types::type type)

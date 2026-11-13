@@ -779,9 +779,9 @@ namespace sogen
         handle_store<handle_types::thread, emulator_thread> threads{};
         // Terminated threads that may still be in threads, the only ones the scheduler can delete.
         size_t terminated_thread_count{0};
-        // PsQueryTotalCycleTimeProcess answers from a process total that keeps its exited threads, so what a reaped
-        // thread ran has to outlive it here.
-        uint64_t reaped_thread_cycles{0};
+        // Every instruction a thread of this process runs, counted as it runs: PsQueryTotalCycleTimeProcess answers
+        // from a process total that keeps its exited threads, and a thread is removed by several paths.
+        uint64_t accumulated_thread_cycles{0};
 
         // Handles delivered with the most recent ALPC reply message (NtAlpcSendWaitReceivePort). rpcrt4's
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)

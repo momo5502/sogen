@@ -1211,7 +1211,7 @@ namespace sogen
         buffer.write(this->parent_process_id);
         buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
-        buffer.write(this->reaped_thread_cycles);
+        buffer.write(this->accumulated_thread_cycles);
         buffer.write(this->threads);
 
         buffer.write(this->threads.find_handle(active_thread).bits);
@@ -1349,7 +1349,7 @@ namespace sogen
         buffer.read(this->parent_process_id);
         buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
-        buffer.read(this->reaped_thread_cycles);
+        buffer.read(this->accumulated_thread_cycles);
 
         for (auto& thread : this->threads | std::views::values)
         {
@@ -1752,12 +1752,7 @@ namespace sogen
 
     uint64_t process_context::get_accumulated_cycles() const
     {
-        uint64_t cycles{this->reaped_thread_cycles};
-        for (const auto& thread : this->threads | std::views::values)
-        {
-            cycles += thread.executed_instructions;
-        }
-        return cycles;
+        return this->accumulated_thread_cycles;
     }
 
     size_t process_context::get_live_thread_count() const
