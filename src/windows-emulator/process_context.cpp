@@ -968,7 +968,7 @@ namespace sogen
             .protection = section_entry->section_page_protection,
             .attributes = section_entry->allocation_attributes,
             .access = section_entry->granted_access,
-            .inherit = section_entry->inherit,
+            .inherit = this->sections.attributes_of(section_handle).inherit,
         };
     }
 
@@ -990,7 +990,7 @@ namespace sogen
                 .guest_handle = object_handle.bits,
                 .memory = entry->shared->name(),
                 .event_type = static_cast<uint32_t>(entry->type),
-                .inherit = entry->inherit,
+                .inherit = this->events.attributes_of(object_handle).inherit,
             };
         }
         case handle_types::mutant: {
@@ -1004,7 +1004,7 @@ namespace sogen
                 .kind = process_shared_object_kind::mutant,
                 .guest_handle = object_handle.bits,
                 .memory = entry->shared->name(),
-                .inherit = entry->inherit,
+                .inherit = this->mutants.attributes_of(object_handle).inherit,
             };
         }
         default:

@@ -186,6 +186,35 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), original));
     }
 
+#ifndef __EMSCRIPTEN__
+    TEST_F(HandleFlagsTest, SharingExportsTheFlagOfTheHandleBeingInherited)
+    {
+        auto& events = this->emu->process.events;
+        const auto original = events.store(event{});
+        this->expect_flags(original, false, false);
+
+        const emulator_object<handle> target{this->emu->memory, this->storage + 0x400};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, original, CURRENT_PROCESS, target, 0,
+                                                                     OBJ_INHERIT, duplicate_same_access));
+        const auto duplicate = target.read();
+        ASSERT_NE(original, duplicate);
+        this->expect_flags(duplicate, true, false);
+
+        // ExpDuplicateSingleHandle copies the entry with its own attributes, so a child that inherits the duplicate
+        // gets an inheritable handle even though the handle it was duplicated from is not inheritable.
+        const auto shared_duplicate = this->emu->process.share_object(duplicate, false);
+        if (!shared_duplicate)
+        {
+            GTEST_SKIP() << "Sharing kernel objects needs host shared memory";
+        }
+        EXPECT_TRUE(shared_duplicate->inherit);
+
+        const auto shared_original = this->emu->process.share_object(original, false);
+        ASSERT_TRUE(shared_original.has_value());
+        EXPECT_FALSE(shared_original->inherit);
+    }
+#endif
+
     TEST_F(HandleFlagsTest, DuplicatingWithCloseSourceClosesTheSource)
     {
         auto& events = this->emu->process.events;

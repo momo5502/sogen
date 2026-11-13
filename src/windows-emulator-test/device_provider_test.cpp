@@ -173,7 +173,7 @@ namespace sogen::test
             EXPECT_EQ(expected, emu.memory.read_memory<uint32_t>(storage + 8));
             EXPECT_EQ(STATUS_SUCCESS, request.io_status_block.read().Status);
             EXPECT_EQ(sizeof(payload), request.io_status_block.read().Information);
-            EXPECT_TRUE(emu.process.events.get(event)->signaled);
+            EXPECT_TRUE(emu.process.events.get(event)->is_signaled());
         }
     }
 
