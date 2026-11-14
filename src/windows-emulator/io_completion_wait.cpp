@@ -128,15 +128,7 @@ namespace sogen
             template <handle_types::type Type, typename T>
             T* wait_packet_target(handle_store<Type, T>& store, wait_completion_packet& wait_packet)
             {
-                if (!wait_packet.target_object || wait_packet.target_generation != store.generation())
-                {
-                    wait_packet.target_object = store.get(wait_packet.target_object_handle);
-                    wait_packet.target_generation = store.generation();
-                }
-
-                // The object came from this store, so it is a T (a dynamic_cast would cost more than the lookup this saves).
-                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
-                return static_cast<T*>(wait_packet.target_object);
+                return store.get_cached(wait_packet.target_object_handle, wait_packet.target_object, wait_packet.target_generation);
             }
 
             bool is_wait_packet_target_signaled(windows_emulator& win_emu, wait_completion_packet& wait_packet)

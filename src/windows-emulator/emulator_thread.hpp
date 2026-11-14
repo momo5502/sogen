@@ -184,6 +184,14 @@ namespace sogen
         remove_multiple = 1,
     };
 
+    // An object a thread waits for, as its store gave it for object_handle (handle_store::get_cached).
+    struct cached_wait_object
+    {
+        handle object_handle{};
+        ref_counted_object* object{};
+        uint64_t generation{};
+    };
+
     struct pending_io_completion_wait
     {
         handle io_completion_handle{};
@@ -198,6 +206,9 @@ namespace sogen
         // The worker factory a NtWaitForWorkViaWorkerFactory wait takes work for; none for NtRemoveIoCompletion(Ex).
         handle worker_factory_handle{};
         bool timeout_absolute{};
+        // The port as last looked up (handle_store::get_cached). Not serialized; a restored wait looks it up again.
+        ref_counted_object* io_completion_object{};
+        uint64_t io_completion_generation{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -443,6 +454,8 @@ namespace sogen
 
         std::optional<NTSTATUS> exit_status{};
         std::vector<handle> await_objects{};
+        // await_objects' objects as last looked up, one per handle. Not serialized; a restored thread looks them up again.
+        std::vector<cached_wait_object> await_object_cache{};
         bool await_any{false};
         bool waiting_for_alert{false};
         // Set while a vCPU moves this thread's registers in or out with the kernel lock released. The thread must not

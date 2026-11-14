@@ -305,6 +305,21 @@ namespace sogen
             return this->generation_;
         }
 
+        // For an object checked again and again, as the scheduler checks waits: the object as found when the generation
+        // was `generation`, looked up again only once the generation has moved.
+        T* get_cached(const handle h, ref_counted_object*& object, uint64_t& generation)
+        {
+            if (!object || generation != this->generation_)
+            {
+                object = this->get(h);
+                generation = this->generation_;
+            }
+
+            // The object came from this store, so it is a T (a dynamic_cast would cost more than the lookup this saves).
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+            return static_cast<T*>(object);
+        }
+
         std::optional<handle> duplicate(const handle h) override
         {
             auto* entry = this->get(h);
