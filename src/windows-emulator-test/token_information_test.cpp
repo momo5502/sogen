@@ -95,6 +95,28 @@ namespace sogen::test
         };
     }
 
+    TEST_F(TokenInformationTest, LogonSidIsTheSingleGroupOfTheLogonSession)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->query(TokenLogonSid, 0x400));
+
+        // TokenLogonSid reports one group, the logon session SID that LsaLogonUser marks SE_GROUP_LOGON_ID.
+        const auto groups = emulator_object<TOKEN_GROUPS64>{this->emu->memory, this->storage + 0x100}.read();
+        ASSERT_EQ(1u, groups.GroupCount);
+
+        constexpr ULONG se_group_logon_id = 0xC0000000;
+        const auto entry =
+            emulator_object<SID_AND_ATTRIBUTES64>{this->emu->memory, this->storage + 0x100 + offsetof(TOKEN_GROUPS64, Groups)}.read();
+        EXPECT_EQ(se_group_logon_id, entry.Attributes & se_group_logon_id);
+
+        // S-1-5-5-x-y: a logon SID has two subauthorities under SECURITY_NT_AUTHORITY, the first SECURITY_LOGON_IDS_RID.
+        std::array<uint8_t, 20> sid{};
+        this->emu->memory.read_memory(entry.Sid, sid.data(), sid.size());
+        EXPECT_EQ(1u, sid[0]);
+        EXPECT_EQ(3u, sid[1]);
+        EXPECT_EQ(5u, sid[7]);
+        EXPECT_EQ(5u, sid[8]);
+    }
+
     TEST_F(TokenInformationTest, ReportsStandardUserPrivilegesWithRequiredSize)
     {
         constexpr ULONG required_size = sizeof(ULONG) + 5 * 12;

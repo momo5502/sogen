@@ -1,6 +1,7 @@
 #include "emulation_test_utils.hpp"
 #include <syscall_dispatcher.hpp>
 #include <syscall_utils.hpp>
+#include <user_callback_dispatch.hpp>
 
 namespace sogen::syscalls
 {
@@ -105,7 +106,8 @@ namespace sogen::test
             focus_message dispatched_message()
             {
                 const auto rsp = this->context().x64_cpu().read_stack_pointer();
-                const auto args = this->emu->memory.read_memory<dword_callback_args>(rsp + 0x30);
+                const auto callout = this->emu->memory.read_memory<user_callout_frame>(rsp);
+                const auto args = this->emu->memory.read_memory<dword_callback_args>(callout.buffer);
                 return {.window = this->windows_by_guest.at(args.pwnd), .message = args.msg, .other = static_cast<hwnd>(args.w_param)};
             }
 

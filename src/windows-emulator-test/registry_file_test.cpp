@@ -812,6 +812,48 @@ namespace sogen::test
         EXPECT_EQ(*name, "{child}");
     }
 
+    TEST_F(RegistryFileTest, OpensSubKeysOfAnOpenKeyAsTheirFullPathsDo)
+    {
+        ASSERT_TRUE(registry().create_key(uR"(\Registry\Machine\System\ControlSet001\Control\ComputerName\ComputerName)").has_value());
+        ASSERT_TRUE(registry().create_key(uR"(\Registry\Machine\Software\Classes\Wow6432Node\Vendor)").has_value());
+        registry().delete_key(get_key(profile_path));
+        ASSERT_TRUE(registry().create_key(std::filesystem::path{profile_path}).has_value());
+
+        struct sub_key_open
+        {
+            std::u16string_view parent;
+            std::u16string_view relative_path;
+            bool exists;
+        };
+
+        constexpr std::array opens{
+            sub_key_open{uR"(\Registry\Machine\System\ControlSet001)", uR"(CONTROL\productoptions)", true},
+            sub_key_open{uR"(\Registry\Machine\System\ControlSet001\Control)", uR"(ComputerName\ActiveComputerName)", true},
+            sub_key_open{uR"(\Registry\Machine\Software)", u"Wow6432Node/Classes/Vendor", true},
+            sub_key_open{uR"(\Registry\User)", u".Default", true},
+            sub_key_open{uR"(\Registry\Machine)", uR"(System\ControlSet001\Control)", true},
+            sub_key_open{uR"(\Registry\Machine\System\ControlSet001)", uR"(..\..\Software\Microsoft)", true},
+            sub_key_open{profile_list_path, u"Profile", true},
+            sub_key_open{profile_list_path, u"Missing", false},
+        };
+
+        for (const auto& open : opens)
+        {
+            SCOPED_TRACE(u16_to_u8(std::u16string{open.parent} + u" + " + std::u16string{open.relative_path}));
+            const auto by_parent = registry().get_sub_key(get_key(open.parent), open.relative_path);
+            const auto by_full_path = registry().get_key(utils::path_key{std::filesystem::path{open.parent} / open.relative_path});
+
+            ASSERT_EQ(by_full_path.has_value(), open.exists);
+            ASSERT_EQ(by_parent.has_value(), open.exists);
+            if (open.exists)
+            {
+                EXPECT_EQ(by_parent->hive, by_full_path->hive);
+                EXPECT_EQ(by_parent->path, by_full_path->path);
+                EXPECT_EQ(by_parent->generation, by_full_path->generation);
+            }
+        }
+    }
+
     TEST_F(RegistryFileTest, CreateKeyIsIdempotent)
     {
         const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Once)"};

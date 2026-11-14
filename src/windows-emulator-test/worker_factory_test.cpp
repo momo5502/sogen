@@ -94,6 +94,46 @@ namespace sogen::test
                 this->take_release();
             }
 
+            // TpSetPoolMinThreads, TpSetPoolMaxThreads and the other ULONG settings.
+            NTSTATUS set_limit(const WORKERFACTORYINFOCLASS info_class, const ULONG value)
+            {
+                emulator_object<ULONG>{this->emu->memory, this->storage}.write(value);
+                return syscalls::handle_NtSetInformationWorkerFactory(this->context(), this->factory_handle, info_class, this->storage,
+                                                                      sizeof(ULONG));
+            }
+
+            // TpAdjustBindingCount: a wait or a timer bound to the pool (1) or unbound from it (-1).
+            NTSTATUS bind(const LONG delta)
+            {
+                emulator_object<LONG>{this->emu->memory, this->storage}.write(delta);
+                return syscalls::handle_NtSetInformationWorkerFactory(this->context(), this->factory_handle, WorkerFactoryBindingCount,
+                                                                      this->storage, sizeof(LONG));
+            }
+
+            // A bound wait's object is signaled or a bound timer is due: its packet reaches the port.
+            void queue_packet()
+            {
+                this->emu->synchronize([&] {
+                    io_completion_wait::insert(*this->emu, this->port, *this->emu->process.io_completions.get(this->port),
+                                               io_completion_message{});
+                });
+            }
+
+            // The pool's first worker takes the queued packet in NtWaitForWorkViaWorkerFactory without waiting for it.
+            void take_packet_without_waiting()
+            {
+                auto* worker = this->emu->process.threads.get(this->pool().worker_threads.front());
+                ASSERT_NE(nullptr, worker);
+                this->emu->vcpu(0).active_thread = worker;
+                ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+                    return syscalls::handle_NtWaitForWorkViaWorkerFactory(this->context(), this->factory_handle,
+                                                                          {this->emu->memory, this->storage + 0x100}, 1,
+                                                                          {this->emu->memory, this->storage + 0x80}, 0);
+                }));
+                EXPECT_FALSE(worker->await_io_completion.has_value());
+                EXPECT_EQ(1u, emulator_object<ULONG>(this->emu->memory, this->storage + 0x80).read());
+            }
+
             std::unique_ptr<windows_emulator> emu{};
             uint64_t storage{};
             handle factory_handle{};
@@ -176,6 +216,114 @@ namespace sogen::test
         EXPECT_FALSE(worker->await_io_completion.has_value());
         EXPECT_EQ(1u, this->emu->process.io_completions.get(this->port)->queue.size());
         EXPECT_EQ(2u, factory.worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, BindingStartsNoWorkerWhileNothingIsQueued)
+    {
+        this->make_pool();
+
+        // ETW's wait on the global pool during Destiny 2's process initialization: ntoskrnl's
+        // ExpTryEnterWorkerFactoryAwayMode starts no worker for it, so no pool thread waits to run the executable's TLS
+        // callbacks while the main thread starts the executable.
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(1));
+        EXPECT_TRUE(this->pool().worker_threads.empty());
+        EXPECT_TRUE(this->pool().away_mode);
+        EXPECT_TRUE(this->pool().away_notification);
+    }
+
+    TEST_F(WorkerFactoryTest, PacketForABoundPoolStartsAWorker)
+    {
+        this->make_pool();
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(1));
+
+        this->queue_packet();
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+        EXPECT_EQ(1u, this->pool().pending_worker_count);
+        EXPECT_FALSE(this->pool().away_mode);
+        EXPECT_FALSE(this->pool().away_notification);
+    }
+
+    TEST_F(WorkerFactoryTest, BindingStartsAWorkerForAPacketAlreadyQueued)
+    {
+        this->make_pool();
+
+        // Without bindings a queued packet starts no worker by itself.
+        this->queue_packet();
+        EXPECT_TRUE(this->pool().worker_threads.empty());
+
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(1));
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+        EXPECT_FALSE(this->pool().away_notification);
+    }
+
+    TEST_F(WorkerFactoryTest, LastBindingStopsWaitingForWork)
+    {
+        this->make_pool();
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(1));
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(1));
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(-1));
+        EXPECT_TRUE(this->pool().away_notification);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(-1));
+        EXPECT_FALSE(this->pool().away_mode);
+        EXPECT_FALSE(this->pool().away_notification);
+
+        this->queue_packet();
+        EXPECT_TRUE(this->pool().worker_threads.empty());
+    }
+
+    TEST_F(WorkerFactoryTest, BoundPoolWhoseWorkerTookWorkStartsAnotherForTheNextPacket)
+    {
+        this->make_pool();
+        ASSERT_EQ(STATUS_SUCCESS, this->bind(1));
+        this->queue_packet();
+        ASSERT_EQ(1u, this->pool().worker_threads.size());
+        ASSERT_EQ(STATUS_SUCCESS, this->worker_ready());
+
+        // With nothing left queued, the end of NtWaitForWorkViaWorkerFactory makes the pool wait for the next packet.
+        this->take_packet_without_waiting();
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+        EXPECT_TRUE(this->pool().away_notification);
+
+        // It comes while that worker is still in its callback.
+        this->queue_packet();
+        EXPECT_EQ(2u, this->pool().worker_threads.size());
+        EXPECT_FALSE(this->pool().away_notification);
+    }
+
+    TEST_F(WorkerFactoryTest, NewMaximumStartsAWorkerForQueuedWork)
+    {
+        this->make_pool(1);
+        this->start_busy_worker();
+
+        // A packet comes while the pool's only worker is busy and the pool is at its maximum.
+        this->queue_packet();
+        ASSERT_EQ(1u, this->pool().worker_threads.size());
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMaximum, 2));
+        EXPECT_EQ(2u, this->pool().worker_threads.size());
+        EXPECT_EQ(1u, this->pool().pending_worker_count);
+    }
+
+    TEST_F(WorkerFactoryTest, NewMaximumStartsAWorkerForAReleaseThatHadNone)
+    {
+        this->make_pool(0);
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        ASSERT_TRUE(this->pool().worker_threads.empty());
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMaximum, 1));
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, NewMaximumLeavesQueuedWorkToAStartingWorker)
+    {
+        this->make_pool(1);
+        ASSERT_EQ(STATUS_SUCCESS, this->release());
+        ASSERT_EQ(1u, this->pool().pending_worker_count);
+        this->queue_packet();
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMaximum, 4));
+        EXPECT_EQ(1u, this->pool().worker_threads.size());
     }
 
     TEST_F(WorkerFactoryTest, UpdatesStackSizesIncludingZeroAndUnalignedSizes)

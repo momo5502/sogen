@@ -93,6 +93,7 @@ namespace sogen
             .vcpu = vcpu,
             .proc = context,
             .write_status = true,
+            .trap_stack_pointer = emu.read_stack_pointer(),
         };
 
         try
@@ -175,7 +176,8 @@ namespace sogen
     }
 
     dispatch_result syscall_dispatcher::dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
-                                                            completion_state* completion_state, const user_callback_result& callback_result)
+                                                            completion_state* completion_state, const user_callback_result& callback_result,
+                                                            const uint64_t trap_stack_pointer)
     {
         auto& emu = vcpu.cpu;
 
@@ -186,7 +188,8 @@ namespace sogen
                                 .write_status = true,
                                 .is_callback_completion = true,
                                 .current_completion_state = completion_state,
-                                .previous_callback_result = callback_result};
+                                .previous_callback_result = callback_result,
+                                .trap_stack_pointer = trap_stack_pointer};
 
         const auto entry = this->completion_handlers_.find(callback_id);
 

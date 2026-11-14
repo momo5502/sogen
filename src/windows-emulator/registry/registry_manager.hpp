@@ -130,6 +130,7 @@ namespace sogen
         registry_manager& operator=(const registry_manager&) = delete;
 
         std::optional<registry_key> get_key(const utils::path_key& key);
+        std::optional<registry_key> get_sub_key(const registry_key& parent, std::u16string_view relative_path);
         bool key_exists(const registry_key& key);
         static bool is_root_key(const registry_key& key);
         bool can_create_key(const std::filesystem::path& key) const;
@@ -200,6 +201,7 @@ namespace sogen
         std::map<utils::path_key, uint64_t> key_generations_{};
 
         utils::path_key normalize_path(utils::path_key path) const;
+        std::optional<utils::path_key> get_unmapped_sub_key_path(const registry_key& parent, std::u16string_view relative_path) const;
         static const utils::path_key& get_full_key_path(const registry_key& key);
         uint64_t get_generation(const utils::path_key& full_path) const;
         bool is_deleted_hive_key(const utils::path_key& full_path) const;

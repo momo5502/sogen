@@ -321,9 +321,7 @@ namespace sogen
                     }
 
                     const auto interface_key_name = u8_to_u16(*interface_name);
-                    std::u16string interface_path{class_path};
-                    interface_path.append(u"\\").append(interface_key_name);
-                    const auto interface_key = win_emu.registry.get_key({interface_path});
+                    const auto interface_key = win_emu.registry.get_sub_key(*class_key, interface_key_name);
                     if (!interface_key)
                     {
                         continue;

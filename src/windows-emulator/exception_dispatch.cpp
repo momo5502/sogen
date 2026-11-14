@@ -86,15 +86,6 @@ namespace sogen
             return total_size;
         }
 
-        struct machine_frame
-        {
-            uint64_t rip;
-            uint64_t cs;
-            uint64_t eflags;
-            uint64_t rsp;
-            uint64_t ss;
-        };
-
         void dispatch_exception_pointers(x86_64_cpu& emu, const emulator_thread& thread, const uint64_t dispatcher,
                                          const EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers)
         {
@@ -132,14 +123,14 @@ namespace sogen
                 throw std::runtime_error("Bad exception record position on stack");
             }
 
-            const emulator_object<machine_frame> machine_frame_obj{emu, new_sp + combined_size};
-            machine_frame_obj.access([&](machine_frame& frame) {
+            const emulator_object<MACHINE_FRAME> machine_frame_obj{emu, new_sp + combined_size};
+            machine_frame_obj.access([&](MACHINE_FRAME& frame) {
                 const auto& record = *reinterpret_cast<CONTEXT64*>(pointers.ContextRecord);
-                frame.rip = record.Rip;
-                frame.rsp = record.Rsp;
-                frame.ss = record.SegSs;
-                frame.cs = record.SegCs;
-                frame.eflags = record.EFlags;
+                frame.Rip = record.Rip;
+                frame.Rsp = record.Rsp;
+                frame.SegSs = record.SegSs;
+                frame.SegCs = record.SegCs;
+                frame.EFlags = record.EFlags;
             });
 
             const auto cs_selector = emu.reg<uint16_t>(x86_register::cs);

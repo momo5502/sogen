@@ -2043,6 +2043,7 @@ namespace sogen
         buffer.write(this->fs);
         buffer.write(this->gs);
         buffer.write_optional(this->arm64_registers);
+        buffer.write(this->trap_stack_pointer);
 
         buffer.write(static_cast<bool>(this->state));
         if (this->state)
@@ -2078,6 +2079,7 @@ namespace sogen
         buffer.read(this->fs);
         buffer.read(this->gs);
         buffer.read_optional(this->arm64_registers);
+        buffer.read(this->trap_stack_pointer);
 
         bool has_state{};
         buffer.read(has_state);

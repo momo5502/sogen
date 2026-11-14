@@ -38,6 +38,9 @@ namespace sogen
         bool is_callback_completion{false};
         completion_state* current_completion_state{};
         user_callback_result previous_callback_result{};
+        // The stack pointer at the syscall instruction, as the kernel's trap frame keeps it through the callbacks the call
+        // makes: guest structures pushed for a callback sit below it.
+        uint64_t trap_stack_pointer{};
 
         emulator_thread& thread() const
         {

@@ -147,7 +147,8 @@ namespace sogen
                     return;
                 }
 
-                const auto desired = std::min(std::max(factory.thread_minimum, factory.binding_count), limit);
+                // Bindings start no worker by themselves: see try_enter_away_mode.
+                const auto desired = std::min(factory.thread_minimum, limit);
                 while (factory.worker_threads.size() < desired)
                 {
                     create_worker_factory_thread(c.win_emu, factory);
@@ -161,6 +162,40 @@ namespace sogen
                     return thread && thread->await_io_completion &&
                            thread->await_io_completion->io_completion_handle == factory.io_completion_handle;
                 });
+            }
+
+            // ExpLeaveWorkerFactoryAwayMode
+            void leave_away_mode(worker_factory& factory)
+            {
+                factory.away_notification = false;
+                factory.away_mode = false;
+            }
+
+            // ExpTryEnterWorkerFactoryAwayMode: says whether to look for a worker now. A factory with bindings and no worker
+            // waiting on its port is away; with nothing queued there it starts no worker yet and waits for the port's next
+            // packet instead (on_io_completion_queued).
+            bool try_enter_away_mode(windows_emulator& win_emu, worker_factory& factory)
+            {
+                prune_worker_factory_threads(win_emu, factory);
+                if (factory.worker_threads.size() >= factory.thread_maximum || has_waiting_worker(win_emu, factory))
+                {
+                    return false;
+                }
+
+                if (factory.binding_count == 0)
+                {
+                    return true;
+                }
+
+                factory.away_mode = true;
+                const auto* completion = win_emu.process.io_completions.get(factory.io_completion_handle);
+                if (completion && !completion->queue.empty())
+                {
+                    return true;
+                }
+
+                factory.away_notification = true;
+                return false;
             }
 
             // Windows ExpWorkerFactoryCheckCreate: start one more worker when work is queued (a completion or a
@@ -186,7 +221,17 @@ namespace sogen
                 const auto work_queued = factory.pending_release_count != 0 || (completion && !completion->queue.empty());
                 if (work_queued && !has_waiting_worker(win_emu, factory))
                 {
+                    leave_away_mode(factory);
                     create_worker_factory_thread(win_emu, factory);
+                }
+            }
+
+            // The end of NtWaitForWorkViaWorkerFactory once its worker took work.
+            void check_for_more_work(windows_emulator& win_emu, worker_factory& factory)
+            {
+                if (try_enter_away_mode(win_emu, factory))
+                {
+                    check_create_worker_factory_thread(win_emu, factory);
                 }
             }
         }
@@ -356,6 +401,7 @@ namespace sogen
                 const auto raw_value = value_u32.read();
                 const auto delta = static_cast<LONG>(raw_value);
                 factory->last_info_value = raw_value;
+                const auto previous = factory->binding_count;
 
                 if (delta < 0)
                 {
@@ -377,7 +423,16 @@ namespace sogen
                         next > std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : static_cast<uint32_t>(next);
                 }
 
-                ensure_worker_factory_threads(c, *factory);
+                // The first binding makes the factory wait for work instead of starting a worker, the last one ends that.
+                if (previous != 0 && factory->binding_count == 0)
+                {
+                    leave_away_mode(*factory);
+                }
+                else if (previous == 0 && factory->binding_count != 0 && try_enter_away_mode(c.win_emu, *factory))
+                {
+                    check_create_worker_factory_thread(c.win_emu, *factory);
+                }
+
                 return STATUS_SUCCESS;
             }
 
@@ -399,11 +454,34 @@ namespace sogen
                 switch (info_class)
                 {
                 case WorkerFactoryThreadMinimum:
+                    // A raised minimum starts its workers itself.
+                    if (value > factory->thread_minimum)
+                    {
+                        leave_away_mode(*factory);
+                    }
                     factory->thread_minimum = value;
                     break;
-                case WorkerFactoryThreadMaximum:
+                case WorkerFactoryThreadMaximum: {
+                    // Work waiting for a worker: a queued packet, or a release while there was no maximum.
+                    const auto* completion = c.proc.io_completions.get(factory->io_completion_handle);
+                    const auto work_queued =
+                        (factory->thread_maximum == 0 && factory->pending_release_count != 0) || (completion && !completion->queue.empty());
                     factory->thread_maximum = value;
+
+                    if (value == 0 || !work_queued || factory->shutdown || factory->paused != 0 || factory->start_routine == 0)
+                    {
+                        break;
+                    }
+
+                    // A maximum with room for it starts one worker for that work, unless one is still starting.
+                    prune_worker_factory_threads(c.win_emu, *factory);
+                    if (factory->pending_worker_count == 0 && factory->worker_threads.size() < factory->thread_maximum)
+                    {
+                        leave_away_mode(*factory);
+                        create_worker_factory_thread(c.win_emu, *factory);
+                    }
                     break;
+                }
                 case WorkerFactoryPaused:
                     factory->paused = value;
                     break;
@@ -460,6 +538,7 @@ namespace sogen
             }
 
             factory->shutdown = true;
+            leave_away_mode(*factory);
             factory->worker_threads.clear();
             pending_worker_count.write_if_valid(0);
             return STATUS_SUCCESS;
@@ -482,6 +561,8 @@ namespace sogen
             if (!factory->release_pending)
             {
                 factory->release_pending = true;
+                // The worker for the release packet is looked for right after it is queued.
+                leave_away_mode(*factory);
 
                 if (!worker_factory_support::enqueue_release_completion(c.win_emu, worker_factory_handle))
                 {
@@ -531,11 +612,14 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            // A worker back for work takes the port's next packet itself.
+            leave_away_mode(*factory);
+
             const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion_handle, count);
             if (!messages.empty())
             {
-                // A worker taking work makes sure another one is coming for whatever is still queued.
-                check_create_worker_factory_thread(c.win_emu, *factory);
+                // A worker taking work makes sure another one is coming for whatever is still queued, or for what comes next.
+                check_for_more_work(c.win_emu, *factory);
                 return io_completion_wait::write_entries(c.win_emu.memory, mini_packets.value(), packets_returned.value(), messages);
             }
 
@@ -581,11 +665,31 @@ namespace sogen
 
     namespace worker_factory_support
     {
-        void check_create_worker(windows_emulator& win_emu, const handle worker_factory_handle)
+        void check_for_more_work(windows_emulator& win_emu, const handle worker_factory_handle)
         {
             if (auto* factory = win_emu.process.worker_factories.get(worker_factory_handle))
             {
-                syscalls::check_create_worker_factory_thread(win_emu, *factory);
+                syscalls::check_for_more_work(win_emu, *factory);
+            }
+        }
+
+        void on_io_completion_queued(windows_emulator& win_emu, const io_completion& completion)
+        {
+            // ponytail: walks the process's few worker factories for each queued packet; keep the waiting factories on the
+            // port if a guest ever runs many pools.
+            for (auto& [index, factory] : win_emu.process.worker_factories)
+            {
+                if (!factory.away_notification || win_emu.process.io_completions.get(factory.io_completion_handle) != &completion)
+                {
+                    continue;
+                }
+
+                // The notification fires once: the packet starts a worker if the factory still has none free for it.
+                factory.away_notification = false;
+                if (factory.away_mode && syscalls::try_enter_away_mode(win_emu, factory))
+                {
+                    syscalls::check_create_worker_factory_thread(win_emu, factory);
+                }
             }
         }
     }
