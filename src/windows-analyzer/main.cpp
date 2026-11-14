@@ -183,6 +183,10 @@ namespace sogen
             {
                 arguments.emplace_back(*options.instruction_precision ? "--inst-precision" : "--no-inst-precision");
             }
+            if (options.native_timing)
+            {
+                arguments.emplace_back("--native-timing");
+            }
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
                 if (!path.empty())
@@ -717,11 +721,16 @@ namespace sogen
         emulator_settings create_emulator_settings(const analysis_options& options,
                                                    const std::optional<PEMachineType> machine = std::nullopt)
         {
+            auto backend = options.backend;
+            if (!backend && machine)
+            {
+                backend = backend_from_environment_for(*machine);
+            }
             return {
                 .use_relative_time = options.reproducible,
                 .use_instruction_precision = uses_instruction_precision(options, machine),
-                .intercept_rdtsc = !options.native_timing,
-                .intercept_kusd = kusd_needs_intercept || !options.native_timing,
+                .intercept_rdtsc = backend != backend_type::native_arm64 && !options.native_timing,
+                .intercept_kusd = kusd_needs_intercept || backend == backend_type::native_arm64 || !options.native_timing,
                 .keep_guest_time_across_snapshots = options.keep_guest_time,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
@@ -1259,8 +1268,9 @@ namespace sogen
             auto* const reproducible_option =
                 app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");
             app.add_flag("--native-timing", options.native_timing,
-                         "Let the guest read the host TSC and a periodically refreshed KUSER_SHARED_DATA without trapping (faster, "
-                         "timing is no longer exact); on macOS KUSER_SHARED_DATA stays trapped and only rdtsc runs natively")
+                         "Let the guest read the host timestamp counter and a periodically refreshed KUSER_SHARED_DATA without "
+                         "trapping (faster, timing is no longer exact); on macOS and native-arm64 KUSER_SHARED_DATA stays trapped and "
+                         "only the counter runs natively")
                 ->excludes(reproducible_option);
             app.add_flag("--keep-guest-time", options.keep_guest_time,
                          "Keep the guest's time across snapshots: its clocks stand still while the process is saved or loaded "
