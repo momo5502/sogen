@@ -110,6 +110,7 @@ namespace sogen
             managed_process_connection* managed_process{};
             filesystem_mode root_mode{default_root_mode};
             std::vector<mount_spec> mounts{};
+            std::vector<image_override> image_overrides{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
         };
 
@@ -200,6 +201,12 @@ namespace sogen
             {
                 arguments.emplace_back("--mount");
                 arguments.push_back(render_mount_spec(mount));
+            }
+            for (const auto& image_override : options.image_overrides)
+            {
+                arguments.emplace_back("--image-override");
+                arguments.push_back(image_override.image.string());
+                arguments.push_back(image_override.replacement.string());
             }
 
             return arguments;
@@ -722,6 +729,7 @@ namespace sogen
                 .registry_directory = options.registry_path,
                 .root_mode = options.root_mode,
                 .mounts = options.mounts,
+                .image_overrides = options.image_overrides,
                 .network = options.network,
                 .spoof_gpu_features = options.spoof_gpu_features,
                 .elevated = options.elevated,
@@ -1326,6 +1334,11 @@ namespace sogen
                 ->type_name("HOST:GUEST[:MODE]")
                 ->allow_extra_args(false);
 
+            std::vector<std::pair<std::string, std::string>> image_overrides{};
+            app.add_option("--image-override", image_overrides, "Map the image at a guest path from a host file instead")
+                ->type_name("GUEST HOST")
+                ->allow_extra_args(false);
+
             std::string root_mode{to_string(default_root_mode)};
             app.add_option("--root-mode", root_mode, "Access mode of the emulation root drives")
                 ->capture_default_str()
@@ -1384,6 +1397,13 @@ namespace sogen
                     auto spec = parse_mount_spec(mount);
                     spec.host_path = std::filesystem::absolute(spec.host_path);
                     options.mounts.push_back(std::move(spec));
+                }
+
+                options.image_overrides.reserve(image_overrides.size());
+                for (const auto& [image, replacement] : image_overrides)
+                {
+                    options.image_overrides.push_back(
+                        {.image = windows_path{image}, .replacement = std::filesystem::absolute(replacement)});
                 }
 
                 for (const auto& [name, value] : environment)

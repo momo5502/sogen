@@ -568,8 +568,9 @@ namespace sogen
         const auto preferred_language =
             registry_utils::read_registry_string(win_emu.registry, R"(\Registry\User\Control Panel\International)", "LocaleName")
                 .value_or(u"");
-        const auto activation_context = sxs::build_process_activation_context(
-            win_emu.file_sys, executable, windows_path(version.get_system_root()), u16_to_u8(preferred_language));
+        const auto activation_context =
+            sxs::build_process_activation_context(win_emu.file_sys, win_emu.mod_manager.image_reader(), executable,
+                                                  windows_path(version.get_system_root()), u16_to_u8(preferred_language));
         if (!activation_context.empty())
         {
             const auto activation_context_address = allocator.reserve(activation_context.size(), alignof(uint32_t));
@@ -583,8 +584,8 @@ namespace sogen
 
         this->apiset = apiset::get_namespace_table(reinterpret_cast<const API_SET_NAMESPACE*>(apiset_container.data.data()));
         const auto& system_root = version.get_system_root();
-        this->build_knowndlls_section_table<uint64_t>(win_emu.registry, win_emu.file_sys, apiset, system_root, false);
-        this->build_knowndlls_section_table<uint32_t>(win_emu.registry, win_emu.file_sys, apiset, system_root, true);
+        this->build_knowndlls_section_table<uint64_t>(win_emu.registry, win_emu.mod_manager, apiset, system_root, false);
+        this->build_knowndlls_section_table<uint32_t>(win_emu.registry, win_emu.mod_manager, apiset, system_root, true);
 
         this->ntdll_image_base = ntdll.image_base;
         this->ldr_initialize_thunk = ntdll.find_export("LdrInitializeThunk");
@@ -1675,8 +1676,8 @@ namespace sogen
     }
 
     template <typename T>
-    void process_context::build_knowndlls_section_table(registry_manager& registry, const file_system& file_system,
-                                                        const apiset_map& apiset, const windows_path& system_root, bool is_32bit)
+    void process_context::build_knowndlls_section_table(registry_manager& registry, const module_manager& modules, const apiset_map& apiset,
+                                                        const windows_path& system_root, bool is_32bit)
     {
         windows_path system_root_path;
         std::set<std::u16string> visisted;
@@ -1714,7 +1715,7 @@ namespace sogen
             q.pop();
 
             std::vector<std::byte> file;
-            if (!file_system.read_file(system_root_path / knowndll_filename, &file))
+            if (!modules.read_image(system_root_path / knowndll_filename, file))
             {
                 continue;
             }

@@ -800,7 +800,10 @@ namespace sogen
             file_sys.map(mount.guest_path, mount.host_path, mount.mode);
         }
 
-        const auto detection = pe_architecture_detector::detect_from_file(file_sys, application);
+        const auto image_override = std::ranges::find(settings.image_overrides, application, &image_override::image);
+        const auto detection = image_override == settings.image_overrides.end()
+                                   ? pe_architecture_detector::detect_from_file(file_sys, application)
+                                   : pe_architecture_detector::detect_from_file(image_override->replacement);
         if (!detection.is_valid())
         {
             throw std::runtime_error("Cannot determine the machine type of " + application.string() + ": " + detection.error_message);
@@ -944,6 +947,8 @@ namespace sogen
         {
             this->map_port(mapping.first, mapping.second);
         }
+
+        this->mod_manager.set_image_overrides(settings.image_overrides);
 
         this->setup_hooks();
     }

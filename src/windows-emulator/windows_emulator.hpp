@@ -145,6 +145,7 @@ namespace sogen
         filesystem_mode root_mode{default_root_mode};
         std::filesystem::path root_layer{};
         std::vector<mount_spec> mounts{};
+        std::vector<image_override> image_overrides{};
 
         fake_environment_config fake_env{};
 

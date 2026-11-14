@@ -42,6 +42,13 @@ last colon, GUEST cannot name an NTFS alternate data stream. `--mount .\a.txt:C:
 error. We think that nobody will mount a stream, so this limit is acceptable for a short CLI syntax. The limit applies
 only to the CLI, because Python mounts are tuples.
 
+An image override maps a different file in place of an image. With `--image-override GUEST HOST`, a section that the
+guest creates from GUEST to map it as an image gets the contents of the host file HOST. The guest still sees GUEST as
+the module's path and name. Other access to GUEST is not changed: opening or reading GUEST as a file still reads the
+file at GUEST. The emulator maps the executable, the modules it loads at startup and the KnownDlls itself, so for
+those GUEST can be missing. A DLL that the guest loads, for example with `LoadLibrary`, is opened as a file before its
+section is created, so GUEST has to exist. The option can be repeated, and child processes get the same overrides.
+
 A savestate does not contain the mount table. When you load a savestate, use the same mounts again. If a file
 handle in the savestate needs write access (a write handle, delete-on-close, or a pending rename), and its mount is
 now `ro`, the load fails with an error that names the file.

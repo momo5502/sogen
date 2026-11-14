@@ -353,7 +353,7 @@ namespace sogen
             if ((allocation_attributes & SEC_IMAGE) && !s.file_name.empty())
             {
                 std::vector<std::byte> file_data;
-                if (c.win_emu.file_sys.read_file(s.file_name, &file_data))
+                if (c.win_emu.mod_manager.read_image(s.file_name, file_data))
                 {
                     s.cache_image_info_from_filedata(file_data);
                 }
