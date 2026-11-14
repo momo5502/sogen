@@ -254,7 +254,9 @@ namespace
     {
 #if defined(_M_ARM64)
         constexpr size_t peb_critical_section_timeout_offset = 0xC0;
-        const auto* peb = reinterpret_cast<const uint8_t*>(__readx18qword(0x60));
+        const auto* teb = reinterpret_cast<const uint8_t*>(NtCurrentTeb());
+        const uint8_t* peb{};
+        memcpy(&peb, teb + 0x60, sizeof(peb));
 #elif defined(_WIN64)
         constexpr size_t peb_critical_section_timeout_offset = 0xC0;
         const auto* peb = reinterpret_cast<const uint8_t*>(__readgsqword(0x60));
