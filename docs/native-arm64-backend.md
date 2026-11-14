@@ -2,7 +2,8 @@
 
 Enable with `-DSOGEN_ENABLE_NATIVE_ARM64=ON` on an ARM64 Linux or Android host.
 Select with `--backend native-arm64` or `EMULATOR_NATIVE_ARM64=1`.
-Use `--native-timing --no-inst-precision`; deterministic counter interception and MMIO are not implemented.
+Use `--native-timing --no-inst-precision`; deterministic counter interception is not implemented.
+MMIO interception can be enabled independently through `emulator_settings::intercept_kusd`.
 
 This is a normal `arm64_emulator` backend. The existing Windows PE loader, process context,
 `emulator_thread`, TEB/PEB initialization, ntdll bootstrap and syscall dispatcher are shared with
@@ -23,7 +24,7 @@ Only one machine, one vCPU, its original host thread, and 4 KiB host pages are s
 The seccomp filter and no-new-privileges setting are irreversible for that host thread.
 This shares the host address space and is not a security boundary for untrusted programs.
 
-Unimplemented operations throw: snapshots, MMIO, counter interception, instruction limits,
+Unimplemented operations throw: snapshots, counter interception, instruction limits,
 execution hooks, recoverable memory faults and
 enabled hardware debug registers. Disabled debug registers read as zero and accept zero.
 Hardware `SIGILL` is reported through the ARM64 undefined-instruction hook at the faulting PC,
@@ -36,6 +37,15 @@ host registers, FPSIMD state and TLS, installs the guest state, captures the ste
 restores the host state before detaching. This requires permission for a same-UID child to trace
 the CPU thread. It fails explicitly if the kernel or host policy disallows tracing.
 An instruction that raises another exception, including SVC, cancels its pending step.
+Read-only MMIO uses inaccessible host pages and handles the resulting memory faults on the host stack.
+The backend decodes integer and SIMD loads with unsigned, unscaled, pre/post-indexed or register offsets, and scalar
+LDAR/LDAPR/LDAPUR loads. It invokes the read callback with the region-relative offset, updates the
+destination register and advances PC. Emulated MMIO loads also complete a pending software step.
+Pre/post-indexed loads write back the base register, including SP, only after a successful read.
+Single-vector `LD1` with a `#16` post-increment supports `.16B`, `.8H`, `.4S` and `.2D` arrangements.
+The byte-lane-zero `LD2`/`LD4` forms with `#2`/`#4` post-increments preserve all other vector bytes.
+Stores, paired/exclusive loads, overlapping integer destination/base writeback and other unsupported accesses fail explicitly.
+The shared `KUSER_SHARED_DATA` callback refreshes timestamps for each intercepted read.
 Memory read/write and basic-block hooks are accepted but never fire, matching Sogen's FEX
 backend. This permits the analyzer's default memory watches but produces no memory-access observations.
 Other unsupported guest signals terminate the run with PC and signal diagnostics. The common Windows

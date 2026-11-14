@@ -213,6 +213,128 @@ namespace sogen::native_arm64
             return nullptr;
         }
 
+        struct decoded_load
+        {
+            size_t size{};
+            uint32_t destination{};
+            bool sign_extend{};
+            bool wide{};
+            bool vector{};
+            bool acquire{};
+            bool writeback{};
+            size_t post_increment{};
+            uint32_t byte_lane_registers{};
+        };
+
+        std::optional<decoded_load> decode_mmio_load(const uint32_t instruction)
+        {
+            const auto size = instruction >> 30;
+            const auto destination = instruction & 31;
+            constexpr uint32_t ld1_vector_postindex = 0x4CDF7000;
+            if ((instruction & 0xFFFFF000u) == ld1_vector_postindex)
+            {
+                return decoded_load{.size = 16, .destination = destination, .vector = true, .writeback = true, .post_increment = 16};
+            }
+            const auto byte_lane = instruction & 0xFFFFFC00u;
+            if (byte_lane == 0x0DFF0000u || byte_lane == 0x0DFF2000u)
+            {
+                const uint32_t count = byte_lane == 0x0DFF0000u ? 2 : 4;
+                return decoded_load{.size = count,
+                                    .destination = destination,
+                                    .vector = true,
+                                    .writeback = true,
+                                    .post_increment = count,
+                                    .byte_lane_registers = count};
+            }
+            const auto acquire = instruction & 0x3FFFFC00u;
+            if (acquire == 0x08DFFC00u || acquire == 0x38BFC000u)
+            {
+                return decoded_load{.size = size_t{1} << size, .destination = destination, .wide = size == 3, .acquire = true};
+            }
+
+            const bool unsigned_offset = (instruction & 0x3B000000u) == 0x39000000u;
+            const bool unscaled = (instruction & 0x3B200C00u) == 0x38000000u;
+            const bool register_offset = (instruction & 0x3B200C00u) == 0x38200800u && (instruction & 0x4000u) != 0;
+            const bool acquire_unscaled = (instruction & 0x3F200C00u) == 0x19000000u;
+            const bool indexed = (instruction & 0x3B200400u) == 0x38000400u;
+            if (!unsigned_offset && !unscaled && !register_offset && !acquire_unscaled && !indexed)
+            {
+                return std::nullopt;
+            }
+
+            const auto opcode = (instruction >> 22) & 3;
+            const bool vector = (instruction & (1u << 26)) != 0;
+            const auto base = (instruction >> 5) & 31;
+            if (indexed && !vector && base == destination && base != 31)
+            {
+                return std::nullopt;
+            }
+            if (vector)
+            {
+                if (opcode == 1 || (opcode == 3 && size == 0))
+                {
+                    return decoded_load{
+                        .size = opcode == 3 ? 16 : size_t{1} << size, .destination = destination, .vector = true, .writeback = indexed};
+                }
+            }
+            else if (opcode == 1 || (opcode == 2 && size < 3) || (opcode == 3 && size < 2))
+            {
+                return decoded_load{.size = size_t{1} << size,
+                                    .destination = destination,
+                                    .sign_extend = opcode != 1,
+                                    .wide = opcode == 2 || size == 3,
+                                    .acquire = acquire_unscaled,
+                                    .writeback = indexed};
+            }
+            return std::nullopt;
+        }
+
+        struct decoded_load_address
+        {
+            uint64_t address;
+            std::optional<uint64_t> writeback{};
+        };
+
+        decoded_load_address mmio_load_address(const register_state& state, const uint32_t instruction, const decoded_load& load)
+        {
+            const auto base = (instruction >> 5) & 31;
+            const auto address = base == 31 ? state.sp : state.x[base];
+            if (load.post_increment != 0)
+            {
+                return {address, address + load.post_increment};
+            }
+            if ((instruction & 0x3B000000u) == 0x39000000u)
+            {
+                return {address + ((instruction >> 10) & 0xFFF) * load.size};
+            }
+            if ((instruction & 0x3B200C00u) == 0x38200800u)
+            {
+                const auto index = (instruction >> 16) & 31;
+                uint64_t offset = index == 31 ? 0 : state.x[index];
+                const auto option = (instruction >> 13) & 7;
+                if (option == 2)
+                {
+                    offset = static_cast<uint32_t>(offset);
+                }
+                else if (option == 6)
+                {
+                    offset = static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(offset)));
+                }
+                return {address + offset * ((instruction & 0x1000) != 0 ? load.size : 1)};
+            }
+            if (load.writeback || (instruction & 0x3B200C00u) == 0x38000000u || (instruction & 0x3F200C00u) == 0x19000000u)
+            {
+                const auto immediate = (instruction >> 12) & 0x1FF;
+                const auto adjusted = address + static_cast<uint64_t>(static_cast<int64_t>(immediate ^ 0x100) - 0x100);
+                if (load.writeback)
+                {
+                    return {(instruction & 0x800) != 0 ? adjusted : address, adjusted};
+                }
+                return {adjusted};
+            }
+            return {address};
+        }
+
         void install_filter()
         {
             // ARM64 seccomp reports the PC after SVC; the last 64 KiB of the window is never allocated by the memory manager.
@@ -468,7 +590,8 @@ namespace sogen::native_arm64
                     {
                         throw std::runtime_error("Invalid native ARM64 entry PC or SP");
                     }
-                    if ((state_.pstate & pstate_software_step) != 0)
+                    const bool single_step = (state_.pstate & pstate_software_step) != 0;
+                    if (single_step)
                     {
                         if (!interrupt_hook_)
                         {
@@ -525,6 +648,15 @@ namespace sogen::native_arm64
                     if (trapped_signal_ == stop_signal)
                     {
                         break;
+                    }
+                    if ((trapped_signal_ == SIGSEGV || trapped_signal_ == SIGBUS) && trapped_code_ > 0 && handle_mmio_fault())
+                    {
+                        if (single_step)
+                        {
+                            const auto callback = interrupt_hook_;
+                            callback(*this, static_cast<int>(arm64_exception_class::software_step));
+                        }
+                        continue;
                     }
                     if (trapped_signal_ == SIGSYS && trapped_code_ == 1 && trapped_arch_ == AUDIT_ARCH_AARCH64)
                     {
@@ -738,6 +870,85 @@ namespace sogen::native_arm64
             std::vector<std::unique_ptr<std::byte>> ignored_hooks_{};
             std::map<uint64_t, memory_permission> pages_{};
 
+            struct mmio_region
+            {
+                uint64_t address;
+                size_t size;
+                mmio_read_callback read;
+            };
+
+            std::vector<mmio_region> mmio_regions_{};
+
+            std::vector<mmio_region>::const_iterator find_mmio(const uint64_t address, const size_t size) const
+            {
+                return std::ranges::find_if(mmio_regions_, [&](const auto& region) {
+                    return address < region.address + region.size && region.address < address + size;
+                });
+            }
+
+            bool handle_mmio_fault()
+            {
+                if (trapped_address_ == state_.pc || !in_window(trapped_address_, 1))
+                {
+                    return false;
+                }
+                const auto region = find_mmio(trapped_address_, 1);
+                if (region == mmio_regions_.end())
+                {
+                    return false;
+                }
+                uint32_t instruction{};
+                read_memory(state_.pc, &instruction, sizeof(instruction));
+                const auto load = decode_mmio_load(instruction);
+                const auto address = load ? mmio_load_address(state_, instruction, *load) : decoded_load_address{};
+                if (!load || load->size > region->size - (trapped_address_ - region->address) || address.address != trapped_address_)
+                {
+                    violation_ = true;
+                    std::ostringstream message{};
+                    message << "Unsupported native ARM64 MMIO instruction 0x" << std::hex << instruction << " at PC 0x" << state_.pc
+                            << ", address 0x" << trapped_address_;
+                    throw std::runtime_error(message.str());
+                }
+                std::array<std::byte, 16> data{};
+                region->read(trapped_address_ - region->address, data.data(), load->size);
+                if (load->acquire)
+                {
+                    std::atomic_thread_fence(std::memory_order_acquire);
+                }
+                if (load->vector)
+                {
+                    if (load->byte_lane_registers != 0)
+                    {
+                        for (uint32_t i = 0; i < load->byte_lane_registers; ++i)
+                        {
+                            state_.vectors[(load->destination + i) % state_.vectors.size()][0] = data[i];
+                        }
+                    }
+                    else
+                    {
+                        state_.vectors[load->destination] = data;
+                    }
+                }
+                else if (load->destination != 31)
+                {
+                    uint64_t value{};
+                    std::memcpy(&value, data.data(), load->size);
+                    if (load->sign_extend)
+                    {
+                        const auto sign = uint64_t{1} << (load->size * 8 - 1);
+                        value = (value ^ sign) - sign;
+                    }
+                    state_.x[load->destination] = load->wide ? value : static_cast<uint32_t>(value);
+                }
+                if (address.writeback)
+                {
+                    const auto base = (instruction >> 5) & 31;
+                    (base == 31 ? state_.sp : state_.x[base]) = *address.writeback;
+                }
+                state_.pc += 4;
+                return true;
+            }
+
             emulator_hook* add_ignored_hook()
             {
                 // FEX also accepts memory read/write and basic-block hooks without delivering their callbacks.
@@ -850,6 +1061,15 @@ namespace sogen::native_arm64
                 {
                     return false;
                 }
+                if (const auto region = find_mmio(address, size); region != mmio_regions_.end())
+                {
+                    if (write || address < region->address || size > region->size - (address - region->address))
+                    {
+                        return false;
+                    }
+                    region->read(address - region->address, data, size);
+                    return true;
+                }
                 std::vector<std::pair<uint64_t, int>> changed{};
                 const auto restore = utils::finally([&] {
                     for (const auto& [page, original] : changed)
@@ -906,12 +1126,22 @@ namespace sogen::native_arm64
                 {
                     throw std::runtime_error("Unmapping missing native ARM64 memory");
                 }
+                for (const auto& region : mmio_regions_)
+                {
+                    if (address < region.address + region.size && region.address < address + size &&
+                        (address > region.address || address + size < region.address + region.size))
+                    {
+                        unsupported("partially unmapping an MMIO region");
+                    }
+                }
                 check_system(mprotect(reinterpret_cast<void*>(address), size, PROT_NONE), "Unmap guest memory");
                 check_system(madvise(reinterpret_cast<void*>(address), size, MADV_DONTNEED), "Discard guest memory");
                 for (auto page = address; page < address + size; page += page_size)
                 {
                     pages_.erase(page);
                 }
+                std::erase_if(mmio_regions_,
+                              [&](const auto& region) { return region.address >= address && region.address < address + size; });
             }
 
             void apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions) override
@@ -921,6 +1151,10 @@ namespace sogen::native_arm64
                 {
                     throw std::runtime_error("Protecting missing native ARM64 memory");
                 }
+                if (find_mmio(address, size) != mmio_regions_.end())
+                {
+                    unsupported("changing MMIO protection");
+                }
                 check_system(mprotect(reinterpret_cast<void*>(address), size, protection(permissions)), "Protect guest memory");
                 for (auto page = address; page < address + size; page += page_size)
                 {
@@ -928,9 +1162,14 @@ namespace sogen::native_arm64
                 }
             }
 
-            void map_mmio(uint64_t, size_t, mmio_read_callback, mmio_write_callback) override
+            void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read, mmio_write_callback) override
             {
-                unsupported("MMIO; use native timing");
+                if (!read)
+                {
+                    throw std::invalid_argument("Native ARM64 MMIO requires a read callback");
+                }
+                map_memory(address, size, memory_permission::none);
+                mmio_regions_.push_back({address, size, std::move(read)});
             }
         };
     }
