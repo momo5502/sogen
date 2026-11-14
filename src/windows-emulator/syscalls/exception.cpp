@@ -76,7 +76,8 @@ namespace sogen
 
             c.proc.exit_status = error_status;
             c.win_emu.callbacks.on_exception();
-            c.emu.stop();
+            // A hard error ends the emulated process: stop the emulator, not only the CPU that raised it.
+            c.win_emu.stop();
 
             return STATUS_SUCCESS;
         }
@@ -132,7 +133,8 @@ namespace sogen
 
             c.proc.exit_status = record.ExceptionCode;
             c.win_emu.callbacks.on_exception();
-            c.emu.stop();
+            // An unhandled second-chance exception ends the emulated process: stop the emulator, not only the CPU.
+            c.win_emu.stop();
 
             return STATUS_SUCCESS;
         }

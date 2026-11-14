@@ -27,6 +27,7 @@ namespace sogen::syscalls
                                            uint64_t thread_information, uint32_t thread_information_length);
     NTSTATUS handle_NtTerminateThread(const syscall_context& c, handle thread_handle, NTSTATUS exit_status);
     NTSTATUS handle_NtClose(const syscall_context& c, handle h);
+    NTSTATUS handle_NtContinueEx(const syscall_context& c, uint64_t thread_context, uint64_t continue_argument);
 }
 
 namespace sogen::test
@@ -1266,6 +1267,52 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, this->rax(0));
         EXPECT_EQ(thread_ip, this->emu->vcpu(0).x64_cpu().reg(x86_register::r10));
         EXPECT_EQ(instrumentation_callback - this->emu->abi().syscall_abi().syscall_instruction_size(), this->rip(0));
+    }
+
+    TEST_F(RunningThreadContextTest, NtContinueKeepsTheInstructionCacheInStepWithARestoredControlContext)
+    {
+        constexpr uint64_t restored_ip = 0x50000;
+        constexpr uint64_t cached_ip = 0x40000;
+
+        auto buffer = this->context_buffer(0, CONTEXT_CONTROL_64);
+        auto context = buffer.read();
+        context.Rip = restored_ip;
+        buffer.write(context);
+
+        const emulator_object<KCONTINUE_ARGUMENT> continue_argument{this->emu->memory, this->storage + 0x800};
+        KCONTINUE_ARGUMENT argument{};
+        continue_argument.write(argument);
+
+        auto& thread = this->emu->vcpu(0).thread();
+        thread.previous_ip = 0;
+        thread.current_ip = cached_ip;
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtContinueEx(this->context(0), buffer.value(), continue_argument.value()));
+        EXPECT_EQ(restored_ip, this->rip(0));
+        EXPECT_EQ(cached_ip, thread.previous_ip);
+        EXPECT_EQ(restored_ip, thread.current_ip);
+    }
+
+    TEST_F(RunningThreadContextTest, NtContinueWithoutAControlContextLeavesTheInstructionCacheAlone)
+    {
+        constexpr uint64_t cached_ip = 0x40000;
+        constexpr uint64_t previous_ip = 0x30000;
+
+        const auto buffer = this->context_buffer(0, CONTEXT_INTEGER_64, written_rax);
+
+        const emulator_object<KCONTINUE_ARGUMENT> continue_argument{this->emu->memory, this->storage + 0x800};
+        KCONTINUE_ARGUMENT argument{};
+        continue_argument.write(argument);
+
+        auto& thread = this->emu->vcpu(0).thread();
+        thread.previous_ip = previous_ip;
+        thread.current_ip = cached_ip;
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtContinueEx(this->context(0), buffer.value(), continue_argument.value()));
+        EXPECT_EQ(thread_ip, this->rip(0));
+        EXPECT_EQ(written_rax, this->rax(0));
+        EXPECT_EQ(previous_ip, thread.previous_ip);
+        EXPECT_EQ(cached_ip, thread.current_ip);
     }
 
     TEST_F(RunningThreadContextTest, DeserializedThreadIsDeletedOnlyAfterItsVcpuUnloadsIt)
