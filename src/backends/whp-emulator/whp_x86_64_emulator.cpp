@@ -34,6 +34,11 @@ namespace sogen::whp
         constexpr size_t maximum_vcpu_count = 64;
         constexpr uint64_t page_size = 0x1000;
         constexpr uint64_t trap_flag_bit = 0x100ull;
+        // DR6's B0-B3: the breakpoints a debug exception met.
+        constexpr uint64_t dr6_breakpoint_hits = 0xFull;
+        constexpr int debug_address_register_count = 4;
+        // DR7's L and G bits of one breakpoint.
+        constexpr uint64_t dr7_enable_bits = 0x3ull;
         constexpr uint64_t syscall_instruction_size = 2;
         constexpr uint64_t page_table_entry_present = 1ull << 0;
         constexpr uint64_t page_table_entry_writable = 1ull << 1;
@@ -895,10 +900,26 @@ namespace sogen::whp
 
         class whp_x86_64_emulator;
 
+        // The B0-B3 flags of the breakpoints that DR7 enables.
+        uint64_t enabled_breakpoint_hits(const uint64_t dr6, const uint64_t dr7)
+        {
+            uint64_t hits = 0;
+            for (int i = 0; i < debug_address_register_count; ++i)
+            {
+                if (((dr7 >> (i * 2)) & dr7_enable_bits) != 0)
+                {
+                    hits |= dr6 & (1ull << i);
+                }
+            }
+
+            return hits;
+        }
+
         struct pending_mmio_step
         {
             uint64_t page_base{};
             uint64_t original_rflags{};
+            uint64_t dr6{};
             bool had_trap_flag{};
             bool allow_debug_delivery{};
             bool is_write{};
@@ -909,6 +930,7 @@ namespace sogen::whp
         {
             std::optional<uint64_t> page_base{};
             std::optional<uint64_t> patched_breakpoint{};
+            uint64_t dr6{};
             bool had_trap_flag{};
             bool stop_after_step{};
         };
@@ -3011,6 +3033,7 @@ namespace sogen::whp
                     pending_execution_step state{};
                     state.page_base = page_base;
                     state.had_trap_flag = (rflags.Reg64 & trap_flag_bit) != 0;
+                    state.dr6 = save_debug_status(vcpu, state.had_trap_flag);
                     state.stop_after_step = stop_after_step;
 
                     rflags.Reg64 |= trap_flag_bit;
@@ -3078,7 +3101,40 @@ namespace sogen::whp
                     vcpu.stop_requested_ = true;
                 }
 
-                return !state->had_trap_flag;
+                return !state->had_trap_flag && !restore_debug_status(vcpu, state->dr6);
+            }
+
+            // Before a step: keeps DR6 for restore_debug_status. A step of sogen's own also clears B0-B3, which only some
+            // debug exceptions clear, so that B0-B3 after it are the breakpoints the stepped instruction met: a flag the
+            // guest left there (a CONTEXT with Dr6 = B0 given to NtContinue) is no hit of the step. A step the guest's own
+            // trap flag asked for leaves DR6 to the processor.
+            static uint64_t save_debug_status(whp_vcpu& vcpu, const bool guest_steps)
+            {
+                auto dr6 = vcpu.get_register(WHvX64RegisterDr6);
+                const auto saved = dr6.Reg64;
+                if (!guest_steps && (saved & dr6_breakpoint_hits) != 0)
+                {
+                    dr6.Reg64 = saved & ~dr6_breakpoint_hits;
+                    vcpu.set_register(WHvX64RegisterDr6, dr6);
+                }
+
+                return saved;
+            }
+
+            // A step of sogen's own makes the processor set DR6.BS for a debug exception the guest never sees, so DR6
+            // goes back to what it held. The stepped instruction can still meet a breakpoint the guest enabled: that
+            // exception reaches the guest, with the B0-B3 flags of its breakpoints. Returns whether it does.
+            static bool restore_debug_status(whp_vcpu& vcpu, const uint64_t saved_dr6)
+            {
+                auto dr6 = vcpu.get_register(WHvX64RegisterDr6);
+
+                // DR7 decides only which B0-B3 flags count, so it is read only when the step set one.
+                const auto hits = (dr6.Reg64 & dr6_breakpoint_hits) == 0
+                                      ? uint64_t{0}
+                                      : enabled_breakpoint_hits(dr6.Reg64, vcpu.get_register(WHvX64RegisterDr7).Reg64);
+                dr6.Reg64 = hits != 0 ? (saved_dr6 & ~dr6_breakpoint_hits) | hits : saved_dr6;
+                vcpu.set_register(WHvX64RegisterDr6, dr6);
+                return hits != 0;
             }
 
             // Assumes partition_mutex_ is held.
@@ -3180,6 +3236,7 @@ namespace sogen::whp
                 state.page_base = page_base;
                 state.original_rflags = original_rflags;
                 state.had_trap_flag = (original_rflags & 0x100) != 0;
+                state.dr6 = save_debug_status(vcpu, state.had_trap_flag);
                 state.allow_debug_delivery = state.had_trap_flag;
                 state.is_write = is_write;
 
@@ -3286,7 +3343,7 @@ namespace sogen::whp
 
                 vcpu.set_register(WHvX64RegisterRflags, rflags);
 
-                return !state.allow_debug_delivery;
+                return !state.allow_debug_delivery && !restore_debug_status(vcpu, state.dr6);
             }
 
             uint64_t* get_page_table_entries(const uint64_t page_gpa)
