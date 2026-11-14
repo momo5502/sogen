@@ -24,11 +24,15 @@ The seccomp filter and no-new-privileges setting are irreversible for that host 
 This shares the host address space and is not a security boundary for untrusted programs.
 
 Unimplemented operations throw: snapshots, MMIO, counter interception, instruction limits,
-stepping, execution hooks, recoverable faults, guest interrupt hooks and
+stepping, execution hooks, recoverable memory faults and
 enabled hardware debug registers. Disabled debug registers read as zero and accept zero.
+Hardware `SIGILL` is reported through the ARM64 undefined-instruction hook at the faulting PC,
+preserving the guest registers. The shared Windows exception dispatcher delivers
+`STATUS_ILLEGAL_INSTRUCTION` to guest handlers. This includes `MRS CurrentEL`, which is undefined
+at EL0; the Windows UCRT's handler recognizes the probe and advances its saved PC itself.
 Memory read/write and basic-block hooks are accepted but never fire, matching Sogen's FEX
 backend. This permits the analyzer's default memory watches but produces no memory-access observations.
-Unexpected guest signals terminate the run with PC and signal diagnostics. The common Windows
+Other unsupported guest signals terminate the run with PC and signal diagnostics. The common Windows
 setup skips optional hooks using the backend's reported capabilities and commits thread stacks
 in full because restartable faults are unavailable.
 
@@ -38,6 +42,11 @@ It links `kernel32` without the CRT, calls `GetStdHandle` and `WriteFile`, check
 then calls `ExitProcess`. The Windows DLLs route the write through `NtWriteFile` using the shared Windows
 process/thread setup. There are no handwritten syscall instructions or hardcoded service numbers in the sample.
 No generated PE or object files belong in git.
+
+`native-arm64-illegal-instruction` is a separate regression sample. Its Windows vectored exception
+handler checks the illegal-instruction status, faulting PC and unchanged X16, advances the saved PC,
+and verifies execution resumes after `MRS CurrentEL`. The backend regression also covers X0, X16,
+X30 and XZR destinations and checks unchanged NZCV, SP and other general registers.
 
 On the phone, from `~/sogen`, after committing on the PC and pushing the branch to the phone:
 

@@ -294,7 +294,7 @@ namespace sogen::native_arm64
 
             bool supports_interrupt_hooks() const override
             {
-                return false;
+                return true;
             }
 
             bool supports_memory_violation_hooks() const override
@@ -499,6 +499,12 @@ namespace sogen::native_arm64
                         dispatch_svc();
                         continue;
                     }
+                    if (trapped_signal_ == SIGILL && trapped_code_ > 0 && interrupt_hook_)
+                    {
+                        const auto callback = interrupt_hook_;
+                        callback(*this, static_cast<int>(arm64_exception_class::undefined_instruction));
+                        continue;
+                    }
                     violation_ = true;
                     std::ostringstream message{};
                     message << "Native ARM64 guest signal " << trapped_signal_ << " (code " << trapped_code_ << ") at PC 0x" << std::hex
@@ -611,9 +617,14 @@ namespace sogen::native_arm64
                 return reinterpret_cast<emulator_hook*>(&svc_hook_);
             }
 
-            emulator_hook* hook_interrupt(interrupt_hook_callback) override
+            emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
             {
-                unsupported("guest interrupt hooks");
+                if (!callback || interrupt_hook_)
+                {
+                    throw std::invalid_argument("Native ARM64 requires exactly one nonempty interrupt hook");
+                }
+                interrupt_hook_ = std::move(callback);
+                return reinterpret_cast<emulator_hook*>(&interrupt_hook_);
             }
 
             emulator_hook* hook_memory_violation(memory_violation_hook_callback) override
@@ -658,6 +669,11 @@ namespace sogen::native_arm64
                     svc_hook_ = {};
                     return;
                 }
+                if (hook == reinterpret_cast<emulator_hook*>(&interrupt_hook_) && interrupt_hook_)
+                {
+                    interrupt_hook_ = {};
+                    return;
+                }
                 const auto ignored = std::ranges::find_if(
                     ignored_hooks_, [hook](const auto& entry) { return hook == reinterpret_cast<emulator_hook*>(entry.get()); });
                 if (ignored == ignored_hooks_.end())
@@ -684,6 +700,7 @@ namespace sogen::native_arm64
             bool missing_fpsimd_{};
             bool violation_{};
             instruction_hook_callback svc_hook_{};
+            interrupt_hook_callback interrupt_hook_{};
             std::vector<std::unique_ptr<std::byte>> ignored_hooks_{};
             std::map<uint64_t, memory_permission> pages_{};
 
