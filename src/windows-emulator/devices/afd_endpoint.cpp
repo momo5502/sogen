@@ -2173,6 +2173,13 @@ namespace sogen
                 object_reference new_event{};
                 if (select_info.Event.bits != 0)
                 {
+                    // Referenced with ExEventObjectType: a wrong type fails before the previous registration changes, so a
+                    // non-event (such as the socket's own handle) is never held.
+                    if (select_info.Event.value.type != handle_types::event)
+                    {
+                        return STATUS_OBJECT_TYPE_MISMATCH;
+                    }
+
                     const auto retained = win_emu.process.retain_object(select_info.Event);
                     if (!retained)
                     {
