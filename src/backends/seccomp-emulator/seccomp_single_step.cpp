@@ -19,6 +19,7 @@
 #include <cerrno>
 #include <cstring>
 #include <system_error>
+#include <tuple>
 
 namespace sogen::seccomp
 {
@@ -109,7 +110,7 @@ namespace sogen::seccomp
         [[noreturn]] void terminate_trace(const pid_t process)
         {
             constexpr char message[] = "Seccomp: failed to restore traced host state\n";
-            write(STDERR_FILENO, message, sizeof(message) - 1);
+            std::ignore = write(STDERR_FILENO, message, sizeof(message) - 1);
             kill(process, SIGKILL);
             _exit(1);
         }
