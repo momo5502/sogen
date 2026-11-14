@@ -1045,15 +1045,24 @@ namespace sogen::seccomp
                 {
                     const auto address = (*execution)->address;
                     const auto size = (*execution)->size;
+                    std::vector<mapped_page*> changed{};
+                    auto rollback = utils::finally([&] {
+                        for (auto* page : changed)
+                        {
+                            ++page->execution_hook_count;
+                        }
+                    });
                     for (auto page = pages_.lower_bound(address & ~(page_size - 1)); page != pages_.end() && page->first < address + size;
                          ++page)
                     {
                         if (page->second.execution_hook_count != 0)
                         {
+                            changed.push_back(&page->second);
                             --page->second.execution_hook_count;
                         }
                     }
                     refresh_protection(address, size);
+                    rollback.cancel();
                     execution_hooks_.erase(execution);
                     return;
                 }

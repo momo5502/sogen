@@ -764,6 +764,12 @@ namespace sogen::test
         auto* const target_pointer = reinterpret_cast<void*>(target);
         ASSERT_TRUE(memory.allocate_memory(target, size, memory_permission::all));
         auto* hook = machine->hook_memory_execution(target, [](cpu_interface&, uint64_t) {});
+        size_t executions{};
+        emulator_hook* remaining{};
+        remaining = machine->hook_memory_execution(target, [&](cpu_interface&, uint64_t) {
+            ++executions;
+            machine->delete_hook(remaining);
+        });
         ASSERT_EQ(munmap(target_pointer, size), 0);
         EXPECT_THROW(machine->delete_hook(hook), std::system_error);
 
@@ -781,12 +787,6 @@ namespace sogen::test
         machine->write_memory(code_address, std::array{0x1400C000u, 0xD4000001u});
         machine->write_memory(target, std::array{0xD28000E0u, 0xD61F0040u});
         machine->reg(arm64_register::x2, code_address + 4);
-        size_t executions{};
-        emulator_hook* replacement{};
-        replacement = machine->hook_memory_execution(target, [&](cpu_interface&, uint64_t) {
-            ++executions;
-            machine->delete_hook(replacement);
-        });
 
         ASSERT_NO_THROW(machine->start());
         EXPECT_EQ(executions, 1u);
