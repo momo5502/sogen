@@ -274,7 +274,7 @@ namespace sogen
 
             auto error = process_error::invalid_process;
             this->on_thread(thread_id, [&](emulator_thread& thread) {
-                thread.set_impersonation_token(impersonation_token);
+                this->emulator_.process.impersonate_token(thread, impersonation_token);
                 error = process_error::none;
             });
             return error;
@@ -283,7 +283,11 @@ namespace sogen
         process_thread_token_result get_thread_token(const uint32_t thread_id) override
         {
             process_thread_token_result result{.error = process_error::invalid_process};
-            this->on_thread(thread_id, [&](const emulator_thread& thread) { result = {.token = thread.impersonation_token.bits}; });
+            this->on_thread(thread_id, [&](const emulator_thread& thread) {
+                // Another process can only be told the token's identity: its object belongs to this one.
+                const auto* opened = this->emulator_.process.tokens.get(thread.impersonation_token);
+                result = {.token = opened ? opened->identity.bits : thread.impersonation_token.bits};
+            });
             return result;
         }
 

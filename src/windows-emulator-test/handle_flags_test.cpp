@@ -272,9 +272,16 @@ namespace sogen::test
         ASSERT_NE(nullptr, events.get(duplicate));
         EXPECT_EQ(1u, events.size());
 
-        // The close-only form takes no target handle and just closes the source.
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, duplicate, CURRENT_PROCESS,
+        // The close-only form passes no target process and just closes the source.
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, duplicate, handle{},
                                                                      {this->emu->memory}, 0, 0, duplicate_close_source));
         EXPECT_EQ(0u, events.size());
+
+        // A NULL target handle still duplicates, so closing the source leaves the object open.
+        const auto kept = events.store(event{});
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, kept, CURRENT_PROCESS, {this->emu->memory}, 0, 0,
+                                                     duplicate_same_access | duplicate_close_source));
+        EXPECT_EQ(1u, events.size());
     }
 }

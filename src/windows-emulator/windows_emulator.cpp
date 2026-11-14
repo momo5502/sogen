@@ -1661,7 +1661,7 @@ namespace sogen
         }
         case 0xF003:
             this->callbacks.on_fast_fail(cpu.reg<uint32_t>(arm64_register::w0));
-            this->process.mark_exited(STATUS_FAIL_FAST_EXCEPTION);
+            this->process.mark_exited(*this, STATUS_FAIL_FAST_EXCEPTION);
             this->stop();
             return;
         case 0xF004:
@@ -1776,7 +1776,7 @@ namespace sogen
                 return;
             case 41:
                 this->callbacks.on_fast_fail(acting.reg<uint32_t>(x86_register::ecx));
-                this->process.mark_exited(STATUS_FAIL_FAST_EXCEPTION);
+                this->process.mark_exited(*this, STATUS_FAIL_FAST_EXCEPTION);
                 this->stop();
                 return;
             case 45:

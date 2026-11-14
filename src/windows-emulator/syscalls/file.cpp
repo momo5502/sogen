@@ -1753,7 +1753,7 @@ namespace sogen
             template <typename Predicate>
             size_t cancel_change_watches(const syscall_context& c, file& directory, const Predicate& matches)
             {
-                const auto cancelled = std::erase_if(directory.change_watches, [&](const directory_change_watch& watch) {
+                const auto cancelled = std::erase_if(directory.change_watches, [&](directory_change_watch& watch) {
                     if (!matches(watch))
                     {
                         return false;
@@ -1769,6 +1769,7 @@ namespace sogen
                         event->set_signaled(true);
                     }
 
+                    release_change_watch_event(c.proc, watch);
                     return true;
                 });
 

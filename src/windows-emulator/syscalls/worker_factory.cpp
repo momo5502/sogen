@@ -5,6 +5,7 @@
 #include "../worker_factory_support.hpp"
 
 #include <limits>
+#include <utils/finally.hpp>
 
 namespace sogen
 {
@@ -25,10 +26,18 @@ namespace sogen
                 return false;
             }
 
+            // The queued packet keeps a reference of its own: the handle the guest released through can be closed while
+            // the packet waits on the port, and its value can then name another factory.
+            const auto retained_factory = process.worker_factories.duplicate(worker_factory_handle);
+            if (!retained_factory)
+            {
+                return false;
+            }
+
             io_completion_message message{};
             message.io_status_block.Status = STATUS_SUCCESS;
             message.io_status_block.Information = 0;
-            message.worker_factory_handle = worker_factory_handle;
+            message.worker_factory_handle = *retained_factory;
             message.worker_factory_release = true;
             io_completion_wait::insert(win_emu, factory->io_completion_handle, *completion, message);
             return true;
@@ -41,7 +50,11 @@ namespace sogen
                 return;
             }
 
-            auto* factory = win_emu.process.worker_factories.get(message.worker_factory_handle);
+            handle retained_factory = message.worker_factory_handle;
+            const auto release_reference =
+                utils::finally([&] { io_completion_wait::release_handle_reference(win_emu.process, retained_factory); });
+
+            auto* factory = win_emu.process.worker_factories.get(retained_factory);
             if (!factory)
             {
                 return;
@@ -58,7 +71,7 @@ namespace sogen
                 return;
             }
 
-            if (!enqueue_release_completion(win_emu, message.worker_factory_handle))
+            if (!enqueue_release_completion(win_emu, retained_factory))
             {
                 factory->release_pending = false;
             }
@@ -636,7 +649,9 @@ namespace sogen
             auto& wait = *t.await_io_completion;
             wait.type = io_completion_wait_type::remove_multiple;
             wait.io_completion_handle = factory->io_completion_handle;
-            wait.worker_factory_handle = worker_factory_handle;
+            // The wait outlives the handle it was entered through, so it names the factory by the value its object is
+            // stored under, which the object keeps for its whole life.
+            wait.worker_factory_handle = c.proc.worker_factories.find_handle(*factory);
             wait.completion_entries_ptr = mini_packets.value();
             wait.entries_removed_ptr = packets_returned.value();
             wait.max_entries = count;

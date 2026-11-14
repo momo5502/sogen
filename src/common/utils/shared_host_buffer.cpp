@@ -1,4 +1,5 @@
 #include "shared_host_buffer.hpp"
+#include "host_process.hpp"
 
 #include <atomic>
 #include <limits>
@@ -74,13 +75,61 @@ namespace sogen::utils
         }
 
 #if !defined(_WIN32) && SOGEN_NAMED_SHARED_MEMORY
-        // POSIX shared memory names outlive their mappings until unlinked, so every process holding the buffer counts
-        // itself in a header page after the data, and the last one to release it removes the name.
+        // POSIX shared memory names outlive their mappings until unlinked, so every process holding the buffer writes
+        // its host process id to a slot in a header page after the data, and the name goes once no live holder is
+        // left. A process that is killed or crashes never releases its slot, so its id is what tells the others its
+        // holding is over, and the slot can be taken over.
         constexpr size_t holder_header_size = page_size;
+        constexpr size_t max_holders = 64;
 
-        std::atomic_ref<uint32_t> holder_count(uint8_t* data, const size_t size)
+        std::atomic_ref<uint32_t> holder_slot(uint8_t* data, const size_t size, const size_t index)
         {
-            return std::atomic_ref<uint32_t>{*reinterpret_cast<uint32_t*>(data + size)};
+            return std::atomic_ref<uint32_t>{reinterpret_cast<uint32_t*>(data + size)[index]};
+        }
+
+        bool has_live_holder(uint8_t* data, const size_t size)
+        {
+            for (size_t index = 0; index < max_holders; ++index)
+            {
+                const auto holder = holder_slot(data, size, index).load();
+                if (holder != 0 && host_process_alive(holder))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool join_holders(uint8_t* data, const size_t size)
+        {
+            const auto self = current_host_process_id();
+            for (size_t index = 0; index < max_holders; ++index)
+            {
+                auto slot = holder_slot(data, size, index);
+                for (auto holder = slot.load(); holder == 0 || !host_process_alive(holder); holder = slot.load())
+                {
+                    if (slot.compare_exchange_weak(holder, self))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        void leave_holders(uint8_t* data, const size_t size)
+        {
+            const auto self = current_host_process_id();
+            for (size_t index = 0; index < max_holders; ++index)
+            {
+                auto holder = self;
+                if (holder_slot(data, size, index).compare_exchange_strong(holder, 0))
+                {
+                    return;
+                }
+            }
         }
 
         uint8_t* map_shared_memory(const int fd, const size_t size)
@@ -195,7 +244,10 @@ namespace sogen::utils
                 throw std::bad_alloc();
             }
 
-            holder_count(buffer.data_, buffer.size_).store(1);
+            if (!join_holders(buffer.data_, buffer.size_))
+            {
+                throw std::bad_alloc();
+            }
         }
 #endif
 
@@ -243,17 +295,12 @@ namespace sogen::utils
             return std::nullopt;
         }
 
-        auto holders = holder_count(buffer.data_, buffer.size_);
-        auto count = holders.load();
-        do
+        if (!has_live_holder(buffer.data_, buffer.size_) || !join_holders(buffer.data_, buffer.size_))
         {
-            if (count == 0)
-            {
-                ::munmap(buffer.data_, buffer.size_ + holder_header_size);
-                buffer.data_ = nullptr;
-                return std::nullopt;
-            }
-        } while (!holders.compare_exchange_weak(count, count + 1));
+            ::munmap(buffer.data_, buffer.size_ + holder_header_size);
+            buffer.data_ = nullptr;
+            return std::nullopt;
+        }
 #endif
 
         if (!buffer.data_)
@@ -315,7 +362,8 @@ namespace sogen::utils
 #elif SOGEN_NAMED_SHARED_MEMORY
             if (this->data_)
             {
-                const auto last_holder = holder_count(this->data_, this->size_).fetch_sub(1) == 1;
+                leave_holders(this->data_, this->size_);
+                const auto last_holder = !has_live_holder(this->data_, this->size_);
                 ::munmap(this->data_, this->size_ + holder_header_size);
                 if (last_holder)
                 {

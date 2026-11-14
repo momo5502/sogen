@@ -1736,7 +1736,7 @@ namespace sogen
 
             directory->change_watches.push_back({
                 .thread_id = c.thread().id,
-                .event = event_handle.bits,
+                .event = retain_change_watch_event(c.proc, event_handle),
                 .io_status_block = io_status_block,
             });
             if (event)

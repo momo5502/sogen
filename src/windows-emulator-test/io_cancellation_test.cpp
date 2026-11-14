@@ -13,6 +13,8 @@ namespace sogen::syscalls
     NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, handle file_handle,
                                      emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_request_to_cancel,
                                      emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
+    NTSTATUS handle_NtNotifyChangeDirectoryFile(const syscall_context& c, handle file_handle, handle event_handle, uint64_t apc_routine,
+                                                uint64_t apc_context, uint64_t io_status_block);
 }
 
 namespace sogen::test
@@ -97,6 +99,28 @@ namespace sogen::test
             handle endpoint{};
             uint64_t storage{};
         };
+    }
+
+    TEST_F(IoCancellationTest, CancellationSignalsTheEventTheWatchWasArmedWith)
+    {
+        auto& events = this->emu->process.events;
+        const auto original = events.store(event{});
+        const auto duplicate = events.duplicate(original);
+        ASSERT_TRUE(duplicate.has_value());
+
+        const syscall_context context{
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+        const auto directory = this->emu->process.files.store(file{});
+        ASSERT_EQ(STATUS_PENDING,
+                  syscalls::handle_NtNotifyChangeDirectoryFile(context, directory, *duplicate, 0, 0, this->status(0x100).value()));
+
+        // The watch reports through the event itself, so closing the handle it was armed with leaves it reporting.
+        ASSERT_TRUE(events.erase(*duplicate));
+        ASSERT_EQ(STATUS_SUCCESS, this->cancel(directory));
+
+        EXPECT_EQ(STATUS_CANCELLED, this->status(0x100).read().Status);
+        ASSERT_NE(nullptr, events.get(original));
+        EXPECT_TRUE(events.get(original)->is_signaled());
     }
 
     TEST_F(IoCancellationTest, IdleThreadsHaveNoPendingIo)

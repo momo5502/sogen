@@ -343,6 +343,12 @@ namespace sogen
         // Every duplicate is a handle value of its own, as on Windows, referring to the same object.
         std::optional<handle> duplicate(const handle h) override
         {
+            return this->duplicate_at(h, std::nullopt);
+        }
+
+        // An inherited duplicate arrives with the value its parent used, so the caller can ask for that value.
+        std::optional<handle> duplicate_at(const handle h, const std::optional<handle> at)
+        {
             if (this->block_mutation_)
             {
                 throw std::runtime_error("Mutation of handle store is blocked!");
@@ -354,8 +360,26 @@ namespace sogen
                 return std::nullopt;
             }
 
+            index_type index{};
+            if (at)
+            {
+                if (at->value.type != Type || at->value.is_pseudo || at->value.id == 0)
+                {
+                    return std::nullopt;
+                }
+
+                index = static_cast<index_type>(at->value.id);
+                if (!this->is_index_free(index))
+                {
+                    return std::nullopt;
+                }
+            }
+            else
+            {
+                index = this->find_free_index();
+            }
+
             ++static_cast<ref_counted_object&>(entry->second).ref_count;
-            const auto index = this->find_free_index();
             this->aliases_.emplace(index, entry->first);
             this->alias_attributes_.emplace(index, handle_attributes{});
             return this->make_handle(index);
@@ -445,10 +469,12 @@ namespace sogen
                 if (target == index)
                 {
                     this->alias_attributes_.erase(alias_index);
+                    this->free_indices_.push_back(alias_index);
                 }
             }
             std::erase_if(this->aliases_, [&](const auto& alias) { return alias.second == index; });
             auto new_iter = this->store_.erase(entry);
+            this->free_indices_.push_back(index);
             ++this->generation_;
             return {new_iter, true};
         }
@@ -466,6 +492,7 @@ namespace sogen
                 const auto target = alias->second;
                 this->aliases_.erase(alias);
                 this->alias_attributes_.erase(index);
+                this->free_indices_.push_back(index);
                 return this->erase(this->store_.find(target)).second;
             }
 
@@ -509,6 +536,8 @@ namespace sogen
             buffer.read_map(this->store_);
             buffer.read_map(this->aliases_);
             buffer.read_map(this->alias_attributes_);
+            this->free_indices_.clear();
+            this->next_free_index_ = 1;
             ++this->generation_;
         }
 
@@ -600,18 +629,29 @@ namespace sogen
             return index ? this->store_.find(*index) : this->store_.end();
         }
 
-        uint32_t find_free_index()
+        bool is_index_free(const index_type index) const
         {
-            uint32_t index = 1;
-            for (; index > 0; ++index)
+            return !this->store_.contains(index) && !this->aliases_.contains(index);
+        }
+
+        index_type find_free_index()
+        {
+            while (!this->free_indices_.empty())
             {
-                if (!this->store_.contains(index) && !this->aliases_.contains(index))
+                const auto index = this->free_indices_.back();
+                this->free_indices_.pop_back();
+                if (this->is_index_free(index))
                 {
-                    break;
+                    return index;
                 }
             }
 
-            return index;
+            while (!this->is_index_free(this->next_free_index_))
+            {
+                ++this->next_free_index_;
+            }
+
+            return this->next_free_index_++;
         }
 
         bool block_mutation_{false};
@@ -619,6 +659,10 @@ namespace sogen
         // Duplicated handle values, mapped to the index their object is stored under.
         std::map<index_type, index_type> aliases_{};
         std::map<index_type, handle_attributes> alias_attributes_{};
+        // Closed values, reused before fresh ones: with a value per duplicate, searching for a free one from the start
+        // would visit every value in use. An entry an explicit id took back is skipped, not trusted.
+        std::vector<index_type> free_indices_{};
+        index_type next_free_index_{1};
         uint64_t generation_{};
     };
 

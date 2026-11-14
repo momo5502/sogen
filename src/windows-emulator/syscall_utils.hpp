@@ -287,22 +287,31 @@ namespace sogen
         return resolve_argument<T>(context, index++);
     }
 
-    inline handle resolve_token(const syscall_context& c, const handle token)
+    // The token object a handle names, which is the impersonated one for the thread's pseudo handles.
+    inline handle resolve_token_object(const syscall_context& c, const handle token)
     {
-        if (token == CURRENT_THREAD_TOKEN || token == CURRENT_THREAD_EFFECTIVE_TOKEN)
+        if (token != CURRENT_THREAD_TOKEN && token != CURRENT_THREAD_EFFECTIVE_TOKEN)
         {
-            const auto impersonation = c.vcpu.active_thread ? c.vcpu.active_thread->impersonation_token : handle{};
-            if (impersonation != 0 || token == CURRENT_THREAD_TOKEN)
-            {
-                return impersonation;
-            }
+            return token;
+        }
+
+        const auto impersonation = c.vcpu.active_thread ? c.vcpu.active_thread->impersonation_token : handle{};
+        if (impersonation == 0 && token == CURRENT_THREAD_EFFECTIVE_TOKEN)
+        {
             return CURRENT_PROCESS_TOKEN;
         }
-        if (const auto* opened = c.proc.tokens.get(token))
+
+        return impersonation;
+    }
+
+    inline handle resolve_token(const syscall_context& c, const handle token)
+    {
+        const auto requested = resolve_token_object(c, token);
+        if (const auto* opened = c.proc.tokens.get(requested))
         {
             return opened->identity;
         }
-        return token;
+        return requested;
     }
 
     inline handle open_token(const syscall_context& c, const handle identity,

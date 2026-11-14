@@ -424,6 +424,11 @@ namespace sogen
                              bool initial_thread = false, uint64_t stack_commit_size = 0);
         void terminate_thread(emulator_thread& thread, NTSTATUS thread_exit_status);
 
+        // PsImpersonateClient keeps the token object itself, so the thread keeps the privileges of the token it was
+        // given and the guest closing that handle does not end the impersonation. A token identity is not an object
+        // and is kept as it is.
+        void impersonate_token(emulator_thread& thread, handle token);
+
         std::optional<uint16_t> find_atom(std::u16string_view name);
         uint16_t add_or_find_atom(std::u16string name);
         bool delete_atom(const std::u16string& name);
@@ -717,7 +722,7 @@ namespace sogen
         void post_job_notification(job_object& job, uint32_t message, uint32_t member_process_id);
         // Posts the exit notifications of jobs associated with the completion port, whose member processes run elsewhere.
         void post_exited_job_processes(windows_emulator& win_emu, std::optional<handle> io_completion_handle);
-        void mark_exited(NTSTATUS status);
+        void mark_exited(windows_emulator& win_emu, NTSTATUS status);
         std::optional<handle> install_shared_object(const process_shared_object& shared, std::optional<handle> at = std::nullopt);
         // A job that kills its processes on close does so when its last handle is closed, which includes the owning
         // process exiting.
@@ -815,5 +820,10 @@ namespace sogen
         uint64_t next_uuid_time{};
         uint32_t uuid_sequence{};
     };
+
+    // A change watch keeps a reference of its own to the event it reports through: the handle the guest armed it with
+    // can be closed while other handles keep the event alive, and its value can then name another event.
+    uint64_t retain_change_watch_event(process_context& process, handle event_handle);
+    void release_change_watch_event(process_context& process, directory_change_watch& watch);
 
 } // namespace sogen

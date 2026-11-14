@@ -73,10 +73,15 @@ namespace sogen
             // lossy NtPulseEvent semantics. The cooperative scheduler only re-evaluates readiness at context
             // switches, so wake the current waiters explicitly while the event is signaled.
 
-            const auto event_handle = make_handle(handle);
             for (auto& thread : c.proc.threads | std::views::values)
             {
-                if (std::ranges::find(thread.await_objects, event_handle) != thread.await_objects.end())
+                // A duplicate is a handle value of its own, so a waiter is a thread awaiting this object through any
+                // of its values.
+                const auto awaits_this_event = std::ranges::any_of(thread.await_objects, [&](const auto awaited) {
+                    return awaited.value.type == handle_types::event && c.proc.events.get(awaited) == entry;
+                });
+
+                if (awaits_this_event)
                 {
                     (void)thread.is_thread_ready(c.win_emu);
                 }

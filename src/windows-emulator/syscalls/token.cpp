@@ -70,7 +70,7 @@ namespace sogen
             // Impersonation tokens are modeled as the process impersonating itself, so they share its privileges.
             std::vector<token_privilege>* find_token_privileges(const syscall_context& c, const handle requested_token)
             {
-                if (auto* opened = c.proc.tokens.get(requested_token); opened && opened->privileges)
+                if (auto* opened = c.proc.tokens.get(resolve_token_object(c, requested_token)); opened && opened->privileges)
                 {
                     return &*opened->privileges;
                 }
@@ -1158,6 +1158,12 @@ namespace sogen
                 previous.reserve(changes.size());
                 for (const auto& [index, attributes] : changes)
                 {
+                    // SepAdjustPrivileges clears a removed privilege without reporting its previous state.
+                    if (attributes & se_privilege_removed)
+                    {
+                        continue;
+                    }
+
                     previous.push_back({.luid_low = (*privileges)[index].luid, .attributes = (*privileges)[index].attributes});
                 }
 

@@ -3690,6 +3690,14 @@ namespace sogen
             return !name.empty() && name.find(u'\\') == std::u16string_view::npos;
         }
 
+        // A duplicate is a handle value of its own, so a station is named by the value its object is stored under,
+        // which the object keeps for its whole life. The interactive station has no object and is its own name.
+        uint64_t window_station_identity(const syscall_context& c, const uint64_t station)
+        {
+            const auto* object = c.proc.window_stations.get(make_handle(station));
+            return object ? c.proc.window_stations.find_handle(*object).bits : station;
+        }
+
         uint64_t find_window_station(const syscall_context& c, const std::u16string_view name)
         {
             if (utils::string::equals_ignore_case(name, std::u16string_view{u"WinSta0"}))
@@ -3764,14 +3772,15 @@ namespace sogen
                     return 0;
                 }
 
-                // Each open is its own reference, so closing one handle must not take the station away from the
-                // other. The interactive station is not in the store and cannot be closed.
-                if (existing != interactive_window_station)
+                // Each open is a handle of its own, so closing one must not take the station away from the other.
+                // The interactive station is not in the store and cannot be closed.
+                if (existing == interactive_window_station)
                 {
-                    c.proc.window_stations.duplicate(make_handle(existing));
+                    return existing;
                 }
 
-                return existing;
+                const auto opened = c.proc.window_stations.duplicate(make_handle(existing));
+                return opened ? opened->bits : 0;
             }
 
             window_station station{};
@@ -3786,14 +3795,14 @@ namespace sogen
                 return FALSE;
             }
 
-            c.proc.process_window_station = station.bits;
+            c.proc.process_window_station = window_station_identity(c, station.bits);
             return TRUE;
         }
 
         BOOL handle_NtUserCloseWindowStation(const syscall_context& c, const handle station)
         {
-            // The window station a process is assigned to cannot be closed.
-            if (station.bits == c.proc.process_window_station || station.bits == 1)
+            // The window station a process is assigned to cannot be closed, through any of its handle values.
+            if (window_station_identity(c, station.bits) == c.proc.process_window_station || station.bits == 1)
             {
                 return FALSE;
             }
@@ -3827,8 +3836,8 @@ namespace sogen
             const auto station = c.proc.process_window_station;
             if (const auto existing = find_desktop(c, station, name); existing != 0)
             {
-                c.proc.desktops.duplicate(make_handle(existing));
-                return existing;
+                const auto opened = c.proc.desktops.duplicate(make_handle(existing));
+                return opened ? opened->bits : 0;
             }
 
             desktop desk{};

@@ -353,8 +353,8 @@ namespace sogen
                 {
                     return token == CURRENT_PROCESS_TOKEN ? STATUS_BAD_TOKEN_TYPE : STATUS_INVALID_HANDLE;
                 }
-                thread->set_impersonation_token(token);
 
+                c.proc.impersonate_token(*thread, c.proc.tokens.get(requested_token) ? requested_token : token);
                 return STATUS_SUCCESS;
             }
 
@@ -943,8 +943,16 @@ namespace sogen
             {
                 return STATUS_CANT_OPEN_ANONYMOUS;
             }
-            token_handle.write(open_token(c, impersonation_token));
 
+            // NtOpenThreadTokenEx opens the token object the thread impersonates, so the privileges it reports and
+            // adjusts are that token's own.
+            if (const auto opened = c.proc.tokens.duplicate(impersonation_token))
+            {
+                token_handle.write(*opened);
+                return STATUS_SUCCESS;
+            }
+
+            token_handle.write(open_token(c, impersonation_token));
             return STATUS_SUCCESS;
         }
 
@@ -962,7 +970,7 @@ namespace sogen
             {
                 return STATUS_INVALID_HANDLE;
             }
-            thread->set_impersonation_token(ANONYMOUS_IMPERSONATION_TOKEN);
+            c.proc.impersonate_token(*thread, ANONYMOUS_IMPERSONATION_TOKEN);
             return STATUS_SUCCESS;
         }
 

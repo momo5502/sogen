@@ -22,6 +22,9 @@ namespace sogen::syscalls
                                             emulator_object<ULONG> return_length);
     NTSTATUS handle_NtPrivilegeCheck(const syscall_context& c, handle client_token, emulator_pointer required_privileges,
                                      emulator_object<BOOLEAN> result);
+    NTSTATUS handle_NtDuplicateToken(const syscall_context& c, handle requested_token, ACCESS_MASK desired_access,
+                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, BOOLEAN effective_only,
+                                     TOKEN_TYPE type, emulator_object<handle> new_token_handle);
 }
 
 namespace sogen::test
@@ -174,6 +177,23 @@ namespace sogen::test
         EXPECT_EQ(STATUS_NO_TOKEN, syscalls::handle_NtOpenThreadToken(this->context(), CURRENT_THREAD, 0, true, input));
     }
 
+    TEST_F(TokenInformationTest, ImpersonatingATokenKeepsThePrivilegesOfThatToken)
+    {
+        const emulator_object<handle> duplicated{this->emu->memory, this->storage + 0x200};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateToken(this->context(), CURRENT_PROCESS_TOKEN, 0, {this->emu->memory}, FALSE,
+                                                                    TokenImpersonation, duplicated));
+        const auto impersonated = duplicated.read();
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtAdjustPrivilegesToken(this->context(), impersonated, true, 0, 0, 0, {this->emu->memory}));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetInformationThread(this->context(), CURRENT_THREAD, ThreadImpersonationToken,
+                                                                          duplicated.value(), sizeof(handle)));
+
+        // PsImpersonateClient keeps the token object itself, so the thread token is that token, with its own privileges.
+        const auto enabled = [](const auto& privilege) { return (privilege.second & 2) != 0; };
+        EXPECT_TRUE(std::ranges::none_of(this->privileges(CURRENT_THREAD_TOKEN), enabled));
+        EXPECT_TRUE(std::ranges::any_of(this->privileges(), enabled));
+    }
+
     TEST_F(TokenInformationTest, RejectsInvalidThreadAndPrimaryTokenWithoutChangingState)
     {
         EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtImpersonateAnonymousToken(this->context(), handle{}));
@@ -280,6 +300,25 @@ namespace sogen::test
         EXPECT_EQ(1u, (emulator_object<ULONG>{this->emu->memory, previous_state}.read()));
         EXPECT_EQ(23u, (emulator_object<ULONG>{this->emu->memory, previous_state + sizeof(ULONG)}.read()));
         EXPECT_TRUE(std::ranges::none_of(this->privileges(), [](const auto& privilege) { return (privilege.second & 2) != 0; }));
+    }
+
+    TEST_F(TokenInformationTest, RemovingAPrivilegeLeavesItOutOfThePreviousState)
+    {
+        constexpr ULONG se_privilege_removed = 0x4;
+        const auto new_state = this->storage + 0x300;
+        emulator_object<ULONG>{this->emu->memory, new_state}.write(1);
+        emulator_object<ULONG>{this->emu->memory, new_state + sizeof(ULONG)}.write(23);
+        emulator_object<ULONG>{this->emu->memory, new_state + sizeof(ULONG) + 8}.write(se_privilege_removed);
+
+        const auto previous_state = this->storage + 0x380;
+        const emulator_object<ULONG> return_length{this->emu->memory, this->storage + 0x200};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtAdjustPrivilegesToken(this->context(), CURRENT_PROCESS_TOKEN, false, new_state, 0x10,
+                                                                           previous_state, return_length));
+
+        // SepAdjustPrivileges reports no previous state for a privilege it removes.
+        EXPECT_EQ(4u, return_length.read());
+        EXPECT_EQ(0u, (emulator_object<ULONG>{this->emu->memory, previous_state}.read()));
+        EXPECT_TRUE(std::ranges::none_of(this->privileges(), [](const auto& privilege) { return privilege.first == 23; }));
     }
 
     TEST_F(TokenInformationTest, PrivilegeCheckGrantsEmptyAllNecessarySetsAndDeniesUnheldPrivileges)

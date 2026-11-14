@@ -1365,14 +1365,13 @@ namespace sogen
 
             if (c.proc.is_current_process_handle(process_handle))
             {
-                c.proc.terminate_kill_on_close_jobs(c.win_emu);
                 c.win_emu.report_debug_event({
                     .kind = process_debug_event_kind::exit_process,
                     .thread_id = c.thread().id,
                     .exit_status = static_cast<uint32_t>(exit_status),
                 });
 
-                c.proc.mark_exited(exit_status);
+                c.proc.mark_exited(c.win_emu, exit_status);
                 c.win_emu.stop();
                 return STATUS_SUCCESS;
             }

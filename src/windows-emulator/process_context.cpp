@@ -855,6 +855,26 @@ namespace sogen
     }
 
     // Without a port every job with one is posted to, so the scheduler reaches a thread already parked on it.
+    uint64_t retain_change_watch_event(process_context& process, const handle event_handle)
+    {
+        if (event_handle.bits == 0)
+        {
+            return 0;
+        }
+
+        const auto retained = process.events.duplicate(event_handle);
+        return retained ? retained->bits : 0;
+    }
+
+    void release_change_watch_event(process_context& process, directory_change_watch& watch)
+    {
+        if (watch.event != 0)
+        {
+            (void)process.events.erase(watch.event);
+            watch.event = 0;
+        }
+    }
+
     void process_context::post_exited_job_processes(windows_emulator& win_emu, const std::optional<handle> io_completion_handle)
     {
         constexpr uint32_t job_object_msg_active_process_zero = 4;
@@ -928,9 +948,12 @@ namespace sogen
         }
     }
 
-    void process_context::mark_exited(const NTSTATUS status)
+    void process_context::mark_exited(windows_emulator& win_emu, const NTSTATUS status)
     {
         this->exit_status = status;
+        // Closing a kill-on-close job's last handle terminates its processes however their owner exits, so every exit
+        // route reaches the teardown here.
+        this->terminate_kill_on_close_jobs(win_emu);
         this->abandon_shared_mutants();
     }
 
@@ -1041,8 +1064,36 @@ namespace sogen
             return at;
         };
 
+        // A process keeps one local object per shared one, so a second value for an object it already has is another
+        // handle over that entry: a WaitAll naming both then sees one object, and one signal satisfies it once.
+        const auto duplicate_installed = [&](auto& objects) -> std::optional<handle> {
+            for (const auto& [index, object] : objects)
+            {
+                if (!object.shared || object.shared->name() != shared.memory)
+                {
+                    continue;
+                }
+
+                const auto duplicate = objects.duplicate_at(objects.make_handle(index), at);
+                if (duplicate)
+                {
+                    objects.set_attributes(*duplicate, {.inherit = shared.inherit, .protect_from_close = shared.protect_from_close});
+                }
+
+                return duplicate;
+            }
+
+            return std::nullopt;
+        };
+
         if (shared.kind == process_shared_object_kind::event || shared.kind == process_shared_object_kind::mutant)
         {
+            if (const auto installed = shared.kind == process_shared_object_kind::event ? duplicate_installed(this->events)
+                                                                                        : duplicate_installed(this->mutants))
+            {
+                return installed;
+            }
+
             auto state = shared_sync_state::open(shared.memory);
             if (!state)
             {
@@ -1797,6 +1848,18 @@ namespace sogen
         return h;
     }
 
+    void process_context::impersonate_token(emulator_thread& thread, const handle token)
+    {
+        const auto previous = thread.impersonation_token;
+        const auto retained = this->tokens.duplicate(token);
+        thread.set_impersonation_token(retained.value_or(token));
+
+        if (previous != thread.impersonation_token)
+        {
+            (void)this->tokens.erase(previous);
+        }
+    }
+
     void process_context::terminate_thread(emulator_thread& thread, const NTSTATUS thread_exit_status)
     {
         if (!thread.is_terminated())
@@ -1805,6 +1868,7 @@ namespace sogen
         }
 
         thread.exit_status = thread_exit_status;
+        this->impersonate_token(thread, {});
 
         for (auto& entry : this->mutants | std::views::values)
         {

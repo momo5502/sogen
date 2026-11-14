@@ -87,6 +87,16 @@ namespace sogen::test
                 return syscalls::handle_NtUserCreateDesktopEx(this->context(), this->attributes(name), 0, 0, 0, 0, 0);
             }
 
+            const window_station* station_object(const uint64_t station)
+            {
+                return this->emu->process.window_stations.get(make_handle(station));
+            }
+
+            const desktop* desktop_object(const uint64_t desk)
+            {
+                return this->emu->process.desktops.get(make_handle(desk));
+            }
+
             DWORD last_error()
             {
                 return this->emu->vcpu(0).active_thread->teb64->read().LastErrorValue;
@@ -136,7 +146,12 @@ namespace sogen::test
 
         const auto created = this->create_station(u"Sandbox");
         ASSERT_NE(0u, created);
-        EXPECT_EQ(created, this->create_station(u"SANDBOX"));
+        ASSERT_NE(nullptr, this->station_object(created));
+
+        // Each open is a handle of its own to the station that is already there.
+        const auto opened = this->create_station(u"SANDBOX");
+        EXPECT_NE(created, opened);
+        EXPECT_EQ(this->station_object(created), this->station_object(opened));
     }
 
     TEST_F(WindowStationTest, CreateOnlyFailsOnAnExistingStation)
@@ -154,7 +169,8 @@ namespace sogen::test
     {
         const auto first = this->create_station(std::nullopt);
         ASSERT_NE(0u, first);
-        EXPECT_EQ(first, this->create_station(std::nullopt));
+        ASSERT_NE(nullptr, this->station_object(first));
+        EXPECT_EQ(this->station_object(first), this->station_object(this->create_station(std::nullopt)));
     }
 
     TEST_F(WindowStationTest, NamesWithABackslashAreRejected)
@@ -166,8 +182,10 @@ namespace sogen::test
 
     TEST_F(WindowStationTest, CreatingAnExistingDesktopOpensIt)
     {
-        EXPECT_EQ(this->emu->process.default_desktop.bits, this->create_desktop(u"Default"));
-        EXPECT_EQ(this->emu->process.default_desktop.bits, this->create_desktop(u"DEFAULT"));
+        const auto* default_desktop = this->desktop_object(this->emu->process.default_desktop.bits);
+        ASSERT_NE(nullptr, default_desktop);
+        EXPECT_EQ(default_desktop, this->desktop_object(this->create_desktop(u"Default")));
+        EXPECT_EQ(default_desktop, this->desktop_object(this->create_desktop(u"DEFAULT")));
     }
 
     TEST_F(WindowStationTest, DesktopNamesAreScopedToTheirStation)
@@ -180,8 +198,24 @@ namespace sogen::test
 
         const auto second = this->create_desktop(u"Shared");
         ASSERT_NE(0u, second);
-        EXPECT_NE(first, second);
-        EXPECT_EQ(second, this->create_desktop(u"Shared"));
+        ASSERT_NE(nullptr, this->desktop_object(second));
+        EXPECT_NE(this->desktop_object(first), this->desktop_object(second));
+        EXPECT_EQ(this->desktop_object(second), this->desktop_object(this->create_desktop(u"Shared")));
+    }
+
+    TEST_F(WindowStationTest, DesktopsAreScopedToTheStationObjectAndNotItsHandle)
+    {
+        const auto first = this->create_station(u"Sandbox");
+        ASSERT_NE(0u, first);
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserSetProcessWindowStation(this->context(), make_handle(first)));
+        const auto created = this->create_desktop(u"Shared");
+        ASSERT_NE(0u, created);
+
+        // A second handle to the station is a value of its own, and the desktop is there under either of them.
+        const auto second = this->create_station(u"Sandbox");
+        ASSERT_NE(first, second);
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserSetProcessWindowStation(this->context(), make_handle(second)));
+        EXPECT_EQ(this->desktop_object(created), this->desktop_object(this->create_desktop(u"Shared")));
     }
 
     TEST_F(WindowStationTest, EachOpenOfAStationIsItsOwnReference)
@@ -189,13 +223,14 @@ namespace sogen::test
         const auto first = this->create_station(u"Sandbox");
         ASSERT_NE(0u, first);
         const auto second = this->create_station(u"Sandbox");
-        ASSERT_EQ(first, second);
+        ASSERT_NE(first, second);
+        ASSERT_EQ(this->station_object(first), this->station_object(second));
 
         ASSERT_EQ(TRUE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(first)));
-        EXPECT_NE(nullptr, this->emu->process.window_stations.get(make_handle(second)));
+        EXPECT_NE(nullptr, this->station_object(second));
 
         ASSERT_EQ(TRUE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(second)));
-        EXPECT_EQ(nullptr, this->emu->process.window_stations.get(make_handle(second)));
+        EXPECT_EQ(nullptr, this->station_object(second));
     }
 
     TEST_F(WindowStationTest, EachOpenOfADesktopIsItsOwnReference)
@@ -203,13 +238,14 @@ namespace sogen::test
         const auto first = this->create_desktop(u"Shared");
         ASSERT_NE(0u, first);
         const auto second = this->create_desktop(u"Shared");
-        ASSERT_EQ(first, second);
+        ASSERT_NE(first, second);
+        ASSERT_EQ(this->desktop_object(first), this->desktop_object(second));
 
         ASSERT_EQ(TRUE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(first)));
-        EXPECT_NE(nullptr, this->emu->process.desktops.get(make_handle(second)));
+        EXPECT_NE(nullptr, this->desktop_object(second));
 
         ASSERT_EQ(TRUE, syscalls::handle_NtUserCloseDesktop(this->context(), make_handle(second)));
-        EXPECT_EQ(nullptr, this->emu->process.desktops.get(make_handle(second)));
+        EXPECT_EQ(nullptr, this->desktop_object(second));
     }
 
     TEST_F(WindowStationTest, OnlyTheInteractiveStationIsVisible)
