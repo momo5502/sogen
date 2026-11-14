@@ -144,7 +144,10 @@ namespace sogen::test
 
                 syscalls::handle_NtGdiInit(this->context());
                 this->dc = static_cast<hdc>(syscalls::handle_NtGdiCreateCompatibleDC(this->context(), 0));
-                const auto bitmap = syscalls::handle_NtGdiCreateBitmap(this->context(), k_side, k_side, 1, 32, 0);
+                const std::vector<uint32_t> background(k_side * k_side, 0xFFFFFFFFu);
+                const auto bits = this->emu->memory.allocate_memory(background.size() * sizeof(uint32_t), memory_permission::read_write);
+                this->emu->memory.write_memory(bits, background.data(), background.size() * sizeof(uint32_t));
+                const auto bitmap = syscalls::handle_NtGdiCreateBitmap(this->context(), k_side, k_side, 1, 32, bits);
                 ASSERT_NE(this->dc, 0);
                 ASSERT_NE(bitmap, 0u);
                 syscalls::handle_NtGdiSelectBitmap(this->context(), this->dc, make_handle(bitmap));
@@ -213,6 +216,14 @@ namespace sogen::test
                         .top = baseline - bitmap->top,
                         .right = origin_x + bitmap->left + bitmap->width,
                         .bottom = baseline - bitmap->top + bitmap->height};
+            }
+
+            COLORREF bottom_edge_color(const gdi_font_reference& font, const uint32_t index, const bool right)
+            {
+                const auto bitmap = this->emu->process.gdi_font_resources.rasterize(font, index);
+                const auto offset = (static_cast<size_t>(bitmap->height) - 1) * bitmap->width + (right ? bitmap->width - 1 : 0);
+                const auto shade = 255u - bitmap->coverage.at(offset);
+                return shade * 0x010101u;
             }
 
             int32_t ascent_of(const gdi_font_reference& font)
@@ -292,8 +303,8 @@ namespace sogen::test
             EXPECT_EQ(k_black, this->pixel(first.left, first.top));
             EXPECT_EQ(k_black, this->pixel(first.right - 1, first.bottom - 1));
             EXPECT_EQ(k_white, this->pixel(first.right, (first.top + first.bottom) / 2));
-            EXPECT_EQ(k_black, this->pixel(second.left, second.bottom - 1));
-            EXPECT_EQ(k_black, this->pixel(second.right - 1, second.bottom - 1));
+            EXPECT_EQ(this->bottom_edge_color(reference, 3, false), this->pixel(second.left, second.bottom - 1));
+            EXPECT_EQ(this->bottom_edge_color(reference, 3, true), this->pixel(second.right - 1, second.bottom - 1));
             EXPECT_EQ(k_white, this->pixel(second.right, (second.top + second.bottom) / 2));
         }
 
@@ -309,7 +320,7 @@ namespace sogen::test
 
             EXPECT_EQ(orange, this->pixel(2, 2));
             EXPECT_EQ(orange, this->pixel(2 + advance - 1, 2 + metrics.ascent + metrics.descent - 1));
-            EXPECT_EQ(k_black, this->pixel(2 + advance / 2, 2 + metrics.ascent));
+            EXPECT_EQ(k_black, this->pixel(2 + advance / 2, 2 + metrics.ascent - 1));
             EXPECT_EQ(k_white, this->pixel(2 + advance, 2));
             EXPECT_EQ(k_white, this->pixel(2, 2 + metrics.ascent + metrics.descent));
         }
@@ -329,8 +340,8 @@ namespace sogen::test
 
             EXPECT_EQ(k_black, this->pixel(first.left, first.top));
             EXPECT_EQ(k_black, this->pixel(first.right - 1, first.bottom - 1));
-            EXPECT_EQ(k_black, this->pixel(second.left, second.bottom - 1));
-            EXPECT_EQ(k_black, this->pixel(second.right - 1, second.bottom - 1));
+            EXPECT_EQ(this->bottom_edge_color(reference, 1, false), this->pixel(second.left, second.bottom - 1));
+            EXPECT_EQ(this->bottom_edge_color(reference, 1, true), this->pixel(second.right - 1, second.bottom - 1));
             EXPECT_EQ(k_white, this->pixel(second.right, (second.top + second.bottom) / 2));
         }
 
@@ -417,16 +428,19 @@ namespace sogen::test
             const auto expected_marked = std::array<uint16_t, 3>{2, 3, 0xFFFF};
             EXPECT_EQ(expected_marked, (this->emu->memory.read_memory<std::array<uint16_t, 3>>(indices)));
 
+            const std::array<char16_t, 2> width_text{u'A', u'中'};
+            const auto width_text_buffer = this->scratch + 0x700;
+            this->emu->memory.write_memory(width_text_buffer, width_text);
             const auto width_buffer = this->scratch + 0x400;
-            ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetCharWidthW(this->context(), this->dc, 0, 2, this->scratch, 2, width_buffer));
+            ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetCharWidthW(this->context(), this->dc, 0, 2, width_text_buffer, 2, width_buffer));
             const auto expected_widths = std::array<int32_t, 2>{8, 16};
             EXPECT_EQ(expected_widths, (this->emu->memory.read_memory<std::array<int32_t, 2>>(width_buffer)));
-            ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetCharWidthW(this->context(), this->dc, 0, 2, this->scratch, 0, width_buffer));
+            ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetCharWidthW(this->context(), this->dc, 0, 2, width_text_buffer, 0, width_buffer));
             const auto expected_float_widths = std::array<float, 2>{8.0f, 16.0f};
             EXPECT_EQ(expected_float_widths, (this->emu->memory.read_memory<std::array<float, 2>>(width_buffer)));
 
             const auto abc_buffer = this->scratch + 0x500;
-            ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetCharABCWidthsW(this->context(), this->dc, 0, 2, this->scratch, 1, abc_buffer));
+            ASSERT_EQ(TRUE, syscalls::handle_NtGdiGetCharABCWidthsW(this->context(), this->dc, 0, 2, width_text_buffer, 1, abc_buffer));
             const auto abcs = this->emu->memory.read_memory<std::array<ABC, 2>>(abc_buffer);
             EXPECT_EQ(0, abcs[0].abcA);
             EXPECT_EQ(8u, abcs[0].abcB);
@@ -443,11 +457,13 @@ namespace sogen::test
 
             const auto fit = this->scratch + 0x610;
             const auto extents = this->scratch + 0x620;
+            constexpr ULONG sentinel = 0xCCCCCCCC;
+            this->emu->memory.write_memory(extents, std::array<ULONG, 2>{sentinel, sentinel});
             const emulator_object<ULONG> fit_count{this->emu->memory, fit};
             ASSERT_EQ(TRUE,
                       syscalls::handle_NtGdiGetTextExtentExW(this->context(), this->dc, this->scratch, 2, 24, fit_count, extents, size, 0));
             EXPECT_EQ(1u, this->emu->memory.read_memory<ULONG>(fit));
-            const auto expected_extents = std::array<ULONG, 2>{16, 32};
+            const auto expected_extents = std::array<ULONG, 2>{16, sentinel};
             EXPECT_EQ(expected_extents, (this->emu->memory.read_memory<std::array<ULONG, 2>>(extents)));
         }
 

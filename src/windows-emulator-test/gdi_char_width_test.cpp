@@ -1,4 +1,4 @@
-#include "emulation_test_utils.hpp"
+#include "gdi_test_utils.hpp"
 #include <syscall_utils.hpp>
 
 #include <algorithm>
@@ -17,32 +17,14 @@ namespace sogen::test
     namespace
     {
         constexpr size_t page_size = 0x1000;
-        constexpr hdc probe_dc = 1;
         constexpr uint32_t sentinel = 0xCCCCCCCC;
         constexpr size_t output_limit = 0x2710000;
         constexpr UINT gcw_nofloat = 2;
         constexpr UINT gcabcw_nofloat = 1;
 
-        class GdiCharWidthTest : public testing::Test
+        class GdiCharWidthTest : public GdiFallbackTest
         {
           protected:
-            void SetUp() override
-            {
-                emulator_interfaces interfaces{};
-                interfaces.ui = std::make_unique<null_ui_backend>();
-                interfaces.audio = std::make_unique<null_audio_backend>();
-                interfaces.console = std::make_unique<null_console_backend>();
-                this->emu = std::make_unique<windows_emulator>(
-                    create_x86_64_emulator_from_environment(),
-                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
-                    emulator_callbacks{}, std::move(interfaces));
-            }
-
-            syscall_context context()
-            {
-                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
-            }
-
             uint64_t first_page_committed(const size_t reserved_pages)
             {
                 const auto base = this->emu->memory.allocate_memory(reserved_pages * page_size, memory_permission::read_write, true);
@@ -84,15 +66,13 @@ namespace sogen::test
 
             BOOL widths(const UINT count, const uint64_t buffer, const uint64_t chars = 0)
             {
-                return syscalls::handle_NtGdiGetCharWidthW(this->context(), probe_dc, 0, count, chars, gcw_nofloat, buffer);
+                return syscalls::handle_NtGdiGetCharWidthW(this->context(), this->dc, 0, count, chars, gcw_nofloat, buffer);
             }
 
             BOOL abc_widths(const UINT count, const uint64_t buffer, const uint64_t chars = 0)
             {
-                return syscalls::handle_NtGdiGetCharABCWidthsW(this->context(), probe_dc, 0, count, chars, gcabcw_nofloat, buffer);
+                return syscalls::handle_NtGdiGetCharABCWidthsW(this->context(), this->dc, 0, count, chars, gcabcw_nofloat, buffer);
             }
-
-            std::unique_ptr<windows_emulator> emu{};
         };
     }
 

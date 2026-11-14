@@ -124,7 +124,8 @@ namespace sogen::gdi_text
 
         for (size_t offset = 0; offset < text.size();)
         {
-            const auto decoded = decode_character(text, offset);
+            const auto decoded =
+                input == glyph_input::indices ? decoded_character{static_cast<char32_t>(text[offset]), 1} : decode_character(text, offset);
             auto& cell = result.cells.emplace_back();
             cell.origin = result.width;
             cell.unit_count = decoded.units;
@@ -171,7 +172,7 @@ namespace sogen::gdi_text
                 {
                     index = lookup_glyph(source, *font, decoded.codepoint);
                 }
-                if (index == 0 && decoded.codepoint != 0)
+                if (strict && index == 0 && decoded.codepoint != 0)
                 {
                     if (const auto fallback = source.select(logfont, decoded.codepoint))
                     {
@@ -249,12 +250,15 @@ namespace sogen::gdi_text
 
         const auto elements_per_unit = advances_have_y ? 2 : 1;
 
-        // Layout in bounded blocks so a huge request never holds one cell per unit; a surrogate pair split across a
-        // block edge decodes as two lone surrogates, which only affects supplementary characters past 0x4000 units.
         constexpr size_t block_units = 0x4000;
-        for (size_t begin = 0; begin < text.size(); begin += block_units)
+        for (size_t begin = 0; begin < text.size();)
         {
-            const auto unit_count = std::min(block_units, text.size() - begin);
+            auto unit_count = std::min(block_units, text.size() - begin);
+            if (input == glyph_input::characters && begin + unit_count < text.size() &&
+                decode_character(text, begin + unit_count - 1).units == 2)
+            {
+                --unit_count;
+            }
             auto block_advances = advances;
             if (!advances.empty())
             {
@@ -298,6 +302,7 @@ namespace sogen::gdi_text
             }
 
             result.width += run.width;
+            begin += unit_count;
         }
 
         return result;

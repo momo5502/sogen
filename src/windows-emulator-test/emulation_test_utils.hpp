@@ -4,12 +4,14 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <cstdlib>
 #include <gtest/gtest.h>
 #include <windows_emulator.hpp>
 #include <backend_selection.hpp>
 
 #include <network/static_socket_factory.hpp>
+#include <utils/executable_path.hpp>
 
 #define ASSERT_NOT_TERMINATED(win_emu)                           \
     do                                                           \
@@ -172,6 +174,19 @@ namespace sogen::test
         }
 
         settings.emulation_root = get_emulator_root();
+
+        const auto sample = utils::get_current_executable_path().parent_path() / "test-sample.exe";
+        const windows_path sample_path{"C:\\test-sample.exe"};
+        if (std::filesystem::is_regular_file(sample) && std::ranges::none_of(settings.mounts, [&](const mount_spec& mount) {
+                return sample_path.relative_to(mount.guest_path).has_value();
+            }))
+        {
+            settings.mounts.push_back(mount_spec{
+                .host_path = sample,
+                .guest_path = sample_path,
+                .mode = filesystem_mode::read_only,
+            });
+        }
 
         settings.mounts.push_back(mount_spec{
             .host_path = std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt"),

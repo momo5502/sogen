@@ -126,6 +126,26 @@ namespace sogen::test
             EXPECT_EQ(run.width, 24);
         }
 
+        TEST_F(GdiTextTest, DoesNotDecodeGlyphIndicesAsSurrogatePairs)
+        {
+            this->store("fixture.ttf", font_fixture::make_font());
+            const std::array<char16_t, 4> glyphs{2, 0xD800, 0xDC00, 1};
+            const std::array advances{10, 20, 30, 40};
+            const auto run = gdi_text::layout(this->source(), this->request(), {glyphs.data(), glyphs.size()},
+                                              gdi_text::glyph_input::indices, advances, false, 8);
+
+            ASSERT_TRUE(run.physical);
+            ASSERT_EQ(run.cells.size(), glyphs.size());
+            for (size_t i = 0; i < glyphs.size(); ++i)
+            {
+                EXPECT_EQ(run.cells[i].index, glyphs[i]);
+                EXPECT_EQ(run.cells[i].unit_count, 1u);
+                EXPECT_EQ(run.cells[i].advance, advances[i]);
+            }
+            EXPECT_EQ(run.cells[2].origin, 30);
+            EXPECT_EQ(run.width, 100);
+        }
+
         TEST_F(GdiTextTest, FallsBackPerCharacterForMissingCoverage)
         {
             this->store("latin.ttf", font_fixture::make_font(u"Fixture Latin", false));
@@ -215,6 +235,31 @@ namespace sogen::test
             EXPECT_EQ(cells[1].origin + pair_width, 16);
         }
 
+        TEST_F(GdiTextTest, MeasuresSurrogatePairsAcrossBlockBoundaries)
+        {
+            this->store("fixture.ttf", font_fixture::make_font());
+            std::u16string text(0x3FFF, u'A');
+            text.push_back(0xD800);
+            text.push_back(0xDC00);
+            text.push_back(u'A');
+            size_t units = 0;
+            bool saw_pair = false;
+            const auto measured = gdi_text::measure(this->source(), this->request(), text, gdi_text::glyph_input::characters, {}, false, 8,
+                                                    [&](const gdi_text::measured_cell& cell) {
+                                                        units += cell.unit_count;
+                                                        if (cell.unit_begin == 0x3FFF)
+                                                        {
+                                                            EXPECT_EQ(cell.unit_count, 2u);
+                                                            saw_pair = true;
+                                                        }
+                                                    });
+
+            EXPECT_TRUE(measured.physical);
+            EXPECT_TRUE(saw_pair);
+            EXPECT_EQ(units, text.size());
+            EXPECT_EQ(measured.width, (0x3FFF + 2) * 8);
+        }
+
         TEST_F(GdiTextTest, MeasuresLargeTextsInBlocks)
         {
             this->store("fixture.ttf", font_fixture::make_font());
@@ -227,6 +272,22 @@ namespace sogen::test
             EXPECT_TRUE(measured.physical);
             EXPECT_EQ(measured.width, 0x5000 * 8);
             EXPECT_EQ(visited_units, text.size());
+        }
+
+        TEST_F(GdiTextTest, MeasuresFallbackWithAnUnavailablePhysicalFont)
+        {
+            const auto font = this->request();
+            const auto run = gdi_text::layout(this->source(), font, u"A中文", gdi_text::glyph_input::characters, {}, false, 8);
+            EXPECT_FALSE(run.physical);
+            ASSERT_EQ(run.cells.size(), 3u);
+            EXPECT_EQ(run.width, 24);
+
+            size_t visited = 0;
+            const auto measured = gdi_text::measure(this->source(), font, u"A中文", gdi_text::glyph_input::characters, {}, false, 8,
+                                                    [&](const gdi_text::measured_cell& cell) { visited += cell.unit_count; });
+            EXPECT_FALSE(measured.physical);
+            EXPECT_EQ(measured.width, 24);
+            EXPECT_EQ(visited, 3u);
         }
 
         TEST_F(GdiTextTest, MeasuresDeterministicallyWithoutAFont)
