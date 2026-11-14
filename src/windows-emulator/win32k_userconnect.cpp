@@ -293,6 +293,7 @@ namespace sogen
 
         void populate_user_shared_info(USER_SHAREDINFO& shared, const process_context& process)
         {
+            memset(&shared, 0, sizeof(shared));
             shared.psi = process.user_handles.get_server_info().value();
             shared.aheList = process.user_handles.get_handle_table().value();
             shared.HeEntrySize = sizeof(USER_HANDLEENTRY);
