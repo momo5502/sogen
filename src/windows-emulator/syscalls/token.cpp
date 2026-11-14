@@ -19,34 +19,132 @@ namespace sogen
             // Windows 11 26200 answers classes up to 0x3A, past the last one TOKEN_INFORMATION_CLASS names.
             constexpr ULONG last_token_information_class = 0x3A;
 
-            constexpr std::array<uint8_t, 12> interactive_sid = {
-                0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x04, 0x00, 0x00, 0x00,
-            };
+            constexpr std::array<uint8_t, 12> everyone_sid{1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};                          // S-1-1-0
+            constexpr std::array<uint8_t, 12> local_sid{1, 1, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0};                             // S-1-2-0
+            constexpr std::array<uint8_t, 12> console_logon_sid{1, 1, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0};                     // S-1-2-1
+            constexpr std::array<uint8_t, 12> interactive_sid{1, 1, 0, 0, 0, 0, 0, 5, 4, 0, 0, 0};                       // S-1-5-4
+            constexpr std::array<uint8_t, 12> anonymous_sid{1, 1, 0, 0, 0, 0, 0, 5, 7, 0, 0, 0};                         // S-1-5-7
+            constexpr std::array<uint8_t, 12> authenticated_users_sid{1, 1, 0, 0, 0, 0, 0, 5, 11, 0, 0, 0};              // S-1-5-11
+            constexpr std::array<uint8_t, 12> this_organization_sid{1, 1, 0, 0, 0, 0, 0, 5, 15, 0, 0, 0};                // S-1-5-15
+            constexpr std::array<uint8_t, 12> local_account_sid{1, 1, 0, 0, 0, 0, 0, 5, 113, 0, 0, 0};                   // S-1-5-113
+            constexpr std::array<uint8_t, 12> local_administrator_account_sid{1, 1, 0, 0, 0, 0, 0, 5, 114, 0, 0, 0};     // S-1-5-114
+            constexpr std::array<uint8_t, 16> users_sid{1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 0x21, 0x02, 0, 0};          // S-1-5-32-545
+            constexpr std::array<uint8_t, 16> ntlm_authentication_sid{1, 2, 0, 0, 0, 0, 0, 5, 64, 0, 0, 0, 10, 0, 0, 0}; // S-1-5-64-10
+            constexpr std::array<uint8_t, 12> medium_integrity_sid{1, 1, 0, 0, 0, 0, 0, 16, 0x00, 0x20, 0, 0};           // S-1-16-8192
+            constexpr std::array<uint8_t, 12> high_integrity_sid{1, 1, 0, 0, 0, 0, 0, 16, 0x00, 0x30, 0, 0};             // S-1-16-12288
 
-            constexpr std::array<uint8_t, 12> anonymous_sid{1, 1, 0, 0, 0, 0, 0, 5, 7, 0, 0, 0};
+            // S-1-5-5-0-4099, the logon session SID winlogon hands LsaLogonUser for the interactive logon.
+            constexpr std::array<uint8_t, 20> logon_session_sid{1, 3, 0, 0, 0, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0x03, 0x10, 0, 0};
+
+            constexpr ULONG se_group_enabled = 0x4;
+            constexpr ULONG se_group_default = 0x7; // SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED
+            constexpr ULONG se_group_owner = 0x8;
+            constexpr ULONG se_group_integrity = 0x60; // SE_GROUP_INTEGRITY | SE_GROUP_INTEGRITY_ENABLED
+            constexpr ULONG se_group_logon_id = 0xC0000000;
 
             struct token_group
             {
-                std::span<const uint8_t> sid;
+                std::vector<uint8_t> sid;
                 ULONG attributes;
             };
 
-            std::vector<token_group> get_token_groups(const syscall_context& c, const std::span<const uint8_t> sid)
+            constexpr uint32_t domain_group_rid_users = 513;
+
+            // A user of an account domain (S-1-5-21-...), whose accounts SAM gives the domain's users group as primary group
+            // ("None" on a workgroup machine).
+            bool is_account_domain_user(const std::span<const uint8_t> user_sid)
             {
-                constexpr ULONG se_group_default = 0x7; // SE_GROUP_MANDATORY | SE_GROUP_ENABLED_BY_DEFAULT | SE_GROUP_ENABLED
-                constexpr ULONG se_group_owner = 0x8;
+                constexpr uint32_t security_nt_non_unique = 21;
+                constexpr SID_IDENTIFIER_AUTHORITY nt_authority{.Value = {0, 0, 0, 0, 0, 5}};
 
-                std::vector<token_group> groups{
-                    token_group{.sid = sid, .attributes = 0},
-                    token_group{.sid = interactive_sid, .attributes = se_group_default},
-                };
-
-                if (c.win_emu.runs_elevated())
+                SID header{};
+                if (user_sid.size() < sizeof(header))
                 {
-                    groups.push_back(token_group{.sid = administrators_sid, .attributes = se_group_default | se_group_owner});
+                    return false;
                 }
 
+                memcpy(&header, user_sid.data(), sizeof(header));
+                return header.SubAuthorityCount >= 2 &&
+                       user_sid.size() == offsetof(SID, SubAuthority) + header.SubAuthorityCount * sizeof(DWORD) &&
+                       std::ranges::equal(header.IdentifierAuthority.Value, nt_authority.Value) &&
+                       header.SubAuthority[0] == security_nt_non_unique;
+            }
+
+            // DOMAIN_GROUP_RID_USERS of the user's account domain.
+            std::optional<std::vector<uint8_t>> account_domain_users_sid(const std::span<const uint8_t> user_sid)
+            {
+                if (!is_account_domain_user(user_sid))
+                {
+                    return std::nullopt;
+                }
+
+                std::vector<uint8_t> sid{user_sid.begin(), user_sid.end()};
+                memcpy(sid.data() + sid.size() - sizeof(domain_group_rid_users), &domain_group_rid_users, sizeof(domain_group_rid_users));
+                return sid;
+            }
+
+            // Whether sid is account_domain_users_sid(user_sid), without building it.
+            bool is_account_domain_users_sid(const std::span<const uint8_t> user_sid, const std::span<const uint8_t> sid)
+            {
+                if (sid.size() != user_sid.size() || !is_account_domain_user(user_sid))
+                {
+                    return false;
+                }
+
+                const auto rid_offset = sid.size() - sizeof(domain_group_rid_users);
+                uint32_t rid{};
+                memcpy(&rid, sid.data() + rid_offset, sizeof(rid));
+                return rid == domain_group_rid_users && std::ranges::equal(sid.first(rid_offset), user_sid.first(rid_offset));
+            }
+
+            // An interactive console logon of a local account as 19041 builds it, in TokenGroups' order: LsapAuAddStandardIds
+            // adds Everyone, INTERACTIVE, CONSOLE LOGON and Authenticated Users, LsapAuSetPassedIds the primary group, This
+            // Organization and Local account, SAM the aliases, winlogon the logon session SID and LOCAL, MSV1_0 its package
+            // SID. With TokenElevationTypeDefault an elevated token is a full administrator's and any other a standard user's.
+            // These are the groups after the account domain's users group, which comes first.
+            template <typename Visit>
+            void visit_standard_token_groups(const bool elevated, Visit&& visit)
+            {
+                visit(everyone_sid, se_group_default);
+                if (elevated)
+                {
+                    visit(local_administrator_account_sid, se_group_default);
+                    visit(administrators_sid, se_group_default | se_group_owner);
+                }
+
+                visit(users_sid, se_group_default);
+                visit(interactive_sid, se_group_default);
+                visit(console_logon_sid, se_group_default);
+                visit(authenticated_users_sid, se_group_default);
+                visit(this_organization_sid, se_group_default);
+                visit(local_account_sid, se_group_default);
+                visit(logon_session_sid, se_group_default | se_group_logon_id);
+                visit(local_sid, se_group_default);
+                visit(ntlm_authentication_sid, se_group_default);
+                visit(elevated ? std::span<const uint8_t>{high_integrity_sid} : std::span<const uint8_t>{medium_integrity_sid},
+                      se_group_integrity);
+            }
+
+            std::vector<token_group> get_token_groups(const windows_emulator& win_emu, const std::span<const uint8_t> user_sid)
+            {
+                std::vector<token_group> groups{};
+                if (auto primary_group = account_domain_users_sid(user_sid))
+                {
+                    groups.push_back(token_group{.sid = std::move(*primary_group), .attributes = se_group_default});
+                }
+
+                visit_standard_token_groups(win_emu.runs_elevated(), [&](const std::span<const uint8_t> sid, const ULONG attributes) {
+                    groups.push_back(token_group{.sid = {sid.begin(), sid.end()}, .attributes = attributes});
+                });
                 return groups;
+            }
+
+            // As many groups as get_token_groups lists, without building them.
+            size_t count_token_groups(const windows_emulator& win_emu, const std::span<const uint8_t> user_sid)
+            {
+                size_t count = is_account_domain_user(user_sid) ? 1 : 0;
+                visit_standard_token_groups(win_emu.runs_elevated(), [&](const std::span<const uint8_t>, const ULONG) { ++count; });
+                return count;
             }
 
             handle resolve_token(const syscall_context& c, const handle token)
@@ -63,19 +161,29 @@ namespace sogen
                 return token;
             }
 
-            bool sid_matches(const memory_manager& memory, const uint64_t address, const std::span<const uint8_t> expected)
+            // The SID of an ACE that is ace_size bytes long, or none when it does not fit there: SeCaptureSecurityDescriptor's
+            // RtlValidAcl wants every ACE to hold its whole SID and fails the descriptor with STATUS_INVALID_ACL otherwise.
+            std::optional<std::vector<uint8_t>> read_ace_sid(const memory_manager& memory, const uint64_t ace_address,
+                                                             const size_t ace_size)
             {
-                std::array<uint8_t, 8> header{};
-                memory.read_memory(address, header.data(), header.size());
-                const auto size = 8 + static_cast<size_t>(header[1]) * sizeof(uint32_t);
-                if (size != expected.size())
+                constexpr size_t sid_offset = offsetof(ACCESS_ALLOWED_ACE, SidStart);
+                constexpr size_t sid_header_size = offsetof(SID, SubAuthority);
+                if (ace_size < sid_offset + sid_header_size)
                 {
-                    return false;
+                    return std::nullopt;
                 }
 
-                std::vector<uint8_t> sid(size);
-                memory.read_memory(address, sid.data(), sid.size());
-                return std::ranges::equal(sid, expected);
+                SID header{};
+                memory.read_memory(ace_address + sid_offset, &header, sid_header_size);
+
+                std::vector<uint8_t> sid(sid_header_size + (header.SubAuthorityCount * sizeof(DWORD)));
+                if (sid.size() > ace_size - sid_offset)
+                {
+                    return std::nullopt;
+                }
+
+                memory.read_memory(ace_address + sid_offset, sid.data(), sid.size());
+                return sid;
             }
 
             ACCESS_MASK map_generic_access(ACCESS_MASK access, const EMU_GENERIC_MAPPING& mapping)
@@ -228,7 +336,7 @@ namespace sogen
                     c.emu.write_memory(token_information, ULONG{0});
                     return STATUS_SUCCESS;
                 }
-                const auto entries = get_token_groups(c, sid);
+                const auto entries = get_token_groups(c.win_emu, sid);
 
                 constexpr auto group_entry_size = sizeof(SID_AND_ATTRIBUTES64);
                 auto required_size = sizeof(TOKEN_GROUPS64) + (entries.size() - 1) * group_entry_size;
@@ -289,7 +397,10 @@ namespace sogen
 
             if (token_information_class == TokenPrimaryGroup)
             {
-                const auto required_size = sizeof(TOKEN_PRIMARY_GROUP64) + sid.size();
+                // The group TokenGroups lists first; a user outside an account domain (S-1-5-7) keeps its own SID.
+                const auto account_group = account_domain_users_sid(sid);
+                const auto group_sid = account_group ? std::span<const uint8_t>{*account_group} : sid;
+                const auto required_size = sizeof(TOKEN_PRIMARY_GROUP64) + group_sid.size();
                 return_length.write(static_cast<ULONG>(required_size));
 
                 if (required_size > token_information_length)
@@ -301,7 +412,7 @@ namespace sogen
                 primary_group.PrimaryGroup = token_information + sizeof(TOKEN_PRIMARY_GROUP64);
 
                 emulator_object<TOKEN_PRIMARY_GROUP64>{c.emu, token_information}.write(primary_group);
-                c.emu.write_memory(token_information + sizeof(TOKEN_PRIMARY_GROUP64), sid.data(), sid.size());
+                c.emu.write_memory(token_information + sizeof(TOKEN_PRIMARY_GROUP64), group_sid.data(), group_sid.size());
                 return STATUS_SUCCESS;
             }
 
@@ -496,7 +607,7 @@ namespace sogen
                 stats.ExpirationTime.QuadPart = std::numeric_limits<LONGLONG>::max();
                 stats.TokenType = get_token_type(token_handle);
                 stats.ImpersonationLevel = !anonymous && stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
-                stats.GroupCount = anonymous ? 0 : static_cast<ULONG>(get_token_groups(c, sid).size());
+                stats.GroupCount = anonymous ? 0 : static_cast<ULONG>(count_token_groups(c.win_emu, sid));
                 stats.PrivilegeCount = 0;
                 stats.ModifiedId.LowPart = token_modified_id;
 
@@ -638,21 +749,25 @@ namespace sogen
                 for (USHORT i = 0; i < acl.AceCount; ++i)
                 {
                     const auto ace = emulator_object<ACCESS_ALLOWED_ACE>{c.emu, ace_address}.read();
-                    if (ace.Header.AceSize < sizeof(ACCESS_ALLOWED_ACE))
+
+                    // Only allow and deny ACEs take part. An ACE of another kind needs no SID: 19041 passes over one that is
+                    // only a header.
+                    if (ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE && ace.Header.AceType != ACCESS_DENIED_ACE_TYPE)
                     {
-                        return STATUS_INVALID_PARAMETER;
+                        ace_address += ace.Header.AceSize;
+                        continue;
                     }
 
-                    const auto ace_sid = ace_address + offsetof(ACCESS_ALLOWED_ACE, SidStart);
-                    const auto anonymous = client_token == ANONYMOUS_IMPERSONATION_TOKEN;
-                    const auto user_sid = anonymous ? std::span<const uint8_t>{anonymous_sid} : std::span<const uint8_t>{c.proc.sid};
+                    const auto ace_sid = read_ace_sid(c.emu.memory(), ace_address, ace.Header.AceSize);
+                    if (!ace_sid)
+                    {
+                        return STATUS_INVALID_ACL;
+                    }
+
                     // SepNormalAccessCheck skips inherit-only ACEs and compares the masks as stored: an ACE's generic bits are
                     // not mapped, so they match no specific right.
                     const auto applies =
-                        (ace.Header.AceFlags & INHERIT_ONLY_ACE) == 0 &&
-                        (sid_matches(c.emu.memory(), ace_sid, user_sid) ||
-                         (!anonymous && (sid_matches(c.emu.memory(), ace_sid, interactive_sid) ||
-                                         (c.win_emu.runs_elevated() && sid_matches(c.emu.memory(), ace_sid, administrators_sid)))));
+                        (ace.Header.AceFlags & INHERIT_ONLY_ACE) == 0 && token_holds_sid(c.win_emu, client_token, *ace_sid);
                     if (applies && ace.Header.AceType == ACCESS_DENIED_ACE_TYPE && (ace.Mask & remaining) != 0)
                     {
                         denied = true;
@@ -793,8 +908,18 @@ namespace sogen
             return std::ranges::equal(sid, syscalls::anonymous_sid);
         }
 
-        return std::ranges::equal(sid, win_emu.process.sid) || std::ranges::equal(sid, syscalls::interactive_sid) ||
-               (win_emu.runs_elevated() && std::ranges::equal(sid, administrators_sid));
+        const auto& user = win_emu.process.sid;
+        if (std::ranges::equal(sid, user) || syscalls::is_account_domain_users_sid(user, sid))
+        {
+            return true;
+        }
+
+        // The other enabled groups, compared where they are defined.
+        bool held = false;
+        syscalls::visit_standard_token_groups(win_emu.runs_elevated(), [&](const std::span<const uint8_t> group, const ULONG attributes) {
+            held = held || ((attributes & syscalls::se_group_enabled) != 0 && std::ranges::equal(group, sid));
+        });
+        return held;
     }
 
     bool token_grants_access(const windows_emulator& win_emu, const handle token, const std::span<const std::byte> descriptor,
