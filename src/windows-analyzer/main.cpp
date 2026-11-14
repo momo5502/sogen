@@ -44,8 +44,13 @@ namespace sogen
         const std::map<std::string, backend_type>& get_backend_names()
         {
             static const std::map<std::string, backend_type> backends{
-                {"unicorn", backend_type::unicorn}, {"icicle", backend_type::icicle}, {"whp", backend_type::whp},
-                {"kvm", backend_type::kvm},         {"fex", backend_type::fex},       {"hvf", backend_type::hvf},
+                {"unicorn", backend_type::unicorn},
+                {"icicle", backend_type::icicle},
+                {"whp", backend_type::whp},
+                {"kvm", backend_type::kvm},
+                {"fex", backend_type::fex},
+                {"hvf", backend_type::hvf},
+                {"native-arm64", backend_type::native_arm64},
             };
             return backends;
         }
@@ -1307,8 +1312,9 @@ namespace sogen
                 ->check(CLI::IsMember({"offline", "live"}));
 
             std::string backend_name{};
-            app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm, fex or hvf (overrides env)")
-                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex", "hvf"}));
+            app.add_option("--backend", backend_name,
+                           "Select CPU backend: unicorn, icicle, whp, kvm, fex, hvf or native-arm64 (overrides env)")
+                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex", "hvf", "native-arm64"}));
 
             std::vector<std::string> tracked_modules{};
             app.add_option("-m,--module", tracked_modules, "Specify module(s) to track")->allow_extra_args(false);

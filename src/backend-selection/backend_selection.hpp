@@ -17,6 +17,7 @@ namespace sogen
         kvm,
         fex,
         hvf,
+        native_arm64,
     };
 
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator(backend_type backend = backend_type::unicorn, size_t vcpu_count = 1);

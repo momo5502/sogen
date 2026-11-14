@@ -1,3 +1,7 @@
+if(SOGEN_ENABLE_NATIVE_ARM64)
+  add_subdirectory(native-arm64-emulator)
+endif()
+
 if(SOGEN_ENABLE_UNICORN)
   add_subdirectory(unicorn-emulator)
 endif()

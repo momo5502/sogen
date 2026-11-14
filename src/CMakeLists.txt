@@ -20,6 +20,10 @@ add_subdirectory(linux-gdb-stub)
 add_subdirectory(macos-emulator)
 add_subdirectory(backend-selection)
 
+if(SOGEN_ENABLE_NATIVE_ARM64)
+  add_subdirectory(samples/native-arm64-hello)
+endif()
+
 if(SOGEN_ENABLE_PYTHON_BINDINGS)
   add_subdirectory(python-bindings)
 endif()
