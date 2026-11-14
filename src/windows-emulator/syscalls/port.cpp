@@ -147,7 +147,8 @@ namespace sogen
             {
                 return STATUS_PORT_DISCONNECTED;
             }
-            const auto key = static_cast<uint32_t>(port_handle.bits & 0xffffffff);
+            const auto port_reference = c.proc.ports.reference_of(port_handle);
+            const auto key = port_reference ? port_reference->index : 0;
             const auto replies = c.proc.pending_alpc_reply_views.find(key);
             if (replies != c.proc.pending_alpc_reply_views.end())
             {
@@ -223,6 +224,11 @@ namespace sogen
                                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                          const emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>> port_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!port_handle)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -269,6 +275,11 @@ namespace sogen
                                           const emulator_pointer /*in_message_attributes*/,
                                           const emulator_object<LARGE_INTEGER> /*timeout*/)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             auto port_name = read_unicode_string(c.emu, server_port_name);
             c.win_emu.callbacks.on_generic_access("Connecting port", port_name);
             port_creation_data data{};
@@ -300,6 +311,16 @@ namespace sogen
             const emulator_object<EmulatorTraits<Emu64>::SIZE_T> buffer_length, const emulator_pointer out_message_attributes,
             const emulator_pointer in_message_attributes, const emulator_object<LARGE_INTEGER> timeout)
         {
+            if (const auto status = validate_object_attributes(connection_port_object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            if (const auto status = validate_object_attributes(client_port_object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!connection_port_object_attributes)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -678,7 +699,8 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto port_key = static_cast<uint32_t>(port_handle.bits & 0xFFFFFFFF);
+            const auto port_reference = c.proc.ports.reference_of(port_handle);
+            const auto port_key = port_reference ? port_reference->index : 0;
             if (send_message)
             {
                 const auto send_header = lpc_port_message::read(send_message);

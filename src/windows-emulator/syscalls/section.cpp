@@ -314,6 +314,11 @@ namespace sogen
                                         const emulator_object<ULARGE_INTEGER> maximum_size, const ULONG section_page_protection,
                                         const ULONG allocation_attributes, const handle file_handle)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             section s{};
             s.section_page_protection = section_page_protection;
             s.allocation_attributes = allocation_attributes;
@@ -373,6 +378,11 @@ namespace sogen
                                           const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
                                           const ULONG extended_parameter_count)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (const auto status = validate_section_extended_parameters(c, extended_parameters, extended_parameter_count);
                 status != STATUS_SUCCESS)
             {
@@ -387,6 +397,11 @@ namespace sogen
                                       const ACCESS_MASK /*desired_access*/,
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
 
             auto filename = read_unicode_string(c.emu, attributes.ObjectName);
@@ -480,8 +495,7 @@ namespace sogen
             {
                 if (!section.name.empty() && utils::string::equals_ignore_case(section.name, filename))
                 {
-                    ++section.ref_count;
-                    section_handle.write(c.proc.sections.make_handle(handle));
+                    section_handle.write(c.proc.sections.open_by_index(handle, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }

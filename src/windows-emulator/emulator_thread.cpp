@@ -1528,7 +1528,7 @@ namespace sogen
             };
 
             const auto& wait = *this->await_io_completion;
-            auto* completion = process.io_completions.get(wait.io_completion_handle);
+            auto* completion = process.get_object_as<io_completion>(wait.io_completion);
             if (!completion)
             {
                 this->mark_as_ready(STATUS_INVALID_HANDLE);
@@ -1561,7 +1561,7 @@ namespace sogen
             if (wait.type == io_completion_wait_type::remove_single)
             {
                 io_completion_message message{};
-                if (!io_completion_wait::dequeue_io_completion_message(win_emu, wait.io_completion_handle, message))
+                if (!io_completion_wait::dequeue_io_completion_message(win_emu, wait.io_completion, message))
                 {
                     return false;
                 }
@@ -1573,8 +1573,7 @@ namespace sogen
 
             if (wait.type == io_completion_wait_type::remove_multiple)
             {
-                const auto messages =
-                    io_completion_wait::dequeue_io_completion_entries(win_emu, wait.io_completion_handle, wait.max_entries);
+                const auto messages = io_completion_wait::dequeue_io_completion_entries(win_emu, wait.io_completion, wait.max_entries);
                 if (messages.empty())
                 {
                     return false;

@@ -1154,6 +1154,11 @@ namespace sogen
                                               const ULONG input_buffer_length, const emulator_pointer output_buffer,
                                               const ULONG output_buffer_length)
         {
+            if (event.bits != 0 && !event.value.is_pseudo && event.value.type != handle_types::event)
+            {
+                return STATUS_OBJECT_TYPE_MISMATCH;
+            }
+
             auto resolved_file_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
             if (file_handle == STDIN_HANDLE || file_handle == STDOUT_HANDLE)
             {
@@ -1173,7 +1178,8 @@ namespace sogen
 
             io_device_context context{c.emu};
             context.source_handle = file_handle;
-            context.event = event;
+            context.event = c.proc.reference_of(event);
+            context.event_low_bit = (event.bits & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;
             context.io_status_block = io_status_block;
@@ -1307,6 +1313,11 @@ namespace sogen
                                           const ACCESS_MASK /*desired_access*/,
                                           const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!job_handle)
             {
                 return STATUS_ACCESS_VIOLATION;
@@ -1328,14 +1339,15 @@ namespace sogen
                 {
                     if (entry.second.name == job.name)
                     {
-                        ++entry.second.ref_count;
-                        job_handle.write(c.proc.jobs.make_handle(entry.first));
+                        job_handle.write(c.proc.jobs.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
             }
 
-            job_handle.write(c.proc.jobs.store(std::move(job)));
+            const auto handle = c.proc.jobs.store(std::move(job));
+            (void)c.proc.jobs.set_attributes(handle, get_handle_attributes(object_attributes));
+            job_handle.write(handle);
             return STATUS_SUCCESS;
         }
 
@@ -1574,6 +1586,11 @@ namespace sogen
                                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                 const DWORD type)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             std::u16string name{};
             if (object_attributes)
             {
@@ -1590,7 +1607,9 @@ namespace sogen
                 // TODO: This probably isn't 100% correct.
                 wait_completion_packet packet{};
                 packet.name = std::move(name);
-                memory_reserve_handle.write(c.proc.wait_completion_packets.store(std::move(packet)));
+                const auto handle = c.proc.wait_completion_packets.store(std::move(packet));
+                (void)c.proc.wait_completion_packets.set_attributes(handle, get_handle_attributes(object_attributes));
+                memory_reserve_handle.write(handle);
                 return STATUS_SUCCESS;
             }
             case 0:

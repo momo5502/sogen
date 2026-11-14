@@ -84,7 +84,7 @@ namespace sogen
 
             void release(const syscall_context& c, registry_notify_request& request)
             {
-                io_completion_wait::release_handle_reference(c.proc, request.event);
+                io_completion_wait::release_reference(c.proc, request.event);
             }
 
             void complete(const syscall_context& c, registry_notify_request& request, const NTSTATUS status)
@@ -94,9 +94,10 @@ namespace sogen
                     write_io_status(c, request.io_status_block, status);
                 }
 
-                if (request.event.bits != 0)
+                if (auto* event = c.proc.get_object_as<sogen::event>(request.event))
                 {
-                    syscalls::handle_NtSetEvent(c, request.event.bits, emulator_object<LONG>{c.emu.memory()});
+                    event->signaled = true;
+                    c.win_emu.wake_idle_vcpu();
                 }
 
                 if (request.apc_routine)
@@ -193,14 +194,17 @@ namespace sogen
         NTSTATUS watch(const syscall_context& c, registry_key& key, registry_notify_request request, const ULONG filter,
                        const bool watch_tree)
         {
-            if (request.event.bits != 0)
+            if (request.event)
             {
-                if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, request.event, request.event))
+                if (!io_completion_wait::retain_reference(c.proc, request.event, request.event))
                 {
                     return STATUS_INVALID_HANDLE;
                 }
 
-                syscalls::handle_NtClearEvent(c, request.event);
+                if (auto* event = c.proc.get_object_as<sogen::event>(request.event))
+                {
+                    event->signaled = false;
+                }
             }
 
             if (!key.notify_block)

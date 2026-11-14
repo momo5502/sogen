@@ -841,9 +841,14 @@ namespace sogen
         }
 
         NTSTATUS handle_NtOpenThread(const syscall_context& c, const emulator_object<handle> thread_handle, ACCESS_MASK /*desired_access*/,
-                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                      emulator_object<CLIENT_ID64> client_id)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!client_id)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -853,31 +858,21 @@ namespace sogen
 
             if (id.UniqueProcess == 0 || id.UniqueProcess == c.proc.process_id)
             {
-                for (auto& [h_val, t] : c.proc.threads)
+                for (auto& [index, thread] : c.proc.threads)
                 {
-                    if (t.id == id.UniqueThread)
+                    if (thread.id == id.UniqueThread)
                     {
-                        const auto handle = c.proc.threads.make_handle(h_val);
-                        if (!c.proc.threads.duplicate(handle))
-                        {
-                            return STATUS_INVALID_HANDLE;
-                        }
-                        thread_handle.write(handle);
+                        thread_handle.write(c.proc.threads.open_by_index(index, get_handle_attributes(object_attributes)));
                         return STATUS_SUCCESS;
                     }
                 }
             }
 
-            for (auto& [h_val, thread] : c.proc.managed_threads)
+            for (auto& [index, thread] : c.proc.managed_threads)
             {
                 if (thread.thread_id == id.UniqueThread && (id.UniqueProcess == 0 || thread.process_id == id.UniqueProcess))
                 {
-                    const auto handle = c.proc.managed_threads.make_handle(h_val);
-                    if (!c.proc.managed_threads.duplicate(handle))
-                    {
-                        return STATUS_INVALID_HANDLE;
-                    }
-                    thread_handle.write(handle);
+                    thread_handle.write(c.proc.managed_threads.open_by_index(index, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }
@@ -1251,7 +1246,7 @@ namespace sogen
         }
 
         NTSTATUS handle_NtGetNextThread(const syscall_context& c, const handle process_handle, const handle thread_handle,
-                                        const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG flags,
+                                        const ACCESS_MASK /*desired_access*/, const ULONG handle_attributes, const ULONG flags,
                                         const emulator_object<handle> new_thread_handle)
         {
             if (!new_thread_handle.try_write(NULL_HANDLE))
@@ -1277,16 +1272,18 @@ namespace sogen
             }
 
             bool return_next_thread = resolved_thread_handle == NULL_HANDLE;
+            const auto* reference_thread = return_next_thread ? nullptr : c.proc.threads.get(resolved_thread_handle);
             for (auto& t : c.proc.threads)
             {
                 if (return_next_thread && !t.second.is_terminated())
                 {
-                    ++t.second.ref_count;
-                    new_thread_handle.write(c.proc.threads.make_handle(t.first));
+                    new_thread_handle.write(
+                        c.proc.threads.open_by_index(t.first, {.inherit = (handle_attributes & OBJ_INHERIT) != 0,
+                                                               .protect_from_close = (handle_attributes & OBJ_PROTECT_CLOSE) != 0}));
                     return STATUS_SUCCESS;
                 }
 
-                if (t.first == resolved_thread_handle.value.id)
+                if (&t.second == reference_thread)
                 {
                     return_next_thread = true;
                 }
@@ -1544,6 +1541,11 @@ namespace sogen
                                          const EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
                                          const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             constexpr ULONG valid_create_flags = 0x7F;
             if (create_flags & ~valid_create_flags)
             {
@@ -1599,7 +1601,9 @@ namespace sogen
             const auto stack_commit_size = stack_size != 0 ? stack_size : c.win_emu.mod_manager.executable->size_of_stack_commit;
             const auto h =
                 c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags, false, stack_commit_size);
-            c.proc.threads.get(h)->inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            const auto thread_attributes = get_handle_attributes(object_attributes);
+            (void)c.proc.threads.set_attributes(h, thread_attributes);
+            c.proc.threads.get(h)->inherit = thread_attributes.inherit;
 
             c.win_emu.report_debug_event({
                 .kind = process_debug_event_kind::create_thread,

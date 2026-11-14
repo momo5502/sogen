@@ -11,8 +11,8 @@ namespace sogen
         {
             void release_wait_packet_association(const syscall_context& c, wait_completion_packet& wait_packet)
             {
-                io_completion_wait::release_handle_reference(c.proc, wait_packet.io_completion_handle);
-                io_completion_wait::release_handle_reference(c.proc, wait_packet.target_object_handle);
+                io_completion_wait::release_reference(c.proc, wait_packet.io_completion);
+                io_completion_wait::release_reference(c.proc, wait_packet.target_object_reference);
                 wait_packet.target_object = nullptr;
                 wait_packet.associated = false;
             }
@@ -23,6 +23,11 @@ namespace sogen
                                              const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                              const ULONG number_of_concurrent_threads)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             std::u16string name{};
             if (object_attributes)
             {
@@ -39,8 +44,8 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        io_completion_handle.write(c.proc.io_completions.make_handle(entry.first));
+                        io_completion_handle.write(
+                            c.proc.io_completions.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -87,7 +92,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            handle wait_packet_handle{};
+            object_reference wait_packet_reference{};
             if (io_completion_packet_handle.bits != 0)
             {
                 auto* wait_packet = c.proc.wait_completion_packets.get(io_completion_packet_handle);
@@ -101,24 +106,24 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                handle retained_io_completion_handle{};
-                if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, io_completion_handle,
-                                                                 retained_io_completion_handle))
+                object_reference retained_io_completion{};
+                if (!io_completion_wait::retain_reference(c.proc, c.vcpu.active_thread, io_completion_handle, retained_io_completion))
                 {
                     return STATUS_INVALID_HANDLE;
                 }
 
-                if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, io_completion_packet_handle,
-                                                                 wait_packet_handle))
+                const auto retained_wait_packet = c.proc.wait_completion_packets.retain(io_completion_packet_handle);
+                if (!retained_wait_packet)
                 {
-                    io_completion_wait::release_handle_reference(c.proc, retained_io_completion_handle);
+                    io_completion_wait::release_reference(c.proc, retained_io_completion);
                     return STATUS_INVALID_HANDLE;
                 }
 
+                wait_packet_reference = *retained_wait_packet;
                 wait_packet->queued_completion = true;
                 wait_packet->associated = false;
-                wait_packet->io_completion_handle = retained_io_completion_handle;
-                wait_packet->target_object_handle = {};
+                wait_packet->io_completion = retained_io_completion;
+                wait_packet->target_object_reference = {};
                 wait_packet->key_context = key_context;
                 wait_packet->apc_context = apc_context;
                 wait_packet->io_status_block.Status = io_status;
@@ -131,7 +136,7 @@ namespace sogen
             message.apc_context = apc_context;
             message.io_status_block.Status = io_status;
             message.io_status_block.Information = io_status_information;
-            message.wait_packet_handle = wait_packet_handle;
+            message.wait_packet_reference = wait_packet_reference;
 
             io_completion_wait::insert(c.win_emu, io_completion_handle, *completion, message);
             c.win_emu.wake_idle_vcpu();
@@ -181,7 +186,7 @@ namespace sogen
 
             auto& wait = *t.await_io_completion;
             wait.type = io_completion_wait_type::remove_single;
-            wait.io_completion_handle = io_completion_handle;
+            wait.io_completion = c.proc.io_completions.reference_of(io_completion_handle).value_or(object_reference{});
             wait.key_context_ptr = key_context.value();
             wait.apc_context_ptr = apc_context.value();
             wait.io_status_block_ptr = io_status_block.value();
@@ -252,7 +257,7 @@ namespace sogen
 
             auto& wait = *t.await_io_completion;
             wait.type = io_completion_wait_type::remove_multiple;
-            wait.io_completion_handle = io_completion_handle;
+            wait.io_completion = c.proc.io_completions.reference_of(io_completion_handle).value_or(object_reference{});
             wait.completion_entries_ptr = io_completion_information.value();
             wait.entries_removed_ptr = num_entries_removed.value();
             wait.max_entries = count;
@@ -281,6 +286,11 @@ namespace sogen
                                                      const ACCESS_MASK /*desired_access*/,
                                                      const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             std::u16string name{};
             if (object_attributes)
             {
@@ -297,8 +307,8 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        wait_packet_handle.write(c.proc.wait_completion_packets.make_handle(entry.first));
+                        wait_packet_handle.write(
+                            c.proc.wait_completion_packets.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -375,22 +385,21 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            handle retained_io_completion_handle{};
-            if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, io_completion_handle,
-                                                             retained_io_completion_handle))
+            object_reference retained_io_completion{};
+            if (!io_completion_wait::retain_reference(c.proc, c.vcpu.active_thread, io_completion_handle, retained_io_completion))
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            handle retained_target_handle{};
-            if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, resolved_target_handle, retained_target_handle))
+            object_reference retained_target{};
+            if (!io_completion_wait::retain_reference(c.proc, c.vcpu.active_thread, resolved_target_handle, retained_target))
             {
-                io_completion_wait::release_handle_reference(c.proc, retained_io_completion_handle);
+                io_completion_wait::release_reference(c.proc, retained_io_completion);
                 return STATUS_INVALID_HANDLE;
             }
 
-            wait_packet->io_completion_handle = retained_io_completion_handle;
-            wait_packet->target_object_handle = retained_target_handle;
+            wait_packet->io_completion = retained_io_completion;
+            wait_packet->target_object_reference = retained_target;
             wait_packet->key_context = key_context;
             wait_packet->apc_context = apc_context;
             wait_packet->io_status_block.Status = io_status;
@@ -420,7 +429,7 @@ namespace sogen
 
             // Windows queues the packet when the target is signalled; the emulator only does so on demand, so a
             // signal that already happened has to be turned into its packet before the wait can be judged.
-            io_completion_wait::materialize_signaled_wait_packets(c.win_emu, wait_packet->io_completion_handle);
+            io_completion_wait::materialize_signaled_wait_packets(c.win_emu, wait_packet->io_completion);
 
             if (wait_packet->queued_completion)
             {
@@ -429,11 +438,15 @@ namespace sogen
                     return STATUS_PENDING;
                 }
 
-                if (auto* completion = c.proc.io_completions.get(wait_packet->io_completion_handle))
+                const auto wait_packet_reference = c.proc.wait_completion_packets.reference_of(wait_completion_packet_handle);
+                if (wait_packet_reference)
                 {
-                    if (completion->remove_by_wait_packet(wait_completion_packet_handle))
+                    if (auto* completion = c.proc.get_object_as<io_completion>(wait_packet->io_completion))
                     {
-                        (void)c.proc.wait_completion_packets.erase(wait_completion_packet_handle);
+                        if (auto message = completion->remove_by_wait_packet(*wait_packet_reference))
+                        {
+                            io_completion_wait::release_reference(c.proc, message->wait_packet_reference);
+                        }
                     }
                 }
             }

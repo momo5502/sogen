@@ -220,11 +220,15 @@ namespace sogen
         }
 
         NTSTATUS handle_NtDuplicateToken(const syscall_context& c, const handle requested_token, ACCESS_MASK /*desired_access*/,
-                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
-                                         /*object_attributes*/,
+                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                          const BOOLEAN /*effective_only*/, const TOKEN_TYPE type,
                                          const emulator_object<handle> new_token_handle)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto existing_token_handle = resolve_token(c, requested_token);
             if (existing_token_handle != CURRENT_PROCESS_TOKEN && existing_token_handle != DUMMY_IMPERSONATION_TOKEN &&
                 existing_token_handle != ANONYMOUS_IMPERSONATION_TOKEN)

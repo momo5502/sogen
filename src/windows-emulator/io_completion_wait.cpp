@@ -10,17 +10,30 @@ namespace sogen
     {
         namespace
         {
-            bool is_wait_completion_target_signaled(windows_emulator& win_emu, const handle target_object_handle)
+            bool is_wait_completion_target_signaled(windows_emulator& win_emu, const object_reference& target)
             {
                 auto& process = win_emu.process;
-                switch (target_object_handle.value.type)
+                const auto type = target.object_type();
+
+                if (target.is_pseudo())
+                {
+                    if (type == handle_types::process)
+                    {
+                        return target.pseudo == GUEST_PROCESS_HANDLE && process.exit_status.has_value();
+                    }
+
+                    if (type == handle_types::file)
+                    {
+                        return target.pseudo == STDIN_HANDLE ? win_emu.console().input_available() : true;
+                    }
+
+                    return false;
+                }
+
+                switch (type)
                 {
                 case handle_types::process: {
-                    if (target_object_handle == GUEST_PROCESS_HANDLE)
-                    {
-                        return process.exit_status.has_value();
-                    }
-                    const auto* entry = process.processes.get(target_object_handle);
+                    const auto* entry = process.processes.get_by_index(target.index);
                     if (!entry || !entry->process || !win_emu.processes())
                     {
                         return false;
@@ -29,7 +42,7 @@ namespace sogen
                     return status && status.status.has_value();
                 }
                 case handle_types::managed_thread: {
-                    const auto* entry = process.managed_threads.get(target_object_handle);
+                    const auto* entry = process.managed_threads.get_by_index(target.index);
                     if (!entry || !win_emu.processes())
                     {
                         return false;
@@ -39,42 +52,32 @@ namespace sogen
                 }
 
                 case handle_types::event: {
-                    const auto* e = process.events.get(target_object_handle);
+                    const auto* e = process.events.get_by_index(target.index);
                     return e && e->signaled;
                 }
                 case handle_types::thread: {
-                    const auto* thread = process.threads.get(target_object_handle);
+                    const auto* thread = process.threads.get_by_index(target.index);
                     return thread && thread->is_terminated();
                 }
 
                 case handle_types::semaphore: {
-                    const auto* semaphore = process.semaphores.get(target_object_handle);
+                    const auto* semaphore = process.semaphores.get_by_index(target.index);
                     return semaphore && semaphore->current_count > 0;
                 }
 
                 case handle_types::port: {
-                    const auto* port = process.ports.get(target_object_handle);
+                    const auto* port = process.ports.get_by_index(target.index);
                     return port != nullptr && port->has_pending_reply();
                 }
 
                 case handle_types::mutant: {
-                    const auto* mutant = process.mutants.get(target_object_handle);
+                    const auto* mutant = process.mutants.get_by_index(target.index);
                     return mutant && mutant->locked_count == 0;
                 }
 
                 case handle_types::timer: {
-                    auto* entry = process.timers.get(target_object_handle);
+                    auto* entry = process.timers.get_by_index(target.index);
                     return entry && entry->is_signaled(win_emu.clock());
-                }
-
-                case handle_types::file: {
-                    // Only STDIN_HANDLE and NUL_HANDLE reach here; see is_wait_completion_target_type.
-                    if (target_object_handle == STDIN_HANDLE)
-                    {
-                        return win_emu.console().input_available();
-                    }
-
-                    return true;
                 }
 
                 default:
@@ -86,12 +89,17 @@ namespace sogen
             // target's signal exactly like NtWaitForSingleObject would: an auto-reset event resets and a
             // semaphore decrements. Without this, an edge-triggered target stays signaled and floods the
             // completion port with spurious packets (e.g. a games's async scheduler busy-spins forever).
-            void consume_wait_completion_target(process_context& process, const handle target_object_handle)
+            void consume_wait_completion_target(process_context& process, const object_reference& target)
             {
-                switch (target_object_handle.value.type)
+                if (target.is_pseudo())
+                {
+                    return;
+                }
+
+                switch (target.object_type())
                 {
                 case handle_types::event: {
-                    auto* e = process.events.get(target_object_handle);
+                    auto* e = process.events.get_by_index(target.index);
                     if (e && e->type == SynchronizationEvent)
                     {
                         e->signaled = false;
@@ -100,7 +108,7 @@ namespace sogen
                 }
 
                 case handle_types::semaphore: {
-                    auto* semaphore = process.semaphores.get(target_object_handle);
+                    auto* semaphore = process.semaphores.get_by_index(target.index);
                     if (semaphore)
                     {
                         (void)semaphore->try_lock();
@@ -109,7 +117,7 @@ namespace sogen
                 }
 
                 case handle_types::timer: {
-                    if (auto* entry = process.timers.get(target_object_handle))
+                    if (auto* entry = process.timers.get_by_index(target.index))
                     {
                         entry->consume_signal();
                     }
@@ -130,7 +138,7 @@ namespace sogen
             {
                 if (!wait_packet.target_object || wait_packet.target_generation != store.generation())
                 {
-                    wait_packet.target_object = store.get(wait_packet.target_object_handle);
+                    wait_packet.target_object = store.get_by_index(wait_packet.target_object_reference.index);
                     wait_packet.target_generation = store.generation();
                 }
 
@@ -142,7 +150,13 @@ namespace sogen
             bool is_wait_packet_target_signaled(windows_emulator& win_emu, wait_completion_packet& wait_packet)
             {
                 auto& process = win_emu.process;
-                switch (wait_packet.target_object_handle.value.type)
+                if (!wait_packet.target_object_reference)
+                {
+                    wait_packet.target_object = nullptr;
+                    return false;
+                }
+
+                switch (wait_packet.target_object_reference.object_type())
                 {
                 case handle_types::event:
                     if (const auto* target = wait_packet_target(process.events, wait_packet))
@@ -178,22 +192,22 @@ namespace sogen
                     break;
                 }
 
-                return is_wait_completion_target_signaled(win_emu, wait_packet.target_object_handle);
+                return is_wait_completion_target_signaled(win_emu, wait_packet.target_object_reference);
             }
 
             void release_wait_packet_association(process_context& process, wait_completion_packet& wait_packet)
             {
-                release_handle_reference(process, wait_packet.io_completion_handle);
-                release_handle_reference(process, wait_packet.target_object_handle);
+                release_reference(process, wait_packet.io_completion);
+                release_reference(process, wait_packet.target_object_reference);
                 wait_packet.target_object = nullptr;
                 wait_packet.associated = false;
             }
 
-            void enqueue_wait_packet_completion(windows_emulator& win_emu, const handle wait_packet_handle,
+            void enqueue_wait_packet_completion(windows_emulator& win_emu, const object_reference& wait_packet_reference,
                                                 const wait_completion_packet& wait_packet)
             {
                 auto& process = win_emu.process;
-                auto* completion = process.io_completions.get(wait_packet.io_completion_handle);
+                auto* completion = process.get_object_as<sogen::io_completion>(wait_packet.io_completion);
                 if (!completion)
                 {
                     return;
@@ -205,22 +219,19 @@ namespace sogen
                 message.io_status_block = wait_packet.io_status_block;
                 message.io_status_block.Information = wait_packet.io_status_information;
 
-                if (wait_packet_handle.bits != 0)
+                if (const auto retained_wait_packet = process.retain_object(wait_packet_reference))
                 {
-                    if (const auto retained_wait_packet = process.wait_completion_packets.duplicate(wait_packet_handle))
-                    {
-                        message.wait_packet_handle = *retained_wait_packet;
-                    }
+                    message.wait_packet_reference = *retained_wait_packet;
                 }
 
-                insert(win_emu, wait_packet.io_completion_handle, *completion, message);
+                insert(win_emu, wait_packet.io_completion, *completion, message);
             }
 
             // Queues the completion of each signaled wait packet on the port, or on any port without one.
-            void queue_signaled_wait_packets(windows_emulator& win_emu, const std::optional<handle> io_completion_handle)
+            void queue_signaled_wait_packets(windows_emulator& win_emu, const std::optional<object_reference>& io_completion)
             {
                 auto& process = win_emu.process;
-                std::vector<handle> signaled{};
+                std::vector<std::pair<object_reference, wait_completion_packet*>> signaled{};
 
                 for (auto& [packet_id, wait_packet] : process.wait_completion_packets)
                 {
@@ -229,7 +240,7 @@ namespace sogen
                         continue;
                     }
 
-                    if (io_completion_handle && wait_packet.io_completion_handle != *io_completion_handle)
+                    if (io_completion && wait_packet.io_completion != *io_completion)
                     {
                         continue;
                     }
@@ -239,18 +250,15 @@ namespace sogen
                         continue;
                     }
 
-                    consume_wait_completion_target(process, wait_packet.target_object_handle);
+                    consume_wait_completion_target(process, wait_packet.target_object_reference);
                     wait_packet.queued_completion = true;
-                    signaled.push_back(process.wait_completion_packets.make_handle(packet_id));
+                    signaled.emplace_back(object_reference{.type = handle_types::wait_completion_packet, .index = packet_id}, &wait_packet);
                 }
 
                 // Queued once the walk is done: a completion handed to a waiter can release its packet.
-                for (const auto wait_packet_handle : signaled)
+                for (const auto& [wait_packet_reference, wait_packet] : signaled)
                 {
-                    if (const auto* wait_packet = process.wait_completion_packets.get(wait_packet_handle))
-                    {
-                        enqueue_wait_packet_completion(win_emu, wait_packet_handle, *wait_packet);
-                    }
+                    enqueue_wait_packet_completion(win_emu, wait_packet_reference, *wait_packet);
                 }
             }
 
@@ -269,7 +277,7 @@ namespace sogen
                 // NtWaitForWorkViaWorkerFactory checks for more work after its wait, and a packet handed straight to its worker
                 // does not go back through that syscall.
                 worker_factory_support::check_for_more_work(win_emu, wait.worker_factory_handle);
-                clear_wait_packet_completion_state(win_emu.process, message.wait_packet_handle);
+                clear_wait_packet_completion_state(win_emu.process, message.wait_packet_reference);
                 win_emu.wake_idle_vcpu();
             }
         }
@@ -280,7 +288,7 @@ namespace sogen
             completion.waiters.push_back(thread_id);
         }
 
-        void insert(windows_emulator& win_emu, const handle io_completion_handle, io_completion& completion,
+        void insert(windows_emulator& win_emu, const object_reference& io_completion_reference, io_completion& completion,
                     const io_completion_message& message)
         {
             // With packets queued, a later one waits behind them: a waiter that resumed from a suspension is not back in the
@@ -289,7 +297,7 @@ namespace sogen
             {
                 auto* thread = win_emu.process.find_thread_by_id(completion.waiters[i]);
                 const auto waits_here = thread && !thread->is_terminated() && thread->await_io_completion &&
-                                        thread->await_io_completion->io_completion_handle == io_completion_handle;
+                                        thread->await_io_completion->io_completion == io_completion_reference;
 
                 // A suspended waiter is out of the wait list until it resumes; one whose wait ended is gone.
                 if (waits_here && thread->suspended != 0)
@@ -307,6 +315,16 @@ namespace sogen
 
             completion.enqueue(message);
             worker_factory_support::on_io_completion_queued(win_emu, completion);
+        }
+
+        void insert(windows_emulator& win_emu, const handle io_completion_handle, io_completion& completion,
+                    const io_completion_message& message)
+        {
+            const auto reference = win_emu.process.io_completions.reference_of(io_completion_handle);
+            if (reference)
+            {
+                insert(win_emu, *reference, completion, message);
+            }
         }
 
         NTSTATUS probe_completion_entries(memory_manager& memory, const uint64_t entries, const ULONG count, const uint64_t entries_removed)
@@ -395,12 +413,12 @@ namespace sogen
             }
         }
 
-        bool retain_handle_reference(process_context& process, const emulator_thread* active_thread, const handle source_handle,
-                                     handle& retained_handle)
+        bool retain_reference(process_context& process, const emulator_thread* active_thread, const handle source_handle,
+                              object_reference& retained_reference)
         {
             if (source_handle.bits == 0)
             {
-                retained_handle = {};
+                retained_reference = {};
                 return true;
             }
 
@@ -408,7 +426,8 @@ namespace sogen
 
             if (resolved_source_handle.value.is_pseudo)
             {
-                retained_handle = resolved_source_handle;
+                retained_reference = object_reference{.type = static_cast<handle_types::type>(resolved_source_handle.value.type),
+                                                      .pseudo = resolved_source_handle};
                 return true;
             }
 
@@ -418,56 +437,54 @@ namespace sogen
                 return false;
             }
 
-            const auto duplicated = store->duplicate(resolved_source_handle);
-            if (!duplicated)
+            const auto retained = store->retain(resolved_source_handle);
+            if (!retained)
             {
                 return false;
             }
 
-            retained_handle = *duplicated;
+            retained_reference = *retained;
             return true;
         }
 
-        void release_handle_reference(process_context& process, handle& retained_handle)
+        bool retain_reference(process_context& process, const object_reference& source_reference, object_reference& retained_reference)
         {
-            if (retained_handle.bits == 0)
+            if (!source_reference)
             {
-                return;
+                retained_reference = {};
+                return true;
             }
 
-            if (retained_handle.value.is_pseudo)
+            const auto retained = process.retain_object(source_reference);
+            if (!retained)
             {
-                retained_handle = {};
-                return;
+                return false;
             }
 
-            if (auto* store = process.get_handle_store(retained_handle))
-            {
-                (void)store->erase(retained_handle);
-            }
-
-            retained_handle = {};
+            retained_reference = *retained;
+            return true;
         }
 
-        void clear_wait_packet_completion_state(process_context& process, const handle wait_packet_handle)
+        void release_reference(process_context& process, object_reference& retained_reference)
         {
-            if (wait_packet_handle.bits == 0)
+            process.release_object(retained_reference);
+        }
+
+        void clear_wait_packet_completion_state(process_context& process, object_reference wait_packet_reference)
+        {
+            if (!wait_packet_reference)
             {
                 return;
             }
 
-            auto* wait_packet = process.wait_completion_packets.get(wait_packet_handle);
-            if (!wait_packet)
+            if (auto* wait_packet = process.get_object_as<wait_completion_packet>(wait_packet_reference))
             {
-                (void)process.wait_completion_packets.erase(wait_packet_handle);
-                return;
+                release_wait_packet_association(process, *wait_packet);
+                wait_packet->queued_completion = false;
             }
-
-            release_wait_packet_association(process, *wait_packet);
-            wait_packet->queued_completion = false;
 
             // Each queued completion keeps an extra packet reference.
-            (void)process.wait_completion_packets.erase(wait_packet_handle);
+            process.release_object(wait_packet_reference);
         }
 
         void cleanup_wait_packet_on_close(process_context& process, const handle wait_packet_handle)
@@ -478,13 +495,19 @@ namespace sogen
                 return;
             }
 
+            const auto wait_packet_reference = process.wait_completion_packets.reference_of(wait_packet_handle);
+            if (!wait_packet_reference)
+            {
+                return;
+            }
+
             if (wait_packet->queued_completion)
             {
-                if (auto* completion = process.io_completions.get(wait_packet->io_completion_handle))
+                if (auto* completion = process.get_object_as<sogen::io_completion>(wait_packet->io_completion))
                 {
-                    if (completion->remove_by_wait_packet(wait_packet_handle))
+                    if (auto message = completion->remove_by_wait_packet(*wait_packet_reference))
                     {
-                        (void)process.wait_completion_packets.erase(wait_packet_handle);
+                        process.release_object(message->wait_packet_reference);
                     }
                 }
             }
@@ -493,11 +516,20 @@ namespace sogen
             wait_packet->queued_completion = false;
         }
 
+        void materialize_signaled_wait_packets(windows_emulator& win_emu, const object_reference& io_completion)
+        {
+            if (win_emu.process.get_object_as<sogen::io_completion>(io_completion))
+            {
+                queue_signaled_wait_packets(win_emu, io_completion);
+            }
+        }
+
         void materialize_signaled_wait_packets(windows_emulator& win_emu, const handle io_completion_handle)
         {
-            if (win_emu.process.io_completions.get(io_completion_handle))
+            const auto reference = win_emu.process.io_completions.reference_of(io_completion_handle);
+            if (reference)
             {
-                queue_signaled_wait_packets(win_emu, io_completion_handle);
+                materialize_signaled_wait_packets(win_emu, *reference);
             }
         }
 
@@ -506,16 +538,17 @@ namespace sogen
             queue_signaled_wait_packets(win_emu, std::nullopt);
         }
 
-        bool dequeue_io_completion_message(windows_emulator& win_emu, const handle io_completion_handle, io_completion_message& out_message)
+        bool dequeue_io_completion_message(windows_emulator& win_emu, const object_reference& io_completion,
+                                           io_completion_message& out_message)
         {
             auto& process = win_emu.process;
-            auto* completion = process.io_completions.get(io_completion_handle);
+            auto* completion = process.get_object_as<sogen::io_completion>(io_completion);
             if (!completion)
             {
                 return false;
             }
 
-            materialize_signaled_wait_packets(win_emu, io_completion_handle);
+            materialize_signaled_wait_packets(win_emu, io_completion);
 
             if (!completion->dequeue(out_message))
             {
@@ -523,32 +556,45 @@ namespace sogen
             }
 
             worker_factory_support::on_io_completion_message_dequeued(win_emu, out_message);
-            clear_wait_packet_completion_state(process, out_message.wait_packet_handle);
+            clear_wait_packet_completion_state(process, out_message.wait_packet_reference);
             return true;
         }
 
-        std::vector<io_completion_message> dequeue_io_completion_entries(windows_emulator& win_emu, const handle io_completion_handle,
+        bool dequeue_io_completion_message(windows_emulator& win_emu, const handle io_completion_handle, io_completion_message& out_message)
+        {
+            const auto reference = win_emu.process.io_completions.reference_of(io_completion_handle);
+            return reference && dequeue_io_completion_message(win_emu, *reference, out_message);
+        }
+
+        std::vector<io_completion_message> dequeue_io_completion_entries(windows_emulator& win_emu, const object_reference& io_completion,
                                                                          const ULONG max_count)
         {
             auto& process = win_emu.process;
             std::vector<io_completion_message> messages{};
-            auto* completion = process.io_completions.get(io_completion_handle);
+            auto* completion = process.get_object_as<sogen::io_completion>(io_completion);
             if (!completion)
             {
                 return messages;
             }
 
-            materialize_signaled_wait_packets(win_emu, io_completion_handle);
+            materialize_signaled_wait_packets(win_emu, io_completion);
 
             io_completion_message message{};
             while (messages.size() < max_count && completion->dequeue(message))
             {
                 worker_factory_support::on_io_completion_message_dequeued(win_emu, message);
-                clear_wait_packet_completion_state(process, message.wait_packet_handle);
+                clear_wait_packet_completion_state(process, message.wait_packet_reference);
                 messages.push_back(message);
             }
 
             return messages;
+        }
+
+        std::vector<io_completion_message> dequeue_io_completion_entries(windows_emulator& win_emu, const handle io_completion_handle,
+                                                                         const ULONG max_count)
+        {
+            const auto reference = win_emu.process.io_completions.reference_of(io_completion_handle);
+            return reference ? dequeue_io_completion_entries(win_emu, *reference, max_count) : std::vector<io_completion_message>{};
         }
     }
 

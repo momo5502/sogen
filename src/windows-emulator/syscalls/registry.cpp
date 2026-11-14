@@ -134,6 +134,11 @@ namespace sogen
         NTSTATUS handle_NtOpenKey(const syscall_context& c, const emulator_object<handle> key_handle, const ACCESS_MASK /*desired_access*/,
                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
             auto key = read_unicode_string(c.emu, attributes.ObjectName);
 
@@ -171,6 +176,11 @@ namespace sogen
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                     ULONG /*open_options*/)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             return handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
         }
 
@@ -583,6 +593,11 @@ namespace sogen
                                     const ULONG /*title_index*/, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class*/,
                                     const ULONG /*create_options*/, const emulator_object<ULONG> disposition)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto result = handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
 
             if (result == STATUS_SUCCESS)
@@ -808,7 +823,7 @@ namespace sogen
                 const registry_notify_request request{
                     .thread_id = c.thread().id,
                     .thread_ended_waits = c.thread().ended_waits,
-                    .event = asynchronous ? event : handle{},
+                    .event = asynchronous ? c.proc.reference_of(event) : object_reference{},
                     .apc_routine = asynchronous ? apc_routine : 0,
                     .apc_context = asynchronous ? apc_context : 0,
                     .io_status_block = thread_agnostic ? 0 : io_status_block,

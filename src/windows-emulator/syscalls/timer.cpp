@@ -118,6 +118,11 @@ namespace sogen
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                       const ULONG timer_type)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (timer_type > 1)
             {
                 return STATUS_INVALID_PARAMETER_4;
@@ -139,8 +144,7 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        timer_handle.write(c.proc.timers.make_handle(entry.first));
+                        timer_handle.write(c.proc.timers.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -183,6 +187,11 @@ namespace sogen
         NTSTATUS handle_NtOpenTimer(const syscall_context& c, const emulator_object<handle> timer_handle, ACCESS_MASK /*desired_access*/,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!timer_handle)
             {
                 return STATUS_ACCESS_VIOLATION;
@@ -212,8 +221,7 @@ namespace sogen
             {
                 if (entry.second.name == name)
                 {
-                    ++entry.second.ref_count;
-                    timer_handle.write(c.proc.timers.make_handle(entry.first));
+                    timer_handle.write(c.proc.timers.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }

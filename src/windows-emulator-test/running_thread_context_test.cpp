@@ -453,8 +453,29 @@ namespace sogen::test
 
             handle create_thread(const uint32_t id)
             {
-                return this->emu->process.threads.store(
-                    emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, id, true});
+                const auto thread_handle =
+                    this->emu->process.threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, id, true});
+                this->thread_ids_by_handle[static_cast<uint32_t>(thread_handle.bits)] = id;
+                return thread_handle;
+            }
+
+            bool thread_object_exists(const handle thread_handle)
+            {
+                const auto id = this->thread_ids_by_handle.find(static_cast<uint32_t>(thread_handle.bits));
+                if (id == this->thread_ids_by_handle.end())
+                {
+                    return false;
+                }
+
+                for (const auto& thread : this->emu->process.threads | std::views::values)
+                {
+                    if (thread.id == id->second)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
             }
 
             handle run_thread(vcpu_context& vcpu, const uint32_t id, const uint64_t live_rax)
@@ -516,14 +537,26 @@ namespace sogen::test
 
             emulator_thread& thread(const handle thread_handle)
             {
-                return *this->emu->process.threads.get(thread_handle);
+                if (auto* thread = this->emu->process.threads.get(thread_handle))
+                {
+                    return *thread;
+                }
+
+                const auto id = this->thread_ids_by_handle.at(static_cast<uint32_t>(thread_handle.bits));
+                for (auto& thread : this->emu->process.threads | std::views::values)
+                {
+                    if (thread.id == id)
+                    {
+                        return thread;
+                    }
+                }
+
+                throw std::runtime_error("Thread object is gone");
             }
 
             bool thread_exists(const handle thread_handle)
             {
-                return this->emu->synchronize([&] {
-                    return this->emu->process.threads.get(thread_handle) != nullptr; //
-                });
+                return this->emu->synchronize([&] { return this->thread_object_exists(thread_handle); });
             }
 
             bool wait_for_deletion(const handle thread_handle)
@@ -685,6 +718,7 @@ namespace sogen::test
 
             std::unique_ptr<windows_emulator> emu{};
             std::optional<watchdog> watchdog_{};
+            std::map<uint32_t, uint32_t> thread_ids_by_handle{};
             two_vcpu_machine* machine{};
             handle first{};
             handle second{};
@@ -772,11 +806,10 @@ namespace sogen::test
         const auto buffer = this->context_buffer(0, CONTEXT64_ALL);
         const auto exists_during_access = std::make_shared<std::optional<bool>>();
         const auto idle_thread = this->create_thread(9);
-        this->thread(idle_thread).await_host_condition = [exists_during_access, &threads = this->emu->process.threads,
-                                                          target = this->second] {
+        this->thread(idle_thread).await_host_condition = [exists_during_access, this, target = this->second] {
             if (!*exists_during_access)
             {
-                *exists_during_access = threads.get(target) != nullptr;
+                *exists_during_access = this->thread_object_exists(target);
             }
 
             return false;
@@ -785,9 +818,12 @@ namespace sogen::test
         auto caller = this->access_from_first_vcpu(syscalls::handle_NtGetContextThread, this->second, buffer);
         auto& vcpu = this->emu->vcpu(1);
         this->wait_for_kick(vcpu, caller);
+        const auto termination_handle = this->emu->process.threads.duplicate(this->second);
+        ASSERT_TRUE(termination_handle);
         this->emu->dispatch_on_cpu(vcpu.cpu, [&] {
             syscalls::handle_NtClose(this->context(1), this->second);
-            syscalls::handle_NtTerminateThread(this->context(1), this->second, STATUS_SUCCESS);
+            syscalls::handle_NtTerminateThread(this->context(1), *termination_handle, STATUS_SUCCESS);
+            syscalls::handle_NtClose(this->context(1), *termination_handle);
         });
         auto second_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
         const auto _ = utils::finally([&] { this->emu->stop(); });
@@ -808,7 +844,7 @@ namespace sogen::test
         const auto exists_during_access = this->emu->dispatch_on_cpu(vcpu.cpu, [&] {
             syscalls::handle_NtTerminateThread(this->context(1), this->second, STATUS_SUCCESS);
             syscalls::handle_NtClose(this->context(1), this->second);
-            return this->emu->process.threads.get(this->second) != nullptr;
+            return this->thread_object_exists(this->second);
         });
         auto second_vcpu = std::async(std::launch::async, [&] { return this->emu->perform_thread_switch(vcpu); });
         const auto _ = utils::finally([&] { this->emu->stop(); });
@@ -897,7 +933,7 @@ namespace sogen::test
         const auto exists_after_close = this->emu->dispatch_on_cpu(this->emu->vcpu(0).cpu, [&] {
             syscalls::handle_NtTerminateThread(this->context(0), this->second, STATUS_SUCCESS);
             syscalls::handle_NtClose(this->context(0), this->second);
-            return this->emu->process.threads.get(this->second) != nullptr;
+            return this->thread_object_exists(this->second);
         });
         ASSERT_TRUE(exists_after_close);
 
@@ -920,7 +956,7 @@ namespace sogen::test
 
         const auto exists_after_close = this->emu->dispatch_on_cpu(this->emu->vcpu(0).cpu, [&] {
             syscalls::handle_NtClose(this->context(0), this->second);
-            return this->emu->process.threads.get(this->second) != nullptr;
+            return this->thread_object_exists(this->second);
         });
         ASSERT_TRUE(exists_after_close);
 
@@ -942,7 +978,7 @@ namespace sogen::test
         const auto exists_after_close = this->emu->dispatch_on_cpu(vcpu.cpu, [&] {
             syscalls::handle_NtTerminateThread(this->context(1), this->first, STATUS_SUCCESS);
             syscalls::handle_NtClose(this->context(1), this->first);
-            return this->emu->process.threads.get(this->first) != nullptr;
+            return this->thread_object_exists(this->first);
         });
         EXPECT_TRUE(exists_after_close);
 
@@ -965,7 +1001,7 @@ namespace sogen::test
             this->thread(transferred).registers_in_transit = true;
             syscalls::handle_NtTerminateThread(this->context(0), transferred, STATUS_SUCCESS);
             syscalls::handle_NtClose(this->context(0), transferred);
-            return this->emu->process.threads.get(transferred) != nullptr;
+            return this->thread_object_exists(transferred);
         });
         ASSERT_TRUE(exists_after_close);
 
@@ -1286,7 +1322,7 @@ namespace sogen::test
         const auto exists_after_close = this->emu->dispatch_on_cpu(this->emu->vcpu(1).cpu, [&] {
             syscalls::handle_NtTerminateThread(this->context(1), this->first, STATUS_SUCCESS);
             syscalls::handle_NtClose(this->context(1), this->first);
-            return this->emu->process.threads.get(this->first) != nullptr;
+            return this->thread_object_exists(this->first);
         });
         EXPECT_TRUE(exists_after_close);
 

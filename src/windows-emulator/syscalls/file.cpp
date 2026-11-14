@@ -1380,6 +1380,11 @@ namespace sogen
                                                  const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                                  const uint64_t file_information, const uint32_t length, const uint32_t info_class)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!is_file_information_class(info_class))
             {
                 c.win_emu.log.error("Unsupported NtQueryInformationByName info class: 0x%X\n", info_class);
@@ -1608,7 +1613,8 @@ namespace sogen
             }
 
             io_device_context context{c.emu};
-            context.event = make_handle(event);
+            context.event = c.proc.reference_of(make_handle(event));
+            context.event_low_bit = (event & 1) != 0;
             context.apc_context = apc_context;
             context.io_status_block = io_status_block;
             context.completion_port = f.completion_association->completion_port;
@@ -1630,7 +1636,8 @@ namespace sogen
             }
             io_device_context context{c.emu};
             context.source_handle = file_handle;
-            context.event = make_handle(event);
+            context.event = c.proc.reference_of(make_handle(event));
+            context.event_low_bit = (event & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;
             context.io_status_block = io_status_block;
@@ -2032,12 +2039,13 @@ namespace sogen
             const auto range_length = static_cast<uint64_t>(lock_length.QuadPart);
             const auto is_exclusive = exclusive_lock != FALSE;
             const auto lock_key = f->handle.path().u16string();
+            const auto owner = c.proc.reference_of(file_handle);
 
             if (const auto lock_it = c.proc.file_locks.find(lock_key); lock_it != c.proc.file_locks.end())
             {
                 for (const auto& existing : lock_it->second.locks)
                 {
-                    if (existing.owner == file_handle || !does_lock_range_overlap(existing, offset, *lock_end))
+                    if (existing.owner == owner || !does_lock_range_overlap(existing, offset, *lock_end))
                     {
                         continue;
                     }
@@ -2059,7 +2067,7 @@ namespace sogen
                 .length = range_length,
                 .key = key,
                 .exclusive = is_exclusive,
-                .owner = file_handle,
+                .owner = owner,
             });
 
             write_lock_io_status(io_status_block, STATUS_SUCCESS);
@@ -2102,8 +2110,9 @@ namespace sogen
             }
 
             auto& locks = lock_it->second.locks;
+            const auto owner = c.proc.reference_of(file_handle);
             const auto entry = std::ranges::find_if(locks, [&](const file_lock_range& existing) {
-                return existing.owner == file_handle && existing.offset == offset && existing.length == range_length && existing.key == key;
+                return existing.owner == owner && existing.offset == offset && existing.length == range_length && existing.key == key;
             });
 
             if (entry == locks.end())
@@ -2242,6 +2251,11 @@ namespace sogen
                                      ULONG /*share_access*/, ULONG create_disposition, ULONG create_options, uint64_t ea_buffer,
                                      ULONG ea_length)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             constexpr ULONG file_opened = 1;
 
             if (create_options & FILE_DELETE_ON_CLOSE && !(desired_access & DELETE))
@@ -2553,6 +2567,11 @@ namespace sogen
                                                   const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                   const emulator_object<FILE_NETWORK_OPEN_INFORMATION> file_information)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!object_attributes)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -2624,6 +2643,11 @@ namespace sogen
                                               const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                               const emulator_object<FILE_BASIC_INFORMATION> file_information)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!object_attributes)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -2694,6 +2718,11 @@ namespace sogen
                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG share_access,
                                    const ULONG open_options)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu.memory()}, 0,
                                        share_access, FILE_OPEN, open_options, 0, 0);
         }
@@ -2702,6 +2731,11 @@ namespace sogen
                                               const ACCESS_MASK /*desired_access*/,
                                               const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
             const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
@@ -2742,6 +2776,11 @@ namespace sogen
                                                 const ACCESS_MASK /*desired_access*/,
                                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
 
             if (attributes.ObjectName == 0)
@@ -2756,6 +2795,11 @@ namespace sogen
                                                  ACCESS_MASK /*desired_access*/,
                                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
             const auto object_name = read_unicode_string(c.emu, attributes.ObjectName);
 
@@ -2854,6 +2898,11 @@ namespace sogen
                                               ULONG completion_mode, ULONG maximum_instances, ULONG inbound_quota, ULONG outbound_quota,
                                               emulator_object<LARGE_INTEGER> default_timeout)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             constexpr ULONG file_created = 2;
 
             (void)share_access;
@@ -2965,6 +3014,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (event.bits != 0 && !event.value.is_pseudo && event.value.type != handle_types::event)
+            {
+                return STATUS_OBJECT_TYPE_MISMATCH;
+            }
+
             if (const auto block = io_status_block.try_read(); !block || !io_status_block.try_write(*block))
             {
                 return STATUS_ACCESS_VIOLATION;
@@ -2986,7 +3040,8 @@ namespace sogen
             }
 
             io_device_context context{c.emu};
-            context.event = event;
+            context.event = c.proc.reference_of(event);
+            context.event_low_bit = (event.bits & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;
             context.io_status_block = io_status_block;

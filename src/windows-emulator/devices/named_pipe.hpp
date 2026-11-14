@@ -113,7 +113,7 @@ namespace sogen
         {
             io_device_context context;
             std::unique_ptr<utils::host_pipe_operation> operation{};
-            handle issuing_thread{};
+            object_reference issuing_thread{};
             operation_kind kind{};
             awaited_pipe awaited{};
             NTSTATUS decided_status{};

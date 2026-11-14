@@ -132,10 +132,9 @@ namespace sogen
                             return STATUS_OBJECT_NAME_COLLISION;
                         }
 
-                        ++entry.second.ref_count;
-
                         c.win_emu.callbacks.on_generic_access("Opening private namespace", boundary_name);
-                        namespace_handle.write(c.proc.private_namespaces.make_handle(entry.first));
+                        namespace_handle.write(
+                            c.proc.private_namespaces.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_SUCCESS;
                     }
                 }
@@ -152,6 +151,7 @@ namespace sogen
                 ns.access_mask = desired_access;
 
                 const auto handle = c.proc.private_namespaces.store(std::move(ns));
+                (void)c.proc.private_namespaces.set_attributes(handle, get_handle_attributes(object_attributes));
                 namespace_handle.write(handle);
 
                 return STATUS_SUCCESS;
@@ -163,6 +163,11 @@ namespace sogen
                                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                  const emulator_object<OBJECT_BOUNDARY_DESCRIPTOR> boundary_descriptor)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             return open_or_create_ns(c, namespace_handle, desired_access, object_attributes, boundary_descriptor, false);
         }
 
@@ -171,6 +176,11 @@ namespace sogen
                                                const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                const emulator_object<OBJECT_BOUNDARY_DESCRIPTOR> boundary_descriptor)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             return open_or_create_ns(c, namespace_handle, desired_access, object_attributes, boundary_descriptor, true);
         }
 
