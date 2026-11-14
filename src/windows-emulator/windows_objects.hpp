@@ -785,8 +785,9 @@ namespace sogen
         // identity: two handle values for one station (a duplicate or a second open) scope the same desktops.
         object_reference window_station{};
         // Set on a further handle to an existing desktop, such as the one NtUserOpenInputDesktop returns. Windows gives each
-        // its own handle value and inherit flag, while the desktop and its state stay shared.
-        handle opened_desktop{};
+        // its own handle value and inherit flag, while the desktop and its state stay shared. By identity, so closing the
+        // original handle does not detach the opened desktop from it.
+        object_reference opened_desktop{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {

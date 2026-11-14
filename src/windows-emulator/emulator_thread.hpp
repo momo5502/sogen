@@ -234,7 +234,9 @@ namespace sogen
 
     struct pending_debug_event_wait
     {
-        handle debug_object{};
+        // The waited debug object by identity, so closing the handle the wait was entered with (a duplicate keeps it alive)
+        // does not detach the wait.
+        object_reference debug_object{};
         emulator_pointer state_change{};
         std::optional<std::chrono::steady_clock::time_point> timeout{};
         bool timeout_absolute{};
@@ -443,7 +445,9 @@ namespace sogen
         ULONG io_priority{2};
 
         std::optional<NTSTATUS> exit_status{};
-        std::vector<handle> await_objects{};
+        // The waited objects by identity, resolved when the wait starts: closing or reusing the handle value a wait was
+        // entered with must not detach it from its object (a duplicate keeps the object alive).
+        std::vector<object_reference> await_objects{};
         bool await_any{false};
         bool waiting_for_alert{false};
         // Set while a vCPU moves this thread's registers in or out with the kernel lock released. The thread must not

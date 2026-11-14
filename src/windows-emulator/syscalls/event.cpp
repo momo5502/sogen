@@ -78,8 +78,8 @@ namespace sogen
             const auto event_reference = c.proc.events.reference_of(make_handle(handle)).value_or(object_reference{});
             for (auto& thread : c.proc.threads | std::views::values)
             {
-                const auto waits_on_event = std::ranges::any_of(
-                    thread.await_objects, [&](const auto awaited) { return c.proc.reference_of(awaited) == event_reference; });
+                const auto waits_on_event =
+                    std::ranges::any_of(thread.await_objects, [&](const auto& awaited) { return awaited == event_reference; });
                 if (waits_on_event)
                 {
                     (void)thread.is_thread_ready(c.win_emu);

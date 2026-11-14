@@ -843,6 +843,18 @@ namespace sogen
             return std::ranges::adjacent_find(objects) != objects.end();
         }
 
+        // The wait keeps the objects by identity, so closing or reusing a handle value it was entered with cannot detach it.
+        std::vector<object_reference> reference_wait_objects(const syscall_context& c, const std::vector<handle>& handles)
+        {
+            std::vector<object_reference> references{};
+            references.reserve(handles.size());
+            for (const auto h : handles)
+            {
+                references.push_back(c.proc.reference_of(h));
+            }
+            return references;
+        }
+
         NTSTATUS validate_wait_handle(const syscall_context& c, const handle h)
         {
             const auto validate_handle_in_store = [&](auto& store) -> NTSTATUS {
@@ -936,9 +948,16 @@ namespace sogen
 
         NTSTATUS handle_NtCompareObjects(const syscall_context& c, const handle first, const handle second)
         {
-            const auto first_resolved = c.proc.resolve_object_pseudo_handle(first, c.vcpu.active_thread);
-            const auto second_resolved = c.proc.resolve_object_pseudo_handle(second, c.vcpu.active_thread);
-            return (first_resolved == second_resolved) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
+            // ObReferenceObjectByHandle on both and compare the objects: a duplicate or a second open of one object is the
+            // same object even though its handle value differs.
+            const auto first_reference = c.proc.reference_of(c.proc.resolve_object_pseudo_handle(first, c.vcpu.active_thread));
+            const auto second_reference = c.proc.reference_of(c.proc.resolve_object_pseudo_handle(second, c.vcpu.active_thread));
+            if (!first_reference || !second_reference)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            return (first_reference == second_reference) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
         }
 
         DWORD handle_NtUserMsgWaitForMultipleObjectsEx(const syscall_context& c, const ULONG count, const emulator_object<handle> handles,
@@ -986,7 +1005,7 @@ namespace sogen
                 wait_handles.push_back(h);
             }
 
-            t.await_objects = std::move(wait_handles);
+            t.await_objects = reference_wait_objects(c, wait_handles);
             t.await_any = !wait_all;
             if (wake_mask != 0)
             {
@@ -1070,7 +1089,7 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER_MIX;
             }
 
-            t.await_objects = std::move(wait_handles);
+            t.await_objects = reference_wait_objects(c, wait_handles);
             t.await_any = wait_type == WaitAny;
 
             if (timeout.value() && !t.await_time.has_value())
@@ -1136,7 +1155,7 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER_MIX;
             }
 
-            t.await_objects = std::move(wait_handles);
+            t.await_objects = reference_wait_objects(c, wait_handles);
             t.await_any = wait_type == WaitAny;
 
             if (timeout.value() && !t.await_time.has_value())
@@ -1160,7 +1179,7 @@ namespace sogen
             }
 
             auto& t = c.thread();
-            t.await_objects = {resolved_handle};
+            t.await_objects = {c.proc.reference_of(resolved_handle)};
             t.await_any = false;
 
             if (timeout.value() && !t.await_time.has_value())

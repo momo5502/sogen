@@ -2108,10 +2108,11 @@ namespace sogen
             return c.proc.desktops.make_handle(c.proc.default_desktop.index);
         }
 
-        handle resolve_desktop(const syscall_context& c, const handle desktop_handle)
+        object_reference resolve_desktop(const syscall_context& c, const handle desktop_handle)
         {
-            const auto* desk = c.proc.desktops.get(desktop_handle);
-            return desk && desk->opened_desktop.bits != 0 ? desk->opened_desktop : desktop_handle;
+            const auto reference = c.proc.reference_of(desktop_handle);
+            const auto* desk = c.proc.get_object_as<desktop>(reference);
+            return desk && desk->opened_desktop ? desk->opened_desktop : reference;
         }
 
         hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, const ULONG thread_id)
@@ -3727,7 +3728,7 @@ namespace sogen
         {
             for (const auto& [index, desk] : c.proc.desktops)
             {
-                if (desk.opened_desktop.bits == 0 && desk.window_station == window_station &&
+                if (!desk.opened_desktop && desk.window_station == window_station &&
                     utils::string::equals_ignore_case(std::u16string_view{desk.name}, name))
                 {
                     return c.proc.desktops.make_handle(index).bits;
@@ -3879,7 +3880,7 @@ namespace sogen
             desktop desk{};
             desk.name = input_desktop->name;
             desk.window_station = input_desktop->window_station;
-            desk.opened_desktop = input_desktop_handle;
+            desk.opened_desktop = c.proc.reference_of(input_desktop_handle);
             desk.inherit = inherit != FALSE;
             return c.proc.desktops.store(std::move(desk)).bits;
         }
@@ -5974,7 +5975,7 @@ namespace sogen
         {
             if (handle.value.type == handle_types::desktop && !handle.value.is_pseudo)
             {
-                auto* desktop = c.proc.desktops.get(resolve_desktop(c, handle));
+                auto* desktop = c.proc.get_object_as<sogen::desktop>(resolve_desktop(c, handle));
                 if (!desktop)
                 {
                     return 0;
@@ -8051,7 +8052,7 @@ namespace sogen
                 {
                     return fail(error_invalid_parameter);
                 }
-                const BOOL receives_input = c.proc.reference_of(resolve_desktop(c, object)) == c.proc.default_desktop;
+                const BOOL receives_input = resolve_desktop(c, object) == c.proc.default_desktop;
                 return write(&receives_input, sizeof(receives_input));
             }
             default:

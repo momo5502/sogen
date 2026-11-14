@@ -145,9 +145,9 @@ namespace sogen
         }
     }
 
-    bool deliver_debug_event(windows_emulator& win_emu, const handle debug_handle, const uint64_t state_change)
+    bool deliver_debug_event(windows_emulator& win_emu, const object_reference& debug_object_reference, const uint64_t state_change)
     {
-        auto* object = win_emu.process.debug_objects.get(debug_handle);
+        auto* object = win_emu.process.get_object_as<debug_object>(debug_object_reference);
         auto* manager = win_emu.processes();
         if (!object || !manager)
         {
@@ -235,12 +235,13 @@ namespace sogen
         NTSTATUS handle_NtWaitForDebugEvent(const syscall_context& c, const handle debug_handle, const BOOLEAN alertable,
                                             const emulator_object<LARGE_INTEGER> timeout, const emulator_pointer state_change)
         {
-            if (!c.proc.debug_objects.get(debug_handle))
+            const auto debug_reference = c.proc.debug_objects.reference_of(debug_handle);
+            if (!debug_reference)
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (deliver_debug_event(c.win_emu, debug_handle, state_change))
+            if (deliver_debug_event(c.win_emu, *debug_reference, state_change))
             {
                 return STATUS_SUCCESS;
             }
@@ -256,7 +257,7 @@ namespace sogen
             t.await_time = {};
             t.await_msg = {};
             t.waiting_for_alert = false;
-            t.await_debug_event = pending_debug_event_wait{.debug_object = debug_handle, .state_change = state_change};
+            t.await_debug_event = pending_debug_event_wait{.debug_object = *debug_reference, .state_change = state_change};
             if (timeout)
             {
                 const auto due = timeout.read();

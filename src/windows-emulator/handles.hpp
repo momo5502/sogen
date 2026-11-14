@@ -284,7 +284,7 @@ namespace sogen
             return nullptr;
         }
 
-        virtual std::optional<object_reference> reference_of(handle)
+        virtual std::optional<object_reference> reference_of(handle) const
         {
             return std::nullopt;
         }
@@ -552,7 +552,7 @@ namespace sogen
         }
 
         // Identifies the object without keeping it alive.
-        std::optional<object_reference> reference_of(const handle h) override
+        std::optional<object_reference> reference_of(const handle h) const override
         {
             const auto index = this->resolve_index(h.value);
             if (!index)
