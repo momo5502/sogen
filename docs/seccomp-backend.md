@@ -63,11 +63,12 @@ without producing callbacks. Unsupported guest signals stop execution with PC an
 
 ## Build and run
 
-Enable the backend with `SOGEN_ENABLE_SECCOMP`. Its unit tests are part of the normal
-`windows-emulator-test` target and require no Windows binaries or cross compiler.
+The backend is enabled by default on ARM64 Linux and Android. Configure with
+`-DSOGEN_ENABLE_SECCOMP=OFF` to disable it. Its unit tests are included in `windows-emulator-test`
+and require no Windows binaries or cross compiler.
 
 ```sh
-cmake --preset release -DSOGEN_ENABLE_SECCOMP=ON
+cmake --preset release
 cmake --build --preset release --target analyzer windows-emulator-test
 build/release/artifacts/windows-emulator-test --gtest_filter='*Seccomp*'
 ```
