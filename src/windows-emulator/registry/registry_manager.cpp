@@ -66,6 +66,34 @@ namespace sogen
         {
             return key == hive ? utils::path_key{} : utils::path_key{key.get().lexically_relative(hive.get())};
         }
+
+        // path_key splits a key path at '/' as well as '\'.
+        std::optional<std::vector<std::u16string_view>> split_plain_key_path(const std::u16string_view path)
+        {
+            if (path.empty() || path.find(u':') != std::u16string_view::npos)
+            {
+                return std::nullopt;
+            }
+
+            std::vector<std::u16string_view> parts{};
+            for (size_t start = 0;;)
+            {
+                const auto end = std::min(path.find_first_of(u"\\/", start), path.size());
+                const auto part = path.substr(start, end - start);
+                if (part.empty() || part == u"." || part == u"..")
+                {
+                    return std::nullopt;
+                }
+
+                parts.push_back(part);
+                if (end == path.size())
+                {
+                    return parts;
+                }
+
+                start = end + 1;
+            }
+        }
     }
 
     registry_manager::registry_manager() = default;
@@ -328,6 +356,50 @@ namespace sogen
         }
 
         return {std::move(reg_key)};
+    }
+
+    std::optional<registry_key> registry_manager::get_sub_key(const registry_key& parent, const std::u16string_view relative_path)
+    {
+        auto full_path = this->get_unmapped_sub_key_path(parent, relative_path);
+        if (!full_path)
+        {
+            return this->get_key(utils::path_key{parent.hive.get() / parent.path.get() / relative_path});
+        }
+
+        registry_key reg_key{};
+        reg_key.hive = parent.hive;
+        reg_key.path = utils::path_key{parent.path.get() / relative_path};
+        reg_key.generation = this->get_generation(*full_path);
+        reg_key.full_path = std::move(full_path);
+
+        if (!this->key_exists(reg_key))
+        {
+            return std::nullopt;
+        }
+
+        return {std::move(reg_key)};
+    }
+
+    std::optional<utils::path_key> registry_manager::get_unmapped_sub_key_path(const registry_key& parent,
+                                                                               const std::u16string_view relative_path) const
+    {
+        const auto parts = split_plain_key_path(relative_path);
+        if (!parts || !this->hives_.contains(parent.hive))
+        {
+            return std::nullopt;
+        }
+
+        auto full_path = registry_manager::get_full_key_path(parent);
+        for (const auto part : *parts)
+        {
+            full_path = utils::path_key{full_path.get() / part};
+            if (this->path_mapping_.contains(full_path))
+            {
+                return std::nullopt;
+            }
+        }
+
+        return full_path;
     }
 
     bool registry_manager::key_exists(const registry_key& key)
