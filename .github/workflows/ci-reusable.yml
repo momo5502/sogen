@@ -1130,6 +1130,39 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
+  smoke-test-seccomp:
+    name: Smoke Test Seccomp (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    needs: [create-arm64-emulation-root, build]
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Linux arm64 Clang Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Test Sample
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows arm64 Release Artifacts
+          path: arm64-artifacts
+
+      - name: Download ARM64 Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 11 arm64 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp arm64-artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: Smoke Test
+        working-directory: build/release/artifacts
+        timeout-minutes: 5
+        run: |
+          chmod +x ./analyzer
+          ./analyzer --backend seccomp --network live -e root --root-mode rw c:/test-sample.exe
+
   smoke-test-mingw:
     name: Smoke Test MinGW x86_64
     runs-on: windows-latest
@@ -1734,6 +1767,7 @@ jobs:
         smoke-test-kvm,
         smoke-test-fex,
         smoke-test-fex-linux,
+        smoke-test-seccomp,
         smoke-test-node,
         smoke-test-mingw,
         smoke-test-win32,
