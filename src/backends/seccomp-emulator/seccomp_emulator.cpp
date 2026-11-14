@@ -425,6 +425,11 @@ namespace sogen::seccomp
                 return true;
             }
 
+            bool supports_timestamp_counter_interception() const override
+            {
+                return false;
+            }
+
             std::optional<uint64_t> native_timestamp_counter_frequency() const override
             {
                 uint64_t frequency{};
@@ -667,6 +672,12 @@ namespace sogen::seccomp
                     {
                         const auto callback = interrupt_hook_;
                         callback(*this, static_cast<int>(arm64_exception_class::undefined_instruction));
+                        continue;
+                    }
+                    if (trapped_signal_ == SIGTRAP && trapped_code_ == TRAP_BRKPT && interrupt_hook_)
+                    {
+                        const auto callback = interrupt_hook_;
+                        callback(*this, static_cast<int>(arm64_exception_class::breakpoint_instruction));
                         continue;
                     }
                     violation_ = true;

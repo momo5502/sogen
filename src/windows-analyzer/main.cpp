@@ -725,7 +725,7 @@ namespace sogen
             return {
                 .use_relative_time = options.reproducible,
                 .use_instruction_precision = uses_instruction_precision(options, machine),
-                .intercept_rdtsc = backend != backend_type::seccomp && !options.native_timing,
+                .intercept_rdtsc = options.native_timing ? std::optional{false} : std::nullopt,
                 .intercept_kusd = kusd_needs_intercept || backend == backend_type::seccomp || !options.native_timing,
                 .keep_guest_time_across_snapshots = options.keep_guest_time,
                 .emulation_root = options.emulation_root,

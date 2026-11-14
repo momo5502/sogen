@@ -118,12 +118,14 @@ namespace sogen
         bool use_relative_time{false};
         bool use_instruction_precision{true};
 
-        // Timing fidelity vs. speed. With interception on (the default, used by the analyzer) rdtsc reads
-        // and KUSER_SHARED_DATA accesses trap so the emulated clock stays exact and deterministic. Turning
-        // them off (as the sandbox does) lets the guest read the host TSC natively and KUSD from a plain
-        // mapped page, removing those VM exits. The cost is exact/reproducible timing, and KUSD's time
-        // fields then only advance in steps of the interrupt thread's 20 ms period.
-        bool intercept_rdtsc{true};
+        // Timing fidelity vs. speed. With interception on (the default where supported), timestamp-counter reads
+        // and KUSER_SHARED_DATA accesses trap through the emulated clock for exact/reproducible timing. Turning
+        // them off (as the sandbox does) lets the guest read the host counter natively and KUSD from a plain
+        // mapped page, removing those VM exits. The cost is exact/reproducible timing; with KUSD interception
+        // off, its time fields only advance in steps of the interrupt thread's 20 ms period.
+        // An unset counter-interception setting follows the backend's capability; explicitly enabling
+        // unsupported interception fails.
+        std::optional<bool> intercept_rdtsc{};
         bool intercept_kusd{true};
 
         // Whether snapshots keep the guest's time: its steady time (interrupt time, tick count, waits and timers) and

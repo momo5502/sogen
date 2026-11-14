@@ -1,6 +1,9 @@
 #include "emulation_test_utils.hpp"
 
 #include <cstring>
+#include <filesystem>
+#include <random>
+#include <stdexcept>
 
 #ifdef SOGEN_ENABLE_SECCOMP
 namespace sogen::test
@@ -28,6 +31,10 @@ namespace sogen::test
         {
         };
 
+        class SeccompBreakpointTest : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
+        {
+        };
+
         class SeccompLd1Test : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
         {
         };
@@ -35,6 +42,63 @@ namespace sogen::test
         class SeccompByteLaneLoadTest : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
         {
         };
+
+        class SeccompWindowsSettingsTest : public testing::Test
+        {
+          protected:
+            std::filesystem::path root =
+                std::filesystem::temp_directory_path() /
+                ("sogen-seccomp-settings-test-" + std::to_string(getpid()) + "-" + std::to_string(std::random_device{}()));
+
+            void SetUp() override
+            {
+                ASSERT_TRUE(std::filesystem::create_directory(this->root));
+                ASSERT_TRUE(std::filesystem::create_directory(this->root / "filesys"));
+            }
+
+            void TearDown() override
+            {
+                std::error_code error{};
+                std::filesystem::remove_all(this->root, error);
+            }
+
+            std::unique_ptr<windows_emulator> create(emulator_settings settings = {}, std::unique_ptr<utils::clock> clock = {})
+            {
+                settings.emulation_root = this->root;
+                settings.load_registry = false;
+                settings.disable_logging = true;
+                emulator_interfaces interfaces{};
+                interfaces.clock = std::move(clock);
+                interfaces.ui = std::make_unique<null_ui_backend>();
+                interfaces.audio = std::make_unique<null_audio_backend>();
+                interfaces.console = std::make_unique<null_console_backend>();
+                return std::make_unique<windows_emulator>(create_arm64_emulator(backend_type::seccomp), settings, emulator_callbacks{},
+                                                          std::move(interfaces));
+            }
+        };
+    }
+
+    TEST_F(SeccompWindowsSettingsTest, DefaultTimingSettingsAllowConstructionWithNativeCounterReads)
+    {
+        const auto emu = create();
+        const auto frequency = emu->native_timestamp_counter_frequency();
+        ASSERT_TRUE(frequency.has_value());
+        EXPECT_GT(*frequency, 0u);
+    }
+
+    TEST_F(SeccompWindowsSettingsTest, ExplicitCounterInterceptionIsRejected)
+    {
+        EXPECT_THROW(create({.intercept_rdtsc = true}), std::invalid_argument);
+    }
+
+    TEST_F(SeccompWindowsSettingsTest, RelativeTimeIsRejected)
+    {
+        EXPECT_THROW(create({.use_relative_time = true}), std::invalid_argument);
+    }
+
+    TEST_F(SeccompWindowsSettingsTest, InjectedClockIsRejected)
+    {
+        EXPECT_THROW(create({}, std::make_unique<utils::clock>()), std::invalid_argument);
     }
 
     TEST_P(SeccompCurrentElTest, RaisesUndefinedInstructionWithoutChangingGuestState)
@@ -91,6 +155,41 @@ namespace sogen::test
     }
 
     INSTANTIATE_TEST_SUITE_P(Destination, SeccompCurrentElTest, testing::Values(0u, 16u, 30u, 31u));
+
+    TEST_P(SeccompBreakpointTest, ReportsTheFaultingPcAndCancelsPendingSoftwareStep)
+    {
+        const uint32_t instruction = 0xD4200000 | (GetParam() << 5);
+        machine->write_memory(code_address, std::array{instruction, 0xD4000001u});
+        machine->reg(arm64_register::x0, 0x1234u);
+        machine->reg(arm64_register::x16, 0x5678u);
+        size_t exceptions{};
+        machine->hook_interrupt([&](cpu_interface& cpu, const int exception_class) {
+            ++exceptions;
+            EXPECT_EQ(exception_class, static_cast<int>(arm64_exception_class::breakpoint_instruction));
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address);
+            EXPECT_EQ(machine->read_stack_pointer(), stack_address + 0xFF0);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 0x1234u);
+            EXPECT_EQ(machine->reg(arm64_register::x16), 0x5678u);
+            EXPECT_EQ(machine->reg(arm64_register::pstate), 0xA0000000u);
+            cpu.stop();
+        });
+        machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface& cpu, uint64_t) {
+            ADD_FAILURE() << "Execution must stop at BRK";
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+        for (const auto software_step : {0u, 1u << 21})
+        {
+            machine->reg(arm64_register::pc, code_address);
+            machine->reg(arm64_register::pstate, 0xA0000000u | software_step);
+            ASSERT_NO_THROW(machine->start());
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address);
+            EXPECT_FALSE(machine->has_violation());
+        }
+        EXPECT_EQ(exceptions, 2u);
+    }
+
+    INSTANTIATE_TEST_SUITE_P(Immediate, SeccompBreakpointTest, testing::Values(0xF000u, 0xF001u, 0xF003u));
 
     TEST_F(SeccompBackendTest, IllegalInstructionsWithoutAnInterruptHookFail)
     {

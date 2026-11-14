@@ -219,6 +219,11 @@ namespace sogen::seccomp
         if (child == 0)
         {
             close(channels[0]);
+            bool begin{};
+            if (!receive_record(channels[1], begin) || !begin)
+            {
+                _exit(1);
+            }
             int error{};
             if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0 || getppid() != process ||
                 ptrace(PTRACE_SEIZE, thread, nullptr, reinterpret_cast<void*>(static_cast<uintptr_t>(PTRACE_O_EXITKILL))) < 0)
@@ -243,9 +248,20 @@ namespace sogen::seccomp
         close(channels[1]);
         channels[1] = -1;
         const auto reap_child = utils::finally([&] {
+            // Closing the start gate releases a child still waiting for authorization after a parent-side error.
+            shutdown(channels[0], SHUT_RDWR);
             int status{};
             wait_for_process(child, status);
         });
+        // Kernels without Yama reject this operation with EINVAL. The tracer's exit removes any granted exception.
+        if (prctl(PR_SET_PTRACER, static_cast<unsigned long>(child), 0, 0, 0) < 0 && errno != EINVAL)
+        {
+            throw std::system_error(errno, std::generic_category(), "Authorize seccomp single-step tracer");
+        }
+        if (!send_record(channels[0], true))
+        {
+            throw std::system_error(errno, std::generic_category(), "Start seccomp single-step tracer");
+        }
         int error{};
         if (!receive_record(channels[0], error))
         {

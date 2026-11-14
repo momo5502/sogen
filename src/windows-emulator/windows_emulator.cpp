@@ -876,7 +876,7 @@ namespace sogen
           // (single-stepping) cannot provide it.
           instruction_precision_(settings.use_instruction_precision && this->emu_->get_guest_cpu(0).supports_instruction_counting() &&
                                  this->emu_->supports_global_memory_execution_hooks()),
-          intercept_rdtsc_(settings.intercept_rdtsc),
+          intercept_rdtsc_(settings.intercept_rdtsc.value_or(this->emu_->supports_timestamp_counter_interception())),
           intercept_kusd_(settings.intercept_kusd),
           keep_guest_time_across_snapshots_(settings.keep_guest_time_across_snapshots),
           spoof_gpu_features_(settings.spoof_gpu_features),
@@ -887,6 +887,11 @@ namespace sogen
         if (this->vcpu_count_ == 0)
         {
             throw std::invalid_argument("At least one vCPU is required");
+        }
+
+        if (!this->emu_->supports_timestamp_counter_interception() && (this->intercept_rdtsc_ || !this->use_native_timestamp_counter_))
+        {
+            throw std::invalid_argument("The selected backend requires native timestamp counter reads");
         }
 
         this->memory.set_execute_implies_read(guest_architecture_of(*this->emu_) == windows_guest_architecture::x86_64);

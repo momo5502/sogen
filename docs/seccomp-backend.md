@@ -4,7 +4,9 @@ The seccomp backend executes ARM64 Windows code directly on ARM64 Linux and Andr
 It uses Sogen's Windows PE loader, process and thread initialization, TEB/PEB setup, and syscall dispatcher.
 Select it with `--backend seccomp` or `EMULATOR_SECCOMP=1`.
 
-Counter-only native timing is enabled by default.
+Counter-only native timing is enabled by default, including through the `windows_emulator` API.
+An unset `emulator_settings::intercept_rdtsc` follows the backend's interception capability;
+explicit counter-interception requests, relative time and injected clocks are rejected by this backend.
 The analyzer keeps shared-data MMIO reads intercepted, including with `--native-timing`, and refreshes
 the Windows timestamps on each read. The flag takes no argument; the seccomp backend always uses native
 counter reads. Native timing is incompatible with `--reproducible`.
@@ -25,12 +27,18 @@ state are saved before returning to the host stack, where emulator callbacks exe
 dispatcher delivers `STATUS_ILLEGAL_INSTRUCTION` with the saved guest registers. This includes
 `MRS CurrentEL` at EL0; a guest handler can advance its saved PC and resume execution.
 
+Guest `BRK` instructions become ARM64 breakpoint-instruction exceptions at the faulting PC.
+The Windows dispatcher interprets the immediate for breakpoints, assertions, debug services and fast-fail.
+
 `PSTATE.SS` uses Linux `PTRACE_SINGLESTEP` to execute one instruction. A child tracer saves the host
 registers, FPSIMD state and TLS, installs the guest state, captures the result, and restores the host
 state before detaching. Successful steps report a software-step exception at the next PC with SS
 cleared. Instructions that raise another exception, including `SVC`, cancel the pending step.
-Tracing failures produce an error, including host policies that disallow a same-UID child from tracing
-the CPU thread.
+Before attachment, the CPU thread authorizes the child with `PR_SET_PTRACER` and releases it through
+the control socket. This permits attachment under Yama's restricted mode. The kernel removes the
+authorization when the tracer exits. The backend owns this per-process Yama exception while stepping;
+an existing exception is replaced and cannot be restored because Linux provides no query for it.
+Kernels without Yama use their normal ptrace policy. Other tracing restrictions still produce an error.
 
 ## MMIO
 
