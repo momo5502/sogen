@@ -340,7 +340,7 @@ namespace sogen
                 return nullptr;
             }
 
-            const auto cls_ptr = process_context::allocate_user_class(c.win_emu.memory, normalized_name);
+            const auto cls_ptr = c.proc.allocate_user_class(c.win_emu.memory, normalized_name);
 
             EMU_WNDCLASSEX wnd_class{};
             wnd_class.cbSize = sizeof(wnd_class);
@@ -875,6 +875,19 @@ namespace sogen
             return c.win_emu.memory.try_write_memory(result_info, &result, sizeof(result));
         }
 
+        uint64_t allocate_text_buffer(const syscall_context& c, const uint64_t count, const size_t character_size)
+        {
+            if (count == 0 || count > (std::numeric_limits<size_t>::max() - 0xFFF) / character_size)
+            {
+                return 0;
+            }
+            const auto size = static_cast<size_t>(page_align_up(count * character_size));
+            const auto start = c.proc.is_wow64_process ? DEFAULT_ALLOCATION_ADDRESS_32BIT : 0;
+            const auto highest_address = c.proc.is_wow64_process ? uint64_t{0xFFFFFFFF} : MAX_ALLOCATION_ADDRESS;
+            return c.win_emu.memory.allocate_memory(size, memory_permission::read_write, false, start,
+                                                    memory_region_kind::private_allocation, highest_address);
+        }
+
         uint64_t copy_text_to_buffer(const syscall_context& c, const std::u16string_view text, const uint64_t character_count,
                                      const uint64_t buffer, const bool ansi)
         {
@@ -885,8 +898,9 @@ namespace sogen
 
             if (ansi)
             {
-                const auto narrow = u16_to_cp1252(text);
-                const auto copy_count = std::min<uint64_t>(narrow.size(), character_count - 1);
+                const auto maximum_bytes = static_cast<size_t>(std::min<uint64_t>(character_count - 1, std::numeric_limits<size_t>::max()));
+                const auto narrow = c.proc.ansi_code_page.encode(text, maximum_bytes);
+                const auto copy_count = narrow.size();
                 if (copy_count != 0 && !c.win_emu.memory.try_write_memory(buffer, narrow.data(), static_cast<size_t>(copy_count)))
                 {
                     return 0;
@@ -935,7 +949,7 @@ namespace sogen
                 }
                 else if (ansi)
                 {
-                    update_window_title(c, win, cp1252_to_u16(read_string<char>(c.win_emu.memory, l_param)));
+                    update_window_title(c, win, c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, l_param)));
                 }
                 else
                 {
@@ -946,10 +960,10 @@ namespace sogen
             case WM_GETTEXT:
                 return copy_def_window_text(c, win, w_param, l_param, ansi != FALSE);
 
-            case WM_GETTEXTLENGTH:
-                // CP-1252 is 1:1 with UTF-16 code units, so the ANSI byte count equals the code-unit
-                // count; no need to encode just to measure it.
-                return read_guest_window_text(c, win).size();
+            case WM_GETTEXTLENGTH: {
+                const auto text = read_guest_window_text(c, win);
+                return ansi ? c.proc.ansi_code_page.encoded_size(text) : text.size();
+            }
 
             case WM_ERASEBKGND:
                 return TRUE;
@@ -1603,7 +1617,7 @@ namespace sogen
                 return resolve_atom_name(c, static_cast<uint16_t>(str_obj.value()));
             }
 
-            return read_large_string(str_obj, index);
+            return read_large_string(str_obj, c.proc.ansi_code_page, index);
         }
 
         std::optional<uint64_t> convert_create_struct_text(const syscall_context& c, const emulator_object<LARGE_STRING> text,
@@ -1620,17 +1634,20 @@ namespace sogen
                 return std::nullopt;
             }
 
-            const auto decoded = read_large_string(text);
+            const auto decoded = read_large_string(text, c.proc.ansi_code_page);
             const auto write = [&](const void* data, const size_t size) {
-                const auto address =
-                    c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(size)), memory_permission::read_write);
+                const auto address = allocate_text_buffer(c, size, sizeof(char));
+                if (address == 0)
+                {
+                    throw std::runtime_error("Cannot allocate converted window text");
+                }
                 c.win_emu.memory.write_memory(address, data, size);
                 return address;
             };
 
             if (ansi)
             {
-                const auto narrow = u16_to_cp1252(decoded);
+                const auto narrow = c.proc.ansi_code_page.encode(decoded);
                 return write(narrow.c_str(), narrow.size() + 1);
             }
 
@@ -1647,59 +1664,32 @@ namespace sogen
             state.converted_create_struct_text.clear();
         }
 
-        std::u16string read_def_set_text_string(const syscall_context& c, const emulator_object<LARGE_STRING> text)
+        std::optional<std::u16string> read_def_set_text_string(const syscall_context& c, const emulator_object<LARGE_STRING> text)
         {
             if (!text)
             {
-                return {};
+                return std::u16string{};
             }
-
-            if (const auto str = text.try_read())
+            const auto str = text.try_read();
+            if (!str)
             {
-                constexpr ULONG k_max_reasonable_text_bytes = 0x10000;
-                const auto length = str->Length;
-                const auto max_length = str->MaximumLength;
-                const auto has_valid_empty_string = length == 0;
-                std::byte last_byte{};
-                const auto has_valid_buffer = str->Buffer != 0 && length <= k_max_reasonable_text_bytes && length <= max_length &&
-                                              length > 0 &&
-                                              c.win_emu.memory.try_read_memory(str->Buffer + length - 1, &last_byte, sizeof(last_byte));
-                if (has_valid_empty_string)
-                {
-                    return {};
-                }
-
-                if (has_valid_buffer)
-                {
-                    // bAnsi is reliable: handle_NtUserMessageCall re-encodes WM_SETTEXT to the target
-                    // proc's encoding, so the buffer agrees with bAnsi here (byte-sniffing would
-                    // mis-handle non-ASCII Unicode such as a CJK title).
-                    if (str->bAnsi)
-                    {
-                        return cp1252_to_u16(read_string<char>(c.win_emu.memory, str->Buffer, length));
-                    }
-
-                    return read_string<char16_t>(c.win_emu.memory, str->Buffer, length / sizeof(char16_t));
-                }
+                return std::nullopt;
             }
-
-            std::array<uint8_t, 2> first_bytes{};
-            if (!c.win_emu.memory.try_read_memory(text.value(), first_bytes.data(), first_bytes.size()))
+            const auto length = str->Length;
+            if (length == 0)
             {
-                return {};
+                return std::u16string{};
             }
-
-            if (first_bytes[0] >= 0x20 && first_bytes[0] < 0x7F && first_bytes[1] == 0)
+            if (str->Buffer == 0 || length > 0x10000 || length > str->MaximumLength || (!str->bAnsi && length % sizeof(char16_t) != 0) ||
+                str->Buffer > std::numeric_limits<uint64_t>::max() - length || !is_memory_readable(c.win_emu.memory, str->Buffer, length))
             {
-                return read_string<char16_t>(c.win_emu.memory, text.value());
+                return std::nullopt;
             }
-
-            if (first_bytes[0] >= 0x20 && first_bytes[0] < 0x7F)
+            if (str->bAnsi)
             {
-                return cp1252_to_u16(read_string<char>(c.win_emu.memory, text.value()));
+                return c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, str->Buffer, length));
             }
-
-            return read_string<char16_t>(c.win_emu.memory, text.value());
+            return read_string<char16_t>(c.win_emu.memory, str->Buffer, length / sizeof(char16_t));
         }
 
         std::u16string standard_dialog_button_caption(const uint64_t id)
@@ -1736,7 +1726,7 @@ namespace sogen
             const auto raw = window_name.read();
             if (raw.bAnsi)
             {
-                return read_large_string(window_name);
+                return read_large_string(window_name, c.proc.ansi_code_page);
             }
 
             if (raw.Buffer == 0 || raw.Length == 0)
@@ -1760,7 +1750,7 @@ namespace sogen
                 }
             }
 
-            return read_large_string(window_name);
+            return read_large_string(window_name, c.proc.ansi_code_page);
         }
 
         hmenu ensure_system_menu(const syscall_context& c, window& win)
@@ -2724,7 +2714,12 @@ namespace sogen
                 return FALSE;
             }
 
-            update_window_title(c, *win, read_def_set_text_string(c, text));
+            const auto decoded = read_def_set_text_string(c, text);
+            if (!decoded)
+            {
+                return FALSE;
+            }
+            update_window_title(c, *win, *decoded);
             return TRUE;
         }
 
@@ -4006,10 +4001,9 @@ namespace sogen
             }
 
             const auto class_name_str = read_unicode_string(c.emu, class_name);
-            const auto cls_ptr =
-                class_size <= desktop_heap_size
-                    ? process_context::allocate_user_class(c.win_emu.memory, class_name_str, static_cast<uint32_t>(wnd_class.cbClsExtra))
-                    : 0;
+            const auto cls_ptr = class_size <= desktop_heap_size ? c.proc.allocate_user_class(c.win_emu.memory, class_name_str,
+                                                                                              static_cast<uint32_t>(wnd_class.cbClsExtra))
+                                                                 : 0;
             if (!cls_ptr)
             {
                 return 0;
@@ -4369,7 +4363,7 @@ namespace sogen
             }
             else
             {
-                win.name = read_large_string(window_name);
+                win.name = read_large_string(window_name, c.proc.ansi_code_page);
             }
 
             if (c.win_emu.callbacks.on_generic_activity && !win.name.empty())
@@ -5034,9 +5028,12 @@ namespace sogen
                 return 0;
             }
 
+            uint64_t dispatch_w_param = w_param;
             uint64_t dispatch_l_param = l_param;
             uint64_t scratch_text = 0;
+            uint64_t scratch_capacity = 0;
             const bool caller_unicode = ansi == FALSE;
+            const bool target_unicode = win->unicode_proc;
 
             if (msg == WM_SETTEXT)
             {
@@ -5046,7 +5043,7 @@ namespace sogen
                 }
                 else if (ansi)
                 {
-                    update_window_title(c, *win, cp1252_to_u16(read_string<char>(c.win_emu.memory, l_param)));
+                    update_window_title(c, *win, c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, l_param)));
                 }
                 else
                 {
@@ -5056,43 +5053,59 @@ namespace sogen
                 // Deliver the text in the target proc's encoding (caller's is `ansi`, proc's is
                 // unicode_proc): when they differ, re-encode into a scratch guest buffer so a wide proc
                 // never reads ANSI as UTF-16. Freed in completion_NtUserMessageCall.
-                if (l_param != 0 && caller_unicode != win->unicode_proc)
+                if (l_param != 0 && caller_unicode != target_unicode)
                 {
-                    if (win->unicode_proc)
+                    if (target_unicode)
                     {
-                        const auto wide = cp1252_to_u16(read_string<char>(c.win_emu.memory, l_param));
-                        const auto bytes = (wide.size() + 1) * sizeof(char16_t);
-                        scratch_text =
-                            c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(bytes)), memory_permission::read_write);
-                        c.win_emu.memory.write_memory(scratch_text, wide.c_str(), bytes);
+                        const auto wide = c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, l_param));
+                        scratch_text = allocate_text_buffer(c, wide.size() + 1, sizeof(char16_t));
+                        if (scratch_text == 0)
+                        {
+                            return 0;
+                        }
+                        c.win_emu.memory.write_memory(scratch_text, wide.c_str(), (wide.size() + 1) * sizeof(char16_t));
                     }
                     else
                     {
-                        const auto narrow = u16_to_cp1252(read_string<char16_t>(c.win_emu.memory, l_param));
-                        const auto bytes = narrow.size() + 1;
-                        scratch_text =
-                            c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(bytes)), memory_permission::read_write);
-                        c.win_emu.memory.write_memory(scratch_text, narrow.c_str(), bytes);
+                        const auto narrow = c.proc.ansi_code_page.encode(read_string<char16_t>(c.win_emu.memory, l_param));
+                        scratch_text = allocate_text_buffer(c, narrow.size() + 1, sizeof(char));
+                        if (scratch_text == 0)
+                        {
+                            return 0;
+                        }
+                        c.win_emu.memory.write_memory(scratch_text, narrow.c_str(), narrow.size() + 1);
                     }
                     dispatch_l_param = scratch_text;
                 }
             }
-            else if (msg == WM_GETTEXT && l_param != 0 && w_param != 0 && caller_unicode != win->unicode_proc)
+            else if (msg == WM_GETTEXT && l_param != 0 && w_param != 0 && caller_unicode != target_unicode)
             {
-                const auto proc_char_size = win->unicode_proc ? sizeof(char16_t) : sizeof(char);
-                const auto bytes = (w_param + 1) * proc_char_size;
-                scratch_text = c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(bytes)), memory_permission::read_write);
-                if (scratch_text != 0)
+                scratch_capacity = w_param;
+                if (caller_unicode)
                 {
-                    dispatch_l_param = scratch_text;
+                    const auto maximum_size = c.proc.ansi_code_page.maximum_character_size();
+                    if (w_param - 1 > (std::numeric_limits<uint64_t>::max() - 1) / maximum_size)
+                    {
+                        return 0;
+                    }
+                    scratch_capacity = (w_param - 1) * maximum_size + 1;
                 }
+                scratch_text = allocate_text_buffer(c, scratch_capacity, target_unicode ? sizeof(char16_t) : sizeof(char));
+                if (scratch_text == 0)
+                {
+                    return 0;
+                }
+                dispatch_w_param = scratch_capacity;
+                dispatch_l_param = scratch_text;
             }
 
             message_call_state state{};
             state.window = hwnd;
             state.message = msg;
             state.scratch_text = scratch_text;
-            dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, msg, w_param, dispatch_l_param);
+            state.scratch_capacity = scratch_capacity;
+            state.target_unicode = target_unicode;
+            dispatch_window_message(c, callback_id::NtUserMessageCall, std::move(state), *win, msg, dispatch_w_param, dispatch_l_param);
             return {};
         }
 
@@ -5111,20 +5124,42 @@ namespace sogen
                 return write_message_call_result(c, result_info, 0) ? TRUE : FALSE;
             }
 
+            if (type == FNID_SENDMESSAGECALLBACK && state.dispatching_result_callback)
+            {
+                return TRUE;
+            }
+
+            const auto callback_result = c.get_callback_result<uint64_t>();
             std::optional<uint64_t> converted_text_length{};
             if (state.scratch_text != 0)
             {
                 if (state.message == WM_GETTEXT)
                 {
-                    const auto capacity = static_cast<size_t>(std::min<uint64_t>(w_param, std::numeric_limits<size_t>::max()));
-                    auto text = ansi ? read_string<char16_t>(c.win_emu.memory, state.scratch_text, capacity)
-                                     : cp1252_to_u16(read_string<char>(c.win_emu.memory, state.scratch_text, capacity));
+                    const auto available = state.scratch_capacity == 0 ? 0 : state.scratch_capacity - 1;
+                    const auto capacity = static_cast<size_t>(
+                        std::min({callback_result, available, static_cast<uint64_t>(std::numeric_limits<size_t>::max())}));
+                    auto text = state.target_unicode
+                                    ? read_string<char16_t>(c.win_emu.memory, state.scratch_text, capacity)
+                                    : c.proc.ansi_code_page.decode(read_string<char>(c.win_emu.memory, state.scratch_text, capacity));
                     text.erase(std::min(text.find(u'\0'), text.size()));
                     converted_text_length = copy_text_to_buffer(c, text, w_param, l_param, ansi != FALSE);
                 }
 
                 c.win_emu.memory.release_memory(state.scratch_text, 0);
                 state.scratch_text = 0;
+            }
+            if (state.message == WM_GETTEXTLENGTH && ansi && state.target_unicode)
+            {
+                const auto maximum_size = c.proc.ansi_code_page.maximum_character_size();
+                if (callback_result > std::numeric_limits<uint64_t>::max() / maximum_size)
+                {
+                    set_guest_last_error(c, 534);
+                    converted_text_length = 0;
+                }
+                else
+                {
+                    converted_text_length = callback_result * maximum_size;
+                }
             }
             if (state.message == WM_PAINT)
             {
@@ -5137,11 +5172,6 @@ namespace sogen
 
             if (type == FNID_SENDMESSAGECALLBACK)
             {
-                if (state.dispatching_result_callback)
-                {
-                    return TRUE;
-                }
-
                 if (result_info != 0)
                 {
                     const auto* win = c.proc.windows.get(hwnd);
@@ -5157,7 +5187,7 @@ namespace sogen
                         args.pwnd = win->guest.value();
                         args.msg = msg;
                         args.wParam = callback_info.data;
-                        args.lParam = c.get_callback_result<uint64_t>();
+                        args.lParam = converted_text_length.value_or(callback_result);
                         args.xParam = callback_info.callback;
                         args.xpfnProc = c.proc.dispatch_client_message;
 

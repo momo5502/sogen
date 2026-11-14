@@ -1,7 +1,13 @@
 #include "emulation_test_utils.hpp"
+#include "code_page_test_utils.hpp"
+#include "gdi_font_test_utils.hpp"
 
+#include <gdi_font_manager.hpp>
+#include <code_page.hpp>
 #include <registry/registry_file.hpp>
+#include <registry/registry_utils.hpp>
 #include <syscall_utils.hpp>
+#include <utils/io.hpp>
 
 #include <atomic>
 #include <fstream>
@@ -363,6 +369,33 @@ namespace sogen::test
             std::optional<registry_manager> registry_{};
         };
 
+        class CodePageConfigurationTest : public RegistryFileTest
+        {
+          protected:
+            void SetUp() override
+            {
+                RegistryFileTest::SetUp();
+                ASSERT_TRUE(std::filesystem::create_directory(this->directory() / "filesys"));
+                ASSERT_TRUE(write_hive(this->directory() / "c_936.nls", make_dbcs_code_page()));
+            }
+
+            std::unique_ptr<windows_emulator> make_emulator()
+            {
+                emulator_interfaces interfaces{};
+                interfaces.audio = std::make_unique<null_audio_backend>();
+                interfaces.console = std::make_unique<null_console_backend>();
+                interfaces.ui = std::make_unique<null_ui_backend>();
+                auto emu = std::make_unique<windows_emulator>(
+                    create_x86_64_emulator_from_environment(),
+                    emulator_settings{.disable_logging = true, .emulation_root = this->directory(), .load_registry = false},
+                    emulator_callbacks{}, std::move(interfaces));
+                emu->registry = registry_manager{this->directory()};
+                emu->version.set_system_root(windows_path{"C:\\Windows"});
+                emu->file_sys.map(emu->version.get_system_root() / "System32" / "c_936.nls", this->directory() / "c_936.nls");
+                return emu;
+            }
+        };
+
         class LicenseValueTest : public RegistryFileTest
         {
           protected:
@@ -642,6 +675,99 @@ namespace sogen::test
         {
             return std::ranges::all_of(std::span{output}.subspan(offset, size), [](const auto b) { return b == untouched_byte; });
         }
+    }
+
+    TEST_F(CodePageConfigurationTest, OverridesImportedCodePagesAndInitializesDbcsWithoutChangingHive)
+    {
+        auto emu = this->make_emulator();
+        import_registry_file_contents(emu->registry, encode_utf8_with_bom(R"(Windows Registry Editor Version 5.00
+
+[HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage]
+"ACP"="1252"
+"OEMCP"="437"
+)"));
+        configure_process_code_pages(emu->registry, 936, 936);
+        const auto key = emu->registry.get_key(utils::path_key{R"(\Registry\Machine\System\CurrentControlSet\Control\Nls\CodePage)"});
+        ASSERT_TRUE(key);
+        for (const auto* name : {"ACP", "OEMCP"})
+        {
+            const auto value = emu->registry.get_value(*key, name);
+            ASSERT_TRUE(value);
+            EXPECT_EQ(value->type, REG_SZ);
+            EXPECT_TRUE(std::ranges::equal(value->data, std::as_bytes(std::span{u"936"})));
+        }
+
+        initialize_process_code_pages(*emu);
+        EXPECT_EQ(emu->process.ansi_code_page.id(), 936);
+        EXPECT_EQ(emu->process.ansi_code_page.decode("\xD6\xD0\xCE\xC4"), u"\x4E2D\x6587");
+        ASSERT_TRUE(emu->process.oem_code_page);
+        EXPECT_EQ(emu->process.oem_code_page->id(), 936);
+        EXPECT_EQ(emu->process.oem_code_page->encode(u"\x4E2D\x6587"), "\xD6\xD0\xCE\xC4");
+        EXPECT_EQ(utils::io::read_file(this->directory() / "SYSTEM"), create_system_hive());
+    }
+
+    TEST_F(CodePageConfigurationTest, RuntimeStateRestoresParentCodePagesBeforeInitialization)
+    {
+        configure_process_code_pages(this->registry(), 936, 936);
+        utils::buffer_serializer state{};
+        this->registry().serialize_runtime_state(state);
+
+        auto child = this->make_emulator();
+        configure_process_code_pages(child->registry, 1252, 437);
+        utils::buffer_deserializer input{state};
+        child->registry.deserialize_runtime_state(input);
+        initialize_process_code_pages(*child);
+
+        const std::filesystem::path path = R"(\Registry\Machine\System\CurrentControlSet\Control\Nls\CodePage)";
+        EXPECT_EQ(registry_utils::read_registry_string(child->registry, path, "ACP"), u"936");
+        EXPECT_EQ(registry_utils::read_registry_string(child->registry, path, "OEMCP"), u"936");
+        EXPECT_EQ(child->process.ansi_code_page.id(), 936);
+        EXPECT_EQ(child->process.ansi_code_page.decode("\xD6\xD0\xCE\xC4"), u"\x4E2D\x6587");
+        ASSERT_TRUE(child->process.oem_code_page);
+        EXPECT_EQ(child->process.oem_code_page->id(), 936);
+        EXPECT_EQ(child->process.oem_code_page->encode(u"\x4E2D\x6587"), "\xD6\xD0\xCE\xC4");
+    }
+
+    TEST_F(RegistryFileTest, RejectsInvalidCodePageIdentifiersBeforeChangingRegistry)
+    {
+        configure_process_code_pages(this->registry(), 1252, 437);
+        for (const auto id : {0u, 1u, 2u, 3u, 65000u, 65001u, 65536u, std::numeric_limits<uint32_t>::max()})
+        {
+            EXPECT_THROW(configure_process_code_pages(this->registry(), id, 936), std::invalid_argument);
+            EXPECT_THROW(configure_process_code_pages(this->registry(), 936, id), std::invalid_argument);
+        }
+        const std::filesystem::path path = R"(\Registry\Machine\System\CurrentControlSet\Control\Nls\CodePage)";
+        EXPECT_EQ(registry_utils::read_registry_string(this->registry(), path, "ACP"), u"1252");
+        EXPECT_EQ(registry_utils::read_registry_string(this->registry(), path, "OEMCP"), u"437");
+    }
+
+    TEST_F(RegistryFileTest, FontSubstitutesSelectGuestFaceAndCyclesFallBack)
+    {
+        const auto folder = this->directory() / "filesys" / "c" / "windows" / "Fonts";
+        ASSERT_TRUE(std::filesystem::create_directories(folder));
+        ASSERT_TRUE(write_hive(folder / "a.ttf", font_fixture::make_font(u"First")));
+        ASSERT_TRUE(write_hive(folder / "b.ttf", font_fixture::make_font(u"Second")));
+        import_registry_file_contents(this->registry(), encode_utf8_with_bom(R"reg(Windows Registry Editor Version 5.00
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\FontSubstitutes]
+"MS Shell Dlg"="Second"
+"Loop A"="Loop B"
+"Loop B"="Loop A"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts]
+"Second (TrueType)"="b.ttf"
+)reg"));
+        file_system files{this->directory() / "filesys"};
+        gdi_font_manager fonts{};
+        EMU_LOGFONTW request{};
+        request.lfHeight = -16;
+        request.lfWeight = FW_NORMAL;
+        utils::string::copy(request.lfFaceName, u"MS Shell Dlg");
+        const auto selected = fonts.resolve(files, this->registry(), windows_path{"C:\\Windows"}, request);
+        ASSERT_TRUE(selected);
+        EXPECT_EQ(fonts.family_name(*selected), u"Second");
+        utils::string::copy(request.lfFaceName, u"Loop A");
+        EXPECT_TRUE(fonts.resolve(files, this->registry(), windows_path{"C:\\Windows"}, request));
     }
 
     TEST_F(RegistryFileTest, ImportsUtf8BomStringsEscapesAndDword)

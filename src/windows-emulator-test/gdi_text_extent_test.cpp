@@ -1,4 +1,4 @@
-#include "emulation_test_utils.hpp"
+#include "gdi_test_utils.hpp"
 #include <syscall_utils.hpp>
 
 #include <optional>
@@ -13,7 +13,6 @@ namespace sogen::test
 {
     namespace
     {
-        constexpr hdc k_dc = 0x1010;
         constexpr ULONG k_unset = 0xCCCCCCCC;
         constexpr size_t k_page_size = 0x1000;
         constexpr size_t k_text_size = 2 * k_page_size;
@@ -31,7 +30,7 @@ namespace sogen::test
 
         struct extent_request
         {
-            hdc dc = k_dc;
+            std::optional<hdc> dc{};
             bool with_text = true;
             ULONG char_count = k_char_count;
             ULONG max_extent = 2 * k_width;
@@ -42,19 +41,12 @@ namespace sogen::test
             uint64_t size_offset = k_size_offset;
         };
 
-        class GdiTextExtentTest : public testing::Test
+        class GdiTextExtentTest : public GdiFallbackTest
         {
           protected:
             void SetUp() override
             {
-                emulator_interfaces interfaces{};
-                interfaces.ui = std::make_unique<null_ui_backend>();
-                interfaces.audio = std::make_unique<null_audio_backend>();
-                interfaces.console = std::make_unique<null_console_backend>();
-                this->emu = std::make_unique<windows_emulator>(
-                    create_x86_64_emulator_from_environment(),
-                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
-                    emulator_callbacks{}, std::move(interfaces));
+                ASSERT_NO_FATAL_FAILURE(GdiFallbackTest::SetUp());
                 this->storage = this->emu->memory.allocate_memory(3 * k_page_size, memory_permission::read_write, true);
                 ASSERT_TRUE(this->emu->memory.commit_memory(this->storage, k_unmapped_offset, memory_permission::read_write));
                 this->text = this->emu->memory.allocate_memory(k_text_size, memory_permission::read_write);
@@ -69,11 +61,6 @@ namespace sogen::test
                 this->emu->memory.write_memory(this->text, hello.data(), hello.size() * sizeof(char16_t));
             }
 
-            syscall_context context()
-            {
-                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
-            }
-
             BOOL extent(const extent_request& request)
             {
                 return this->extent_at(request, request.with_text ? this->text : 0,
@@ -83,8 +70,8 @@ namespace sogen::test
             BOOL extent_at(const extent_request& request, const uint64_t text_address, const uint64_t extents)
             {
                 const emulator_object<ULONG> fit_count{this->emu->memory, request.with_fit ? this->storage + k_fit_offset : 0};
-                return syscalls::handle_NtGdiGetTextExtentExW(this->context(), request.dc, text_address, request.char_count,
-                                                              request.max_extent, fit_count, extents,
+                return syscalls::handle_NtGdiGetTextExtentExW(this->context(), request.dc.value_or(this->dc), text_address,
+                                                              request.char_count, request.max_extent, fit_count, extents,
                                                               request.with_size ? this->storage + request.size_offset : 0, 0);
             }
 
@@ -100,7 +87,7 @@ namespace sogen::test
             BOOL extent_into(const ULONG char_count, const uint64_t fit_address, const uint64_t extents, const uint64_t size)
             {
                 const emulator_object<ULONG> fit_count{this->emu->memory, fit_address};
-                return syscalls::handle_NtGdiGetTextExtentExW(this->context(), k_dc, this->text, char_count, 2 * k_width, fit_count,
+                return syscalls::handle_NtGdiGetTextExtentExW(this->context(), this->dc, this->text, char_count, 2 * k_width, fit_count,
                                                               extents, size, 0);
             }
 
@@ -159,7 +146,6 @@ namespace sogen::test
                 EXPECT_EQ(k_unset, this->slot(k_size_offset + sizeof(ULONG)));
             }
 
-            std::unique_ptr<windows_emulator> emu{};
             uint64_t storage{};
             uint64_t text{};
         };
@@ -245,8 +231,9 @@ namespace sogen::test
     TEST_F(GdiTextExtentTest, UnwritableFitCountFailsAfterSize)
     {
         const emulator_object<ULONG> unmapped_fit{this->emu->memory, this->storage + k_unmapped_offset};
-        EXPECT_EQ(FALSE, syscalls::handle_NtGdiGetTextExtentExW(this->context(), k_dc, this->text, k_char_count, 2 * k_width, unmapped_fit,
-                                                                this->storage + k_extents_offset, this->storage + k_size_offset, 0));
+        EXPECT_EQ(FALSE,
+                  syscalls::handle_NtGdiGetTextExtentExW(this->context(), this->dc, this->text, k_char_count, 2 * k_width, unmapped_fit,
+                                                         this->storage + k_extents_offset, this->storage + k_size_offset, 0));
         this->expect_whole_string_size();
         this->expect_partial_extents(0);
     }

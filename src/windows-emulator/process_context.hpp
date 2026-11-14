@@ -1,6 +1,7 @@
 #pragma once
 #include "section_view_manager.hpp"
 #include "display_modes.hpp"
+#include "gdi_font_manager.hpp"
 #include "arch/windows_abi.hpp"
 
 #include "emulator_utils.hpp"
@@ -146,6 +147,8 @@ namespace sogen
     struct gdi_dc_state
     {
         uint32_t selected_bitmap{};
+        // gdi32 可先写共享字体槽；这里保存批处理同步后的内核选择，用于返回旧字体。
+        uint32_t selected_font{};
         hwnd target_window{};
         int32_t current_x{};
         int32_t current_y{};
@@ -156,6 +159,7 @@ namespace sogen
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->selected_bitmap);
+            buffer.write(this->selected_font);
             buffer.write(this->target_window);
             buffer.write(this->current_x);
             buffer.write(this->current_y);
@@ -166,6 +170,7 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->selected_bitmap);
+            buffer.read(this->selected_font);
             buffer.read(this->target_window);
             buffer.read(this->current_x);
             buffer.read(this->current_y);
@@ -416,7 +421,7 @@ namespace sogen
         // A class's extra bytes follow its 0x58-byte tagCLS (win32kfull's InternalRegisterClassEx allocates 0x58 + cbClsExtra),
         // where user32's GetClassLongPtr reads positive indexes and xxxSetClassLongPtr writes them.
         static constexpr uint64_t user_class_extra_offset = 0x58;
-        static emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name, uint32_t class_extra = 0);
+        emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name, uint32_t class_extra = 0);
 
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                              bool initial_thread = false, uint64_t stack_commit_size = 0);
@@ -503,6 +508,8 @@ namespace sogen
         emulator_object<PEB64> peb64;
         emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_params64;
         kusd_mmio kusd;
+        code_page ansi_code_page{};
+        std::optional<code_page> oem_code_page{};
 
         uint64_t ntdll_image_base{};
         uint64_t ldr_initialize_thunk{};
@@ -522,6 +529,7 @@ namespace sogen
         std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         std::map<uint32_t, EMU_LOGFONTW> gdi_fonts{};
+        gdi_font_manager gdi_font_resources{};
         std::map<uint32_t, std::vector<RECT>> gdi_regions{};
         std::map<uint32_t, std::vector<EMU_PALETTEENTRY>> gdi_palettes{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.

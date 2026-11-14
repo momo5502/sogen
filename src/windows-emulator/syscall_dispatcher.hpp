@@ -333,6 +333,8 @@ namespace sogen
         hwnd window{};
         UINT message{};
         uint64_t scratch_text{}; // guest buffer holding a re-encoded text payload; freed on completion
+        uint64_t scratch_capacity{};
+        bool target_unicode{};
         bool dispatching_result_callback{};
         bool destroying_window{};
         window_destroy_data destruction{};
@@ -343,6 +345,8 @@ namespace sogen
             buffer.write(this->window);
             buffer.write(this->message);
             buffer.write(this->scratch_text);
+            buffer.write(this->scratch_capacity);
+            buffer.write(this->target_unicode);
             buffer.write(this->dispatching_result_callback);
             buffer.write(this->destroying_window);
             this->destruction.serialize(buffer);
@@ -353,6 +357,8 @@ namespace sogen
             buffer.read(this->window);
             buffer.read(this->message);
             buffer.read(this->scratch_text);
+            buffer.read(this->scratch_capacity);
+            buffer.read(this->target_unicode);
             buffer.read(this->dispatching_result_callback);
             buffer.read(this->destroying_window);
             this->destruction.deserialize(buffer);

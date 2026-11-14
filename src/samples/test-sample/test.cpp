@@ -2327,28 +2327,57 @@ namespace
 
     bool test_ansi_oem_translation()
     {
-        std::array<char, 256> source{};
-        std::array<char, 256> converted{};
-        for (size_t i = 0; i < source.size(); ++i)
-        {
-            source[i] = static_cast<char>(i);
-        }
-        if (!CharToOemBuffA(source.data(), converted.data(), static_cast<DWORD>(source.size())))
+        CPINFO ansi{};
+        CPINFO oem{};
+        if (!GetCPInfo(CP_ACP, &ansi) || !GetCPInfo(CP_OEMCP, &oem))
         {
             return false;
         }
-        for (size_t i = 0; i < source.size(); ++i)
-        {
-            wchar_t wide{};
-            char expected{};
-            if (!MultiByteToWideChar(CP_ACP, 0, &source[i], 1, &wide, 1) ||
-                !WideCharToMultiByte(CP_OEMCP, 0, &wide, 1, &expected, 1, nullptr, nullptr) || converted[i] != expected)
+        const bool single_byte = ansi.MaxCharSize == 1 && oem.MaxCharSize == 1;
+        const auto check = [single_byte](const UINT from, const UINT to, const auto translate) {
+            std::array<char, 256> source{};
+            int length = static_cast<int>(source.size());
+            if (single_byte)
+            {
+                for (size_t i = 0; i < source.size(); ++i)
+                {
+                    source[i] = static_cast<char>(i);
+                }
+            }
+            else
+            {
+                constexpr std::wstring_view text = L"A中文Z";
+                length = WideCharToMultiByte(from, 0, text.data(), static_cast<int>(text.size()), source.data(),
+                                             static_cast<int>(source.size()), nullptr, nullptr);
+                if (length == 0)
+                {
+                    return false;
+                }
+            }
+
+            std::array<wchar_t, 256> wide{};
+            const auto wide_length = MultiByteToWideChar(from, 0, source.data(), length, wide.data(), static_cast<int>(wide.size()));
+            if (wide_length == 0)
             {
                 return false;
             }
-        }
+            std::array<char, 1024> expected{};
+            const auto expected_length =
+                WideCharToMultiByte(to, 0, wide.data(), wide_length, expected.data(), static_cast<int>(expected.size()), nullptr, nullptr);
+            if (expected_length == 0 || static_cast<size_t>(expected_length) >= expected.size())
+            {
+                return false;
+            }
+            std::array<char, 1024> converted{};
+            converted.fill('#');
+            return translate(source.data(), converted.data(), static_cast<DWORD>(length)) &&
+                   std::equal(expected.begin(), expected.begin() + expected_length, converted.begin()) &&
+                   converted[static_cast<size_t>(expected_length)] == '#';
+        };
+
         auto inplace = std::to_array("shell-arguments");
-        return CharToOemA(inplace.data(), inplace.data()) && std::string_view{inplace.data()} == "shell-arguments";
+        return check(CP_ACP, CP_OEMCP, CharToOemBuffA) && check(CP_OEMCP, CP_ACP, OemToCharBuffA) &&
+               CharToOemA(inplace.data(), inplace.data()) && std::string_view{inplace.data()} == "shell-arguments";
     }
 
     bool test_bcrypt_random()
