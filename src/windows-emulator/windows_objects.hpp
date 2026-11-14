@@ -1295,6 +1295,10 @@ namespace sogen
         bool release_pending{};
         std::vector<handle> worker_threads{};
         uint32_t pending_worker_count{};
+        // ExpTryEnterWorkerFactoryAwayMode: a factory with bindings and no worker waiting on its port is away, and while
+        // the port has nothing queued it waits for the port's next packet to start a worker (the queue notification).
+        bool away_mode{};
+        bool away_notification{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -1325,6 +1329,8 @@ namespace sogen
             buffer.write(this->release_pending);
             buffer.write_vector(this->worker_threads);
             buffer.write(this->pending_worker_count);
+            buffer.write(this->away_mode);
+            buffer.write(this->away_notification);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -1356,6 +1362,8 @@ namespace sogen
             buffer.read(this->release_pending);
             buffer.read_vector(this->worker_threads);
             buffer.read(this->pending_worker_count);
+            buffer.read(this->away_mode);
+            buffer.read(this->away_notification);
         }
     };
 
