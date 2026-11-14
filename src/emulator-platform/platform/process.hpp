@@ -773,6 +773,22 @@ namespace sogen
         CONTEXT_CHUNK KernelCet;
     } CONTEXT_EX, *PCONTEXT_EX;
 
+    // The frame the kernel leaves under ntdll's user-mode dispatchers; their unwind data reads the interrupted RIP and RSP
+    // from it.
+    typedef struct _MACHINE_FRAME
+    {
+        DWORD64 Rip;
+        USHORT SegCs;
+        USHORT Fill1[3];
+        ULONG EFlags;
+        ULONG Fill2;
+        DWORD64 Rsp;
+        USHORT SegSs;
+        USHORT Fill3[3];
+    } MACHINE_FRAME, *PMACHINE_FRAME;
+
+    static_assert(sizeof(MACHINE_FRAME) == 0x28);
+
     template <typename Traits>
     struct EMU_QUOTA_LIMITS
     {

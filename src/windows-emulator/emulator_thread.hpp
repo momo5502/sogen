@@ -283,6 +283,8 @@ namespace sogen
     struct callback_frame
     {
         callback_id handler_id{};
+        // The calling syscall's stack pointer, for the completion's own callbacks.
+        uint64_t trap_stack_pointer{};
         uint64_t rip{};
         uint64_t rbp{};
         uint64_t rdi{};

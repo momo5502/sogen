@@ -244,4 +244,84 @@ namespace sogen::test
             }
         }
     }
+
+    // ObWaitForMultipleObjects fails a WaitAll that names one object twice once every handle is referenced; a WaitAny
+    // may name it again. Before, the WaitAll waited and its check threw when the second consume found nothing left.
+    TEST_F(SyncArgumentValidationTest, WaitAllRejectsAnObjectNamedTwice)
+    {
+        auto& threads = this->emu->process.threads;
+        this->emu->vcpu(0).active_thread =
+            threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+
+        handle first{};
+        handle second{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_event(SynchronizationEvent, &first));
+        ASSERT_EQ(STATUS_SUCCESS, this->create_event(SynchronizationEvent, &second));
+        this->emu->process.events.get(second)->signaled = true;
+
+        const emulator_object<handle> handles{this->emu->memory, this->storage + 0x400};
+        const emulator_object<uint32_t> handles32{this->emu->memory, this->storage + 0x600};
+        const emulator_object<LARGE_INTEGER> timeout{this->emu->memory, this->storage + 0x500};
+        timeout.write(LARGE_INTEGER{});
+
+        handles.write(first, 0);
+        handles.write(second, 1);
+        handles.write(second, 2);
+        handles32.write(static_cast<uint32_t>(second.bits), 0);
+        handles32.write(static_cast<uint32_t>(second.bits), 1);
+
+        EXPECT_EQ(STATUS_INVALID_PARAMETER_MIX,
+                  syscalls::handle_NtWaitForMultipleObjects(this->context(), 3, handles, WaitAll, FALSE, timeout));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER_MIX,
+                  syscalls::handle_NtWaitForMultipleObjects32(this->context(), 2, handles32, WaitAll, FALSE, timeout));
+        EXPECT_TRUE(this->emu->process.events.get(second)->signaled);
+        EXPECT_TRUE(this->emu->vcpu(0).thread().await_objects.empty());
+
+        // The WaitAny takes the signaled event at its first place.
+        EXPECT_EQ(STATUS_WAIT_0 + 1, syscalls::handle_NtWaitForMultipleObjects(this->context(), 3, handles, WaitAny, FALSE, timeout));
+        EXPECT_FALSE(this->emu->process.events.get(second)->signaled);
+    }
+
+    // A debugger's handles to a child: the ones NtCreateUserProcess returned and the ones its create-process debug event
+    // brought, two objects here for one process and one thread. ObWaitForMultipleObjects compares the process and the
+    // thread themselves.
+    TEST_F(SyncArgumentValidationTest, WaitAllRejectsAChildNamedThroughTwoOfItsHandles)
+    {
+        auto& threads = this->emu->process.threads;
+        this->emu->vcpu(0).active_thread =
+            threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+
+        constexpr managed_process child{.value = 0x10};
+        constexpr uint32_t child_process_id = 0x2000;
+        constexpr uint32_t child_thread_id = 0x2004;
+
+        const auto store_process = [&] {
+            emulator_process process{};
+            process.process = child;
+            process.id = child_process_id;
+            return this->emu->process.processes.store(std::move(process));
+        };
+        const auto store_thread = [&] {
+            managed_process_thread thread{};
+            thread.process = child;
+            thread.process_id = child_process_id;
+            thread.thread_id = child_thread_id;
+            return this->emu->process.managed_threads.store(std::move(thread));
+        };
+
+        const emulator_object<handle> handles{this->emu->memory, this->storage + 0x400};
+        const emulator_object<LARGE_INTEGER> timeout{this->emu->memory, this->storage + 0x500};
+        timeout.write(LARGE_INTEGER{});
+
+        handles.write(store_process(), 0);
+        handles.write(store_process(), 1);
+        EXPECT_EQ(STATUS_INVALID_PARAMETER_MIX,
+                  syscalls::handle_NtWaitForMultipleObjects(this->context(), 2, handles, WaitAll, FALSE, timeout));
+
+        handles.write(store_thread(), 0);
+        handles.write(store_thread(), 1);
+        EXPECT_EQ(STATUS_INVALID_PARAMETER_MIX,
+                  syscalls::handle_NtWaitForMultipleObjects(this->context(), 2, handles, WaitAll, FALSE, timeout));
+        EXPECT_TRUE(this->emu->vcpu(0).thread().await_objects.empty());
+    }
 }

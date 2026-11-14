@@ -1,6 +1,7 @@
 #include "emulation_test_utils.hpp"
 #include <syscall_dispatcher.hpp>
 #include <syscall_utils.hpp>
+#include <user_callback_dispatch.hpp>
 
 namespace sogen::syscalls
 {
@@ -74,7 +75,8 @@ namespace sogen::test
             syscall_context answer_parent(const uint64_t parent_answer, const uint32_t message = k_wm_ctlcolorstatic, const hdc dc = k_dc)
             {
                 const auto rsp = this->context().x64_cpu().read_stack_pointer();
-                const auto args = this->emu.memory.read_memory<dword_callback_args>(rsp + 0x30);
+                const auto callout = this->emu.memory.read_memory<user_callout_frame>(rsp);
+                const auto args = this->emu.memory.read_memory<dword_callback_args>(callout.buffer);
                 EXPECT_EQ(this->emu.process.windows.get(this->parent)->guest.value(), args.pwnd);
                 EXPECT_EQ(message, args.msg);
                 EXPECT_EQ(dc, args.w_param);
@@ -156,5 +158,25 @@ namespace sogen::test
         EXPECT_EQ(k_parent_color, this->fill_window(brush));
         EXPECT_EQ(k_system_color, this->fill_window(0));
         EXPECT_EQ(k_system_color, this->fill_window(0x1234));
+    }
+
+    // KeUserModeCallback's callout frame ends in a MACHINE_FRAME with the syscall's return RIP and its trap RSP, which
+    // KiUserCallbackDispatcher's unwind data reads (UWOP_ALLOC_SMALL 0x30, then UWOP_PUSH_MACHFRAME).
+    TEST_F(ControlColorTest, TheCallbackFrameHoldsWhereTheSyscallReturnsTo)
+    {
+        auto& cpu = this->emu.vcpu(0).x64_cpu();
+        const auto syscall_rip = cpu.read_instruction_pointer();
+        const auto trap_rsp = cpu.read_stack_pointer();
+
+        auto call = this->context();
+        call.trap_stack_pointer = trap_rsp;
+        (void)syscalls::handle_NtUserGetControlColor(call, this->parent, this->control, k_dc, k_wm_ctlcolorstatic);
+        ASSERT_TRUE(call.run_callback);
+
+        const auto rsp = cpu.read_stack_pointer();
+        const auto callout = this->emu.memory.read_memory<user_callout_frame>(rsp);
+        EXPECT_EQ(rsp + sizeof(user_callout_frame), callout.buffer);
+        EXPECT_EQ(syscall_rip + this->emu.abi().syscall_abi().syscall_instruction_size(), callout.machine_frame.Rip);
+        EXPECT_EQ(trap_rsp, callout.machine_frame.Rsp);
     }
 }

@@ -44,6 +44,7 @@ namespace sogen
 
         callback_frame frame(completion_id, std::move(state));
         frame.save_registers(c.emu);
+        frame.trap_stack_pointer = c.trap_stack_pointer;
 
         auto& thread = c.thread();
         thread.callback_return_rax.reset();
@@ -74,31 +75,44 @@ namespace sogen
         cpu.write_memory(new_sp + 0xC, &callback_index, sizeof(callback_index));
     }
 
+    // KeUserModeCallback's frame, with the arguments right after it. KiUserCallbackDispatcher reads the buffer, its length
+    // and the callback index; its unwind data reads the syscall's return RIP and RSP from the machine frame.
+    struct user_callout_frame
+    {
+        std::array<uint64_t, 4> home{};
+        uint64_t buffer{};
+        uint32_t length{};
+        uint32_t api_number{};
+        MACHINE_FRAME machine_frame{};
+    };
+
+    static_assert(offsetof(user_callout_frame, machine_frame) == 0x30);
+    static_assert(sizeof(user_callout_frame) == 0x58);
+
     template <typename... Args>
-    void prepare_call_stack(x86_64_cpu& emu, const emulator_thread& thread, const uint32_t callback_index, const Args&... args)
+    void prepare_call_stack(x86_64_cpu& emu, const emulator_thread& thread, const uint64_t trap_rip, const uint64_t trap_rsp,
+                            const uint32_t callback_index, const Args&... args)
     {
         const uint32_t arg_length = user_callback_args_size<Args...>();
-        const uint64_t stack_args_size = align_up(arg_length, 0x10);
         const uint64_t current_rsp = emu.read_stack_pointer();
-        const uint64_t aligned_rsp = align_down(current_rsp, 16);
+        const uint64_t new_rsp = align_down(current_rsp - (align_up(arg_length, 0x10) + sizeof(user_callout_frame)), 0x10);
 
-        // KiUserCallbackDispatcher expects 0x20 bytes of shadow space plus the arg buffer pointer,
-        // arg length, and callback index stored in the 0x10 bytes above it.
-        const uint64_t new_rsp = aligned_rsp - 0x30 - stack_args_size;
-        const uint64_t arg_buffer = new_rsp + 0x30;
+        user_callout_frame frame{};
+        frame.buffer = new_rsp + sizeof(user_callout_frame);
+        frame.length = arg_length;
+        frame.api_number = callback_index;
+        frame.machine_frame.Rip = trap_rip;
+        frame.machine_frame.Rsp = trap_rsp;
 
         thread.grow_stack_for_frame(new_rsp, current_rsp);
         emu.reg(x86_register::rsp, new_rsp);
+        emu.write_memory(new_rsp, &frame, sizeof(frame));
 
         if constexpr (sizeof...(Args) > 0)
         {
             size_t offset = 0;
-            (write_user_callback_arg(emu, arg_buffer, offset, args), ...);
+            (write_user_callback_arg(emu, frame.buffer, offset, args), ...);
         }
-
-        emu.write_memory(new_rsp + 0x20, &arg_buffer, sizeof(arg_buffer));
-        emu.write_memory(new_rsp + 0x28, &arg_length, sizeof(arg_length));
-        emu.write_memory(new_rsp + 0x2C, &callback_index, sizeof(callback_index));
     }
 
     template <typename StateT, typename... Args>
@@ -116,8 +130,10 @@ namespace sogen
         }
         else
         {
+            // The syscall instruction is still at RIP: the kernel's trap frame holds the instruction after it.
             auto& cpu = c.x64_cpu();
-            prepare_call_stack(cpu, c.thread(), callback_index, args...);
+            const auto trap_rip = cpu.read_instruction_pointer() + c.win_emu.abi().syscall_abi().syscall_instruction_size();
+            prepare_call_stack(cpu, c.thread(), trap_rip, c.trap_stack_pointer, callback_index, args...);
             cpu.reg(x86_register::rip, c.proc.ki_user_callback_dispatcher);
         }
 
