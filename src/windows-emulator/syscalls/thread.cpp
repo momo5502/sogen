@@ -1767,8 +1767,8 @@ namespace sogen
 
             frame.restore_registers(c.emu);
 
-            auto dispatch_result =
-                c.win_emu.dispatcher.dispatch_completion(c.win_emu, c.vcpu, frame.handler_id, frame.state.get(), callback_result);
+            auto dispatch_result = c.win_emu.dispatcher.dispatch_completion(c.win_emu, c.vcpu, frame.handler_id, frame.state.get(),
+                                                                            callback_result, frame.trap_stack_pointer);
 
             if (dispatch_result == dispatch_result::completed)
             {
