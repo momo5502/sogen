@@ -763,6 +763,47 @@ namespace sogen
             return resolved;
         }
 
+        // ObWaitForMultipleObjects sorts a WaitAll's wait objects once every handle is referenced and fails if one is named
+        // twice, through one handle or two.
+        bool names_an_object_twice(const syscall_context& c, const std::vector<handle>& handles)
+        {
+            // A child process or thread can have several objects here (NtCreateUserProcess and the debug events each make
+            // one), so it is told apart by its process and thread ID; a handle without a store by its value.
+            enum class waited_on : uint8_t
+            {
+                object,
+                handle_value,
+                child_process,
+                child_thread,
+            };
+
+            std::vector<std::tuple<waited_on, uint64_t, uint64_t>> objects{};
+            objects.reserve(handles.size());
+            for (const auto h : handles)
+            {
+                const auto* process = h.value.type == handle_types::process ? c.proc.processes.get(h) : nullptr;
+                const auto* thread = h.value.type == handle_types::managed_thread ? c.proc.managed_threads.get(h) : nullptr;
+                if (process && process->process)
+                {
+                    objects.emplace_back(waited_on::child_process, process->process.value, 0);
+                }
+                else if (thread)
+                {
+                    objects.emplace_back(waited_on::child_thread, thread->process.value, thread->thread_id);
+                }
+                else
+                {
+                    auto* store = c.proc.get_handle_store(h);
+                    const auto* object = store ? store->get_object(h) : nullptr;
+                    objects.emplace_back(object ? waited_on::object : waited_on::handle_value,
+                                         object ? reinterpret_cast<uintptr_t>(object) : h.bits, 0);
+                }
+            }
+
+            std::ranges::sort(objects);
+            return std::ranges::adjacent_find(objects) != objects.end();
+        }
+
         NTSTATUS validate_wait_handle(const syscall_context& c, const handle h)
         {
             const auto validate_handle_in_store = [&](auto& store) -> NTSTATUS {
@@ -984,6 +1025,12 @@ namespace sogen
                 wait_handles.push_back(h);
             }
 
+            if (wait_type == WaitAll && names_an_object_twice(c, wait_handles))
+            {
+                t.await_time = {};
+                return STATUS_INVALID_PARAMETER_MIX;
+            }
+
             t.await_objects = std::move(wait_handles);
             t.await_any = wait_type == WaitAny;
 
@@ -1042,6 +1089,12 @@ namespace sogen
                 }
 
                 wait_handles.push_back(*h);
+            }
+
+            if (wait_type == WaitAll && names_an_object_twice(c, wait_handles))
+            {
+                t.await_time = {};
+                return STATUS_INVALID_PARAMETER_MIX;
             }
 
             t.await_objects = std::move(wait_handles);
