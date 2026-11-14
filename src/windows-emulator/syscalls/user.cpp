@@ -363,27 +363,6 @@ namespace sogen
                     teb.Win32ClientInfo.arr[9] = active_window_ptr;
                 });
             }
-
-            if (c.proc.is_wow64_process && c.vcpu.active_thread && c.vcpu.active_thread->teb32)
-            {
-                uint32_t active_handle32{};
-                uint32_t active_window_ptr32{};
-
-                if (active_handle <= std::numeric_limits<uint32_t>::max())
-                {
-                    active_handle32 = static_cast<uint32_t>(active_handle);
-                }
-
-                if (active_window_ptr <= std::numeric_limits<uint32_t>::max())
-                {
-                    active_window_ptr32 = static_cast<uint32_t>(active_window_ptr);
-                }
-
-                c.vcpu.active_thread->teb32->access([&](TEB32& teb) {
-                    teb.Win32ClientInfo[8] = active_handle32;
-                    teb.Win32ClientInfo[9] = active_window_ptr32;
-                });
-            }
         }
 
         void set_thread_window_context(const syscall_context& c, const hwnd hwnd)

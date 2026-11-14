@@ -315,18 +315,6 @@ namespace sogen
                 }
             });
         }
-
-        if (thread.teb32)
-        {
-            thread.teb32->access([&](TEB32& teb) {
-                if (teb.Win32ClientInfo[8] == static_cast<uint32_t>(handle) &&
-                    teb.Win32ClientInfo[9] == static_cast<uint32_t>(guest_pointer))
-                {
-                    teb.Win32ClientInfo[8] = 0;
-                    teb.Win32ClientInfo[9] = 0;
-                }
-            });
-        }
     }
 
     void window_destroy_orchestrator::finalize_frame(window_destroy_frame& frame, const window& win) const
