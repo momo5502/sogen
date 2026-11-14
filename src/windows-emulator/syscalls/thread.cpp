@@ -1226,15 +1226,30 @@ namespace sogen
                 argument = c.emu.read_memory<KCONTINUE_ARGUMENT>(continue_argument);
             }
 
+            bool restored_control{};
             if (auto* arm64 = dynamic_cast<arm64_cpu*>(&c.emu))
             {
-                cpu_context::restore(*arm64, c.emu.read_memory<arm64_context>(thread_context));
+                const auto context = c.emu.read_memory<arm64_context>(thread_context);
+                restored_control = (context.ContextFlags & arm64_context_control) == arm64_context_control;
+                cpu_context::restore(*arm64, context);
                 // X18 always addresses the thread's TEB; the kernel does not take it from a user context.
                 c.win_emu.abi().install_thread_environment(c.emu, c.thread().teb64->value());
             }
             else
             {
-                cpu_context::restore(c.x64_cpu(), c.emu.read_memory<CONTEXT64>(thread_context));
+                const auto context = c.emu.read_memory<CONTEXT64>(thread_context);
+                restored_control = (context.ContextFlags & CONTEXT_CONTROL_64) == CONTEXT_CONTROL_64;
+                cpu_context::restore(c.x64_cpu(), context);
+            }
+
+            if (restored_control)
+            {
+                // NtContinue replaces the execution context without executing a guest instruction. Keep the
+                // precise-instruction cache in step with the restored RIP so a later exception is reported against the
+                // restored context rather than the syscall that issued NtContinue.
+                auto& thread = c.thread();
+                thread.previous_ip = thread.current_ip;
+                thread.current_ip = c.emu.read_instruction_pointer();
             }
 
             if (argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT)
