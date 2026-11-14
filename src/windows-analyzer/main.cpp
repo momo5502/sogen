@@ -44,13 +44,9 @@ namespace sogen
         const std::map<std::string, backend_type>& get_backend_names()
         {
             static const std::map<std::string, backend_type> backends{
-                {"unicorn", backend_type::unicorn},
-                {"icicle", backend_type::icicle},
-                {"whp", backend_type::whp},
-                {"kvm", backend_type::kvm},
-                {"fex", backend_type::fex},
-                {"hvf", backend_type::hvf},
-                {"native-arm64", backend_type::native_arm64},
+                {"unicorn", backend_type::unicorn}, {"icicle", backend_type::icicle}, {"whp", backend_type::whp},
+                {"kvm", backend_type::kvm},         {"fex", backend_type::fex},       {"hvf", backend_type::hvf},
+                {"seccomp", backend_type::seccomp},
             };
             return backends;
         }
@@ -729,8 +725,8 @@ namespace sogen
             return {
                 .use_relative_time = options.reproducible,
                 .use_instruction_precision = uses_instruction_precision(options, machine),
-                .intercept_rdtsc = backend != backend_type::native_arm64 && !options.native_timing,
-                .intercept_kusd = kusd_needs_intercept || backend == backend_type::native_arm64 || !options.native_timing,
+                .intercept_rdtsc = backend != backend_type::seccomp && !options.native_timing,
+                .intercept_kusd = kusd_needs_intercept || backend == backend_type::seccomp || !options.native_timing,
                 .keep_guest_time_across_snapshots = options.keep_guest_time,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
@@ -1269,7 +1265,7 @@ namespace sogen
                 app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");
             app.add_flag("--native-timing", options.native_timing,
                          "Let the guest read the host timestamp counter and a periodically refreshed KUSER_SHARED_DATA without "
-                         "trapping (faster, timing is no longer exact); on macOS and native-arm64 KUSER_SHARED_DATA stays trapped and "
+                         "trapping (faster, timing is no longer exact); on macOS and seccomp KUSER_SHARED_DATA stays trapped and "
                          "only the counter runs natively")
                 ->excludes(reproducible_option);
             app.add_flag("--keep-guest-time", options.keep_guest_time,
@@ -1322,9 +1318,8 @@ namespace sogen
                 ->check(CLI::IsMember({"offline", "live"}));
 
             std::string backend_name{};
-            app.add_option("--backend", backend_name,
-                           "Select CPU backend: unicorn, icicle, whp, kvm, fex, hvf or native-arm64 (overrides env)")
-                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex", "hvf", "native-arm64"}));
+            app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm, fex, hvf or seccomp (overrides env)")
+                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex", "hvf", "seccomp"}));
 
             std::vector<std::string> tracked_modules{};
             app.add_option("-m,--module", tracked_modules, "Specify module(s) to track")->allow_extra_args(false);

@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace sogen::native_arm64
+namespace sogen::seccomp
 {
     constexpr uint64_t pstate_nzcv = 0xF0000000;
     constexpr uint64_t pstate_software_step = 1u << 21;

@@ -3,8 +3,8 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string_view>
-#if defined(SOGEN_ENABLE_NATIVE_ARM64)
-#include <native_arm64_emulator.hpp>
+#if defined(SOGEN_ENABLE_SECCOMP)
+#include <seccomp_emulator.hpp>
 #endif
 #if !defined(_M_ARM64)
 #include <unicorn_x86_64_emulator.hpp>
@@ -116,9 +116,9 @@ namespace sogen
         std::unique_ptr<arm64_emulator> emulator{};
         switch (backend)
         {
-#if defined(SOGEN_ENABLE_NATIVE_ARM64)
-        case backend_type::native_arm64:
-            emulator = native_arm64::create_arm64_emulator();
+#if defined(SOGEN_ENABLE_SECCOMP)
+        case backend_type::seccomp:
+            emulator = seccomp::create_arm64_emulator();
             break;
 #endif
 #if !defined(_M_ARM64)
@@ -156,11 +156,11 @@ namespace sogen
 
     backend_type get_arm64_emulator_backend_from_environment()
     {
-#if defined(SOGEN_ENABLE_NATIVE_ARM64)
-        const auto* native = getenv("EMULATOR_NATIVE_ARM64");
-        if (native && (native == "1"sv || native == "true"sv))
+#if defined(SOGEN_ENABLE_SECCOMP)
+        const auto* seccomp_backend = getenv("EMULATOR_SECCOMP");
+        if (seccomp_backend && (seccomp_backend == "1"sv || seccomp_backend == "true"sv))
         {
-            return backend_type::native_arm64;
+            return backend_type::seccomp;
         }
 #endif
 #if defined(_M_ARM64) && !defined(__MINGW64__)

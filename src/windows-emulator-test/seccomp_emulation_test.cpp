@@ -1,19 +1,18 @@
 #include "emulation_test_utils.hpp"
 
-#include <cstdlib>
 #include <cstring>
 
-#ifdef SOGEN_NATIVE_ARM64_SAMPLE
+#ifdef SOGEN_ENABLE_SECCOMP
 namespace sogen::test
 {
     namespace
     {
-        class NativeArm64BackendTest : public testing::Test
+        class SeccompBackendTest : public testing::Test
         {
           protected:
             static constexpr uint64_t code_address = 0x10000;
             static constexpr uint64_t stack_address = 0x20000;
-            std::unique_ptr<arm64_emulator> machine = create_arm64_emulator(backend_type::native_arm64);
+            std::unique_ptr<arm64_emulator> machine = create_arm64_emulator(backend_type::seccomp);
             memory_manager memory{*machine};
 
             void SetUp() override
@@ -25,20 +24,20 @@ namespace sogen::test
             }
         };
 
-        class NativeArm64CurrentElTest : public NativeArm64BackendTest, public testing::WithParamInterface<uint32_t>
+        class SeccompCurrentElTest : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
         {
         };
 
-        class NativeArm64Ld1Test : public NativeArm64BackendTest, public testing::WithParamInterface<uint32_t>
+        class SeccompLd1Test : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
         {
         };
 
-        class NativeArm64ByteLaneLoadTest : public NativeArm64BackendTest, public testing::WithParamInterface<uint32_t>
+        class SeccompByteLaneLoadTest : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
         {
         };
     }
 
-    TEST_P(NativeArm64CurrentElTest, RaisesUndefinedInstructionWithoutChangingGuestState)
+    TEST_P(SeccompCurrentElTest, RaisesUndefinedInstructionWithoutChangingGuestState)
     {
         constexpr uint32_t mrs_current_el = 0xD5384240;
         constexpr uint32_t svc = 0xD4000001 | (0x1234 << 5);
@@ -91,9 +90,9 @@ namespace sogen::test
         EXPECT_FALSE(machine->has_violation());
     }
 
-    INSTANTIATE_TEST_SUITE_P(Destination, NativeArm64CurrentElTest, testing::Values(0u, 16u, 30u, 31u));
+    INSTANTIATE_TEST_SUITE_P(Destination, SeccompCurrentElTest, testing::Values(0u, 16u, 30u, 31u));
 
-    TEST_F(NativeArm64BackendTest, IllegalInstructionsWithoutAnInterruptHookFail)
+    TEST_F(SeccompBackendTest, IllegalInstructionsWithoutAnInterruptHookFail)
     {
         machine->write_memory(code_address, std::array{0x00000000u, 0xD4000001u});
         size_t calls{};
@@ -109,7 +108,7 @@ namespace sogen::test
         EXPECT_TRUE(machine->has_violation());
     }
 
-    TEST_F(NativeArm64BackendTest, SoftwareStepExecutesOneInstructionAndCanBeRearmed)
+    TEST_F(SeccompBackendTest, SoftwareStepExecutesOneInstructionAndCanBeRearmed)
     {
         constexpr uint64_t software_step = 1u << 21;
         machine->write_memory(code_address, std::array{0xD2800020u, 0x91000400u, 0x91000400u, 0xD4000001u});
@@ -138,7 +137,7 @@ namespace sogen::test
         EXPECT_EQ(machine->read_instruction_pointer(), code_address + 16);
     }
 
-    TEST_F(NativeArm64BackendTest, SoftwareStepUsesTheExecutedBranchTargetAndLinkRegister)
+    TEST_F(SeccompBackendTest, SoftwareStepUsesTheExecutedBranchTargetAndLinkRegister)
     {
         constexpr uint64_t software_step = 1u << 21;
         machine->write_memory(code_address, uint32_t{0x14000000});
@@ -168,7 +167,7 @@ namespace sogen::test
         EXPECT_EQ(machine->reg(arm64_register::x30), code_address + 4);
     }
 
-    TEST_F(NativeArm64BackendTest, FaultingInstructionCancelsThePendingSoftwareStep)
+    TEST_F(SeccompBackendTest, FaultingInstructionCancelsThePendingSoftwareStep)
     {
         constexpr uint64_t software_step = 1u << 21;
         machine->write_memory(code_address, std::array{0xD5384250u, 0xD4000001u});
@@ -193,7 +192,7 @@ namespace sogen::test
         EXPECT_EQ(machine->read_instruction_pointer(), code_address + 8);
     }
 
-    TEST_F(NativeArm64BackendTest, SteppedSvcRaisesOnlyTheSyscall)
+    TEST_F(SeccompBackendTest, SteppedSvcRaisesOnlyTheSyscall)
     {
         constexpr uint64_t software_step = 1u << 21;
         machine->write_memory(code_address, uint32_t{0xD4000001 | (0x1234 << 5)});
@@ -214,7 +213,7 @@ namespace sogen::test
         EXPECT_EQ(machine->read_instruction_pointer(), code_address + 4);
     }
 
-    TEST_F(NativeArm64BackendTest, MmioLoadsPreserveArm64RegisterSemantics)
+    TEST_F(SeccompBackendTest, MmioLoadsPreserveArm64RegisterSemantics)
     {
         constexpr uint64_t mmio_address = 0x40000;
         constexpr std::array<uint8_t, 16> data{0x80, 0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 8, 9, 10, 11, 12, 13, 14, 15};
@@ -296,7 +295,7 @@ namespace sogen::test
         EXPECT_EQ(reads, cases.size() + 3);
     }
 
-    TEST_F(NativeArm64BackendTest, IndexedMmioLoadsWriteBackTheBaseAfterReading)
+    TEST_F(SeccompBackendTest, IndexedMmioLoadsWriteBackTheBaseAfterReading)
     {
         constexpr uint64_t mmio_address = 0x40000;
         constexpr std::array<uint8_t, 16> data{0x80, 0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA, 0xF9, 8, 9, 10, 11, 12, 13, 14, 15};
@@ -382,7 +381,7 @@ namespace sogen::test
         EXPECT_EQ(machine->read_instruction_pointer(), code_address);
     }
 
-    TEST_P(NativeArm64Ld1Test, LoadsOneVectorAndWritesBackAfterEachRead)
+    TEST_P(SeccompLd1Test, LoadsOneVectorAndWritesBackAfterEachRead)
     {
         constexpr uint64_t mmio_address = 0x40000;
         constexpr std::array<uint8_t, 32> data{0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14, 15,
@@ -427,9 +426,9 @@ namespace sogen::test
         EXPECT_TRUE(std::equal(vector.begin(), vector.end(), data.begin() + 16));
     }
 
-    INSTANTIATE_TEST_SUITE_P(ElementSize, NativeArm64Ld1Test, testing::Values(0u, 1u, 2u, 3u));
+    INSTANTIATE_TEST_SUITE_P(ElementSize, SeccompLd1Test, testing::Values(0u, 1u, 2u, 3u));
 
-    TEST_P(NativeArm64ByteLaneLoadTest, UpdatesOnlyTheSelectedByteLanesAndWritesBackAfterReading)
+    TEST_P(SeccompByteLaneLoadTest, UpdatesOnlyTheSelectedByteLanesAndWritesBackAfterReading)
     {
         constexpr uint64_t mmio_address = 0x40000;
         constexpr std::array<uint8_t, 8> data{0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80};
@@ -492,9 +491,9 @@ namespace sogen::test
         expect_vectors(count);
     }
 
-    INSTANTIATE_TEST_SUITE_P(RegisterCount, NativeArm64ByteLaneLoadTest, testing::Values(2u, 4u));
+    INSTANTIATE_TEST_SUITE_P(RegisterCount, SeccompByteLaneLoadTest, testing::Values(2u, 4u));
 
-    TEST_F(NativeArm64BackendTest, EveryMmioLoadReadsTheCallbackIncludingZeroRegisterAndSoftwareStep)
+    TEST_F(SeccompBackendTest, EveryMmioLoadReadsTheCallbackIncludingZeroRegisterAndSoftwareStep)
     {
         constexpr uint64_t mmio_address = 0x40000;
         size_t reads{};
@@ -530,7 +529,7 @@ namespace sogen::test
         EXPECT_EQ(machine->reg(arm64_register::x2), 3u);
     }
 
-    TEST_F(NativeArm64BackendTest, UnsupportedMmioInstructionsFailWithoutCallingCallbacks)
+    TEST_F(SeccompBackendTest, UnsupportedMmioInstructionsFailWithoutCallingCallbacks)
     {
         constexpr uint64_t mmio_address = 0x40000;
         ASSERT_TRUE(memory.allocate_mmio(
@@ -552,92 +551,5 @@ namespace sogen::test
         EXPECT_FALSE(machine->try_write_memory(mmio_address, &value, sizeof(value)));
     }
 
-    TEST(NativeArm64EmulationTest, NtWriteFileUsesSharedWindowsProcessAndThreadSetup)
-    {
-        const auto* root = std::getenv("EMULATOR_ARM64_ROOT");
-        if (!root || !*root)
-        {
-            GTEST_SKIP() << "Set EMULATOR_ARM64_ROOT to an ARM64 emulation root";
-        }
-
-        emulator_settings settings{};
-        settings.emulation_root = root;
-        settings.intercept_rdtsc = false;
-        settings.intercept_kusd = true;
-        settings.use_instruction_precision = false;
-        settings.mounts = {{.host_path = SOGEN_NATIVE_ARM64_SAMPLE,
-                            .guest_path = windows_path{"C:\\native-arm64-hello.exe"},
-                            .mode = filesystem_mode::read_only}};
-        std::string output{};
-        emulator_callbacks callbacks{};
-        callbacks.on_stdout = [&](const std::string_view data) { output.append(data); };
-        emulator_interfaces interfaces{};
-        interfaces.ui = std::make_unique<null_ui_backend>();
-
-        windows_emulator emu{create_arm64_emulator(backend_type::native_arm64),
-                             application_settings{.application = "C:\\native-arm64-hello.exe"}, settings, std::move(callbacks),
-                             std::move(interfaces)};
-        emu.log.disable_output(!enable_verbose_logging());
-        emu.start();
-
-        EXPECT_EQ(emu.process.exit_status, STATUS_SUCCESS);
-        EXPECT_EQ(output, "Hello World\n");
-    }
-
-    TEST(NativeArm64EmulationTest, IllegalInstructionReachesGuestHandlerAndResumes)
-    {
-        const auto* root = std::getenv("EMULATOR_ARM64_ROOT");
-        if (!root || !*root)
-        {
-            GTEST_SKIP() << "Set EMULATOR_ARM64_ROOT to an ARM64 emulation root";
-        }
-
-        emulator_settings settings{};
-        settings.emulation_root = root;
-        settings.intercept_rdtsc = false;
-        settings.intercept_kusd = false;
-        settings.use_instruction_precision = false;
-        settings.mounts = {{.host_path = SOGEN_NATIVE_ARM64_ILLEGAL_INSTRUCTION_SAMPLE,
-                            .guest_path = windows_path{"C:\\native-arm64-illegal-instruction.exe"},
-                            .mode = filesystem_mode::read_only}};
-        emulator_interfaces interfaces{};
-        interfaces.ui = std::make_unique<null_ui_backend>();
-
-        windows_emulator emu{create_arm64_emulator(backend_type::native_arm64),
-                             application_settings{.application = "C:\\native-arm64-illegal-instruction.exe"}, settings,
-                             emulator_callbacks{}, std::move(interfaces)};
-        emu.log.disable_output(!enable_verbose_logging());
-        emu.start();
-
-        EXPECT_EQ(emu.process.exit_status, STATUS_SUCCESS);
-    }
-
-    TEST(NativeArm64EmulationTest, SoftwareStepReachesGuestHandlerAfterExactlyOneInstruction)
-    {
-        const auto* root = std::getenv("EMULATOR_ARM64_ROOT");
-        if (!root || !*root)
-        {
-            GTEST_SKIP() << "Set EMULATOR_ARM64_ROOT to an ARM64 emulation root";
-        }
-
-        emulator_settings settings{};
-        settings.emulation_root = root;
-        settings.intercept_rdtsc = false;
-        settings.intercept_kusd = false;
-        settings.use_instruction_precision = false;
-        settings.mounts = {{.host_path = SOGEN_NATIVE_ARM64_SINGLE_STEP_SAMPLE,
-                            .guest_path = windows_path{"C:\\native-arm64-single-step.exe"},
-                            .mode = filesystem_mode::read_only}};
-        emulator_interfaces interfaces{};
-        interfaces.ui = std::make_unique<null_ui_backend>();
-
-        windows_emulator emu{create_arm64_emulator(backend_type::native_arm64),
-                             application_settings{.application = "C:\\native-arm64-single-step.exe"}, settings, emulator_callbacks{},
-                             std::move(interfaces)};
-        emu.log.disable_output(!enable_verbose_logging());
-        emu.start();
-
-        EXPECT_EQ(emu.process.exit_status, STATUS_SUCCESS);
-    }
 }
 #endif

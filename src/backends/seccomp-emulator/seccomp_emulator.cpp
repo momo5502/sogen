@@ -2,11 +2,11 @@
 #define _GNU_SOURCE
 #endif
 
-#include "native_arm64_emulator.hpp"
-#include "native_arm64_single_step.hpp"
+#include "seccomp_emulator.hpp"
+#include "seccomp_single_step.hpp"
 
 #if !defined(__aarch64__) || !defined(__linux__)
-#error "Native ARM64 requires an ARM64 Linux or Android host"
+#error "Seccomp requires an ARM64 Linux or Android host"
 #endif
 
 #include <utils/finally.hpp>
@@ -36,12 +36,12 @@
 
 extern "C"
 {
-    __attribute__((visibility("hidden"))) uint64_t sogen_native_arm64_host_x18{};
-    __attribute__((visibility("hidden"))) uint64_t sogen_native_arm64_host_tls{};
-    void sogen_native_arm64_signal_entry(int signal, siginfo_t* info, void* context);
+    __attribute__((visibility("hidden"))) uint64_t sogen_seccomp_host_x18{};
+    __attribute__((visibility("hidden"))) uint64_t sogen_seccomp_host_tls{};
+    void sogen_seccomp_signal_entry(int signal, siginfo_t* info, void* context);
 }
 
-namespace sogen::native_arm64
+namespace sogen::seccomp
 {
     namespace
     {
@@ -54,7 +54,7 @@ namespace sogen::native_arm64
 
         [[noreturn]] void unsupported(const char* feature)
         {
-            throw std::runtime_error(std::string{"Native ARM64 MVP does not support "} + feature);
+            throw std::runtime_error(std::string{"Seccomp does not support "} + feature);
         }
 
         void check_system(const int result, const char* operation)
@@ -100,7 +100,7 @@ namespace sogen::native_arm64
             {
                 if (claimed.test_and_set())
                 {
-                    unsupported("more than one native machine per process");
+                    unsupported("multiple emulator instances in one process");
                 }
             }
 
@@ -124,12 +124,12 @@ namespace sogen::native_arm64
                                MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
                 if (address == MAP_FAILED)
                 {
-                    throw std::system_error(errno, std::generic_category(), "Reserve native guest window");
+                    throw std::system_error(errno, std::generic_category(), "Reserve seccomp guest window");
                 }
                 if (reinterpret_cast<uint64_t>(address) != window_begin)
                 {
                     munmap(address, window_end - window_begin);
-                    throw std::runtime_error("Native ARM64 guest window collides with host memory");
+                    throw std::runtime_error("Seccomp guest window collides with host memory");
                 }
             }
 
@@ -156,7 +156,7 @@ namespace sogen::native_arm64
                 try
                 {
                     struct sigaction action{};
-                    action.sa_sigaction = sogen_native_arm64_signal_entry;
+                    action.sa_sigaction = sogen_seccomp_signal_entry;
                     action.sa_flags = SA_SIGINFO | SA_ONSTACK;
                     sigemptyset(&action.sa_mask);
                     for (const auto signal : signals)
@@ -168,7 +168,7 @@ namespace sogen::native_arm64
                         check_system(sigaction(signal, &action, &previous_actions[installed]), "sigaction");
                         ++installed;
                     }
-                    check_system(sigprocmask(SIG_UNBLOCK, &action.sa_mask, &previous_mask), "Unblock native signals");
+                    check_system(sigprocmask(SIG_UNBLOCK, &action.sa_mask, &previous_mask), "Unblock seccomp signals");
                 }
                 catch (...)
                 {
@@ -349,35 +349,35 @@ namespace sogen::native_arm64
             };
             sock_fprog program{static_cast<unsigned short>(std::size(filter)), filter};
             check_system(prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), "PR_SET_NO_NEW_PRIVS");
-            check_system(static_cast<int>(syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program)), "Install native seccomp filter");
+            check_system(static_cast<int>(syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program)), "Install seccomp filter");
         }
 
-        class native_emulator final : public arm64_emulator
+        class seccomp_emulator final : public arm64_emulator
         {
           public:
-            inline static native_emulator* active{};
+            inline static seccomp_emulator* active{};
 
-            native_emulator()
+            seccomp_emulator()
                 : owner_tid_(static_cast<pid_t>(syscall(SYS_gettid)))
             {
-                if (reinterpret_cast<uint64_t>(&sogen_native_arm64_signal_entry) < window_end)
+                if (reinterpret_cast<uint64_t>(&sogen_seccomp_signal_entry) < window_end)
                 {
-                    throw std::runtime_error("Native ARM64 host code must be above the guest window");
+                    throw std::runtime_error("Seccomp host code must be above the guest window");
                 }
-                asm volatile("mov %0, x18" : "=r"(sogen_native_arm64_host_x18));
-                asm volatile("mrs %0, tpidr_el0" : "=r"(sogen_native_arm64_host_tls));
+                asm volatile("mov %0, x18" : "=r"(sogen_seccomp_host_x18));
+                asm volatile("mrs %0, tpidr_el0" : "=r"(sogen_seccomp_host_tls));
                 install_filter();
                 active = this;
             }
 
-            ~native_emulator() override
+            ~seccomp_emulator() override
             {
                 active = nullptr;
             }
 
             std::string get_name() const override
             {
-                return "Native ARM64 (seccomp MVP)";
+                return "Seccomp";
             }
 
             bool supports_multiple_vcpus() const override
@@ -470,7 +470,7 @@ namespace sogen::native_arm64
             {
                 if (data.size() != sizeof(state_))
                 {
-                    throw std::invalid_argument("Invalid native ARM64 register state");
+                    throw std::invalid_argument("Invalid seccomp register state");
                 }
                 std::memcpy(&state_, data.data(), sizeof(state_));
             }
@@ -482,7 +482,7 @@ namespace sogen::native_arm64
                 {
                     if (!value || size < sizeof(uint64_t))
                     {
-                        throw std::invalid_argument("Native ARM64 register buffer is too small or null");
+                        throw std::invalid_argument("Seccomp register buffer is too small or null");
                     }
                     if ((getauxval(AT_HWCAP) & HWCAP_CPUID) == 0)
                     {
@@ -508,7 +508,7 @@ namespace sogen::native_arm64
                 auto [address, width] = register_storage(id);
                 if (!value || size < width)
                 {
-                    throw std::invalid_argument("Native ARM64 register buffer is too small or null");
+                    throw std::invalid_argument("Seccomp register buffer is too small or null");
                 }
                 std::memset(value, 0, size);
                 std::memcpy(value, address, width);
@@ -526,7 +526,7 @@ namespace sogen::native_arm64
                 auto [address, width] = register_storage(id);
                 if (!value || size < width)
                 {
-                    throw std::invalid_argument("Native ARM64 register buffer is too small or null");
+                    throw std::invalid_argument("Seccomp register buffer is too small or null");
                 }
                 if (id >= arm64_register::bcr0 && id <= arm64_register::wvr1)
                 {
@@ -567,15 +567,15 @@ namespace sogen::native_arm64
             {
                 if (count != 0)
                 {
-                    unsupported("instruction limits and stepping");
+                    unsupported("instruction-count execution budgets");
                 }
                 if (syscall(SYS_gettid) != owner_tid_)
                 {
-                    unsupported("moving a native CPU between host threads");
+                    unsupported("moving a vCPU between host threads");
                 }
                 if (!svc_hook_)
                 {
-                    throw std::logic_error("Native ARM64 requires an SVC hook");
+                    throw std::logic_error("Seccomp requires an SVC hook");
                 }
                 stop_requested_ = false;
                 violation_ = false;
@@ -588,14 +588,14 @@ namespace sogen::native_arm64
                 {
                     if (!in_window(state_.pc, 4) || state_.pc % 4 != 0 || state_.sp % 16 != 0)
                     {
-                        throw std::runtime_error("Invalid native ARM64 entry PC or SP");
+                        throw std::runtime_error("Invalid seccomp entry PC or SP");
                     }
                     const bool single_step = (state_.pstate & pstate_software_step) != 0;
                     if (single_step)
                     {
                         if (!interrupt_hook_)
                         {
-                            throw std::logic_error("Native ARM64 requires an interrupt hook for single-stepping");
+                            throw std::logic_error("Seccomp requires an interrupt hook for single-stepping");
                         }
                         uint32_t instruction{};
                         read_memory(state_.pc, &instruction, sizeof(instruction));
@@ -614,7 +614,7 @@ namespace sogen::native_arm64
                             {
                                 break;
                             }
-                            result = single_step_native(state_, enter_signal);
+                            result = single_step_guest(state_, enter_signal);
                         }
                         state_.pstate &= ~pstate_software_step;
                         if (result.signal == SIGTRAP && result.info.si_code == TRAP_TRACE)
@@ -632,12 +632,12 @@ namespace sogen::native_arm64
                     {
                         if (sigsetjmp(host_return_, 1) == 0)
                         {
-                            check_system(static_cast<int>(syscall(SYS_tgkill, getpid(), owner_tid_, enter_signal)), "Enter native ARM64");
+                            check_system(static_cast<int>(syscall(SYS_tgkill, getpid(), owner_tid_, enter_signal)), "Enter seccomp");
                             if (stop_requested_)
                             {
                                 break;
                             }
-                            throw std::runtime_error("Native ARM64 entry signal did not enter the guest");
+                            throw std::runtime_error("Seccomp entry signal did not enter the guest");
                         }
                         asm volatile("msr fpcr, %0; msr fpsr, %1" : : "r"(host_fpcr), "r"(host_fpsr) : "memory");
                         if (missing_fpsimd_)
@@ -671,7 +671,7 @@ namespace sogen::native_arm64
                     }
                     violation_ = true;
                     std::ostringstream message{};
-                    message << "Native ARM64 guest signal " << trapped_signal_ << " (code " << trapped_code_ << ") at PC 0x" << std::hex
+                    message << "Seccomp guest signal " << trapped_signal_ << " (code " << trapped_code_ << ") at PC 0x" << std::hex
                             << state_.pc << ", address 0x" << trapped_address_;
                     throw std::runtime_error(message.str());
                 }
@@ -683,7 +683,7 @@ namespace sogen::native_arm64
                 stop_requested_ = true;
                 if (running_ && syscall(SYS_gettid) != owner_tid_)
                 {
-                    check_system(static_cast<int>(syscall(SYS_tgkill, getpid(), owner_tid_, stop_signal)), "Stop native ARM64");
+                    check_system(static_cast<int>(syscall(SYS_tgkill, getpid(), owner_tid_, stop_signal)), "Stop seccomp");
                 }
             }
 
@@ -716,7 +716,7 @@ namespace sogen::native_arm64
                 }
                 if (!running_ || !in_window(machine.pc, 1))
                 {
-                    constexpr char error[] = "Native ARM64: signal outside guest execution\n";
+                    constexpr char error[] = "Seccomp: signal outside guest execution\n";
                     write(STDERR_FILENO, error, sizeof(error) - 1);
                     _exit(128 + signal);
                 }
@@ -746,7 +746,7 @@ namespace sogen::native_arm64
             {
                 if (!try_read_memory(address, data, size))
                 {
-                    throw std::runtime_error("Native ARM64 read from unmapped memory");
+                    throw std::runtime_error("Seccomp read from unmapped memory");
                 }
             }
 
@@ -759,7 +759,7 @@ namespace sogen::native_arm64
             {
                 if (!try_write_memory(address, data, size))
                 {
-                    throw std::runtime_error("Native ARM64 write to unmapped memory");
+                    throw std::runtime_error("Seccomp write to unmapped memory");
                 }
             }
 
@@ -772,11 +772,11 @@ namespace sogen::native_arm64
             {
                 if (instruction != static_cast<int>(arm64_hookable_instructions::svc))
                 {
-                    unsupported("counter interception; use native timing");
+                    unsupported("counter interception");
                 }
                 if (!callback || svc_hook_)
                 {
-                    throw std::invalid_argument("Native ARM64 requires exactly one nonempty SVC hook");
+                    throw std::invalid_argument("Seccomp requires exactly one nonempty SVC hook");
                 }
                 svc_hook_ = std::move(callback);
                 return reinterpret_cast<emulator_hook*>(&svc_hook_);
@@ -786,7 +786,7 @@ namespace sogen::native_arm64
             {
                 if (!callback || interrupt_hook_)
                 {
-                    throw std::invalid_argument("Native ARM64 requires exactly one nonempty interrupt hook");
+                    throw std::invalid_argument("Seccomp requires exactly one nonempty interrupt hook");
                 }
                 interrupt_hook_ = std::move(callback);
                 return reinterpret_cast<emulator_hook*>(&interrupt_hook_);
@@ -843,7 +843,7 @@ namespace sogen::native_arm64
                     ignored_hooks_, [hook](const auto& entry) { return hook == reinterpret_cast<emulator_hook*>(entry.get()); });
                 if (ignored == ignored_hooks_.end())
                 {
-                    throw std::invalid_argument("Unknown native ARM64 hook");
+                    throw std::invalid_argument("Unknown seccomp hook");
                 }
                 ignored_hooks_.erase(ignored);
             }
@@ -905,7 +905,7 @@ namespace sogen::native_arm64
                 {
                     violation_ = true;
                     std::ostringstream message{};
-                    message << "Unsupported native ARM64 MMIO instruction 0x" << std::hex << instruction << " at PC 0x" << state_.pc
+                    message << "Unsupported seccomp MMIO instruction 0x" << std::hex << instruction << " at PC 0x" << state_.pc
                             << ", address 0x" << trapped_address_;
                     throw std::runtime_error(message.str());
                 }
@@ -1001,7 +1001,7 @@ namespace sogen::native_arm64
                 case arm64_register::fpsr:
                     return {&state_.fpsr, 4};
                 default:
-                    throw std::runtime_error("Native ARM64 MVP does not support register " + std::to_string(static_cast<int>(id)));
+                    throw std::runtime_error("Seccomp does not support register " + std::to_string(static_cast<int>(id)));
                 }
             }
 
@@ -1012,7 +1012,7 @@ namespace sogen::native_arm64
                 read_memory(state_.pc, &instruction, sizeof(instruction));
                 if ((instruction & 0xFFE0001F) != 0xD4000001)
                 {
-                    throw std::runtime_error("Native ARM64 SIGSYS does not follow an SVC instruction");
+                    throw std::runtime_error("Seccomp SIGSYS does not follow an SVC instruction");
                 }
                 const auto callback = svc_hook_;
                 switch (callback(*this, (instruction >> 5) & 0xFFFF))
@@ -1031,7 +1031,7 @@ namespace sogen::native_arm64
             {
                 if (!in_window(address, size) || size == 0 || address % page_size != 0 || size % page_size != 0)
                 {
-                    throw std::invalid_argument("Invalid native ARM64 mapping range");
+                    throw std::invalid_argument("Invalid seccomp mapping range");
                 }
             }
 
@@ -1109,7 +1109,7 @@ namespace sogen::native_arm64
                 {
                     if (pages_.contains(page))
                     {
-                        throw std::runtime_error("Overlapping native ARM64 memory mapping");
+                        throw std::runtime_error("Overlapping seccomp memory mapping");
                     }
                 }
                 check_system(mprotect(reinterpret_cast<void*>(address), size, protection(permissions)), "Map guest memory");
@@ -1124,7 +1124,7 @@ namespace sogen::native_arm64
                 validate_mapping(address, size);
                 if (!mapped(address, size))
                 {
-                    throw std::runtime_error("Unmapping missing native ARM64 memory");
+                    throw std::runtime_error("Unmapping missing seccomp memory");
                 }
                 for (const auto& region : mmio_regions_)
                 {
@@ -1149,7 +1149,7 @@ namespace sogen::native_arm64
                 validate_mapping(address, size);
                 if (!mapped(address, size))
                 {
-                    throw std::runtime_error("Protecting missing native ARM64 memory");
+                    throw std::runtime_error("Protecting missing seccomp memory");
                 }
                 if (find_mmio(address, size) != mmio_regions_.end())
                 {
@@ -1166,7 +1166,7 @@ namespace sogen::native_arm64
             {
                 if (!read)
                 {
-                    throw std::invalid_argument("Native ARM64 MMIO requires a read callback");
+                    throw std::invalid_argument("Seccomp MMIO requires a read callback");
                 }
                 map_memory(address, size, memory_permission::none);
                 mmio_regions_.push_back({address, size, std::move(read)});
@@ -1176,15 +1176,15 @@ namespace sogen::native_arm64
 
     std::unique_ptr<arm64_emulator> create_arm64_emulator()
     {
-        return std::make_unique<native_emulator>();
+        return std::make_unique<seccomp_emulator>();
     }
 }
 
-extern "C" __attribute__((visibility("hidden"))) void sogen_native_arm64_signal_dispatch(const int signal, siginfo_t* info, void* context)
+extern "C" __attribute__((visibility("hidden"))) void sogen_seccomp_signal_dispatch(const int signal, siginfo_t* info, void* context)
 {
-    if (!sogen::native_arm64::native_emulator::active || !info || !context)
+    if (!sogen::seccomp::seccomp_emulator::active || !info || !context)
     {
         _exit(128 + signal);
     }
-    sogen::native_arm64::native_emulator::active->handle_signal(signal, *info, *static_cast<ucontext_t*>(context));
+    sogen::seccomp::seccomp_emulator::active->handle_signal(signal, *info, *static_cast<ucontext_t*>(context));
 }

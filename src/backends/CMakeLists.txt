@@ -1,5 +1,5 @@
-if(SOGEN_ENABLE_NATIVE_ARM64)
-  add_subdirectory(native-arm64-emulator)
+if(SOGEN_ENABLE_SECCOMP)
+  add_subdirectory(seccomp-emulator)
 endif()
 
 if(SOGEN_ENABLE_UNICORN)

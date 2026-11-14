@@ -2,7 +2,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include "native_arm64_single_step.hpp"
+#include "seccomp_single_step.hpp"
 
 #include <asm/ptrace.h>
 #include <linux/elf.h>
@@ -20,7 +20,7 @@
 #include <cstring>
 #include <system_error>
 
-namespace sogen::native_arm64
+namespace sogen::seccomp
 {
     namespace
     {
@@ -108,7 +108,7 @@ namespace sogen::native_arm64
 
         [[noreturn]] void terminate_trace(const pid_t process)
         {
-            constexpr char message[] = "Native ARM64: failed to restore traced host state\n";
+            constexpr char message[] = "Seccomp: failed to restore traced host state\n";
             write(STDERR_FILENO, message, sizeof(message) - 1);
             kill(process, SIGKILL);
             _exit(1);
@@ -195,12 +195,12 @@ namespace sogen::native_arm64
         }
     }
 
-    single_step_result single_step_native(register_state& registers, const int entry_signal)
+    single_step_result single_step_guest(register_state& registers, const int entry_signal)
     {
         int channels[2]{};
         if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, channels) < 0)
         {
-            throw std::system_error(errno, std::generic_category(), "Create native single-step channel");
+            throw std::system_error(errno, std::generic_category(), "Create seccomp single-step channel");
         }
         const auto close_channels = utils::finally([&] {
             close(channels[0]);
@@ -214,7 +214,7 @@ namespace sogen::native_arm64
         const auto child = fork();
         if (child < 0)
         {
-            throw std::system_error(errno, std::generic_category(), "Create native single-step tracer");
+            throw std::system_error(errno, std::generic_category(), "Create seccomp single-step tracer");
         }
         if (child == 0)
         {
@@ -249,11 +249,11 @@ namespace sogen::native_arm64
         int error{};
         if (!receive_record(channels[0], error))
         {
-            throw std::system_error(errno, std::generic_category(), "Receive native single-step readiness");
+            throw std::system_error(errno, std::generic_category(), "Receive seccomp single-step readiness");
         }
         if (error != 0)
         {
-            throw std::system_error(error, std::generic_category(), "Attach native single-step tracer");
+            throw std::system_error(error, std::generic_category(), "Attach seccomp single-step tracer");
         }
         if (syscall(SYS_tgkill, process, thread, entry_signal) < 0)
         {
@@ -262,11 +262,11 @@ namespace sogen::native_arm64
         step_response response{};
         if (!receive_record(channels[0], response))
         {
-            throw std::system_error(errno, std::generic_category(), "Receive native single-step state");
+            throw std::system_error(errno, std::generic_category(), "Receive seccomp single-step state");
         }
         if (response.error != 0)
         {
-            throw std::system_error(response.error, std::generic_category(), "Execute native single step");
+            throw std::system_error(response.error, std::generic_category(), "Execute seccomp single step");
         }
         registers = response.registers;
         return response.result;
