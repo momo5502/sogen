@@ -3,6 +3,7 @@
 #endif
 
 #include "native_arm64_emulator.hpp"
+#include "native_arm64_single_step.hpp"
 
 #if !defined(__aarch64__) || !defined(__linux__)
 #error "Native ARM64 requires an ARM64 Linux or Android host"
@@ -29,6 +30,7 @@
 #include <csignal>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <system_error>
 
@@ -189,17 +191,6 @@ namespace sogen::native_arm64
                 sigaltstack(&previous_stack, nullptr);
                 sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
             }
-        };
-
-        struct register_state
-        {
-            std::array<uint64_t, 31> x{};
-            uint64_t sp{};
-            uint64_t pc{};
-            uint64_t pstate{};
-            std::array<std::array<std::byte, 16>, 32> vectors{};
-            uint32_t fpcr{};
-            uint32_t fpsr{};
         };
 
         fpsimd_context* find_fpsimd(ucontext_t& context)
@@ -429,11 +420,12 @@ namespace sogen::native_arm64
                 {
                     uint64_t flags{};
                     std::memcpy(&flags, value, std::min(size, sizeof(flags)));
-                    if ((flags & ~uint64_t{0xF0000000}) != 0)
+                    const auto allowed = id == arm64_register::pstate ? pstate_nzcv | pstate_software_step : pstate_nzcv;
+                    if ((flags & ~allowed) != 0)
                     {
-                        unsupported("PSTATE bits other than NZCV");
+                        unsupported("requested PSTATE bits");
                     }
-                    state_.pstate = flags;
+                    state_.pstate = id == arm64_register::nzcv ? (state_.pstate & ~pstate_nzcv) | flags : flags;
                     return width;
                 }
                 if ((id >= arm64_register::w0 && id <= arm64_register::w30) || id == arm64_register::wsp)
@@ -476,19 +468,59 @@ namespace sogen::native_arm64
                     {
                         throw std::runtime_error("Invalid native ARM64 entry PC or SP");
                     }
-                    if (sigsetjmp(host_return_, 1) == 0)
+                    if ((state_.pstate & pstate_software_step) != 0)
                     {
-                        check_system(static_cast<int>(syscall(SYS_tgkill, getpid(), owner_tid_, enter_signal)), "Enter native ARM64");
-                        if (stop_requested_)
+                        if (!interrupt_hook_)
                         {
-                            break;
+                            throw std::logic_error("Native ARM64 requires an interrupt hook for single-stepping");
                         }
-                        throw std::runtime_error("Native ARM64 entry signal did not enter the guest");
+                        uint32_t instruction{};
+                        read_memory(state_.pc, &instruction, sizeof(instruction));
+                        if ((instruction & 0xFFE0001F) == 0xD4000001)
+                        {
+                            // SVC raises its syscall exception instead of a software-step exception.
+                            state_.pstate &= ~pstate_software_step;
+                            state_.pc += 4;
+                            dispatch_svc();
+                            continue;
+                        }
+                        single_step_result result{};
+                        {
+                            const std::scoped_lock lock(step_mutex_);
+                            if (stop_requested_)
+                            {
+                                break;
+                            }
+                            result = single_step_native(state_, enter_signal);
+                        }
+                        state_.pstate &= ~pstate_software_step;
+                        if (result.signal == SIGTRAP && result.info.si_code == TRAP_TRACE)
+                        {
+                            const auto callback = interrupt_hook_;
+                            callback(*this, static_cast<int>(arm64_exception_class::software_step));
+                            continue;
+                        }
+                        trapped_signal_ = result.signal;
+                        trapped_code_ = result.info.si_code;
+                        trapped_arch_ = result.signal == SIGSYS ? result.info.si_arch : 0;
+                        trapped_address_ = reinterpret_cast<uint64_t>(result.info.si_addr);
                     }
-                    asm volatile("msr fpcr, %0; msr fpsr, %1" : : "r"(host_fpcr), "r"(host_fpsr) : "memory");
-                    if (missing_fpsimd_)
+                    else
                     {
-                        unsupported("signal frames without FPSIMD state");
+                        if (sigsetjmp(host_return_, 1) == 0)
+                        {
+                            check_system(static_cast<int>(syscall(SYS_tgkill, getpid(), owner_tid_, enter_signal)), "Enter native ARM64");
+                            if (stop_requested_)
+                            {
+                                break;
+                            }
+                            throw std::runtime_error("Native ARM64 entry signal did not enter the guest");
+                        }
+                        asm volatile("msr fpcr, %0; msr fpsr, %1" : : "r"(host_fpcr), "r"(host_fpsr) : "memory");
+                        if (missing_fpsimd_)
+                        {
+                            unsupported("signal frames without FPSIMD state");
+                        }
                     }
                     if (trapped_signal_ == stop_signal)
                     {
@@ -515,6 +547,7 @@ namespace sogen::native_arm64
 
             void stop() override
             {
+                const std::scoped_lock lock(step_mutex_);
                 stop_requested_ = true;
                 if (running_ && syscall(SYS_gettid) != owner_tid_)
                 {
@@ -690,6 +723,7 @@ namespace sogen::native_arm64
             pid_t owner_tid_{};
             std::atomic<bool> running_{};
             std::atomic<bool> stop_requested_{};
+            std::mutex step_mutex_{};
             register_state state_{};
             uint64_t zero_{};
             sigjmp_buf host_return_{};

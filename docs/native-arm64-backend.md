@@ -24,12 +24,18 @@ The seccomp filter and no-new-privileges setting are irreversible for that host 
 This shares the host address space and is not a security boundary for untrusted programs.
 
 Unimplemented operations throw: snapshots, MMIO, counter interception, instruction limits,
-stepping, execution hooks, recoverable memory faults and
+execution hooks, recoverable memory faults and
 enabled hardware debug registers. Disabled debug registers read as zero and accept zero.
 Hardware `SIGILL` is reported through the ARM64 undefined-instruction hook at the faulting PC,
 preserving the guest registers. The shared Windows exception dispatcher delivers
 `STATUS_ILLEGAL_INSTRUCTION` to guest handlers. This includes `MRS CurrentEL`, which is undefined
 at EL0; the Windows UCRT's handler recognizes the probe and advances its saved PC itself.
+`PSTATE.SS` executes one instruction using Linux `PTRACE_SINGLESTEP` and then reports the ARM64
+software-step exception with the next PC and SS cleared. A short-lived child tracer saves the
+host registers, FPSIMD state and TLS, installs the guest state, captures the step or fault, and
+restores the host state before detaching. This requires permission for a same-UID child to trace
+the CPU thread. It fails explicitly if the kernel or host policy disallows tracing.
+An instruction that raises another exception, including SVC, cancels its pending step.
 Memory read/write and basic-block hooks are accepted but never fire, matching Sogen's FEX
 backend. This permits the analyzer's default memory watches but produces no memory-access observations.
 Other unsupported guest signals terminate the run with PC and signal diagnostics. The common Windows
@@ -47,6 +53,8 @@ No generated PE or object files belong in git.
 handler checks the illegal-instruction status, faulting PC and unchanged X16, advances the saved PC,
 and verifies execution resumes after `MRS CurrentEL`. The backend regression also covers X0, X16,
 X30 and XZR destinations and checks unchanged NZCV, SP and other general registers.
+`native-arm64-single-step` checks Windows `NtContinue` with SS set, delivery of `EXCEPTION_SINGLE_STEP`
+after exactly one instruction, the handler's saved PC and registers, and continued execution with SS clear.
 
 On the phone, from `~/sogen`, after committing on the PC and pushing the branch to the phone:
 

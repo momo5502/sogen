@@ -18,5 +18,7 @@ endfunction()
 
 add_native_arm64_sample(native-arm64-hello hello.c NATIVE_ARM64_SAMPLE)
 add_native_arm64_sample(native-arm64-illegal-instruction illegal_instruction.c NATIVE_ARM64_ILLEGAL_INSTRUCTION_SAMPLE)
+add_native_arm64_sample(native-arm64-single-step single_step.c NATIVE_ARM64_SINGLE_STEP_SAMPLE)
 set(NATIVE_ARM64_SAMPLE "${NATIVE_ARM64_SAMPLE}" PARENT_SCOPE)
 set(NATIVE_ARM64_ILLEGAL_INSTRUCTION_SAMPLE "${NATIVE_ARM64_ILLEGAL_INSTRUCTION_SAMPLE}" PARENT_SCOPE)
+set(NATIVE_ARM64_SINGLE_STEP_SAMPLE "${NATIVE_ARM64_SINGLE_STEP_SAMPLE}" PARENT_SCOPE)
