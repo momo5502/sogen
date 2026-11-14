@@ -4,6 +4,7 @@
 #include <gdb_stub.hpp>
 #include <scoped_hook.hpp>
 #include <arch_emulator.hpp>
+#include <x87_tag_word.hpp>
 
 #include <utils/concurrency.hpp>
 
@@ -102,7 +103,9 @@ namespace sogen
 
                 const auto real_reg = gdb_registers[reg];
 
-                auto size = this->emu_->read_register(real_reg.reg, data, max_length);
+                // GDB's ftag is FSAVE's full tag word, while the backends give FXSAVE's abridged form.
+                auto size = real_reg.reg == x86_register::fptag ? x87::read_full_tag(*this->emu_, data, max_length)
+                                                                : this->emu_->read_register(real_reg.reg, data, max_length);
 
                 if (real_reg.offset)
                 {
@@ -155,7 +158,8 @@ namespace sogen
                 }
                 else
                 {
-                    written_size = this->emu_->write_register(real_reg.reg, data, size);
+                    written_size = real_reg.reg == x86_register::fptag ? x87::write_full_tag(*this->emu_, data, size)
+                                                                       : this->emu_->write_register(real_reg.reg, data, size);
                 }
 
                 return real_reg.expected_size.value_or(written_size);

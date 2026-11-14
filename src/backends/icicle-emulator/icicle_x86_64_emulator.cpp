@@ -2,9 +2,11 @@
 #include "icicle_x86_64_emulator.hpp"
 
 #include <cstdio>
+#include <cstring>
 #include <unordered_set>
 #include <utils/object.hpp>
 #include <utils/finally.hpp>
+#include <x87_tag_word.hpp>
 
 using icicle_emulator = struct icicle_emulator_;
 
@@ -218,14 +220,34 @@ namespace sogen::icicle
             }
         }
 
+        // SLEIGH keeps the x87 tag word in FSAVE's full form and stores it as it is given; the backends give FXSAVE's
+        // abridged form. A written word keeps each register in use with the class FSAVE would report for its value.
         size_t write_raw_register(const int reg, const void* value, const size_t size) override
         {
-            return icicle_write_register(this->emu_, reg, value, size);
+            if (reg != static_cast<int>(x86_register::fptag))
+            {
+                return icicle_write_register(this->emu_, reg, value, size);
+            }
+
+            uint16_t abridged{};
+            memcpy(&abridged, value, (std::min)(size, sizeof(abridged)));
+            const auto full = x87::full_tag(*this, abridged);
+            return icicle_write_register(this->emu_, reg, &full, sizeof(full));
         }
 
         size_t read_raw_register(const int reg, void* value, const size_t size) override
         {
-            return icicle_read_register(this->emu_, reg, value, size);
+            if (reg != static_cast<int>(x86_register::fptag))
+            {
+                return icicle_read_register(this->emu_, reg, value, size);
+            }
+
+            uint16_t full{};
+            const auto result_size = icicle_read_register(this->emu_, reg, &full, sizeof(full));
+            const auto abridged = x87::abridged_tag(full);
+            memset(value, 0, size);
+            memcpy(value, &abridged, (std::min)(size, sizeof(abridged)));
+            return result_size;
         }
 
         bool read_descriptor_table(const int reg, descriptor_table_register& table) override
