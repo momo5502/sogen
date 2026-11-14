@@ -38,7 +38,9 @@ extern "C"
 {
     __attribute__((visibility("hidden"))) uint64_t sogen_seccomp_host_x18{};
     __attribute__((visibility("hidden"))) uint64_t sogen_seccomp_host_tls{};
+    __attribute__((visibility("hidden"))) std::atomic<pid_t> sogen_seccomp_owner_tid{};
     void sogen_seccomp_signal_entry(int signal, siginfo_t* info, void* context);
+    void sogen_seccomp_host_signal_dispatch(int signal, siginfo_t* info, void* context);
 }
 
 namespace sogen::seccomp
@@ -139,6 +141,14 @@ namespace sogen::seccomp
             }
         };
 
+        struct host_signal_action
+        {
+            struct sigaction action{};
+            std::atomic<bool> reset{};
+        };
+
+        std::array<host_signal_action, signals.size()> host_actions{};
+
         struct signal_environment
         {
             std::array<std::byte, 0x10000> stack{};
@@ -165,6 +175,9 @@ namespace sogen::seccomp
                     }
                     for (const auto signal : signals)
                     {
+                        check_system(sigaction(signal, nullptr, &host_actions[installed].action), "Read host sigaction");
+                        host_actions[installed].reset = false;
+                        action.sa_flags = SA_SIGINFO | SA_ONSTACK | (host_actions[installed].action.sa_flags & SA_RESTART);
                         check_system(sigaction(signal, &action, &previous_actions[installed]), "sigaction");
                         ++installed;
                     }
@@ -186,14 +199,74 @@ namespace sogen::seccomp
             {
                 for (size_t i = 0; i < signals.size(); ++i)
                 {
-                    sigaction(signals[i], &previous_actions[i], nullptr);
+                    auto previous = previous_actions[i];
+                    if (host_actions[i].reset)
+                    {
+                        previous.sa_handler = SIG_DFL;
+                        previous.sa_flags = 0;
+                    }
+                    sigaction(signals[i], &previous, nullptr);
                 }
                 sigaltstack(&previous_stack, nullptr);
                 sigprocmask(SIG_SETMASK, &previous_mask, nullptr);
             }
+
+            static void forward(const int signal, siginfo_t* info, void* context)
+            {
+                const auto index = static_cast<size_t>(std::ranges::find(signals, signal) - signals.begin());
+                if (index == signals.size() || !context)
+                {
+                    _exit(128 + signal);
+                }
+                auto previous = host_actions[index].action;
+                if ((previous.sa_flags & SA_RESETHAND) != 0 && host_actions[index].reset.exchange(true))
+                {
+                    previous.sa_handler = SIG_DFL;
+                    previous.sa_flags = 0;
+                }
+                if (previous.sa_handler == SIG_IGN)
+                {
+                    return;
+                }
+                const auto saved_errno = errno;
+                if (previous.sa_handler == SIG_DFL)
+                {
+                    sigaction(signal, &previous, nullptr);
+                    syscall(SYS_tgkill, getpid(), syscall(SYS_gettid), signal);
+                }
+                else
+                {
+                    auto mask = static_cast<ucontext_t*>(context)->uc_sigmask;
+                    for (int member = 1; member < NSIG; ++member)
+                    {
+                        if (sigismember(&previous.sa_mask, member) == 1)
+                        {
+                            sigaddset(&mask, member);
+                        }
+                    }
+                    if ((previous.sa_flags & SA_NODEFER) == 0)
+                    {
+                        sigaddset(&mask, signal);
+                    }
+                    sigset_t current_mask{};
+                    sigprocmask(SIG_SETMASK, &mask, &current_mask);
+                    errno = saved_errno;
+                    if ((previous.sa_flags & SA_SIGINFO) != 0)
+                    {
+                        previous.sa_sigaction(signal, info, context);
+                    }
+                    else
+                    {
+                        previous.sa_handler(signal);
+                    }
+                    sigprocmask(SIG_SETMASK, &current_mask, nullptr);
+                }
+                errno = saved_errno;
+            }
         };
 
-        fpsimd_context* find_fpsimd(ucontext_t& context)
+        template <typename T>
+        T* find_context(ucontext_t& context, const uint32_t magic)
         {
             auto* cursor = reinterpret_cast<std::byte*>(context.uc_mcontext.__reserved);
             const auto* end = cursor + sizeof(context.uc_mcontext.__reserved);
@@ -204,9 +277,9 @@ namespace sogen::seccomp
                 {
                     break;
                 }
-                if (header->magic == FPSIMD_MAGIC && header->size >= sizeof(fpsimd_context))
+                if (header->magic == magic && header->size >= sizeof(T))
                 {
-                    return reinterpret_cast<fpsimd_context*>(cursor);
+                    return reinterpret_cast<T*>(cursor);
                 }
                 cursor += header->size;
             }
@@ -289,6 +362,28 @@ namespace sogen::seccomp
             return std::nullopt;
         }
 
+        struct decoded_memory_access
+        {
+            memory_operation operation;
+            size_t size;
+        };
+
+        std::optional<decoded_memory_access> decode_memory_access(const uint32_t instruction)
+        {
+            if (const auto load = decode_mmio_load(instruction))
+            {
+                return decoded_memory_access{memory_operation::read, load->size};
+            }
+            if ((instruction & (1u << 22)) == 0)
+            {
+                if (const auto store = decode_mmio_load(instruction | (1u << 22)))
+                {
+                    return decoded_memory_access{memory_operation::write, store->size};
+                }
+            }
+            return std::nullopt;
+        }
+
         struct decoded_load_address
         {
             uint64_t address;
@@ -366,13 +461,30 @@ namespace sogen::seccomp
                 }
                 asm volatile("mov %0, x18" : "=r"(sogen_seccomp_host_x18));
                 asm volatile("mrs %0, tpidr_el0" : "=r"(sogen_seccomp_host_tls));
-                install_filter();
+                static_assert(std::atomic<pid_t>::is_always_lock_free);
+                static_assert(sizeof(sogen_seccomp_owner_tid) == 4);
+                static_assert(std::atomic<bool>::is_always_lock_free);
+                sogen_seccomp_owner_tid.store(owner_tid_, std::memory_order_release);
                 active = this;
+                try
+                {
+                    signals_ = std::make_unique<signal_environment>();
+                    install_filter();
+                }
+                catch (...)
+                {
+                    signals_.reset();
+                    active = nullptr;
+                    sogen_seccomp_owner_tid.store(0, std::memory_order_release);
+                    throw;
+                }
             }
 
             ~seccomp_emulator() override
             {
+                signals_.reset();
                 active = nullptr;
+                sogen_seccomp_owner_tid.store(0, std::memory_order_release);
             }
 
             std::string get_name() const override
@@ -412,7 +524,7 @@ namespace sogen::seccomp
 
             bool supports_memory_violation_hooks() const override
             {
-                return false;
+                return true;
             }
 
             bool supports_restartable_faults() const override
@@ -591,9 +703,19 @@ namespace sogen::seccomp
                 asm volatile("mrs %0, fpcr; mrs %1, fpsr" : "=r"(host_fpcr), "=r"(host_fpsr));
                 while (!stop_requested_)
                 {
-                    if (!in_window(state_.pc, 4) || state_.pc % 4 != 0 || state_.sp % 16 != 0)
+                    if (state_.pc % 4 != 0 || state_.sp % 16 != 0)
                     {
                         throw std::runtime_error("Invalid seccomp entry PC or SP");
+                    }
+                    if (!executable(state_.pc))
+                    {
+                        state_.pstate &= ~pstate_software_step;
+                        if (dispatch_memory_violation(state_.pc, 4, memory_operation::exec))
+                        {
+                            continue;
+                        }
+                        violation_ = true;
+                        throw std::runtime_error("Seccomp instruction fetch from non-executable memory");
                     }
                     const bool single_step = (state_.pstate & pstate_software_step) != 0;
                     if (single_step)
@@ -632,12 +754,15 @@ namespace sogen::seccomp
                         trapped_code_ = result.info.si_code;
                         trapped_arch_ = result.signal == SIGSYS ? result.info.si_arch : 0;
                         trapped_address_ = reinterpret_cast<uint64_t>(result.info.si_addr);
+                        trapped_esr_ = 0;
                     }
                     else
                     {
                         if (sigsetjmp(host_return_, 1) == 0)
                         {
+                            entry_pending_ = true;
                             check_system(static_cast<int>(syscall(SYS_tgkill, getpid(), owner_tid_, enter_signal)), "Enter seccomp");
+                            entry_pending_ = false;
                             if (stop_requested_)
                             {
                                 break;
@@ -654,13 +779,18 @@ namespace sogen::seccomp
                     {
                         break;
                     }
-                    if ((trapped_signal_ == SIGSEGV || trapped_signal_ == SIGBUS) && trapped_code_ > 0 && handle_mmio_fault())
+                    if (trapped_signal_ == SIGSEGV && trapped_code_ == SEGV_ACCERR && handle_mmio_fault())
                     {
                         if (single_step)
                         {
                             const auto callback = interrupt_hook_;
                             callback(*this, static_cast<int>(arm64_exception_class::software_step));
                         }
+                        continue;
+                    }
+                    if (trapped_signal_ == SIGSEGV && (trapped_code_ == SEGV_MAPERR || trapped_code_ == SEGV_ACCERR) &&
+                        handle_memory_fault())
+                    {
                         continue;
                     }
                     if (trapped_signal_ == SIGSYS && trapped_code_ == 1 && trapped_arch_ == AUDIT_ARCH_AARCH64)
@@ -701,9 +831,19 @@ namespace sogen::seccomp
             void handle_signal(const int signal, const siginfo_t& info, ucontext_t& context)
             {
                 auto& machine = context.uc_mcontext;
-                if (signal == enter_signal && running_ && !stop_requested_)
+                if (checking_alignment_ && signal == SIGBUS && info.si_code == BUS_ADRALN)
                 {
-                    auto* fp = find_fpsimd(context);
+                    siglongjmp(alignment_return_, 1);
+                }
+                const bool internal_signal = info.si_code == SI_TKILL && info.si_pid == getpid();
+                if (signal == enter_signal && internal_signal && entry_pending_)
+                {
+                    entry_pending_ = false;
+                    if (stop_requested_)
+                    {
+                        return;
+                    }
+                    auto* fp = find_context<fpsimd_context>(context, FPSIMD_MAGIC);
                     if (!fp)
                     {
                         missing_fpsimd_ = true;
@@ -719,18 +859,27 @@ namespace sogen::seccomp
                     std::memcpy(fp->vregs, state_.vectors.data(), sizeof(fp->vregs));
                     fp->fpcr = state_.fpcr;
                     fp->fpsr = state_.fpsr;
+                    guest_active_ = true;
                     return;
                 }
-                if (signal == enter_signal || (signal == stop_signal && !in_window(machine.pc, 1)))
+                if (signal == stop_signal && internal_signal && stop_requested_ && !guest_active_)
                 {
                     return;
                 }
-                if (!running_ || !in_window(machine.pc, 1))
+                bool stopped_in_host_handler{};
+                if (!running_ || !guest_active_ || (info.si_code <= 0 && !(signal == stop_signal && internal_signal && stop_requested_)))
                 {
-                    constexpr char error[] = "Seccomp: signal outside guest execution\n";
-                    write(STDERR_FILENO, error, sizeof(error) - 1);
-                    _exit(128 + signal);
+                    const bool was_guest = guest_active_;
+                    guest_active_ = false;
+                    signal_environment::forward(signal, const_cast<siginfo_t*>(&info), &context);
+                    guest_active_ = was_guest;
+                    if (!was_guest || !stop_requested_)
+                    {
+                        return;
+                    }
+                    stopped_in_host_handler = true;
                 }
+                guest_active_ = false;
                 for (size_t i = 0; i < state_.x.size(); ++i)
                 {
                     state_.x[i] = machine.regs[i];
@@ -738,7 +887,7 @@ namespace sogen::seccomp
                 state_.sp = machine.sp;
                 state_.pc = machine.pc;
                 state_.pstate = machine.pstate & 0xF0000000;
-                auto* fp = find_fpsimd(context);
+                auto* fp = find_context<fpsimd_context>(context, FPSIMD_MAGIC);
                 missing_fpsimd_ = fp == nullptr;
                 if (fp)
                 {
@@ -746,10 +895,12 @@ namespace sogen::seccomp
                     state_.fpcr = fp->fpcr;
                     state_.fpsr = fp->fpsr;
                 }
-                trapped_signal_ = signal;
+                trapped_signal_ = stopped_in_host_handler ? stop_signal : signal;
                 trapped_code_ = info.si_code;
                 trapped_arch_ = signal == SIGSYS ? info.si_arch : 0;
                 trapped_address_ = reinterpret_cast<uint64_t>(info.si_addr);
+                const auto* esr = find_context<esr_context>(context, ESR_MAGIC);
+                trapped_esr_ = esr ? esr->esr : 0;
                 siglongjmp(host_return_, 1);
             }
 
@@ -803,9 +954,14 @@ namespace sogen::seccomp
                 return reinterpret_cast<emulator_hook*>(&interrupt_hook_);
             }
 
-            emulator_hook* hook_memory_violation(memory_violation_hook_callback) override
+            emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
             {
-                unsupported("recoverable guest memory faults");
+                if (!callback || memory_violation_hook_)
+                {
+                    throw std::invalid_argument("Seccomp requires exactly one nonempty memory violation hook");
+                }
+                memory_violation_hook_ = std::move(callback);
+                return reinterpret_cast<emulator_hook*>(&memory_violation_hook_);
             }
 
             emulator_hook* hook_memory_execution(memory_execution_hook_callback) override
@@ -850,6 +1006,11 @@ namespace sogen::seccomp
                     interrupt_hook_ = {};
                     return;
                 }
+                if (hook == reinterpret_cast<emulator_hook*>(&memory_violation_hook_) && memory_violation_hook_)
+                {
+                    memory_violation_hook_ = {};
+                    return;
+                }
                 const auto ignored = std::ranges::find_if(
                     ignored_hooks_, [hook](const auto& entry) { return hook == reinterpret_cast<emulator_hook*>(entry.get()); });
                 if (ignored == ignored_hooks_.end())
@@ -862,7 +1023,7 @@ namespace sogen::seccomp
           private:
             instance_claim claim_{};
             guest_window window_{};
-            std::unique_ptr<signal_environment> signals_ = std::make_unique<signal_environment>();
+            std::unique_ptr<signal_environment> signals_{};
             pid_t owner_tid_{};
             std::atomic<bool> running_{};
             std::atomic<bool> stop_requested_{};
@@ -870,14 +1031,20 @@ namespace sogen::seccomp
             register_state state_{};
             uint64_t zero_{};
             sigjmp_buf host_return_{};
+            sigjmp_buf alignment_return_{};
+            volatile sig_atomic_t entry_pending_{};
+            volatile sig_atomic_t guest_active_{};
+            volatile sig_atomic_t checking_alignment_{};
             int trapped_signal_{};
             int trapped_code_{};
             uint32_t trapped_arch_{};
             uint64_t trapped_address_{};
+            uint64_t trapped_esr_{};
             bool missing_fpsimd_{};
             bool violation_{};
             instruction_hook_callback svc_hook_{};
             interrupt_hook_callback interrupt_hook_{};
+            memory_violation_hook_callback memory_violation_hook_{};
             std::vector<std::unique_ptr<std::byte>> ignored_hooks_{};
             std::map<uint64_t, memory_permission> pages_{};
 
@@ -890,11 +1057,111 @@ namespace sogen::seccomp
 
             std::vector<mmio_region> mmio_regions_{};
 
+            bool executable(const uint64_t address) const
+            {
+                const auto page = pages_.find(address & ~(page_size - 1));
+                return in_window(address, 4) && page != pages_.end() && (protection(page->second) & PROT_EXEC) != 0;
+            }
+
+            bool dispatch_memory_violation(const uint64_t address, const size_t size, const memory_operation operation)
+            {
+                if (!memory_violation_hook_)
+                {
+                    return false;
+                }
+                const auto type = mapped(address, 1) ? memory_violation_type::protection : memory_violation_type::unmapped;
+                const auto callback = memory_violation_hook_;
+                switch (callback(*this, address, size, operation, type))
+                {
+                case memory_violation_continuation::stop:
+                    stop();
+                    return true;
+                case memory_violation_continuation::resume:
+                    return true;
+                case memory_violation_continuation::restart:
+                    unsupported("restarting memory faults");
+                }
+                throw std::logic_error("Invalid seccomp memory violation continuation");
+            }
+
+            bool handle_memory_fault()
+            {
+                if (!memory_violation_hook_)
+                {
+                    return false;
+                }
+                const auto exception_class = (trapped_esr_ >> 26) & 0x3F;
+                constexpr uint64_t instruction_abort = 0x20;
+                constexpr uint64_t data_abort = 0x24;
+                if (exception_class == instruction_abort)
+                {
+                    return dispatch_memory_violation(trapped_address_, 4, memory_operation::exec);
+                }
+                if (trapped_esr_ == 0 && !executable(state_.pc))
+                {
+                    return dispatch_memory_violation(trapped_address_, 4, memory_operation::exec);
+                }
+                uint32_t instruction{};
+                read_memory(state_.pc, &instruction, sizeof(instruction));
+                const auto access = decode_memory_access(instruction);
+                if (exception_class == data_abort)
+                {
+                    const auto operation = (trapped_esr_ & (1u << 6)) != 0 ? memory_operation::write : memory_operation::read;
+                    auto size = access ? access->size : 1;
+                    if ((trapped_esr_ & (1u << 24)) != 0)
+                    {
+                        size = size_t{1} << ((trapped_esr_ >> 22) & 3);
+                    }
+                    return dispatch_memory_violation(trapped_address_, size, operation);
+                }
+                // Ptrace signal-delivery stops precede construction of the signal frame containing ESR_EL1.
+                if (trapped_esr_ == 0 && access)
+                {
+                    return dispatch_memory_violation(trapped_address_, access->size, access->operation);
+                }
+                unsupported("classifying this single-stepped memory fault without ESR_EL1");
+            }
+
             std::vector<mmio_region>::const_iterator find_mmio(const uint64_t address, const size_t size) const
             {
                 return std::ranges::find_if(mmio_regions_, [&](const auto& region) {
                     return address < region.address + region.size && region.address < address + size;
                 });
+            }
+
+            void check_mmio_alignment(const decoded_load& load, const uint64_t address)
+            {
+                if (!load.acquire || address % load.size == 0)
+                {
+                    return;
+                }
+                // FEAT_LSE2 and SCTLR_EL1.nAA affect acquire-load alignment; use the host's actual access rules.
+                alignas(16) const std::array<std::byte, 32> scratch{};
+                const auto* source = scratch.data() + (address & 15);
+                if (sigsetjmp(alignment_return_, 1) != 0)
+                {
+                    checking_alignment_ = false;
+                    violation_ = true;
+                    throw std::runtime_error("Seccomp MMIO acquire-load alignment fault");
+                }
+                checking_alignment_ = true;
+                uint64_t value{};
+                switch (load.size)
+                {
+                case 2:
+                    asm volatile("ldarh %w0, [%1]" : "=r"(value) : "r"(source) : "memory");
+                    break;
+                case 4:
+                    asm volatile("ldar %w0, [%1]" : "=r"(value) : "r"(source) : "memory");
+                    break;
+                case 8:
+                    asm volatile("ldar %0, [%1]" : "=r"(value) : "r"(source) : "memory");
+                    break;
+                default:
+                    checking_alignment_ = false;
+                    throw std::logic_error("Invalid seccomp acquire-load size");
+                }
+                checking_alignment_ = false;
             }
 
             bool handle_mmio_fault()
@@ -920,6 +1187,7 @@ namespace sogen::seccomp
                             << ", address 0x" << trapped_address_;
                     throw std::runtime_error(message.str());
                 }
+                check_mmio_alignment(*load, trapped_address_);
                 std::array<std::byte, 16> data{};
                 region->read(trapped_address_ - region->address, data.data(), load->size);
                 if (load->acquire)
@@ -1195,7 +1463,13 @@ extern "C" __attribute__((visibility("hidden"))) void sogen_seccomp_signal_dispa
 {
     if (!sogen::seccomp::seccomp_emulator::active || !info || !context)
     {
-        _exit(128 + signal);
+        sogen::seccomp::signal_environment::forward(signal, info, context);
+        return;
     }
     sogen::seccomp::seccomp_emulator::active->handle_signal(signal, *info, *static_cast<ucontext_t*>(context));
+}
+
+extern "C" __attribute__((visibility("hidden"))) void sogen_seccomp_host_signal_dispatch(const int signal, siginfo_t* info, void* context)
+{
+    sogen::seccomp::signal_environment::forward(signal, info, context);
 }

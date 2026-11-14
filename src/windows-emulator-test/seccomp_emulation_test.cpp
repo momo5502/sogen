@@ -6,10 +6,86 @@
 #include <stdexcept>
 
 #ifdef SOGEN_ENABLE_SECCOMP
+#include <asm/hwcap.h>
+#include <platform/arm64_context.hpp>
+#include <sys/auxv.h>
+#include <utils/finally.hpp>
+
+#include <atomic>
+#include <cerrno>
+#include <csignal>
+#include <thread>
+#include <unistd.h>
+
 namespace sogen::test
 {
     namespace
     {
+        thread_local volatile sig_atomic_t host_signal_bits{};
+        thread_local volatile sig_atomic_t host_signal_mask_invalid{};
+
+        void host_signal_handler(const int signal, siginfo_t*, void*)
+        {
+            host_signal_bits = host_signal_bits | (1 << signal);
+            sigset_t mask{};
+            sigprocmask(SIG_SETMASK, nullptr, &mask);
+            if (sigismember(&mask, SIGWINCH) != 1 || sigismember(&mask, signal) != 1)
+            {
+                host_signal_mask_invalid = 1;
+            }
+        }
+
+        class host_signal_handlers
+        {
+          public:
+            host_signal_handlers()
+            {
+                struct sigaction action{};
+                action.sa_sigaction = host_signal_handler;
+                action.sa_flags = SA_SIGINFO;
+                sigemptyset(&action.sa_mask);
+                sigaddset(&action.sa_mask, SIGWINCH);
+                for (size_t i = 0; i < signals.size(); ++i)
+                {
+                    if (sigaction(signals[i], &action, &previous[i]) != 0)
+                    {
+                        throw std::runtime_error("Install host test signal handler");
+                    }
+                }
+            }
+
+            ~host_signal_handlers()
+            {
+                for (size_t i = 0; i < signals.size(); ++i)
+                {
+                    sigaction(signals[i], &previous[i], nullptr);
+                }
+            }
+
+          private:
+            static constexpr std::array signals{SIGUSR1, SIGUSR2, SIGILL};
+            std::array<struct sigaction, signals.size()> previous{};
+        };
+
+        void check_host_signals()
+        {
+            uint64_t original_tls{};
+            asm volatile("mrs %0, tpidr_el0" : "=r"(original_tls));
+            host_signal_bits = 0;
+            host_signal_mask_invalid = 0;
+            for (const auto signal : {SIGUSR1, SIGUSR2, SIGILL})
+            {
+                errno = EDOM;
+                EXPECT_EQ(raise(signal), 0);
+                EXPECT_EQ(errno, EDOM);
+                uint64_t tls{};
+                asm volatile("mrs %0, tpidr_el0" : "=r"(tls));
+                EXPECT_EQ(tls, original_tls);
+            }
+            EXPECT_EQ(host_signal_bits, (1 << SIGUSR1) | (1 << SIGUSR2) | (1 << SIGILL));
+            EXPECT_EQ(host_signal_mask_invalid, 0);
+        }
+
         class SeccompBackendTest : public testing::Test
         {
           protected:
@@ -62,7 +138,8 @@ namespace sogen::test
                 std::filesystem::remove_all(this->root, error);
             }
 
-            std::unique_ptr<windows_emulator> create(emulator_settings settings = {}, std::unique_ptr<utils::clock> clock = {})
+            std::unique_ptr<windows_emulator> create(emulator_settings settings = {}, std::unique_ptr<utils::clock> clock = {},
+                                                     emulator_callbacks callbacks = {})
             {
                 settings.emulation_root = this->root;
                 settings.load_registry = false;
@@ -72,10 +149,66 @@ namespace sogen::test
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 interfaces.audio = std::make_unique<null_audio_backend>();
                 interfaces.console = std::make_unique<null_console_backend>();
-                return std::make_unique<windows_emulator>(create_arm64_emulator(backend_type::seccomp), settings, emulator_callbacks{},
+                return std::make_unique<windows_emulator>(create_arm64_emulator(backend_type::seccomp), settings, std::move(callbacks),
                                                           std::move(interfaces));
             }
         };
+    }
+
+    TEST(SeccompSignalTest, OtherHostThreadsKeepTheirTlsAndCannotEnterTheRunningGuest)
+    {
+        const host_signal_handlers handlers{};
+        auto machine = create_arm64_emulator(backend_type::seccomp);
+        memory_manager memory{*machine};
+        ASSERT_TRUE(memory.allocate_memory(0x10000, 0x1000, memory_permission::all));
+        ASSERT_TRUE(memory.allocate_memory(0x20000, 0x1000, memory_permission::read_write));
+        machine->write_memory(0x10000, std::array{0x52800020u, 0x889FFC20u, 0x88DFFC40u, 0x34FFFFE0u, 0xD4000001u});
+        machine->reg(arm64_register::pc, 0x10000);
+        machine->reg(arm64_register::sp, 0x20FF0);
+        machine->reg(arm64_register::x1, 0x20000);
+        machine->reg(arm64_register::x2, 0x20004);
+        machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface& cpu, uint64_t) {
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+        std::atomic_ref<uint32_t> entered{*std::construct_at(reinterpret_cast<uint32_t*>(0x20000), 0u)};
+        std::atomic_ref<uint32_t> release{*std::construct_at(reinterpret_cast<uint32_t*>(0x20004), 0u)};
+        std::jthread worker{[&](const std::stop_token stop) {
+            while (entered.load(std::memory_order_acquire) == 0)
+            {
+                if (stop.stop_requested())
+                {
+                    return;
+                }
+                std::this_thread::yield();
+            }
+            check_host_signals();
+            release.store(1, std::memory_order_release);
+        }};
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(machine->read_instruction_pointer(), 0x10014u);
+        EXPECT_FALSE(machine->has_violation());
+    }
+
+    TEST(SeccompSignalTest, OwnerHostCallbacksChainUnsolicitedEntryAndFaultSignals)
+    {
+        const host_signal_handlers handlers{};
+        auto machine = create_arm64_emulator(backend_type::seccomp);
+        memory_manager memory{*machine};
+        ASSERT_TRUE(memory.allocate_memory(0x10000, 0x1000, memory_permission::all));
+        ASSERT_TRUE(memory.allocate_memory(0x20000, 0x1000, memory_permission::read_write));
+        machine->write_memory(0x10000, uint32_t{0xD4000001});
+        machine->reg(arm64_register::pc, 0x10000);
+        machine->reg(arm64_register::sp, 0x20FF0);
+        machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface& cpu, uint64_t) {
+            check_host_signals();
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(machine->read_instruction_pointer(), 0x10004u);
     }
 
     TEST_F(SeccompWindowsSettingsTest, DefaultTimingSettingsAllowConstructionWithNativeCounterReads)
@@ -99,6 +232,60 @@ namespace sogen::test
     TEST_F(SeccompWindowsSettingsTest, InjectedClockIsRejected)
     {
         EXPECT_THROW(create({}, std::make_unique<utils::clock>()), std::invalid_argument);
+    }
+
+    TEST_F(SeccompWindowsSettingsTest, AccessViolationsBuildWindowsExceptionFrames)
+    {
+        arm64_cpu* cpu{};
+        size_t faults{};
+        emulator_callbacks callbacks{};
+        callbacks.on_memory_violate = [&](uint64_t, size_t, memory_operation, memory_violation_type) {
+            ++faults;
+            cpu->stop();
+        };
+        const auto emu = create({}, {}, std::move(callbacks));
+        cpu = dynamic_cast<arm64_cpu*>(&emu->emu());
+        ASSERT_NE(cpu, nullptr);
+        const auto code = emu->memory.allocate_memory(0x1000, memory_permission::all);
+        ASSERT_NE(code, 0u);
+        emulator_thread thread{emu->memory, emu->process, code, 0, 0x10000, 0, 8, true};
+        emu->vcpu(0).active_thread = &thread;
+        const auto clear_thread = utils::finally([&] { emu->vcpu(0).active_thread = nullptr; });
+        const auto initial_sp = thread.stack_base + thread.stack_size - 0x10;
+        const auto dispatcher = code + 0x100;
+        emu->process.ki_user_exception_dispatcher = dispatcher;
+        constexpr std::array cases{
+            std::pair{0xF9400020u, uint64_t{0}},
+            std::pair{0xF9000020u, uint64_t{1}},
+            std::pair{0xD61F0020u, uint64_t{8}},
+        };
+        for (const auto [instruction, access_type] : cases)
+        {
+            emu->memory.write_memory(code, instruction);
+            cpu->reg(arm64_register::pc, code);
+            cpu->reg(arm64_register::sp, initial_sp);
+            cpu->reg(arm64_register::x0, 0x1234u);
+            cpu->reg(arm64_register::x1, 0);
+            cpu->reg(arm64_register::pstate, 0xA0000000u);
+
+            ASSERT_NO_THROW(cpu->start());
+            EXPECT_EQ(cpu->read_instruction_pointer(), dispatcher);
+            const auto sp = cpu->read_stack_pointer();
+            const auto context = emu->memory.read_memory<arm64_context>(sp);
+            const auto record = emu->memory.read_memory<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>>(sp + 0x3B0);
+            const auto faulting_pc = access_type == 8 ? 0 : code;
+            EXPECT_EQ(record.ExceptionCode, static_cast<DWORD>(STATUS_ACCESS_VIOLATION));
+            EXPECT_EQ(record.ExceptionAddress, faulting_pc);
+            ASSERT_EQ(record.NumberParameters, 2u);
+            EXPECT_EQ(record.ExceptionInformation[0], access_type);
+            EXPECT_EQ(record.ExceptionInformation[1], 0u);
+            EXPECT_EQ(context.Pc, faulting_pc);
+            EXPECT_EQ(context.Sp, initial_sp);
+            EXPECT_EQ(context.X[0], 0x1234u);
+            EXPECT_EQ(context.X[1], 0u);
+            EXPECT_EQ(context.Cpsr, 0xA0000000u);
+        }
+        EXPECT_EQ(faults, cases.size());
     }
 
     TEST_P(SeccompCurrentElTest, RaisesUndefinedInstructionWithoutChangingGuestState)
@@ -310,6 +497,265 @@ namespace sogen::test
         ASSERT_NO_THROW(machine->start());
         EXPECT_EQ(calls, 1u);
         EXPECT_EQ(machine->read_instruction_pointer(), code_address + 4);
+    }
+
+    TEST_F(SeccompBackendTest, SteppedSvcRequiresAnExecutablePage)
+    {
+        machine->write_memory(code_address, uint32_t{0xD4000001});
+        machine->hook_interrupt([](cpu_interface&, int) { ADD_FAILURE() << "An execution fault must cancel the software step"; });
+        machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface& cpu, uint64_t) {
+            ADD_FAILURE() << "A non-executable SVC must not dispatch a syscall";
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+        size_t faults{};
+        machine->hook_memory_violation([&](cpu_interface&, const uint64_t address, const size_t size, const memory_operation operation,
+                                           const memory_violation_type type) {
+            ++faults;
+            EXPECT_EQ(address, code_address);
+            EXPECT_EQ(size, 4u);
+            EXPECT_EQ(operation, memory_operation::exec);
+            EXPECT_EQ(type, memory_violation_type::protection);
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address);
+            EXPECT_EQ(machine->reg(arm64_register::pstate), 0xA0000000u);
+            return memory_violation_continuation::stop;
+        });
+        for (const auto permission : {memory_permission::none, memory_permission::read, memory_permission::read_write,
+                                      memory_permission::all | memory_permission::guard})
+        {
+            ASSERT_TRUE(memory.protect_memory(code_address, 0x1000, permission));
+            machine->reg(arm64_register::pstate, 0xA0000000u | (1u << 21));
+            ASSERT_NO_THROW(machine->start());
+            EXPECT_FALSE(machine->has_violation());
+        }
+        EXPECT_EQ(faults, 4u);
+    }
+
+    TEST_F(SeccompBackendTest, MemoryFaultsReportGuestAccessAndPreserveRegisters)
+    {
+        constexpr uint64_t data_address = 0x40000;
+        ASSERT_TRUE(memory.allocate_memory(data_address, 0x1000, memory_permission::read));
+
+        struct fault_case
+        {
+            uint32_t instruction;
+            uint64_t address;
+            memory_operation operation;
+            memory_violation_type type;
+            memory_permission permission = memory_permission::read;
+        };
+
+        constexpr std::array cases{
+            fault_case{0xF9400020, 0, memory_operation::read, memory_violation_type::unmapped},
+            fault_case{0xF9400020, 0x50000, memory_operation::read, memory_violation_type::unmapped},
+            fault_case{0xF9400020, data_address, memory_operation::read, memory_violation_type::protection, memory_permission::none},
+            fault_case{0xF8008420, 0, memory_operation::write, memory_violation_type::unmapped},
+            fault_case{0xF8008420, data_address, memory_operation::write, memory_violation_type::protection},
+        };
+        machine->hook_interrupt([](cpu_interface&, int) { ADD_FAILURE() << "A memory fault must cancel the software step"; });
+        machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface& cpu, uint64_t) {
+            ADD_FAILURE() << "The faulting instruction must not complete";
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+        for (const auto& fault : cases)
+        {
+            ASSERT_TRUE(memory.protect_memory(data_address, 0x1000, fault.permission));
+            size_t faults{};
+            auto* hook = machine->hook_memory_violation([&](cpu_interface&, const uint64_t address, const size_t size,
+                                                            const memory_operation operation, const memory_violation_type type) {
+                ++faults;
+                EXPECT_EQ(address, fault.address);
+                EXPECT_EQ(size, 8u);
+                EXPECT_EQ(operation, fault.operation);
+                EXPECT_EQ(type, fault.type);
+                EXPECT_EQ(machine->read_instruction_pointer(), code_address);
+                EXPECT_EQ(machine->reg(arm64_register::x0), 0x1234u);
+                EXPECT_EQ(machine->reg(arm64_register::x1), fault.address);
+                EXPECT_EQ(machine->reg(arm64_register::pstate), 0xA0000000u);
+                return memory_violation_continuation::stop;
+            });
+            for (const auto software_step : {0u, 1u << 21})
+            {
+                machine->write_memory(code_address, std::array{fault.instruction, 0xD4000001u});
+                machine->reg(arm64_register::pc, code_address);
+                machine->reg(arm64_register::x0, 0x1234u);
+                machine->reg(arm64_register::x1, fault.address);
+                machine->reg(arm64_register::pstate, 0xA0000000u | software_step);
+                ASSERT_NO_THROW(machine->start());
+                EXPECT_FALSE(machine->has_violation());
+            }
+            EXPECT_EQ(faults, 2u);
+            machine->delete_hook(hook);
+        }
+    }
+
+    TEST_F(SeccompBackendTest, InstructionFetchFaultsIncludeBranchTargetsOutsideTheGuestWindow)
+    {
+        machine->write_memory(code_address, uint32_t{0xD61F0020});
+        machine->reg(arm64_register::x1, 0);
+        machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface&, uint64_t) {
+            ADD_FAILURE() << "An invalid branch target must fault";
+            return instruction_hook_continuation::skip_instruction;
+        });
+        size_t faults{};
+        machine->hook_memory_violation([&](cpu_interface&, const uint64_t address, const size_t size, const memory_operation operation,
+                                           const memory_violation_type type) {
+            ++faults;
+            EXPECT_EQ(address, 0u);
+            EXPECT_EQ(size, 4u);
+            EXPECT_EQ(operation, memory_operation::exec);
+            EXPECT_EQ(type, memory_violation_type::unmapped);
+            EXPECT_EQ(machine->read_instruction_pointer(), 0u);
+            return memory_violation_continuation::stop;
+        });
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(faults, 1u);
+        EXPECT_FALSE(machine->has_violation());
+    }
+
+    TEST_F(SeccompBackendTest, MemoryFaultCallbacksCanRedirectExecution)
+    {
+        machine->write_memory(code_address, std::array{0xF9400020u, 0xD4000001u});
+        machine->reg(arm64_register::x1, 0);
+        machine->hook_memory_violation([&](cpu_interface&, uint64_t, size_t, memory_operation, memory_violation_type) {
+            machine->reg(arm64_register::pc, code_address + 4);
+            return memory_violation_continuation::resume;
+        });
+        size_t calls{};
+        machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& cpu, uint64_t) {
+            ++calls;
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(calls, 1u);
+        EXPECT_FALSE(machine->has_violation());
+    }
+
+    TEST_F(SeccompBackendTest, MemoryFaultRestartRequestsFailExplicitly)
+    {
+        machine->write_memory(code_address, uint32_t{0xF9400020});
+        machine->reg(arm64_register::x1, 0);
+        machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface&, uint64_t) {
+            ADD_FAILURE() << "The faulting load must not complete";
+            return instruction_hook_continuation::skip_instruction;
+        });
+        machine->hook_memory_violation([](cpu_interface&, uint64_t, size_t, memory_operation, memory_violation_type) {
+            return memory_violation_continuation::restart;
+        });
+
+        EXPECT_THROW(machine->start(), std::runtime_error);
+        EXPECT_EQ(machine->read_instruction_pointer(), code_address);
+    }
+
+    TEST_F(SeccompBackendTest, MmioAcquireLoadsMatchNativeAlignmentChecks)
+    {
+        constexpr uint64_t mmio_address = 0x40000;
+        constexpr uint64_t ram_address = 0x50000;
+        std::array<uint8_t, 32> data{};
+        for (size_t i = 0; i < data.size(); ++i)
+        {
+            data[i] = static_cast<uint8_t>(i);
+        }
+        ASSERT_TRUE(memory.allocate_memory(ram_address, 0x1000, memory_permission::read));
+        machine->write_memory(ram_address, data.data(), data.size());
+        size_t reads{};
+        ASSERT_TRUE(memory.allocate_mmio(mmio_address, 0x1000,
+                                         [&](const uint64_t offset, void* output, const size_t size) {
+                                             ++reads;
+                                             ASSERT_LE(offset + size, data.size());
+                                             std::memcpy(output, data.data() + offset, size);
+                                         },
+                                         {}));
+        size_t steps{};
+        machine->hook_interrupt([&](cpu_interface&, const int exception_class) {
+            ++steps;
+            EXPECT_EQ(exception_class, static_cast<int>(arm64_exception_class::software_step));
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address + 4);
+        });
+        machine->hook_memory_violation([](cpu_interface&, uint64_t, size_t, memory_operation, memory_violation_type) {
+            ADD_FAILURE() << "An alignment fault is not an access violation";
+            return memory_violation_continuation::stop;
+        });
+        size_t calls{};
+        machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& cpu, uint64_t) {
+            ++calls;
+            cpu.stop();
+            return instruction_hook_continuation::skip_instruction;
+        });
+
+        struct load_case
+        {
+            uint32_t instruction;
+            size_t size;
+            unsigned long capability{};
+        };
+
+        constexpr std::array cases{
+            load_case{0x08DFFC20, 1},
+            load_case{0x48DFFC20, 2},
+            load_case{0x88DFFC20, 4},
+            load_case{0xC8DFFC20, 8},
+            load_case{0x38BFC020, 1, HWCAP_LRCPC},
+            load_case{0x78BFC020, 2, HWCAP_LRCPC},
+            load_case{0xB8BFC020, 4, HWCAP_LRCPC},
+            load_case{0xF8BFC020, 8, HWCAP_LRCPC},
+            load_case{0x19400020, 1, HWCAP_ILRCPC},
+            load_case{0x59400020, 2, HWCAP_ILRCPC},
+            load_case{0x99400020, 4, HWCAP_ILRCPC},
+            load_case{0xD9400020, 8, HWCAP_ILRCPC},
+        };
+        size_t native_alignment_faults{};
+        for (const auto& load : cases)
+        {
+            if (load.capability != 0 && (getauxval(AT_HWCAP) & load.capability) == 0)
+            {
+                continue;
+            }
+            machine->write_memory(code_address, std::array{load.instruction, 0xD4000001u});
+            for (const auto offset : {0u, 1u, 9u, 15u})
+            {
+                SCOPED_TRACE(testing::Message() << "instruction=" << load.instruction << ", offset=" << offset);
+                uint64_t expected{};
+                std::memcpy(&expected, data.data() + offset, load.size);
+                for (const auto software_step : {0u, 1u << 21})
+                {
+                    const auto run = [&](const uint64_t base) {
+                        calls = steps = reads = 0;
+                        machine->reg(arm64_register::pc, code_address);
+                        machine->reg(arm64_register::x0, 0x1234u);
+                        machine->reg(arm64_register::x1, base + offset);
+                        machine->reg(arm64_register::pstate, 0xA0000000u | software_step);
+                        bool completed{};
+                        try
+                        {
+                            machine->start();
+                            completed = true;
+                        }
+                        catch (const std::runtime_error&)
+                        {
+                            EXPECT_TRUE(machine->has_violation());
+                        }
+                        EXPECT_EQ(machine->reg(arm64_register::x1), base + offset);
+                        EXPECT_EQ(machine->reg(arm64_register::pstate), 0xA0000000u);
+                        EXPECT_EQ(machine->reg(arm64_register::x0), completed ? expected : 0x1234u);
+                        EXPECT_EQ(machine->read_instruction_pointer(), completed ? code_address + 8 : code_address);
+                        EXPECT_EQ(calls, completed ? 1u : 0u);
+                        EXPECT_EQ(steps, completed && software_step != 0 ? 1u : 0u);
+                        EXPECT_EQ(reads, completed && base == mmio_address ? 1u : 0u);
+                        return completed;
+                    };
+                    const auto native_completed = run(ram_address);
+                    native_alignment_faults += !native_completed;
+                    const auto mmio_completed = run(mmio_address);
+                    EXPECT_EQ(mmio_completed, native_completed);
+                }
+            }
+        }
+        RecordProperty("native_alignment_faults", std::to_string(native_alignment_faults));
     }
 
     TEST_F(SeccompBackendTest, MmioLoadsPreserveArm64RegisterSemantics)

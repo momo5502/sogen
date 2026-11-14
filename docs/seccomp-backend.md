@@ -19,9 +19,11 @@ window with `SIGSYS`. The backend decodes the Windows syscall number from the `S
 passes it to the shared syscall dispatcher, with PC pointing to the `SVC` instruction.
 
 Guest entry uses `SIGUSR2` and signal return; `SIGUSR1` requests a scheduler stop from another host
-thread. The backend owns these signals and its synchronous fault handlers while the emulator is alive.
-Signal entry restores the host's X18 and TLS before calling C++. Guest GPRs, NZCV, SP, PC and FPSIMD
-state are saved before returning to the host stack, where emulator callbacks execute.
+thread. Signal entry identifies the receiving thread with a raw syscall before touching X18 or TLS.
+Only the vCPU's owner thread restores its saved host X18 and TLS. Signals on other host threads,
+signals outside guest execution and unrelated user-sent signals chain to the previous host handlers.
+Guest entry is accepted only while the owner thread is requesting it. Guest GPRs, NZCV, SP, PC and
+FPSIMD state are saved before returning to the host stack, where emulator callbacks execute.
 
 `SIGILL` becomes an ARM64 undefined-instruction exception at the faulting PC. The Windows exception
 dispatcher delivers `STATUS_ILLEGAL_INSTRUCTION` with the saved guest registers. This includes
@@ -29,6 +31,15 @@ dispatcher delivers `STATUS_ILLEGAL_INSTRUCTION` with the saved guest registers.
 
 Guest `BRK` instructions become ARM64 breakpoint-instruction exceptions at the faulting PC.
 The Windows dispatcher interprets the immediate for breakpoints, assertions, debug services and fast-fail.
+
+Ordinary read, write and instruction-fetch faults reach the shared memory-violation hook, which delivers
+`STATUS_ACCESS_VIOLATION` through the Windows exception dispatcher. The faulting PC, address and
+operation are preserved, including branches to unmapped addresses outside the guest window.
+Non-executable pages are rejected before decoding a single-stepped `SVC`.
+Memory-violation callbacks may stop execution or resume at a guest exception handler; restart requests
+remain unsupported. Access direction comes from the signal frame's ARM64 fault syndrome. Ptrace stops
+have no signal frame yet, so single-stepped load/store faults use the instruction decoder and reject
+unsupported encodings rather than guess the operation.
 
 `PSTATE.SS` uses Linux `PTRACE_SINGLESTEP` to execute one instruction. A child tracer saves the host
 registers, FPSIMD state and TLS, installs the guest state, captures the result, and restores the host
@@ -42,7 +53,7 @@ Kernels without Yama use their normal ptrace policy. Other tracing restrictions 
 
 ## MMIO
 
-Read-only MMIO regions have inaccessible host pages. Memory faults return execution to the host
+Read-only MMIO regions have inaccessible host pages. Protection faults return execution to the host
 stack, where the backend decodes the load, calls the region-relative read callback, updates the guest
 registers, and advances PC. Supported forms are:
 
@@ -55,6 +66,12 @@ Indexed loads write back the base register, including SP, after a successful rea
 preserve the other vector bytes. Emulated loads complete a pending software step.
 Unsupported accesses raise an error, including stores, paired or exclusive loads, and overlapping
 integer destination/base writeback.
+Alignment faults are not emulated as MMIO or converted to access violations. They stop execution
+without calling the MMIO callback or changing the load's destination and base registers.
+Protection faults can mask acquire-load alignment checks. Before emulating a non-naturally-aligned
+acquire load, the backend performs a host acquire load of the same width on readable scratch memory
+with the same low address bits. This preserves the host's alignment behavior under FEAT_LSE2 and
+`SCTLR_EL1.nAA`, including permitted unaligned accesses, without inferring kernel settings from CPU capabilities.
 
 ## Host requirements and limits
 
@@ -63,11 +80,11 @@ The backend supports one emulator instance per process, one vCPU on its original
 the emulator is destroyed. Guest code shares the host address space; this backend does not isolate
 untrusted programs from the host.
 
-Snapshots, counter interception, instruction-count execution budgets, execution hooks, recoverable
-memory faults, and enabled hardware debug registers are unsupported and raise an error. Disabled debug
-registers read as zero and accept zero. Thread stacks are committed in full because stack growth
-cannot recover from memory faults. Memory read/write and basic-block observation hooks are accepted
-without producing callbacks. Unsupported guest signals stop execution with PC and signal diagnostics.
+Snapshots, counter interception, instruction-count execution budgets, execution hooks, restartable
+memory faults, alignment-exception delivery and enabled hardware debug registers are unsupported and
+raise an error. Disabled debug registers read as zero and accept zero. Thread stacks are committed in
+full because stack growth cannot restart memory faults. Memory read/write and basic-block observation
+hooks are accepted without producing callbacks. Unsupported guest signals stop execution with PC and signal diagnostics.
 
 ## Build and run
 
@@ -92,7 +109,8 @@ build/release/artifacts/analyzer --backend seccomp --no-inst-precision \
   -s 'C:\test-sample.exe'
 ```
 
-The backend tests cover illegal-instruction delivery, hardware single-stepping, MMIO load semantics,
-register preservation and base-register writeback. The existing ARM64 integration tests use
+The backend tests cover host-thread signal routing and TLS preservation, Windows access-violation frames,
+execution protection, illegal-instruction delivery, hardware single-stepping, MMIO load semantics,
+alignment faults, register preservation and base-register writeback. The existing ARM64 integration tests use
 `EMULATOR_ARM64_ROOT`; select this backend with `EMULATOR_SECCOMP=1`. The ordinary `test-sample`
 exercises Windows startup, console output, guest exception handling and single-stepping.
