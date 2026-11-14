@@ -43,6 +43,7 @@ namespace sogen::test
         constexpr uint32_t reserved_eax = 0x5001;
         constexpr uint32_t written_eax = 0x6001;
         constexpr uint32_t written_dr7 = 0x401;
+        constexpr uint32_t stored_dr7 = 0x001; // written_dr7 & DR7_LEGAL
         constexpr uint32_t get_context_syscall_id = 0x42;
         constexpr uint64_t instrumentation_callback = 0x20000;
 
@@ -869,7 +870,7 @@ namespace sogen::test
         EXPECT_TRUE(second_vcpu.get());
         EXPECT_EQ(written_eax, reserved.read().Context.Eax);
         EXPECT_EQ(&this->thread(this->second), this->emu->vcpu(1).active_thread);
-        EXPECT_EQ(written_dr7, this->emu->vcpu(1).x64_cpu().reg(x86_register::dr7));
+        EXPECT_EQ(stored_dr7, this->emu->vcpu(1).x64_cpu().reg(x86_register::dr7));
         EXPECT_EQ(second_rax, this->rax(1));
         EXPECT_EQ(first_rax, this->rax(0));
     }
@@ -1524,7 +1525,7 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, status);
         EXPECT_EQ(0u, this->machine->second().stops.load());
         EXPECT_EQ(written_eax, reserved.read().Context.Eax);
-        EXPECT_EQ(written_dr7, this->emu->vcpu(1).x64_cpu().reg(x86_register::dr7));
+        EXPECT_EQ(stored_dr7, this->emu->vcpu(1).x64_cpu().reg(x86_register::dr7));
         EXPECT_EQ(second_rax, this->rax(1));
         EXPECT_EQ(first_rax, this->rax(0));
     }
