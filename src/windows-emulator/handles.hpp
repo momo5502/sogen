@@ -632,6 +632,7 @@ namespace sogen
             if (h.is_system)
             {
                 this->internal_handles_.erase(static_cast<handle_id_type>(h.id));
+                this->recycle_handle_id(static_cast<handle_id_type>(h.id));
                 return true;
             }
 
@@ -643,6 +644,7 @@ namespace sogen
 
             this->handles_.erase(entry);
             this->attributes_.erase(static_cast<handle_id_type>(h.id));
+            this->recycle_handle_id(static_cast<handle_id_type>(h.id));
             this->release_index(*index);
             return true;
         }
@@ -701,6 +703,7 @@ namespace sogen
             buffer.read_map(this->handles_);
             buffer.read_map(this->internal_handles_);
             buffer.read_map(this->attributes_);
+            this->next_handle_id_ = 1;
             ++this->generation_;
         }
 
@@ -841,14 +844,30 @@ namespace sogen
 
             for (auto it = this->internal_handles_.begin(); it != this->internal_handles_.end();)
             {
-                it = it->second == index ? this->internal_handles_.erase(it) : std::next(it);
+                if (it->second == index)
+                {
+                    this->recycle_handle_id(it->first);
+                    it = this->internal_handles_.erase(it);
+                }
+                else
+                {
+                    it = std::next(it);
+                }
             }
 
             if (remove_guest_handles)
             {
                 for (auto it = this->handles_.begin(); it != this->handles_.end();)
                 {
-                    it = it->second == index ? this->handles_.erase(it) : std::next(it);
+                    if (it->second == index)
+                    {
+                        this->recycle_handle_id(it->first);
+                        it = this->handles_.erase(it);
+                    }
+                    else
+                    {
+                        it = std::next(it);
+                    }
                 }
 
                 std::erase_if(this->attributes_, [&](const auto& attribute) {
@@ -888,10 +907,26 @@ namespace sogen
 
         handle_id_type find_free_handle_id()
         {
-            for (handle_id_type id = 1; id <= max_handle_id; ++id)
+            const auto is_free = [this](const handle_id_type id) {
+                return !this->handles_.contains(id) && !this->internal_handles_.contains(id);
+            };
+
+            // Start from the hint so a run of allocations does not rescan the ids already handed out; a closed id pulls the
+            // hint back down (recycle_handle_id) so it is reused instead of marching to the end of the space.
+            for (handle_id_type id = this->next_handle_id_; id <= max_handle_id; ++id)
             {
-                if (!this->handles_.contains(id) && !this->internal_handles_.contains(id))
+                if (is_free(id))
                 {
+                    this->next_handle_id_ = id + 1;
+                    return id;
+                }
+            }
+
+            for (handle_id_type id = 1; id < this->next_handle_id_; ++id)
+            {
+                if (is_free(id))
+                {
+                    this->next_handle_id_ = id + 1;
                     return id;
                 }
             }
@@ -899,8 +934,14 @@ namespace sogen
             throw std::runtime_error("Handle store is exhausted!");
         }
 
+        void recycle_handle_id(const handle_id_type id)
+        {
+            this->next_handle_id_ = std::min(this->next_handle_id_, id);
+        }
+
         bool block_mutation_{false};
         index_type next_object_index_{first_object_index};
+        handle_id_type next_handle_id_{1};
         value_map store_{};
         handle_map handles_{};
         handle_map internal_handles_{};

@@ -148,6 +148,11 @@ namespace sogen
                 {
                     release_completion_association(c.proc, file->completion_association);
 
+                    for (auto& watch : file->change_watches)
+                    {
+                        io_completion_wait::release_reference(c.proc, watch.event);
+                    }
+
                     const auto owner = c.proc.reference_of(h);
                     for (auto it = c.proc.file_locks.begin(); it != c.proc.file_locks.end();)
                     {

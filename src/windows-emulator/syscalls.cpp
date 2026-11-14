@@ -1179,6 +1179,10 @@ namespace sogen
             io_device_context context{c.emu};
             context.source_handle = file_handle;
             context.event = c.proc.reference_of(event);
+            if (event.bits != 0 && !context.event)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
             context.event_low_bit = (event.bits & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;
@@ -1643,15 +1647,16 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            directory->change_watches.push_back({
+            directory_change_watch watch{
                 .thread_id = c.thread().id,
-                .event = event_handle.bits,
                 .io_status_block = io_status_block,
-            });
+            };
             if (event)
             {
+                watch.event = c.proc.retain_object(event_handle).value_or(object_reference{});
                 event->signaled = false;
             }
+            directory->change_watches.push_back(watch);
 
             return STATUS_PENDING;
         }

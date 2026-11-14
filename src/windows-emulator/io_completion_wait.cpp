@@ -276,7 +276,7 @@ namespace sogen
 
                 // NtWaitForWorkViaWorkerFactory checks for more work after its wait, and a packet handed straight to its worker
                 // does not go back through that syscall.
-                worker_factory_support::check_for_more_work(win_emu, wait.worker_factory_handle);
+                worker_factory_support::check_for_more_work(win_emu, wait.worker_factory);
                 clear_wait_packet_completion_state(win_emu.process, message.wait_packet_reference);
                 win_emu.wake_idle_vcpu();
             }

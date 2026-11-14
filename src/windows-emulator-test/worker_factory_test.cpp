@@ -211,12 +211,40 @@ namespace sogen::test
         auto& factory = this->pool();
         factory.pending_release_count = 2;
         factory.release_pending = true;
-        ASSERT_TRUE(
-            this->emu->synchronize([&] { return worker_factory_support::enqueue_release_completion(*this->emu, this->factory_handle); }));
+        ASSERT_TRUE(this->emu->synchronize([&] {
+            return worker_factory_support::enqueue_release_completion(
+                *this->emu, *this->emu->process.worker_factories.reference_of(this->factory_handle));
+        }));
 
         EXPECT_FALSE(worker->await_io_completion.has_value());
         EXPECT_EQ(1u, this->emu->process.io_completions.get(this->port)->queue.size());
         EXPECT_EQ(2u, factory.worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, ReleasePacketStillNamesItsFactoryAfterTheReleasedHandleCloses)
+    {
+        this->make_pool();
+
+        const auto duplicate = this->emu->process.worker_factories.duplicate(this->factory_handle);
+        ASSERT_TRUE(duplicate);
+
+        auto& factory = this->pool();
+        factory.pending_release_count = 2;
+        factory.release_pending = true;
+        ASSERT_TRUE(this->emu->synchronize([&] {
+            return worker_factory_support::enqueue_release_completion(
+                *this->emu, *this->emu->process.worker_factories.reference_of(this->factory_handle));
+        }));
+
+        // The guest closes the handle it released through; the duplicate keeps the factory alive. The queued packet must
+        // still resolve the factory by identity to take the release and queue the next one.
+        ASSERT_TRUE(this->emu->process.worker_factories.erase(this->factory_handle));
+        ASSERT_NE(nullptr, this->emu->process.worker_factories.get(*duplicate));
+
+        this->take_release();
+
+        EXPECT_EQ(1u, factory.pending_release_count);
+        EXPECT_EQ(1u, this->emu->process.io_completions.get(this->port)->queue.size());
     }
 
     TEST_F(WorkerFactoryTest, BindingStartsNoWorkerWhileNothingIsQueued)

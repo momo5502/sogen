@@ -1,5 +1,6 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
+#include "../io_completion_wait.hpp"
 #include "../syscall_utils.hpp"
 #include "utils/io.hpp"
 
@@ -1637,6 +1638,10 @@ namespace sogen
             io_device_context context{c.emu};
             context.source_handle = file_handle;
             context.event = c.proc.reference_of(make_handle(event));
+            if (event != 0 && !context.event)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
             context.event_low_bit = (event & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;
@@ -1771,10 +1776,12 @@ namespace sogen
                         write_io_status_block(c, watch.io_status_block, STATUS_CANCELLED);
                     }
 
-                    if (auto* event = c.proc.events.get(watch.event))
+                    auto event_reference = watch.event;
+                    if (auto* event = c.proc.get_object_as<sogen::event>(event_reference))
                     {
                         event->signaled = true;
                     }
+                    io_completion_wait::release_reference(c.proc, event_reference);
 
                     return true;
                 });
@@ -2962,12 +2969,20 @@ namespace sogen
 
         NTSTATUS check_completion_event(const syscall_context& c, const handle event)
         {
-            if (!event.bits || c.proc.events.get(event))
+            if (!event.bits)
             {
                 return STATUS_SUCCESS;
             }
-            auto* store = c.proc.get_handle_store(event);
-            return store && store->get_object(event) ? STATUS_OBJECT_TYPE_MISMATCH : STATUS_INVALID_HANDLE;
+
+            // A nonzero event that names no object is invalid, not "no event": reference_of alone would collapse it to an
+            // empty reference and the I/O would run as if Event were NULL.
+            const auto reference = c.proc.reference_of(event);
+            if (!reference)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            return reference.object_type() == handle_types::event ? STATUS_SUCCESS : STATUS_OBJECT_TYPE_MISMATCH;
         }
 
         namespace

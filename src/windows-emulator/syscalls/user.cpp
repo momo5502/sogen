@@ -2080,13 +2080,26 @@ namespace sogen
             return 1;
         }
 
+        // The station's object identity for scoping desktop names. The interactive station is not in the store, so it gets a
+        // stable pseudo reference; a stored station is keyed by its index, not by whichever handle value names it.
+        object_reference window_station_reference(const syscall_context& c, const uint64_t station)
+        {
+            if (station == interactive_window_station)
+            {
+                return object_reference{.type = handle_types::window_station,
+                                        .pseudo = make_pseudo_handle(1, handle_types::window_station)};
+            }
+
+            return c.proc.window_stations.reference_of(make_handle(station)).value_or(object_reference{});
+        }
+
         handle default_desktop(const syscall_context& c)
         {
             if (!c.proc.default_desktop)
             {
                 desktop desk{};
                 desk.name = u"Default";
-                desk.window_station = interactive_window_station;
+                desk.window_station = window_station_reference(c, interactive_window_station);
                 auto [handle, _] = c.proc.desktops.store_and_get(std::move(desk));
                 c.proc.default_desktop = c.proc.desktops.retain(handle).value_or(object_reference{});
                 return handle;
@@ -3710,7 +3723,7 @@ namespace sogen
             return 0;
         }
 
-        uint64_t find_desktop(const syscall_context& c, const uint64_t window_station, const std::u16string_view name)
+        uint64_t find_desktop(const syscall_context& c, const object_reference& window_station, const std::u16string_view name)
         {
             for (const auto& [index, desk] : c.proc.desktops)
             {
@@ -3833,7 +3846,7 @@ namespace sogen
             }
 
             // CommonCreateDesktop always asks for open-if, scoped to the process window station.
-            const auto station = c.proc.process_window_station;
+            const auto station = window_station_reference(c, c.proc.process_window_station);
             if (const auto existing = find_desktop(c, station, name); existing != 0)
             {
                 const auto duplicated = c.proc.desktops.duplicate(make_handle(existing));

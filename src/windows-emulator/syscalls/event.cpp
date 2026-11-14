@@ -73,10 +73,14 @@ namespace sogen
             // switches, so wake the current waiters explicitly while the event is signaled.
             entry->signaled = true;
 
-            const auto event_handle = make_handle(handle);
+            // A waiter may hold a different handle value for this event (a duplicate or a second open by name), so match the
+            // object it waits on, not the value.
+            const auto event_reference = c.proc.events.reference_of(make_handle(handle)).value_or(object_reference{});
             for (auto& thread : c.proc.threads | std::views::values)
             {
-                if (std::ranges::find(thread.await_objects, event_handle) != thread.await_objects.end())
+                const auto waits_on_event = std::ranges::any_of(
+                    thread.await_objects, [&](const auto awaited) { return c.proc.reference_of(awaited) == event_reference; });
+                if (waits_on_event)
                 {
                     (void)thread.is_thread_ready(c.win_emu);
                 }

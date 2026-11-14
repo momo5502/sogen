@@ -195,8 +195,9 @@ namespace sogen
         emulator_pointer entries_removed_ptr{};
         ULONG max_entries{};
         std::optional<std::chrono::steady_clock::time_point> timeout{};
-        // The worker factory a NtWaitForWorkViaWorkerFactory wait takes work for; none for NtRemoveIoCompletion(Ex).
-        handle worker_factory_handle{};
+        // The worker factory a NtWaitForWorkViaWorkerFactory wait takes work for; none for NtRemoveIoCompletion(Ex). Keyed by
+        // object identity so the more-work check resolves it through whichever handle value the wait was entered with.
+        object_reference worker_factory{};
         bool timeout_absolute{};
 
         void serialize(utils::buffer_serializer& buffer) const
@@ -210,7 +211,7 @@ namespace sogen
             buffer.write(this->entries_removed_ptr);
             buffer.write(this->max_entries);
             buffer.write_optional(this->timeout);
-            buffer.write(this->worker_factory_handle);
+            buffer.write(this->worker_factory);
             buffer.write(this->timeout_absolute);
         }
 
@@ -226,7 +227,7 @@ namespace sogen
             buffer.read(this->entries_removed_ptr);
             buffer.read(this->max_entries);
             buffer.read_optional(this->timeout);
-            buffer.read(this->worker_factory_handle);
+            buffer.read(this->worker_factory);
             buffer.read(this->timeout_absolute);
         }
     };

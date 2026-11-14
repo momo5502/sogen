@@ -13,6 +13,13 @@ namespace sogen::syscalls
     NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, handle file_handle,
                                      emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_request_to_cancel,
                                      emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
+    NTSTATUS handle_NtNotifyChangeDirectoryFile(const syscall_context& c, handle file_handle, handle event_handle, uint64_t apc_routine,
+                                                uint64_t apc_context, uint64_t io_status_block);
+    NTSTATUS handle_NtDeviceIoControlFile(const syscall_context& c, handle file_handle, handle event, emulator_pointer apc_routine,
+                                          emulator_pointer apc_context,
+                                          emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, ULONG io_control_code,
+                                          emulator_pointer input_buffer, ULONG input_buffer_length, emulator_pointer output_buffer,
+                                          ULONG output_buffer_length);
 }
 
 namespace sogen::test
@@ -251,5 +258,41 @@ namespace sogen::test
         io_device_context restored{this->emu->memory};
         restored.deserialize(reader);
         EXPECT_EQ(12u, restored.issuing_thread_id);
+    }
+
+    TEST_F(IoCancellationTest, CancellingADirectoryWatchSignalsTheEventThroughADuplicate)
+    {
+        const syscall_context context{
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+
+        const auto directory = this->emu->process.files.store(file{});
+        const auto event_handle = this->emu->process.events.store(event{});
+        const auto duplicate = this->emu->process.events.duplicate(event_handle);
+        ASSERT_TRUE(duplicate);
+
+        ASSERT_EQ(STATUS_PENDING,
+                  syscalls::handle_NtNotifyChangeDirectoryFile(context, directory, event_handle, 0, 0, this->storage + 0x100));
+
+        // The guest closes the handle the watch was armed with; the duplicate keeps the event alive, and the cancel must
+        // still signal it.
+        ASSERT_TRUE(this->emu->process.events.erase(event_handle));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelIoFile(context, directory, this->status(0xF00)));
+
+        EXPECT_TRUE(this->emu->process.events.get(*duplicate)->signaled);
+        EXPECT_EQ(STATUS_CANCELLED, this->emu->memory.read_memory<NTSTATUS>(this->storage + 0x100));
+    }
+
+    TEST_F(IoCancellationTest, IoctlWithAClosedEventHandleIsInvalid)
+    {
+        const syscall_context context{
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+
+        const auto event_handle = this->emu->process.events.store(event{});
+        ASSERT_TRUE(this->emu->process.events.erase(event_handle));
+
+        // A nonzero event that no longer resolves is invalid, not "no event": the request must not run as if Event were NULL.
+        const auto status =
+            syscalls::handle_NtDeviceIoControlFile(context, this->endpoint, event_handle, 0, 0, this->status(0x100), 0, 0, 0, 0, 0);
+        EXPECT_EQ(STATUS_INVALID_HANDLE, status);
     }
 }

@@ -781,8 +781,9 @@ namespace sogen
     {
         std::u16string name{};
         uint64_t mapped_object{};
-        // Desktop names are scoped to a window station, so the same name in two stations is two desktops.
-        uint64_t window_station{};
+        // Desktop names are scoped to a window station, so the same name in two stations is two desktops. Keyed by object
+        // identity: two handle values for one station (a duplicate or a second open) scope the same desktops.
+        object_reference window_station{};
         // Set on a further handle to an existing desktop, such as the one NtUserOpenInputDesktop returns. Windows gives each
         // its own handle value and inherit flag, while the desktop and its state stay shared.
         handle opened_desktop{};
@@ -951,8 +952,24 @@ namespace sogen
     struct directory_change_watch
     {
         uint32_t thread_id{};
-        uint64_t event{};
+        // Retained so the watch still signals the event after the guest closes the handle it was armed with, or signals it
+        // through a duplicate. Released when the watch completes, is cancelled, or its directory closes.
+        object_reference event{};
         uint64_t io_status_block{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->thread_id);
+            buffer.write(this->event);
+            buffer.write(this->io_status_block);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->thread_id);
+            buffer.read(this->event);
+            buffer.read(this->io_status_block);
+        }
     };
 
     struct file : ref_counted_object
@@ -1139,7 +1156,10 @@ namespace sogen
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> io_status_block{};
         object_reference wait_packet_reference{};
 
-        handle worker_factory_handle{};
+        // The factory this release packet is for, by object identity so it still resolves after the guest closes the handle it
+        // was released through (a duplicate keeps the factory alive). Not retained: the factory owns this port, so a retained
+        // reference here would cycle port -> packet -> factory -> port and keep all three alive after the last handle closes.
+        object_reference worker_factory{};
         bool worker_factory_release{};
 
         void serialize(utils::buffer_serializer& buffer) const
@@ -1148,7 +1168,7 @@ namespace sogen
             buffer.write(this->apc_context);
             buffer.write(this->io_status_block);
             buffer.write(this->wait_packet_reference);
-            buffer.write(this->worker_factory_handle);
+            buffer.write(this->worker_factory);
             buffer.write(this->worker_factory_release);
         }
 
@@ -1158,7 +1178,7 @@ namespace sogen
             buffer.read(this->apc_context);
             buffer.read(this->io_status_block);
             buffer.read(this->wait_packet_reference);
-            buffer.read(this->worker_factory_handle);
+            buffer.read(this->worker_factory);
             buffer.read(this->worker_factory_release);
         }
     };

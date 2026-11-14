@@ -88,4 +88,20 @@ namespace sogen::test
         EXPECT_FALSE(store.retain(original));
         EXPECT_EQ(nullptr, store.get(original));
     }
+
+    TEST(HandleStoreTest, AllocationReusesAFreedIdAmongManyLiveHandles)
+    {
+        handle_store<handle_types::event, event> store{};
+
+        std::vector<handle> handles{};
+        for (int i = 0; i < 64; ++i)
+        {
+            handles.push_back(store.store(event{}));
+        }
+
+        ASSERT_TRUE(store.erase(handles[3]));
+        const auto reused = store.store(event{});
+        EXPECT_EQ(handles[3], reused);
+        EXPECT_EQ(64u, store.handle_count());
+    }
 }

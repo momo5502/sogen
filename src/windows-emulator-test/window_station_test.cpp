@@ -51,7 +51,8 @@ namespace sogen::test
 
                 desktop default_desktop{};
                 default_desktop.name = u"Default";
-                default_desktop.window_station = interactive_window_station;
+                default_desktop.window_station =
+                    object_reference{.type = handle_types::window_station, .pseudo = make_pseudo_handle(1, handle_types::window_station)};
                 this->default_desktop_handle = this->emu->process.desktops.store(std::move(default_desktop)).bits;
                 this->emu->process.default_desktop =
                     this->emu->process.desktops.retain(this->default_desktop_handle).value_or(object_reference{});
@@ -221,6 +222,25 @@ namespace sogen::test
         ASSERT_NE(0u, reopened);
         EXPECT_NE(second, reopened);
         EXPECT_EQ(this->desktop_object(second), this->desktop_object(reopened));
+    }
+
+    TEST_F(WindowStationTest, DesktopsScopeByStationIdentityAcrossHandleValues)
+    {
+        const auto first_station = this->create_station(u"Sandbox");
+        ASSERT_NE(0u, first_station);
+        const auto second_station = this->create_station(u"Sandbox");
+        ASSERT_NE(0u, second_station);
+        ASSERT_NE(first_station, second_station);
+
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserSetProcessWindowStation(this->context(), make_handle(first_station)));
+        const auto first_desktop = this->create_desktop(u"Shared");
+        ASSERT_NE(0u, first_desktop);
+
+        // The same station through its other handle value must scope the same desktop, not create a second one.
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserSetProcessWindowStation(this->context(), make_handle(second_station)));
+        const auto second_desktop = this->create_desktop(u"Shared");
+        ASSERT_NE(0u, second_desktop);
+        EXPECT_EQ(this->desktop_object(first_desktop), this->desktop_object(second_desktop));
     }
 
     TEST_F(WindowStationTest, EachOpenOfAStationIsItsOwnReference)
