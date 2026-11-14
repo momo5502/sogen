@@ -61,9 +61,7 @@ namespace sogen::test
             interfaces.dns_lookup = create_sample_dns_lookup();
 
             const auto machine = get_application_machine(settings, app_settings);
-            const auto backend = get_machine_type(machine) == machine_type::arm64 ? get_arm64_emulator_backend_from_environment()
-                                                                                  : get_x86_64_emulator_backend_from_environment();
-            windows_emulator emu{create_emulator_for_machine(get_machine_type(machine), backend), std::move(app_settings), settings,
+            windows_emulator emu{create_emulator_for_machine(get_machine_type(machine)), std::move(app_settings), settings,
                                  std::move(callbacks), std::move(interfaces)};
             emu.log.disable_output(!enable_verbose_logging());
             emu.start();

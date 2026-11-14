@@ -512,21 +512,6 @@ namespace sogen::seccomp
                 return false;
             }
 
-            bool supports_memory_range_execution_hooks() const override
-            {
-                return false;
-            }
-
-            bool supports_interrupt_hooks() const override
-            {
-                return true;
-            }
-
-            bool supports_memory_violation_hooks() const override
-            {
-                return true;
-            }
-
             bool supports_restartable_faults() const override
             {
                 return false;
@@ -717,10 +702,16 @@ namespace sogen::seccomp
                         violation_ = true;
                         throw std::runtime_error("Seccomp instruction fetch from non-executable memory");
                     }
-                    const bool single_step = (state_.pstate & pstate_software_step) != 0;
-                    if (single_step)
+                    if (!prepare_execution_hooks() || !executable(state_.pc))
                     {
-                        if (!interrupt_hook_)
+                        continue;
+                    }
+                    const bool single_step = (state_.pstate & pstate_software_step) != 0;
+                    const bool execution_step = page_has_execution_hooks(state_.pc);
+                    const auto instruction_pc = state_.pc;
+                    if (single_step || execution_step)
+                    {
+                        if (single_step && !interrupt_hook_)
                         {
                             throw std::logic_error("Seccomp requires an interrupt hook for single-stepping");
                         }
@@ -741,13 +732,31 @@ namespace sogen::seccomp
                             {
                                 break;
                             }
+                            const auto page = state_.pc & ~(page_size - 1);
+                            const auto rearm = utils::finally([&] {
+                                execution_step_page_.reset();
+                                const auto entry = pages_.find(page);
+                                if (execution_step && entry != pages_.end() &&
+                                    mprotect(reinterpret_cast<void*>(page), page_size, effective_protection(page, entry->second)) != 0)
+                                {
+                                    std::terminate();
+                                }
+                            });
+                            if (execution_step)
+                            {
+                                execution_step_page_ = page;
+                                refresh_protection(page, page_size);
+                            }
                             result = single_step_guest(state_, enter_signal);
                         }
                         state_.pstate &= ~pstate_software_step;
                         if (result.signal == SIGTRAP && result.info.si_code == TRAP_TRACE)
                         {
-                            const auto callback = interrupt_hook_;
-                            callback(*this, static_cast<int>(arm64_exception_class::software_step));
+                            if (single_step)
+                            {
+                                const auto callback = interrupt_hook_;
+                                callback(*this, static_cast<int>(arm64_exception_class::software_step));
+                            }
                             continue;
                         }
                         trapped_signal_ = result.signal;
@@ -778,6 +787,11 @@ namespace sogen::seccomp
                     if (trapped_signal_ == stop_signal)
                     {
                         break;
+                    }
+                    if (trapped_signal_ == SIGSEGV && trapped_code_ == SEGV_ACCERR &&
+                        is_execution_hook_fault(single_step || execution_step, instruction_pc))
+                    {
+                        continue;
                     }
                     if (trapped_signal_ == SIGSEGV && trapped_code_ == SEGV_ACCERR && handle_mmio_fault())
                     {
@@ -969,14 +983,28 @@ namespace sogen::seccomp
                 unsupported("execution hooks");
             }
 
-            emulator_hook* hook_memory_execution(uint64_t, memory_execution_hook_callback) override
+            emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
             {
-                unsupported("execution hooks");
+                return hook_memory_range_execution(address, 1, std::move(callback));
             }
 
-            emulator_hook* hook_memory_range_execution(uint64_t, uint64_t, memory_execution_hook_callback) override
+            emulator_hook* hook_memory_range_execution(const uint64_t address, const uint64_t size,
+                                                       memory_execution_hook_callback callback) override
             {
-                unsupported("execution hooks");
+                if (!callback || size == 0 || !in_window(address, size))
+                {
+                    throw std::invalid_argument("Invalid seccomp execution hook");
+                }
+                auto entry = std::make_unique<execution_hook>(execution_hook{address, size, std::move(callback)});
+                auto* hook = reinterpret_cast<emulator_hook*>(entry.get());
+                execution_hooks_.push_back(std::move(entry));
+                for (auto page = pages_.lower_bound(address & ~(page_size - 1)); page != pages_.end() && page->first < address + size;
+                     ++page)
+                {
+                    ++page->second.execution_hook_count;
+                }
+                refresh_protection(address, size);
+                return hook;
             }
 
             emulator_hook* hook_memory_read(uint64_t, uint64_t, memory_access_hook_callback) override
@@ -1009,6 +1037,24 @@ namespace sogen::seccomp
                 if (hook == reinterpret_cast<emulator_hook*>(&memory_violation_hook_) && memory_violation_hook_)
                 {
                     memory_violation_hook_ = {};
+                    return;
+                }
+                const auto execution = std::ranges::find_if(
+                    execution_hooks_, [hook](const auto& entry) { return hook == reinterpret_cast<emulator_hook*>(entry.get()); });
+                if (execution != execution_hooks_.end())
+                {
+                    const auto address = (*execution)->address;
+                    const auto size = (*execution)->size;
+                    for (auto page = pages_.lower_bound(address & ~(page_size - 1)); page != pages_.end() && page->first < address + size;
+                         ++page)
+                    {
+                        if (page->second.execution_hook_count != 0)
+                        {
+                            --page->second.execution_hook_count;
+                        }
+                    }
+                    refresh_protection(address, size);
+                    execution_hooks_.erase(execution);
                     return;
                 }
                 const auto ignored = std::ranges::find_if(
@@ -1046,7 +1092,24 @@ namespace sogen::seccomp
             interrupt_hook_callback interrupt_hook_{};
             memory_violation_hook_callback memory_violation_hook_{};
             std::vector<std::unique_ptr<std::byte>> ignored_hooks_{};
-            std::map<uint64_t, memory_permission> pages_{};
+
+            struct mapped_page
+            {
+                memory_permission permissions;
+                size_t execution_hook_count{};
+            };
+
+            struct execution_hook
+            {
+                uint64_t address;
+                uint64_t size;
+                memory_execution_hook_callback callback;
+            };
+
+            std::map<uint64_t, mapped_page> pages_{};
+            std::vector<std::unique_ptr<execution_hook>> execution_hooks_{};
+            std::optional<uint64_t> execution_step_page_{};
+            std::optional<uint64_t> execution_resume_pc_{};
 
             struct mmio_region
             {
@@ -1060,7 +1123,88 @@ namespace sogen::seccomp
             bool executable(const uint64_t address) const
             {
                 const auto page = pages_.find(address & ~(page_size - 1));
-                return in_window(address, 4) && page != pages_.end() && (protection(page->second) & PROT_EXEC) != 0;
+                return in_window(address, 4) && page != pages_.end() && (protection(page->second.permissions) & PROT_EXEC) != 0;
+            }
+
+            bool page_has_execution_hooks(const uint64_t address) const
+            {
+                const auto page = pages_.find(address & ~(page_size - 1));
+                return page != pages_.end() && page->second.execution_hook_count != 0;
+            }
+
+            int effective_protection(const uint64_t address, const mapped_page& page) const
+            {
+                const auto permissions = protection(page.permissions);
+                return page.execution_hook_count != 0 && execution_step_page_ != address ? permissions & ~PROT_EXEC : permissions;
+            }
+
+            void refresh_protection(const uint64_t address, const uint64_t size) const
+            {
+                uint64_t run_begin{};
+                uint64_t run_end{};
+                int run_protection{};
+                const auto flush = [&] {
+                    if (run_begin != run_end)
+                    {
+                        check_system(mprotect(reinterpret_cast<void*>(run_begin), run_end - run_begin, run_protection),
+                                     "Update seccomp page protection");
+                    }
+                };
+                for (auto page = pages_.lower_bound(address & ~(page_size - 1)); page != pages_.end() && page->first < address + size;
+                     ++page)
+                {
+                    const auto permissions = effective_protection(page->first, page->second);
+                    if (run_end != page->first || run_protection != permissions)
+                    {
+                        flush();
+                        run_begin = page->first;
+                        run_protection = permissions;
+                    }
+                    run_end = page->first + page_size;
+                }
+                flush();
+            }
+
+            bool prepare_execution_hooks()
+            {
+                const auto pc = state_.pc;
+                if (!page_has_execution_hooks(pc))
+                {
+                    execution_resume_pc_.reset();
+                    return true;
+                }
+                if (execution_resume_pc_ != pc)
+                {
+                    std::vector<memory_execution_hook_callback> callbacks{};
+                    for (const auto& hook : execution_hooks_)
+                    {
+                        if (pc >= hook->address && pc - hook->address < hook->size)
+                        {
+                            callbacks.push_back(hook->callback);
+                        }
+                    }
+                    execution_resume_pc_ = pc;
+                    for (const auto& callback : callbacks)
+                    {
+                        callback(*this, pc);
+                    }
+                }
+                if (stop_requested_ || state_.pc != pc)
+                {
+                    return false;
+                }
+                execution_resume_pc_.reset();
+                return true;
+            }
+
+            bool is_execution_hook_fault(const bool stepped, const uint64_t instruction_pc) const
+            {
+                if (trapped_address_ != state_.pc || !executable(state_.pc) || !page_has_execution_hooks(state_.pc))
+                {
+                    return false;
+                }
+                const auto exception_class = (trapped_esr_ >> 26) & 0x3F;
+                return exception_class == 0x20 || (trapped_esr_ == 0 && (!stepped || state_.pc != instruction_pc));
             }
 
             bool dispatch_memory_violation(const uint64_t address, const size_t size, const memory_operation operation)
@@ -1362,7 +1506,7 @@ namespace sogen::seccomp
                 const int required = write ? PROT_WRITE : PROT_READ;
                 for (auto page = address & ~(page_size - 1); page < address + size; page += page_size)
                 {
-                    const auto original = protection(pages_.at(page));
+                    const auto original = effective_protection(page, pages_.at(page));
                     if ((original & required) == 0)
                     {
                         changed.emplace_back(page, original);
@@ -1391,11 +1535,14 @@ namespace sogen::seccomp
                         throw std::runtime_error("Overlapping seccomp memory mapping");
                     }
                 }
-                check_system(mprotect(reinterpret_cast<void*>(address), size, protection(permissions)), "Map guest memory");
                 for (auto page = address; page < address + size; page += page_size)
                 {
-                    pages_.emplace(page, permissions);
+                    const auto count = std::ranges::count_if(execution_hooks_, [&](const auto& hook) {
+                        return page < hook->address + hook->size && hook->address < page + page_size;
+                    });
+                    pages_.emplace(page, mapped_page{permissions, static_cast<size_t>(count)});
                 }
+                refresh_protection(address, size);
             }
 
             void unmap_memory(const uint64_t address, const size_t size) override
@@ -1434,11 +1581,11 @@ namespace sogen::seccomp
                 {
                     unsupported("changing MMIO protection");
                 }
-                check_system(mprotect(reinterpret_cast<void*>(address), size, protection(permissions)), "Protect guest memory");
                 for (auto page = address; page < address + size; page += page_size)
                 {
-                    pages_.at(page) = permissions;
+                    pages_.at(page).permissions = permissions;
                 }
+                refresh_protection(address, size);
             }
 
             void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read, mmio_write_callback) override

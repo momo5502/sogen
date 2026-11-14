@@ -1332,7 +1332,7 @@ namespace sogen
 
     bool windows_emulator::uses_section_first_execution_hooks() const
     {
-        return !this->uses_instruction_precision() && this->emu().supports_memory_range_execution_hooks();
+        return !this->uses_instruction_precision();
     }
 
     void windows_emulator::track_section_first_execution(const uint64_t address)
@@ -1494,68 +1494,65 @@ namespace sogen
             throw std::runtime_error("Unsupported Windows guest machine: " + this->emu().get_name());
         }
 
-        if (this->emu().supports_memory_violation_hooks())
-        {
-            this->emu().hook_memory_violation([&](cpu_interface& cpu, const uint64_t address, const size_t size,
-                                                  const memory_operation operation, const memory_violation_type type) {
-                const std::scoped_lock lock(this->kernel_lock_);
-                auto& vcpu = this->vcpu(cpu.index());
-                const scoped_dispatch dispatch(*this, vcpu);
-                auto* x64 = dynamic_cast<x86_64_cpu*>(&vcpu.cpu);
-                if (x64 && x64->reg<uint16_t>(x86_register::cs) == 0x33)
+        this->emu().hook_memory_violation([&](cpu_interface& cpu, const uint64_t address, const size_t size,
+                                              const memory_operation operation, const memory_violation_type type) {
+            const std::scoped_lock lock(this->kernel_lock_);
+            auto& vcpu = this->vcpu(cpu.index());
+            const scoped_dispatch dispatch(*this, vcpu);
+            auto* x64 = dynamic_cast<x86_64_cpu*>(&vcpu.cpu);
+            if (x64 && x64->reg<uint16_t>(x86_register::cs) == 0x33)
+            {
+                // loading gs selector only works in 64-bit mode
+                const auto required_gs_base = vcpu.thread().gs_segment->get_base();
+                const auto actual_gs_base = x64->get_segment_base(x86_register::gs);
+                if (actual_gs_base != required_gs_base)
                 {
-                    // loading gs selector only works in 64-bit mode
-                    const auto required_gs_base = vcpu.thread().gs_segment->get_base();
-                    const auto actual_gs_base = x64->get_segment_base(x86_register::gs);
-                    if (actual_gs_base != required_gs_base)
+                    x64->set_segment_base(x86_register::gs, required_gs_base);
+                    return memory_violation_continuation::restart;
+                }
+            }
+
+            if (const auto guarded_address = this->memory.find_guard_page_violation_address(address, size, operation))
+            {
+                this->memory.release_guard_page(*guarded_address);
+                switch (vcpu.thread().handle_stack_guard_fault(*guarded_address))
+                {
+                case stack_guard_fault::grown:
+                    return memory_violation_continuation::restart;
+                case stack_guard_fault::overflow:
+                    dispatch_stack_overflow(*this, vcpu, *guarded_address, operation);
+                    break;
+                case stack_guard_fault::outside_stack:
+                    dispatch_guard_page_violation(*this, vcpu, *guarded_address, operation);
+                    break;
+                }
+            }
+            else
+            {
+                // A fault on a null/near-null address is almost always a call through a null function
+                // pointer (e.g. a Vulkan entry point the shim doesn't implement). Log the caller's
+                // return address so the missing function's call site can be identified.
+                if (x64 && address < 0x1000)
+                {
+                    const auto is_32bit = is_32bit_code_segment(*x64);
+                    const uint64_t sp = is_32bit ? x64->reg<uint32_t>(x86_register::esp) : x64->read_stack_pointer();
+                    uint64_t return_address = 0;
+                    if (x64->try_read_memory(sp, &return_address, is_32bit ? sizeof(uint32_t) : sizeof(uint64_t)))
                     {
-                        x64->set_segment_base(x86_register::gs, required_gs_base);
-                        return memory_violation_continuation::restart;
+                        const auto* mod = this->mod_manager.find_by_address(return_address);
+                        this->log.error("Null-pointer call to 0x%llx; caller return address 0x%llx (%s+0x%llx)\n",
+                                        static_cast<unsigned long long>(address), static_cast<unsigned long long>(return_address),
+                                        mod ? mod->name.c_str() : "?",
+                                        static_cast<unsigned long long>(mod ? return_address - mod->image_base : return_address));
                     }
                 }
 
-                if (const auto guarded_address = this->memory.find_guard_page_violation_address(address, size, operation))
-                {
-                    this->memory.release_guard_page(*guarded_address);
-                    switch (vcpu.thread().handle_stack_guard_fault(*guarded_address))
-                    {
-                    case stack_guard_fault::grown:
-                        return memory_violation_continuation::restart;
-                    case stack_guard_fault::overflow:
-                        dispatch_stack_overflow(*this, vcpu, *guarded_address, operation);
-                        break;
-                    case stack_guard_fault::outside_stack:
-                        dispatch_guard_page_violation(*this, vcpu, *guarded_address, operation);
-                        break;
-                    }
-                }
-                else
-                {
-                    // A fault on a null/near-null address is almost always a call through a null function
-                    // pointer (e.g. a Vulkan entry point the shim doesn't implement). Log the caller's
-                    // return address so the missing function's call site can be identified.
-                    if (x64 && address < 0x1000)
-                    {
-                        const auto is_32bit = is_32bit_code_segment(*x64);
-                        const uint64_t sp = is_32bit ? x64->reg<uint32_t>(x86_register::esp) : x64->read_stack_pointer();
-                        uint64_t return_address = 0;
-                        if (x64->try_read_memory(sp, &return_address, is_32bit ? sizeof(uint32_t) : sizeof(uint64_t)))
-                        {
-                            const auto* mod = this->mod_manager.find_by_address(return_address);
-                            this->log.error("Null-pointer call to 0x%llx; caller return address 0x%llx (%s+0x%llx)\n",
-                                            static_cast<unsigned long long>(address), static_cast<unsigned long long>(return_address),
-                                            mod ? mod->name.c_str() : "?",
-                                            static_cast<unsigned long long>(mod ? return_address - mod->image_base : return_address));
-                        }
-                    }
+                this->callbacks.on_memory_violate(address, size, operation, type);
+                dispatch_access_violation(*this, vcpu, address, operation);
+            }
 
-                    this->callbacks.on_memory_violate(address, size, operation, type);
-                    dispatch_access_violation(*this, vcpu, address, operation);
-                }
-
-                return memory_violation_continuation::resume;
-            });
-        }
+            return memory_violation_continuation::resume;
+        });
 
         if (this->uses_instruction_precision())
         {
@@ -1603,33 +1600,30 @@ namespace sogen
             });
         }
 
-        if (emu.supports_interrupt_hooks())
-        {
-            emu.hook_interrupt([&](cpu_interface& cpu, const int exception_class) {
-                const std::scoped_lock lock(this->kernel_lock_);
-                auto& vcpu = this->vcpu(cpu.index());
-                const scoped_dispatch dispatch(*this, vcpu);
-                this->callbacks.on_exception();
+        emu.hook_interrupt([&](cpu_interface& cpu, const int exception_class) {
+            const std::scoped_lock lock(this->kernel_lock_);
+            auto& vcpu = this->vcpu(cpu.index());
+            const scoped_dispatch dispatch(*this, vcpu);
+            this->callbacks.on_exception();
 
-                switch (static_cast<arm64_exception_class>(exception_class))
-                {
-                case arm64_exception_class::undefined_instruction:
-                    this->callbacks.on_suspicious_activity("Illegal instruction");
-                    dispatch_illegal_instruction_violation(*this, vcpu);
-                    return;
-                case arm64_exception_class::breakpoint_instruction:
-                    this->handle_arm64_breakpoint(vcpu);
-                    return;
-                case arm64_exception_class::software_step:
-                    // The step completed, so it is reported at the next instruction.
-                    vcpu.thread().current_ip = vcpu.cpu.read_instruction_pointer();
-                    dispatch_single_step(*this, vcpu);
-                    return;
-                default:
-                    throw std::runtime_error("Unsupported ARM64 guest exception class " + std::to_string(exception_class));
-                }
-            });
-        }
+            switch (static_cast<arm64_exception_class>(exception_class))
+            {
+            case arm64_exception_class::undefined_instruction:
+                this->callbacks.on_suspicious_activity("Illegal instruction");
+                dispatch_illegal_instruction_violation(*this, vcpu);
+                return;
+            case arm64_exception_class::breakpoint_instruction:
+                this->handle_arm64_breakpoint(vcpu);
+                return;
+            case arm64_exception_class::software_step:
+                // The step completed, so it is reported at the next instruction.
+                vcpu.thread().current_ip = vcpu.cpu.read_instruction_pointer();
+                dispatch_single_step(*this, vcpu);
+                return;
+            default:
+                throw std::runtime_error("Unsupported ARM64 guest exception class " + std::to_string(exception_class));
+            }
+        });
     }
 
     // Windows on ARM selects the kernel action by the BRK immediate; unassigned immediates are illegal instructions.

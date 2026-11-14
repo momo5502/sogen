@@ -51,6 +51,16 @@ authorization when the tracer exits. The backend owns this per-process Yama exce
 an existing exception is replaced and cannot be restored because Linux provides no query for it.
 Kernels without Yama use their normal ptrace policy. Other tracing restrictions still produce an error.
 
+Address and range execution hooks temporarily remove execute permission from their host pages.
+Instruction-fetch faults invoke matching callbacks on the host stack before the instruction executes.
+Guest permissions remain separate, so instrumentation never grants execution to a non-executable or
+guarded guest page. Removing the last hook on a page restores its normal execute permission.
+Persistent and partial-page hooks use an internal single-step and rearm page protection afterward;
+these steps report a Windows single-step exception only when the guest requested `PSTATE.SS`.
+A callback may remove hooks, redirect execution or stop before the instruction. Resuming at that
+instruction bypasses the already-dispatched callbacks once, then rearms any remaining hooks.
+Hooks also apply to later mappings and survive unmapping and remapping their address ranges.
+
 ## MMIO
 
 Read-only MMIO regions have inaccessible host pages. Protection faults return execution to the host
@@ -80,7 +90,7 @@ The backend supports one emulator instance per process, one vCPU on its original
 the emulator is destroyed. Guest code shares the host address space; this backend does not isolate
 untrusted programs from the host.
 
-Snapshots, counter interception, instruction-count execution budgets, execution hooks, restartable
+Snapshots, counter interception, instruction-count execution budgets, global execution hooks, restartable
 memory faults, alignment-exception delivery and enabled hardware debug registers are unsupported and
 raise an error. Disabled debug registers read as zero and accept zero. Thread stacks are committed in
 full because stack growth cannot restart memory faults. Memory read/write and basic-block observation
@@ -109,8 +119,9 @@ build/release/artifacts/analyzer --backend seccomp --no-inst-precision \
   -s 'C:\test-sample.exe'
 ```
 
-The backend tests cover host-thread signal routing and TLS preservation, Windows access-violation frames,
-execution protection, illegal-instruction delivery, hardware single-stepping, MMIO load semantics,
+The backend tests cover execution hooks and page rearming, host-thread signal routing and TLS
+preservation, Windows access-violation frames, execution protection, illegal-instruction delivery,
+hardware single-stepping, MMIO load semantics,
 alignment faults, register preservation and base-register writeback. The existing ARM64 integration tests use
 `EMULATOR_ARM64_ROOT`; select this backend with `EMULATOR_SECCOMP=1`. The ordinary `test-sample`
 exercises Windows startup, console output, guest exception handling and single-stepping.

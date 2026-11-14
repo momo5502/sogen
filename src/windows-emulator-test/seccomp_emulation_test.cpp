@@ -4,11 +4,13 @@
 #include <filesystem>
 #include <random>
 #include <stdexcept>
+#include <system_error>
 
 #ifdef SOGEN_ENABLE_SECCOMP
 #include <asm/hwcap.h>
 #include <platform/arm64_context.hpp>
 #include <sys/auxv.h>
+#include <sys/mman.h>
 #include <utils/finally.hpp>
 
 #include <atomic>
@@ -117,6 +119,22 @@ namespace sogen::test
 
         class SeccompByteLaneLoadTest : public SeccompBackendTest, public testing::WithParamInterface<uint32_t>
         {
+        };
+
+        class SeccompExecutionHookTest : public SeccompBackendTest
+        {
+          protected:
+            size_t syscall_calls{};
+
+            void SetUp() override
+            {
+                SeccompBackendTest::SetUp();
+                machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& cpu, uint64_t) {
+                    ++syscall_calls;
+                    cpu.stop();
+                    return instruction_hook_continuation::skip_instruction;
+                });
+            }
         };
 
         class SeccompWindowsSettingsTest : public testing::Test
@@ -483,6 +501,11 @@ namespace sogen::test
         constexpr uint64_t software_step = 1u << 21;
         machine->write_memory(code_address, uint32_t{0xD4000001 | (0x1234 << 5)});
         machine->reg(arm64_register::pstate, software_step);
+        size_t executions{};
+        machine->hook_memory_execution(code_address, [&](cpu_interface&, uint64_t) {
+            ++executions;
+            EXPECT_EQ(machine->reg(arm64_register::pstate) & software_step, software_step);
+        });
         machine->hook_interrupt([](cpu_interface&, int) { ADD_FAILURE() << "SVC must cancel the software-step exception"; });
         size_t calls{};
         machine->hook_instruction(arm64_hookable_instructions::svc, [&](cpu_interface& cpu, const uint64_t service) {
@@ -496,12 +519,323 @@ namespace sogen::test
 
         ASSERT_NO_THROW(machine->start());
         EXPECT_EQ(calls, 1u);
+        EXPECT_EQ(executions, 1u);
         EXPECT_EQ(machine->read_instruction_pointer(), code_address + 4);
+    }
+
+    TEST_F(SeccompExecutionHookTest, OneShotRangeTrapsABranchBeforeItsFirstInstruction)
+    {
+        constexpr uint64_t target = 0x40000;
+        ASSERT_TRUE(memory.allocate_memory(target, 0x1000, memory_permission::read_exec));
+        machine->write_memory(code_address, std::array{0x1400C000u, 0xD4000001u});
+        machine->reg(arm64_register::x0, 0x1234u);
+        machine->reg(arm64_register::x2, code_address + 4);
+        machine->reg(arm64_register::pstate, 0xA0000000u);
+        size_t executions{};
+        emulator_hook* hook{};
+        hook = machine->hook_memory_range_execution(target, 0x1000, [&](cpu_interface&, const uint64_t address) {
+            ++executions;
+            EXPECT_EQ(address, target);
+            EXPECT_EQ(machine->read_instruction_pointer(), target);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 0x1234u);
+            EXPECT_EQ(machine->reg(arm64_register::pstate), 0xA0000000u);
+            machine->delete_hook(hook);
+        });
+        machine->write_memory(target, std::array{0xD28000E0u, 0xD61F0040u});
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, 1u);
+        EXPECT_EQ(syscall_calls, 1u);
+        EXPECT_EQ(machine->reg(arm64_register::x0), 7u);
+        EXPECT_EQ(machine->read_instruction_pointer(), code_address + 8);
+        EXPECT_FALSE(machine->has_violation());
+    }
+
+    TEST_F(SeccompExecutionHookTest, PersistentRangesRearmAndExcludeOtherInstructionsOnTheirPage)
+    {
+        machine->write_memory(code_address, std::array{0x91000400u, 0x91000400u, 0x91000400u, 0xD4000001u});
+        std::vector<uint64_t> executions{};
+        machine->hook_memory_range_execution(code_address + 4, 8, [&](cpu_interface&, const uint64_t address) {
+            executions.push_back(address);
+            EXPECT_EQ(machine->reg(arm64_register::x0), (address - code_address) / 4);
+        });
+        machine->hook_interrupt([](cpu_interface&, int) { ADD_FAILURE() << "Internal steps must not become guest exceptions"; });
+        for (size_t run = 0; run < 2; ++run)
+        {
+            machine->reg(arm64_register::pc, code_address);
+            machine->reg(arm64_register::x0, 0);
+            ASSERT_NO_THROW(machine->start());
+            EXPECT_EQ(machine->reg(arm64_register::x0), 3u);
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address + 16);
+        }
+        EXPECT_EQ(executions, (std::vector<uint64_t>{code_address + 4, code_address + 8, code_address + 4, code_address + 8}));
+        EXPECT_EQ(syscall_calls, 2u);
+    }
+
+    TEST_F(SeccompExecutionHookTest, GuestBranchStepPrecedesFirstExecutionAtTheTarget)
+    {
+        constexpr uint64_t target = 0x40000;
+        ASSERT_TRUE(memory.allocate_memory(target, 0x1000, memory_permission::read_exec));
+        machine->write_memory(code_address, std::array{0x1400C000u, 0xD4000001u});
+        machine->write_memory(target, std::array{0xD28000E0u, 0xD61F0040u});
+        machine->reg(arm64_register::x0, 0x1234u);
+        machine->reg(arm64_register::x2, code_address + 4);
+        machine->reg(arm64_register::pstate, 1u << 21);
+        size_t executions{};
+        size_t steps{};
+        emulator_hook* hook{};
+        hook = machine->hook_memory_execution(target, [&](cpu_interface&, uint64_t) {
+            ++executions;
+            EXPECT_EQ(steps, 1u);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 0x1234u);
+            machine->delete_hook(hook);
+        });
+        machine->hook_interrupt([&](cpu_interface& cpu, const int exception_class) {
+            ++steps;
+            EXPECT_EQ(exception_class, static_cast<int>(arm64_exception_class::software_step));
+            EXPECT_EQ(machine->read_instruction_pointer(), target);
+            EXPECT_EQ(executions, 0u);
+            cpu.stop();
+        });
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, 0u);
+        EXPECT_EQ(machine->read_instruction_pointer(), target);
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, 1u);
+        EXPECT_EQ(steps, 1u);
+        EXPECT_EQ(machine->reg(arm64_register::x0), 7u);
+        EXPECT_EQ(syscall_calls, 1u);
+    }
+
+    TEST_F(SeccompExecutionHookTest, OverlappingHooksCanDeleteThemselvesWithoutDisablingTheirNeighbor)
+    {
+        machine->write_memory(code_address, std::array{0x91000400u, 0x91000400u, 0x91000400u, 0xD4000001u});
+        machine->reg(arm64_register::x0, 0);
+        std::vector<uint64_t> executions{};
+        emulator_hook* range{};
+        emulator_hook* point{};
+        range = machine->hook_memory_range_execution(code_address, 12, [&](cpu_interface&, const uint64_t address) {
+            executions.push_back(address);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 0u);
+            machine->delete_hook(range);
+        });
+        point = machine->hook_memory_execution(code_address + 4, [&](cpu_interface&, const uint64_t address) {
+            executions.push_back(address);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 1u);
+            machine->delete_hook(point);
+        });
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, (std::vector<uint64_t>{code_address, code_address + 4}));
+        EXPECT_EQ(machine->reg(arm64_register::x0), 3u);
+        EXPECT_EQ(syscall_calls, 1u);
+    }
+
+    TEST_F(SeccompExecutionHookTest, StoppedHooksResumeOnceAndPreserveTheGuestSoftwareStep)
+    {
+        machine->write_memory(code_address, std::array{0x91000400u, 0x91000400u, 0xD4000001u});
+        size_t executions{};
+        machine->hook_memory_execution(code_address, [&](cpu_interface& cpu, uint64_t) {
+            ++executions;
+            cpu.stop();
+        });
+        size_t steps{};
+        machine->hook_interrupt([&](cpu_interface&, const int exception_class) {
+            ++steps;
+            EXPECT_EQ(exception_class, static_cast<int>(arm64_exception_class::software_step));
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address + 4);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 1u);
+        });
+        for (const auto software_step : {0u, 1u << 21})
+        {
+            const auto previous_executions = executions;
+            steps = 0;
+            machine->reg(arm64_register::pc, code_address);
+            machine->reg(arm64_register::x0, 0);
+            machine->reg(arm64_register::pstate, 0xA0000000u | software_step);
+            ASSERT_NO_THROW(machine->start());
+            EXPECT_EQ(executions, previous_executions + 1);
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 0u);
+            EXPECT_EQ(machine->reg(arm64_register::pstate), 0xA0000000u | software_step);
+
+            ASSERT_NO_THROW(machine->start());
+            EXPECT_EQ(executions, previous_executions + 1);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 2u);
+            EXPECT_EQ(machine->reg(arm64_register::pstate), 0xA0000000u);
+            EXPECT_EQ(steps, software_step != 0 ? 1u : 0u);
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address + 12);
+        }
+        EXPECT_EQ(syscall_calls, 2u);
+    }
+
+    TEST_F(SeccompExecutionHookTest, CallbacksCanRedirectExecutionWithoutLosingTheGuestSoftwareStep)
+    {
+        machine->write_memory(code_address, std::array{0xD4200000u, 0x91000400u, 0xD4000001u});
+        machine->reg(arm64_register::x0, 0);
+        machine->reg(arm64_register::pstate, 1u << 21);
+        size_t executions{};
+        machine->hook_memory_execution(code_address, [&](cpu_interface&, uint64_t) {
+            ++executions;
+            machine->reg(arm64_register::pc, code_address + 4);
+        });
+        size_t steps{};
+        machine->hook_interrupt([&](cpu_interface&, const int exception_class) {
+            ++steps;
+            EXPECT_EQ(exception_class, static_cast<int>(arm64_exception_class::software_step));
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address + 8);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 1u);
+        });
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, 1u);
+        EXPECT_EQ(steps, 1u);
+        EXPECT_EQ(syscall_calls, 1u);
+        EXPECT_EQ(machine->read_instruction_pointer(), code_address + 12);
+    }
+
+    TEST_F(SeccompExecutionHookTest, HooksSurviveMappingProtectionChangesAndRemapping)
+    {
+        constexpr uint64_t target = 0x40000;
+        machine->write_memory(code_address, std::array{0x1400C000u, 0xD4000001u});
+        machine->reg(arm64_register::x2, code_address + 4);
+        size_t executions{};
+        auto* hook = machine->hook_memory_execution(target, [&](cpu_interface&, const uint64_t address) {
+            ++executions;
+            EXPECT_EQ(address, target);
+        });
+        ASSERT_TRUE(memory.allocate_memory(target, 0x1000, memory_permission::read_write));
+        machine->write_memory(target, std::array{0xD28000A0u, 0xD61F0040u});
+        ASSERT_TRUE(memory.protect_memory(target, 0x1000, memory_permission::read_exec));
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, 1u);
+        EXPECT_EQ(machine->reg(arm64_register::x0), 5u);
+
+        ASSERT_TRUE(memory.release_memory(target, 0x1000));
+        ASSERT_TRUE(memory.allocate_memory(target, 0x1000, memory_permission::read_exec));
+        machine->write_memory(target, std::array{0xD2800120u, 0xD61F0040u});
+        machine->reg(arm64_register::pc, code_address);
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, 2u);
+        EXPECT_EQ(machine->reg(arm64_register::x0), 9u);
+
+        machine->delete_hook(hook);
+        machine->reg(arm64_register::pc, code_address);
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, 2u);
+        EXPECT_EQ(syscall_calls, 3u);
+    }
+
+    TEST_F(SeccompExecutionHookTest, GuestExceptionsCancelInternalAndGuestSteps)
+    {
+        size_t executions{};
+        machine->hook_memory_execution(code_address, [&](cpu_interface&, uint64_t) { ++executions; });
+        size_t exceptions{};
+        int expected_exception{};
+        machine->hook_interrupt([&](cpu_interface&, const int exception_class) {
+            ++exceptions;
+            EXPECT_EQ(exception_class, expected_exception);
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address);
+            EXPECT_EQ(machine->reg(arm64_register::pstate) & (1u << 21), 0u);
+            machine->reg(arm64_register::pc, code_address + 4);
+        });
+        for (const auto instruction : {0xD5384250u, 0xD43E0000u})
+        {
+            expected_exception = static_cast<int>(instruction == 0xD5384250 ? arm64_exception_class::undefined_instruction
+                                                                            : arm64_exception_class::breakpoint_instruction);
+            machine->write_memory(code_address, std::array{instruction, 0xD4000001u});
+            for (const auto software_step : {0u, 1u << 21})
+            {
+                machine->reg(arm64_register::pc, code_address);
+                machine->reg(arm64_register::pstate, software_step);
+                ASSERT_NO_THROW(machine->start());
+            }
+        }
+        EXPECT_EQ(executions, 4u);
+        EXPECT_EQ(exceptions, 4u);
+        EXPECT_EQ(syscall_calls, 4u);
+    }
+
+    TEST_F(SeccompExecutionHookTest, FailedHookDeletionCanBeRetriedWithoutDisablingLaterHooks)
+    {
+        constexpr uint64_t target = 0x40000;
+        constexpr size_t size = 0x1000;
+        auto* const target_pointer = reinterpret_cast<void*>(target);
+        ASSERT_TRUE(memory.allocate_memory(target, size, memory_permission::all));
+        auto* hook = machine->hook_memory_execution(target, [](cpu_interface&, uint64_t) {});
+        ASSERT_EQ(munmap(target_pointer, size), 0);
+        EXPECT_THROW(machine->delete_hook(hook), std::system_error);
+
+        auto* const restored = mmap(target_pointer, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        ASSERT_NE(restored, MAP_FAILED);
+        const auto cleanup = utils::finally([&] {
+            if (restored != target_pointer)
+            {
+                munmap(restored, size);
+            }
+        });
+        ASSERT_EQ(restored, target_pointer);
+        ASSERT_NO_THROW(machine->delete_hook(hook));
+
+        machine->write_memory(code_address, std::array{0x1400C000u, 0xD4000001u});
+        machine->write_memory(target, std::array{0xD28000E0u, 0xD61F0040u});
+        machine->reg(arm64_register::x2, code_address + 4);
+        size_t executions{};
+        emulator_hook* replacement{};
+        replacement = machine->hook_memory_execution(target, [&](cpu_interface&, uint64_t) {
+            ++executions;
+            machine->delete_hook(replacement);
+        });
+
+        ASSERT_NO_THROW(machine->start());
+        EXPECT_EQ(executions, 1u);
+        EXPECT_EQ(machine->reg(arm64_register::x0), 7u);
+        EXPECT_EQ(syscall_calls, 1u);
+    }
+
+    TEST_F(SeccompExecutionHookTest, MmioCompletionReportsOnlyGuestRequestedSteps)
+    {
+        constexpr uint64_t mmio_address = 0x40000;
+        size_t reads{};
+        ASSERT_TRUE(memory.allocate_mmio(mmio_address, 0x1000,
+                                         [&](uint64_t, void* output, const size_t size) {
+                                             ++reads;
+                                             const uint64_t value = 7;
+                                             ASSERT_EQ(size, sizeof(value));
+                                             std::memcpy(output, &value, size);
+                                         },
+                                         {}));
+        machine->write_memory(code_address, std::array{0xF9400020u, 0xD4000001u});
+        machine->reg(arm64_register::x1, mmio_address);
+        size_t executions{};
+        machine->hook_memory_range_execution(code_address, 8, [&](cpu_interface&, uint64_t) { ++executions; });
+        size_t steps{};
+        machine->hook_interrupt([&](cpu_interface&, const int exception_class) {
+            ++steps;
+            EXPECT_EQ(exception_class, static_cast<int>(arm64_exception_class::software_step));
+            EXPECT_EQ(machine->read_instruction_pointer(), code_address + 4);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 7u);
+        });
+        for (const auto software_step : {0u, 1u << 21})
+        {
+            steps = 0;
+            machine->reg(arm64_register::pc, code_address);
+            machine->reg(arm64_register::pstate, software_step);
+            ASSERT_NO_THROW(machine->start());
+            EXPECT_EQ(steps, software_step != 0 ? 1u : 0u);
+            EXPECT_EQ(machine->reg(arm64_register::x0), 7u);
+        }
+        EXPECT_EQ(executions, 4u);
+        EXPECT_EQ(reads, 2u);
+        EXPECT_EQ(syscall_calls, 2u);
     }
 
     TEST_F(SeccompBackendTest, SteppedSvcRequiresAnExecutablePage)
     {
         machine->write_memory(code_address, uint32_t{0xD4000001});
+        machine->hook_memory_execution(
+            code_address, [](cpu_interface&, uint64_t) { ADD_FAILURE() << "Execution hooks must not bypass guest execution protection"; });
         machine->hook_interrupt([](cpu_interface&, int) { ADD_FAILURE() << "An execution fault must cancel the software step"; });
         machine->hook_instruction(arm64_hookable_instructions::svc, [](cpu_interface& cpu, uint64_t) {
             ADD_FAILURE() << "A non-executable SVC must not dispatch a syscall";
