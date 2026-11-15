@@ -76,6 +76,12 @@ namespace sogen::test
         EXPECT_EQ(1u, this->emu->process.devices.get(this->endpoint)->ref_count);
         EXPECT_EQ(2u, this->emu->process.events.get(event_handle)->ref_count);
 
+        // A closed non-event handle has no table entry: it fails as invalid before the type is compared.
+        const auto stale = this->emu->process.mutants.store(mutant{});
+        ASSERT_TRUE(this->emu->process.mutants.erase(stale));
+        ASSERT_EQ(STATUS_INVALID_HANDLE, this->event_select(stale, 1));
+        EXPECT_EQ(2u, this->emu->process.events.get(event_handle)->ref_count);
+
         // With nothing pinning the device, closing its last handle releases it.
         ASSERT_TRUE(this->emu->process.devices.erase(this->endpoint));
         EXPECT_EQ(nullptr, this->emu->process.devices.get(this->endpoint));

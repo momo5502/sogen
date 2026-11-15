@@ -2173,14 +2173,21 @@ namespace sogen
                 object_reference new_event{};
                 if (select_info.Event.bits != 0)
                 {
-                    // Referenced with ExEventObjectType: a wrong type fails before the previous registration changes, so a
-                    // non-event (such as the socket's own handle) is never held.
-                    if (select_info.Event.value.type != handle_types::event)
+                    // ObReferenceObjectByHandle with ExEventObjectType: a handle with no table entry fails first with
+                    // STATUS_INVALID_HANDLE, a wrong type then with STATUS_OBJECT_TYPE_MISMATCH. Either leaves the previous
+                    // registration untouched, and a non-event (such as the socket's own handle) is never held.
+                    const auto reference = win_emu.process.reference_of(select_info.Event);
+                    if (!reference)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    if (reference.object_type() != handle_types::event)
                     {
                         return STATUS_OBJECT_TYPE_MISMATCH;
                     }
 
-                    const auto retained = win_emu.process.retain_object(select_info.Event);
+                    const auto retained = win_emu.process.retain_object(reference);
                     if (!retained)
                     {
                         return STATUS_INVALID_HANDLE;
