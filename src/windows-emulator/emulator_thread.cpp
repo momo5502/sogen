@@ -1684,27 +1684,6 @@ namespace sogen
                     });
                 }
 
-                if (process.is_wow64_process && this->teb32)
-                {
-                    uint32_t active_handle32 = 0;
-                    uint32_t active_window_ptr32 = 0;
-
-                    if (active_handle <= std::numeric_limits<uint32_t>::max())
-                    {
-                        active_handle32 = static_cast<uint32_t>(active_handle);
-                    }
-
-                    if (active_window_ptr <= std::numeric_limits<uint32_t>::max())
-                    {
-                        active_window_ptr32 = static_cast<uint32_t>(active_window_ptr);
-                    }
-
-                    this->teb32->access([&](TEB32& teb) {
-                        teb.Win32ClientInfo[8] = active_handle32;
-                        teb.Win32ClientInfo[9] = active_window_ptr32;
-                    });
-                }
-
                 this->mark_as_ready(m->message != WM_QUIT ? TRUE : FALSE);
                 return true;
             }
