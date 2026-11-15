@@ -3,6 +3,7 @@
 
 namespace sogen::syscalls
 {
+    NTSTATUS handle_NtClose(const syscall_context& c, handle h);
     NTSTATUS handle_NtQueryInformationToken(const syscall_context& c, handle token_handle, TOKEN_INFORMATION_CLASS information_class,
                                             uint64_t information, ULONG information_length, emulator_object<ULONG> return_length);
     NTSTATUS handle_NtQuerySecurityAttributesToken(const syscall_context& c, handle token_handle,
@@ -207,6 +208,25 @@ namespace sogen::test
         const auto enabled = [](const auto& privilege) { return (privilege.second & 2) != 0; };
         EXPECT_TRUE(std::ranges::none_of(this->privileges(CURRENT_THREAD_TOKEN), enabled));
         EXPECT_TRUE(std::ranges::any_of(this->privileges(), enabled));
+    }
+
+    TEST_F(TokenInformationTest, TheImpersonatedTokenOutlivesItsHandleWithoutCountingAsOne)
+    {
+        const auto handles_before = this->emu->process.handle_count();
+        const emulator_object<handle> duplicated{this->emu->memory, this->storage + 0x200};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateToken(this->context(), CURRENT_PROCESS_TOKEN, 0, {this->emu->memory}, FALSE,
+                                                                    TokenImpersonation, duplicated));
+        const auto impersonated = duplicated.read();
+        ASSERT_EQ(STATUS_SUCCESS,
+                  syscalls::handle_NtAdjustPrivilegesToken(this->context(), impersonated, true, 0, 0, 0, {this->emu->memory}));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetInformationThread(this->context(), CURRENT_THREAD, ThreadImpersonationToken,
+                                                                          duplicated.value(), sizeof(handle)));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), impersonated));
+
+        // PsImpersonateClient references the token object and opens no handle for the thread.
+        EXPECT_EQ(handles_before, this->emu->process.handle_count());
+        const auto enabled = [](const auto& privilege) { return (privilege.second & 2) != 0; };
+        EXPECT_TRUE(std::ranges::none_of(this->privileges(CURRENT_THREAD_TOKEN), enabled));
     }
 
     TEST_F(TokenInformationTest, RejectsInvalidThreadAndPrimaryTokenWithoutChangingState)

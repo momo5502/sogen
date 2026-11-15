@@ -1963,15 +1963,23 @@ namespace sogen
         return h;
     }
 
+    // PsImpersonateClient keeps the token object on the thread, not a handle, so the thread holds a reference to it and
+    // names it by an internal value the guest neither sees in its handle count nor can close.
     void process_context::impersonate_token(emulator_thread& thread, const handle token)
     {
-        const auto previous = thread.impersonation_token;
-        const auto retained = this->tokens.duplicate(token);
-        thread.set_impersonation_token(retained.value_or(token));
+        const auto previous = this->tokens.reference_of(thread.impersonation_token);
 
-        if (previous != thread.impersonation_token)
+        auto impersonated = token;
+        if (const auto retained = this->tokens.retain(token))
         {
-            (void)this->tokens.erase(previous);
+            impersonated = this->tokens.internal_handle(retained->index);
+        }
+        thread.set_impersonation_token(impersonated);
+
+        if (previous)
+        {
+            auto released = *previous;
+            this->tokens.release(released);
         }
     }
 
