@@ -3815,8 +3815,9 @@ namespace sogen
 
         BOOL handle_NtUserCloseWindowStation(const syscall_context& c, const handle station)
         {
-            // The window station a process is assigned to cannot be closed.
-            if (station.bits == c.proc.process_window_station || station.bits == 1)
+            // The window station a process is assigned to cannot be closed, through any handle to it.
+            const auto assigned = c.proc.window_stations.reference_of(make_handle(c.proc.process_window_station));
+            if (station.bits == interactive_window_station || (assigned && c.proc.window_stations.reference_of(station) == assigned))
             {
                 return FALSE;
             }
