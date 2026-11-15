@@ -358,7 +358,7 @@ namespace sogen
                 {
                     pending_read read{.context = io_device_context{buffer}};
                     buffer.read(read);
-                    pending_reads_.push_back(std::move(read));
+                    pending_reads_.push_back(read);
                 }
             }
 
@@ -405,10 +405,17 @@ namespace sogen
                         continue;
                     }
                     it->request.events_read = 0;
-                    const auto status = event ? write_read_result(win_emu, *it, *event)
-                                        : win_emu.memory.try_write_memory(it->request_address, &it->request, sizeof(it->request))
-                                            ? STATUS_END_OF_FILE
-                                            : STATUS_ACCESS_VIOLATION;
+                    NTSTATUS status{};
+                    if (event)
+                    {
+                        status = write_read_result(win_emu, *it, *event);
+                    }
+                    else
+                    {
+                        status = win_emu.memory.try_write_memory(it->request_address, &it->request, sizeof(it->request))
+                                     ? STATUS_END_OF_FILE
+                                     : STATUS_ACCESS_VIOLATION;
+                    }
                     it = finish_read(win_emu, it, status);
                 }
             }
@@ -960,7 +967,7 @@ namespace sogen
                 }
                 read.context.vcpu = nullptr;
                 const auto text = read.text;
-                pending_reads_.push_back(std::move(read));
+                pending_reads_.push_back(read);
                 queued = true;
                 write_io_status(context, STATUS_PENDING, true);
                 if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
