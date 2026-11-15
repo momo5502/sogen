@@ -841,7 +841,7 @@ namespace sogen
 
     void process_context::post_job_notification(job_object& job, const uint32_t message, const uint32_t member_process_id)
     {
-        auto* port = this->io_completions.get(job.completion_port);
+        auto* port = this->get_object_as<io_completion>(job.completion_port);
         if (!port)
         {
             return;
@@ -867,7 +867,7 @@ namespace sogen
             return;
         }
 
-        const auto* port = io_completion_handle ? this->io_completions.get(*io_completion_handle) : nullptr;
+        const auto port = io_completion_handle ? this->io_completions.reference_of(*io_completion_handle) : std::nullopt;
         if (io_completion_handle && !port)
         {
             return;
@@ -875,8 +875,7 @@ namespace sogen
 
         for (auto& job : this->jobs | std::views::values)
         {
-            const auto* job_port = this->io_completions.get(job.completion_port);
-            if (job.processes.empty() || !job_port || (port && job_port != port))
+            if (job.processes.empty() || !job.completion_port || (port && job.completion_port != *port))
             {
                 continue;
             }

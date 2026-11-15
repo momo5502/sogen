@@ -1445,19 +1445,19 @@ namespace sogen
                 {
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
-                if (job->completion_port != 0)
+                if (job->completion_port)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto port = c.emu.read_memory<handle>(info + sizeof(EmulatorTraits<Emu64>::PVOID));
-                if (!c.proc.io_completions.get(port))
+                const auto port = c.proc.io_completions.retain(c.emu.read_memory<handle>(info + sizeof(EmulatorTraits<Emu64>::PVOID)));
+                if (!port)
                 {
                     return STATUS_INVALID_HANDLE;
                 }
 
                 job->completion_key = c.emu.read_memory<uint64_t>(info);
-                job->completion_port = port;
+                job->completion_port = *port;
                 for (const auto& member : job->processes)
                 {
                     c.proc.post_job_notification(*job, job_object_msg_new_process, member.process_id);

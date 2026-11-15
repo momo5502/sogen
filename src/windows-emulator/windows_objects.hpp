@@ -36,8 +36,8 @@ namespace sogen
         uint32_t ui_restrictions{};
         // Managed child processes assigned to the job.
         std::vector<member> processes{};
-        // The completion port job notifications are posted to, once one is associated.
-        handle completion_port{};
+        // The completion port job notifications are posted to, once one is associated. The job keeps it alive.
+        object_reference completion_port{};
         uint64_t completion_key{};
         bool active_process_zero_reported{};
 

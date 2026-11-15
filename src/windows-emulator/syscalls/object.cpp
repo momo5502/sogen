@@ -155,9 +155,10 @@ namespace sogen
 
             if (value.type == handle_types::job)
             {
-                if (const auto* job = c.proc.jobs.get(h); job && job->ref_count == 1)
+                if (auto* job = c.proc.jobs.get(h); job && job->ref_count == 1)
                 {
                     process_context::terminate_job_processes(c.win_emu, *job);
+                    io_completion_wait::release_reference(c.proc, job->completion_port);
                 }
             }
 
