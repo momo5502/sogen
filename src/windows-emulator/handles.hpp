@@ -340,7 +340,7 @@ namespace sogen
             return this->store_and_get(std::move(value)).first;
         }
 
-        bool store_at(const handle h, T value)
+        bool store_at(const handle h, T&& value)
         {
             if (this->block_mutation_)
             {
