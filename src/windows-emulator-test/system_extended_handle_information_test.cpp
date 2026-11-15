@@ -222,4 +222,18 @@ namespace sogen::test
         EXPECT_EQ(15u, debug_entry->ObjectTypeIndex);
         EXPECT_EQ(0x1F000Fu, debug_entry->GrantedAccess);
     }
+
+    // ObpCaptureHandleInformationEx reports every handle table entry, tokens included, with Windows 10 19045's Token type.
+    TEST_F(SystemExtendedHandleInformationTest, ReportsTokenHandles)
+    {
+        const auto token_handle = this->emu.process.tokens.store(token_object{});
+
+        this->reset();
+        ASSERT_EQ(STATUS_SUCCESS, this->query(this->buffer, 0x10000, this->return_length));
+
+        const auto token_entry = this->find_entry(token_handle);
+        ASSERT_TRUE(token_entry.has_value());
+        EXPECT_EQ(5u, token_entry->ObjectTypeIndex);
+        EXPECT_EQ(0xF01FFu, token_entry->GrantedAccess);
+    }
 }

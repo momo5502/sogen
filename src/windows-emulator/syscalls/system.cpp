@@ -406,6 +406,8 @@ namespace sogen
                 return kernel_object_type{.index = 36, .generic_all = 0xF0001};
             case handle_types::worker_factory:
                 return kernel_object_type{.index = 30, .generic_all = 0xF00FF};
+            case handle_types::token:
+                return kernel_object_type{.index = 5, .generic_all = 0xF01FF};
             case handle_types::job:
                 return kernel_object_type{.index = 6, .generic_all = 0x1F003F};
             case handle_types::private_namespace:
@@ -466,6 +468,7 @@ namespace sogen
             collect_kernel_handles(handles, proc.processes);
             collect_kernel_handles(handles, proc.managed_threads);
             collect_kernel_handles(handles, proc.threads);
+            collect_kernel_handles(handles, proc.tokens);
 
             // Until the process sets another one, NtUserGetProcessWindowStation returns the interactive window station as
             // the fixed handle 1. It is the process's window station handle like any other, but it lives in no store.
