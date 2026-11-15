@@ -1,6 +1,8 @@
 #include "../std_include.hpp"
 #include "buffered_console_backend.hpp"
 #include <thread>
+#include <system_error>
+#include <utils/nt_handle.hpp>
 
 #ifdef OS_WINDOWS
 namespace sogen
@@ -76,10 +78,19 @@ namespace sogen
                     }
                     return buffered_console_backend::try_read_input(length);
                 }
+                if (!this->reader_handle_)
+                {
+                    this->reader_handle_ =
+                        CreateFileW(L"CONIN$", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+                    if (!this->reader_handle_)
+                    {
+                        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Opening console reader");
+                    }
+                }
                 this->read_text_.resize(std::min<size_t>(length, 256));
                 this->reader_ = std::thread([this] {
                     DWORD count{};
-                    if (!ReadConsoleW(this->input_handle_, this->read_text_.data(), static_cast<DWORD>(this->read_text_.size()), &count,
+                    if (!ReadConsoleW(this->reader_handle_, this->read_text_.data(), static_cast<DWORD>(this->read_text_.size()), &count,
                                       nullptr))
                     {
                         count = 0;
@@ -95,7 +106,14 @@ namespace sogen
                 {
                     return true;
                 }
-                CancelIoEx(this->input_handle_, nullptr);
+                if (!CancelIoEx(this->reader_handle_, nullptr))
+                {
+                    const auto error = GetLastError();
+                    if (error != ERROR_NOT_FOUND)
+                    {
+                        throw std::system_error(static_cast<int>(error), std::system_category(), "CancelIoEx");
+                    }
+                }
                 if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
                 {
                     return false;
@@ -149,6 +167,7 @@ namespace sogen
             void reset() override
             {
                 this->stop_reader();
+                this->reader_handle_ = INVALID_HANDLE_VALUE;
                 this->restore_terminal();
                 this->pending_surrogate_ = 0;
                 buffered_console_backend::reset();
@@ -262,6 +281,7 @@ namespace sogen
             DWORD original_mode_{};
             bool terminal_modified_{};
             char16_t pending_surrogate_{};
+            utils::nt::handle<utils::nt::invalid_handle> reader_handle_{};
             std::thread reader_{};
             std::u16string read_text_{};
         };

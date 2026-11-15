@@ -292,6 +292,39 @@ namespace sogen
 
     namespace
     {
+        struct pending_read
+        {
+            io_device_context context;
+            uint64_t request_address{};
+            uint64_t output_address{};
+            read_console_input_request request{};
+            handle issuing_thread{};
+            bool text{};
+            bool cancelled{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(context);
+                buffer.write(request_address);
+                buffer.write(output_address);
+                buffer.write(request);
+                buffer.write(issuing_thread);
+                buffer.write(text);
+                buffer.write(cancelled);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(context);
+                buffer.read(request_address);
+                buffer.read(output_address);
+                buffer.read(request);
+                buffer.read(issuing_thread);
+                buffer.read(text);
+                buffer.read(cancelled);
+            }
+        };
+
         struct console_device final : io_device
         {
             void serialize_object(utils::buffer_serializer& buffer) const override
@@ -306,13 +339,7 @@ namespace sogen
                 buffer.write(static_cast<uint64_t>(pending_reads_.size()));
                 for (const auto& read : pending_reads_)
                 {
-                    buffer.write(read.context);
-                    buffer.write(read.request_address);
-                    buffer.write(read.output_address);
-                    buffer.write(read.request);
-                    buffer.write(read.issuing_thread);
-                    buffer.write(read.text);
-                    buffer.write(read.cancelled);
+                    buffer.write(read);
                 }
             }
 
@@ -329,13 +356,8 @@ namespace sogen
                 const auto count = buffer.read<uint64_t>();
                 for (uint64_t i = 0; i < count; ++i)
                 {
-                    pending_read read{.context = buffer.read<io_device_context>()};
-                    buffer.read(read.request_address);
-                    buffer.read(read.output_address);
-                    buffer.read(read.request);
-                    buffer.read(read.issuing_thread);
-                    buffer.read(read.text);
-                    buffer.read(read.cancelled);
+                    pending_read read{.context = io_device_context{buffer}};
+                    buffer.read(read);
                     pending_reads_.push_back(std::move(read));
                 }
             }
@@ -344,51 +366,50 @@ namespace sogen
             {
                 for (auto it = pending_reads_.begin(); it != pending_reads_.end();)
                 {
+                    if (it->cancelled)
+                    {
+                        const auto first_text = std::ranges::find_if(pending_reads_, [](const auto& read) { return read.text; });
+                        if (it->text && it == first_text && !win_emu.console().cancel_read_input())
+                        {
+                            ++it;
+                            continue;
+                        }
+                        it = finish_read(win_emu, it, STATUS_CANCELLED);
+                        continue;
+                    }
                     if (it->text)
                     {
                         const auto first_text = std::ranges::find_if(pending_reads_, [](const auto& read) { return read.text; });
-                        if (it->cancelled)
+                        if (it != first_text && it->context.output_buffer_length != 0)
                         {
-                            if (it == first_text && !win_emu.console().cancel_read_input())
-                            {
-                                ++it;
-                                continue;
-                            }
-                            complete_read(win_emu, *it, STATUS_CANCELLED);
+                            ++it;
+                            continue;
                         }
-                        else
+                        const auto data = win_emu.console().try_read_input(it->context.output_buffer_length);
+                        if (!data)
                         {
-                            if (it != first_text && it->context.output_buffer_length != 0)
-                            {
-                                ++it;
-                                continue;
-                            }
-                            const auto data = win_emu.console().try_read_input(it->context.output_buffer_length);
-                            if (!data)
-                            {
-                                ++it;
-                                continue;
-                            }
-                            const auto status =
-                                data->empty() || win_emu.memory.try_write_memory(it->context.output_buffer, data->data(), data->size())
-                                    ? STATUS_SUCCESS
-                                    : STATUS_ACCESS_VIOLATION;
-                            complete_read(win_emu, *it, status, status == STATUS_SUCCESS ? data->size() : 0);
+                            ++it;
+                            continue;
                         }
-                        release_read(win_emu.process, *it);
-                        it = pending_reads_.erase(it);
+                        const auto status =
+                            data->empty() || win_emu.memory.try_write_memory(it->context.output_buffer, data->data(), data->size())
+                                ? STATUS_SUCCESS
+                                : STATUS_ACCESS_VIOLATION;
+                        it = finish_read(win_emu, it, status, status == STATUS_SUCCESS ? data->size() : 0);
                         continue;
                     }
                     const auto event = win_emu.console().read_input_event(false, (it->request.flags & console_read_noremove) == 0);
-                    if (!event)
+                    if (!event && !win_emu.console().input_closed())
                     {
                         ++it;
                         continue;
                     }
-                    const auto status = write_read_result(win_emu, *it, *event);
-                    complete_read(win_emu, *it, status);
-                    release_read(win_emu.process, *it);
-                    it = pending_reads_.erase(it);
+                    it->request.events_read = 0;
+                    const auto status = event ? write_read_result(win_emu, *it, *event)
+                                        : win_emu.memory.try_write_memory(it->request_address, &it->request, sizeof(it->request))
+                                            ? STATUS_END_OF_FILE
+                                            : STATUS_ACCESS_VIOLATION;
+                    it = finish_read(win_emu, it, status);
                 }
             }
 
@@ -422,9 +443,7 @@ namespace sogen
                             continue;
                         }
                     }
-                    complete_read(win_emu, *it, STATUS_CANCELLED);
-                    release_read(win_emu.process, *it);
-                    it = pending_reads_.erase(it);
+                    it = finish_read(win_emu, it, STATUS_CANCELLED);
                     cancelled = true;
                 }
                 return cancelled;
@@ -664,13 +683,13 @@ namespace sogen
                     const auto event = win_emu.console().read_input_event(false, remove);
                     if (!event)
                     {
-                        if (wait)
+                        if (wait && !win_emu.console().input_closed())
                         {
                             return queue_read(win_emu, context, header.data, input_header.output_buffer, request);
                         }
                         request.events_read = 0;
                         win_emu.emu().write_memory(header.data, &request, sizeof(request));
-                        return STATUS_SUCCESS;
+                        return wait ? STATUS_END_OF_FILE : STATUS_SUCCESS;
                     }
 
                     const auto record = make_console_input_record(*event);
@@ -845,17 +864,6 @@ namespace sogen
             }
 
           private:
-            struct pending_read
-            {
-                io_device_context context;
-                uint64_t request_address{};
-                uint64_t output_address{};
-                read_console_input_request request{};
-                handle issuing_thread{};
-                bool text{};
-                bool cancelled{};
-            };
-
             static NTSTATUS write_read_result(windows_emulator& win_emu, pending_read& read, const console_key_event& event)
             {
                 const auto record = make_console_input_record(event);
@@ -897,6 +905,14 @@ namespace sogen
                 win_emu.wake_idle_vcpu();
             }
 
+            std::vector<pending_read>::iterator finish_read(windows_emulator& win_emu, std::vector<pending_read>::iterator read,
+                                                            const NTSTATUS status, const uint64_t information = 0)
+            {
+                complete_read(win_emu, *read, status, information);
+                release_read(win_emu.process, *read);
+                return pending_reads_.erase(read);
+            }
+
             static void release_read(process_context& process, pending_read& read)
             {
                 io_completion_wait::release_handle_reference(process, read.context.event);
@@ -916,7 +932,9 @@ namespace sogen
             NTSTATUS queue_read(windows_emulator& win_emu, pending_read read)
             {
                 const auto context = read.context;
-                if (!context.io_status_block || (!context.event.bits && (!context.vcpu || !context.vcpu->active_thread)))
+                if ((context.completion_port.bits && context.apc_routine) || !context.io_status_block ||
+                    (!context.event.bits && !context.apc_routine && !context.completion_port.bits &&
+                     (!context.vcpu || !context.vcpu->active_thread)))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -960,7 +978,7 @@ namespace sogen
                     this->work(win_emu);
                 }
                 const auto status = context.io_status_block.read().Status;
-                if (status == STATUS_PENDING && !context.event.bits && !context.apc_routine)
+                if (status == STATUS_PENDING && !context.event.bits && !context.apc_routine && !context.completion_port.bits)
                 {
                     context.thread().await_file_io = context.io_status_block.value();
                     win_emu.yield_thread(*context.vcpu);

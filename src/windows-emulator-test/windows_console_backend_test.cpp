@@ -1,5 +1,6 @@
 #include "emulation_test_utils.hpp"
 #include <utils/finally.hpp>
+#include <thread>
 
 #ifdef OS_WINDOWS
 namespace sogen::test
@@ -188,6 +189,63 @@ namespace sogen::test
         this->console->set_input_mode({.processed = true, .line = true, .echo = false});
         ASSERT_FALSE(this->console->try_read_input(16));
         ASSERT_TRUE(this->cancel_ready());
+        ASSERT_FALSE(this->console->try_read_input(16));
+        this->queue(u'q', 'Q');
+        this->queue(u'\r', VK_RETURN);
+        const auto data = this->read_ready(16);
+        ASSERT_TRUE(data);
+        EXPECT_EQ("q\r\n", *data);
+    }
+
+    TEST_F(WindowsConsoleTextTest, CancellationLeavesOtherReadsOnTheHostHandlePending)
+    {
+        this->console->set_input_mode({.processed = true, .line = true, .echo = false});
+        std::array<wchar_t, 16> text{};
+        DWORD count{};
+        BOOL read_success{};
+        std::thread other([&] { read_success = ReadConsoleW(this->input, text.data(), static_cast<DWORD>(text.size()), &count, nullptr); });
+        const auto cleanup = utils::finally([&] {
+            if (!other.joinable())
+            {
+                return;
+            }
+            while (WaitForSingleObject(other.native_handle(), 0) != WAIT_OBJECT_0)
+            {
+                CancelIoEx(this->input, nullptr);
+                SwitchToThread();
+            }
+            other.join();
+        });
+        BOOL pending{};
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        do
+        {
+            ASSERT_TRUE(GetThreadIOPendingFlag(other.native_handle(), &pending));
+            if (pending)
+            {
+                break;
+            }
+            SwitchToThread();
+        } while (std::chrono::steady_clock::now() < deadline);
+        ASSERT_TRUE(pending);
+        ASSERT_FALSE(this->console->try_read_input(16));
+        ASSERT_TRUE(this->cancel_ready());
+        ASSERT_TRUE(GetThreadIOPendingFlag(other.native_handle(), &pending));
+        EXPECT_TRUE(pending);
+        this->queue(u'q', 'Q');
+        this->queue(u'\r', VK_RETURN);
+        ASSERT_EQ(WAIT_OBJECT_0, WaitForSingleObject(other.native_handle(), 5000));
+        other.join();
+        EXPECT_TRUE(read_success);
+        EXPECT_EQ(L"q\r\n", std::wstring(text.data(), count));
+    }
+
+    TEST_F(WindowsConsoleTextTest, ResetStopsActiveReaderBeforeStartingAnother)
+    {
+        this->console->set_input_mode({.processed = true, .line = true, .echo = false});
+        ASSERT_FALSE(this->console->try_read_input(16));
+        this->console->reset();
+        this->console->set_input_mode({.processed = true, .line = true, .echo = false});
         ASSERT_FALSE(this->console->try_read_input(16));
         this->queue(u'q', 'Q');
         this->queue(u'\r', VK_RETURN);

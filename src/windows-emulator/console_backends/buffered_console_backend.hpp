@@ -12,6 +12,7 @@ namespace sogen
     {
       public:
         bool input_available() override;
+        bool input_closed() const override;
         std::optional<console_key_event> read_input_event(bool wait, bool remove) override;
         std::string read_input(size_t length) override;
         std::optional<std::string> try_read_input(size_t length) override;

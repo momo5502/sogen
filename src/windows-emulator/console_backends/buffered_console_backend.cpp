@@ -120,6 +120,11 @@ namespace sogen
         return !this->input_.empty();
     }
 
+    bool buffered_console_backend::input_closed() const
+    {
+        return this->input_closed_ && this->input_.empty() && this->pending_events_.empty();
+    }
+
     std::optional<uint8_t> buffered_console_backend::read_byte(const int timeout_ms)
     {
         if (this->input_.empty())
@@ -292,6 +297,10 @@ namespace sogen
                     const auto next = this->read_byte(wait ? -1 : 0);
                     if (!next)
                     {
+                        if (this->input_closed_)
+                        {
+                            return console_key_event{.key = console_key::character, .character = u'\uFFFD'};
+                        }
                         for (size_t j = sequence_size; j > 0; --j)
                         {
                             this->unread(sequence[j - 1]);
