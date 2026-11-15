@@ -320,6 +320,57 @@ namespace sogen::test
         EXPECT_FALSE(this->pool().away_notification);
     }
 
+    TEST_F(WorkerFactoryTest, ThreadMinimumRaisesTheMaximumAndStartsItsWorkers)
+    {
+        this->make_pool(2);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMinimum, 4));
+        EXPECT_EQ(4u, this->pool().thread_minimum);
+        EXPECT_EQ(4u, this->pool().thread_maximum);
+        EXPECT_EQ(4u, this->pool().worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, ThreadMaximumLowersTheMinimumAndKeepsRunningWorkers)
+    {
+        this->make_pool();
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMinimum, 3));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMaximum, 1));
+        EXPECT_EQ(1u, this->pool().thread_minimum);
+        EXPECT_EQ(1u, this->pool().thread_maximum);
+        EXPECT_EQ(3u, this->pool().worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, OnlyARaisedMinimumStartsWorkers)
+    {
+        this->make_pool();
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMinimum, 2));
+        ASSERT_EQ(2u, this->pool().worker_threads.size());
+
+        // A worker is gone: neither the same minimum again nor another setting starts one in its place.
+        this->emu->process.threads.get(this->pool().worker_threads.front())->exit_status = STATUS_SUCCESS;
+        const auto workers = this->pool().worker_threads;
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMinimum, 2));
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMaximum, 8));
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadBasePriority, 1));
+        EXPECT_EQ(workers, this->pool().worker_threads);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMinimum, 3));
+        EXPECT_EQ(3u, this->pool().worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, FactoryBeingShutDownKeepsItsLimits)
+    {
+        this->make_pool(4);
+        this->pool().shutdown = true;
+
+        EXPECT_EQ(STATUS_ABANDONED, this->set_limit(WorkerFactoryThreadMinimum, 2));
+        EXPECT_EQ(STATUS_ABANDONED, this->set_limit(WorkerFactoryThreadMaximum, 1));
+        EXPECT_EQ(0u, this->pool().thread_minimum);
+        EXPECT_EQ(4u, this->pool().thread_maximum);
+        EXPECT_TRUE(this->pool().worker_threads.empty());
+    }
+
     TEST_F(WorkerFactoryTest, NewMaximumStartsAWorkerForQueuedWork)
     {
         this->make_pool(1);

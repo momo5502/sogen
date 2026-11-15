@@ -94,28 +94,6 @@ namespace sogen
                 });
             }
 
-            uint32_t get_worker_factory_thread_limit(const worker_factory& factory)
-            {
-                uint32_t limit = std::numeric_limits<uint32_t>::max();
-
-                if (factory.max_thread_count != 0)
-                {
-                    limit = std::min(limit, factory.max_thread_count);
-                }
-
-                if (factory.thread_maximum != 0)
-                {
-                    limit = std::min(limit, factory.thread_maximum);
-                }
-
-                if (factory.thread_soft_maximum != 0)
-                {
-                    limit = std::min(limit, factory.thread_soft_maximum);
-                }
-
-                return limit;
-            }
-
             void create_worker_factory_thread(windows_emulator& win_emu, worker_factory& factory)
             {
                 const auto stack_size =
@@ -141,15 +119,9 @@ namespace sogen
 
                 prune_worker_factory_threads(c.win_emu, factory);
 
-                const auto limit = get_worker_factory_thread_limit(factory);
-                if (limit == 0)
-                {
-                    return;
-                }
-
-                // Bindings start no worker by themselves: see try_enter_away_mode.
-                const auto desired = std::min(factory.thread_minimum, limit);
-                while (factory.worker_threads.size() < desired)
+                // Only a raised thread minimum starts workers at once, and the maximum rises with it; bindings start
+                // none by themselves (try_enter_away_mode).
+                while (factory.worker_threads.size() < factory.thread_minimum)
                 {
                     create_worker_factory_thread(c.win_emu, factory);
                 }
@@ -287,14 +259,12 @@ namespace sogen
             factory.worker_process_handle = worker_process_handle;
             factory.start_routine = start_routine;
             factory.start_parameter = start_parameter;
-            factory.max_thread_count = max_thread_count;
             factory.stack_reserve = stack_reserve;
             factory.stack_commit = stack_commit;
+            // ntoskrnl keeps MaxThreadCount as the thread maximum, with a minimum of 0: the factory starts no worker yet.
             factory.thread_maximum = max_thread_count;
 
-            auto [stored_handle, stored_factory] = c.proc.worker_factories.store_and_get(std::move(factory));
-            ensure_worker_factory_threads(c, *stored_factory);
-            worker_factory_handle.write(stored_handle);
+            worker_factory_handle.write(c.proc.worker_factories.store(std::move(factory)));
             return STATUS_SUCCESS;
         }
 
@@ -456,22 +426,40 @@ namespace sogen
 
                 switch (info_class)
                 {
-                case WorkerFactoryThreadMinimum:
-                    // A raised minimum starts its workers itself.
-                    if (value > factory->thread_minimum)
+                case WorkerFactoryThreadMinimum: {
+                    // A factory being shut down keeps its limits; ntoskrnl answers STATUS_ABANDONED.
+                    if (factory->shutdown)
+                    {
+                        return STATUS_ABANDONED;
+                    }
+
+                    // The maximum rises with the minimum, and only a raised minimum starts its workers.
+                    const auto raised = value > factory->thread_minimum;
+                    factory->thread_minimum = value;
+                    factory->thread_maximum = std::max<uint32_t>(factory->thread_maximum, value);
+                    if (raised)
                     {
                         leave_away_mode(*factory);
+                        ensure_worker_factory_threads(c, *factory);
                     }
-                    factory->thread_minimum = value;
                     break;
+                }
                 case WorkerFactoryThreadMaximum: {
+                    if (factory->shutdown)
+                    {
+                        return STATUS_ABANDONED;
+                    }
+
                     // Work waiting for a worker: a queued packet, or a release while there was no maximum.
                     const auto* completion = c.proc.get_object_as<io_completion>(factory->io_completion);
                     const auto work_queued =
                         (factory->thread_maximum == 0 && factory->pending_release_count != 0) || (completion && !completion->queue.empty());
-                    factory->thread_maximum = value;
 
-                    if (value == 0 || !work_queued || factory->shutdown || factory->paused != 0 || factory->start_routine == 0)
+                    // The minimum falls with the maximum.
+                    factory->thread_maximum = value;
+                    factory->thread_minimum = std::min<uint32_t>(factory->thread_minimum, value);
+
+                    if (value == 0 || !work_queued || factory->paused != 0 || factory->start_routine == 0)
                     {
                         break;
                     }
@@ -504,7 +492,6 @@ namespace sogen
                     break;
                 }
 
-                ensure_worker_factory_threads(c, *factory);
                 return STATUS_SUCCESS;
             }
 

@@ -1654,7 +1654,6 @@ namespace sogen
         handle worker_process_handle{};
         uint64_t start_routine{};
         uint64_t start_parameter{};
-        uint32_t max_thread_count{};
         uint64_t stack_reserve{};
         uint64_t stack_commit{};
         bool shutdown{};
@@ -1690,7 +1689,6 @@ namespace sogen
             buffer.write(this->worker_process_handle);
             buffer.write(this->start_routine);
             buffer.write(this->start_parameter);
-            buffer.write(this->max_thread_count);
             buffer.write(this->stack_reserve);
             buffer.write(this->stack_commit);
             buffer.write(this->shutdown);
@@ -1723,7 +1721,6 @@ namespace sogen
             buffer.read(this->worker_process_handle);
             buffer.read(this->start_routine);
             buffer.read(this->start_parameter);
-            buffer.read(this->max_thread_count);
             buffer.read(this->stack_reserve);
             buffer.read(this->stack_commit);
             buffer.read(this->shutdown);
