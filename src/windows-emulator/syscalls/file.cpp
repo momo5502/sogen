@@ -3029,9 +3029,18 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (event.bits != 0 && !event.value.is_pseudo && event.value.type != handle_types::event)
+            if (event.bits != 0 && !event.value.is_pseudo)
             {
-                return STATUS_OBJECT_TYPE_MISMATCH;
+                const auto reference = c.proc.reference_of(event);
+                if (!reference)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                if (reference.object_type() != handle_types::event)
+                {
+                    return STATUS_OBJECT_TYPE_MISMATCH;
+                }
             }
 
             if (const auto block = io_status_block.try_read(); !block || !io_status_block.try_write(*block))

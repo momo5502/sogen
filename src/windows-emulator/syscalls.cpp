@@ -1154,7 +1154,15 @@ namespace sogen
                                               const ULONG input_buffer_length, const emulator_pointer output_buffer,
                                               const ULONG output_buffer_length)
         {
-            if (event.bits != 0 && !event.value.is_pseudo && event.value.type != handle_types::event)
+            // ObReferenceObjectByHandle fails a handle with no table entry with STATUS_INVALID_HANDLE before comparing the
+            // type, so resolve first and check the type of the object it names.
+            const auto event_reference = c.proc.reference_of(event);
+            if (event.bits != 0 && !event_reference)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            if (event.bits != 0 && !event.value.is_pseudo && event_reference.object_type() != handle_types::event)
             {
                 return STATUS_OBJECT_TYPE_MISMATCH;
             }
@@ -1178,11 +1186,7 @@ namespace sogen
 
             io_device_context context{c.emu};
             context.source_handle = file_handle;
-            context.event = c.proc.reference_of(event);
-            if (event.bits != 0 && !context.event)
-            {
-                return STATUS_INVALID_HANDLE;
-            }
+            context.event = event_reference;
             context.event_low_bit = (event.bits & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;

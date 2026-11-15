@@ -282,17 +282,27 @@ namespace sogen::test
         EXPECT_EQ(STATUS_CANCELLED, this->emu->memory.read_memory<NTSTATUS>(this->storage + 0x100));
     }
 
-    TEST_F(IoCancellationTest, IoctlWithAClosedEventHandleIsInvalid)
+    TEST_F(IoCancellationTest, IoctlValidatesTheEventHandleBeforeItsType)
     {
         const syscall_context context{
             .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
 
-        const auto event_handle = this->emu->process.events.store(event{});
-        ASSERT_TRUE(this->emu->process.events.erase(event_handle));
+        const auto ioctl = [&](const handle event) {
+            return syscalls::handle_NtDeviceIoControlFile(context, this->endpoint, event, 0, 0, this->status(0x100), 0, 0, 0, 0, 0);
+        };
 
         // A nonzero event that no longer resolves is invalid, not "no event": the request must not run as if Event were NULL.
-        const auto status =
-            syscalls::handle_NtDeviceIoControlFile(context, this->endpoint, event_handle, 0, 0, this->status(0x100), 0, 0, 0, 0, 0);
-        EXPECT_EQ(STATUS_INVALID_HANDLE, status);
+        const auto event_handle = this->emu->process.events.store(event{});
+        ASSERT_TRUE(this->emu->process.events.erase(event_handle));
+        EXPECT_EQ(STATUS_INVALID_HANDLE, ioctl(event_handle));
+
+        // A closed handle of another type has no table entry either, so it is invalid before its type is compared.
+        const auto closed_mutant = this->emu->process.mutants.store(mutant{});
+        ASSERT_TRUE(this->emu->process.mutants.erase(closed_mutant));
+        EXPECT_EQ(STATUS_INVALID_HANDLE, ioctl(closed_mutant));
+
+        // A live handle of another type is a type mismatch.
+        const auto live_mutant = this->emu->process.mutants.store(mutant{});
+        EXPECT_EQ(STATUS_OBJECT_TYPE_MISMATCH, ioctl(live_mutant));
     }
 }
