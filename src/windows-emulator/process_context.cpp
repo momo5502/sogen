@@ -855,26 +855,6 @@ namespace sogen
     }
 
     // Without a port every job with one is posted to, so the scheduler reaches a thread already parked on it.
-    uint64_t retain_change_watch_event(process_context& process, const handle event_handle)
-    {
-        if (event_handle.bits == 0)
-        {
-            return 0;
-        }
-
-        const auto retained = process.events.duplicate(event_handle);
-        return retained ? retained->bits : 0;
-    }
-
-    void release_change_watch_event(process_context& process, directory_change_watch& watch)
-    {
-        if (watch.event != 0)
-        {
-            (void)process.events.erase(watch.event);
-            watch.event = 0;
-        }
-    }
-
     void process_context::post_exited_job_processes(windows_emulator& win_emu, const std::optional<handle> io_completion_handle)
     {
         constexpr uint32_t job_object_msg_active_process_zero = 4;

@@ -1782,8 +1782,6 @@ namespace sogen
                         event->set_signaled(true);
                     }
                     io_completion_wait::release_reference(c.proc, event_reference);
-
-                    release_change_watch_event(c.proc, watch);
                     return true;
                 });
 

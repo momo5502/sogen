@@ -839,7 +839,5 @@ namespace sogen
 
     // A change watch keeps a reference of its own to the event it reports through: the handle the guest armed it with
     // can be closed while other handles keep the event alive, and its value can then name another event.
-    uint64_t retain_change_watch_event(process_context& process, handle event_handle);
-    void release_change_watch_event(process_context& process, directory_change_watch& watch);
 
 } // namespace sogen

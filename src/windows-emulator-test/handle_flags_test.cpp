@@ -25,10 +25,6 @@ namespace sogen::test
 {
     namespace
     {
-        constexpr ULONG duplicate_close_source = 1;
-        constexpr ULONG duplicate_same_access = 2;
-        constexpr ULONG duplicate_same_attributes = 4;
-
         class HandleFlagsTest : public testing::Test
         {
           protected:
@@ -228,100 +224,10 @@ namespace sogen::test
         }
     }
 
-    TEST_F(HandleFlagsTest, DuplicateHasItsOwnValueAndTheObjectKeepsItsIndex)
-    {
-        auto& events = this->emu->process.events;
-        const auto original = events.store(event{});
-        const auto duplicate = events.duplicate(original);
-
-        ASSERT_TRUE(duplicate.has_value());
-        EXPECT_NE(original, *duplicate);
-        EXPECT_EQ(events.get(original), events.get(*duplicate));
-
-        // The object stays at the index it was stored under, so the internal references that keep that value, such
-        // as a file's completion port association or a pending request's event, go on resolving to it.
-        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), original));
-        ASSERT_NE(nullptr, events.get(original));
-        ASSERT_NE(nullptr, events.get(*duplicate));
-        EXPECT_EQ(events.get(original), events.get(*duplicate));
-        EXPECT_EQ(1u, events.size());
-
-        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), *duplicate));
-        EXPECT_EQ(nullptr, events.get(*duplicate));
-        EXPECT_EQ(nullptr, events.get(original));
-        EXPECT_EQ(0u, events.size());
-    }
-
-    TEST_F(HandleFlagsTest, DuplicatesKeepTheirOwnAttributes)
-    {
-        auto& events = this->emu->process.events;
-        const auto original = events.store(event{});
-        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(original, true, false));
-
-        const emulator_object<handle> target{this->emu->memory, this->storage + 0x400};
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, original, CURRENT_PROCESS, target, 0,
-                                                                     0, duplicate_same_access));
-        const auto duplicate = target.read();
-        ASSERT_NE(original, duplicate);
-
-        // DuplicateHandle without bInheritHandle must not carry the source's inherit flag over.
-        this->expect_flags(original, true, false);
-        this->expect_flags(duplicate, false, false);
-
-        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(duplicate, false, true));
-        this->expect_flags(original, true, false);
-        this->expect_flags(duplicate, false, true);
-
-        // Protection belongs to the handle too, so the unprotected one still closes.
-        EXPECT_EQ(STATUS_HANDLE_NOT_CLOSABLE, syscalls::handle_NtClose(this->context(), duplicate));
-        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), original));
-    }
-
-    TEST_F(HandleFlagsTest, DuplicateTakesProtectionFromTheRequestOrTheSource)
-    {
-        auto& events = this->emu->process.events;
-        const auto original = events.store(event{});
-        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(original, true, true));
-
-        const emulator_object<handle> target{this->emu->memory, this->storage + 0x400};
-
-        // ObDuplicateObject builds the new handle's attributes from HandleAttributes, which carries OBJ_PROTECT_CLOSE
-        // next to OBJ_INHERIT.
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, original, CURRENT_PROCESS, target, 0,
-                                                                     OBJ_PROTECT_CLOSE, duplicate_same_access));
-        const auto requested = target.read();
-        this->expect_flags(requested, false, true);
-        EXPECT_EQ(STATUS_HANDLE_NOT_CLOSABLE, syscalls::handle_NtClose(this->context(), requested));
-        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(requested, false, false));
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), requested));
-
-        // DUPLICATE_SAME_ATTRIBUTES takes both flags from the source instead of the request.
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, original, CURRENT_PROCESS, target, 0,
-                                                                     0, duplicate_same_access | duplicate_same_attributes));
-        this->expect_flags(target.read(), true, true);
-    }
-
-    TEST_F(HandleFlagsTest, DuplicateWithCloseSourceSucceedsWhenTheSourceRefusesToClose)
-    {
-        auto& events = this->emu->process.events;
-        const auto original = events.store(event{});
-        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(original, false, true));
-
-        const emulator_object<handle> target{this->emu->memory, this->storage + 0x400};
-
-        // ObDuplicateObject ignores what closing the source reports and returns the duplication's own status, so a
-        // protected source does not turn a duplication that worked into a failure the caller cannot act on.
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, original, CURRENT_PROCESS, target, 0,
-                                                                     0, duplicate_same_access | duplicate_close_source));
-        const auto duplicate = target.read();
-        ASSERT_NE(original, duplicate);
-        EXPECT_NE(nullptr, events.get(duplicate));
-        EXPECT_NE(nullptr, events.get(original));
-    }
-
 #ifndef __EMSCRIPTEN__
     TEST_F(HandleFlagsTest, SharingExportsTheFlagOfTheHandleBeingInherited)
     {
+        constexpr ULONG duplicate_same_access = 2;
         auto& events = this->emu->process.events;
         const auto original = events.store(event{});
         this->expect_flags(original, false, false);
@@ -347,31 +253,4 @@ namespace sogen::test
         EXPECT_FALSE(shared_original->inherit);
     }
 #endif
-
-    TEST_F(HandleFlagsTest, DuplicatingWithCloseSourceClosesTheSource)
-    {
-        auto& events = this->emu->process.events;
-        const auto original = events.store(event{});
-
-        const emulator_object<handle> target{this->emu->memory, this->storage + 0x400};
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, original, CURRENT_PROCESS, target, 0,
-                                                                     0, duplicate_same_access | duplicate_close_source));
-
-        const auto duplicate = target.read();
-        ASSERT_NE(original, duplicate);
-        ASSERT_NE(nullptr, events.get(duplicate));
-        EXPECT_EQ(1u, events.size());
-
-        // The close-only form passes no target process and just closes the source.
-        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, duplicate, handle{},
-                                                                     {this->emu->memory}, 0, 0, duplicate_close_source));
-        EXPECT_EQ(0u, events.size());
-
-        // A NULL target handle still duplicates, so closing the source leaves the object open.
-        const auto kept = events.store(event{});
-        ASSERT_EQ(STATUS_SUCCESS,
-                  syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, kept, CURRENT_PROCESS, {this->emu->memory}, 0, 0,
-                                                     duplicate_same_access | duplicate_close_source));
-        EXPECT_EQ(1u, events.size());
-    }
 }

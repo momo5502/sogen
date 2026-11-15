@@ -278,7 +278,7 @@ namespace sogen::test
         ASSERT_TRUE(this->emu->process.events.erase(event_handle));
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelIoFile(context, directory, this->status(0xF00)));
 
-        EXPECT_TRUE(this->emu->process.events.get(*duplicate)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(*duplicate)->is_signaled());
         EXPECT_EQ(STATUS_CANCELLED, this->emu->memory.read_memory<NTSTATUS>(this->storage + 0x100));
     }
 

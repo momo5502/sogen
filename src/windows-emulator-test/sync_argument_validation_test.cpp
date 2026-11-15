@@ -348,7 +348,7 @@ namespace sogen::test
 
         EXPECT_TRUE(waiter->await_objects.empty());
         EXPECT_EQ(STATUS_WAIT_0, waiter->pending_status);
-        EXPECT_FALSE(this->emu->process.events.get(original)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(original)->is_signaled());
     }
 
     TEST_F(SyncArgumentValidationTest, CompareObjectsMatchesADuplicateByObject)
@@ -382,7 +382,7 @@ namespace sogen::test
         waiter->await_objects = {this->emu->process.reference_of(original)};
         waiter->await_any = false;
         ASSERT_TRUE(this->emu->process.events.erase(original));
-        this->emu->process.events.get(*duplicate)->signaled = true;
+        this->emu->process.events.get(*duplicate)->set_signaled(true);
 
         EXPECT_TRUE(waiter->is_thread_ready(*this->emu));
         EXPECT_EQ(STATUS_SUCCESS, waiter->pending_status);

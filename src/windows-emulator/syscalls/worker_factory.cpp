@@ -5,7 +5,6 @@
 #include "../worker_factory_support.hpp"
 
 #include <limits>
-#include <utils/finally.hpp>
 
 namespace sogen
 {
@@ -22,14 +21,6 @@ namespace sogen
 
             auto* completion = process.get_object_as<io_completion>(factory->io_completion);
             if (!completion)
-            {
-                return false;
-            }
-
-            // The queued packet keeps a reference of its own: the handle the guest released through can be closed while
-            // the packet waits on the port, and its value can then name another factory.
-            const auto retained_factory = process.worker_factories.duplicate(worker_factory_handle);
-            if (!retained_factory)
             {
                 return false;
             }
