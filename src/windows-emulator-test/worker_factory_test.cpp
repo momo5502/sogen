@@ -62,7 +62,7 @@ namespace sogen::test
             {
                 this->port = this->emu->process.io_completions.store(io_completion{});
                 auto& factory = this->pool();
-                factory.io_completion_handle = this->port;
+                factory.io_completion = this->emu->process.io_completions.reference_of(this->port).value_or(object_reference{});
                 factory.start_routine = 0x10000;
                 factory.thread_maximum = thread_maximum;
             }
@@ -160,8 +160,9 @@ namespace sogen::test
 
         auto* worker = this->emu->process.threads.get(this->pool().worker_threads.front());
         ASSERT_NE(nullptr, worker);
-        worker->await_io_completion =
-            pending_io_completion_wait{.io_completion_handle = this->port, .type = io_completion_wait_type::remove_multiple};
+        worker->await_io_completion = pending_io_completion_wait{
+            .io_completion = this->emu->process.io_completions.reference_of(this->port).value_or(object_reference{}),
+            .type = io_completion_wait_type::remove_multiple};
 
         ASSERT_EQ(STATUS_SUCCESS, this->release());
         EXPECT_EQ(1u, this->pool().worker_threads.size());
@@ -210,12 +211,40 @@ namespace sogen::test
         auto& factory = this->pool();
         factory.pending_release_count = 2;
         factory.release_pending = true;
-        ASSERT_TRUE(
-            this->emu->synchronize([&] { return worker_factory_support::enqueue_release_completion(*this->emu, this->factory_handle); }));
+        ASSERT_TRUE(this->emu->synchronize([&] {
+            return worker_factory_support::enqueue_release_completion(
+                *this->emu, *this->emu->process.worker_factories.reference_of(this->factory_handle));
+        }));
 
         EXPECT_FALSE(worker->await_io_completion.has_value());
         EXPECT_EQ(1u, this->emu->process.io_completions.get(this->port)->queue.size());
         EXPECT_EQ(2u, factory.worker_threads.size());
+    }
+
+    TEST_F(WorkerFactoryTest, ReleasePacketStillNamesItsFactoryAfterTheReleasedHandleCloses)
+    {
+        this->make_pool();
+
+        const auto duplicate = this->emu->process.worker_factories.duplicate(this->factory_handle);
+        ASSERT_TRUE(duplicate);
+
+        auto& factory = this->pool();
+        factory.pending_release_count = 2;
+        factory.release_pending = true;
+        ASSERT_TRUE(this->emu->synchronize([&] {
+            return worker_factory_support::enqueue_release_completion(
+                *this->emu, *this->emu->process.worker_factories.reference_of(this->factory_handle));
+        }));
+
+        // The guest closes the handle it released through; the duplicate keeps the factory alive. The queued packet must
+        // still resolve the factory by identity to take the release and queue the next one.
+        ASSERT_TRUE(this->emu->process.worker_factories.erase(this->factory_handle));
+        ASSERT_NE(nullptr, this->emu->process.worker_factories.get(*duplicate));
+
+        this->take_release();
+
+        EXPECT_EQ(1u, factory.pending_release_count);
+        EXPECT_EQ(1u, this->emu->process.io_completions.get(this->port)->queue.size());
     }
 
     TEST_F(WorkerFactoryTest, BindingStartsNoWorkerWhileNothingIsQueued)

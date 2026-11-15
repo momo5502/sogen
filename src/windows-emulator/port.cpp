@@ -391,7 +391,7 @@ namespace sogen
 
     void port_container::post_completion(windows_emulator& win_emu) const
     {
-        auto* completion = win_emu.process.io_completions.get(this->completion_port_);
+        auto* completion = win_emu.process.get_object_as<io_completion>(this->completion_port_);
         if (!completion)
         {
             return;
@@ -405,7 +405,7 @@ namespace sogen
     NTSTATUS port_container::associate_completion_port(windows_emulator& win_emu, const emulator_thread* active_thread,
                                                        const uint64_t completion_key, const handle completion_port)
     {
-        if (this->completion_port_.bits != 0)
+        if (this->completion_port_)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -416,8 +416,8 @@ namespace sogen
             return STATUS_INVALID_HANDLE;
         }
 
-        handle retained_port{};
-        if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, resolved_port, retained_port))
+        object_reference retained_port{};
+        if (!io_completion_wait::retain_reference(win_emu.process, active_thread, resolved_port, retained_port))
         {
             return STATUS_INVALID_HANDLE;
         }
@@ -435,7 +435,7 @@ namespace sogen
 
     void port_container::release_completion_port(process_context& process)
     {
-        io_completion_wait::release_handle_reference(process, this->completion_port_);
+        io_completion_wait::release_reference(process, this->completion_port_);
         this->completion_key_ = 0;
     }
 
@@ -489,7 +489,7 @@ namespace sogen
 
         if (!c.receive_message)
         {
-            if (this->completion_port_.bits == 0 || !NT_SUCCESS(result.status))
+            if (!this->completion_port_ || !NT_SUCCESS(result.status))
             {
                 return {.status = result.status};
             }

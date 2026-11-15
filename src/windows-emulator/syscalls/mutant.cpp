@@ -46,6 +46,11 @@ namespace sogen
                                      const ACCESS_MASK /*desired_access*/,
                                      const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             std::u16string name{};
             if (object_attributes)
             {
@@ -66,8 +71,7 @@ namespace sogen
             {
                 if (entry.second.name == name)
                 {
-                    ++entry.second.ref_count;
-                    mutant_handle.write(c.proc.mutants.make_handle(entry.first));
+                    mutant_handle.write(c.proc.mutants.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }
@@ -80,6 +84,11 @@ namespace sogen
                                        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                        const BOOLEAN initial_owner)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             std::u16string name{};
             if (object_attributes)
             {
@@ -97,8 +106,7 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        mutant_handle.write(c.proc.mutants.make_handle(entry.first));
+                        mutant_handle.write(c.proc.mutants.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }

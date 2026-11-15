@@ -507,7 +507,7 @@ namespace sogen::test
         auto& worker = this->new_thread();
         auto& releaser = this->new_thread();
         worker_factory factory{};
-        factory.io_completion_handle = this->port;
+        factory.io_completion = this->emu->process.io_completions.reference_of(this->port).value_or(object_reference{});
         const auto factory_handle = this->emu->process.worker_factories.store(std::move(factory));
 
         const emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> packets{this->emu->memory, this->storage};
@@ -749,8 +749,10 @@ namespace sogen::test
 
         // The event's own reference and the association's go, so it is destroyed while the packet is armed.
         auto& events = this->emu->process.events;
+        auto* wait_packet = this->emu->process.wait_completion_packets.get(this->packet);
+        ASSERT_NE(nullptr, wait_packet);
         ASSERT_TRUE(events.erase(this->first));
-        ASSERT_TRUE(events.erase(this->first));
+        io_completion_wait::release_reference(this->emu->process, wait_packet->target_object_reference);
         ASSERT_EQ(nullptr, events.get(this->first));
 
         EXPECT_EQ(0u, this->queued());

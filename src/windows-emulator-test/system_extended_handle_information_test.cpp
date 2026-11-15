@@ -178,6 +178,24 @@ namespace sogen::test
         EXPECT_EQ(event_entry->Object, this->find_entry(event_handle)->Object);
     }
 
+    TEST_F(SystemExtendedHandleInformationTest, DuplicateHandlesReportTheSameObjectAddress)
+    {
+        const auto original = this->emu.process.events.store(event{});
+        const auto duplicate = this->emu.process.events.duplicate(original);
+        ASSERT_TRUE(duplicate);
+        ASSERT_NE(original, *duplicate);
+
+        this->reset();
+        ASSERT_EQ(STATUS_SUCCESS, this->query(this->buffer, 0x10000, this->return_length));
+
+        const auto original_entry = this->find_entry(original);
+        const auto duplicate_entry = this->find_entry(*duplicate);
+        ASSERT_TRUE(original_entry.has_value());
+        ASSERT_TRUE(duplicate_entry.has_value());
+        EXPECT_EQ(original_entry->Object, duplicate_entry->Object);
+        EXPECT_NE(original_entry->HandleValue, duplicate_entry->HandleValue);
+    }
+
     // Window stations, the fixed interactive one NtUserGetProcessWindowStation returns as handle 1 included, and debug
     // objects are executive objects too. Their type indices and full access as Windows 10 19045 reports them for
     // GetProcessWindowStation's handle and NtCreateDebugObject(DEBUG_ALL_ACCESS).

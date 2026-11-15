@@ -67,8 +67,14 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (value.is_system)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
             auto* handle_store = c.proc.get_handle_store(h);
-            if (handle_store && handle_store->attributes_of(h).protect_from_close)
+            const auto* object = handle_store ? handle_store->get_object(h) : nullptr;
+            if (object && handle_store->attributes_of(h).protect_from_close)
             {
                 return STATUS_HANDLE_NOT_CLOSABLE;
             }
@@ -105,7 +111,7 @@ namespace sogen
                 auto* factory = c.proc.worker_factories.get(h);
                 if (factory && factory->ref_count == 1)
                 {
-                    io_completion_wait::release_handle_reference(c.proc, factory->io_completion_handle);
+                    io_completion_wait::release_reference(c.proc, factory->io_completion);
                 }
             }
 
@@ -131,14 +137,18 @@ namespace sogen
                 {
                     port->get_internal_port()->release_sections(c.win_emu);
                     port->release_completion_port(c.proc);
-                    const auto port_key = static_cast<uint32_t>(h.bits & 0xFFFFFFFF);
-                    if (const auto views = c.proc.pending_alpc_reply_views.find(port_key); views != c.proc.pending_alpc_reply_views.end())
+                    const auto port_reference = c.proc.ports.reference_of(h);
+                    if (port_reference)
                     {
-                        for (const auto& view : views->second)
+                        if (const auto views = c.proc.pending_alpc_reply_views.find(port_reference->index);
+                            views != c.proc.pending_alpc_reply_views.end())
                         {
-                            c.win_emu.memory.release_memory(view[0], static_cast<size_t>(view[1]));
+                            for (const auto& view : views->second)
+                            {
+                                c.win_emu.memory.release_memory(view[0], static_cast<size_t>(view[1]));
+                            }
+                            c.proc.pending_alpc_reply_views.erase(views);
                         }
-                        c.proc.pending_alpc_reply_views.erase(views);
                     }
                 }
             }
@@ -160,13 +170,14 @@ namespace sogen
 
                     for (auto& watch : file->change_watches)
                     {
-                        release_change_watch_event(c.proc, watch);
+                        io_completion_wait::release_reference(c.proc, watch.event);
                     }
 
+                    const auto owner = c.proc.reference_of(h);
                     for (auto it = c.proc.file_locks.begin(); it != c.proc.file_locks.end();)
                     {
                         auto& locks = it->second.locks;
-                        std::erase_if(locks, [&](const file_lock_range& lock) { return lock.owner == h; });
+                        std::erase_if(locks, [&](const file_lock_range& lock) { return lock.owner == owner; });
 
                         if (locks.empty())
                         {
@@ -376,13 +387,18 @@ namespace sogen
             }
 
             auto* store = c.proc.get_handle_store(resolved_source_handle);
+            const auto attributes =
+                duplicate_attributes(store ? store->attributes_of(resolved_source_handle) : sogen::handle_attributes{}, handle_attributes, options);
+
             if (const auto* source = c.proc.devices.get(resolved_source_handle))
             {
                 if (source->get_internal_device<named_pipe>())
                 {
                     auto duplicate = source->duplicate((options & duplicate_same_access) ? source->granted_access : desired_access,
-                                                       (handle_attributes & OBJ_INHERIT) != 0);
-                    target_handle.write_if_valid(c.proc.devices.store(std::move(duplicate)));
+                                                       attributes.inherit);
+                    const auto new_handle = c.proc.devices.store(std::move(duplicate));
+                    (void)c.proc.devices.set_attributes(new_handle, attributes);
+                    target_handle.write_if_valid(new_handle);
                     return STATUS_SUCCESS;
                 }
             }
@@ -402,8 +418,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            store->set_attributes(*new_handle,
-                                  duplicate_attributes(store->attributes_of(resolved_source_handle), handle_attributes, options));
+            (void)store->set_attributes(*new_handle, attributes);
             target_handle.write_if_valid(*new_handle);
             return STATUS_SUCCESS;
         }
@@ -450,7 +465,11 @@ namespace sogen
         {
             if (c.proc.is_current_process_handle(source_process_handle))
             {
-                std::ignore = handle_NtClose(c, c.proc.resolve_object_pseudo_handle(source_handle, c.vcpu.active_thread));
+                const auto resolved = c.proc.resolve_object_pseudo_handle(source_handle, c.vcpu.active_thread);
+                if (!resolved.value.is_system)
+                {
+                    std::ignore = handle_NtClose(c, resolved);
+                }
                 return;
             }
 
@@ -916,9 +935,10 @@ namespace sogen
                 return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(
                     c.emu, object_information, object_information_length, return_length, [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
                         auto* store = c.proc.get_handle_store(effective_handle);
+                        const auto* object = store ? store->get_object(effective_handle) : nullptr;
                         const auto attributes = store ? store->attributes_of(effective_handle) : handle_attributes{};
-                        info.Inherit = attributes.inherit;
-                        info.ProtectFromClose = attributes.protect_from_close;
+                        info.Inherit = object && attributes.inherit;
+                        info.ProtectFromClose = object && attributes.protect_from_close;
                     });
             }
 
@@ -930,7 +950,8 @@ namespace sogen
         template <typename Store>
         void collect_wait32_candidate(Store& store, const uint32_t id, std::optional<handle>& resolved, uint32_t& candidate_count)
         {
-            if (!store.get_by_index(id))
+            const auto candidate = store.handle_for_id(id);
+            if (candidate.bits == 0)
             {
                 return;
             }
@@ -938,7 +959,7 @@ namespace sogen
             ++candidate_count;
             if (!resolved)
             {
-                resolved = store.make_handle(id);
+                resolved = candidate;
             }
         }
 
@@ -1036,6 +1057,18 @@ namespace sogen
             return std::ranges::adjacent_find(objects) != objects.end();
         }
 
+        // The wait keeps the objects by identity, so closing or reusing a handle value it was entered with cannot detach it.
+        std::vector<object_reference> reference_wait_objects(const syscall_context& c, const std::vector<handle>& handles)
+        {
+            std::vector<object_reference> references{};
+            references.reserve(handles.size());
+            for (const auto h : handles)
+            {
+                references.push_back(c.proc.reference_of(h));
+            }
+            return references;
+        }
+
         NTSTATUS validate_wait_handle(const syscall_context& c, const handle h)
         {
             const auto validate_handle_in_store = [&](auto& store) -> NTSTATUS {
@@ -1129,9 +1162,16 @@ namespace sogen
 
         NTSTATUS handle_NtCompareObjects(const syscall_context& c, const handle first, const handle second)
         {
-            const auto first_resolved = c.proc.resolve_object_pseudo_handle(first, c.vcpu.active_thread);
-            const auto second_resolved = c.proc.resolve_object_pseudo_handle(second, c.vcpu.active_thread);
-            return (first_resolved == second_resolved) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
+            // ObReferenceObjectByHandle on both and compare the objects: a duplicate or a second open of one object is the
+            // same object even though its handle value differs.
+            const auto first_reference = c.proc.reference_of(c.proc.resolve_object_pseudo_handle(first, c.vcpu.active_thread));
+            const auto second_reference = c.proc.reference_of(c.proc.resolve_object_pseudo_handle(second, c.vcpu.active_thread));
+            if (!first_reference || !second_reference)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            return (first_reference == second_reference) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
         }
 
         DWORD handle_NtUserMsgWaitForMultipleObjectsEx(const syscall_context& c, const ULONG count, const emulator_object<handle> handles,
@@ -1179,7 +1219,7 @@ namespace sogen
                 wait_handles.push_back(h);
             }
 
-            t.await_objects = std::move(wait_handles);
+            t.await_objects = reference_wait_objects(c, wait_handles);
             t.await_any = !wait_all;
             if (wake_mask != 0)
             {
@@ -1263,7 +1303,7 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER_MIX;
             }
 
-            t.await_objects = std::move(wait_handles);
+            t.await_objects = reference_wait_objects(c, wait_handles);
             t.await_any = wait_type == WaitAny;
 
             if (timeout.value() && !t.await_time.has_value())
@@ -1329,7 +1369,7 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER_MIX;
             }
 
-            t.await_objects = std::move(wait_handles);
+            t.await_objects = reference_wait_objects(c, wait_handles);
             t.await_any = wait_type == WaitAny;
 
             if (timeout.value() && !t.await_time.has_value())
@@ -1353,7 +1393,7 @@ namespace sogen
             }
 
             auto& t = c.thread();
-            t.await_objects = {resolved_handle};
+            t.await_objects = {c.proc.reference_of(resolved_handle)};
             t.await_any = false;
 
             if (timeout.value() && !t.await_time.has_value())

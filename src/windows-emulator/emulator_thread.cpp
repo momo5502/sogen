@@ -232,15 +232,14 @@ namespace sogen
             }
         }
 
-        wait_state observe_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
+        wait_state observe_object_signal(windows_emulator& win_emu, const object_reference& ref, const uint32_t current_thread_id)
         {
             auto& c = win_emu.process;
-            const auto type = h.value.type;
 
-            switch (type)
+            switch (ref.object_type())
             {
             case handle_types::device: {
-                const auto* container = c.devices.get(h);
+                const auto* container = c.devices.get_by_index(ref.index);
                 const auto* pipe = container ? container->get_internal_device<named_pipe>() : nullptr;
                 return pipe && pipe->signaled ? wait_state::signaled : wait_state::not_signaled;
             }
@@ -248,12 +247,12 @@ namespace sogen
                 break;
 
             case handle_types::process:
-                if (c.is_current_process_handle(h) && c.exit_status.has_value())
+                if (ref == c.reference_of(GUEST_PROCESS_HANDLE) && c.exit_status.has_value())
                 {
                     return wait_state::signaled;
                 }
 
-                if (const auto* process = c.processes.get(h); process && process->process && win_emu.processes())
+                if (const auto* process = c.processes.get_by_index(ref.index); process && process->process && win_emu.processes())
                 {
                     const auto status = win_emu.processes()->exit_status(process->process);
                     if (status && status.status.has_value())
@@ -265,7 +264,7 @@ namespace sogen
                 break;
 
             case handle_types::managed_thread:
-                if (const auto* thread = c.managed_threads.get(h); thread && win_emu.processes())
+                if (const auto* thread = c.managed_threads.get_by_index(ref.index); thread && win_emu.processes())
                 {
                     const auto status = win_emu.processes()->exit_status(thread->process);
                     if (status && status.status.has_value())
@@ -277,12 +276,12 @@ namespace sogen
                 break;
 
             case handle_types::event: {
-                if (h.value.is_pseudo)
+                if (ref.is_pseudo())
                 {
                     return wait_state::signaled;
                 }
 
-                const auto* e = c.events.get(h);
+                const auto* e = c.events.get_by_index(ref.index);
                 if (e && e->is_signaled())
                 {
                     return wait_state::signaled;
@@ -292,17 +291,17 @@ namespace sogen
             }
 
             case handle_types::file: {
-                if (h == STDIN_HANDLE)
+                if (ref.is_pseudo())
                 {
-                    return win_emu.console().input_available() ? wait_state::signaled : wait_state::not_signaled;
-                }
+                    if (ref.pseudo == STDIN_HANDLE)
+                    {
+                        return win_emu.console().input_available() ? wait_state::signaled : wait_state::not_signaled;
+                    }
 
-                if (h.value.is_pseudo)
-                {
                     return wait_state::signaled;
                 }
 
-                if (const auto* f = c.files.get(h))
+                if (const auto* f = c.files.get_by_index(ref.index))
                 {
                     return f->change_watches.empty() ? wait_state::signaled : wait_state::not_signaled;
                 }
@@ -311,7 +310,7 @@ namespace sogen
             }
 
             case handle_types::mutant: {
-                const auto* e = c.mutants.get(h);
+                const auto* e = c.mutants.get_by_index(ref.index);
                 if (e && e->is_signaled(mutant::make_owner(c.process_id, current_thread_id)))
                 {
                     return e->is_abandoned() ? wait_state::abandoned : wait_state::signaled;
@@ -321,12 +320,12 @@ namespace sogen
             }
 
             case handle_types::timer: {
-                auto* entry = c.timers.get(h);
+                auto* entry = c.timers.get_by_index(ref.index);
                 return entry && entry->is_signaled(win_emu.clock()) ? wait_state::signaled : wait_state::not_signaled;
             }
 
             case handle_types::semaphore: {
-                const auto* s = c.semaphores.get(h);
+                const auto* s = c.semaphores.get_by_index(ref.index);
                 if (s && s->current_count > 0)
                 {
                     return wait_state::signaled;
@@ -336,7 +335,7 @@ namespace sogen
             }
 
             case handle_types::port: {
-                const auto* p = c.ports.get(h);
+                const auto* p = c.ports.get_by_index(ref.index);
                 if (p && p->has_pending_reply())
                 {
                     return wait_state::signaled;
@@ -346,8 +345,8 @@ namespace sogen
             }
 
             case handle_types::io_completion: {
-                io_completion_wait::materialize_signaled_wait_packets(win_emu, h);
-                const auto* completion = c.io_completions.get(h);
+                io_completion_wait::materialize_signaled_wait_packets(win_emu, ref);
+                const auto* completion = c.io_completions.get_by_index(ref.index);
                 if (completion && !completion->queue.empty())
                 {
                     return wait_state::signaled;
@@ -357,7 +356,7 @@ namespace sogen
             }
 
             case handle_types::thread: {
-                const auto* t = c.threads.get(h);
+                const auto* t = c.threads.get_by_index(ref.index);
                 // A reaped thread is gone from the store, but its handle stays signaled (it terminated),
                 // so a missing thread counts the same as a terminated one.
                 if (!t || t->is_terminated())
@@ -374,39 +373,42 @@ namespace sogen
 
         // Puts back what consume_object_signal took. A wait-all that has already taken some objects and then finds a
         // later one gone, because another process took it, has to leave all of them as it found them and keep waiting.
-        void release_consumed_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id, const wait_state taken_as)
+        void release_consumed_signal(windows_emulator& win_emu, const object_reference& ref, const uint32_t current_thread_id,
+                                     const wait_state taken_as)
         {
             auto& c = win_emu.process;
-            switch (h.value.type)
+            if (ref.is_pseudo())
+            {
+                return;
+            }
+
+            switch (ref.object_type())
             {
             case handle_types::event:
                 // Only a synchronization event is reset by taking it; consuming a notification event changes
                 // nothing, so re-signaling one would undo another process's reset.
-                if (!h.value.is_pseudo)
+                if (auto* event = c.events.get_by_index(ref.index); event && event->type == SynchronizationEvent)
                 {
-                    if (auto* event = c.events.get(h); event && event->type == SynchronizationEvent)
-                    {
-                        event->set_signaled(true);
-                    }
+                    event->set_signaled(true);
                 }
                 break;
 
             case handle_types::mutant:
-                if (auto* mutant = c.mutants.get(h))
+                if (auto* mutant = c.mutants.get_by_index(ref.index))
                 {
                     mutant->unlock_and_restore(mutant::make_owner(c.process_id, current_thread_id), taken_as == wait_state::abandoned);
                 }
                 break;
 
             case handle_types::semaphore:
-                if (auto* semaphore = c.semaphores.get(h))
+                if (auto* semaphore = c.semaphores.get_by_index(ref.index))
                 {
                     std::ignore = semaphore->release(1);
                 }
                 break;
 
             case handle_types::timer:
-                if (auto* timer = c.timers.get(h))
+                if (auto* timer = c.timers.get_by_index(ref.index))
                 {
                     timer->restore_signal();
                 }
@@ -418,23 +420,24 @@ namespace sogen
             }
         }
 
-        std::optional<wait_state> consume_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
+        std::optional<wait_state> consume_object_signal(windows_emulator& win_emu, const object_reference& ref,
+                                                        const uint32_t current_thread_id)
         {
             auto& c = win_emu.process;
-            switch (h.value.type)
+            switch (ref.object_type())
             {
             case handle_types::device: {
-                const auto* container = c.devices.get(h);
+                const auto* container = c.devices.get_by_index(ref.index);
                 const auto* pipe = container ? container->get_internal_device<named_pipe>() : nullptr;
                 return pipe && pipe->signaled ? std::optional{wait_state::signaled} : std::nullopt;
             }
             case handle_types::process: {
-                if (c.is_current_process_handle(h))
+                if (ref == c.reference_of(GUEST_PROCESS_HANDLE))
                 {
                     return c.exit_status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
                 }
 
-                const auto* process = c.processes.get(h);
+                const auto* process = c.processes.get_by_index(ref.index);
                 if (!process || !process->process || !win_emu.processes())
                 {
                     return std::nullopt;
@@ -445,7 +448,7 @@ namespace sogen
             }
 
             case handle_types::managed_thread: {
-                const auto* thread = c.managed_threads.get(h);
+                const auto* thread = c.managed_threads.get_by_index(ref.index);
                 if (!thread || !win_emu.processes())
                 {
                     return std::nullopt;
@@ -456,12 +459,12 @@ namespace sogen
             }
 
             case handle_types::event: {
-                if (h.value.is_pseudo)
+                if (ref.is_pseudo())
                 {
                     return wait_state::signaled;
                 }
 
-                auto* event = c.events.get(h);
+                auto* event = c.events.get_by_index(ref.index);
                 if (!event || !event->try_acquire())
                 {
                     return std::nullopt;
@@ -471,12 +474,12 @@ namespace sogen
             }
 
             case handle_types::file: {
-                if (h.value.is_pseudo)
+                if (ref.is_pseudo())
                 {
                     return wait_state::signaled;
                 }
 
-                const auto* f = c.files.get(h);
+                const auto* f = c.files.get_by_index(ref.index);
                 if (!f || !f->change_watches.empty())
                 {
                     return std::nullopt;
@@ -486,7 +489,7 @@ namespace sogen
             }
 
             case handle_types::mutant: {
-                auto* mutant = c.mutants.get(h);
+                auto* mutant = c.mutants.get_by_index(ref.index);
                 if (!mutant)
                 {
                     return std::nullopt;
@@ -502,7 +505,7 @@ namespace sogen
             }
 
             case handle_types::timer: {
-                auto* entry = c.timers.get(h);
+                auto* entry = c.timers.get_by_index(ref.index);
                 if (!entry || !entry->is_signaled(win_emu.clock()))
                 {
                     return std::nullopt;
@@ -512,7 +515,7 @@ namespace sogen
             }
 
             case handle_types::semaphore: {
-                auto* semaphore = c.semaphores.get(h);
+                auto* semaphore = c.semaphores.get_by_index(ref.index);
                 if (!semaphore || !semaphore->try_lock())
                 {
                     return std::nullopt;
@@ -522,7 +525,7 @@ namespace sogen
             }
 
             case handle_types::port: {
-                auto* port = c.ports.get(h);
+                auto* port = c.ports.get_by_index(ref.index);
                 if (!port || !port->has_pending_reply())
                 {
                     return std::nullopt;
@@ -532,8 +535,8 @@ namespace sogen
             }
 
             case handle_types::io_completion: {
-                io_completion_wait::materialize_signaled_wait_packets(win_emu, h);
-                const auto* completion = c.io_completions.get(h);
+                io_completion_wait::materialize_signaled_wait_packets(win_emu, ref);
+                const auto* completion = c.io_completions.get_by_index(ref.index);
                 if (!completion || completion->queue.empty())
                 {
                     return std::nullopt;
@@ -545,7 +548,7 @@ namespace sogen
             }
 
             case handle_types::thread: {
-                const auto* thread = c.threads.get(h);
+                const auto* thread = c.threads.get_by_index(ref.index);
                 // A missing (reaped) thread counts as terminated; its signal is sticky, so consuming it
                 // is a no-op.
                 if (thread && !thread->is_terminated())
@@ -557,7 +560,7 @@ namespace sogen
             }
 
             default:
-                throw std::runtime_error("Bad object: " + std::to_string(h.value.type));
+                throw std::runtime_error("Bad object: " + std::to_string(ref.object_type()));
             }
         }
 
@@ -1592,7 +1595,7 @@ namespace sogen
             };
 
             const auto& wait = *this->await_io_completion;
-            auto* completion = process.io_completions.get(wait.io_completion_handle);
+            auto* completion = process.get_object_as<io_completion>(wait.io_completion);
             if (!completion)
             {
                 this->mark_as_ready(STATUS_INVALID_HANDLE);
@@ -1625,7 +1628,7 @@ namespace sogen
             if (wait.type == io_completion_wait_type::remove_single)
             {
                 io_completion_message message{};
-                if (!io_completion_wait::dequeue_io_completion_message(win_emu, wait.io_completion_handle, message))
+                if (!io_completion_wait::dequeue_io_completion_message(win_emu, wait.io_completion, message))
                 {
                     return false;
                 }
@@ -1637,8 +1640,7 @@ namespace sogen
 
             if (wait.type == io_completion_wait_type::remove_multiple)
             {
-                const auto messages =
-                    io_completion_wait::dequeue_io_completion_entries(win_emu, wait.io_completion_handle, wait.max_entries);
+                const auto messages = io_completion_wait::dequeue_io_completion_entries(win_emu, wait.io_completion, wait.max_entries);
                 if (messages.empty())
                 {
                     return false;

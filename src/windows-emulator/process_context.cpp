@@ -1074,10 +1074,11 @@ namespace sogen
                     continue;
                 }
 
-                const auto duplicate = objects.duplicate_at(objects.make_handle(index), at);
-                if (duplicate)
+                const handle_attributes attributes{.inherit = shared.inherit, .protect_from_close = shared.protect_from_close};
+                const auto duplicate = at ? objects.open_by_index_at(index, *at, attributes) : objects.open_by_index(index, attributes);
+                if (!duplicate.bits)
                 {
-                    objects.set_attributes(*duplicate, {.inherit = shared.inherit, .protect_from_close = shared.protect_from_close});
+                    return std::nullopt;
                 }
 
                 return duplicate;
@@ -1263,9 +1264,10 @@ namespace sogen
         buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->accumulated_thread_cycles);
+        buffer.write(this->initial_thread_handle);
         buffer.write(this->threads);
 
-        buffer.write(this->threads.find_handle(active_thread).bits);
+        buffer.write(active_thread ? this->threads.index_of(*active_thread).value_or(0) : 0);
     }
 
     void process_context::deserialize(utils::buffer_deserializer& buffer, emulator_thread*& active_thread)
@@ -1401,6 +1403,7 @@ namespace sogen
         buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
         buffer.read(this->accumulated_thread_cycles);
+        buffer.read(this->initial_thread_handle);
 
         for (auto& thread : this->threads | std::views::values)
         {
@@ -1416,7 +1419,7 @@ namespace sogen
             this->terminated_thread_count += thread.is_terminated() ? 1 : 0;
         }
 
-        active_thread = this->threads.get(buffer.read<uint64_t>());
+        active_thread = this->threads.get_by_index(buffer.read<uint64_t>());
 
         for (auto& entry : this->mutants | std::views::values)
         {
@@ -1581,7 +1584,12 @@ namespace sogen
 
     generic_handle_store* process_context::get_handle_store(const handle handle)
     {
-        switch (handle.value.type)
+        return this->get_handle_store(static_cast<handle_types::type>(handle.value.type));
+    }
+
+    generic_handle_store* process_context::get_handle_store(const handle_types::type type)
+    {
+        switch (type)
         {
         case handle_types::process:
             return &this->processes;
@@ -1634,15 +1642,110 @@ namespace sogen
         }
     }
 
+    object_reference process_context::reference_of(const handle h)
+    {
+        if (h.bits == 0)
+        {
+            return {};
+        }
+
+        if (h.value.is_pseudo)
+        {
+            return object_reference{.type = static_cast<handle_types::type>(h.value.type), .pseudo = h};
+        }
+
+        auto* store = this->get_handle_store(static_cast<handle_types::type>(h.value.type));
+        if (!store)
+        {
+            return {};
+        }
+
+        const auto reference = store->reference_of(h);
+        return reference.value_or(object_reference{});
+    }
+
+    std::optional<object_reference> process_context::retain_object(const handle h)
+    {
+        if (h.bits == 0)
+        {
+            return std::nullopt;
+        }
+
+        if (h.value.is_pseudo)
+        {
+            return object_reference{.type = static_cast<handle_types::type>(h.value.type), .pseudo = h};
+        }
+
+        auto* store = this->get_handle_store(static_cast<handle_types::type>(h.value.type));
+        return store ? store->retain(h) : std::nullopt;
+    }
+
+    std::optional<object_reference> process_context::retain_object(const object_reference& reference)
+    {
+        if (!reference)
+        {
+            return std::nullopt;
+        }
+
+        if (reference.is_pseudo())
+        {
+            return reference;
+        }
+
+        auto* store = this->get_handle_store(reference.type);
+        if (!store)
+        {
+            return std::nullopt;
+        }
+
+        return store->retain(reference.index);
+    }
+
+    void process_context::release_object(object_reference& reference)
+    {
+        if (reference.is_pseudo())
+        {
+            reference = {};
+            return;
+        }
+
+        if (auto* store = this->get_handle_store(reference.type))
+        {
+            store->release(reference);
+        }
+        else
+        {
+            reference = {};
+        }
+    }
+
+    ref_counted_object* process_context::get_object(const object_reference& reference)
+    {
+        if (reference.is_pseudo())
+        {
+            return nullptr;
+        }
+
+        auto* store = this->get_handle_store(reference.type);
+        return store ? store->get_object(reference) : nullptr;
+    }
+
     size_t process_context::handle_count() const
     {
-        // Threads live in their store whether or not the guest holds a handle to them.
-        return this->processes.size() + this->managed_threads.size() + this->debug_objects.size() + this->events.size() +
-               this->files.size() + this->devices.size() + this->semaphores.size() + this->io_completions.size() +
-               this->wait_completion_packets.size() + this->worker_factories.size() + this->jobs.size() +
-               this->thread_state_changes.size() + this->registry_keys.size() + this->mutants.size() + this->timers.size() +
-               this->desktops.size() + this->window_stations.size() + this->ports.size() + this->sections.size() +
-               this->private_namespaces.size() + this->deferred_window_position_batches.size();
+        auto thread_handles = this->threads.handle_count();
+        if (const auto* thread = this->threads.get(this->initial_thread_handle);
+            thread && thread->id == this->initial_thread_id && thread_handles > 0)
+        {
+            --thread_handles;
+        }
+
+        return thread_handles + this->processes.handle_count() + this->managed_threads.handle_count() + this->debug_objects.handle_count() +
+               this->events.handle_count() + this->files.handle_count() + this->devices.handle_count() + this->semaphores.handle_count() +
+               this->io_completions.handle_count() + this->wait_completion_packets.handle_count() + this->worker_factories.handle_count() +
+               this->jobs.handle_count() + this->thread_state_changes.handle_count() + this->registry_keys.handle_count() +
+               this->mutants.handle_count() + this->timers.handle_count() + this->desktops.handle_count() +
+               this->window_stations.handle_count() + this->ports.handle_count() + this->sections.handle_count() +
+               this->private_namespaces.handle_count() + this->deferred_window_position_batches.handle_count();
     }
 
     emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id)
@@ -1772,7 +1875,7 @@ namespace sogen
     bool process_context::is_current_thread_handle(const handle handle, const emulator_thread* active_thread) const
     {
         return handle == CURRENT_THREAD ||
-               (handle.value.type == handle_types::thread && active_thread && this->threads.find_handle(active_thread) == handle);
+               (handle.value.type == handle_types::thread && active_thread && this->threads.get(handle) == active_thread);
     }
 
     // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
@@ -1781,7 +1884,7 @@ namespace sogen
         return handle == CURRENT_PROCESS || handle == CURRENT_THREAD;
     }
 
-    handle process_context::resolve_object_pseudo_handle(const handle handle, const emulator_thread* active_thread) const
+    handle process_context::resolve_object_pseudo_handle(const handle handle, const emulator_thread* active_thread)
     {
         if (handle == CURRENT_PROCESS)
         {
@@ -1790,7 +1893,7 @@ namespace sogen
 
         if (handle == CURRENT_THREAD)
         {
-            return this->threads.find_handle(active_thread);
+            return active_thread ? this->threads.internal_handle(*active_thread) : sogen::handle{};
         }
 
         if (handle == CONSOLE_HANDLE)
@@ -1830,6 +1933,10 @@ namespace sogen
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread, stack_commit_size};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
+        if (initial_thread)
+        {
+            this->initial_thread_handle = h;
+        }
 
         // The desktop window is created during process setup, before any thread exists, so it has no owning
         // thread. GetWindowThreadProcessId(GetDesktopWindow()) must return a real thread id (DirectSound, for

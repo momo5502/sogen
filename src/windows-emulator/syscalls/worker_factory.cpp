@@ -11,16 +11,16 @@ namespace sogen
 {
     namespace worker_factory_support
     {
-        bool enqueue_release_completion(windows_emulator& win_emu, const handle worker_factory_handle)
+        bool enqueue_release_completion(windows_emulator& win_emu, const object_reference& worker_factory)
         {
             auto& process = win_emu.process;
-            auto* factory = process.worker_factories.get(worker_factory_handle);
+            auto* factory = process.get_object_as<sogen::worker_factory>(worker_factory);
             if (!factory)
             {
                 return false;
             }
 
-            auto* completion = process.io_completions.get(factory->io_completion_handle);
+            auto* completion = process.get_object_as<io_completion>(factory->io_completion);
             if (!completion)
             {
                 return false;
@@ -37,24 +37,20 @@ namespace sogen
             io_completion_message message{};
             message.io_status_block.Status = STATUS_SUCCESS;
             message.io_status_block.Information = 0;
-            message.worker_factory_handle = *retained_factory;
+            message.worker_factory = worker_factory;
             message.worker_factory_release = true;
-            io_completion_wait::insert(win_emu, factory->io_completion_handle, *completion, message);
+            io_completion_wait::insert(win_emu, factory->io_completion, *completion, message);
             return true;
         }
 
         void on_io_completion_message_dequeued(windows_emulator& win_emu, const io_completion_message& message)
         {
-            if (!message.worker_factory_release || message.worker_factory_handle.bits == 0)
+            if (!message.worker_factory_release || !message.worker_factory)
             {
                 return;
             }
 
-            handle retained_factory = message.worker_factory_handle;
-            const auto release_reference =
-                utils::finally([&] { io_completion_wait::release_handle_reference(win_emu.process, retained_factory); });
-
-            auto* factory = win_emu.process.worker_factories.get(retained_factory);
+            auto* factory = win_emu.process.get_object_as<sogen::worker_factory>(message.worker_factory);
             if (!factory)
             {
                 return;
@@ -71,7 +67,7 @@ namespace sogen
                 return;
             }
 
-            if (!enqueue_release_completion(win_emu, retained_factory))
+            if (!enqueue_release_completion(win_emu, message.worker_factory))
             {
                 factory->release_pending = false;
             }
@@ -172,8 +168,7 @@ namespace sogen
             {
                 return std::ranges::any_of(factory.worker_threads, [&](const handle thread_handle) {
                     const auto* thread = win_emu.process.threads.get(thread_handle);
-                    return thread && thread->await_io_completion &&
-                           thread->await_io_completion->io_completion_handle == factory.io_completion_handle;
+                    return thread && thread->await_io_completion && thread->await_io_completion->io_completion == factory.io_completion;
                 });
             }
 
@@ -201,7 +196,7 @@ namespace sogen
                 }
 
                 factory.away_mode = true;
-                const auto* completion = win_emu.process.io_completions.get(factory.io_completion_handle);
+                const auto* completion = win_emu.process.get_object_as<io_completion>(factory.io_completion);
                 if (completion && !completion->queue.empty())
                 {
                     return true;
@@ -230,7 +225,7 @@ namespace sogen
                     return;
                 }
 
-                const auto* completion = win_emu.process.io_completions.get(factory.io_completion_handle);
+                const auto* completion = win_emu.process.get_object_as<io_completion>(factory.io_completion);
                 const auto work_queued = factory.pending_release_count != 0 || (completion && !completion->queue.empty());
                 if (work_queued && !has_waiting_worker(win_emu, factory))
                 {
@@ -258,6 +253,11 @@ namespace sogen
                                               const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) stack_reserve,
                                               const EMULATOR_CAST(EmulatorTraits<Emu64>::SIZE_T, SIZE_T) stack_commit)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!c.proc.io_completions.get(io_completion_handle))
             {
                 return STATUS_INVALID_HANDLE;
@@ -275,8 +275,8 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        worker_factory_handle.write(c.proc.worker_factories.make_handle(entry.first));
+                        worker_factory_handle.write(
+                            c.proc.worker_factories.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -286,14 +286,13 @@ namespace sogen
             factory.name = name;
             factory.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
-            handle retained_io_completion_handle{};
-            if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, io_completion_handle,
-                                                             retained_io_completion_handle))
+            object_reference retained_io_completion{};
+            if (!io_completion_wait::retain_reference(c.proc, c.vcpu.active_thread, io_completion_handle, retained_io_completion))
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            factory.io_completion_handle = retained_io_completion_handle;
+            factory.io_completion = retained_io_completion;
             factory.worker_process_handle = worker_process_handle;
             factory.start_routine = start_routine;
             factory.start_parameter = start_parameter;
@@ -476,7 +475,7 @@ namespace sogen
                     break;
                 case WorkerFactoryThreadMaximum: {
                     // Work waiting for a worker: a queued packet, or a release while there was no maximum.
-                    const auto* completion = c.proc.io_completions.get(factory->io_completion_handle);
+                    const auto* completion = c.proc.get_object_as<io_completion>(factory->io_completion);
                     const auto work_queued =
                         (factory->thread_maximum == 0 && factory->pending_release_count != 0) || (completion && !completion->queue.empty());
                     factory->thread_maximum = value;
@@ -577,7 +576,8 @@ namespace sogen
                 // The worker for the release packet is looked for right after it is queued.
                 leave_away_mode(*factory);
 
-                if (!worker_factory_support::enqueue_release_completion(c.win_emu, worker_factory_handle))
+                const auto factory_reference = c.proc.worker_factories.reference_of(worker_factory_handle);
+                if (!factory_reference || !worker_factory_support::enqueue_release_completion(c.win_emu, *factory_reference))
                 {
                     factory->release_pending = false;
                     --factory->pending_release_count;
@@ -619,7 +619,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            auto* completion = c.proc.io_completions.get(factory->io_completion_handle);
+            auto* completion = c.proc.get_object_as<io_completion>(factory->io_completion);
             if (!completion)
             {
                 return STATUS_INVALID_HANDLE;
@@ -628,7 +628,7 @@ namespace sogen
             // A worker back for work takes the port's next packet itself.
             leave_away_mode(*factory);
 
-            const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion_handle, count);
+            const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion, count);
             if (!messages.empty())
             {
                 // A worker taking work makes sure another one is coming for whatever is still queued, or for what comes next.
@@ -648,10 +648,8 @@ namespace sogen
 
             auto& wait = *t.await_io_completion;
             wait.type = io_completion_wait_type::remove_multiple;
-            wait.io_completion_handle = factory->io_completion_handle;
-            // The wait outlives the handle it was entered through, so it names the factory by the value its object is
-            // stored under, which the object keeps for its whole life.
-            wait.worker_factory_handle = c.proc.worker_factories.find_handle(*factory);
+            wait.io_completion = factory->io_completion;
+            wait.worker_factory = c.proc.worker_factories.reference_of(worker_factory_handle).value_or(object_reference{});
             wait.completion_entries_ptr = mini_packets.value();
             wait.entries_removed_ptr = packets_returned.value();
             wait.max_entries = count;
@@ -680,9 +678,9 @@ namespace sogen
 
     namespace worker_factory_support
     {
-        void check_for_more_work(windows_emulator& win_emu, const handle worker_factory_handle)
+        void check_for_more_work(windows_emulator& win_emu, const object_reference& worker_factory)
         {
-            if (auto* factory = win_emu.process.worker_factories.get(worker_factory_handle))
+            if (auto* factory = win_emu.process.get_object_as<sogen::worker_factory>(worker_factory))
             {
                 syscalls::check_for_more_work(win_emu, *factory);
             }
@@ -694,7 +692,7 @@ namespace sogen
             // port if a guest ever runs many pools.
             for (auto& [index, factory] : win_emu.process.worker_factories)
             {
-                if (!factory.away_notification || win_emu.process.io_completions.get(factory.io_completion_handle) != &completion)
+                if (!factory.away_notification || win_emu.process.get_object_as<io_completion>(factory.io_completion) != &completion)
                 {
                     continue;
                 }

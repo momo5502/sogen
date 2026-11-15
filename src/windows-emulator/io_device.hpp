@@ -22,7 +22,10 @@ namespace sogen
     struct io_device_context
     {
         handle source_handle{};
-        handle event{};
+        object_reference event{};
+        // The low bit of the OVERLAPPED event value tells the I/O manager not to queue a completion packet. It is a
+        // property of the value the guest passed, not of the event object, so it is kept separately.
+        bool event_low_bit{};
         emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine{};
         emulator_pointer apc_context{};
         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block;
@@ -32,7 +35,7 @@ namespace sogen
         ULONG input_buffer_length{};
         emulator_pointer output_buffer{};
         ULONG output_buffer_length{};
-        handle completion_port{};
+        object_reference completion_port{};
         uint64_t completion_key{};
         ULONG completion_notification_flags{};
         ACCESS_MASK granted_access{};
@@ -55,7 +58,7 @@ namespace sogen
         // uv__process_pipe_read_req.
         bool suppresses_completion_packet() const
         {
-            return !this->apc_context || (this->event.bits & 1) != 0;
+            return !this->apc_context || this->event_low_bit;
         }
 
         io_device_context(memory_interface& emu)
@@ -73,6 +76,7 @@ namespace sogen
         {
             buffer.write(source_handle);
             buffer.write(event);
+            buffer.write(event_low_bit);
             buffer.write(apc_routine);
             buffer.write(apc_context);
             buffer.write(io_status_block);
@@ -93,6 +97,7 @@ namespace sogen
         {
             buffer.read(source_handle);
             buffer.read(event);
+            buffer.read(event_low_bit);
             buffer.read(apc_routine);
             buffer.read(apc_context);
             buffer.read(io_status_block);
@@ -287,8 +292,20 @@ namespace sogen
 
     struct device_completion_association
     {
-        handle completion_port{};
+        object_reference completion_port{};
         uint64_t key{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->completion_port);
+            buffer.write(this->key);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->completion_port);
+            buffer.read(this->key);
+        }
     };
 
     NTSTATUS associate_completion_port(process_context& process, const emulator_thread* active_thread,

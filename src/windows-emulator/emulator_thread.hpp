@@ -186,7 +186,7 @@ namespace sogen
 
     struct pending_io_completion_wait
     {
-        handle io_completion_handle{};
+        object_reference io_completion{};
         io_completion_wait_type type{io_completion_wait_type::remove_single};
         emulator_pointer key_context_ptr{};
         emulator_pointer apc_context_ptr{};
@@ -195,14 +195,15 @@ namespace sogen
         emulator_pointer entries_removed_ptr{};
         ULONG max_entries{};
         std::optional<std::chrono::steady_clock::time_point> timeout{};
-        // The worker factory a NtWaitForWorkViaWorkerFactory wait takes work for; none for NtRemoveIoCompletion(Ex).
-        handle worker_factory_handle{};
+        // The worker factory a NtWaitForWorkViaWorkerFactory wait takes work for; none for NtRemoveIoCompletion(Ex). Keyed by
+        // object identity so the more-work check resolves it through whichever handle value the wait was entered with.
+        object_reference worker_factory{};
         bool timeout_absolute{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(static_cast<uint8_t>(this->type));
-            buffer.write(this->io_completion_handle);
+            buffer.write(this->io_completion);
             buffer.write(this->key_context_ptr);
             buffer.write(this->apc_context_ptr);
             buffer.write(this->io_status_block_ptr);
@@ -210,7 +211,7 @@ namespace sogen
             buffer.write(this->entries_removed_ptr);
             buffer.write(this->max_entries);
             buffer.write_optional(this->timeout);
-            buffer.write(this->worker_factory_handle);
+            buffer.write(this->worker_factory);
             buffer.write(this->timeout_absolute);
         }
 
@@ -218,7 +219,7 @@ namespace sogen
         {
             const auto raw_type = buffer.read<uint8_t>();
             this->type = static_cast<io_completion_wait_type>(raw_type);
-            buffer.read(this->io_completion_handle);
+            buffer.read(this->io_completion);
             buffer.read(this->key_context_ptr);
             buffer.read(this->apc_context_ptr);
             buffer.read(this->io_status_block_ptr);
@@ -226,14 +227,16 @@ namespace sogen
             buffer.read(this->entries_removed_ptr);
             buffer.read(this->max_entries);
             buffer.read_optional(this->timeout);
-            buffer.read(this->worker_factory_handle);
+            buffer.read(this->worker_factory);
             buffer.read(this->timeout_absolute);
         }
     };
 
     struct pending_debug_event_wait
     {
-        handle debug_object{};
+        // The waited debug object by identity, so closing the handle the wait was entered with (a duplicate keeps it alive)
+        // does not detach the wait.
+        object_reference debug_object{};
         emulator_pointer state_change{};
         std::optional<std::chrono::steady_clock::time_point> timeout{};
         bool timeout_absolute{};
@@ -442,7 +445,9 @@ namespace sogen
         ULONG io_priority{2};
 
         std::optional<NTSTATUS> exit_status{};
-        std::vector<handle> await_objects{};
+        // The waited objects by identity, resolved when the wait starts: closing or reusing the handle value a wait was
+        // entered with must not detach it from its object (a duplicate keeps the object alive).
+        std::vector<object_reference> await_objects{};
         bool await_any{false};
         bool waiting_for_alert{false};
         // Set while a vCPU moves this thread's registers in or out with the kernel lock released. The thread must not

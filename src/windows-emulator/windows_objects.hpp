@@ -885,11 +885,13 @@ namespace sogen
     {
         std::u16string name{};
         uint64_t mapped_object{};
-        // Desktop names are scoped to a window station, so the same name in two stations is two desktops.
-        uint64_t window_station{};
+        // Desktop names are scoped to a window station, so the same name in two stations is two desktops. Keyed by object
+        // identity: two handle values for one station (a duplicate or a second open) scope the same desktops.
+        object_reference window_station{};
         // Set on a further handle to an existing desktop, such as the one NtUserOpenInputDesktop returns. Windows gives each
-        // its own handle value and inherit flag, while the desktop and its state stay shared.
-        handle opened_desktop{};
+        // its own handle value and inherit flag, while the desktop and its state stay shared. By identity, so closing the
+        // original handle does not detach the opened desktop from it.
+        object_reference opened_desktop{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -1272,8 +1274,24 @@ namespace sogen
     struct directory_change_watch
     {
         uint32_t thread_id{};
-        uint64_t event{};
+        // Retained so the watch still signals the event after the guest closes the handle it was armed with, or signals it
+        // through a duplicate. Released when the watch completes, is cancelled, or its directory closes.
+        object_reference event{};
         uint64_t io_status_block{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->thread_id);
+            buffer.write(this->event);
+            buffer.write(this->io_status_block);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->thread_id);
+            buffer.read(this->event);
+            buffer.read(this->io_status_block);
+        }
     };
 
     struct file : ref_counted_object
@@ -1498,9 +1516,12 @@ namespace sogen
         uint64_t key_context{};
         uint64_t apc_context{};
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> io_status_block{};
-        handle wait_packet_handle{};
+        object_reference wait_packet_reference{};
 
-        handle worker_factory_handle{};
+        // The factory this release packet is for, by object identity so it still resolves after the guest closes the handle it
+        // was released through (a duplicate keeps the factory alive). Not retained: the factory owns this port, so a retained
+        // reference here would cycle port -> packet -> factory -> port and keep all three alive after the last handle closes.
+        object_reference worker_factory{};
         bool worker_factory_release{};
 
         void serialize(utils::buffer_serializer& buffer) const
@@ -1508,8 +1529,8 @@ namespace sogen
             buffer.write(this->key_context);
             buffer.write(this->apc_context);
             buffer.write(this->io_status_block);
-            buffer.write(this->wait_packet_handle);
-            buffer.write(this->worker_factory_handle);
+            buffer.write(this->wait_packet_reference);
+            buffer.write(this->worker_factory);
             buffer.write(this->worker_factory_release);
         }
 
@@ -1518,8 +1539,8 @@ namespace sogen
             buffer.read(this->key_context);
             buffer.read(this->apc_context);
             buffer.read(this->io_status_block);
-            buffer.read(this->wait_packet_handle);
-            buffer.read(this->worker_factory_handle);
+            buffer.read(this->wait_packet_reference);
+            buffer.read(this->worker_factory);
             buffer.read(this->worker_factory_release);
         }
     };
@@ -1550,22 +1571,20 @@ namespace sogen
             return true;
         }
 
-        // A queued completion carries a duplicate of the wait packet's handle, which is a value of its own, so the
-        // caller decides which handle values name the packet to remove.
-        template <typename Matcher>
-        bool remove_by_wait_packet(const Matcher& names_wait_packet)
+        std::optional<io_completion_message> remove_by_wait_packet(const object_reference& wait_packet_reference)
         {
             const auto entry = std::ranges::find_if(this->queue, [&](const io_completion_message& message) {
-                return names_wait_packet(message.wait_packet_handle); //
+                return message.wait_packet_reference == wait_packet_reference; //
             });
 
             if (entry == this->queue.end())
             {
-                return false;
+                return std::nullopt;
             }
 
+            const auto message = *entry;
             this->queue.erase(entry);
-            return true;
+            return message;
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -1588,8 +1607,8 @@ namespace sogen
     struct wait_completion_packet : ref_counted_object
     {
         std::u16string name{};
-        handle io_completion_handle{};
-        handle target_object_handle{};
+        object_reference io_completion{};
+        object_reference target_object_reference{};
         // The target's object as last looked up, valid while its store's generation is still target_generation. Not
         // serialized; a restored packet looks it up again.
         ref_counted_object* target_object{};
@@ -1604,8 +1623,8 @@ namespace sogen
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
-            buffer.write(this->io_completion_handle);
-            buffer.write(this->target_object_handle);
+            buffer.write(this->io_completion);
+            buffer.write(this->target_object_reference);
             buffer.write(this->key_context);
             buffer.write(this->apc_context);
             buffer.write(this->io_status_block);
@@ -1617,8 +1636,8 @@ namespace sogen
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->name);
-            buffer.read(this->io_completion_handle);
-            buffer.read(this->target_object_handle);
+            buffer.read(this->io_completion);
+            buffer.read(this->target_object_reference);
             buffer.read(this->key_context);
             buffer.read(this->apc_context);
             buffer.read(this->io_status_block);
@@ -1631,7 +1650,7 @@ namespace sogen
     struct worker_factory : ref_counted_object
     {
         std::u16string name{};
-        handle io_completion_handle{};
+        object_reference io_completion{};
         handle worker_process_handle{};
         uint64_t start_routine{};
         uint64_t start_parameter{};
@@ -1667,7 +1686,7 @@ namespace sogen
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
-            buffer.write(this->io_completion_handle);
+            buffer.write(this->io_completion);
             buffer.write(this->worker_process_handle);
             buffer.write(this->start_routine);
             buffer.write(this->start_parameter);
@@ -1700,7 +1719,7 @@ namespace sogen
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->name);
-            buffer.read(this->io_completion_handle);
+            buffer.read(this->io_completion);
             buffer.read(this->worker_process_handle);
             buffer.read(this->start_routine);
             buffer.read(this->start_parameter);

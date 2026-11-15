@@ -255,9 +255,9 @@ namespace sogen::test
         const auto closed_event = proc.events.store(event{});
         ASSERT_TRUE(proc.events.erase(closed_event));
 
-        for (const auto h :
-             {closed_event, proc.mutants.make_handle(99), proc.semaphores.make_handle(99), proc.timers.make_handle(99),
-              proc.sections.make_handle(99), make_pseudo_handle(0x7, handle_types::token), make_pseudo_handle(0x7, handle_types::symlink)})
+        for (const auto h : {closed_event, make_handle(99, handle_types::mutant, false), make_handle(99, handle_types::semaphore, false),
+                             make_handle(99, handle_types::timer, false), make_handle(99, handle_types::section, false),
+                             make_pseudo_handle(0x7, handle_types::token), make_pseudo_handle(0x7, handle_types::symlink)})
         {
             SCOPED_TRACE(h.bits);
             this->expect_invalid_handle(h, static_cast<ULONG>(poisoned_size));

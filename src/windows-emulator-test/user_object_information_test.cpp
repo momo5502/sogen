@@ -35,7 +35,7 @@ namespace sogen::test
                 object.name = u"Default";
                 object.inherit = true;
                 this->desktop_handle = this->emu->process.desktops.store(std::move(object));
-                this->emu->process.default_desktop = this->desktop_handle;
+                this->emu->process.default_desktop = this->emu->process.desktops.retain(this->desktop_handle).value_or(object_reference{});
             }
 
             syscall_context context()

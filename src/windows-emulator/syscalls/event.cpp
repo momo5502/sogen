@@ -73,15 +73,14 @@ namespace sogen
             // lossy NtPulseEvent semantics. The cooperative scheduler only re-evaluates readiness at context
             // switches, so wake the current waiters explicitly while the event is signaled.
 
+            // A waiter may hold a different handle value for this event (a duplicate or a second open by name), so match the
+            // object it waits on, not the value.
+            const auto event_reference = c.proc.events.reference_of(make_handle(handle)).value_or(object_reference{});
             for (auto& thread : c.proc.threads | std::views::values)
             {
-                // A duplicate is a handle value of its own, so a waiter is a thread awaiting this object through any
-                // of its values.
-                const auto awaits_this_event = std::ranges::any_of(thread.await_objects, [&](const auto awaited) {
-                    return awaited.value.type == handle_types::event && c.proc.events.get(awaited) == entry;
-                });
-
-                if (awaits_this_event)
+                const auto waits_on_event =
+                    std::ranges::any_of(thread.await_objects, [&](const auto& awaited) { return awaited == event_reference; });
+                if (waits_on_event)
                 {
                     (void)thread.is_thread_ready(c.win_emu);
                 }
@@ -169,6 +168,11 @@ namespace sogen
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                       const EVENT_TYPE event_type, const BOOLEAN initial_state)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (event_type != NotificationEvent && event_type != SynchronizationEvent)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -191,8 +195,7 @@ namespace sogen
                 {
                     if (entry.second.name == name)
                     {
-                        ++entry.second.ref_count;
-                        event_handle.write(c.proc.events.make_handle(entry.first));
+                        event_handle.write(c.proc.events.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
@@ -217,6 +220,11 @@ namespace sogen
                                     const ACCESS_MASK /*desired_access*/,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             const auto attributes = object_attributes.read();
             const auto name = read_unicode_string(c.emu, attributes.ObjectName);
             c.win_emu.callbacks.on_generic_access("Opening event", name);
@@ -255,8 +263,7 @@ namespace sogen
             {
                 if (entry.second.name == name)
                 {
-                    ++entry.second.ref_count;
-                    event_handle.write(c.proc.events.make_handle(entry.first).bits);
+                    event_handle.write(c.proc.events.open_by_index(entry.first, get_handle_attributes(object_attributes)).bits);
                     return STATUS_SUCCESS;
                 }
             }
@@ -267,7 +274,9 @@ namespace sogen
                 e.type = NotificationEvent;
                 e.set_signaled(*signaled);
                 e.name = name;
-                event_handle.write(c.proc.events.store(std::move(e)).bits);
+                const auto handle = c.proc.events.store(std::move(e));
+                (void)c.proc.events.set_attributes(handle, get_handle_attributes(object_attributes));
+                event_handle.write(handle.bits);
                 return STATUS_SUCCESS;
             }
 

@@ -56,7 +56,7 @@ namespace sogen
         uint64_t length{};
         ULONG key{};
         bool exclusive{};
-        handle owner{};
+        object_reference owner{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -453,6 +453,21 @@ namespace sogen
         void move_absolute_deadlines(std::chrono::steady_clock::duration system_time_ahead);
 
         generic_handle_store* get_handle_store(handle handle);
+        generic_handle_store* get_handle_store(handle_types::type type);
+        // Identifies the object a handle names without keeping it alive.
+        object_reference reference_of(handle handle);
+        // Retains an object without handing out a handle value. Pseudo handles, which cannot close, stay values.
+        std::optional<object_reference> retain_object(handle handle);
+        std::optional<object_reference> retain_object(const object_reference& reference);
+        void release_object(object_reference& reference);
+        ref_counted_object* get_object(const object_reference& reference);
+
+        template <typename T>
+        T* get_object_as(const object_reference& reference)
+        {
+            return dynamic_cast<T*>(this->get_object(reference));
+        }
+
         size_t handle_count() const;
         emulator_thread* find_thread_by_id(uint32_t thread_id);
         const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
@@ -470,7 +485,7 @@ namespace sogen
         bool is_current_process_handle(handle handle) const;
         bool is_current_thread_handle(handle handle, const emulator_thread* active_thread) const;
         bool is_object_pseudo_handle(handle handle) const;
-        handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread) const;
+        handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread);
 
         size_t get_live_thread_count() const;
         // CPU cycles are not modeled; executed instructions are the closest measure.
@@ -749,7 +764,7 @@ namespace sogen
         handle_store<handle_types::port, port_container> ports{};
         handle_store<handle_types::mutant, mutant> mutants{};
         handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
-        handle default_desktop{};
+        object_reference default_desktop{};
         handle_store<handle_types::desktop, desktop> desktops{};
         handle_store<handle_types::token, token_object> tokens{};
         std::vector<token_privilege> token_privileges{};
@@ -767,6 +782,7 @@ namespace sogen
         handle_store<handle_types::managed_thread, managed_process_thread> managed_threads{};
         handle_store<handle_types::debug_object, debug_object> debug_objects{};
         std::map<uint32_t, handle> thread_handles_by_id{};
+        handle initial_thread_handle{};
         std::map<uint16_t, atom_entry> atoms{};
         utils::insensitive_u16string_map<class_entry> classes{};
 
@@ -792,7 +808,7 @@ namespace sogen
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
         // rather than reading the handle attribute directly. Transient (valid only until the next reply).
         std::vector<alpc_reply_handle> pending_alpc_message_handles{};
-        std::map<uint32_t, std::vector<std::array<uint64_t, 2>>> pending_alpc_reply_views{};
+        std::map<uint64_t, std::vector<std::array<uint64_t, 2>>> pending_alpc_reply_views{};
 
         // Guest events WASAPI EVENTCALLBACK clients registered via SetEventHandle, keyed by the stream whose endpoint
         // port received them. The audio service hands each to its stream when the stream starts.

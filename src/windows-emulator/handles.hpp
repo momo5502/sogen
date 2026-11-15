@@ -190,7 +190,58 @@ namespace sogen
         virtual void deserialize_object(utils::buffer_deserializer& buffer) = 0;
     };
 
-    // On Windows these belong to the handle, not to the object, so two values for one object can differ.
+    // Object identity is independent of the handle values that name it. Objects are keyed by a monotonically increasing
+    // index from a space the store never forms handles from, so the index can never be mistaken for a handle value and
+    // stays meaningful while an internal reference keeps the object alive after its last handle closes.
+    struct object_reference
+    {
+        handle_types::type type{};
+        uint64_t index{};
+        // Pseudo handles name objects the store does not hold (the current process and thread, the console and so on).
+        // They never close, so an internal reference keeps the value itself instead of an index.
+        handle pseudo{};
+
+        explicit operator bool() const
+        {
+            return this->index != 0 || this->pseudo.bits != 0;
+        }
+
+        bool is_pseudo() const
+        {
+            return this->pseudo.bits != 0;
+        }
+
+        handle_types::type object_type() const
+        {
+            if (this->is_pseudo())
+            {
+                return static_cast<handle_types::type>(this->pseudo.value.type);
+            }
+
+            return this->type;
+        }
+
+        friend bool operator==(const object_reference& left, const object_reference& right)
+        {
+            return left.type == right.type && left.index == right.index && left.pseudo.bits == right.pseudo.bits;
+        }
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->type);
+            buffer.write(this->index);
+            buffer.write(this->pseudo);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->type);
+            buffer.read(this->index);
+            buffer.read(this->pseudo);
+        }
+    };
+
+    // These belong to a handle value, not to the object, so two handles to one object can differ.
     struct handle_attributes
     {
         bool inherit{};
@@ -203,7 +254,7 @@ namespace sogen
         virtual bool erase(handle h) = 0;
         virtual std::optional<handle> duplicate(handle h) = 0;
 
-        virtual handle_attributes attributes_of(handle)
+        virtual handle_attributes attributes_of(handle) const
         {
             return {};
         }
@@ -213,9 +264,39 @@ namespace sogen
             return false;
         }
 
+        virtual std::optional<object_reference> retain(handle)
+        {
+            return std::nullopt;
+        }
+
+        virtual std::optional<object_reference> retain(uint64_t)
+        {
+            return std::nullopt;
+        }
+
+        virtual void release(object_reference& reference)
+        {
+            reference = {};
+        }
+
         virtual ref_counted_object* get_object(handle)
         {
             return nullptr;
+        }
+
+        virtual std::optional<object_reference> reference_of(handle) const
+        {
+            return std::nullopt;
+        }
+
+        virtual ref_counted_object* get_object(const object_reference&)
+        {
+            return nullptr;
+        }
+
+        virtual uint64_t generation() const
+        {
+            return 0;
         }
     };
 
@@ -224,9 +305,14 @@ namespace sogen
     class handle_store : public generic_handle_store
     {
       public:
-        using index_type = uint32_t;
+        using index_type = uint64_t;
+        using handle_id_type = uint32_t;
         using value_map = std::map<index_type, T>;
+        using handle_map = std::map<handle_id_type, index_type>;
         using iterator = value_map::iterator;
+
+        static constexpr index_type first_object_index = 1ULL << 32;
+        static constexpr handle_id_type max_handle_id = (1u << 21) - 1;
 
         bool block_mutation(bool blocked)
         {
@@ -241,10 +327,12 @@ namespace sogen
                 throw std::runtime_error("Mutation of handle store is blocked!");
             }
 
-            auto index = this->find_free_index();
+            const auto index = this->allocate_object_index();
             const auto it = this->store_.emplace(index, std::move(value)).first;
+            const auto handle =
+                this->open_index(index, false, {.inherit = it->second.inherit, .protect_from_close = it->second.protect_from_close});
 
-            return {make_handle(index), &it->second};
+            return {handle, &it->second};
         }
 
         handle store(T value)
@@ -252,34 +340,108 @@ namespace sogen
             return this->store_and_get(std::move(value)).first;
         }
 
-        bool store_at(const handle h, T&& value)
+        bool store_at(const handle h, T value)
         {
             if (this->block_mutation_)
             {
                 throw std::runtime_error("Mutation of handle store is blocked!");
             }
-            if (h.value.type != Type || h.value.is_pseudo || h.value.id == 0 ||
-                this->aliases_.contains(static_cast<index_type>(h.value.id)))
+            const auto id = static_cast<handle_id_type>(h.value.id);
+            if (h.value.type != Type || h.value.is_pseudo || id == 0 || this->handles_.contains(id) || this->internal_handles_.contains(id))
             {
                 return false;
             }
-            return this->store_.try_emplace(static_cast<index_type>(h.value.id), std::move(value)).second;
+
+            const auto index = this->allocate_object_index();
+            const auto [entry, inserted] = this->store_.try_emplace(index, std::move(value));
+            if (!inserted)
+            {
+                return false;
+            }
+
+            this->handles_.emplace(id, index);
+            this->attributes_[id] = {.inherit = entry->second.inherit, .protect_from_close = entry->second.protect_from_close};
+            return true;
         }
 
+        // Opens another handle for the object at index, as opening a named object does. The caller must have verified
+        // that the object is open to guest handles or is otherwise still alive.
+        handle open_by_index(const index_type index, const handle_attributes& attributes = {})
+        {
+            if (!this->get_by_index(index))
+            {
+                return {};
+            }
+
+            return this->open_index(index, true, attributes);
+        }
+
+        // An inherited handle arrives with the value its parent used, so the child opens it at that value.
+        handle open_by_index_at(const index_type index, const handle at, const handle_attributes& attributes = {})
+        {
+            const auto id = static_cast<handle_id_type>(at.value.id);
+            if (!this->get_by_index(index) || at.value.type != Type || at.value.is_pseudo || at.value.is_system || id == 0 ||
+                !this->is_free_handle_id(id))
+            {
+                return {};
+            }
+
+            return this->open_index_at(index, id, true, attributes);
+        }
+
+        // A stable value for emulator-internal resolution when the guest has closed every value naming the object. It is
+        // not counted, enumerated or handed to the guest, and it does not keep the object alive.
+        handle internal_handle(const index_type index)
+        {
+            for (const auto& [id, target] : this->internal_handles_)
+            {
+                if (target == index)
+                {
+                    return this->make_handle_from_id(id, true);
+                }
+            }
+
+            if (!this->get_by_index(index))
+            {
+                return {};
+            }
+
+            const auto id = this->find_free_handle_id();
+            this->internal_handles_.emplace(id, index);
+            return this->make_handle_from_id(id, true);
+        }
+
+        handle internal_handle(const T& value)
+        {
+            const auto entry = this->find(value);
+            return entry == this->store_.end() ? handle{} : this->internal_handle(entry->first);
+        }
+
+        // The handle value that currently names the object at index, if any. A value the guest closed is gone from the
+        // map, so it can never come back as long as the handle id is not reused.
         handle make_handle(const index_type index) const
         {
-            handle h{};
-            h.bits = 0;
-            h.value.is_pseudo = false;
-            h.value.type = Type;
-            h.value.id = index;
+            for (const auto& [id, target] : this->handles_)
+            {
+                if (target == index)
+                {
+                    return this->make_handle_from_id(id);
+                }
+            }
 
-            return h;
+            return {};
         }
 
-        T* get_by_index(const uint32_t index)
+        T* get_by_index(const index_type index)
         {
-            return this->get(this->make_handle(index));
+            const auto entry = this->store_.find(index);
+            return entry == this->store_.end() ? nullptr : &entry->second;
+        }
+
+        const T* get_by_index(const index_type index) const
+        {
+            const auto entry = this->store_.find(index);
+            return entry == this->store_.end() ? nullptr : &entry->second;
         }
 
         ref_counted_object* get_object(const handle h) override
@@ -287,32 +449,31 @@ namespace sogen
             return this->get(h);
         }
 
-        T* get(const handle_value h)
+        ref_counted_object* get_object(const object_reference& reference) override
         {
-            const auto entry = this->get_iterator(h);
-            if (entry == this->store_.end())
+            if (reference.is_pseudo() || reference.type != Type)
             {
                 return nullptr;
             }
 
-            return &entry->second;
+            return this->get_by_index(reference.index);
         }
 
-        T* get(const handle h)
+        T* get(const handle_value h)
         {
-            return this->get(h.value);
+            const auto index = this->resolve_index(h);
+            return index ? this->get_by_index(*index) : nullptr;
         }
 
         const T* get(const handle_value h) const
         {
             const auto index = this->resolve_index(h);
-            if (!index)
-            {
-                return nullptr;
-            }
+            return index ? this->get_by_index(*index) : nullptr;
+        }
 
-            const auto entry = this->store_.find(*index);
-            return entry == this->store_.end() ? nullptr : &entry->second;
+        T* get(const handle h)
+        {
+            return this->get(h.value);
         }
 
         const T* get(const handle h) const
@@ -333,9 +494,31 @@ namespace sogen
             return this->store_.size();
         }
 
+        size_t handle_count() const
+        {
+            return this->handles_.size();
+        }
+
+        handle handle_for_id(const handle_id_type id) const
+        {
+            const auto entry = this->handles_.find(id);
+            return entry == this->handles_.end() ? handle{} : this->make_handle_from_id(id);
+        }
+
+        std::optional<index_type> index_of(const T& value) const
+        {
+            const auto entry = this->find(value);
+            if (entry == this->store_.end())
+            {
+                return std::nullopt;
+            }
+
+            return entry->first;
+        }
+
         // Advances whenever an object of this store is destroyed or the store is rebuilt. Map entries never move, so a
         // pointer to one of its objects stays valid while the generation is unchanged.
-        uint64_t generation() const
+        uint64_t generation() const override
         {
             return this->generation_;
         }
@@ -343,106 +526,86 @@ namespace sogen
         // Every duplicate is a handle value of its own, as on Windows, referring to the same object.
         std::optional<handle> duplicate(const handle h) override
         {
-            return this->duplicate_at(h, std::nullopt);
-        }
-
-        // An inherited duplicate arrives with the value its parent used, so the caller can ask for that value.
-        std::optional<handle> duplicate_at(const handle h, const std::optional<handle> at)
-        {
             if (this->block_mutation_)
             {
                 throw std::runtime_error("Mutation of handle store is blocked!");
             }
 
-            const auto entry = this->get_iterator(h.value);
-            if (entry == this->store_.end())
+            const auto index = this->resolve_index(h.value);
+            if (!index)
             {
                 return std::nullopt;
             }
 
-            index_type index{};
-            if (at)
-            {
-                if (at->value.type != Type || at->value.is_pseudo || at->value.id == 0)
-                {
-                    return std::nullopt;
-                }
-
-                index = static_cast<index_type>(at->value.id);
-                if (!this->is_index_free(index))
-                {
-                    return std::nullopt;
-                }
-            }
-            else
-            {
-                index = this->find_free_index();
-            }
-
-            ++static_cast<ref_counted_object&>(entry->second).ref_count;
-            this->aliases_.emplace(index, entry->first);
-            this->alias_attributes_.emplace(index, handle_attributes{});
-            return this->make_handle(index);
+            return this->open_index(*index, true, this->attributes_of(h));
         }
 
-        // The value the object was stored under is its first handle, whose attributes live on the object and are
-        // what the serialized object carries. Every duplicate keeps its own.
-        handle_attributes attributes_of(const handle h) override
+        handle_attributes attributes_of(const handle h) const override
         {
-            const auto index = static_cast<index_type>(h.value.id);
-            if (this->aliases_.contains(index))
-            {
-                const auto entry = this->alias_attributes_.find(index);
-                return entry == this->alias_attributes_.end() ? handle_attributes{} : entry->second;
-            }
-
-            const auto* object = this->get(h);
-            if (!object)
+            const auto index = this->resolve_index(h.value);
+            if (!index)
             {
                 return {};
             }
 
-            return {.inherit = object->inherit, .protect_from_close = object->protect_from_close};
+            const auto entry = this->attributes_.find(static_cast<handle_id_type>(h.value.id));
+            return entry == this->attributes_.end() ? handle_attributes{} : entry->second;
         }
 
         bool set_attributes(const handle h, const handle_attributes attributes) override
         {
-            auto* object = this->get(h);
-            if (!object)
+            const auto index = this->resolve_index(h.value);
+            if (!index)
             {
                 return false;
             }
 
-            const auto index = static_cast<index_type>(h.value.id);
-            if (this->aliases_.contains(index))
-            {
-                this->alias_attributes_[index] = attributes;
-                return true;
-            }
-
-            object->inherit = attributes.inherit;
-            object->protect_from_close = attributes.protect_from_close;
+            this->attributes_[static_cast<handle_id_type>(h.value.id)] = attributes;
             return true;
         }
 
-        // Every value that refers to an object: the one it was stored under and each duplicate.
-        std::vector<handle> handle_values() const
+        // Identifies the object without keeping it alive.
+        std::optional<object_reference> reference_of(const handle h) const override
         {
-            std::vector<handle> values{};
-            values.reserve(this->store_.size() + this->aliases_.size());
-
-            for (const auto& entry : this->store_)
+            const auto index = this->resolve_index(h.value);
+            if (!index)
             {
-                values.push_back(this->make_handle(entry.first));
-            }
-            for (const auto& alias : this->aliases_)
-            {
-                values.push_back(this->make_handle(alias.first));
+                return std::nullopt;
             }
 
-            return values;
+            return object_reference{.type = Type, .index = *index};
         }
 
+        // Keeps the object alive without giving the guest a handle value for it.
+        std::optional<object_reference> retain(const handle h) override
+        {
+            const auto index = this->resolve_index(h.value);
+            if (!index)
+            {
+                return std::nullopt;
+            }
+
+            return this->retain_index(*index);
+        }
+
+        std::optional<object_reference> retain(const index_type index) override
+        {
+            return this->retain_index(index);
+        }
+
+        void release(object_reference& reference) override
+        {
+            if (reference.is_pseudo() || reference.type != Type || reference.index == 0)
+            {
+                reference = {};
+                return;
+            }
+
+            this->release_index(reference.index);
+            reference = {};
+        }
+
+        // Drops one reference. Used by forced object deletion for objects whose last reference is already gone.
         std::pair<iterator, bool> erase(const iterator& entry)
         {
             if (this->block_mutation_)
@@ -463,20 +626,7 @@ namespace sogen
                 }
             }
 
-            const auto index = entry->first;
-            for (const auto& [alias_index, target] : this->aliases_)
-            {
-                if (target == index)
-                {
-                    this->alias_attributes_.erase(alias_index);
-                    this->free_indices_.push_back(alias_index);
-                }
-            }
-            std::erase_if(this->aliases_, [&](const auto& alias) { return alias.second == index; });
-            auto new_iter = this->store_.erase(entry);
-            this->free_indices_.push_back(index);
-            ++this->generation_;
-            return {new_iter, true};
+            return {this->erase_object(entry, true), true};
         }
 
         bool erase(const handle_value h)
@@ -486,21 +636,30 @@ namespace sogen
                 return false;
             }
 
-            const auto index = static_cast<index_type>(h.id);
-            if (const auto alias = this->aliases_.find(index); alias != this->aliases_.end())
+            const auto index = this->resolve_index(h);
+            if (!index)
             {
-                const auto target = alias->second;
-                this->aliases_.erase(alias);
-                this->alias_attributes_.erase(index);
-                this->free_indices_.push_back(index);
-                return this->erase(this->store_.find(target)).second;
+                return false;
             }
 
-            // The object stays at the index it was stored under for its whole life, even once that first handle is
-            // closed and only duplicates remain. Everything that kept the value, such as a file's completion port
-            // association or a pending request's event, keeps resolving to it, and the index is not handed out
-            // again while the object is there. The object goes when its last reference does.
-            return this->erase(this->store_.find(index)).second;
+            if (h.is_system)
+            {
+                this->internal_handles_.erase(static_cast<handle_id_type>(h.id));
+                this->recycle_handle_id(static_cast<handle_id_type>(h.id));
+                return true;
+            }
+
+            const auto entry = this->handles_.find(static_cast<handle_id_type>(h.id));
+            if (entry == this->handles_.end() || entry->second != *index)
+            {
+                return false;
+            }
+
+            this->handles_.erase(entry);
+            this->attributes_.erase(static_cast<handle_id_type>(h.id));
+            this->recycle_handle_id(static_cast<handle_id_type>(h.id));
+            this->release_index(*index);
+            return true;
         }
 
         bool erase(const handle h) override
@@ -522,22 +681,42 @@ namespace sogen
             return this->erase(entry);
         }
 
+        // One entry per guest handle, so handle enumeration and counts see duplicates as separate handles.
+        std::vector<std::pair<handle, const T*>> handle_entries() const
+        {
+            std::vector<std::pair<handle, const T*>> entries{};
+            entries.reserve(this->handles_.size());
+
+            for (const auto& [id, index] : this->handles_)
+            {
+                if (const auto* object = this->get_by_index(index))
+                {
+                    entries.emplace_back(this->make_handle_from_id(id), object);
+                }
+            }
+
+            return entries;
+        }
+
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->block_mutation_);
+            buffer.write(this->next_object_index_);
             buffer.write_map(this->store_);
-            buffer.write_map(this->aliases_);
-            buffer.write_map(this->alias_attributes_);
+            buffer.write_map(this->handles_);
+            buffer.write_map(this->internal_handles_);
+            buffer.write_map(this->attributes_);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->block_mutation_);
+            buffer.read(this->next_object_index_);
             buffer.read_map(this->store_);
-            buffer.read_map(this->aliases_);
-            buffer.read_map(this->alias_attributes_);
-            this->free_indices_.clear();
-            this->next_free_index_ = 1;
+            buffer.read_map(this->handles_);
+            buffer.read_map(this->internal_handles_);
+            buffer.read_map(this->attributes_);
+            this->next_handle_id_ = 1;
             ++this->generation_;
         }
 
@@ -611,6 +790,18 @@ namespace sogen
         }
 
       private:
+        handle make_handle_from_id(const handle_id_type id, const bool is_system = false) const
+        {
+            handle h{};
+            h.bits = 0;
+            h.value.is_pseudo = false;
+            h.value.type = Type;
+            h.value.is_system = is_system;
+            h.value.id = id;
+
+            return h;
+        }
+
         std::optional<index_type> resolve_index(const handle_value h) const
         {
             if (h.type != Type || h.is_pseudo)
@@ -618,51 +809,164 @@ namespace sogen
                 return std::nullopt;
             }
 
-            const auto index = static_cast<index_type>(h.id);
-            const auto alias = this->aliases_.find(index);
-            return alias == this->aliases_.end() ? index : alias->second;
-        }
-
-        value_map::iterator get_iterator(const handle_value h)
-        {
-            const auto index = this->resolve_index(h);
-            return index ? this->store_.find(*index) : this->store_.end();
-        }
-
-        bool is_index_free(const index_type index) const
-        {
-            return !this->store_.contains(index) && !this->aliases_.contains(index);
-        }
-
-        index_type find_free_index()
-        {
-            while (!this->free_indices_.empty())
+            const auto id = static_cast<handle_id_type>(h.id);
+            if (h.is_system)
             {
-                const auto index = this->free_indices_.back();
-                this->free_indices_.pop_back();
-                if (this->is_index_free(index))
+                const auto internal = this->internal_handles_.find(id);
+                return internal == this->internal_handles_.end() ? std::nullopt : std::optional<index_type>{internal->second};
+            }
+
+            const auto entry = this->handles_.find(id);
+            return entry == this->handles_.end() ? std::nullopt : std::optional<index_type>{entry->second};
+        }
+
+        std::optional<object_reference> retain_index(const index_type index)
+        {
+            auto* object = this->get_by_index(index);
+            if (!object)
+            {
+                return std::nullopt;
+            }
+
+            ++object->ref_count;
+            return object_reference{.type = Type, .index = index};
+        }
+
+        void release_index(const index_type index)
+        {
+            const auto entry = this->store_.find(index);
+            if (entry == this->store_.end())
+            {
+                return;
+            }
+
+            if constexpr (handle_detail::has_deleter_function<T>())
+            {
+                if (!T::deleter(entry->second))
                 {
-                    return index;
+                    return;
                 }
             }
 
-            while (!this->is_index_free(this->next_free_index_))
+            (void)this->erase_object(entry, false);
+        }
+
+        iterator erase_object(const value_map::iterator& entry, const bool remove_guest_handles)
+        {
+            const auto index = entry->first;
+
+            for (auto it = this->internal_handles_.begin(); it != this->internal_handles_.end();)
             {
-                ++this->next_free_index_;
+                if (it->second == index)
+                {
+                    this->recycle_handle_id(it->first);
+                    it = this->internal_handles_.erase(it);
+                }
+                else
+                {
+                    it = std::next(it);
+                }
             }
 
-            return this->next_free_index_++;
+            if (remove_guest_handles)
+            {
+                for (auto it = this->handles_.begin(); it != this->handles_.end();)
+                {
+                    if (it->second == index)
+                    {
+                        this->recycle_handle_id(it->first);
+                        it = this->handles_.erase(it);
+                    }
+                    else
+                    {
+                        it = std::next(it);
+                    }
+                }
+
+                std::erase_if(this->attributes_, [&](const auto& attribute) {
+                    const auto handle = this->handles_.find(attribute.first);
+                    return handle == this->handles_.end();
+                });
+            }
+
+            auto new_iter = this->store_.erase(entry);
+            ++this->generation_;
+            return new_iter;
+        }
+
+        index_type allocate_object_index()
+        {
+            return this->next_object_index_++;
+        }
+
+        handle open_index(const index_type index, const bool add_reference, const handle_attributes& attributes)
+        {
+            return this->open_index_at(index, this->find_free_handle_id(), add_reference, attributes);
+        }
+
+        bool is_free_handle_id(const handle_id_type id) const
+        {
+            return !this->handles_.contains(id) && !this->internal_handles_.contains(id);
+        }
+
+        handle open_index_at(const index_type index, const handle_id_type id, const bool add_reference,
+                             const handle_attributes& attributes)
+        {
+            auto* object = this->get_by_index(index);
+            if (!object)
+            {
+                throw std::runtime_error("Cannot open a handle for a missing object!");
+            }
+
+            if (add_reference)
+            {
+                ++object->ref_count;
+            }
+
+            this->handles_.emplace(id, index);
+            this->attributes_[id] = attributes;
+            return this->make_handle_from_id(id);
+        }
+
+        handle_id_type find_free_handle_id()
+        {
+            const auto is_free = [this](const handle_id_type id) { return this->is_free_handle_id(id); };
+
+            // Start from the hint so a run of allocations does not rescan the ids already handed out; a closed id pulls the
+            // hint back down (recycle_handle_id) so it is reused instead of marching to the end of the space.
+            for (handle_id_type id = this->next_handle_id_; id <= max_handle_id; ++id)
+            {
+                if (is_free(id))
+                {
+                    this->next_handle_id_ = id + 1;
+                    return id;
+                }
+            }
+
+            for (handle_id_type id = 1; id < this->next_handle_id_; ++id)
+            {
+                if (is_free(id))
+                {
+                    this->next_handle_id_ = id + 1;
+                    return id;
+                }
+            }
+
+            throw std::runtime_error("Handle store is exhausted!");
+        }
+
+        void recycle_handle_id(const handle_id_type id)
+        {
+            this->next_handle_id_ = std::min(this->next_handle_id_, id);
         }
 
         bool block_mutation_{false};
+        index_type next_object_index_{first_object_index};
+        handle_id_type next_handle_id_{1};
         value_map store_{};
-        // Duplicated handle values, mapped to the index their object is stored under.
-        std::map<index_type, index_type> aliases_{};
-        std::map<index_type, handle_attributes> alias_attributes_{};
-        // Closed values, reused before fresh ones: with a value per duplicate, searching for a free one from the start
-        // would visit every value in use. An entry an explicit id took back is skipped, not trusted.
-        std::vector<index_type> free_indices_{};
-        index_type next_free_index_{1};
+        handle_map handles_{};
+        handle_map internal_handles_{};
+        std::map<handle_id_type, handle_attributes> attributes_{};
         uint64_t generation_{};
     };
 

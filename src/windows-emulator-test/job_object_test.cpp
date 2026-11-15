@@ -6,6 +6,8 @@ namespace sogen::syscalls
     NTSTATUS handle_NtSetInformationJobObject(const syscall_context& c, handle job_handle, uint32_t info_class, uint64_t info,
                                               ULONG length);
     NTSTATUS handle_NtAssignProcessToJobObject(const syscall_context& c, handle job_handle, handle process_handle);
+    NTSTATUS handle_NtCreateJobObject(const syscall_context& c, emulator_object<handle> job_handle, ACCESS_MASK desired_access,
+                                      emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
 }
 
 namespace sogen::test
@@ -52,6 +54,19 @@ namespace sogen::test
             uint64_t storage{};
             handle job{};
         };
+    }
+
+    TEST_F(JobObjectTest, CreatedJobHandleUsesTheRequestedInheritAttribute)
+    {
+        const emulator_object<handle> output{this->emu->memory, this->storage + 0x100};
+        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> attributes{this->emu->memory, this->storage + 0x200};
+        OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>> values{};
+        values.Length = sizeof(values);
+        values.Attributes = OBJ_INHERIT;
+        attributes.write(values);
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateJobObject(this->context(), output, 0, attributes));
+        EXPECT_TRUE(this->emu->process.jobs.attributes_of(output.read()).inherit);
     }
 
     TEST_F(JobObjectTest, AcceptsTheLimitFlagsLibuvSets)
