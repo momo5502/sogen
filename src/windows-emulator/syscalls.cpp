@@ -894,6 +894,8 @@ namespace sogen
         BOOL handle_NtUserShowScrollBar();
         BOOL handle_NtUserSetWindowPlacement(const syscall_context& c, hwnd window, emulator_pointer placement);
         BOOL handle_NtUserIsChildWindowDpiMessageEnabled();
+        DWORD handle_NtUserGetWindowContextHelpId(const syscall_context& c, hwnd window);
+        BOOL handle_NtUserSetWindowContextHelpId(const syscall_context& c, hwnd window, DWORD context_help_id);
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -2246,6 +2248,8 @@ namespace sogen
         add_handler(NtUserCallNoParam);
         add_handler(NtUserGetDisplayConfigBufferSizes);
         add_handler(NtUserQueryDisplayConfig);
+        add_handler(NtUserGetWindowContextHelpId);
+        add_handler(NtUserSetWindowContextHelpId);
         add_handler(NtGdiDdDDIEnumAdapters2);
         add_handler(NtDxgkEnumAdapters3);
         add_handler(NtDxgkGetProperties);

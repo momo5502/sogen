@@ -9590,6 +9590,31 @@ namespace sogen
             return TRUE;
         }
 
+        DWORD handle_NtUserGetWindowContextHelpId(const syscall_context& c, hwnd window)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return 0;
+            }
+
+            return win->context_help_id;
+        }
+
+        BOOL handle_NtUserSetWindowContextHelpId(const syscall_context& c, hwnd window, DWORD context_help_id)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            win->context_help_id = context_help_id;
+            return TRUE;
+        }
+
         BOOL handle_NtUserUpdateClientRect(const syscall_context&, const hwnd)
         {
             return TRUE;
