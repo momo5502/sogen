@@ -259,7 +259,7 @@ namespace sogen::test
         EXPECT_EQ(nullptr, this->emu->process.window_stations.get(make_handle(second)));
     }
 
-    TEST_F(WindowStationTest, NoHandleToTheAssignedStationCanCloseIt)
+    TEST_F(WindowStationTest, OnlyTheAssignedHandleOfAStationIsRefusedOnClose)
     {
         const auto assigned = this->create_station(u"Sandbox");
         ASSERT_NE(0u, assigned);
@@ -267,10 +267,10 @@ namespace sogen::test
         ASSERT_NE(0u, other_handle);
         ASSERT_EQ(TRUE, syscalls::handle_NtUserSetProcessWindowStation(this->context(), make_handle(assigned)));
 
-        // _CloseWindowStation compares the station object with the process's, not the handle value.
-        EXPECT_EQ(FALSE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(other_handle)));
+        // _CloseWindowStation compares the handle value the process was assigned, not the station object.
         EXPECT_EQ(FALSE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(assigned)));
-        EXPECT_NE(nullptr, this->emu->process.window_stations.get(make_handle(other_handle)));
+        EXPECT_EQ(TRUE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(other_handle)));
+        EXPECT_NE(nullptr, this->emu->process.window_stations.get(make_handle(assigned)));
     }
 
     TEST_F(WindowStationTest, EachOpenOfADesktopIsItsOwnReference)
