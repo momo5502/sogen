@@ -267,7 +267,7 @@ namespace sogen::test
                                       ->set_completion_association(this->emu->process, this->emu->vcpu(0).active_thread, completion, 42));
         auto context = this->request(this->reader, 0);
         context.io_control_code = FSCTL_PIPE_LISTEN;
-        context.event = event_handle;
+        context.event = this->emu->process.events.reference_of(event_handle).value_or(object_reference{});
         context.apc_context = 123;
         EXPECT_EQ(STATUS_PENDING, this->emu->process.devices.get(this->reader)->execute_ioctl(*this->emu, context));
         server.work(*this->emu);
@@ -294,7 +294,7 @@ namespace sogen::test
         auto context = this->request(this->reader, 0);
         context.io_control_code = FSCTL_PIPE_LISTEN;
         const auto event_handle = this->emu->process.events.store(event{});
-        context.event = event_handle;
+        context.event = this->emu->process.events.reference_of(event_handle).value_or(object_reference{});
         ASSERT_EQ(STATUS_PENDING, server.io_control(*this->emu, context));
         EXPECT_TRUE(server.cancel_io(*this->emu, context.io_status_block.value()));
         EXPECT_EQ(STATUS_CANCELLED, context.io_status_block.read().Status);
@@ -342,7 +342,7 @@ namespace sogen::test
                       ->set_completion_association(this->emu->process, this->emu->vcpu(0).active_thread, completion, 0x1234),
                   STATUS_SUCCESS);
         auto context = this->request(this->reader, 128);
-        context.event = event;
+        context.event = this->emu->process.events.reference_of(event).value_or(object_reference{});
         context.apc_context = 0x5678;
         ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, context, true), STATUS_PENDING);
         EXPECT_FALSE(this->emu->process.events.get(event)->signaled);
@@ -372,8 +372,8 @@ namespace sogen::test
         ASSERT_EQ(this->write("hello pipe"), STATUS_SUCCESS);
 
         auto context = this->request(this->reader, 16);
-        context.event = event;
-        context.event.bits |= 1;
+        context.event = this->emu->process.events.reference_of(event).value_or(object_reference{});
+        context.event_low_bit = true;
         context.apc_context = 0x5678;
         ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, context, true), STATUS_SUCCESS);
 
@@ -486,7 +486,7 @@ namespace sogen::test
     {
         const auto event = this->emu->process.events.store(sogen::event{});
         auto context = this->request(this->reader, 16);
-        context.event = event;
+        context.event = this->emu->process.events.reference_of(event).value_or(object_reference{});
         ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, context, true), STATUS_PENDING);
         ASSERT_TRUE(this->pipe(this->reader).cancel_io(*this->emu, context.io_status_block.value()));
         EXPECT_EQ(context.io_status_block.read().Status, STATUS_CANCELLED);
@@ -555,7 +555,7 @@ namespace sogen::test
         original->set_completion_notification_flags(1);
         auto context = this->request(duplicate, 16);
         context.apc_context = 0x5678;
-        EXPECT_EQ(context.completion_port, completion);
+        EXPECT_EQ(context.completion_port, this->emu->process.io_completions.reference_of(completion).value_or(object_reference{}));
         EXPECT_EQ(context.completion_key, 42u);
         EXPECT_EQ(context.completion_notification_flags, 1u);
         ASSERT_EQ(this->pipe(duplicate).start_io(*this->emu, context, true), STATUS_PENDING);
@@ -582,11 +582,11 @@ namespace sogen::test
         EXPECT_EQ(copy->granted_access, FILE_WRITE_DATA);
         EXPECT_FALSE(original->inherit);
         EXPECT_TRUE(copy->inherit);
-        copy->protect_from_close = true;
+        this->emu->process.devices.set_attributes(duplicate, {.inherit = true, .protect_from_close = true});
         EXPECT_EQ(this->close(duplicate), STATUS_HANDLE_NOT_CLOSABLE);
         EXPECT_EQ(this->pipe(duplicate).start_io(*this->emu, this->request(duplicate, 1), true), STATUS_ACCESS_DENIED);
         EXPECT_EQ(this->close(this->reader), STATUS_SUCCESS);
-        copy->protect_from_close = false;
+        this->emu->process.devices.set_attributes(duplicate, {.inherit = true, .protect_from_close = false});
         EXPECT_EQ(this->close(duplicate), STATUS_SUCCESS);
     }
 
@@ -626,7 +626,7 @@ namespace sogen::test
     {
         ASSERT_EQ(this->write("untouched"), STATUS_SUCCESS);
         auto context = this->request(this->reader, 16);
-        context.event = make_handle(0x7fffffff, handle_types::event, false);
+        context.event = object_reference{.type = handle_types::event, .index = 0x7fffffff};
         EXPECT_EQ(this->pipe(this->reader).start_io(*this->emu, context, true), STATUS_INVALID_HANDLE);
         EXPECT_TRUE(this->pipe(this->reader).signaled);
         context = this->request(this->reader, 16);
@@ -639,11 +639,14 @@ namespace sogen::test
         for (const uint32_t size : {1u, 8192u})
         {
             auto context = this->request(this->writer, size);
-            context.event = this->emu->process.events.store(sogen::event{});
-            context.completion_port = make_handle(0x7fffffff, handle_types::io_completion, false);
-            const auto references = this->emu->process.events.get(context.event)->ref_count;
+            {
+                const auto event_handle = this->emu->process.events.store(sogen::event{});
+                context.event = this->emu->process.events.reference_of(event_handle).value_or(object_reference{});
+            }
+            context.completion_port = object_reference{.type = handle_types::io_completion, .index = 0x7fffffff};
+            const auto references = this->emu->process.get_object_as<sogen::event>(context.event)->ref_count;
             EXPECT_EQ(this->pipe(this->writer).start_io(*this->emu, context, false), STATUS_INVALID_HANDLE);
-            EXPECT_EQ(this->emu->process.events.get(context.event)->ref_count, references);
+            EXPECT_EQ(this->emu->process.get_object_as<sogen::event>(context.event)->ref_count, references);
             EXPECT_TRUE(this->pipe(this->writer).signaled);
             std::string data;
             uint32_t available{};
@@ -742,7 +745,7 @@ namespace sogen::test
     {
         const auto event = this->emu->process.events.store(sogen::event{});
         auto pending = this->request(this->reader, 4);
-        pending.event = event;
+        pending.event = this->emu->process.events.reference_of(event).value_or(object_reference{});
         ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, pending, true), STATUS_PENDING);
         utils::buffer_serializer snapshot;
         this->emu->process.devices.get(this->reader)->serialize(snapshot);
@@ -763,8 +766,8 @@ namespace sogen::test
 
     TEST_F(NamedPipeTest, StdioDoesNotBypassDisabledInheritance)
     {
-        this->emu->process.devices.get(this->reader)->inherit = true;
-        this->emu->process.devices.get(this->writer)->inherit = true;
+        this->emu->process.devices.set_attributes(this->reader, {.inherit = true});
+        this->emu->process.devices.set_attributes(this->writer, {.inherit = true});
         this->create_child(0);
         EXPECT_TRUE(this->manager.request->inherited_pipes.empty());
         EXPECT_EQ(this->manager.request->standard_input, 0u);
@@ -774,7 +777,7 @@ namespace sogen::test
 
     TEST_F(InheritedPipeTest, GeneralInheritanceSelectsOnlyInheritableHandles)
     {
-        this->emu->process.devices.get(this->writer)->inherit = true;
+        this->emu->process.devices.set_attributes(this->writer, {.inherit = true});
         this->create_child(4);
         ASSERT_EQ(this->manager.request->inherited_pipes.size(), 1u);
         EXPECT_EQ(this->manager.request->inherited_pipes.front().guest_handle, this->writer.bits);
@@ -785,8 +788,8 @@ namespace sogen::test
 
     TEST_F(InheritedPipeTest, ExplicitHandleListExcludesOtherStdio)
     {
-        this->emu->process.devices.get(this->reader)->inherit = true;
-        this->emu->process.devices.get(this->writer)->inherit = true;
+        this->emu->process.devices.set_attributes(this->reader, {.inherit = true});
+        this->emu->process.devices.set_attributes(this->writer, {.inherit = true});
         this->create_child(4, std::vector{this->reader});
         ASSERT_EQ(this->manager.request->inherited_pipes.size(), 1u);
         EXPECT_EQ(this->manager.request->inherited_pipes.front().guest_handle, this->reader.bits);
@@ -797,7 +800,7 @@ namespace sogen::test
 
     TEST_F(NamedPipeTest, ExplicitHandleListCannotEnableInheritance)
     {
-        this->emu->process.devices.get(this->reader)->inherit = true;
+        this->emu->process.devices.set_attributes(this->reader, {.inherit = true});
         this->create_child(0, std::vector{this->reader});
         EXPECT_TRUE(this->manager.request->inherited_pipes.empty());
         EXPECT_EQ(this->manager.request->standard_input, 0u);
@@ -805,7 +808,7 @@ namespace sogen::test
 
     TEST_F(NamedPipeTest, EmptyExplicitHandleListDoesNotInheritStdio)
     {
-        this->emu->process.devices.get(this->writer)->inherit = true;
+        this->emu->process.devices.set_attributes(this->writer, {.inherit = true});
         this->create_child(4, std::vector<handle>{});
         EXPECT_TRUE(this->manager.request->inherited_pipes.empty());
         EXPECT_EQ(this->manager.request->standard_output, 0u);
@@ -815,7 +818,7 @@ namespace sogen::test
     {
         this->pipe(this->reader).pipe_type = 1;
         this->pipe(this->reader).read_mode = 1;
-        this->emu->process.devices.get(this->reader)->inherit = true;
+        this->emu->process.devices.set_attributes(this->reader, {.inherit = true});
         EXPECT_EQ(this->pipe(this->reader).start_io(*this->emu, this->request(this->reader, 16), true), STATUS_NOT_SUPPORTED);
         this->create_child(4, {}, false);
     }
@@ -849,8 +852,8 @@ namespace sogen::test
     TEST_F(NamedPipeTest, WrongObjectTypeCannotBeUsedAsCompletionEvent)
     {
         auto context = this->request(this->writer, 1);
-        context.event = this->reader;
-        EXPECT_EQ(this->pipe(this->writer).start_io(*this->emu, context, false), STATUS_INVALID_HANDLE);
+        context.event = this->emu->process.reference_of(this->reader);
+        EXPECT_EQ(this->pipe(this->writer).start_io(*this->emu, context, false), STATUS_OBJECT_TYPE_MISMATCH);
         EXPECT_TRUE(this->pipe(this->writer).signaled);
     }
 }

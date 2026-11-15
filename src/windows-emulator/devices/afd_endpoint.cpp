@@ -390,7 +390,11 @@ namespace sogen
             io_device_context context;
             std::optional<std::chrono::steady_clock::time_point> timeout{};
             bool timeout_absolute{};
-            handle retained_completion_port{};
+            object_reference retained_event{};
+            object_reference retained_completion_port{};
+            // The polled sockets by identity, captured when the poll is queued: closing or reusing a handle value must not
+            // redirect the poll. Not retained, so a socket reports local close once its last handle closes and it is gone.
+            std::vector<object_reference> polled_sockets{};
 
             pending_poll(memory_interface& emu)
                 : context(emu)
@@ -415,7 +419,9 @@ namespace sogen
                 this->context.serialize(buffer);
                 buffer.write_optional(this->timeout);
                 buffer.write(this->timeout_absolute);
+                buffer.write(this->retained_event);
                 buffer.write(this->retained_completion_port);
+                buffer.write_vector(this->polled_sockets);
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
@@ -423,7 +429,9 @@ namespace sogen
                 this->context.deserialize(buffer);
                 buffer.read_optional(this->timeout);
                 buffer.read(this->timeout_absolute);
+                buffer.read(this->retained_event);
                 buffer.read(this->retained_completion_port);
+                buffer.read_vector(this->polled_sockets);
             }
         };
 
@@ -481,7 +489,8 @@ namespace sogen
             std::optional<afd_creation_data> creation_data{};
             std::optional<bool> require_poll_{};
             std::optional<io_device_context> delayed_ioctl_{};
-            handle retained_completion_port_{};
+            object_reference retained_event_{};
+            object_reference retained_completion_port_{};
             std::optional<std::chrono::steady_clock::time_point> timeout_{};
             std::optional<std::function<void(windows_emulator&, const io_device_context&)>> timeout_callback_{};
             std::vector<pending_poll> pending_polls_{};
@@ -494,7 +503,9 @@ namespace sogen
             // Stream operations may complete partially, so cap staging allocations instead of trusting guest-provided WSABUF lengths.
             static constexpr size_t max_stream_transfer_bytes = 64u << 20;
 
-            std::optional<handle> event_select_event_{};
+            // AfdEventSelect references the registered event; retained so readiness still signals it after the guest closes
+            // the handle it was registered with (a duplicate keeps the event alive).
+            object_reference event_select_event_{};
             ULONG event_select_mask_{0};
             ULONG triggered_events_{0};
 
@@ -563,7 +574,8 @@ namespace sogen
                     }
 
                     this->complete_io(win_emu, it->context, STATUS_CANCELLED);
-                    io_completion_wait::release_handle_reference(win_emu.process, it->retained_completion_port);
+                    io_completion_wait::release_reference(win_emu.process, it->retained_event);
+                    io_completion_wait::release_reference(win_emu.process, it->retained_completion_port);
                     it = this->pending_polls_.erase(it);
                     cancelled = true;
                 }
@@ -581,17 +593,20 @@ namespace sogen
 
             void release_references(process_context& process) override
             {
-                io_completion_wait::release_handle_reference(process, this->retained_completion_port_);
+                io_completion_wait::release_reference(process, this->retained_event_);
+                io_completion_wait::release_reference(process, this->retained_completion_port_);
+                io_completion_wait::release_reference(process, this->event_select_event_);
                 for (auto& poll : this->pending_polls_)
                 {
-                    io_completion_wait::release_handle_reference(process, poll.retained_completion_port);
+                    io_completion_wait::release_reference(process, poll.retained_event);
+                    io_completion_wait::release_reference(process, poll.retained_completion_port);
                 }
             }
 
             void complete_io(windows_emulator& win_emu, const io_device_context& context, const NTSTATUS status)
             {
                 write_io_status(context, status);
-                if (auto* event = win_emu.process.events.get(context.event))
+                if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
                 {
                     event->signaled = true;
                     win_emu.wake_idle_vcpu();
@@ -634,10 +649,13 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                handle retained_port{};
-                const auto* active_thread = c.vcpu ? &c.thread() : nullptr;
-                if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, c.completion_port, retained_port))
+                object_reference retained_port{};
+                object_reference retained_event{};
+                if (!io_completion_wait::retain_reference(win_emu.process, c.completion_port, retained_port) ||
+                    !io_completion_wait::retain_reference(win_emu.process, c.event, retained_event))
                 {
+                    io_completion_wait::release_reference(win_emu.process, retained_port);
+                    io_completion_wait::release_reference(win_emu.process, retained_event);
                     return STATUS_INVALID_HANDLE;
                 }
 
@@ -645,14 +663,17 @@ namespace sogen
                 this->timeout_ = timeout;
                 this->require_poll_ = require_poll;
                 this->delayed_ioctl_ = c;
+                this->delayed_ioctl_->event = retained_event;
                 this->delayed_ioctl_->completion_port = retained_port;
+                this->retained_event_ = retained_event;
                 this->retained_completion_port_ = retained_port;
                 return STATUS_PENDING;
             }
 
             void clear_pending_state(windows_emulator& win_emu)
             {
-                io_completion_wait::release_handle_reference(win_emu.process, this->retained_completion_port_);
+                io_completion_wait::release_reference(win_emu.process, this->retained_event_);
+                io_completion_wait::release_reference(win_emu.process, this->retained_completion_port_);
                 this->timeout_callback_ = {};
                 this->timeout_ = {};
                 this->require_poll_ = {};
@@ -747,7 +768,7 @@ namespace sogen
                 for (auto it = this->pending_polls_.begin(); it != this->pending_polls_.end();)
                 {
                     const auto [info, handles] = get_poll_info<Traits>(win_emu, it->context);
-                    const auto endpoints = resolve_endpoints(win_emu, handles);
+                    const auto endpoints = resolve_endpoints(win_emu, std::span<const object_reference>{it->polled_sockets});
                     auto status = perform_poll(win_emu, it->context, endpoints, handles);
 
                     if (status == STATUS_PENDING)
@@ -763,7 +784,8 @@ namespace sogen
                     }
 
                     this->complete_io(win_emu, it->context, status);
-                    io_completion_wait::release_handle_reference(win_emu.process, it->retained_completion_port);
+                    io_completion_wait::release_reference(win_emu.process, it->retained_event);
+                    io_completion_wait::release_reference(win_emu.process, it->retained_completion_port);
                     it = this->pending_polls_.erase(it);
                 }
             }
@@ -807,7 +829,7 @@ namespace sogen
                     {
                         this->triggered_events_ |= current_events;
 
-                        if (auto* event = win_emu.process.events.get(*this->event_select_event_))
+                        if (auto* event = win_emu.process.get_object_as<sogen::event>(this->event_select_event_))
                         {
                             event->signaled = true;
                             win_emu.wake_idle_vcpu();
@@ -866,6 +888,9 @@ namespace sogen
                 buffer.read_optional(this->connect_data_sent_);
                 buffer.read(this->shared_context_);
                 buffer.read_vector(this->pending_polls_);
+                buffer.read(this->event_select_event_);
+                buffer.read(this->event_select_mask_);
+                buffer.read(this->triggered_events_);
 
                 // A connected socket is bound in restore_after_state_restore: by its connect, or here as well when it
                 // stays unconnected.
@@ -895,6 +920,9 @@ namespace sogen
                 buffer.write_optional(this->connect_data_sent_);
                 buffer.write(this->shared_context_);
                 buffer.write_vector(this->pending_polls_);
+                buffer.write(this->event_select_event_);
+                buffer.write(this->event_select_mask_);
+                buffer.write(this->triggered_events_);
             }
 
             // The host connection ends with the run that saved it. Its two ends and the bytes waiting unread are kept, so
@@ -1706,6 +1734,26 @@ namespace sogen
                 return endpoints;
             }
 
+            // Resolves the sockets a pending poll captured by identity. A socket whose last handle closed is gone from the
+            // store and reports AFD_POLL_LOCAL_CLOSE; a duplicate keeps it alive and the poll keeps watching it.
+            static std::vector<const afd_endpoint*> resolve_endpoints(windows_emulator& win_emu,
+                                                                      const std::span<const object_reference> sockets)
+            {
+                auto& proc = win_emu.process;
+
+                std::vector<const afd_endpoint*> endpoints{};
+                endpoints.reserve(sockets.size());
+
+                for (const auto& socket : sockets)
+                {
+                    const auto* device = proc.get_object_as<io_device_container>(socket);
+                    const auto* endpoint = device ? device->template get_internal_device<afd_endpoint<Traits>>() : nullptr;
+                    endpoints.push_back(endpoint && endpoint->s_ ? endpoint : nullptr);
+                }
+
+                return endpoints;
+            }
+
             static NTSTATUS perform_poll(windows_emulator& win_emu, const io_device_context& c,
                                          const std::span<const afd_endpoint* const> endpoints,
                                          const std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles)
@@ -1835,16 +1883,26 @@ namespace sogen
                 pending_poll poll{c, timeout, timeout && utils::is_absolute_due_time(info.Timeout)};
                 this->pending_polls_.reserve(this->pending_polls_.size() + 1);
 
-                handle retained_port{};
-                const auto* active_thread = c.vcpu ? &c.thread() : nullptr;
-                if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, c.completion_port, retained_port))
+                object_reference retained_port{};
+                object_reference retained_event{};
+                if (!io_completion_wait::retain_reference(win_emu.process, c.completion_port, retained_port) ||
+                    !io_completion_wait::retain_reference(win_emu.process, c.event, retained_event))
                 {
+                    io_completion_wait::release_reference(win_emu.process, retained_port);
+                    io_completion_wait::release_reference(win_emu.process, retained_event);
                     return STATUS_INVALID_HANDLE;
                 }
 
+                poll.context.event = retained_event;
                 poll.context.completion_port = retained_port;
+                poll.retained_event = retained_event;
                 poll.retained_completion_port = retained_port;
-                this->pending_polls_.push_back(poll);
+                poll.polled_sockets.reserve(handles.size());
+                for (const auto& polled : handles)
+                {
+                    poll.polled_sockets.push_back(win_emu.process.reference_of(make_handle(polled.Handle)));
+                }
+                this->pending_polls_.push_back(std::move(poll));
                 return STATUS_PENDING;
             }
 
@@ -2111,11 +2169,37 @@ namespace sogen
 
                 const auto select_info = win_emu.emu().read_memory<AFD_EVENT_SELECT_INFO>(c.input_buffer);
 
-                this->event_select_event_ = select_info.Event;
+                // AfdEventSelect references the new event and dereferences the previous one; a null event unregisters.
+                object_reference new_event{};
+                if (select_info.Event.bits != 0)
+                {
+                    // ObReferenceObjectByHandle with ExEventObjectType: a handle with no table entry fails first with
+                    // STATUS_INVALID_HANDLE, a wrong type then with STATUS_OBJECT_TYPE_MISMATCH. Either leaves the previous
+                    // registration untouched, and a non-event (such as the socket's own handle) is never held.
+                    const auto reference = win_emu.process.reference_of(select_info.Event);
+                    if (!reference)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    if (reference.object_type() != handle_types::event)
+                    {
+                        return STATUS_OBJECT_TYPE_MISMATCH;
+                    }
+
+                    const auto retained = win_emu.process.retain_object(reference);
+                    if (!retained)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+                    new_event = *retained;
+                }
+                io_completion_wait::release_reference(win_emu.process, this->event_select_event_);
+                this->event_select_event_ = new_event;
                 this->event_select_mask_ = select_info.PollEvents;
                 this->triggered_events_ = 0;
 
-                if (auto* event = win_emu.process.events.get(select_info.Event))
+                if (auto* event = win_emu.process.get_object_as<sogen::event>(this->event_select_event_))
                 {
                     event->signaled = false;
                 }

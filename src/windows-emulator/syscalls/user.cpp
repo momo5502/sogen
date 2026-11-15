@@ -2080,23 +2080,39 @@ namespace sogen
             return 1;
         }
 
+        // The station's object identity for scoping desktop names. The interactive station is not in the store, so it gets a
+        // stable pseudo reference; a stored station is keyed by its index, not by whichever handle value names it.
+        object_reference window_station_reference(const syscall_context& c, const uint64_t station)
+        {
+            if (station == interactive_window_station)
+            {
+                return object_reference{.type = handle_types::window_station,
+                                        .pseudo = make_pseudo_handle(1, handle_types::window_station)};
+            }
+
+            return c.proc.window_stations.reference_of(make_handle(station)).value_or(object_reference{});
+        }
+
         handle default_desktop(const syscall_context& c)
         {
-            if (c.proc.default_desktop.bits == 0)
+            if (!c.proc.default_desktop)
             {
                 desktop desk{};
                 desk.name = u"Default";
-                desk.window_station = interactive_window_station;
-                c.proc.default_desktop = c.proc.desktops.store(std::move(desk));
+                desk.window_station = window_station_reference(c, interactive_window_station);
+                auto [handle, _] = c.proc.desktops.store_and_get(std::move(desk));
+                c.proc.default_desktop = c.proc.desktops.retain(handle).value_or(object_reference{});
+                return handle;
             }
 
-            return c.proc.default_desktop;
+            return c.proc.desktops.make_handle(c.proc.default_desktop.index);
         }
 
-        handle resolve_desktop(const syscall_context& c, const handle desktop_handle)
+        object_reference resolve_desktop(const syscall_context& c, const handle desktop_handle)
         {
-            const auto* desk = c.proc.desktops.get(desktop_handle);
-            return desk && desk->opened_desktop.bits != 0 ? desk->opened_desktop : desktop_handle;
+            const auto reference = c.proc.reference_of(desktop_handle);
+            const auto* desk = c.proc.get_object_as<desktop>(reference);
+            return desk && desk->opened_desktop ? desk->opened_desktop : reference;
         }
 
         hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, const ULONG thread_id)
@@ -3708,11 +3724,11 @@ namespace sogen
             return 0;
         }
 
-        uint64_t find_desktop(const syscall_context& c, const uint64_t window_station, const std::u16string_view name)
+        uint64_t find_desktop(const syscall_context& c, const object_reference& window_station, const std::u16string_view name)
         {
             for (const auto& [index, desk] : c.proc.desktops)
             {
-                if (desk.opened_desktop.bits == 0 && desk.window_station == window_station &&
+                if (!desk.opened_desktop && desk.window_station == window_station &&
                     utils::string::equals_ignore_case(std::u16string_view{desk.name}, name))
                 {
                     return c.proc.desktops.make_handle(index).bits;
@@ -3768,7 +3784,12 @@ namespace sogen
                 // other. The interactive station is not in the store and cannot be closed.
                 if (existing != interactive_window_station)
                 {
-                    c.proc.window_stations.duplicate(make_handle(existing));
+                    const auto duplicated = c.proc.window_stations.duplicate(make_handle(existing));
+                    if (duplicated)
+                    {
+                        (void)c.proc.window_stations.set_attributes(*duplicated, get_handle_attributes(object_attributes));
+                    }
+                    return duplicated ? duplicated->bits : 0;
                 }
 
                 return existing;
@@ -3776,7 +3797,9 @@ namespace sogen
 
             window_station station{};
             station.name = std::move(name);
-            return c.proc.window_stations.store(std::move(station)).bits;
+            const auto handle = c.proc.window_stations.store(std::move(station));
+            (void)c.proc.window_stations.set_attributes(handle, get_handle_attributes(object_attributes));
+            return handle.bits;
         }
 
         BOOL handle_NtUserSetProcessWindowStation(const syscall_context& c, const handle station)
@@ -3824,18 +3847,24 @@ namespace sogen
             }
 
             // CommonCreateDesktop always asks for open-if, scoped to the process window station.
-            const auto station = c.proc.process_window_station;
+            const auto station = window_station_reference(c, c.proc.process_window_station);
             if (const auto existing = find_desktop(c, station, name); existing != 0)
             {
-                c.proc.desktops.duplicate(make_handle(existing));
-                return existing;
+                const auto duplicated = c.proc.desktops.duplicate(make_handle(existing));
+                if (duplicated)
+                {
+                    (void)c.proc.desktops.set_attributes(*duplicated, get_handle_attributes(object_attributes));
+                }
+                return duplicated ? duplicated->bits : 0;
             }
 
             desktop desk{};
             desk.name = std::move(name);
             desk.window_station = station;
 
-            return c.proc.desktops.store(std::move(desk)).bits;
+            const auto handle = c.proc.desktops.store(std::move(desk));
+            (void)c.proc.desktops.set_attributes(handle, get_handle_attributes(object_attributes));
+            return handle.bits;
         }
 
         hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, const DWORD /*flags*/, const BOOL inherit,
@@ -3851,7 +3880,7 @@ namespace sogen
             desktop desk{};
             desk.name = input_desktop->name;
             desk.window_station = input_desktop->window_station;
-            desk.opened_desktop = input_desktop_handle;
+            desk.opened_desktop = c.proc.reference_of(input_desktop_handle);
             desk.inherit = inherit != FALSE;
             return c.proc.desktops.store(std::move(desk)).bits;
         }
@@ -3859,7 +3888,7 @@ namespace sogen
         BOOL handle_NtUserCloseDesktop(const syscall_context& c, const handle desktop_handle)
         {
             // A desktop that threads are using cannot be closed.
-            if (desktop_handle == c.proc.default_desktop)
+            if (c.proc.reference_of(desktop_handle) == c.proc.default_desktop)
             {
                 return FALSE;
             }
@@ -5946,7 +5975,7 @@ namespace sogen
         {
             if (handle.value.type == handle_types::desktop && !handle.value.is_pseudo)
             {
-                auto* desktop = c.proc.desktops.get(resolve_desktop(c, handle));
+                auto* desktop = c.proc.get_object_as<sogen::desktop>(resolve_desktop(c, handle));
                 if (!desktop)
                 {
                     return 0;
@@ -7992,7 +8021,9 @@ namespace sogen
                 // WSF_VISIBLE, which only the interactive station has. A process moved to a noninteractive station
                 // reads 0 here, which is how .NET's Environment.UserInteractive decides.
                 constexpr uint32_t wsf_visible = 1;
-                const user_object_flags flags{.inherit = desktop_object && desktop_object->inherit,
+                const auto inheritable =
+                    window_station ? c.proc.window_stations.attributes_of(object).inherit : c.proc.desktops.attributes_of(object).inherit;
+                const user_object_flags flags{.inherit = inheritable,
                                               .reserved = FALSE,
                                               .flags = (window_station && object.bits == interactive_window_station) ? wsf_visible : 0u};
                 return write(&flags, sizeof(flags));

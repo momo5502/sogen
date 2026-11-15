@@ -11,6 +11,11 @@ namespace sogen
                                         const ACCESS_MASK /*desired_access*/,
                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!object_attributes)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -33,8 +38,7 @@ namespace sogen
             {
                 if (semaphore.second.name == name)
                 {
-                    ++semaphore.second.ref_count;
-                    semaphore_handle.write(c.proc.semaphores.make_handle(semaphore.first));
+                    semaphore_handle.write(c.proc.semaphores.open_by_index(semaphore.first, get_handle_attributes(object_attributes)));
                     return STATUS_SUCCESS;
                 }
             }
@@ -81,6 +85,11 @@ namespace sogen
                                           const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                           const LONG initial_count, const LONG maximum_count)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (maximum_count <= 0 || initial_count < 0 || initial_count > maximum_count)
             {
                 return STATUS_INVALID_PARAMETER;
@@ -106,8 +115,7 @@ namespace sogen
                 {
                     if (entry.second.name == s.name)
                     {
-                        ++entry.second.ref_count;
-                        semaphore_handle.write(c.proc.semaphores.make_handle(entry.first));
+                        semaphore_handle.write(c.proc.semaphores.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }

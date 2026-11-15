@@ -52,6 +52,8 @@ namespace sogen
                                          emulator_object<CONTEXT64> thread_context, BOOLEAN handle_exception);
 
         // syscalls/file.cpp
+        // Validates an I/O completion event, resolving the handle before checking the type of the object it names.
+        NTSTATUS check_completion_event(const syscall_context& c, handle event);
         NTSTATUS handle_NtSetInformationFile(const syscall_context& c, handle file_handle,
                                              emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              uint64_t file_information, ULONG length, FILE_INFORMATION_CLASS info_class);
@@ -1166,6 +1168,13 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            // IopXxxControlFile references the file handle first and the event second, so an invalid file handle wins over a
+            // bad event. check_completion_event resolves the event before comparing its type.
+            if (const auto status = check_completion_event(c, event); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (auto* e = c.proc.events.get(event))
             {
                 e->signaled = false;
@@ -1173,7 +1182,8 @@ namespace sogen
 
             io_device_context context{c.emu};
             context.source_handle = file_handle;
-            context.event = event;
+            context.event = c.proc.reference_of(event);
+            context.event_low_bit = (event.bits & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;
             context.io_status_block = io_status_block;
@@ -1307,6 +1317,11 @@ namespace sogen
                                           const ACCESS_MASK /*desired_access*/,
                                           const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (!job_handle)
             {
                 return STATUS_ACCESS_VIOLATION;
@@ -1328,14 +1343,15 @@ namespace sogen
                 {
                     if (entry.second.name == job.name)
                     {
-                        ++entry.second.ref_count;
-                        job_handle.write(c.proc.jobs.make_handle(entry.first));
+                        job_handle.write(c.proc.jobs.open_by_index(entry.first, get_handle_attributes(object_attributes)));
                         return STATUS_OBJECT_NAME_EXISTS;
                     }
                 }
             }
 
-            job_handle.write(c.proc.jobs.store(std::move(job)));
+            const auto handle = c.proc.jobs.store(std::move(job));
+            (void)c.proc.jobs.set_attributes(handle, get_handle_attributes(object_attributes));
+            job_handle.write(handle);
             return STATUS_SUCCESS;
         }
 
@@ -1574,6 +1590,11 @@ namespace sogen
                                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                 const DWORD type)
         {
+            if (const auto status = validate_object_attributes(object_attributes); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             std::u16string name{};
             if (object_attributes)
             {
@@ -1590,7 +1611,9 @@ namespace sogen
                 // TODO: This probably isn't 100% correct.
                 wait_completion_packet packet{};
                 packet.name = std::move(name);
-                memory_reserve_handle.write(c.proc.wait_completion_packets.store(std::move(packet)));
+                const auto handle = c.proc.wait_completion_packets.store(std::move(packet));
+                (void)c.proc.wait_completion_packets.set_attributes(handle, get_handle_attributes(object_attributes));
+                memory_reserve_handle.write(handle);
                 return STATUS_SUCCESS;
             }
             case 0:
@@ -1624,15 +1647,16 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            directory->change_watches.push_back({
+            directory_change_watch watch{
                 .thread_id = c.thread().id,
-                .event = event_handle.bits,
                 .io_status_block = io_status_block,
-            });
+            };
             if (event)
             {
+                watch.event = c.proc.retain_object(event_handle).value_or(object_reference{});
                 event->signaled = false;
             }
+            directory->change_watches.push_back(watch);
 
             return STATUS_PENDING;
         }

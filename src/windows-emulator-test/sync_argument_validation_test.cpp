@@ -6,6 +6,8 @@ namespace sogen::syscalls
     NTSTATUS handle_NtCreateEvent(const syscall_context& c, emulator_object<handle> event_handle, ACCESS_MASK desired_access,
                                   emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, EVENT_TYPE event_type,
                                   BOOLEAN initial_state);
+    NTSTATUS handle_NtPulseEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
+    NTSTATUS handle_NtCompareObjects(const syscall_context& c, handle first, handle second);
     NTSTATUS handle_NtQueryEvent(const syscall_context& c, handle event_handle, uint32_t event_information_class,
                                  emulator_object<EVENT_BASIC_INFORMATION> event_information, uint32_t event_information_length,
                                  emulator_object<uint32_t> return_length);
@@ -323,5 +325,66 @@ namespace sogen::test
         EXPECT_EQ(STATUS_INVALID_PARAMETER_MIX,
                   syscalls::handle_NtWaitForMultipleObjects(this->context(), 2, handles, WaitAll, FALSE, timeout));
         EXPECT_TRUE(this->emu->vcpu(0).thread().await_objects.empty());
+    }
+
+    TEST_F(SyncArgumentValidationTest, PulseEventWakesAWaiterHoldingAnotherHandleValue)
+    {
+        auto& threads = this->emu->process.threads;
+        auto* waiter = threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+        ASSERT_NE(nullptr, waiter);
+
+        handle original{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_event(SynchronizationEvent, &original));
+        const auto duplicate = this->emu->process.events.duplicate(original);
+        ASSERT_TRUE(duplicate);
+        ASSERT_NE(original, *duplicate);
+
+        waiter->await_objects = {this->emu->process.reference_of(original)};
+        waiter->await_any = true;
+
+        // The pulse arrives through the duplicate's value; the waiter holds the original, so it must be matched by object.
+        const emulator_object<LONG> previous{this->emu->memory, this->storage + 0x100};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtPulseEvent(this->context(), duplicate->bits, previous));
+
+        EXPECT_TRUE(waiter->await_objects.empty());
+        EXPECT_EQ(STATUS_WAIT_0, waiter->pending_status);
+        EXPECT_FALSE(this->emu->process.events.get(original)->signaled);
+    }
+
+    TEST_F(SyncArgumentValidationTest, CompareObjectsMatchesADuplicateByObject)
+    {
+        handle original{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_event(SynchronizationEvent, &original));
+        const auto duplicate = this->emu->process.events.duplicate(original);
+        ASSERT_TRUE(duplicate);
+        ASSERT_NE(original, *duplicate);
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtCompareObjects(this->context(), original, *duplicate));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtCompareObjects(this->context(), original, original));
+
+        handle other{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_event(SynchronizationEvent, &other));
+        EXPECT_EQ(STATUS_NOT_SAME_OBJECT, syscalls::handle_NtCompareObjects(this->context(), original, other));
+    }
+
+    TEST_F(SyncArgumentValidationTest, ObjectWaitSurvivesClosingTheHandleItWasEnteredWith)
+    {
+        auto& threads = this->emu->process.threads;
+        auto* waiter = threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+        ASSERT_NE(nullptr, waiter);
+
+        handle original{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_event(SynchronizationEvent, &original));
+        const auto duplicate = this->emu->process.events.duplicate(original);
+        ASSERT_TRUE(duplicate);
+
+        // The wait is entered through original, then that handle closes; the duplicate keeps the event alive and signals it.
+        waiter->await_objects = {this->emu->process.reference_of(original)};
+        waiter->await_any = false;
+        ASSERT_TRUE(this->emu->process.events.erase(original));
+        this->emu->process.events.get(*duplicate)->signaled = true;
+
+        EXPECT_TRUE(waiter->is_thread_ready(*this->emu));
+        EXPECT_EQ(STATUS_SUCCESS, waiter->pending_status);
     }
 }

@@ -18,7 +18,7 @@ namespace sogen
     {
         uint32_t thread_id{};
         uint64_t thread_ended_waits{};
-        handle event{};
+        object_reference event{};
         uint64_t apc_routine{};
         uint64_t apc_context{};
         uint64_t io_status_block{};

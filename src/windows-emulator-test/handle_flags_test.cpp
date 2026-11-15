@@ -16,6 +16,9 @@ namespace sogen::syscalls
     NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, emulator_object<handle> semaphore_handle, ACCESS_MASK desired_access,
                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, LONG initial_count,
                                       LONG maximum_count);
+    NTSTATUS handle_NtDuplicateObject(const syscall_context& c, handle source_process_handle, handle source_handle,
+                                      handle target_process_handle, emulator_object<handle> target_handle, ACCESS_MASK desired_access,
+                                      ULONG handle_attributes, ULONG options);
 }
 
 namespace sogen::test
@@ -49,6 +52,14 @@ namespace sogen::test
                     {.Inherit = static_cast<BOOLEAN>(inherit), .ProtectFromClose = static_cast<BOOLEAN>(protect)});
                 return syscalls::handle_NtSetInformationObject(this->context(), h, ObjectHandleFlagInformation, this->storage,
                                                                sizeof(OBJECT_HANDLE_FLAG_INFORMATION));
+            }
+
+            handle duplicate(handle source, ULONG handle_attributes, ULONG options)
+            {
+                const emulator_object<handle> output{this->emu->memory, this->storage + 0x300};
+                EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, source, CURRENT_PROCESS,
+                                                                             output, 0, handle_attributes, options));
+                return output.read();
             }
 
             void expect_flags(handle h, bool inherit, bool protect)
@@ -88,6 +99,88 @@ namespace sogen::test
         EXPECT_EQ(STATUS_HANDLE_NOT_CLOSABLE, syscalls::handle_NtClose(this->context(), h));
         ASSERT_EQ(STATUS_SUCCESS, this->set_flags(h, false, false));
         EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), h));
+    }
+
+    TEST_F(HandleFlagsTest, DuplicatesKeepIndependentFlags)
+    {
+        const auto original = this->emu->process.events.store(event{});
+        const auto duplicate = this->emu->process.events.duplicate(original);
+        ASSERT_TRUE(duplicate);
+        EXPECT_NE(original, *duplicate);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(*duplicate, true, true));
+        this->expect_flags(original, false, false);
+        this->expect_flags(*duplicate, true, true);
+
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), original));
+        EXPECT_EQ(STATUS_HANDLE_NOT_CLOSABLE, syscalls::handle_NtClose(this->context(), *duplicate));
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(*duplicate, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), *duplicate));
+    }
+
+    TEST_F(HandleFlagsTest, DuplicateUsesTheRequestedAttributesUnlessSameAttributesIsAsked)
+    {
+        constexpr ULONG duplicate_same_attributes = 4;
+        const auto source = this->emu->process.events.store(event{});
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(source, true, true));
+
+        const auto plain = this->duplicate(source, 0, 0);
+        this->expect_flags(plain, false, false);
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), plain));
+
+        const auto requested = this->duplicate(source, OBJ_INHERIT | OBJ_PROTECT_CLOSE, 0);
+        this->expect_flags(requested, true, true);
+        EXPECT_EQ(STATUS_HANDLE_NOT_CLOSABLE, syscalls::handle_NtClose(this->context(), requested));
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(requested, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), requested));
+
+        const auto same = this->duplicate(source, 0, duplicate_same_attributes);
+        this->expect_flags(same, true, true);
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(same, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), same));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(source, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), source));
+    }
+
+    TEST_F(HandleFlagsTest, DuplicateCloseSourceClosesTheOriginal)
+    {
+        constexpr ULONG duplicate_close_source = 1;
+        const auto source = this->emu->process.events.store(event{});
+        const auto duplicate = this->duplicate(source, 0, duplicate_close_source);
+
+        EXPECT_EQ(nullptr, this->emu->process.events.get(source));
+        ASSERT_NE(nullptr, this->emu->process.events.get(duplicate));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), duplicate));
+    }
+
+    TEST_F(HandleFlagsTest, ForgedSystemBitDoesNotCloseAProtectedGuestHandle)
+    {
+        const auto handle = this->emu->process.events.store(event{});
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(handle, false, true));
+
+        auto forged = handle;
+        forged.value.is_system = true;
+        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtClose(this->context(), forged));
+        ASSERT_NE(nullptr, this->emu->process.events.get(handle));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(handle, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), handle));
+    }
+
+    TEST_F(HandleFlagsTest, DuplicateCloseSourceIgnoresTheProtectedSourceCloseStatus)
+    {
+        constexpr ULONG duplicate_close_source = 1;
+        const auto source = this->emu->process.events.store(event{});
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(source, false, true));
+
+        const auto duplicate = this->duplicate(source, 0, duplicate_close_source);
+        ASSERT_NE(nullptr, this->emu->process.events.get(source));
+        ASSERT_NE(nullptr, this->emu->process.events.get(duplicate));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->set_flags(source, false, false));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), source));
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), duplicate));
     }
 
     TEST_F(HandleFlagsTest, RejectsInvalidObjectHandleWhenSettingFlags)
