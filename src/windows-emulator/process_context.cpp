@@ -1983,21 +1983,31 @@ namespace sogen
         }
     }
 
+    // A token without privileges of its own shares its process's, which are this process's and not the other one's, so
+    // they are sent along.
     process_token process_context::export_token(const handle token) const
     {
         const auto* opened = this->tokens.get(token);
-        if (!opened)
+        const auto identity = opened ? opened->identity : token;
+
+        const std::vector<token_privilege>* privileges = nullptr;
+        if (opened && opened->privileges)
         {
-            return {.identity = token.bits};
+            privileges = &*opened->privileges;
+        }
+        else if (identity == CURRENT_PROCESS_TOKEN || identity == DUMMY_IMPERSONATION_TOKEN)
+        {
+            privileges = &this->token_privileges;
         }
 
-        process_token exported{.identity = opened->identity.bits};
-        if (opened->privileges)
+        process_token exported{.identity = identity.bits};
+        if (privileges)
         {
-            auto& privileges = exported.privileges.emplace();
-            for (const auto& privilege : *opened->privileges)
+            auto& copied = exported.privileges.emplace();
+            copied.reserve(privileges->size());
+            for (const auto& privilege : *privileges)
             {
-                privileges.push_back({.luid = privilege.luid, .attributes = privilege.attributes});
+                copied.push_back({.luid = privilege.luid, .attributes = privilege.attributes});
             }
         }
         return exported;

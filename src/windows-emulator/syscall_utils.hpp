@@ -353,6 +353,7 @@ namespace sogen
         if (token.privileges)
         {
             auto& imported = privileges.emplace();
+            imported.reserve(token.privileges->size());
             for (const auto& privilege : *token.privileges)
             {
                 imported.push_back({.luid = privilege.luid, .attributes = privilege.attributes});

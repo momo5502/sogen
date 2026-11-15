@@ -211,6 +211,23 @@ namespace sogen::test
         EXPECT_TRUE(std::ranges::any_of(this->privileges(), enabled));
     }
 
+    TEST_F(TokenInformationTest, ATokenSharingItsProcessPrivilegesIsSentWithThem)
+    {
+        // The impersonation token is this process impersonating itself, so another process must get this process's
+        // privileges with it rather than use its own.
+        auto& process = this->emu->process;
+        process.token_privileges = {{.luid = 7, .attributes = 2}};
+
+        const auto exported = process.export_token(DUMMY_IMPERSONATION_TOKEN);
+        EXPECT_EQ(DUMMY_IMPERSONATION_TOKEN.bits, exported.identity);
+        ASSERT_TRUE(exported.privileges.has_value());
+        ASSERT_EQ(1u, exported.privileges->size());
+        EXPECT_EQ(7u, exported.privileges->front().luid);
+        EXPECT_EQ(2u, exported.privileges->front().attributes);
+
+        EXPECT_FALSE(process.export_token(ANONYMOUS_IMPERSONATION_TOKEN).privileges.has_value());
+    }
+
     TEST_F(TokenInformationTest, AThreadTokenFromAnotherProcessKeepsItsPrivileges)
     {
         emulator_process_target target{*this->emu};

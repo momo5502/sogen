@@ -1382,7 +1382,7 @@ namespace sogen
         }
 
         std::u16string name{};
-        // Section handles that differ in access are separate objects sharing one backing, as a handle's access is fixed.
+        // The access the section was created with. A handle with less, such as a duplicate, records its own in the store.
         ACCESS_MASK granted_access{all_access};
         std::u16string file_name{};
         uint64_t maximum_size{};

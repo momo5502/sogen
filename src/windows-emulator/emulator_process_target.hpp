@@ -286,6 +286,7 @@ namespace sogen
                 token_object copy{};
                 copy.identity = identity;
                 auto& privileges = copy.privileges.emplace();
+                privileges.reserve(token.privileges->size());
                 for (const auto& privilege : *token.privileges)
                 {
                     privileges.push_back({.luid = privilege.luid, .attributes = privilege.attributes});

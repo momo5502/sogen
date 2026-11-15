@@ -169,7 +169,13 @@ namespace sogen
             identity = token.identity;
             has_privileges = token.privileges.has_value();
             privileges.clear();
-            for (const auto& privilege : token.privileges.value_or(std::vector<process_token_privilege>{}))
+            if (!token.privileges)
+            {
+                return;
+            }
+
+            privileges.reserve(token.privileges->size());
+            for (const auto& privilege : *token.privileges)
             {
                 privileges.emplace_back(privilege.luid, privilege.attributes);
             }
