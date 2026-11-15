@@ -146,6 +146,24 @@ namespace sogen::test
             std::optional<DWORD> original_mode{};
             bool allocated_console{};
         };
+
+        class WindowsConsoleStreamCharacterTest : public WindowsConsoleTextTest
+        {
+          protected:
+            void SetUp() override
+            {
+                WindowsConsoleTextTest::SetUp();
+                if (testing::Test::IsSkipped() || testing::Test::HasFatalFailure())
+                {
+                    return;
+                }
+                this->console = create_stream_console_backend();
+                DWORD mode{};
+                ASSERT_TRUE(GetConsoleMode(this->input, &mode));
+                ASSERT_TRUE(SetConsoleMode(this->input, mode & ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT)));
+                ASSERT_EQ(FILE_TYPE_CHAR, GetFileType(this->input));
+            }
+        };
     }
 
     TEST_F(WindowsConsoleTextTest, CooperativeLineReadPreservesEditingAndEcho)
@@ -269,30 +287,45 @@ namespace sogen::test
         EXPECT_EQ("\xF0\x9F\x98\x80", utf8);
     }
 
-    TEST(WindowsConsoleStreamTest, PipeDistinguishesPendingInputFromEof)
+    TEST_F(WindowsConsoleStreamCharacterTest, CharacterInputWaitsForDataInsteadOfReportingEof)
     {
-        HANDLE pipe_input{};
-        HANDLE pipe_output{};
-        ASSERT_TRUE(CreatePipe(&pipe_input, &pipe_output, nullptr, 0));
-        const auto original = GetStdHandle(STD_INPUT_HANDLE);
+        ASSERT_FALSE(this->console->try_read_input(16));
+        EXPECT_FALSE(this->console->input_closed());
+        this->queue(u'q', 'Q');
+        EXPECT_EQ(std::optional<std::string>{"q"}, this->read_ready(16));
+        EXPECT_FALSE(this->console->input_closed());
+    }
+
+    TEST_F(WindowsConsoleStreamCharacterTest, CancellationAllowsAnotherCharacterRead)
+    {
+        ASSERT_FALSE(this->console->try_read_input(16));
+        ASSERT_TRUE(this->cancel_ready());
+        EXPECT_FALSE(this->console->input_closed());
+        ASSERT_FALSE(this->console->try_read_input(16));
+        this->queue(u'q', 'Q');
+        EXPECT_EQ(std::optional<std::string>{"q"}, this->read_ready(16));
+    }
+
+    TEST_F(WindowsConsoleStreamCharacterTest, ResetStopsActiveCharacterReader)
+    {
+        ASSERT_FALSE(this->console->try_read_input(16));
+        this->console->reset();
+        ASSERT_FALSE(this->console->try_read_input(16));
+        this->queue(u'q', 'Q');
+        EXPECT_EQ(std::optional<std::string>{"q"}, this->read_ready(16));
+    }
+
+    TEST_F(WindowsConsoleStreamCharacterTest, NullDeviceReportsEof)
+    {
+        auto* null_input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        ASSERT_NE(INVALID_HANDLE_VALUE, null_input);
         const auto cleanup = utils::finally([&] {
-            SetStdHandle(STD_INPUT_HANDLE, original);
-            CloseHandle(pipe_input);
-            if (pipe_output)
-            {
-                CloseHandle(pipe_output);
-            }
+            SetStdHandle(STD_INPUT_HANDLE, this->input);
+            CloseHandle(null_input);
         });
-        ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, pipe_input));
-        auto backend = create_stream_console_backend();
-        EXPECT_FALSE(backend->try_read_input(16));
-        DWORD count{};
-        ASSERT_TRUE(WriteFile(pipe_output, "abc", 3, &count, nullptr));
-        ASSERT_TRUE(CloseHandle(pipe_output));
-        pipe_output = nullptr;
-        EXPECT_EQ(std::optional<std::string>{"ab"}, backend->try_read_input(2));
-        EXPECT_EQ(std::optional<std::string>{"c"}, backend->try_read_input(16));
-        EXPECT_EQ(std::optional<std::string>{""}, backend->try_read_input(16));
+        ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, null_input));
+        EXPECT_EQ(std::optional<std::string>{""}, this->read_ready(16));
+        EXPECT_TRUE(this->console->input_closed());
     }
 
     TEST_F(WindowsConsoleBackendTest, PollReadsIndividualKeysWithoutEnter)

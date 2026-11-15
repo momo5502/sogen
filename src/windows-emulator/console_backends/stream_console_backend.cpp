@@ -4,6 +4,16 @@
 #include <chrono>
 #include <iostream>
 #include <thread>
+#ifdef OS_WINDOWS
+#include <system_error>
+#include <utils/nt_handle.hpp>
+#elif !defined(OS_EMSCRIPTEN)
+#include <cerrno>
+#include <cstdio>
+#include <fcntl.h>
+#include <unistd.h>
+#include <utils/finally.hpp>
+#endif
 
 namespace sogen
 {
@@ -12,6 +22,50 @@ namespace sogen
         class stream_console_backend final : public buffered_console_backend
         {
           public:
+#ifdef OS_WINDOWS
+            ~stream_console_backend() override
+            {
+                this->stop_reader();
+            }
+
+            bool cancel_read_input() override
+            {
+                if (!this->reader_.joinable())
+                {
+                    return true;
+                }
+                const auto canceled =
+                    this->console_reader_ ? CancelIoEx(this->reader_handle_, nullptr) : CancelSynchronousIo(this->reader_.native_handle());
+                if (!canceled)
+                {
+                    const auto error = GetLastError();
+                    if (error != ERROR_NOT_FOUND)
+                    {
+                        throw std::system_error(static_cast<int>(error), std::system_category(),
+                                                this->console_reader_ ? "CancelIoEx" : "CancelSynchronousIo");
+                    }
+                }
+                if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
+                {
+                    return false;
+                }
+                this->reader_.join();
+                this->collect_read(true);
+                if (this->console_reader_)
+                {
+                    this->reader_handle_ = INVALID_HANDLE_VALUE;
+                }
+                return true;
+            }
+
+            void reset() override
+            {
+                this->stop_reader();
+                this->reader_handle_ = INVALID_HANDLE_VALUE;
+                buffered_console_backend::reset();
+            }
+#endif
+
             void set_input_mode(const console_input_mode& /*mode*/) override
             {
             }
@@ -24,11 +78,13 @@ namespace sogen
                     return;
                 }
 
+#ifdef OS_EMSCRIPTEN
                 if (timeout_ms < 0)
                 {
                     this->read_one();
                     return;
                 }
+#endif
 
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
                 do
@@ -45,12 +101,19 @@ namespace sogen
                     }
 
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                } while (std::chrono::steady_clock::now() < deadline);
+                } while (timeout_ms < 0 || std::chrono::steady_clock::now() < deadline);
             }
 
           private:
             void poll_input()
             {
+                if (this->input_closed_)
+                {
+                    return;
+                }
+#if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)
+                this->read_posix_input();
+#else
                 const auto available = std::cin.rdbuf()->in_avail();
                 if (available > 0)
                 {
@@ -78,6 +141,11 @@ namespace sogen
                         return;
                     }
                 }
+                else if (type == FILE_TYPE_CHAR)
+                {
+                    this->poll_character_input(input);
+                    return;
+                }
                 else if (type != FILE_TYPE_DISK)
                 {
                     this->input_closed_ = true;
@@ -92,8 +160,161 @@ namespace sogen
                 }
                 this->input_.insert(this->input_.end(), data.begin(), data.begin() + count);
 #endif
+#endif
             }
 
+#if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)
+            void read_posix_input()
+            {
+                const auto flags = fcntl(STDIN_FILENO, F_GETFL);
+                if (flags < 0 && errno != EBADF)
+                {
+                    this->input_closed_ = true;
+                    return;
+                }
+                const auto change_flags = flags >= 0 && (flags & O_NONBLOCK) == 0;
+                if (change_flags && fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK) < 0)
+                {
+                    this->input_closed_ = true;
+                    return;
+                }
+                const auto restore_flags = utils::finally([&] {
+                    if (change_flags)
+                    {
+                        fcntl(STDIN_FILENO, F_SETFL, flags);
+                    }
+                });
+                for (size_t count = 0; count < 256;)
+                {
+                    auto character = std::char_traits<char>::eof();
+                    errno = 0;
+                    try
+                    {
+                        character = std::cin.rdbuf()->sbumpc();
+                    }
+                    catch (const std::ios_base::failure&)
+                    {
+                        if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
+                        {
+                            this->input_closed_ = true;
+                            return;
+                        }
+                    }
+                    if (character != std::char_traits<char>::eof())
+                    {
+                        this->input_.push_back(static_cast<uint8_t>(character));
+                        ++count;
+                        continue;
+                    }
+                    const auto error = errno;
+                    if (error == EINTR || error == EAGAIN || error == EWOULDBLOCK)
+                    {
+                        std::clearerr(stdin);
+                        if (error == EINTR)
+                        {
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        this->input_closed_ = true;
+                    }
+                    return;
+                }
+            }
+#endif
+
+#ifdef OS_WINDOWS
+            void poll_character_input(HANDLE input)
+            {
+                if (this->reader_.joinable())
+                {
+                    if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
+                    {
+                        return;
+                    }
+                    this->reader_.join();
+                    this->collect_read();
+                    return;
+                }
+                if (!this->reader_handle_)
+                {
+                    DWORD mode{};
+                    this->console_reader_ = GetConsoleMode(input, &mode) != FALSE;
+                    if (this->console_reader_)
+                    {
+                        this->reader_handle_ =
+                            CreateFileW(L"CONIN$", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+                    }
+                    else
+                    {
+                        HANDLE duplicate{};
+                        if (DuplicateHandle(GetCurrentProcess(), input, GetCurrentProcess(), &duplicate, 0, FALSE, DUPLICATE_SAME_ACCESS))
+                        {
+                            this->reader_handle_ = duplicate;
+                        }
+                    }
+                    if (!this->reader_handle_)
+                    {
+                        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(), "Opening character reader");
+                    }
+                    DCB configuration{};
+                    configuration.DCBlength = sizeof(configuration);
+                    this->serial_reader_ = GetCommState(this->reader_handle_, &configuration) != FALSE;
+                }
+                this->reader_ = std::thread([this] {
+                    this->read_count_ = 0;
+                    const auto length = this->serial_reader_ ? 1u : static_cast<DWORD>(this->read_buffer_.size());
+                    this->read_error_ = ReadFile(this->reader_handle_, this->read_buffer_.data(), length, &this->read_count_, nullptr)
+                                            ? ERROR_SUCCESS
+                                            : GetLastError();
+                    if (this->serial_reader_ && this->read_count_)
+                    {
+                        COMSTAT status{};
+                        DWORD errors{};
+                        if (ClearCommError(this->reader_handle_, &errors, &status) && status.cbInQue)
+                        {
+                            const auto remaining = static_cast<DWORD>(this->read_buffer_.size()) - this->read_count_;
+                            DWORD count{};
+                            ReadFile(this->reader_handle_, this->read_buffer_.data() + this->read_count_,
+                                     std::min(status.cbInQue, remaining), &count, nullptr);
+                            this->read_count_ += count;
+                        }
+                    }
+                });
+            }
+
+            void collect_read(const bool canceled = false)
+            {
+                if (this->read_count_)
+                {
+                    this->input_.insert(this->input_.end(), this->read_buffer_.begin(), this->read_buffer_.begin() + this->read_count_);
+                }
+                else if (!canceled && this->read_error_ != ERROR_OPERATION_ABORTED &&
+                         (this->read_error_ != ERROR_SUCCESS || !this->serial_reader_))
+                {
+                    this->input_closed_ = true;
+                }
+            }
+
+            void stop_reader()
+            {
+                while (!this->cancel_read_input())
+                {
+                    WaitForSingleObject(this->reader_.native_handle(), 1);
+                }
+            }
+
+            utils::nt::handle<utils::nt::invalid_handle> reader_handle_{};
+            std::thread reader_{};
+            bool console_reader_{};
+            bool serial_reader_{};
+            std::array<uint8_t, 256> read_buffer_{};
+            DWORD read_count_{};
+            DWORD read_error_{};
+#endif
+
+#ifdef OS_EMSCRIPTEN
             void read_one()
             {
                 const auto character = std::cin.get();
@@ -107,6 +328,7 @@ namespace sogen
                     this->input_closed_ = true;
                 }
             }
+#endif
 
             void read_available()
             {
