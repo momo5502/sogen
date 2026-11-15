@@ -1,5 +1,6 @@
 #include "../std_include.hpp"
 #include "buffered_console_backend.hpp"
+#include <thread>
 
 #ifdef OS_WINDOWS
 namespace sogen
@@ -46,7 +47,61 @@ namespace sogen
 
             ~windows_console_backend() override
             {
+                this->stop_reader();
                 this->restore_terminal();
+            }
+
+            std::optional<std::string> try_read_input(const size_t length) override
+            {
+                if (!this->reader_.joinable() && !this->read_text_.empty())
+                {
+                    this->buffer_text(std::exchange(this->read_text_, {}));
+                }
+                if (length == 0 || !this->input_.empty())
+                {
+                    return buffered_console_backend::try_read_input(length);
+                }
+                if (this->reader_.joinable())
+                {
+                    if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
+                    {
+                        return std::nullopt;
+                    }
+                    this->reader_.join();
+                    const auto has_text = !this->read_text_.empty();
+                    this->buffer_text(std::exchange(this->read_text_, {}));
+                    if (this->input_.empty())
+                    {
+                        return has_text ? this->try_read_input(length) : std::optional<std::string>{std::string{}};
+                    }
+                    return buffered_console_backend::try_read_input(length);
+                }
+                this->read_text_.resize(std::min<size_t>(length, 256));
+                this->reader_ = std::thread([this] {
+                    DWORD count{};
+                    if (!ReadConsoleW(this->input_handle_, this->read_text_.data(), static_cast<DWORD>(this->read_text_.size()), &count,
+                                      nullptr))
+                    {
+                        count = 0;
+                    }
+                    this->read_text_.resize(count);
+                });
+                return std::nullopt;
+            }
+
+            bool cancel_read_input() override
+            {
+                if (!this->reader_.joinable())
+                {
+                    return true;
+                }
+                CancelIoEx(this->input_handle_, nullptr);
+                if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
+                {
+                    return false;
+                }
+                this->reader_.join();
+                return true;
             }
 
             std::string read_input(const size_t length) override
@@ -93,6 +148,7 @@ namespace sogen
 
             void reset() override
             {
+                this->stop_reader();
                 this->restore_terminal();
                 this->pending_surrogate_ = 0;
                 buffered_console_backend::reset();
@@ -101,6 +157,10 @@ namespace sogen
           protected:
             void refill(const int timeout_ms) override
             {
+                if (this->reader_.joinable())
+                {
+                    return;
+                }
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(std::max(timeout_ms, 0));
                 while (this->input_.empty())
                 {
@@ -163,6 +223,16 @@ namespace sogen
             }
 
           private:
+            void stop_reader()
+            {
+                while (!this->cancel_read_input())
+                {
+                    // Cancellation can race the worker entering ReadConsoleW, so retry until it has actually exited.
+                    WaitForSingleObject(this->reader_.native_handle(), 1);
+                }
+                this->read_text_.clear();
+            }
+
             void buffer_text(std::u16string text)
             {
                 if (this->pending_surrogate_)
@@ -192,6 +262,8 @@ namespace sogen
             DWORD original_mode_{};
             bool terminal_modified_{};
             char16_t pending_surrogate_{};
+            std::thread reader_{};
+            std::u16string read_text_{};
         };
     }
 

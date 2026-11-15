@@ -311,6 +311,8 @@ namespace sogen
                     buffer.write(read.output_address);
                     buffer.write(read.request);
                     buffer.write(read.issuing_thread);
+                    buffer.write(read.text);
+                    buffer.write(read.cancelled);
                 }
             }
 
@@ -332,6 +334,8 @@ namespace sogen
                     buffer.read(read.output_address);
                     buffer.read(read.request);
                     buffer.read(read.issuing_thread);
+                    buffer.read(read.text);
+                    buffer.read(read.cancelled);
                     pending_reads_.push_back(std::move(read));
                 }
             }
@@ -340,10 +344,46 @@ namespace sogen
             {
                 for (auto it = pending_reads_.begin(); it != pending_reads_.end();)
                 {
+                    if (it->text)
+                    {
+                        const auto first_text = std::ranges::find_if(pending_reads_, [](const auto& read) { return read.text; });
+                        if (it->cancelled)
+                        {
+                            if (it == first_text && !win_emu.console().cancel_read_input())
+                            {
+                                ++it;
+                                continue;
+                            }
+                            complete_read(win_emu, *it, STATUS_CANCELLED);
+                        }
+                        else
+                        {
+                            if (it != first_text && it->context.output_buffer_length != 0)
+                            {
+                                ++it;
+                                continue;
+                            }
+                            const auto data = win_emu.console().try_read_input(it->context.output_buffer_length);
+                            if (!data)
+                            {
+                                ++it;
+                                continue;
+                            }
+                            const auto status =
+                                data->empty() || win_emu.memory.try_write_memory(it->context.output_buffer, data->data(), data->size())
+                                    ? STATUS_SUCCESS
+                                    : STATUS_ACCESS_VIOLATION;
+                            complete_read(win_emu, *it, status, status == STATUS_SUCCESS ? data->size() : 0);
+                        }
+                        release_read(win_emu.process, *it);
+                        it = pending_reads_.erase(it);
+                        continue;
+                    }
                     const auto event = win_emu.console().read_input_event(false, (it->request.flags & console_read_noremove) == 0);
                     if (!event)
                     {
-                        break;
+                        ++it;
+                        continue;
                     }
                     const auto status = write_read_result(win_emu, *it, *event);
                     complete_read(win_emu, *it, status);
@@ -371,6 +411,17 @@ namespace sogen
                         ++it;
                         continue;
                     }
+                    if (it->text)
+                    {
+                        it->cancelled = true;
+                        const auto first_text = std::ranges::find_if(pending_reads_, [](const auto& read) { return read.text; });
+                        if (it == first_text && !win_emu.console().cancel_read_input())
+                        {
+                            cancelled = true;
+                            ++it;
+                            continue;
+                        }
+                    }
                     complete_read(win_emu, *it, STATUS_CANCELLED);
                     release_read(win_emu.process, *it);
                     it = pending_reads_.erase(it);
@@ -391,6 +442,11 @@ namespace sogen
             void restore_after_state_restore(windows_emulator& win_emu) override
             {
                 win_emu.console().set_input_mode(make_console_input_mode(input_mode_));
+            }
+
+            NTSTATUS read_input(windows_emulator& win_emu, const io_device_context& context)
+            {
+                return queue_read(win_emu, pending_read{.context = context, .text = true});
             }
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
@@ -796,6 +852,8 @@ namespace sogen
                 uint64_t output_address{};
                 read_console_input_request request{};
                 handle issuing_thread{};
+                bool text{};
+                bool cancelled{};
             };
 
             static NTSTATUS write_read_result(windows_emulator& win_emu, pending_read& read, const console_key_event& event)
@@ -810,10 +868,11 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            static void complete_read(windows_emulator& win_emu, const pending_read& read, const NTSTATUS status)
+            static void complete_read(windows_emulator& win_emu, const pending_read& read, const NTSTATUS status,
+                                      const uint64_t information = 0)
             {
                 const auto& context = read.context;
-                context.io_status_block.write({.Status = status, .Information = 0});
+                context.io_status_block.write({.Status = status, .Information = information});
                 write_io_status(context, status);
                 if (auto* event = win_emu.process.events.get(context.event))
                 {
@@ -848,12 +907,19 @@ namespace sogen
             NTSTATUS queue_read(windows_emulator& win_emu, const io_device_context& context, const uint64_t request_address,
                                 const uint64_t output_address, const read_console_input_request& request)
             {
+                return queue_read(win_emu, pending_read{.context = context,
+                                                        .request_address = request_address,
+                                                        .output_address = output_address,
+                                                        .request = request});
+            }
+
+            NTSTATUS queue_read(windows_emulator& win_emu, pending_read read)
+            {
+                const auto context = read.context;
                 if (!context.io_status_block || (!context.event.bits && (!context.vcpu || !context.vcpu->active_thread)))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                pending_read read{
-                    .context = context, .request_address = request_address, .output_address = output_address, .request = request};
                 auto* thread = context.vcpu ? context.vcpu->active_thread : nullptr;
                 if (thread)
                 {
@@ -881,15 +947,25 @@ namespace sogen
                     }
                 }
                 read.context.vcpu = nullptr;
+                const auto text = read.text;
                 pending_reads_.push_back(std::move(read));
                 queued = true;
                 write_io_status(context, STATUS_PENDING, true);
-                if (!context.event.bits)
+                if (auto* event = win_emu.process.events.get(context.event))
+                {
+                    event->signaled = false;
+                }
+                if (text)
+                {
+                    this->work(win_emu);
+                }
+                const auto status = context.io_status_block.read().Status;
+                if (status == STATUS_PENDING && !context.event.bits && !context.apc_routine)
                 {
                     context.thread().await_file_io = context.io_status_block.value();
                     win_emu.yield_thread(*context.vcpu);
                 }
-                return STATUS_PENDING;
+                return status;
             }
 
             std::vector<pending_read> pending_reads_{};
@@ -906,6 +982,17 @@ namespace sogen
     std::unique_ptr<io_device> create_console_device(const device_creation_context&)
     {
         return std::make_unique<console_device>();
+    }
+
+    NTSTATUS read_console_input(windows_emulator& win_emu, const io_device_context& context)
+    {
+        if (!win_emu.process.devices.get(win_emu.process.console_handle))
+        {
+            win_emu.process.console_handle = win_emu.process.devices.store(io_device_container{u"Console", win_emu, {}});
+        }
+        auto* container = win_emu.process.devices.get(win_emu.process.console_handle);
+        auto* console = container->get_internal_device<console_device>();
+        return console->read_input(win_emu, container->prepare_io_context(context));
     }
 
 } // namespace sogen

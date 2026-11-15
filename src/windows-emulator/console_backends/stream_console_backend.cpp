@@ -9,37 +9,6 @@ namespace sogen
 {
     namespace
     {
-        bool host_input_available()
-        {
-            if (std::cin.rdbuf()->in_avail() > 0)
-            {
-                return true;
-            }
-
-#ifdef OS_WINDOWS
-            auto* const input = GetStdHandle(STD_INPUT_HANDLE);
-            if (input == nullptr || input == INVALID_HANDLE_VALUE)
-            {
-                return false;
-            }
-
-            switch (GetFileType(input))
-            {
-            case FILE_TYPE_PIPE: {
-                DWORD available{};
-                return PeekNamedPipe(input, nullptr, 0, nullptr, &available, nullptr) != 0 && available > 0;
-            }
-            case FILE_TYPE_CHAR:
-                return WaitForSingleObject(input, 0) == WAIT_OBJECT_0;
-            case FILE_TYPE_DISK:
-                return std::cin.peek() != std::char_traits<char>::eof();
-            default:
-                break;
-            }
-#endif
-            return false;
-        }
-
         class stream_console_backend final : public buffered_console_backend
         {
           public:
@@ -64,9 +33,9 @@ namespace sogen
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
                 do
                 {
-                    if (host_input_available())
+                    this->poll_input();
+                    if (!this->input_.empty() || this->input_closed_)
                     {
-                        this->read_available();
                         return;
                     }
 
@@ -80,6 +49,51 @@ namespace sogen
             }
 
           private:
+            void poll_input()
+            {
+                const auto available = std::cin.rdbuf()->in_avail();
+                if (available > 0)
+                {
+                    this->read_available();
+                    return;
+                }
+                if (available < 0 || std::cin.eof())
+                {
+                    this->input_closed_ = true;
+                    return;
+                }
+#ifdef OS_WINDOWS
+                auto* const input = GetStdHandle(STD_INPUT_HANDLE);
+                const auto type = GetFileType(input);
+                DWORD amount = 256;
+                if (type == FILE_TYPE_PIPE)
+                {
+                    if (!PeekNamedPipe(input, nullptr, 0, nullptr, &amount, nullptr))
+                    {
+                        this->input_closed_ = true;
+                        return;
+                    }
+                    if (amount == 0)
+                    {
+                        return;
+                    }
+                }
+                else if (type != FILE_TYPE_DISK)
+                {
+                    this->input_closed_ = true;
+                    return;
+                }
+                std::array<uint8_t, 256> data{};
+                DWORD count{};
+                if (!ReadFile(input, data.data(), std::min<DWORD>(amount, static_cast<DWORD>(data.size())), &count, nullptr) || count == 0)
+                {
+                    this->input_closed_ = true;
+                    return;
+                }
+                this->input_.insert(this->input_.end(), data.begin(), data.begin() + count);
+#endif
+            }
+
             void read_one()
             {
                 const auto character = std::cin.get();
@@ -87,6 +101,10 @@ namespace sogen
                 {
                     this->input_.push_back(static_cast<uint8_t>(character));
                     this->read_available();
+                }
+                else
+                {
+                    this->input_closed_ = true;
                 }
             }
 

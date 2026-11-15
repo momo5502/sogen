@@ -42,6 +42,199 @@ namespace sogen::test
             HANDLE input{};
             std::unique_ptr<console_backend> console{};
         };
+
+        class WindowsConsoleTextTest : public WindowsConsoleBackendTest
+        {
+          protected:
+            void SetUp() override
+            {
+                this->original_input = GetStdHandle(STD_INPUT_HANDLE);
+                this->original_output = GetStdHandle(STD_OUTPUT_HANDLE);
+                this->native_input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                 OPEN_EXISTING, 0, nullptr);
+                if (this->native_input == INVALID_HANDLE_VALUE)
+                {
+                    if (!AllocConsole())
+                    {
+                        GTEST_SKIP() << "Requires a Windows console";
+                    }
+                    this->allocated_console = true;
+                    ShowWindow(GetConsoleWindow(), SW_HIDE);
+                    this->native_input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                     OPEN_EXISTING, 0, nullptr);
+                }
+                ASSERT_NE(INVALID_HANDLE_VALUE, this->native_input);
+                DWORD mode{};
+                ASSERT_TRUE(GetConsoleMode(this->native_input, &mode));
+                this->original_mode = mode;
+                ASSERT_TRUE(SetConsoleMode(this->native_input, mode | ENABLE_INSERT_MODE | ENABLE_EXTENDED_FLAGS));
+                this->original_buffer = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                    OPEN_EXISTING, 0, nullptr);
+                ASSERT_NE(INVALID_HANDLE_VALUE, this->original_buffer);
+                this->output_buffer = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                                CONSOLE_TEXTMODE_BUFFER, nullptr);
+                ASSERT_NE(INVALID_HANDLE_VALUE, this->output_buffer);
+                ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, this->native_input));
+                ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, this->output_buffer));
+                ASSERT_TRUE(SetConsoleActiveScreenBuffer(this->output_buffer));
+                ASSERT_TRUE(FlushConsoleInputBuffer(this->native_input));
+                WindowsConsoleBackendTest::SetUp();
+            }
+
+            void TearDown() override
+            {
+                this->console.reset();
+                if (this->original_mode)
+                {
+                    SetConsoleMode(this->native_input, *this->original_mode);
+                }
+                if (this->original_buffer != INVALID_HANDLE_VALUE)
+                {
+                    SetConsoleActiveScreenBuffer(this->original_buffer);
+                }
+                SetStdHandle(STD_INPUT_HANDLE, this->original_input);
+                SetStdHandle(STD_OUTPUT_HANDLE, this->original_output);
+                for (auto* native_handle : {this->native_input, this->original_buffer, this->output_buffer})
+                {
+                    if (native_handle != INVALID_HANDLE_VALUE)
+                    {
+                        CloseHandle(native_handle);
+                    }
+                }
+                if (this->allocated_console)
+                {
+                    FreeConsole();
+                }
+            }
+
+            std::optional<std::string> read_ready(const size_t length)
+            {
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                do
+                {
+                    if (auto data = this->console->try_read_input(length))
+                    {
+                        return data;
+                    }
+                    SwitchToThread();
+                } while (std::chrono::steady_clock::now() < deadline);
+                return std::nullopt;
+            }
+
+            bool cancel_ready()
+            {
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                do
+                {
+                    if (this->console->cancel_read_input())
+                    {
+                        return true;
+                    }
+                    SwitchToThread();
+                } while (std::chrono::steady_clock::now() < deadline);
+                return false;
+            }
+
+            HANDLE output_buffer{INVALID_HANDLE_VALUE};
+
+          private:
+            HANDLE original_input{};
+            HANDLE original_output{};
+            HANDLE native_input{INVALID_HANDLE_VALUE};
+            HANDLE original_buffer{INVALID_HANDLE_VALUE};
+            std::optional<DWORD> original_mode{};
+            bool allocated_console{};
+        };
+    }
+
+    TEST_F(WindowsConsoleTextTest, CooperativeLineReadPreservesEditingAndEcho)
+    {
+        this->console->set_input_mode({.processed = true, .line = true, .echo = true});
+        EXPECT_FALSE(this->console->try_read_input(32));
+        this->queue(u'a', 'A');
+        this->queue(u'c', 'C');
+        this->queue(0, VK_LEFT);
+        this->queue(u'b', 'B');
+        this->queue(u'\r', VK_RETURN);
+        const auto data = this->read_ready(32);
+        ASSERT_TRUE(data);
+        EXPECT_EQ("abc\r\n", *data);
+        std::array<wchar_t, 3> text{};
+        DWORD count{};
+        ASSERT_TRUE(ReadConsoleOutputCharacterW(this->output_buffer, text.data(), static_cast<DWORD>(text.size()), {0, 0}, &count));
+        EXPECT_EQ(L"abc", std::wstring(text.data(), count));
+    }
+
+    TEST_F(WindowsConsoleTextTest, CooperativeLineReadPreservesDisabledEcho)
+    {
+        this->console->set_input_mode({.processed = true, .line = true, .echo = false});
+        EXPECT_FALSE(this->console->try_read_input(32));
+        this->queue(u'a', 'A');
+        this->queue(u'b', 'B');
+        this->queue(u'\b', VK_BACK);
+        this->queue(u'c', 'C');
+        this->queue(u'\r', VK_RETURN);
+        const auto data = this->read_ready(32);
+        ASSERT_TRUE(data);
+        EXPECT_EQ("ac\r\n", *data);
+        std::array<wchar_t, 2> text{};
+        DWORD count{};
+        ASSERT_TRUE(ReadConsoleOutputCharacterW(this->output_buffer, text.data(), static_cast<DWORD>(text.size()), {0, 0}, &count));
+        EXPECT_EQ(L"  ", std::wstring(text.data(), count));
+    }
+
+    TEST_F(WindowsConsoleTextTest, CancelledNativeReadAllowsAnotherRead)
+    {
+        this->console->set_input_mode({.processed = true, .line = true, .echo = false});
+        ASSERT_FALSE(this->console->try_read_input(16));
+        ASSERT_TRUE(this->cancel_ready());
+        ASSERT_FALSE(this->console->try_read_input(16));
+        this->queue(u'q', 'Q');
+        this->queue(u'\r', VK_RETURN);
+        const auto data = this->read_ready(16);
+        ASSERT_TRUE(data);
+        EXPECT_EQ("q\r\n", *data);
+    }
+
+    TEST_F(WindowsConsoleTextTest, CooperativeByteReadsPreserveSplitSurrogates)
+    {
+        this->queue(0xD83D);
+        this->queue(0xDE00);
+        std::string utf8;
+        for (size_t i = 0; i < 4; ++i)
+        {
+            const auto data = this->read_ready(1);
+            ASSERT_TRUE(data);
+            ASSERT_EQ(1u, data->size());
+            utf8 += *data;
+        }
+        EXPECT_EQ("\xF0\x9F\x98\x80", utf8);
+    }
+
+    TEST(WindowsConsoleStreamTest, PipeDistinguishesPendingInputFromEof)
+    {
+        HANDLE pipe_input{};
+        HANDLE pipe_output{};
+        ASSERT_TRUE(CreatePipe(&pipe_input, &pipe_output, nullptr, 0));
+        const auto original = GetStdHandle(STD_INPUT_HANDLE);
+        const auto cleanup = utils::finally([&] {
+            SetStdHandle(STD_INPUT_HANDLE, original);
+            CloseHandle(pipe_input);
+            if (pipe_output)
+            {
+                CloseHandle(pipe_output);
+            }
+        });
+        ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, pipe_input));
+        auto backend = create_stream_console_backend();
+        EXPECT_FALSE(backend->try_read_input(16));
+        DWORD count{};
+        ASSERT_TRUE(WriteFile(pipe_output, "abc", 3, &count, nullptr));
+        ASSERT_TRUE(CloseHandle(pipe_output));
+        pipe_output = nullptr;
+        EXPECT_EQ(std::optional<std::string>{"ab"}, backend->try_read_input(2));
+        EXPECT_EQ(std::optional<std::string>{"c"}, backend->try_read_input(16));
+        EXPECT_EQ(std::optional<std::string>{""}, backend->try_read_input(16));
     }
 
     TEST_F(WindowsConsoleBackendTest, PollReadsIndividualKeysWithoutEnter)

@@ -14,6 +14,7 @@ namespace sogen
         bool input_available() override;
         std::optional<console_key_event> read_input_event(bool wait, bool remove) override;
         std::string read_input(size_t length) override;
+        std::optional<std::string> try_read_input(size_t length) override;
         console_size get_size() const override;
         void reset() override;
 
@@ -21,6 +22,7 @@ namespace sogen
         virtual void refill(int timeout_ms) = 0;
 
         std::deque<uint8_t> input_{};
+        bool input_closed_{};
 
       private:
         std::optional<console_key_event> read_input_event_impl(bool wait);

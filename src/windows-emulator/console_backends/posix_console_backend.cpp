@@ -40,6 +40,10 @@ namespace sogen
           protected:
             void refill(const int timeout_ms) override
             {
+                if (this->input_closed_ && isatty(STDIN_FILENO))
+                {
+                    this->input_closed_ = false;
+                }
                 if (!this->input_.empty())
                 {
                     return;
@@ -52,7 +56,7 @@ namespace sogen
                     poll_result = poll(&descriptor, 1, timeout_ms);
                 } while (poll_result < 0 && errno == EINTR);
 
-                if (poll_result <= 0 || (descriptor.revents & POLLIN) == 0)
+                if (poll_result <= 0 || (descriptor.revents & (POLLIN | POLLHUP)) == 0)
                 {
                     return;
                 }
@@ -71,6 +75,7 @@ namespace sogen
                     }
                     else
                     {
+                        this->input_closed_ = bytes_read == 0;
                         return;
                     }
 

@@ -359,10 +359,34 @@ namespace sogen
         return data;
     }
 
+    std::optional<std::string> buffered_console_backend::try_read_input(const size_t length)
+    {
+        if (length == 0)
+        {
+            return std::string{};
+        }
+        if (this->input_.empty())
+        {
+            this->refill(0);
+        }
+        if (this->input_.empty() && !this->input_closed_)
+        {
+            return std::nullopt;
+        }
+        std::string data;
+        while (data.size() < length && !this->input_.empty())
+        {
+            data.push_back(static_cast<char>(this->input_.front()));
+            this->input_.pop_front();
+        }
+        return data;
+    }
+
     void buffered_console_backend::reset()
     {
         this->input_.clear();
         this->pending_events_.clear();
+        this->input_closed_ = false;
     }
 
 } // namespace sogen
