@@ -172,6 +172,8 @@ namespace sogen
             }
         }
 
+        std::optional<CONTEXT64> read_native_debug_registers(const syscall_context& c, emulator_thread& thread);
+
         NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const handle thread_handle, const THREADINFOCLASS info_class,
                                                const uint64_t thread_information, const uint32_t thread_information_length)
         {
@@ -526,7 +528,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
             {
@@ -583,11 +585,29 @@ namespace sogen
                 }
 
                 // Return the saved context (which was set by NtSetInformationThread)
-                thread->wow64_cpu_reserved->access([&](const WOW64_CPURESERVED& ctx) {
-                    const auto wow64_context = ctx.Context;
-                    context_obj.write(wow64_context);
-                });
+                const auto requested_flags = context_obj.read().ContextFlags;
+                auto wow64_context = thread->wow64_cpu_reserved->read().Context;
 
+                // RtlpWow64GetContextOnAmd64 takes the debug registers from the thread's native context, and
+                // RtlpWow64CtxFromAmd64 keeps L0-L3, LE and the breakpoint conditions of DR7.
+                if ((requested_flags & CONTEXT_DEBUG_REGISTERS_32) == CONTEXT_DEBUG_REGISTERS_32)
+                {
+                    constexpr DWORD wow64_dr7_kept = 0xFFFF0155;
+                    const auto native = read_native_debug_registers(c, *thread);
+                    if (!native)
+                    {
+                        return STATUS_UNSUCCESSFUL;
+                    }
+
+                    wow64_context.Dr0 = static_cast<DWORD>(native->Dr0);
+                    wow64_context.Dr1 = static_cast<DWORD>(native->Dr1);
+                    wow64_context.Dr2 = static_cast<DWORD>(native->Dr2);
+                    wow64_context.Dr3 = static_cast<DWORD>(native->Dr3);
+                    wow64_context.Dr6 = static_cast<DWORD>(native->Dr6);
+                    wow64_context.Dr7 = static_cast<DWORD>(native->Dr7) & wow64_dr7_kept;
+                }
+
+                context_obj.write(wow64_context);
                 return STATUS_SUCCESS;
             }
 
@@ -1469,6 +1489,22 @@ namespace sogen
             }
 
             return true;
+        }
+
+        std::optional<CONTEXT64> read_native_debug_registers(const syscall_context& c, emulator_thread& thread)
+        {
+            CONTEXT64 native{};
+            native.ContextFlags = CONTEXT_DEBUG_REGISTERS_64;
+            const auto accessed = access_thread_context<CONTEXT64>(c, thread, [&] {
+                store_context(c.emu, native);
+                return false;
+            });
+            if (!accessed)
+            {
+                return std::nullopt;
+            }
+
+            return native;
         }
 
         NTSTATUS handle_NtGetContextThread(const syscall_context& c, const handle thread_handle,
