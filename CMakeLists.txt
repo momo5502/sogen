@@ -46,6 +46,19 @@ set(ENV{ARCHFLAGS} "nope")
 ##########################################
 
 project(sogen LANGUAGES C CXX)
+
+set(SOGEN_SECCOMP_SUPPORTED OFF)
+if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Android)$" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64|ARM64)$")
+  set(SOGEN_SECCOMP_SUPPORTED ON)
+endif()
+option(SOGEN_ENABLE_SECCOMP "Enable the ARM64 Linux/Android seccomp backend" ${SOGEN_SECCOMP_SUPPORTED})
+if(SOGEN_ENABLE_SECCOMP)
+  if(NOT SOGEN_SECCOMP_SUPPORTED)
+    message(FATAL_ERROR "The seccomp backend requires an ARM64 Linux or Android host")
+  endif()
+  enable_language(ASM)
+endif()
+
 enable_testing()
 
 include(cmake/reflection-check.cmake)

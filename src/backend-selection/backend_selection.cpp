@@ -3,6 +3,9 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string_view>
+#if defined(SOGEN_ENABLE_SECCOMP)
+#include <seccomp_emulator.hpp>
+#endif
 #if !defined(_M_ARM64)
 #include <unicorn_x86_64_emulator.hpp>
 #include <unicorn_arm64_emulator.hpp>
@@ -113,6 +116,11 @@ namespace sogen
         std::unique_ptr<arm64_emulator> emulator{};
         switch (backend)
         {
+#if defined(SOGEN_ENABLE_SECCOMP)
+        case backend_type::seccomp:
+            emulator = seccomp::create_arm64_emulator();
+            break;
+#endif
 #if !defined(_M_ARM64)
         case backend_type::unicorn:
             emulator = unicorn::create_arm64_emulator();
@@ -148,6 +156,13 @@ namespace sogen
 
     backend_type get_arm64_emulator_backend_from_environment()
     {
+#if defined(SOGEN_ENABLE_SECCOMP)
+        const auto* seccomp_backend = getenv("EMULATOR_SECCOMP");
+        if (seccomp_backend && (seccomp_backend == "1"sv || seccomp_backend == "true"sv))
+        {
+            return backend_type::seccomp;
+        }
+#endif
 #if defined(_M_ARM64) && !defined(__MINGW64__)
         return backend_type::whp;
 #else

@@ -77,6 +77,10 @@ if (SOGEN_ENABLE_FEX)
   target_link_libraries(windows-emulator-test PRIVATE fex-emulator)
 endif()
 
+if(SOGEN_ENABLE_SECCOMP)
+  target_compile_definitions(windows-emulator-test PRIVATE SOGEN_ENABLE_SECCOMP=1)
+endif()
+
 if(EMSCRIPTEN)
   target_link_options(windows-emulator-test PRIVATE -sASYNCIFY_EXPORTS=main -sASYNCIFY_STACK_SIZE=65536)
 endif()

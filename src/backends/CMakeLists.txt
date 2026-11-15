@@ -1,3 +1,7 @@
+if(SOGEN_ENABLE_SECCOMP)
+  add_subdirectory(seccomp-emulator)
+endif()
+
 if(SOGEN_ENABLE_UNICORN)
   add_subdirectory(unicorn-emulator)
 endif()

@@ -252,16 +252,11 @@ namespace
 
     bool test_critical_section_timeout()
     {
-#if defined(_M_ARM64)
-        constexpr size_t peb_critical_section_timeout_offset = 0xC0;
-        const auto* peb = reinterpret_cast<const uint8_t*>(__readx18qword(0x60));
-#elif defined(_WIN64)
-        constexpr size_t peb_critical_section_timeout_offset = 0xC0;
-        const auto* peb = reinterpret_cast<const uint8_t*>(__readgsqword(0x60));
-#else
-        constexpr size_t peb_critical_section_timeout_offset = 0x70;
-        const auto* peb = reinterpret_cast<const uint8_t*>(__readfsdword(0x30));
-#endif
+        constexpr size_t teb_peb_offset = sizeof(void*) == 8 ? 0x60 : 0x30;
+        constexpr size_t peb_critical_section_timeout_offset = sizeof(void*) == 8 ? 0xC0 : 0x70;
+        const auto* teb = reinterpret_cast<const uint8_t*>(NtCurrentTeb());
+        const uint8_t* peb{};
+        memcpy(&peb, teb + teb_peb_offset, sizeof(peb));
 
         int64_t timeout{};
         memcpy(&timeout, peb + peb_critical_section_timeout_offset, sizeof(timeout));

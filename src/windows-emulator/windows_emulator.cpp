@@ -882,7 +882,7 @@ namespace sogen
           // (single-stepping) cannot provide it.
           instruction_precision_(settings.use_instruction_precision && this->emu_->get_guest_cpu(0).supports_instruction_counting() &&
                                  this->emu_->supports_global_memory_execution_hooks()),
-          intercept_rdtsc_(settings.intercept_rdtsc),
+          intercept_rdtsc_(settings.intercept_rdtsc.value_or(this->emu_->supports_timestamp_counter_interception())),
           intercept_kusd_(settings.intercept_kusd),
           keep_guest_time_across_snapshots_(settings.keep_guest_time_across_snapshots),
           spoof_gpu_features_(settings.spoof_gpu_features),
@@ -893,6 +893,11 @@ namespace sogen
         if (this->vcpu_count_ == 0)
         {
             throw std::invalid_argument("At least one vCPU is required");
+        }
+
+        if (!this->emu_->supports_timestamp_counter_interception() && (this->intercept_rdtsc_ || !this->use_native_timestamp_counter_))
+        {
+            throw std::invalid_argument("The selected backend requires native timestamp counter reads");
         }
 
         this->memory.set_execute_implies_read(guest_architecture_of(*this->emu_) == windows_guest_architecture::x86_64);
@@ -1592,16 +1597,19 @@ namespace sogen
             return instruction_hook_continuation::skip_instruction;
         });
 
-        emu.hook_instruction(arm64_hookable_instructions::read_counter, [&](cpu_interface& cpu, const uint64_t destination) {
-            const std::scoped_lock lock(this->kernel_lock_);
-            auto& vcpu = this->vcpu(cpu.index());
-            const scoped_dispatch dispatch(*this, vcpu);
-            this->callbacks.on_rdtsc();
+        if (this->intercept_rdtsc_ || !this->use_native_timestamp_counter_)
+        {
+            emu.hook_instruction(arm64_hookable_instructions::read_counter, [&](cpu_interface& cpu, const uint64_t destination) {
+                const std::scoped_lock lock(this->kernel_lock_);
+                auto& vcpu = this->vcpu(cpu.index());
+                const scoped_dispatch dispatch(*this, vcpu);
+                this->callbacks.on_rdtsc();
 
-            const auto ticks = this->clock_->timestamp_counter();
-            dynamic_cast<arm64_cpu&>(vcpu.cpu).reg(static_cast<arm64_register>(destination), ticks);
-            return instruction_hook_continuation::skip_instruction;
-        });
+                const auto ticks = this->clock_->timestamp_counter();
+                dynamic_cast<arm64_cpu&>(vcpu.cpu).reg(static_cast<arm64_register>(destination), ticks);
+                return instruction_hook_continuation::skip_instruction;
+            });
+        }
 
         emu.hook_interrupt([&](cpu_interface& cpu, const int exception_class) {
             const std::scoped_lock lock(this->kernel_lock_);

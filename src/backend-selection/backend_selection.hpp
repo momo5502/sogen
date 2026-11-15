@@ -17,6 +17,7 @@ namespace sogen
         kvm,
         fex,
         hvf,
+        seccomp,
     };
 
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator(backend_type backend = backend_type::unicorn, size_t vcpu_count = 1);
@@ -25,7 +26,7 @@ namespace sogen
 
     // The host's hardware backend where one is usable (WHP on Windows ARM64; Hypervisor.framework on Apple
     // Silicon when the process holds the hypervisor entitlement), Unicorn otherwise. Outside Windows ARM64,
-    // EMULATOR_UNICORN=1 selects Unicorn.
+    // EMULATOR_UNICORN=1 selects Unicorn. EMULATOR_SECCOMP=1 takes precedence when seccomp is enabled.
     backend_type get_arm64_emulator_backend_from_environment();
     std::unique_ptr<arm64_emulator> create_arm64_emulator_from_environment(size_t vcpu_count = 1);
 

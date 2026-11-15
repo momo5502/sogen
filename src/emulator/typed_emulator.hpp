@@ -23,6 +23,11 @@ namespace sogen
             return false;
         }
 
+        virtual bool supports_timestamp_counter_interception() const
+        {
+            return true;
+        }
+
         // The rate of the guest's native timestamp counter in Hz, when the backend knows it.
         virtual std::optional<uint64_t> native_timestamp_counter_frequency() const
         {
