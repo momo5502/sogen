@@ -6,6 +6,7 @@
 #include <gdb_stub.hpp>
 #include <scoped_hook.hpp>
 #include <arch_emulator.hpp>
+#include <x87_tag_word.hpp>
 
 #include <utils/concurrency.hpp>
 
@@ -112,7 +113,8 @@ namespace sogen
 
                 const auto real_reg = registers[reg];
 
-                auto size = this->cpu().read_raw_register(real_reg.reg, data, max_length);
+                auto size = this->is_x87_tag_word(real_reg) ? x87::read_full_tag(this->cpu(), data, max_length)
+                                                            : this->cpu().read_raw_register(real_reg.reg, data, max_length);
 
                 if (real_reg.offset)
                 {
@@ -166,7 +168,8 @@ namespace sogen
                 }
                 else
                 {
-                    written_size = this->cpu().write_raw_register(real_reg.reg, data, size);
+                    written_size = this->is_x87_tag_word(real_reg) ? x87::write_full_tag(this->cpu(), data, size)
+                                                                   : this->cpu().write_raw_register(real_reg.reg, data, size);
                 }
 
                 return real_reg.expected_size.value_or(written_size);
@@ -313,6 +316,12 @@ namespace sogen
         cpu_interface& cpu() const
         {
             return this->emu_->get_guest_cpu(0);
+        }
+
+        // GDB's ftag is FSAVE's full tag word, while the backends give FXSAVE's abridged form.
+        bool is_x87_tag_word(const register_entry& entry) const
+        {
+            return !this->is_arm64() && entry.reg == static_cast<int>(x86_register::fptag);
         }
 
         using hook_map = std::unordered_map<breakpoint_key, scoped_hook>;

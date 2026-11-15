@@ -1,5 +1,5 @@
 #[repr(i32)]
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum X86Register {
     Invalid = 0,
     Ah,
