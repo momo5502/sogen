@@ -9582,6 +9582,7 @@ namespace sogen
             auto* win = c.proc.windows.get(window);
             if (!win)
             {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
                 return 0;
             }
 
@@ -9593,6 +9594,7 @@ namespace sogen
             auto* win = c.proc.windows.get(window);
             if (!win)
             {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
                 return FALSE;
             }
 
