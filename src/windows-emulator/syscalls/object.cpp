@@ -255,47 +255,34 @@ namespace sogen
             return true;
         }
 
-        // A section handle with less access than its source is a separate object over the same backing. Returns nothing
-        // when the duplicate can share the source's handle.
+        // ObDuplicateObject opens the same section object again, with an access of its own that cannot exceed the source's.
+        // Returns nothing for a handle that is not a section.
         std::optional<NTSTATUS> duplicate_section(const syscall_context& c, const handle source_handle,
                                                   const emulator_object<handle> target_handle, const ACCESS_MASK desired_access,
                                                   const ULONG handle_attributes, const ULONG options)
         {
-            auto* source = c.proc.sections.get(source_handle);
-            if (!source)
+            if (!c.proc.sections.get(source_handle))
             {
                 return std::nullopt;
             }
 
-            const auto requested = (options & duplicate_same_access) ? source->granted_access : section::map_generic_access(desired_access);
-            if ((requested & ~source->granted_access) != 0)
+            const auto source_access = c.proc.section_access(source_handle);
+            const auto requested = (options & duplicate_same_access) ? source_access : section::map_generic_access(desired_access);
+            if ((requested & ~source_access) != 0)
             {
                 return STATUS_ACCESS_DENIED;
             }
-            if (requested == source->granted_access)
+
+            const auto duplicate = c.proc.sections.duplicate(source_handle);
+            if (!duplicate)
             {
-                return std::nullopt;
+                return STATUS_INVALID_HANDLE;
             }
 
-            const auto storage =
-                c.proc.section_view_storage(*source, c.win_emu.memory.can_alias_host_memory_anywhere(), c.win_emu.processes() != nullptr);
-            if (storage == 0)
-            {
-                return std::nullopt;
-            }
-
-            section duplicate{};
-            duplicate.maximum_size = source->maximum_size;
-            duplicate.section_page_protection = source->section_page_protection;
-            duplicate.allocation_attributes = source->allocation_attributes;
-            duplicate.view_storage_id = storage;
-            duplicate.granted_access = requested;
-            const auto attributes = duplicate_attributes(c.proc.sections.attributes_of(source_handle), handle_attributes, options);
-            duplicate.inherit = attributes.inherit;
-            duplicate.protect_from_close = attributes.protect_from_close;
-            c.proc.section_views.add_reference(storage);
-
-            target_handle.write_if_valid(c.proc.sections.store(std::move(duplicate)));
+            (void)c.proc.sections.set_attributes(
+                *duplicate, duplicate_attributes(c.proc.sections.attributes_of(source_handle), handle_attributes, options));
+            (void)c.proc.sections.set_granted_access(*duplicate, requested);
+            target_handle.write_if_valid(*duplicate);
             return STATUS_SUCCESS;
         }
 

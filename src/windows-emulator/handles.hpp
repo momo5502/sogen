@@ -564,6 +564,30 @@ namespace sogen
             return true;
         }
 
+        // The access a handle was granted, when it is less than its object's own: on Windows two handles to one object
+        // can differ in access. Empty for a handle with the object's access.
+        std::optional<uint32_t> granted_access_of(const handle h) const
+        {
+            const auto entry = this->granted_access_.find(static_cast<handle_id_type>(h.value.id));
+            if (entry == this->granted_access_.end() || !this->resolve_index(h.value))
+            {
+                return std::nullopt;
+            }
+
+            return entry->second;
+        }
+
+        bool set_granted_access(const handle h, const uint32_t access)
+        {
+            if (h.value.is_system || !this->resolve_index(h.value))
+            {
+                return false;
+            }
+
+            this->granted_access_[static_cast<handle_id_type>(h.value.id)] = access;
+            return true;
+        }
+
         // Identifies the object without keeping it alive.
         std::optional<object_reference> reference_of(const handle h) const override
         {
@@ -657,6 +681,7 @@ namespace sogen
 
             this->handles_.erase(entry);
             this->attributes_.erase(static_cast<handle_id_type>(h.id));
+            this->granted_access_.erase(static_cast<handle_id_type>(h.id));
             this->recycle_handle_id(static_cast<handle_id_type>(h.id));
             this->release_index(*index);
             return true;
@@ -706,6 +731,7 @@ namespace sogen
             buffer.write_map(this->handles_);
             buffer.write_map(this->internal_handles_);
             buffer.write_map(this->attributes_);
+            buffer.write_map(this->granted_access_);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -716,6 +742,7 @@ namespace sogen
             buffer.read_map(this->handles_);
             buffer.read_map(this->internal_handles_);
             buffer.read_map(this->attributes_);
+            buffer.read_map(this->granted_access_);
             this->next_handle_id_ = 1;
             ++this->generation_;
         }
@@ -883,10 +910,8 @@ namespace sogen
                     }
                 }
 
-                std::erase_if(this->attributes_, [&](const auto& attribute) {
-                    const auto handle = this->handles_.find(attribute.first);
-                    return handle == this->handles_.end();
-                });
+                std::erase_if(this->attributes_, [&](const auto& attribute) { return !this->handles_.contains(attribute.first); });
+                std::erase_if(this->granted_access_, [&](const auto& access) { return !this->handles_.contains(access.first); });
             }
 
             auto new_iter = this->store_.erase(entry);
@@ -966,6 +991,7 @@ namespace sogen
         handle_map handles_{};
         handle_map internal_handles_{};
         std::map<handle_id_type, handle_attributes> attributes_{};
+        std::map<handle_id_type, uint32_t> granted_access_{};
         uint64_t generation_{};
     };
 

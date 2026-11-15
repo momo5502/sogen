@@ -727,6 +727,7 @@ namespace sogen
         // The storage a pagefile section's views alias, created on first use. 0 when the section's views share one guest
         // backing instead, because they cannot alias host memory or the section only reserves.
         uint64_t section_view_storage(section& section_entry, bool can_alias_host_memory, bool shareable);
+        ACCESS_MASK section_access(handle section_handle) const;
         std::optional<process_shared_object> share_section(handle section_handle, bool can_alias_host_memory);
         // Describes a pagefile section, event or mutant so another process can open the same object. Fails for objects that
         // cannot be shared, such as file-backed sections or sections whose views share one guest backing.

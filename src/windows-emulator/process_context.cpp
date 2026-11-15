@@ -931,6 +931,17 @@ namespace sogen
         this->abandon_shared_mutants();
     }
 
+    ACCESS_MASK process_context::section_access(const handle section_handle) const
+    {
+        const auto* section_entry = this->sections.get(section_handle);
+        if (!section_entry)
+        {
+            return 0;
+        }
+
+        return this->sections.granted_access_of(section_handle).value_or(section_entry->granted_access);
+    }
+
     uint64_t process_context::section_view_storage(section& section_entry, const bool can_alias_host_memory, const bool shareable)
     {
         if (section_entry.view_storage_id != 0)
@@ -972,7 +983,7 @@ namespace sogen
             .size = memory->size(),
             .protection = section_entry->section_page_protection,
             .attributes = section_entry->allocation_attributes,
-            .access = section_entry->granted_access,
+            .access = this->section_access(section_handle),
             .inherit = section_attributes.inherit,
             .protect_from_close = section_attributes.protect_from_close,
         };
@@ -1086,6 +1097,28 @@ namespace sogen
             mutant entry{};
             entry.shared = std::move(*state);
             return store(this->mutants, std::move(entry));
+        }
+
+        // A section this process already imported or created over the same memory is the same section object, so another
+        // handle to it shares its views and needs no second host mapping.
+        for (const auto& [index, existing] : this->sections)
+        {
+            const auto* memory = existing.view_storage_id ? this->section_views.storage_memory(existing.view_storage_id) : nullptr;
+            if (!memory || memory->name() != shared.memory)
+            {
+                continue;
+            }
+
+            const handle_attributes attributes{.inherit = shared.inherit, .protect_from_close = shared.protect_from_close};
+            const auto opened =
+                at ? this->sections.open_by_index_at(index, *at, attributes) : this->sections.open_by_index(index, attributes);
+            if (!opened.bits)
+            {
+                return std::nullopt;
+            }
+
+            (void)this->sections.set_granted_access(opened, shared.access);
+            return opened;
         }
 
         auto backing = utils::shared_host_buffer::open_named(shared.memory, static_cast<size_t>(shared.size));
