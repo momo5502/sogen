@@ -32,7 +32,8 @@ namespace sogen
 
         // What NtRemoveIoCompletionEx and NtWaitForWorkViaWorkerFactory probe before they look at the handle (19041): the
         // entry array, 32 bytes an entry and 8-aligned, for write, and the ULONG for the number of entries removed.
-        NTSTATUS probe_completion_entries(memory_manager& memory, uint64_t entries, ULONG count, uint64_t entries_removed);
+        NTSTATUS probe_completion_entries(memory_manager& memory, const emulator_thread* thread, uint64_t entries, ULONG count,
+                                          uint64_t entries_removed);
 
         bool dequeue_io_completion_message(windows_emulator& win_emu, const object_reference& io_completion,
                                            io_completion_message& out_message);
@@ -46,11 +47,13 @@ namespace sogen
         // The copy of taken packets, which the kernel makes under try once they are off the queue (19041). NtRemoveIoCompletion
         // stores KeyContext, ApcContext, then the IO_STATUS_BLOCK as one 16-byte store. IoRemoveIoCompletion stores each entry
         // of an array that way and goes on with the next entry when one faults; NtRemoveIoCompletionEx and
-        // NtWaitForWorkViaWorkerFactory then store the count only if none did. Stores before a fault land, the packets are
-        // gone either way, and a fault returns STATUS_ACCESS_VIOLATION.
-        NTSTATUS write_message(memory_manager& memory, uint64_t key_context, uint64_t apc_context, uint64_t io_status_block,
-                               const io_completion_message& message);
-        NTSTATUS write_entries(memory_manager& memory, uint64_t entries, uint64_t entries_removed,
+        // NtWaitForWorkViaWorkerFactory then store the count only if none did. The stores are writes, so a page the waiter may
+        // not write faults before its guard is looked at. Stores before a fault land, the packets are gone either way, and the
+        // result is a fault's code: write_message's first, write_entries' last faulting entry's. The waiter makes the copy, so
+        // a guard page grows its stack.
+        NTSTATUS write_message(memory_manager& memory, const emulator_thread* thread, uint64_t key_context, uint64_t apc_context,
+                               uint64_t io_status_block, const io_completion_message& message);
+        NTSTATUS write_entries(memory_manager& memory, const emulator_thread* thread, uint64_t entries, uint64_t entries_removed,
                                std::span<const io_completion_message> messages);
     }
 

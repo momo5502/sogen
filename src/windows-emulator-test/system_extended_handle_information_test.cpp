@@ -106,6 +106,28 @@ namespace sogen::test
         EXPECT_EQ(sentinel, this->emu.memory.read_memory<uint8_t>(this->buffer));
     }
 
+    // ExpQuerySystemInformation's probes take a guard page's guard: one under the buffer or the returned length fails the
+    // query with STATUS_GUARD_PAGE_VIOLATION before anything is written (19041 on the host).
+    TEST_F(SystemExtendedHandleInformationTest, AGuardPageFailsTheQueryWithItsGuard)
+    {
+        const auto guarded = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto guard = [&] {
+            return this->emu.memory.protect_memory(guarded, 0x1000,
+                                                   nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard));
+        };
+
+        this->reset();
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION, this->query(guarded, 0x1000, this->return_length));
+        EXPECT_EQ(0xDEADBEEFu, this->reported_length());
+        EXPECT_FALSE(this->emu.memory.is_guard_page(guarded));
+
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION, this->query(this->buffer, 0x1000, guarded));
+        EXPECT_EQ(sentinel, this->emu.memory.read_memory<uint8_t>(this->buffer));
+        EXPECT_FALSE(this->emu.memory.is_guard_page(guarded));
+    }
+
     TEST_F(SystemExtendedHandleInformationTest, RequiresPointerAlignmentOnceTheBufferHoldsAnEntry)
     {
         this->reset();

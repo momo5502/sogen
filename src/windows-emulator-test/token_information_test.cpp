@@ -401,6 +401,24 @@ namespace sogen::test
         EXPECT_TRUE(std::ranges::none_of(this->privileges(), [](const auto& privilege) { return privilege.first == 23; }));
     }
 
+    // The result's probe takes a guard page's guard and fails the check with STATUS_GUARD_PAGE_VIOLATION (19041 on the host).
+    TEST_F(TokenInformationTest, PrivilegeCheckResultOnAGuardPageFailsWithItsGuard)
+    {
+        constexpr ULONG se_change_notify = 23;
+        const auto guarded = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto guard = [&] {
+            return this->emu->memory.protect_memory(guarded, 0x1000,
+                                                    nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard));
+        };
+
+        ASSERT_TRUE(guard());
+        const auto set = this->storage + 0x100;
+        this->emu->memory.write_memory(set, std::array<ULONG, 5>{1, 0, se_change_notify, 0, 0});
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION,
+                  syscalls::handle_NtPrivilegeCheck(this->context(), CURRENT_PROCESS_TOKEN, set, {this->emu->memory, guarded}));
+        EXPECT_FALSE(this->emu->memory.is_guard_page(guarded));
+    }
+
     TEST_F(TokenInformationTest, PrivilegeCheckGrantsEmptyAllNecessarySetsAndDeniesUnheldPrivileges)
     {
         constexpr ULONG all_necessary = 1;

@@ -22,8 +22,8 @@ namespace
                 return STATUS_BUFFER_TOO_SMALL;
             }
             uint32_t value{};
-            if (!sogen::is_readable_range(emulator.memory, request.input_buffer, sizeof(value)) ||
-                !sogen::is_writable_range(emulator.memory, request.output_buffer, sizeof(value)) ||
+            if (!sogen::is_readable_range(emulator, request.input_buffer, sizeof(value)) ||
+                !sogen::is_writable_range(emulator, request.output_buffer, sizeof(value)) ||
                 !emulator.emu().try_read_memory(request.input_buffer, &value, sizeof(value)) ||
                 !emulator.emu().try_write_memory(request.output_buffer, &value, sizeof(value)))
             {

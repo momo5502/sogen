@@ -520,6 +520,12 @@ namespace sogen
             return this->active_vcpu().thread();
         }
 
+        // The same thread, or null where none runs (before process setup).
+        emulator_thread* active_thread() const
+        {
+            return this->active_vcpu().active_thread;
+        }
+
         // The CPU of the vCPU currently dispatching a handler on the calling host thread (see
         // scoped_dispatch). emu() is only the facade/vCPU 0, so handlers that inspect the faulting
         // register state must go through here to observe the right vCPU when vcpu_count > 1.

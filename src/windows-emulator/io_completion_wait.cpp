@@ -260,8 +260,9 @@ namespace sogen
                 const auto wait = *thread.await_io_completion;
                 thread.mark_as_ready(
                     wait.type == io_completion_wait_type::remove_single
-                        ? write_message(win_emu.memory, wait.key_context_ptr, wait.apc_context_ptr, wait.io_status_block_ptr, message)
-                        : write_entries(win_emu.memory, wait.completion_entries_ptr, wait.entries_removed_ptr, {&message, 1}));
+                        ? write_message(win_emu.memory, &thread, wait.key_context_ptr, wait.apc_context_ptr, wait.io_status_block_ptr,
+                                        message)
+                        : write_entries(win_emu.memory, &thread, wait.completion_entries_ptr, wait.entries_removed_ptr, {&message, 1}));
                 worker_factory_support::on_io_completion_message_dequeued(win_emu, message);
 
                 // NtWaitForWorkViaWorkerFactory checks for more work after its wait, and a packet handed straight to its worker
@@ -317,7 +318,8 @@ namespace sogen
             }
         }
 
-        NTSTATUS probe_completion_entries(memory_manager& memory, const uint64_t entries, const ULONG count, const uint64_t entries_removed)
+        NTSTATUS probe_completion_entries(memory_manager& memory, const emulator_thread* thread, const uint64_t entries, const ULONG count,
+                                          const uint64_t entries_removed)
         {
             constexpr auto entry_size = sizeof(FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>);
             if (entries % 8 != 0)
@@ -325,35 +327,45 @@ namespace sogen
                 return STATUS_DATATYPE_MISALIGNMENT;
             }
 
-            if (!is_writable_range(memory, entries, entry_size * count) || !is_writable_range(memory, entries_removed, sizeof(ULONG)))
+            if (const auto status = probe_range(memory, thread, entries, entry_size * count, memory_permission::write);
+                status != STATUS_SUCCESS)
             {
-                return STATUS_ACCESS_VIOLATION;
+                return status;
             }
 
-            return STATUS_SUCCESS;
+            return probe_range(memory, thread, entries_removed, sizeof(ULONG), memory_permission::write);
         }
 
-        NTSTATUS write_message(memory_manager& memory, const uint64_t key_context, const uint64_t apc_context,
-                               const uint64_t io_status_block, const io_completion_message& message)
+        NTSTATUS write_message(memory_manager& memory, const emulator_thread* thread, const uint64_t key_context,
+                               const uint64_t apc_context, const uint64_t io_status_block, const io_completion_message& message)
         {
             const auto store = [&]<typename T>(const uint64_t address, const T& value) {
-                if (!is_writable_range(memory, address, sizeof(T)))
+                const auto status = store_range(memory, thread, address, sizeof(T));
+                if (status == STATUS_SUCCESS)
                 {
-                    return false;
+                    emulator_object<T>{memory, address}.write(value);
                 }
 
-                emulator_object<T>{memory, address}.write(value);
-                return true;
+                return status;
             };
 
-            return store(key_context, message.key_context) && store(apc_context, message.apc_context) &&
-                           store(io_status_block, message.io_status_block)
-                       ? STATUS_SUCCESS
-                       : STATUS_ACCESS_VIOLATION;
+            // The copy ends at its first fault, whose code it returns.
+            auto status = store(key_context, message.key_context);
+            if (status == STATUS_SUCCESS)
+            {
+                status = store(apc_context, message.apc_context);
+            }
+
+            if (status == STATUS_SUCCESS)
+            {
+                status = store(io_status_block, message.io_status_block);
+            }
+
+            return status;
         }
 
-        NTSTATUS write_entries(memory_manager& memory, const uint64_t entries, const uint64_t entries_removed,
-                               const std::span<const io_completion_message> messages)
+        NTSTATUS write_entries(memory_manager& memory, const emulator_thread* thread, const uint64_t entries,
+                               const uint64_t entries_removed, const std::span<const io_completion_message> messages)
         {
             using entry_type = FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>;
 
@@ -361,20 +373,27 @@ namespace sogen
             for (size_t i = 0; i < messages.size(); ++i)
             {
                 const auto entry = entries + i * sizeof(entry_type);
-                if (write_message(memory, entry + offsetof(entry_type, KeyContext), entry + offsetof(entry_type, ApcContext),
-                                  entry + offsetof(entry_type, IoStatusBlock), messages[i]) != STATUS_SUCCESS)
+                // A faulting entry's code replaces any earlier one, and the copy goes on with the next entry.
+                if (const auto entry_status =
+                        write_message(memory, thread, entry + offsetof(entry_type, KeyContext), entry + offsetof(entry_type, ApcContext),
+                                      entry + offsetof(entry_type, IoStatusBlock), messages[i]);
+                    entry_status != STATUS_SUCCESS)
                 {
-                    status = STATUS_ACCESS_VIOLATION;
+                    status = entry_status;
                 }
             }
 
-            if (status != STATUS_SUCCESS || !is_writable_range(memory, entries_removed, sizeof(ULONG)))
+            if (status == STATUS_SUCCESS)
             {
-                return STATUS_ACCESS_VIOLATION;
+                status = store_range(memory, thread, entries_removed, sizeof(ULONG));
             }
 
-            emulator_object<ULONG>{memory, entries_removed}.write(static_cast<ULONG>(messages.size()));
-            return STATUS_SUCCESS;
+            if (status == STATUS_SUCCESS)
+            {
+                emulator_object<ULONG>{memory, entries_removed}.write(static_cast<ULONG>(messages.size()));
+            }
+
+            return status;
         }
 
         bool is_wait_completion_target_type(const handle target_object_handle)

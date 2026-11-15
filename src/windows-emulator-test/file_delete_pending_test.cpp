@@ -148,6 +148,25 @@ namespace sogen::test
         };
     }
 
+    // Copying the disposition from a guard page takes its guard and fails with STATUS_GUARD_PAGE_VIOLATION, and the file is
+    // not marked for deletion (19041 on the host).
+    TEST_F(FileDeletePendingTest, DispositionOnAGuardPageFailsWithItsGuard)
+    {
+        const auto file = this->open(u"guarded.txt", delete_access, FILE_CREATE).file;
+        const auto guarded = this->emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto guard = [&] {
+            return this->emu.memory.protect_memory(guarded, 0x1000,
+                                                   nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard));
+        };
+        this->emu.memory.write_memory(guarded, FILE_DISPOSITION_INFORMATION{.DeleteFile = TRUE});
+
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION,
+                  this->set_information_at(file, FileDispositionInformation, guarded, sizeof(FILE_DISPOSITION_INFORMATION)));
+        EXPECT_FALSE(this->emu.memory.is_guard_page(guarded));
+        EXPECT_EQ(STATUS_SUCCESS, this->open(u"guarded.txt", attribute_access).status);
+    }
+
     TEST_F(FileDeletePendingTest, FilesAndDirectoriesFollowTheCapturedWindowsDeleteLifecycle)
     {
         this->make_file("plain.txt");

@@ -1042,4 +1042,47 @@ namespace sogen::test
 
         EXPECT_EQ(value, emu->reg(x86_register::rax));
     }
+
+    // A kernel probe or copy that reaches a guard page takes its guard as the guest's own access does (MiAccessCheck).
+    // Outside a stack it then fails with STATUS_GUARD_PAGE_VIOLATION and the next one finds an ordinary page; a write probe
+    // reads first, so a read-only guard page loses its guard before its write is refused (19041 on the host).
+    TEST_F(GuardPageTest, KernelProbeOfAGuardPageTakesItsGuard)
+    {
+        const auto pages = this->emu->memory.allocate_memory(2 * page_size, memory_permission::read_write);
+        const auto guarded = pages + page_size;
+        const auto guard = [&](const memory_permission permission) {
+            return this->emu->memory.protect_memory(guarded, page_size, nt_memory_permission(permission, memory_permission_ext::guard));
+        };
+
+        ASSERT_TRUE(guard(memory_permission::read_write));
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION, probe_range(*this->emu, guarded - 8, 16, memory_permission::write));
+        EXPECT_FALSE(this->emu->memory.is_guard_page(guarded));
+        EXPECT_EQ(STATUS_SUCCESS, probe_range(*this->emu, guarded - 8, 16, memory_permission::write));
+
+        ASSERT_TRUE(guard(memory_permission::read));
+        EXPECT_FALSE(is_writable_range(*this->emu, guarded, sizeof(uint32_t)));
+        EXPECT_FALSE(this->emu->memory.is_guard_page(guarded));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, probe_range(*this->emu, guarded, sizeof(uint32_t), memory_permission::write));
+        EXPECT_TRUE(is_readable_range(*this->emu, guarded, sizeof(uint32_t)));
+    }
+
+    // A kernel probe that reaches the thread's stack guard page grows the stack and goes on (MiCheckForUserStackOverflow; on
+    // the host StackLimit moves down a page), until the guard would leave the stack: then the probe overflows it.
+    TEST_F(StackGuardFaultTest, KernelProbesGrowTheStackUntilItOverflows)
+    {
+        const auto limit = this->teb().NtTib.StackLimit;
+        ASSERT_TRUE(this->emu->memory.is_guard_page(limit - page_size));
+        EXPECT_EQ(STATUS_SUCCESS, probe_range(*this->emu, limit - 8, 16, memory_permission::write));
+        EXPECT_EQ(limit - page_size, this->teb().NtTib.StackLimit);
+        EXPECT_FALSE(this->emu->memory.is_guard_page(limit - page_size));
+        EXPECT_TRUE(this->emu->memory.is_guard_page(limit - (2 * page_size)));
+
+        auto status = STATUS_SUCCESS;
+        for (size_t probes = 0; status == STATUS_SUCCESS && probes < stack_reserve / page_size; ++probes)
+        {
+            status = probe_range(*this->emu, this->teb().NtTib.StackLimit - 1, 1, memory_permission::read);
+        }
+
+        EXPECT_EQ(STATUS_STACK_OVERFLOW, status);
+    }
 }

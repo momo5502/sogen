@@ -373,9 +373,9 @@ namespace sogen
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
-                if (!is_readable_range(c.win_emu.memory, file_information, length))
+                if (const auto status = probe_range(c.win_emu, file_information, length, memory_permission::read); status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
                 }
 
                 if (!(f->access_mask & DELETE))
@@ -395,9 +395,9 @@ namespace sogen
                     return STATUS_INFO_LENGTH_MISMATCH;
                 }
 
-                if (!is_readable_range(c.win_emu.memory, file_information, length))
+                if (const auto status = probe_range(c.win_emu, file_information, length, memory_permission::read); status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
                 }
 
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);

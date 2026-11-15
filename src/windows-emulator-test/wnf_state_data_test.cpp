@@ -100,6 +100,27 @@ namespace sogen::test
         }
     }
 
+    // The change stamp's probe takes a guard page's guard and fails the query with STATUS_GUARD_PAGE_VIOLATION (19041 on
+    // the host).
+    TEST_F(WnfStateDataTest, ChangeStampOnAGuardPageFailsWithItsGuard)
+    {
+        const auto guarded = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto guard = [&] {
+            return this->emu->memory.protect_memory(guarded, 0x1000,
+                                                    nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard));
+        };
+        const emulator_object<uint64_t> state_name{this->emu->memory, this->storage};
+        const emulator_object<ULONG> buffer_size{this->emu->memory, this->storage + 0x20};
+        state_name.write(registered_name);
+        buffer_size.write(sizeof(ULONG));
+
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION,
+                  syscalls::handle_NtQueryWnfStateData(this->context(), state_name, 0, 0, {this->emu->memory, guarded},
+                                                       this->buffer_address(), buffer_size));
+        EXPECT_FALSE(this->emu->memory.is_guard_page(guarded));
+    }
+
     TEST_F(WnfStateDataTest, PublishedStateReportsItsStampAndData)
     {
         this->emu->process.wnf_states[registered_name] = {.change_stamp = 7,

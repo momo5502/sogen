@@ -599,6 +599,33 @@ namespace sogen::test
         EXPECT_EQ(0u, this->key(0).read());
     }
 
+    // The probes before the wait take a guard page's guard and fail the call with STATUS_GUARD_PAGE_VIOLATION (19041 on the
+    // host).
+    TEST_F(IoCompletionWaiterTest, OutputsOnAGuardPageFailTheRemoveWithItsGuard)
+    {
+        auto& waiter = this->new_thread();
+        const auto guarded = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto guard = [&] {
+            return this->emu->memory.protect_memory(guarded, 0x1000,
+                                                    nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard));
+        };
+        const emulator_object<LARGE_INTEGER> no_wait{this->emu->memory, this->storage + 0x900};
+        no_wait.write(LARGE_INTEGER{});
+
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION, this->emu->synchronize([&] {
+            return syscalls::handle_NtRemoveIoCompletion(this->context_of(waiter), this->port, {this->emu->memory, guarded},
+                                                         {this->emu->memory, this->storage + 8}, {this->emu->memory, this->storage + 0x10},
+                                                         no_wait);
+        }));
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION, this->emu->synchronize([&] {
+            return syscalls::handle_NtRemoveIoCompletionEx(this->context_of(waiter), this->port, {this->emu->memory, guarded}, 1,
+                                                           {this->emu->memory, this->storage + 0x20}, no_wait, FALSE);
+        }));
+        EXPECT_FALSE(this->emu->memory.is_guard_page(guarded));
+    }
+
     // IoRemoveIoCompletion stores each taken entry under try, and NtRemoveIoCompletionEx stores the count only when none
     // faulted: a count reprotected while the waiter was suspended fails the wait after both entries are written.
     TEST_F(IoCompletionWaiterTest, SuspendedExWaiterWritesItsEntriesButNotACountReprotectedMeanwhile)
@@ -624,6 +651,67 @@ namespace sogen::test
         EXPECT_EQ(0x11u, entries.read(0).KeyContext);
         EXPECT_EQ(0x22u, entries.read(1).KeyContext);
         EXPECT_EQ(0u, removed.read());
+    }
+
+    // The copy-out after the wait is plain stores under try (NtRemoveIoCompletion): a store needs a writable page before its
+    // guard is looked at, and the wait ends with its fault's own code. A KeyContext that became a guard page while the waiter
+    // was suspended fails the wait with STATUS_GUARD_PAGE_VIOLATION and loses its guard; a read-only guard page fails it with
+    // STATUS_ACCESS_VIOLATION and keeps its guard (19041 on the host).
+    TEST_F(IoCompletionWaiterTest, CopyOutStoresEndTheWaitWithTheirFaultsCode)
+    {
+        for (const auto& [permission, expected, keeps_guard] :
+             {std::tuple{memory_permission::read_write, STATUS_GUARD_PAGE_VIOLATION, false},
+              std::tuple{memory_permission::read, STATUS_ACCESS_VIOLATION, true}})
+        {
+            auto& waiter = this->new_thread();
+            auto& poster = this->new_thread();
+            const auto key_page = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+                return syscalls::handle_NtRemoveIoCompletion(this->context_of(waiter), this->port, {this->emu->memory, key_page},
+                                                             {this->emu->memory, this->storage + 8},
+                                                             {this->emu->memory, this->storage + 0x10}, {this->emu->memory});
+            }));
+            waiter.suspended = 1;
+            ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x11));
+            ASSERT_TRUE(this->emu->memory.protect_memory(key_page, 0x1000, nt_memory_permission(permission, memory_permission_ext::guard),
+                                                         nullptr));
+
+            waiter.suspended = 0;
+            EXPECT_TRUE(this->emu->synchronize([&] { return waiter.is_thread_ready(*this->emu); }));
+            EXPECT_EQ(expected, waiter.pending_status);
+            EXPECT_EQ(keeps_guard, this->emu->memory.is_guard_page(key_page));
+        }
+    }
+
+    // IoRemoveIoCompletion stores each taken entry under try and goes on after a fault, returning the code it saved last: of
+    // two entries on two pages the second's fault is the result (19041 on the host).
+    TEST_F(IoCompletionWaiterTest, CopyOutOfAnEntryArrayEndsWithTheLastFaultsCode)
+    {
+        const auto guard = nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard);
+        const auto read_only = nt_memory_permission(memory_permission::read);
+        for (const auto& [first, second, expected] :
+             {std::tuple{guard, read_only, STATUS_ACCESS_VIOLATION}, std::tuple{read_only, guard, STATUS_GUARD_PAGE_VIOLATION}})
+        {
+            using entry_type = FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>;
+            auto& waiter = this->new_thread();
+            auto& poster = this->new_thread();
+            const auto pages = this->emu->memory.allocate_memory(0x2000, memory_permission::read_write);
+            const emulator_object<entry_type> entries{this->emu->memory, pages + 0x1000 - sizeof(entry_type)};
+            const emulator_object<ULONG> removed{this->emu->memory, this->storage + 0x20};
+            ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+                return syscalls::handle_NtRemoveIoCompletionEx(this->context_of(waiter), this->port, entries, 2, removed,
+                                                               {this->emu->memory}, FALSE);
+            }));
+            waiter.suspended = 1;
+            ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x11));
+            ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x22));
+            ASSERT_TRUE(this->emu->memory.protect_memory(pages, 0x1000, first, nullptr));
+            ASSERT_TRUE(this->emu->memory.protect_memory(pages + 0x1000, 0x1000, second, nullptr));
+
+            waiter.suspended = 0;
+            EXPECT_TRUE(this->emu->synchronize([&] { return waiter.is_thread_ready(*this->emu); }));
+            EXPECT_EQ(expected, waiter.pending_status);
+        }
     }
 
     // NtRemoveIoCompletion probes only the status block's first ULONG, then stores the taken packet under try: KeyContext,
