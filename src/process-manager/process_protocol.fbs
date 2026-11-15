@@ -218,10 +218,18 @@ table CloseHandleRequest {
     handle: ulong;
 }
 
-// Tokens travel as the pseudo-handle that identifies them: none, the impersonation token or the anonymous one.
+struct TokenPrivilege {
+    luid: uint;
+    attributes: uint;
+}
+
+// Tokens travel as the pseudo-handle that identifies them: none, the impersonation token or the anonymous one. An
+// opened token has privileges of its own, which travel with it; without them the token has its process's.
 table SetThreadTokenRequest {
     thread_id: uint;
     token: ulong;
+    has_privileges: bool;
+    privileges: [TokenPrivilege];
 }
 
 table ThreadTokenRequest {
@@ -231,6 +239,8 @@ table ThreadTokenRequest {
 table ThreadTokenResponse {
     error: ProcessError = None;
     token: ulong;
+    has_privileges: bool;
+    privileges: [TokenPrivilege];
 }
 
 table CycleTimeRequest {

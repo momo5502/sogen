@@ -1983,6 +1983,26 @@ namespace sogen
         }
     }
 
+    process_token process_context::export_token(const handle token) const
+    {
+        const auto* opened = this->tokens.get(token);
+        if (!opened)
+        {
+            return {.identity = token.bits};
+        }
+
+        process_token exported{.identity = opened->identity.bits};
+        if (opened->privileges)
+        {
+            auto& privileges = exported.privileges.emplace();
+            for (const auto& privilege : *opened->privileges)
+            {
+                privileges.push_back({.luid = privilege.luid, .attributes = privilege.attributes});
+            }
+        }
+        return exported;
+    }
+
     void process_context::terminate_thread(emulator_thread& thread, const NTSTATUS thread_exit_status)
     {
         if (!thread.is_terminated())

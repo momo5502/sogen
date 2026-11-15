@@ -347,6 +347,21 @@ namespace sogen
         return c.proc.tokens.store(std::move(token));
     }
 
+    inline handle open_token(const syscall_context& c, const process_token& token)
+    {
+        std::optional<std::vector<token_privilege>> privileges{};
+        if (token.privileges)
+        {
+            auto& imported = privileges.emplace();
+            for (const auto& privilege : *token.privileges)
+            {
+                imported.push_back({.luid = privilege.luid, .attributes = privilege.attributes});
+            }
+        }
+
+        return open_token(c, handle{.bits = token.identity}, std::move(privileges));
+    }
+
     inline NTSTATUS map_process_error(const process_error error)
     {
         switch (error)

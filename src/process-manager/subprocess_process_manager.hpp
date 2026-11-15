@@ -88,7 +88,7 @@ namespace sogen
         process_object_install_result install_object(managed_process process, const process_shared_object& object) override;
         process_object_export_result export_object(managed_process process, uint64_t handle) override;
         process_error close_handle(managed_process process, uint64_t handle) override;
-        process_error set_thread_token(managed_process process, uint32_t thread_id, uint64_t token) override;
+        process_error set_thread_token(managed_process process, uint32_t thread_id, const process_token& token) override;
         process_thread_token_result get_thread_token(managed_process process, uint32_t thread_id) override;
         process_cycle_time_result cycle_time(managed_process process) const override;
         process_thread_context_result get_thread_context(managed_process process, uint32_t thread_id, bool wow64) override;

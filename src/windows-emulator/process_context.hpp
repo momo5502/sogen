@@ -428,6 +428,8 @@ namespace sogen
         // given and the guest closing that handle does not end the impersonation. A token identity is not an object
         // and is kept as it is.
         void impersonate_token(emulator_thread& thread, handle token);
+        // What another process needs to recreate the token: its identity and, for an opened token, its own privileges.
+        process_token export_token(handle token) const;
 
         std::optional<uint16_t> find_atom(std::u16string_view name);
         uint16_t add_or_find_atom(std::u16string name);

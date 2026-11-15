@@ -123,6 +123,8 @@ struct CloseHandleRequest;
 struct CloseHandleRequestBuilder;
 struct CloseHandleRequestT;
 
+struct TokenPrivilege;
+
 struct SetThreadTokenRequest;
 struct SetThreadTokenRequestBuilder;
 struct SetThreadTokenRequestT;
@@ -1152,6 +1154,29 @@ template <bool B = false>
 bool VerifyMessagePayload(::flatbuffers::VerifierTemplate<B> &verifier, const void *obj, MessagePayload type);
 template <bool B = false>
 bool VerifyMessagePayloadVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<uint8_t> *types);
+
+FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) TokenPrivilege FLATBUFFERS_FINAL_CLASS {
+ private:
+  uint32_t luid_;
+  uint32_t attributes_;
+
+ public:
+  TokenPrivilege()
+      : luid_(0),
+        attributes_(0) {
+  }
+  TokenPrivilege(uint32_t _luid, uint32_t _attributes)
+      : luid_(::flatbuffers::EndianScalar(_luid)),
+        attributes_(::flatbuffers::EndianScalar(_attributes)) {
+  }
+  uint32_t luid() const {
+    return ::flatbuffers::EndianScalar(luid_);
+  }
+  uint32_t attributes() const {
+    return ::flatbuffers::EndianScalar(attributes_);
+  }
+};
+FLATBUFFERS_STRUCT_END(TokenPrivilege, 8);
 
 struct HelloT : public ::flatbuffers::NativeTable {
   typedef Hello TableType;
@@ -3528,6 +3553,8 @@ struct SetThreadTokenRequestT : public ::flatbuffers::NativeTable {
   typedef SetThreadTokenRequest TableType;
   uint32_t thread_id = 0;
   uint64_t token = 0;
+  bool has_privileges = false;
+  std::vector<ProcessProtocol::TokenPrivilege> privileges{};
 };
 
 struct SetThreadTokenRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -3535,7 +3562,9 @@ struct SetThreadTokenRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
   typedef SetThreadTokenRequestBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_THREAD_ID = 4,
-    VT_TOKEN = 6
+    VT_TOKEN = 6,
+    VT_HAS_PRIVILEGES = 8,
+    VT_PRIVILEGES = 10
   };
   uint32_t thread_id() const {
     return GetField<uint32_t>(VT_THREAD_ID, 0);
@@ -3543,11 +3572,20 @@ struct SetThreadTokenRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Ta
   uint64_t token() const {
     return GetField<uint64_t>(VT_TOKEN, 0);
   }
+  bool has_privileges() const {
+    return GetField<uint8_t>(VT_HAS_PRIVILEGES, 0) != 0;
+  }
+  const ::flatbuffers::Vector<const ProcessProtocol::TokenPrivilege *> *privileges() const {
+    return GetPointer<const ::flatbuffers::Vector<const ProcessProtocol::TokenPrivilege *> *>(VT_PRIVILEGES);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
            VerifyField<uint64_t>(verifier, VT_TOKEN, 8) &&
+           VerifyField<uint8_t>(verifier, VT_HAS_PRIVILEGES, 1) &&
+           VerifyOffset(verifier, VT_PRIVILEGES) &&
+           verifier.VerifyVector(privileges()) &&
            verifier.EndTable();
   }
   SetThreadTokenRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -3565,6 +3603,12 @@ struct SetThreadTokenRequestBuilder {
   void add_token(uint64_t token) {
     fbb_.AddElement<uint64_t>(SetThreadTokenRequest::VT_TOKEN, token, 0);
   }
+  void add_has_privileges(bool has_privileges) {
+    fbb_.AddElement<uint8_t>(SetThreadTokenRequest::VT_HAS_PRIVILEGES, static_cast<uint8_t>(has_privileges), 0);
+  }
+  void add_privileges(::flatbuffers::Offset<::flatbuffers::Vector<const ProcessProtocol::TokenPrivilege *>> privileges) {
+    fbb_.AddOffset(SetThreadTokenRequest::VT_PRIVILEGES, privileges);
+  }
   explicit SetThreadTokenRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -3579,11 +3623,30 @@ struct SetThreadTokenRequestBuilder {
 inline ::flatbuffers::Offset<SetThreadTokenRequest> CreateSetThreadTokenRequest(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint32_t thread_id = 0,
-    uint64_t token = 0) {
+    uint64_t token = 0,
+    bool has_privileges = false,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const ProcessProtocol::TokenPrivilege *>> privileges = 0) {
   SetThreadTokenRequestBuilder builder_(_fbb);
   builder_.add_token(token);
+  builder_.add_privileges(privileges);
   builder_.add_thread_id(thread_id);
+  builder_.add_has_privileges(has_privileges);
   return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<SetThreadTokenRequest> CreateSetThreadTokenRequestDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint32_t thread_id = 0,
+    uint64_t token = 0,
+    bool has_privileges = false,
+    const std::vector<ProcessProtocol::TokenPrivilege> *privileges = nullptr) {
+  auto privileges__ = privileges ? _fbb.CreateVectorOfStructs<ProcessProtocol::TokenPrivilege>(*privileges) : 0;
+  return ProcessProtocol::CreateSetThreadTokenRequest(
+      _fbb,
+      thread_id,
+      token,
+      has_privileges,
+      privileges__);
 }
 
 ::flatbuffers::Offset<SetThreadTokenRequest> CreateSetThreadTokenRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadTokenRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -3645,6 +3708,8 @@ struct ThreadTokenResponseT : public ::flatbuffers::NativeTable {
   typedef ThreadTokenResponse TableType;
   ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
   uint64_t token = 0;
+  bool has_privileges = false;
+  std::vector<ProcessProtocol::TokenPrivilege> privileges{};
 };
 
 struct ThreadTokenResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -3652,7 +3717,9 @@ struct ThreadTokenResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   typedef ThreadTokenResponseBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_ERROR = 4,
-    VT_TOKEN = 6
+    VT_TOKEN = 6,
+    VT_HAS_PRIVILEGES = 8,
+    VT_PRIVILEGES = 10
   };
   ProcessProtocol::ProcessError error() const {
     return static_cast<ProcessProtocol::ProcessError>(GetField<uint8_t>(VT_ERROR, 0));
@@ -3660,11 +3727,20 @@ struct ThreadTokenResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tabl
   uint64_t token() const {
     return GetField<uint64_t>(VT_TOKEN, 0);
   }
+  bool has_privileges() const {
+    return GetField<uint8_t>(VT_HAS_PRIVILEGES, 0) != 0;
+  }
+  const ::flatbuffers::Vector<const ProcessProtocol::TokenPrivilege *> *privileges() const {
+    return GetPointer<const ::flatbuffers::Vector<const ProcessProtocol::TokenPrivilege *> *>(VT_PRIVILEGES);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_ERROR, 1) &&
            VerifyField<uint64_t>(verifier, VT_TOKEN, 8) &&
+           VerifyField<uint8_t>(verifier, VT_HAS_PRIVILEGES, 1) &&
+           VerifyOffset(verifier, VT_PRIVILEGES) &&
+           verifier.VerifyVector(privileges()) &&
            verifier.EndTable();
   }
   ThreadTokenResponseT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -3682,6 +3758,12 @@ struct ThreadTokenResponseBuilder {
   void add_token(uint64_t token) {
     fbb_.AddElement<uint64_t>(ThreadTokenResponse::VT_TOKEN, token, 0);
   }
+  void add_has_privileges(bool has_privileges) {
+    fbb_.AddElement<uint8_t>(ThreadTokenResponse::VT_HAS_PRIVILEGES, static_cast<uint8_t>(has_privileges), 0);
+  }
+  void add_privileges(::flatbuffers::Offset<::flatbuffers::Vector<const ProcessProtocol::TokenPrivilege *>> privileges) {
+    fbb_.AddOffset(ThreadTokenResponse::VT_PRIVILEGES, privileges);
+  }
   explicit ThreadTokenResponseBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -3696,11 +3778,30 @@ struct ThreadTokenResponseBuilder {
 inline ::flatbuffers::Offset<ThreadTokenResponse> CreateThreadTokenResponse(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
-    uint64_t token = 0) {
+    uint64_t token = 0,
+    bool has_privileges = false,
+    ::flatbuffers::Offset<::flatbuffers::Vector<const ProcessProtocol::TokenPrivilege *>> privileges = 0) {
   ThreadTokenResponseBuilder builder_(_fbb);
   builder_.add_token(token);
+  builder_.add_privileges(privileges);
+  builder_.add_has_privileges(has_privileges);
   builder_.add_error(error);
   return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<ThreadTokenResponse> CreateThreadTokenResponseDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None,
+    uint64_t token = 0,
+    bool has_privileges = false,
+    const std::vector<ProcessProtocol::TokenPrivilege> *privileges = nullptr) {
+  auto privileges__ = privileges ? _fbb.CreateVectorOfStructs<ProcessProtocol::TokenPrivilege>(*privileges) : 0;
+  return ProcessProtocol::CreateThreadTokenResponse(
+      _fbb,
+      error,
+      token,
+      has_privileges,
+      privileges__);
 }
 
 ::flatbuffers::Offset<ThreadTokenResponse> CreateThreadTokenResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -5808,6 +5909,8 @@ inline void SetThreadTokenRequest::UnPackTo(SetThreadTokenRequestT *_o, const ::
   (void)_resolver;
   { auto _e = thread_id(); _o->thread_id = _e; }
   { auto _e = token(); _o->token = _e; }
+  { auto _e = has_privileges(); _o->has_privileges = _e; }
+  { auto _e = privileges(); if (_e) { _o->privileges.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->privileges[_i] = *_e->Get(_i); } } else { _o->privileges.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<SetThreadTokenRequest> CreateSetThreadTokenRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SetThreadTokenRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -5820,10 +5923,14 @@ inline ::flatbuffers::Offset<SetThreadTokenRequest> SetThreadTokenRequest::Pack(
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const SetThreadTokenRequestT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _thread_id = _o->thread_id;
   auto _token = _o->token;
+  auto _has_privileges = _o->has_privileges;
+  auto _privileges = _o->privileges.size() ? _fbb.CreateVectorOfStructs(_o->privileges) : 0;
   return ProcessProtocol::CreateSetThreadTokenRequest(
       _fbb,
       _thread_id,
-      _token);
+      _token,
+      _has_privileges,
+      _privileges);
 }
 
 inline ThreadTokenRequestT *ThreadTokenRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
@@ -5863,6 +5970,8 @@ inline void ThreadTokenResponse::UnPackTo(ThreadTokenResponseT *_o, const ::flat
   (void)_resolver;
   { auto _e = error(); _o->error = _e; }
   { auto _e = token(); _o->token = _e; }
+  { auto _e = has_privileges(); _o->has_privileges = _e; }
+  { auto _e = privileges(); if (_e) { _o->privileges.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->privileges[_i] = *_e->Get(_i); } } else { _o->privileges.resize(0); } }
 }
 
 inline ::flatbuffers::Offset<ThreadTokenResponse> CreateThreadTokenResponse(::flatbuffers::FlatBufferBuilder &_fbb, const ThreadTokenResponseT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -5875,10 +5984,14 @@ inline ::flatbuffers::Offset<ThreadTokenResponse> ThreadTokenResponse::Pack(::fl
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const ThreadTokenResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _error = _o->error;
   auto _token = _o->token;
+  auto _has_privileges = _o->has_privileges;
+  auto _privileges = _o->privileges.size() ? _fbb.CreateVectorOfStructs(_o->privileges) : 0;
   return ProcessProtocol::CreateThreadTokenResponse(
       _fbb,
       _error,
-      _token);
+      _token,
+      _has_privileges,
+      _privileges);
 }
 
 inline CycleTimeRequestT *CycleTimeRequest::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {

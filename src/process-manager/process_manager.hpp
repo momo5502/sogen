@@ -125,9 +125,23 @@ namespace sogen
         process_error error{process_error::none};
     };
 
+    struct process_token_privilege
+    {
+        uint32_t luid{};
+        uint32_t attributes{};
+    };
+
+    // A token as another process can name it: the pseudo-handle of its identity and, for an opened token, the privileges
+    // that belong to it rather than to its process.
+    struct process_token
+    {
+        uint64_t identity{};
+        std::optional<std::vector<process_token_privilege>> privileges{};
+    };
+
     struct process_thread_token_result
     {
-        uint64_t token{};
+        process_token token{};
         process_error error{process_error::none};
     };
 
@@ -306,7 +320,7 @@ namespace sogen
         virtual process_object_install_result install_object(const process_shared_object& object) = 0;
         virtual process_object_export_result export_object(uint64_t handle) = 0;
         virtual process_error close_handle(uint64_t handle) = 0;
-        virtual process_error set_thread_token(uint32_t thread_id, uint64_t token) = 0;
+        virtual process_error set_thread_token(uint32_t thread_id, const process_token& token) = 0;
         virtual process_thread_token_result get_thread_token(uint32_t thread_id) = 0;
         virtual process_cycle_time_result cycle_time() const = 0;
     };
@@ -363,7 +377,7 @@ namespace sogen
             return process_error::unavailable;
         }
 
-        virtual process_error set_thread_token(managed_process /*process*/, uint32_t /*thread_id*/, uint64_t /*token*/)
+        virtual process_error set_thread_token(managed_process /*process*/, uint32_t /*thread_id*/, const process_token& /*token*/)
         {
             return process_error::unavailable;
         }

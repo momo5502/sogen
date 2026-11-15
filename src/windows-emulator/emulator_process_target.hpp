@@ -263,18 +263,37 @@ namespace sogen
             });
         }
 
-        process_error set_thread_token(const uint32_t thread_id, const uint64_t token) override
+        process_error set_thread_token(const uint32_t thread_id, const process_token& token) override
         {
-            const handle impersonation_token{.bits = token};
-            if (impersonation_token != 0 && impersonation_token != DUMMY_IMPERSONATION_TOKEN &&
-                impersonation_token != ANONYMOUS_IMPERSONATION_TOKEN)
+            const handle identity{.bits = token.identity};
+            if (identity != 0 && identity != DUMMY_IMPERSONATION_TOKEN && identity != ANONYMOUS_IMPERSONATION_TOKEN)
             {
                 return process_error::internal_failure;
             }
 
             auto error = process_error::invalid_process;
             this->on_thread(thread_id, [&](emulator_thread& thread) {
-                this->emulator_.process.impersonate_token(thread, impersonation_token);
+                auto& process = this->emulator_.process;
+                if (!token.privileges)
+                {
+                    process.impersonate_token(thread, identity);
+                    error = process_error::none;
+                    return;
+                }
+
+                // The token arrives as a copy with its own privileges. The thread keeps it alive; this handle is only how
+                // it gets there.
+                token_object copy{};
+                copy.identity = identity;
+                auto& privileges = copy.privileges.emplace();
+                for (const auto& privilege : *token.privileges)
+                {
+                    privileges.push_back({.luid = privilege.luid, .attributes = privilege.attributes});
+                }
+
+                const auto opened = process.tokens.store(std::move(copy));
+                process.impersonate_token(thread, opened);
+                (void)process.tokens.erase(opened);
                 error = process_error::none;
             });
             return error;
@@ -284,9 +303,7 @@ namespace sogen
         {
             process_thread_token_result result{.error = process_error::invalid_process};
             this->on_thread(thread_id, [&](const emulator_thread& thread) {
-                // Another process can only be told the token's identity: its object belongs to this one.
-                const auto* opened = this->emulator_.process.tokens.get(thread.impersonation_token);
-                result = {.token = opened ? opened->identity.bits : thread.impersonation_token.bits};
+                result = {.token = this->emulator_.process.export_token(thread.impersonation_token)};
             });
             return result;
         }

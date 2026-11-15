@@ -1,5 +1,6 @@
 #include "emulation_test_utils.hpp"
 #include <syscall_utils.hpp>
+#include <emulator_process_target.hpp>
 
 namespace sogen::syscalls
 {
@@ -208,6 +209,27 @@ namespace sogen::test
         const auto enabled = [](const auto& privilege) { return (privilege.second & 2) != 0; };
         EXPECT_TRUE(std::ranges::none_of(this->privileges(CURRENT_THREAD_TOKEN), enabled));
         EXPECT_TRUE(std::ranges::any_of(this->privileges(), enabled));
+    }
+
+    TEST_F(TokenInformationTest, AThreadTokenFromAnotherProcessKeepsItsPrivileges)
+    {
+        emulator_process_target target{*this->emu};
+        const auto thread_id = this->emu->vcpu(0).active_thread->id;
+        const process_token sent{.identity = DUMMY_IMPERSONATION_TOKEN.bits,
+                                 .privileges = std::vector<process_token_privilege>{{.luid = 23, .attributes = 0}}};
+        ASSERT_EQ(process_error::none, target.set_thread_token(thread_id, sent));
+
+        // PsImpersonateClient keeps the token itself, so the thread reports the privileges the token was sent with, not
+        // the process's.
+        EXPECT_EQ((std::vector<std::pair<ULONG, ULONG>>{{23, 0}}), this->privileges(CURRENT_THREAD_TOKEN));
+
+        const auto received = target.get_thread_token(thread_id);
+        ASSERT_EQ(process_error::none, received.error);
+        EXPECT_EQ(DUMMY_IMPERSONATION_TOKEN.bits, received.token.identity);
+        ASSERT_TRUE(received.token.privileges.has_value());
+        ASSERT_EQ(1u, received.token.privileges->size());
+        EXPECT_EQ(23u, received.token.privileges->front().luid);
+        EXPECT_EQ(0u, received.token.privileges->front().attributes);
     }
 
     TEST_F(TokenInformationTest, TheImpersonatedTokenOutlivesItsHandleWithoutCountingAsOne)

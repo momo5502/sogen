@@ -161,7 +161,8 @@ namespace sogen
                     return token == CURRENT_PROCESS_TOKEN ? STATUS_BAD_TOKEN_TYPE : STATUS_INVALID_HANDLE;
                 }
 
-                return map_process_error(manager->set_thread_token(thread.process, thread.thread_id, token.bits));
+                const auto exported = token == 0 ? process_token{} : c.proc.export_token(resolve_token_object(c, requested_token));
+                return map_process_error(manager->set_thread_token(thread.process, thread.thread_id, exported));
             }
 
             NTSTATUS get_unresolved_handle_status(const handle h, const handle_types::type expected_type)
@@ -905,6 +906,7 @@ namespace sogen
                                           const BOOLEAN /*open_as_self*/, const emulator_object<handle> token_handle)
         {
             handle impersonation_token{};
+            std::optional<process_token> remote_token{};
             if (const auto* managed = c.proc.managed_threads.get(thread_handle))
             {
                 auto* manager = c.win_emu.processes();
@@ -918,7 +920,8 @@ namespace sogen
                 {
                     return map_process_error(result.error);
                 }
-                impersonation_token.bits = result.token;
+                impersonation_token.bits = result.token.identity;
+                remote_token = result.token;
             }
             else
             {
@@ -940,7 +943,13 @@ namespace sogen
             }
 
             // NtOpenThreadTokenEx opens the token object the thread impersonates, so the privileges it reports and
-            // adjusts are that token's own.
+            // adjusts are that token's own. Another process's token object can only be copied here.
+            if (remote_token)
+            {
+                token_handle.write(open_token(c, *remote_token));
+                return STATUS_SUCCESS;
+            }
+
             if (const auto opened = c.proc.tokens.duplicate(impersonation_token))
             {
                 token_handle.write(*opened);

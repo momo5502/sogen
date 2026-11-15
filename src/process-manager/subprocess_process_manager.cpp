@@ -163,6 +163,34 @@ namespace sogen
             return decode_message(std::move(*size_data));
         }
 
+        void encode_token(const process_token& token, uint64_t& identity, bool& has_privileges,
+                          std::vector<ProcessProtocol::TokenPrivilege>& privileges)
+        {
+            identity = token.identity;
+            has_privileges = token.privileges.has_value();
+            privileges.clear();
+            for (const auto& privilege : token.privileges.value_or(std::vector<process_token_privilege>{}))
+            {
+                privileges.emplace_back(privilege.luid, privilege.attributes);
+            }
+        }
+
+        process_token decode_token(const uint64_t identity, const bool has_privileges,
+                                   const std::vector<ProcessProtocol::TokenPrivilege>& privileges)
+        {
+            process_token token{.identity = identity};
+            if (has_privileges)
+            {
+                auto& decoded = token.privileges.emplace();
+                decoded.reserve(privileges.size());
+                for (const auto& privilege : privileges)
+                {
+                    decoded.push_back({.luid = privilege.luid(), .attributes = privilege.attributes()});
+                }
+            }
+            return token;
+        }
+
         ProcessProtocol::ProcessError encode_error(const process_error error)
         {
             return static_cast<ProcessProtocol::ProcessError>(error);
@@ -705,7 +733,8 @@ namespace sogen
             case ProcessProtocol::MessagePayload_SetThreadTokenRequest: {
                 const auto& request = *message->payload.AsSetThreadTokenRequest();
                 ProcessProtocol::ProcessErrorResponseT response{};
-                response.error = encode_error(target.set_thread_token(request.thread_id, request.token));
+                response.error = encode_error(
+                    target.set_thread_token(request.thread_id, decode_token(request.token, request.has_privileges, request.privileges)));
                 if (!this->send(response))
                 {
                     return false;
@@ -716,7 +745,7 @@ namespace sogen
                 const auto result = target.get_thread_token(message->payload.AsThreadTokenRequest()->thread_id);
                 ProcessProtocol::ThreadTokenResponseT response{};
                 response.error = encode_error(result.error);
-                response.token = result.token;
+                encode_token(result.token, response.token, response.has_privileges, response.privileges);
                 if (!this->send(response))
                 {
                     return false;
@@ -1312,11 +1341,11 @@ namespace sogen
     }
 
     process_error subprocess_process_manager::set_thread_token(const managed_process process, const uint32_t thread_id,
-                                                               const uint64_t token)
+                                                               const process_token& token)
     {
         ProcessProtocol::SetThreadTokenRequestT request{};
         request.thread_id = thread_id;
-        request.token = token;
+        encode_token(token, request.token, request.has_privileges, request.privileges);
         const auto response = this->exchange(process, request, ProcessProtocol::MessagePayload_ProcessErrorResponse);
         if (!response)
         {
@@ -1335,7 +1364,7 @@ namespace sogen
             return {.error = process_error::communication_failure};
         }
         const auto& result = *response->payload.AsThreadTokenResponse();
-        return {.token = result.token, .error = decode_error(result.error)};
+        return {.token = decode_token(result.token, result.has_privileges, result.privileges), .error = decode_error(result.error)};
     }
 
     process_cycle_time_result subprocess_process_manager::cycle_time(const managed_process process) const
