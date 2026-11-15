@@ -6990,7 +6990,7 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserSetSysMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu)
+        BOOL handle_NtUserSetSystemMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu)
         {
             auto* win = c.proc.windows.get(hwnd);
             if (!win)
@@ -7020,9 +7020,18 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserSetSystemMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu)
+        BOOL handle_NtUserSetSysMenu(const syscall_context& c, const hwnd hwnd)
         {
-            return handle_NtUserSetSysMenu(c, hwnd, menu);
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400);
+                return FALSE;
+            }
+
+            // TODO: enable or disable system menu items (minimize, restore, size, move, ...) based on the window's state
+
+            return TRUE;
         }
 
         BOOL handle_NtUserSetMsgBox(const syscall_context& c, const hwnd hwnd)

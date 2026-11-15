@@ -779,7 +779,7 @@ namespace sogen
         BOOL handle_NtUserSetWindowFNID(const syscall_context& c, hwnd hwnd, WORD fnid);
         BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, emulator_pointer ptr);
         BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
-        BOOL handle_NtUserSetSysMenu(const syscall_context& c, hwnd hwnd, hmenu menu);
+        BOOL handle_NtUserSetSysMenu(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserSetSystemMenu(const syscall_context& c, hwnd hwnd, hmenu menu);
         BOOL handle_NtUserSetMsgBox(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserEnableWindow(const syscall_context& c, hwnd hwnd, BOOL enable);
