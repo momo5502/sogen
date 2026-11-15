@@ -706,6 +706,7 @@ namespace sogen
             PFN_vkDestroyImage destroy_image{};
             PFN_vkGetImageMemoryRequirements get_image_memory_requirements{};
             PFN_vkGetDeviceImageMemoryRequirements get_device_image_memory_requirements{};
+            PFN_vkGetDeviceBufferMemoryRequirements get_device_buffer_memory_requirements{};
             PFN_vkGetImageSubresourceLayout get_image_subresource_layout{};
             PFN_vkBindImageMemory bind_image_memory{};
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
@@ -1504,6 +1505,10 @@ namespace sogen
             uint64_t memory_id{};
             uint64_t memory_offset{};
             uint64_t size{};
+            // Whether imported host memory can back the buffer, and whether it was re-created for that.
+            bool host_import{};
+            bool created_for_import{};
+            VkMemoryRequirements requirements{};
         };
 
         struct image_create_params
@@ -1626,6 +1631,10 @@ namespace sogen
             uint64_t memory_offset{};
             // Whether the image was created with the transfer usage snapshots copy it with.
             bool copyable{};
+            // Whether imported host memory can back the image, and whether it was re-created for that.
+            bool host_import{};
+            bool created_for_import{};
+            VkMemoryRequirements requirements{};
             // The layout of each aspect, mip level and array layer as of the last submission, in the order of
             // subresource_index. Vulkan cannot report it.
             std::vector<uint32_t> layouts{};
@@ -3187,12 +3196,11 @@ namespace sogen
         }
 
         // The create-info a guest image is made with: the guest's parameters, with a BC format the device cannot sample
-        // swapped for its decoded substitute, plus transfer usage where the format allows it (the bridge copies images)
-        // and the host-allocation handle type where host memory can back the image. external_info is chained into info,
-        // and copyable says whether the image can be copied. A BC image the emulation cannot serve fails with
-        // VK_ERROR_FORMAT_NOT_SUPPORTED.
-        VkResult fill_image_create_info(const device_data& dev, const image_create_params& params, VkImageCreateInfo& info,
-                                        VkExternalMemoryImageCreateInfo& external_info, bool& copyable)
+        // swapped for its decoded substitute, plus transfer usage where the format allows it (the bridge copies images).
+        // copyable says whether the image can be copied and host_import whether imported host memory can back it. A BC
+        // image the emulation cannot serve fails with VK_ERROR_FORMAT_NOT_SUPPORTED.
+        VkResult fill_image_create_info(const device_data& dev, const image_create_params& params, VkImageCreateInfo& info, bool& copyable,
+                                        bool& host_import)
         {
             const auto sample_count = params.samples != 0 ? params.samples : static_cast<uint32_t>(VK_SAMPLE_COUNT_1_BIT);
             info = {
@@ -3246,14 +3254,172 @@ namespace sogen
                 copyable = false;
             }
 
-            external_info = {};
-            if (this->image_supports_host_import(dev, info))
+            host_import = this->image_supports_host_import(dev, info);
+            return VK_SUCCESS;
+        }
+
+        // Images and buffers that imported host memory can back are created without the host-allocation handle type:
+        // drivers may offer resources with it only importable system memory (AMD does), keeping them out of VRAM. Binding
+        // imported memory re-creates the still unbound resource with the handle type, so the requirements cover both
+        // forms: the larger size and alignment, and the plain form's memory types except host-visible ones in a heap that
+        // imports go to which the imported form cannot use.
+        VkMemoryRequirements merge_import_requirements(const device_data& dev, VkMemoryRequirements plain,
+                                                       const VkMemoryRequirements& imported)
+        {
+            VkPhysicalDeviceMemoryProperties properties{};
+            if (!this->query_memory_properties(dev, properties))
             {
-                external_info.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
-                external_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
-                info.pNext = &external_info;
+                return imported;
             }
 
+            uint32_t import_heaps = 0;
+            for (uint32_t i = 0; i < properties.memoryTypeCount; ++i)
+            {
+                if ((imported.memoryTypeBits & (1u << i)) != 0)
+                {
+                    import_heaps |= 1u << properties.memoryTypes[i].heapIndex;
+                }
+            }
+
+            for (uint32_t i = 0; i < properties.memoryTypeCount; ++i)
+            {
+                const auto& type = properties.memoryTypes[i];
+                if ((type.propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 && (import_heaps & (1u << type.heapIndex)) != 0 &&
+                    (imported.memoryTypeBits & (1u << i)) == 0)
+                {
+                    plain.memoryTypeBits &= ~(1u << i);
+                }
+            }
+
+            plain.size = std::max(plain.size, imported.size);
+            plain.alignment = std::max(plain.alignment, imported.alignment);
+            return plain;
+        }
+
+        static VkMemoryRequirements device_image_requirements(const device_data& dev, const VkImageCreateInfo& info)
+        {
+            VkMemoryRequirements requirements{};
+            if (dev.get_device_image_memory_requirements)
+            {
+                const VkDeviceImageMemoryRequirements query{
+                    .sType = VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS, .pNext = nullptr, .pCreateInfo = &info, .planeAspect = {}};
+                VkMemoryRequirements2 result{};
+                result.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+                dev.get_device_image_memory_requirements(dev.handle, &query, &result);
+                return result.memoryRequirements;
+            }
+
+            VkImage image{};
+            if (dev.create_image(dev.handle, &info, nullptr, &image) == VK_SUCCESS)
+            {
+                dev.get_image_memory_requirements(dev.handle, image, &requirements);
+                dev.destroy_image(dev.handle, image, nullptr);
+            }
+            return requirements;
+        }
+
+        VkMemoryRequirements image_requirements(const device_data& dev, const VkImageCreateInfo& info, const VkMemoryRequirements& plain,
+                                                const bool host_import)
+        {
+            if (!host_import)
+            {
+                return plain;
+            }
+
+            const VkExternalMemoryImageCreateInfo external_info{.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+                                                                .pNext = nullptr,
+                                                                .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+            auto imported = info;
+            imported.pNext = &external_info;
+            return this->merge_import_requirements(dev, plain, device_image_requirements(dev, imported));
+        }
+
+        VkResult recreate_image_for_import(const device_data& dev, image_data& image)
+        {
+            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+            VkImageCreateInfo info{};
+            bool copyable = false;
+            bool host_import = false;
+            if (const VkResult filled = this->fill_image_create_info(dev, image.create, info, copyable, host_import); filled != VK_SUCCESS)
+            {
+                return filled;
+            }
+            const VkExternalMemoryImageCreateInfo external_info{.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+                                                                .pNext = nullptr,
+                                                                .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+            info.pNext = &external_info;
+
+            VkImage imported{};
+            if (const VkResult result = dev.create_image(dev.handle, &info, nullptr, &imported); result != VK_SUCCESS)
+            {
+                return result;
+            }
+
+            dev.destroy_image(dev.handle, image.handle, nullptr);
+            image.handle = imported;
+            image.created_for_import = true;
+            return VK_SUCCESS;
+        }
+
+        static VkMemoryRequirements device_buffer_requirements(const device_data& dev, const VkBufferCreateInfo& info)
+        {
+            VkMemoryRequirements requirements{};
+            if (dev.get_device_buffer_memory_requirements)
+            {
+                const VkDeviceBufferMemoryRequirements query{
+                    .sType = VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS, .pNext = nullptr, .pCreateInfo = &info};
+                VkMemoryRequirements2 result{};
+                result.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
+                dev.get_device_buffer_memory_requirements(dev.handle, &query, &result);
+                return result.memoryRequirements;
+            }
+
+            VkBuffer buffer{};
+            if (dev.create_buffer(dev.handle, &info, nullptr, &buffer) == VK_SUCCESS)
+            {
+                dev.get_buffer_memory_requirements(dev.handle, buffer, &requirements);
+                dev.destroy_buffer(dev.handle, buffer, nullptr);
+            }
+            return requirements;
+        }
+
+        VkMemoryRequirements buffer_requirements(const device_data& dev, const VkBufferCreateInfo& info, const VkMemoryRequirements& plain,
+                                                 const bool host_import)
+        {
+            if (!host_import)
+            {
+                return plain;
+            }
+
+            const VkExternalMemoryBufferCreateInfo external_info{.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+                                                                 .pNext = nullptr,
+                                                                 .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+            auto imported = info;
+            imported.pNext = &external_info;
+            return this->merge_import_requirements(dev, plain, device_buffer_requirements(dev, imported));
+        }
+
+        static VkResult recreate_buffer_for_import(const device_data& dev, buffer_data& buffer)
+        {
+            const VkExternalMemoryBufferCreateInfo external_info{.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+                                                                 .pNext = nullptr,
+                                                                 .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+            VkBufferCreateInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            info.pNext = &external_info;
+            info.size = buffer.size;
+            info.usage = buffer.usage;
+            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+            VkBuffer imported{};
+            if (const VkResult result = dev.create_buffer(dev.handle, &info, nullptr, &imported); result != VK_SUCCESS)
+            {
+                return result;
+            }
+
+            dev.destroy_buffer(dev.handle, buffer.handle, nullptr);
+            buffer.handle = imported;
+            buffer.created_for_import = true;
             return VK_SUCCESS;
         }
 
@@ -5598,6 +5764,13 @@ namespace sogen
                 data.get_device_image_memory_requirements =
                     reinterpret_cast<PFN_vkGetDeviceImageMemoryRequirements>(resolve("vkGetDeviceImageMemoryRequirementsKHR"));
             }
+            data.get_device_buffer_memory_requirements =
+                reinterpret_cast<PFN_vkGetDeviceBufferMemoryRequirements>(resolve("vkGetDeviceBufferMemoryRequirements"));
+            if (!data.get_device_buffer_memory_requirements)
+            {
+                data.get_device_buffer_memory_requirements =
+                    reinterpret_cast<PFN_vkGetDeviceBufferMemoryRequirements>(resolve("vkGetDeviceBufferMemoryRequirementsKHR"));
+            }
             data.get_image_subresource_layout = reinterpret_cast<PFN_vkGetImageSubresourceLayout>(resolve("vkGetImageSubresourceLayout"));
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
@@ -6888,15 +7061,6 @@ namespace sogen
         info.usage = usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        // Memory the bridge imports may only back resources created for its handle type.
-        VkExternalMemoryBufferCreateInfo external_info{};
-        if (this->impl_->buffer_supports_host_import(dev->second, info.flags, usage))
-        {
-            external_info.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
-            external_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
-            info.pNext = &external_info;
-        }
-
         VkBuffer buffer{};
         const VkResult result = dev->second.create_buffer(dev->second.handle, &info, nullptr, &buffer);
         if (result != VK_SUCCESS)
@@ -6904,8 +7068,17 @@ namespace sogen
             return result;
         }
 
+        impl::buffer_data data{.handle = buffer,
+                               .device_id = device,
+                               .usage = usage,
+                               .size = size,
+                               .host_import = this->impl_->buffer_supports_host_import(dev->second, info.flags, usage)};
+        VkMemoryRequirements plain{};
+        dev->second.get_buffer_memory_requirements(dev->second.handle, buffer, &plain);
+        data.requirements = this->impl_->buffer_requirements(dev->second, info, plain, data.host_import);
+
         const uint64_t id = this->impl_->allocate_id();
-        this->impl_->buffers.emplace(id, impl::buffer_data{.handle = buffer, .device_id = device, .usage = usage, .size = size});
+        this->impl_->buffers.emplace(id, data);
         out_buffer = id;
         return VK_SUCCESS;
     }
@@ -6942,9 +7115,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        VkMemoryRequirements requirements{};
-        dev->second.get_buffer_memory_requirements(dev->second.handle, buf->second.handle, &requirements);
-
+        const auto& requirements = buf->second.requirements;
         out_size = requirements.size;
         out_alignment = requirements.alignment;
         out_memory_type_bits = dev->second.memory_types.to_guest_bits(requirements.memoryTypeBits);
@@ -6960,6 +7131,14 @@ namespace sogen
             buf->second.device_id != device || mem->second.device_id != device || !dev->second.bind_buffer_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (mem->second.imported && buf->second.host_import && !buf->second.created_for_import)
+        {
+            if (const VkResult result = impl::recreate_buffer_for_import(dev->second, buf->second); result != VK_SUCCESS)
+            {
+                return result;
+            }
         }
 
         buf->second.memory_id = memory;
@@ -7165,6 +7344,18 @@ namespace sogen
     {
         const auto dev = this->impl_->devices.find(device);
         return dev == this->impl_->devices.end() ? 0 : dev->second.host_import_alignment;
+    }
+
+    bool vulkan_host::image_takes_host_import(uint64_t device, uint64_t image) const
+    {
+        const auto it = this->impl_->images.find(image);
+        return it != this->impl_->images.end() && it->second.device_id == device && it->second.host_import;
+    }
+
+    bool vulkan_host::buffer_takes_host_import(uint64_t device, uint64_t buffer) const
+    {
+        const auto it = this->impl_->buffers.find(buffer);
+        return it != this->impl_->buffers.end() && it->second.device_id == device && it->second.host_import;
     }
 
     bool vulkan_host::is_host_visible_memory_type(uint64_t device, uint32_t memory_type_index) const
@@ -7435,9 +7626,9 @@ namespace sogen
                                                .flags = flags};
         // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkImageCreateInfo info{};
-        VkExternalMemoryImageCreateInfo external_info{};
-        bool copyable{};
-        if (const VkResult filled = this->impl_->fill_image_create_info(dev->second, params, info, external_info, copyable);
+        bool copyable = false;
+        bool host_import = false;
+        if (const VkResult filled = this->impl_->fill_image_create_info(dev->second, params, info, copyable, host_import);
             filled != VK_SUCCESS)
         {
             return filled;
@@ -7466,8 +7657,18 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->allocate_id();
-        impl::image_data data{.handle = image, .device_id = device, .samples = samples ? samples : 1, .copyable = copyable};
+        impl::image_data data{
+            .handle = image, .device_id = device, .samples = samples ? samples : 1, .copyable = copyable, .host_import = host_import};
         data.bc = std::move(bc);
+
+        // A disjoint image has no whole-image requirements to query (VUID-vkGetImageMemoryRequirements-image-01588), so
+        // none are recorded and a later query takes the path of images the bridge did not make.
+        if ((info.flags & VK_IMAGE_CREATE_DISJOINT_BIT) == 0)
+        {
+            VkMemoryRequirements plain{};
+            dev->second.get_image_memory_requirements(dev->second.handle, image, &plain);
+            data.requirements = this->impl_->image_requirements(dev->second, info, plain, host_import);
+        }
         data.create = impl::image_create_params{
             .format = format,
             .width = width,
@@ -7519,8 +7720,12 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        VkMemoryRequirements requirements{};
-        dev->second.get_image_memory_requirements(dev->second.handle, img->second.handle, &requirements);
+        // Images the bridge did not make itself, such as swapchain images, have none recorded.
+        VkMemoryRequirements requirements = img->second.requirements;
+        if (requirements.memoryTypeBits == 0)
+        {
+            dev->second.get_image_memory_requirements(dev->second.handle, img->second.handle, &requirements);
+        }
 
         out_size = requirements.size;
         out_alignment = requirements.alignment;
@@ -7572,23 +7777,19 @@ namespace sogen
                                                .flags = flags};
         // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkImageCreateInfo info{};
-        VkExternalMemoryImageCreateInfo external_info{};
-        bool copyable{};
-        if (const VkResult filled = this->impl_->fill_image_create_info(dev->second, params, info, external_info, copyable);
+        bool copyable = false;
+        bool host_import = false;
+        if (const VkResult filled = this->impl_->fill_image_create_info(dev->second, params, info, copyable, host_import);
             filled != VK_SUCCESS)
         {
             return filled;
         }
 
-        const VkDeviceImageMemoryRequirements query{
-            .sType = VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS, .pNext = nullptr, .pCreateInfo = &info, .planeAspect = {}};
-        VkMemoryRequirements2 requirements{};
-        requirements.sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2;
-        dev->second.get_device_image_memory_requirements(dev->second.handle, &query, &requirements);
-
-        out_size = requirements.memoryRequirements.size;
-        out_alignment = requirements.memoryRequirements.alignment;
-        out_memory_type_bits = dev->second.memory_types.to_guest_bits(requirements.memoryRequirements.memoryTypeBits);
+        const auto requirements =
+            this->impl_->image_requirements(dev->second, info, impl::device_image_requirements(dev->second, info), host_import);
+        out_size = requirements.size;
+        out_alignment = requirements.alignment;
+        out_memory_type_bits = dev->second.memory_types.to_guest_bits(requirements.memoryTypeBits);
         return VK_SUCCESS;
     }
 
@@ -7635,6 +7836,14 @@ namespace sogen
             img->second.device_id != device || mem->second.device_id != device || !dev->second.bind_image_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (mem->second.imported && img->second.host_import && !img->second.created_for_import)
+        {
+            if (const VkResult result = this->impl_->recreate_image_for_import(dev->second, img->second); result != VK_SUCCESS)
+            {
+                return result;
+            }
         }
 
         const VkResult result = dev->second.bind_image_memory(dev->second.handle, img->second.handle, mem->second.handle, offset);
