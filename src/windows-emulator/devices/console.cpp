@@ -298,7 +298,7 @@ namespace sogen
             uint64_t request_address{};
             uint64_t output_address{};
             read_console_input_request request{};
-            handle issuing_thread{};
+            object_reference issuing_thread{};
             bool text{};
             bool cancelled{};
 
@@ -882,13 +882,13 @@ namespace sogen
                 const auto& context = read.context;
                 context.io_status_block.write({.Status = status, .Information = information});
                 write_io_status(context, status);
-                if (auto* event = win_emu.process.events.get(context.event))
+                if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
                 {
-                    event->signaled = true;
+                    event->set_signaled(true);
                 }
                 if (context.apc_routine)
                 {
-                    if (auto* thread = win_emu.process.threads.get(read.issuing_thread))
+                    if (auto* thread = win_emu.process.get_object_as<emulator_thread>(read.issuing_thread))
                     {
                         thread->pending_apcs.push_back({.apc_routine = context.apc_routine,
                                                         .apc_argument1 = context.apc_context,
@@ -915,9 +915,9 @@ namespace sogen
 
             static void release_read(process_context& process, pending_read& read)
             {
-                io_completion_wait::release_handle_reference(process, read.context.event);
-                io_completion_wait::release_handle_reference(process, read.context.completion_port);
-                io_completion_wait::release_handle_reference(process, read.issuing_thread);
+                io_completion_wait::release_reference(process, read.context.event);
+                io_completion_wait::release_reference(process, read.context.completion_port);
+                io_completion_wait::release_reference(process, read.issuing_thread);
             }
 
             NTSTATUS queue_read(windows_emulator& win_emu, const io_device_context& context, const uint64_t request_address,
@@ -932,9 +932,8 @@ namespace sogen
             NTSTATUS queue_read(windows_emulator& win_emu, pending_read read)
             {
                 const auto context = read.context;
-                if ((context.completion_port.bits && context.apc_routine) || !context.io_status_block ||
-                    (!context.event.bits && !context.apc_routine && !context.completion_port.bits &&
-                     (!context.vcpu || !context.vcpu->active_thread)))
+                if ((context.completion_port && context.apc_routine) || !context.io_status_block ||
+                    (!context.event && !context.apc_routine && !context.completion_port && (!context.vcpu || !context.vcpu->active_thread)))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -942,8 +941,9 @@ namespace sogen
                 if (thread)
                 {
                     read.context.issuing_thread_id = thread->id;
-                    read.issuing_thread = win_emu.process.threads.find_handle(thread);
                 }
+                read.context.event = {};
+                read.context.completion_port = {};
                 bool queued{};
                 const auto cleanup = utils::finally([&] {
                     if (!queued)
@@ -951,34 +951,28 @@ namespace sogen
                         release_read(win_emu.process, read);
                     }
                 });
-                const std::array<handle*, 3> references{&read.context.event, &read.context.completion_port, &read.issuing_thread};
-                std::array<handle, 3> sources{};
-                for (size_t i = 0; i < references.size(); ++i)
+                const auto issuing_thread = thread ? win_emu.process.threads.internal_handle(*thread) : handle{};
+                if (!io_completion_wait::retain_reference(win_emu.process, context.event, read.context.event) ||
+                    !io_completion_wait::retain_reference(win_emu.process, context.completion_port, read.context.completion_port) ||
+                    !io_completion_wait::retain_reference(win_emu.process, thread, issuing_thread, read.issuing_thread))
                 {
-                    sources[i] = std::exchange(*references[i], handle{});
-                }
-                for (size_t i = 0; i < references.size(); ++i)
-                {
-                    if (!io_completion_wait::retain_handle_reference(win_emu.process, thread, sources[i], *references[i]))
-                    {
-                        return STATUS_INVALID_HANDLE;
-                    }
+                    return STATUS_INVALID_HANDLE;
                 }
                 read.context.vcpu = nullptr;
                 const auto text = read.text;
                 pending_reads_.push_back(std::move(read));
                 queued = true;
                 write_io_status(context, STATUS_PENDING, true);
-                if (auto* event = win_emu.process.events.get(context.event))
+                if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
                 {
-                    event->signaled = false;
+                    event->set_signaled(false);
                 }
                 if (text)
                 {
                     this->work(win_emu);
                 }
                 const auto status = context.io_status_block.read().Status;
-                if (status == STATUS_PENDING && !context.event.bits && !context.apc_routine && !context.completion_port.bits)
+                if (status == STATUS_PENDING && !context.event && !context.apc_routine && !context.completion_port)
                 {
                     context.thread().await_file_io = context.io_status_block.value();
                     win_emu.yield_thread(*context.vcpu);

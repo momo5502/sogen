@@ -258,7 +258,8 @@ namespace sogen::test
                 context.input_buffer = this->storage;
                 context.input_buffer_length = 64;
                 context.io_status_block = {this->emu->memory, this->storage + 0x300};
-                context.event = completion_event;
+                context.event = this->emu->process.reference_of(completion_event);
+                context.event_low_bit = (completion_event.bits & 1) != 0;
                 context.apc_routine = apc;
                 context.apc_context = 0x1234;
                 context.vcpu = &this->emu->vcpu(0);
@@ -361,12 +362,12 @@ namespace sogen::test
     {
         const auto event = this->emu->process.events.store(sogen::event{});
         ASSERT_EQ(STATUS_PENDING, this->read(1, event));
-        EXPECT_FALSE(this->emu->process.events.get(event)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(event)->is_signaled());
         EXPECT_FALSE(this->reader->await_file_io);
         this->input->queue("q");
         this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
         EXPECT_EQ(STATUS_SUCCESS, this->status());
-        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
         const auto key = this->input->read_input_event(false, true);
         ASSERT_TRUE(key);
         EXPECT_EQ(u'q', key->character);
@@ -386,7 +387,7 @@ namespace sogen::test
                                                      {this->emu->memory, this->storage + 0x340});
         }));
         EXPECT_EQ(STATUS_CANCELLED, this->status());
-        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
         EXPECT_FALSE(console->has_pending_io(this->reader->id));
         this->input->queue("q");
         this->emu->synchronize([&] { console->work(*this->emu); });
@@ -428,7 +429,7 @@ namespace sogen::test
         this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
         EXPECT_EQ(STATUS_END_OF_FILE, this->status());
         EXPECT_EQ(0u, this->emu->memory.read_memory<console_read_request>(this->storage + 0x108).events_read);
-        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
         EXPECT_FALSE(this->emu->process.devices.get(this->console_handle)->has_pending_io(this->reader->id));
         EXPECT_TRUE(this->emu->synchronize([&] { return this->reader->is_thread_ready(*this->emu); }));
         EXPECT_EQ(0u, this->input->blocking_refills);
@@ -497,6 +498,55 @@ namespace sogen::test
         }
     }
 
+    TEST_F(CooperativeConsoleReadTest, PendingEventReferenceSurvivesLastHandleCloseAndSnapshot)
+    {
+        auto& process = this->emu->process;
+        const auto event_handle = process.events.store(sogen::event{});
+        const auto reference = process.reference_of(event_handle);
+        const auto handle_count = process.events.handle_count();
+        ASSERT_EQ(STATUS_PENDING, this->read(0, event_handle));
+        EXPECT_EQ(handle_count, process.events.handle_count());
+        ASSERT_TRUE(process.events.erase(event_handle));
+        ASSERT_NE(nullptr, process.get_object_as<sogen::event>(reference));
+
+        utils::buffer_serializer snapshot{};
+        this->emu->serialize(snapshot);
+        utils::buffer_deserializer restore{snapshot};
+        this->emu->deserialize(restore);
+
+        auto observer = process.retain_object(reference);
+        ASSERT_TRUE(observer);
+        const auto cleanup = utils::finally([&] { process.release_object(*observer); });
+        auto* event = process.get_object_as<sogen::event>(reference);
+        ASSERT_NE(nullptr, event);
+        EXPECT_FALSE(event->is_signaled());
+        this->input->queue("q");
+        this->emu->synchronize([&] { process.devices.get(this->console_handle)->work(*this->emu); });
+        EXPECT_EQ(STATUS_SUCCESS, this->status());
+        EXPECT_TRUE(event->is_signaled());
+        EXPECT_EQ(1u, event->ref_count);
+        process.release_object(*observer);
+        EXPECT_EQ(nullptr, process.get_object_as<sogen::event>(reference));
+    }
+
+    TEST_F(CooperativeConsoleReadTest, TaggedEventSignalsWithoutQueuingCompletionPacket)
+    {
+        const auto port = this->emu->process.io_completions.store(io_completion{});
+        const auto event = this->emu->process.events.store(sogen::event{});
+        ASSERT_EQ(STATUS_SUCCESS, this->associate(this->console_handle, port));
+        const auto tagged_event = make_handle(event.bits | 1);
+        for (const bool text : {false, true})
+        {
+            ASSERT_EQ(STATUS_PENDING, text ? this->read_bytes(16, tagged_event) : this->read(0, tagged_event));
+            EXPECT_FALSE(this->emu->process.events.get(event)->is_signaled());
+            this->input->queue("q");
+            this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
+            EXPECT_EQ(STATUS_SUCCESS, this->status());
+            EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
+            EXPECT_TRUE(this->emu->process.io_completions.get(port)->queue.empty());
+        }
+    }
+
     TEST_F(CooperativeConsoleReadTest, ByteReadLetsAnotherGuestThreadRunUntilDataArrives)
     {
         ASSERT_EQ(STATUS_PENDING, this->read_bytes());
@@ -559,12 +609,12 @@ namespace sogen::test
         const auto completion = this->emu->process.events.store(sogen::event{});
         ASSERT_EQ(STATUS_PENDING, this->read_bytes(16, completion, 0x5678));
         EXPECT_FALSE(this->reader->await_file_io);
-        EXPECT_FALSE(this->emu->process.events.get(completion)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(completion)->is_signaled());
         this->input->queue("ab");
         this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
         EXPECT_EQ(STATUS_SUCCESS, this->status());
         EXPECT_EQ(2u, this->transferred());
-        EXPECT_TRUE(this->emu->process.events.get(completion)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(completion)->is_signaled());
         ASSERT_EQ(1u, this->reader->pending_apcs.size());
         const auto& apc = this->reader->pending_apcs.front();
         EXPECT_EQ(0x5678u, apc.apc_routine);
@@ -605,7 +655,7 @@ namespace sogen::test
         auto* console = this->emu->process.devices.get(this->console_handle);
         EXPECT_TRUE(this->emu->synchronize([&] { return console->cancel_io(*this->emu, this->storage + 0x300); }));
         EXPECT_EQ(STATUS_PENDING, this->status());
-        EXPECT_FALSE(this->emu->process.events.get(completion)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(completion)->is_signaled());
         this->input->queue("q");
         this->emu->synchronize([&] { console->work(*this->emu); });
         EXPECT_EQ(STATUS_PENDING, this->status());
@@ -613,7 +663,7 @@ namespace sogen::test
         this->emu->synchronize([&] { console->work(*this->emu); });
         EXPECT_EQ(STATUS_CANCELLED, this->status());
         EXPECT_EQ(0u, this->transferred());
-        EXPECT_TRUE(this->emu->process.events.get(completion)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(completion)->is_signaled());
         EXPECT_EQ(std::optional<std::string>{"q"}, this->input->try_read_input(16));
     }
 
@@ -627,13 +677,13 @@ namespace sogen::test
         ASSERT_TRUE(this->emu->synchronize([&] { return console->cancel_io(*this->emu, this->storage + 0x400); }));
         EXPECT_EQ(0u, this->input->cancellations);
         EXPECT_EQ(STATUS_PENDING, this->status());
-        EXPECT_TRUE(this->emu->process.events.get(second)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(second)->is_signaled());
         this->input->queue("q");
         this->emu->synchronize([&] { console->work(*this->emu); });
         EXPECT_EQ(STATUS_SUCCESS, this->status());
         EXPECT_EQ(1u, this->transferred());
         EXPECT_EQ('q', this->emu->memory.read_memory<char>(this->storage + 0x200));
-        EXPECT_TRUE(this->emu->process.events.get(first)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(first)->is_signaled());
         EXPECT_EQ(STATUS_CANCELLED, this->emu->memory.read_memory<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>(this->storage + 0x400).Status);
     }
 
@@ -643,7 +693,7 @@ namespace sogen::test
         ASSERT_EQ(STATUS_PENDING, this->read_bytes(16, completion));
         ASSERT_EQ(STATUS_SUCCESS, this->read_bytes(0, {}, 0, 0x100));
         EXPECT_EQ(STATUS_PENDING, this->status());
-        EXPECT_FALSE(this->emu->process.events.get(completion)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(completion)->is_signaled());
         const auto empty = this->emu->memory.read_memory<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>(this->storage + 0x400);
         EXPECT_EQ(0u, empty.Information);
         EXPECT_EQ(STATUS_SUCCESS, empty.Status);

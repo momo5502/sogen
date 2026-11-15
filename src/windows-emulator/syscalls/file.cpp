@@ -1682,7 +1682,12 @@ namespace sogen
                 }
                 io_device_context context{c.emu};
                 context.source_handle = file_handle;
-                context.event = make_handle(event);
+                context.event = c.proc.reference_of(make_handle(event));
+                if (event != 0 && !context.event)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+                context.event_low_bit = (event & 1) != 0;
                 context.apc_routine = apc_routine;
                 context.apc_context = apc_context;
                 context.io_status_block = io_status_block;
