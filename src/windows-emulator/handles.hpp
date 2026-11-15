@@ -340,7 +340,7 @@ namespace sogen
             return this->store_and_get(std::move(value)).first;
         }
 
-        bool store_at(const handle h, T value)
+        bool store_at(const handle h, T&& value)
         {
             if (this->block_mutation_)
             {
@@ -374,6 +374,19 @@ namespace sogen
             }
 
             return this->open_index(index, true, attributes);
+        }
+
+        // An inherited handle arrives with the value its parent used, so the child opens it at that value.
+        handle open_by_index_at(const index_type index, const handle at, const handle_attributes& attributes = {})
+        {
+            const auto id = static_cast<handle_id_type>(at.value.id);
+            if (!this->get_by_index(index) || at.value.type != Type || at.value.is_pseudo || at.value.is_system || id == 0 ||
+                !this->is_free_handle_id(id))
+            {
+                return {};
+            }
+
+            return this->open_index_at(index, id, true, attributes);
         }
 
         // A stable value for emulator-internal resolution when the guest has closed every value naming the object. It is
@@ -551,6 +564,30 @@ namespace sogen
             return true;
         }
 
+        // The access a handle was granted, when it is less than its object's own: on Windows two handles to one object
+        // can differ in access. Empty for a handle with the object's access.
+        std::optional<uint32_t> granted_access_of(const handle h) const
+        {
+            const auto entry = this->granted_access_.find(static_cast<handle_id_type>(h.value.id));
+            if (entry == this->granted_access_.end() || !this->resolve_index(h.value))
+            {
+                return std::nullopt;
+            }
+
+            return entry->second;
+        }
+
+        bool set_granted_access(const handle h, const uint32_t access)
+        {
+            if (h.value.is_system || !this->resolve_index(h.value))
+            {
+                return false;
+            }
+
+            this->granted_access_[static_cast<handle_id_type>(h.value.id)] = access;
+            return true;
+        }
+
         // Identifies the object without keeping it alive.
         std::optional<object_reference> reference_of(const handle h) const override
         {
@@ -644,6 +681,7 @@ namespace sogen
 
             this->handles_.erase(entry);
             this->attributes_.erase(static_cast<handle_id_type>(h.id));
+            this->granted_access_.erase(static_cast<handle_id_type>(h.id));
             this->recycle_handle_id(static_cast<handle_id_type>(h.id));
             this->release_index(*index);
             return true;
@@ -693,6 +731,7 @@ namespace sogen
             buffer.write_map(this->handles_);
             buffer.write_map(this->internal_handles_);
             buffer.write_map(this->attributes_);
+            buffer.write_map(this->granted_access_);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -703,6 +742,7 @@ namespace sogen
             buffer.read_map(this->handles_);
             buffer.read_map(this->internal_handles_);
             buffer.read_map(this->attributes_);
+            buffer.read_map(this->granted_access_);
             this->next_handle_id_ = 1;
             ++this->generation_;
         }
@@ -870,10 +910,8 @@ namespace sogen
                     }
                 }
 
-                std::erase_if(this->attributes_, [&](const auto& attribute) {
-                    const auto handle = this->handles_.find(attribute.first);
-                    return handle == this->handles_.end();
-                });
+                std::erase_if(this->attributes_, [&](const auto& attribute) { return !this->handles_.contains(attribute.first); });
+                std::erase_if(this->granted_access_, [&](const auto& access) { return !this->handles_.contains(access.first); });
             }
 
             auto new_iter = this->store_.erase(entry);
@@ -888,6 +926,16 @@ namespace sogen
 
         handle open_index(const index_type index, const bool add_reference, const handle_attributes& attributes)
         {
+            return this->open_index_at(index, this->find_free_handle_id(), add_reference, attributes);
+        }
+
+        bool is_free_handle_id(const handle_id_type id) const
+        {
+            return !this->handles_.contains(id) && !this->internal_handles_.contains(id);
+        }
+
+        handle open_index_at(const index_type index, const handle_id_type id, const bool add_reference, const handle_attributes& attributes)
+        {
             auto* object = this->get_by_index(index);
             if (!object)
             {
@@ -899,7 +947,6 @@ namespace sogen
                 ++object->ref_count;
             }
 
-            const auto id = this->find_free_handle_id();
             this->handles_.emplace(id, index);
             this->attributes_[id] = attributes;
             return this->make_handle_from_id(id);
@@ -907,9 +954,7 @@ namespace sogen
 
         handle_id_type find_free_handle_id()
         {
-            const auto is_free = [this](const handle_id_type id) {
-                return !this->handles_.contains(id) && !this->internal_handles_.contains(id);
-            };
+            const auto is_free = [this](const handle_id_type id) { return this->is_free_handle_id(id); };
 
             // Start from the hint so a run of allocations does not rescan the ids already handed out; a closed id pulls the
             // hint back down (recycle_handle_id) so it is reused instead of marching to the end of the space.
@@ -946,6 +991,7 @@ namespace sogen
         handle_map handles_{};
         handle_map internal_handles_{};
         std::map<handle_id_type, handle_attributes> attributes_{};
+        std::map<handle_id_type, uint32_t> granted_access_{};
         uint64_t generation_{};
     };
 

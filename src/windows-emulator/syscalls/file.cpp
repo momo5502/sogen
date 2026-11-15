@@ -1580,7 +1580,7 @@ namespace sogen
             {
                 if (auto* e = c.proc.events.get(event))
                 {
-                    e->signaled = true;
+                    e->set_signaled(true);
                     c.win_emu.wake_idle_vcpu();
                 }
             }
@@ -1765,7 +1765,7 @@ namespace sogen
             template <typename Predicate>
             size_t cancel_change_watches(const syscall_context& c, file& directory, const Predicate& matches)
             {
-                const auto cancelled = std::erase_if(directory.change_watches, [&](const directory_change_watch& watch) {
+                const auto cancelled = std::erase_if(directory.change_watches, [&](directory_change_watch& watch) {
                     if (!matches(watch))
                     {
                         return false;
@@ -1779,10 +1779,9 @@ namespace sogen
                     auto event_reference = watch.event;
                     if (auto* event = c.proc.get_object_as<sogen::event>(event_reference))
                     {
-                        event->signaled = true;
+                        event->set_signaled(true);
                     }
                     io_completion_wait::release_reference(c.proc, event_reference);
-
                     return true;
                 });
 
@@ -3055,7 +3054,7 @@ namespace sogen
 
             if (auto* e = c.proc.events.get(event))
             {
-                e->signaled = false;
+                e->set_signaled(false);
             }
 
             if (!is_control_input_readable(c, fs_control_code, input_buffer, input_buffer_length))

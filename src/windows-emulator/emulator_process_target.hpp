@@ -238,6 +238,89 @@ namespace sogen
             return this->access_emulator([&] { return describe_memory_region(this->emulator_, address); });
         }
 
+        process_object_install_result install_object(const process_shared_object& object) override
+        {
+            return this->access_emulator([&]() -> process_object_install_result {
+                const auto installed = this->emulator_.process.install_shared_object(object);
+                if (!installed)
+                {
+                    return {.error = process_error::internal_failure};
+                }
+                return {.handle = installed->bits};
+            });
+        }
+
+        process_object_export_result export_object(const uint64_t handle) override
+        {
+            return this->access_emulator([&]() -> process_object_export_result {
+                auto shared =
+                    this->emulator_.process.share_object(make_handle(handle), this->emulator_.memory.can_alias_host_memory_anywhere());
+                if (!shared)
+                {
+                    return {.error = process_error::unavailable};
+                }
+                return {.object = std::move(*shared)};
+            });
+        }
+
+        process_error set_thread_token(const uint32_t thread_id, const process_token& token) override
+        {
+            const handle identity{.bits = token.identity};
+            if (identity != 0 && identity != DUMMY_IMPERSONATION_TOKEN && identity != ANONYMOUS_IMPERSONATION_TOKEN)
+            {
+                return process_error::internal_failure;
+            }
+
+            auto error = process_error::invalid_process;
+            this->on_thread(thread_id, [&](emulator_thread& thread) {
+                auto& process = this->emulator_.process;
+                if (!token.privileges)
+                {
+                    process.impersonate_token(thread, identity);
+                    error = process_error::none;
+                    return;
+                }
+
+                // The token arrives as a copy with its own privileges. The thread keeps it alive; this handle is only how
+                // it gets there.
+                token_object copy{};
+                copy.identity = identity;
+                auto& privileges = copy.privileges.emplace();
+                privileges.reserve(token.privileges->size());
+                for (const auto& privilege : *token.privileges)
+                {
+                    privileges.push_back({.luid = privilege.luid, .attributes = privilege.attributes});
+                }
+
+                const auto opened = process.tokens.store(std::move(copy));
+                process.impersonate_token(thread, opened);
+                (void)process.tokens.erase(opened);
+                error = process_error::none;
+            });
+            return error;
+        }
+
+        process_thread_token_result get_thread_token(const uint32_t thread_id) override
+        {
+            process_thread_token_result result{.error = process_error::invalid_process};
+            this->on_thread(thread_id, [&](const emulator_thread& thread) {
+                result = {.token = this->emulator_.process.export_token(thread.impersonation_token)};
+            });
+            return result;
+        }
+
+        process_cycle_time_result cycle_time() const override
+        {
+            return this->access_emulator(
+                [&] { return process_cycle_time_result{.cycles = this->emulator_.process.get_accumulated_cycles()}; });
+        }
+
+        process_error close_handle(const uint64_t handle) override
+        {
+            return this->access_emulator(
+                [&] { return this->emulator_.close_handle(make_handle(handle)) ? process_error::none : process_error::invalid_process; });
+        }
+
       private:
         emulator_thread* find_thread(const uint32_t thread_id) const
         {

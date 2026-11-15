@@ -259,6 +259,21 @@ namespace sogen::test
         EXPECT_EQ(nullptr, this->emu->process.window_stations.get(make_handle(second)));
     }
 
+    TEST_F(WindowStationTest, OnlyTheAssignedHandleOfAStationIsRefusedOnClose)
+    {
+        const auto assigned = this->create_station(u"Sandbox");
+        ASSERT_NE(0u, assigned);
+        const auto other_handle = this->create_station(u"Sandbox");
+        ASSERT_NE(0u, other_handle);
+        ASSERT_EQ(TRUE, syscalls::handle_NtUserSetProcessWindowStation(this->context(), make_handle(assigned)));
+
+        // _CloseWindowStation compares the handle value the process was assigned, without its tag bits, not the station object.
+        EXPECT_EQ(FALSE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(assigned)));
+        EXPECT_EQ(FALSE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(assigned | 3)));
+        EXPECT_EQ(TRUE, syscalls::handle_NtUserCloseWindowStation(this->context(), make_handle(other_handle)));
+        EXPECT_NE(nullptr, this->emu->process.window_stations.get(make_handle(assigned)));
+    }
+
     TEST_F(WindowStationTest, EachOpenOfADesktopIsItsOwnReference)
     {
         const auto first = this->create_desktop(u"Shared");

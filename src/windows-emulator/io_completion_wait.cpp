@@ -53,7 +53,7 @@ namespace sogen
 
                 case handle_types::event: {
                     const auto* e = process.events.get_by_index(target.index);
-                    return e && e->signaled;
+                    return e && e->is_signaled();
                 }
                 case handle_types::thread: {
                     const auto* thread = process.threads.get_by_index(target.index);
@@ -72,7 +72,7 @@ namespace sogen
 
                 case handle_types::mutant: {
                     const auto* mutant = process.mutants.get_by_index(target.index);
-                    return mutant && mutant->locked_count == 0;
+                    return mutant && !mutant->is_locked();
                 }
 
                 case handle_types::timer: {
@@ -89,31 +89,25 @@ namespace sogen
             // target's signal exactly like NtWaitForSingleObject would: an auto-reset event resets and a
             // semaphore decrements. Without this, an edge-triggered target stays signaled and floods the
             // completion port with spurious packets (e.g. a games's async scheduler busy-spins forever).
-            void consume_wait_completion_target(process_context& process, const object_reference& target)
+            // False when the signal was gone: a shared event can be taken by a thread of another process between the
+            // check and the take, and that one signal must satisfy only one wait.
+            bool consume_wait_completion_target(process_context& process, const object_reference& target)
             {
                 if (target.is_pseudo())
                 {
-                    return;
+                    return true;
                 }
 
                 switch (target.object_type())
                 {
                 case handle_types::event: {
-                    auto* e = process.events.get_by_index(target.index);
-                    if (e && e->type == SynchronizationEvent)
-                    {
-                        e->signaled = false;
-                    }
-                    break;
+                    auto* entry = process.events.get_by_index(target.index);
+                    return entry && entry->try_acquire();
                 }
 
                 case handle_types::semaphore: {
                     auto* semaphore = process.semaphores.get_by_index(target.index);
-                    if (semaphore)
-                    {
-                        (void)semaphore->try_lock();
-                    }
-                    break;
+                    return semaphore && semaphore->try_lock();
                 }
 
                 case handle_types::timer: {
@@ -121,13 +115,13 @@ namespace sogen
                     {
                         entry->consume_signal();
                     }
-                    break;
+                    return true;
                 }
 
                 default:
                     // process/thread are terminal; ports and mutants are left
                     // untouched (a wait packet does not take mutant ownership).
-                    break;
+                    return true;
                 }
             }
 
@@ -161,7 +155,7 @@ namespace sogen
                 case handle_types::event:
                     if (const auto* target = wait_packet_target(process.events, wait_packet))
                     {
-                        return target->signaled;
+                        return target->is_signaled();
                     }
                     break;
                 case handle_types::semaphore:
@@ -173,7 +167,7 @@ namespace sogen
                 case handle_types::mutant:
                     if (const auto* target = wait_packet_target(process.mutants, wait_packet))
                     {
-                        return target->locked_count == 0;
+                        return !target->is_locked();
                     }
                     break;
                 case handle_types::timer:
@@ -250,7 +244,11 @@ namespace sogen
                         continue;
                     }
 
-                    consume_wait_completion_target(process, wait_packet.target_object_reference);
+                    if (!consume_wait_completion_target(process, wait_packet.target_object_reference))
+                    {
+                        continue;
+                    }
+
                     wait_packet.queued_completion = true;
                     signaled.emplace_back(object_reference{.type = handle_types::wait_completion_packet, .index = packet_id}, &wait_packet);
                 }
@@ -520,6 +518,7 @@ namespace sogen
         {
             if (win_emu.process.get_object_as<sogen::io_completion>(io_completion))
             {
+                win_emu.process.post_exited_job_processes(win_emu, io_completion);
                 queue_signaled_wait_packets(win_emu, io_completion);
             }
         }
@@ -535,6 +534,15 @@ namespace sogen
 
         void materialize_all_signaled_wait_packets(windows_emulator& win_emu)
         {
+            auto& process = win_emu.process;
+            for (const auto& [index, completion] : process.io_completions)
+            {
+                if (!completion.waiters.empty())
+                {
+                    process.post_exited_job_processes(win_emu, object_reference{.type = handle_types::io_completion, .index = index});
+                }
+            }
+
             queue_signaled_wait_packets(win_emu, std::nullopt);
         }
 

@@ -259,7 +259,7 @@ namespace sogen::test
         handle second{};
         ASSERT_EQ(STATUS_SUCCESS, this->create_event(SynchronizationEvent, &first));
         ASSERT_EQ(STATUS_SUCCESS, this->create_event(SynchronizationEvent, &second));
-        this->emu->process.events.get(second)->signaled = true;
+        this->emu->process.events.get(second)->set_signaled(true);
 
         const emulator_object<handle> handles{this->emu->memory, this->storage + 0x400};
         const emulator_object<uint32_t> handles32{this->emu->memory, this->storage + 0x600};
@@ -276,12 +276,12 @@ namespace sogen::test
                   syscalls::handle_NtWaitForMultipleObjects(this->context(), 3, handles, WaitAll, FALSE, timeout));
         EXPECT_EQ(STATUS_INVALID_PARAMETER_MIX,
                   syscalls::handle_NtWaitForMultipleObjects32(this->context(), 2, handles32, WaitAll, FALSE, timeout));
-        EXPECT_TRUE(this->emu->process.events.get(second)->signaled);
+        EXPECT_TRUE(this->emu->process.events.get(second)->is_signaled());
         EXPECT_TRUE(this->emu->vcpu(0).thread().await_objects.empty());
 
         // The WaitAny takes the signaled event at its first place.
         EXPECT_EQ(STATUS_WAIT_0 + 1, syscalls::handle_NtWaitForMultipleObjects(this->context(), 3, handles, WaitAny, FALSE, timeout));
-        EXPECT_FALSE(this->emu->process.events.get(second)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(second)->is_signaled());
     }
 
     // A debugger's handles to a child: the ones NtCreateUserProcess returned and the ones its create-process debug event
@@ -348,7 +348,7 @@ namespace sogen::test
 
         EXPECT_TRUE(waiter->await_objects.empty());
         EXPECT_EQ(STATUS_WAIT_0, waiter->pending_status);
-        EXPECT_FALSE(this->emu->process.events.get(original)->signaled);
+        EXPECT_FALSE(this->emu->process.events.get(original)->is_signaled());
     }
 
     TEST_F(SyncArgumentValidationTest, CompareObjectsMatchesADuplicateByObject)
@@ -382,7 +382,7 @@ namespace sogen::test
         waiter->await_objects = {this->emu->process.reference_of(original)};
         waiter->await_any = false;
         ASSERT_TRUE(this->emu->process.events.erase(original));
-        this->emu->process.events.get(*duplicate)->signaled = true;
+        this->emu->process.events.get(*duplicate)->set_signaled(true);
 
         EXPECT_TRUE(waiter->is_thread_ready(*this->emu));
         EXPECT_EQ(STATUS_SUCCESS, waiter->pending_status);

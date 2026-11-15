@@ -2,6 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <string>
 
 namespace sogen::utils
 {
@@ -14,6 +16,10 @@ namespace sogen::utils
         shared_host_buffer() = default;
         explicit shared_host_buffer(size_t size);
         ~shared_host_buffer();
+
+        // Memory another host process can map by its name. The name stays valid while any process holds the memory.
+        static shared_host_buffer create_named(size_t size);
+        static std::optional<shared_host_buffer> open_named(const std::string& name, size_t size);
 
         shared_host_buffer(const shared_host_buffer&) = delete;
         shared_host_buffer& operator=(const shared_host_buffer&) = delete;
@@ -31,9 +37,17 @@ namespace sogen::utils
             return this->size_;
         }
 
+        // Empty unless the buffer can be opened by another process.
+        const std::string& name() const
+        {
+            return this->name_;
+        }
+
       private:
         size_t size_{};
         uint8_t* data_{};
+        std::string name_{};
+        void* mapping_{};
 
         void release();
     };

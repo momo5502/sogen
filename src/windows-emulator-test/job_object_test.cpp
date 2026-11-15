@@ -8,6 +8,7 @@ namespace sogen::syscalls
     NTSTATUS handle_NtAssignProcessToJobObject(const syscall_context& c, handle job_handle, handle process_handle);
     NTSTATUS handle_NtCreateJobObject(const syscall_context& c, emulator_object<handle> job_handle, ACCESS_MASK desired_access,
                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
+    NTSTATUS handle_NtClose(const syscall_context& c, handle h);
 }
 
 namespace sogen::test
@@ -17,6 +18,7 @@ namespace sogen::test
         constexpr uint32_t extended_limit_information_class = 9;
         constexpr ULONG extended_limit_information_size = 144;
         constexpr uint64_t limit_flags_offset = 16;
+        constexpr uint32_t associate_completion_port_information_class = 7;
 
         class JobObjectTest : public testing::Test
         {
@@ -78,7 +80,7 @@ namespace sogen::test
         constexpr auto flags = die_on_unhandled_exception | breakaway_ok | silent_breakaway_ok | kill_on_job_close;
 
         ASSERT_EQ(STATUS_SUCCESS, this->set_limit_flags(flags));
-        EXPECT_EQ(flags, this->emu->process.jobs.get(this->job)->limit_flags);
+        EXPECT_EQ(flags, this->emu->process.jobs.get(this->job)->limit_flags());
     }
 
     TEST_F(JobObjectTest, RejectsLimitsThatAreNotEnforced)
@@ -97,5 +99,32 @@ namespace sogen::test
         EXPECT_EQ(STATUS_INVALID_HANDLE,
                   syscalls::handle_NtAssignProcessToJobObject(this->context(), handle{.bits = 0x1234}, CURRENT_PROCESS));
         EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtAssignProcessToJobObject(this->context(), this->job, handle{.bits = 0x1234}));
+    }
+
+    TEST_F(JobObjectTest, NotificationsReachThePortAfterTheAssociatedHandleCloses)
+    {
+        auto& ports = this->emu->process.io_completions;
+        const auto port = ports.store(io_completion{});
+        const auto associated = ports.duplicate(port);
+        ASSERT_TRUE(associated.has_value());
+
+        // JOBOBJECT_ASSOCIATE_COMPLETION_PORT: the key, then the port handle.
+        this->emu->emu().write_memory(this->storage, uint64_t{0x55});
+        this->emu->emu().write_memory(this->storage + 8, *associated);
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtSetInformationJobObject(
+                                      this->context(), this->job, associate_completion_port_information_class, this->storage, 16));
+
+        // AssignmentJob references the port, so the job reaches it through no handle value, and a port that reuses the
+        // closed value is a different one.
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), *associated));
+        const auto other = ports.store(io_completion{});
+
+        constexpr uint32_t job_object_msg_new_process = 6;
+        this->emu->process.post_job_notification(*this->emu->process.jobs.get(this->job), job_object_msg_new_process, 42);
+
+        ASSERT_EQ(1u, ports.get(port)->queue.size());
+        EXPECT_EQ(0x55u, ports.get(port)->queue.front().key_context);
+        EXPECT_EQ(42u, ports.get(port)->queue.front().apc_context);
+        EXPECT_TRUE(ports.get(other)->queue.empty());
     }
 }

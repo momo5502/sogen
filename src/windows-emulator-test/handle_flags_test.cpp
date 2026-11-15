@@ -19,6 +19,7 @@ namespace sogen::syscalls
     NTSTATUS handle_NtDuplicateObject(const syscall_context& c, handle source_process_handle, handle source_handle,
                                       handle target_process_handle, emulator_object<handle> target_handle, ACCESS_MASK desired_access,
                                       ULONG handle_attributes, ULONG options);
+    NTSTATUS handle_NtCompareObjects(const syscall_context& c, handle first, handle second);
 }
 
 namespace sogen::test
@@ -223,4 +224,56 @@ namespace sogen::test
             EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), out.read()));
         }
     }
+
+    TEST_F(HandleFlagsTest, ASectionDuplicateWithLessAccessIsTheSameSection)
+    {
+        constexpr ACCESS_MASK section_map_read = 0x4;
+        constexpr ACCESS_MASK section_all_access = 0xF001F;
+        section source_section{};
+        source_section.maximum_size = 0x1000;
+        const auto source = this->emu->process.sections.store(std::move(source_section));
+
+        const emulator_object<handle> target{this->emu->memory, this->storage + 0x400};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, source, CURRENT_PROCESS, target,
+                                                                     section_map_read, 0, 0));
+        const auto duplicate = target.read();
+        ASSERT_NE(source, duplicate);
+
+        // ObDuplicateObject opens the same object with an access of its own, and access cannot grow through the narrower handle.
+        EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtCompareObjects(this->context(), source, duplicate));
+        EXPECT_EQ(section_map_read, this->emu->process.section_access(duplicate));
+        EXPECT_EQ(section_all_access, this->emu->process.section_access(source));
+        EXPECT_EQ(STATUS_ACCESS_DENIED, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, duplicate, CURRENT_PROCESS,
+                                                                           target, section_all_access, 0, 0));
+    }
+
+#ifndef __EMSCRIPTEN__
+    TEST_F(HandleFlagsTest, SharingExportsTheFlagOfTheHandleBeingInherited)
+    {
+        constexpr ULONG duplicate_same_access = 2;
+        auto& events = this->emu->process.events;
+        const auto original = events.store(event{});
+        this->expect_flags(original, false, false);
+
+        const emulator_object<handle> target{this->emu->memory, this->storage + 0x400};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtDuplicateObject(this->context(), CURRENT_PROCESS, original, CURRENT_PROCESS, target, 0,
+                                                                     OBJ_INHERIT, duplicate_same_access));
+        const auto duplicate = target.read();
+        ASSERT_NE(original, duplicate);
+        this->expect_flags(duplicate, true, false);
+
+        // ExpDuplicateSingleHandle copies the entry with its own attributes, so a child that inherits the duplicate
+        // gets an inheritable handle even though the handle it was duplicated from is not inheritable.
+        const auto shared_duplicate = this->emu->process.share_object(duplicate, false);
+        if (!shared_duplicate)
+        {
+            GTEST_SKIP() << "Sharing kernel objects needs host shared memory";
+        }
+        EXPECT_TRUE(shared_duplicate->inherit);
+
+        const auto shared_original = this->emu->process.share_object(original, false);
+        ASSERT_TRUE(shared_original.has_value());
+        EXPECT_FALSE(shared_original->inherit);
+    }
+#endif
 }

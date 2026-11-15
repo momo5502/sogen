@@ -96,7 +96,7 @@ namespace sogen
 
                 if (auto* event = c.proc.get_object_as<sogen::event>(request.event))
                 {
-                    event->signaled = true;
+                    event->set_signaled(true);
                     c.win_emu.wake_idle_vcpu();
                 }
 
@@ -203,7 +203,7 @@ namespace sogen
 
                 if (auto* event = c.proc.get_object_as<sogen::event>(request.event))
                 {
-                    event->signaled = false;
+                    event->set_signaled(false);
                 }
             }
 

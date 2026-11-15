@@ -608,7 +608,7 @@ namespace sogen
                 write_io_status(context, status);
                 if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
                 {
-                    event->signaled = true;
+                    event->set_signaled(true);
                     win_emu.wake_idle_vcpu();
                 }
                 io_device::queue_io_completion(win_emu, context);
@@ -831,7 +831,7 @@ namespace sogen
 
                         if (auto* event = win_emu.process.get_object_as<sogen::event>(this->event_select_event_))
                         {
-                            event->signaled = true;
+                            event->set_signaled(true);
                             win_emu.wake_idle_vcpu();
                         }
                     }
@@ -2201,7 +2201,7 @@ namespace sogen
 
                 if (auto* event = win_emu.process.get_object_as<sogen::event>(this->event_select_event_))
                 {
-                    event->signaled = false;
+                    event->set_signaled(false);
                 }
 
                 return STATUS_SUCCESS;
@@ -2228,7 +2228,7 @@ namespace sogen
 
                         if (auto* event = win_emu.process.events.get(h))
                         {
-                            event->signaled = false;
+                            event->set_signaled(false);
                         }
                     }
                     else
