@@ -184,6 +184,14 @@ namespace sogen
         remove_multiple = 1,
     };
 
+    // An object a thread waits for, as its store gave it for reference (handle_store::get_cached).
+    struct cached_wait_object
+    {
+        object_reference reference{};
+        ref_counted_object* object{};
+        uint64_t generation{};
+    };
+
     struct pending_io_completion_wait
     {
         object_reference io_completion{};
@@ -199,6 +207,9 @@ namespace sogen
         // object identity so the more-work check resolves it through whichever handle value the wait was entered with.
         object_reference worker_factory{};
         bool timeout_absolute{};
+        // The port as last looked up (handle_store::get_cached). Not serialized; a restored wait looks it up again.
+        ref_counted_object* io_completion_object{};
+        uint64_t io_completion_generation{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -448,6 +459,8 @@ namespace sogen
         // The waited objects by identity, resolved when the wait starts: closing or reusing the handle value a wait was
         // entered with must not detach it from its object (a duplicate keeps the object alive).
         std::vector<object_reference> await_objects{};
+        // await_objects' objects as last looked up, one per reference. Not serialized; a restored thread looks them up again.
+        std::vector<cached_wait_object> await_object_cache{};
         bool await_any{false};
         bool waiting_for_alert{false};
         // Set while a vCPU moves this thread's registers in or out with the kernel lock released. The thread must not
