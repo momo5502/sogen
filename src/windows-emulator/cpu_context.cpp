@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "cpu_context.hpp"
+#include "memory_manager.hpp"
 
 namespace sogen
 {
@@ -10,12 +11,15 @@ namespace sogen
         {
             if ((context.ContextFlags & CONTEXT_DEBUG_REGISTERS_64) == CONTEXT_DEBUG_REGISTERS_64)
             {
-                emu.reg(x86_register::dr0, context.Dr0);
-                emu.reg(x86_register::dr1, context.Dr1);
-                emu.reg(x86_register::dr2, context.Dr2);
-                emu.reg(x86_register::dr3, context.Dr3);
-                emu.reg(x86_register::dr6, context.Dr6);
-                emu.reg(x86_register::dr7, context.Dr7);
+                // KxContextToKframes drops a user context's breakpoints above the highest user address, clears DR6 and
+                // keeps DR7_LEGAL of DR7's low half.
+                const auto user_address = [](const uint64_t address) { return address > MAX_ALLOCATION_ADDRESS ? uint64_t{0} : address; };
+                emu.reg(x86_register::dr0, user_address(context.Dr0));
+                emu.reg(x86_register::dr1, user_address(context.Dr1));
+                emu.reg(x86_register::dr2, user_address(context.Dr2));
+                emu.reg(x86_register::dr3, user_address(context.Dr3));
+                emu.reg(x86_register::dr6, uint64_t{0});
+                emu.reg(x86_register::dr7, uint64_t{static_cast<uint32_t>(context.Dr7) & dr7_legal});
             }
 
             if ((context.ContextFlags & CONTEXT_CONTROL_64) == CONTEXT_CONTROL_64)
