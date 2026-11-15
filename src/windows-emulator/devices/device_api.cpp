@@ -715,13 +715,12 @@ namespace sogen
                 return path;
             }
 
-            static std::vector<std::u16string> sub_key_names(windows_emulator& win_emu, const std::u16string& path)
+            static std::vector<std::u16string> sub_key_names(windows_emulator& win_emu, const registry_key& key)
             {
                 std::vector<std::u16string> names{};
-                const auto key = win_emu.registry.get_key({path});
-                for (size_t index = 0; key && index < win_emu.registry.get_sub_key_count(*key); ++index)
+                for (size_t index = 0; index < win_emu.registry.get_sub_key_count(key); ++index)
                 {
-                    if (const auto name = win_emu.registry.get_sub_key_name(*key, index))
+                    if (const auto name = win_emu.registry.get_sub_key_name(key, index))
                     {
                         names.push_back(u8_to_u16(*name));
                     }
@@ -737,25 +736,42 @@ namespace sogen
                        std::ranges::all_of(part, [](const char16_t c) { return c >= u'!' && c <= u'\x7F' && c != u',' && c != u'\\'; });
             }
 
+            struct registered_device
+            {
+                std::u16string id;
+                std::optional<registry_key> key;
+            };
+
             // The devices the PnP manager knows whose IDs start with the prefix, ignoring case: each
             // Enum\<enumerator>\<device>\<instance> key that names a valid device ID.
-            static std::vector<std::u16string> registered_device_ids(windows_emulator& win_emu, const std::u16string& prefix)
+            static std::vector<registered_device> registered_devices(windows_emulator& win_emu, const std::u16string& prefix)
             {
                 const auto may_lead_to_prefix = [&](const std::u16string& id_start) {
                     return id_start.size() < prefix.size() ? utils::string::starts_with_ignore_case(prefix, id_start)
                                                            : utils::string::starts_with_ignore_case(id_start, prefix);
                 };
 
-                std::vector<std::u16string> ids{};
-                for (const auto& enumerator : sub_key_names(win_emu, std::u16string{enum_key}))
+                std::vector<registered_device> devices{};
+                const auto enum_root = win_emu.registry.get_key({std::u16string{enum_key}});
+                if (!enum_root)
+                {
+                    return devices;
+                }
+
+                for (const auto& enumerator : sub_key_names(win_emu, *enum_root))
                 {
                     if (!may_lead_to_prefix(sub_key_path(enumerator, {})))
                     {
                         continue;
                     }
 
-                    const auto enumerator_path = sub_key_path(enum_key, enumerator);
-                    for (const auto& device : sub_key_names(win_emu, enumerator_path))
+                    const auto enumerator_key = win_emu.registry.get_sub_key(*enum_root, enumerator);
+                    if (!enumerator_key)
+                    {
+                        continue;
+                    }
+
+                    for (const auto& device : sub_key_names(win_emu, *enumerator_key))
                     {
                         const auto device_id = sub_key_path(enumerator, device);
                         if (!may_lead_to_prefix(sub_key_path(device_id, {})))
@@ -763,26 +779,25 @@ namespace sogen
                             continue;
                         }
 
-                        for (const auto& instance : sub_key_names(win_emu, sub_key_path(enumerator_path, device)))
+                        const auto device_key = win_emu.registry.get_sub_key(*enumerator_key, device);
+                        if (!device_key)
+                        {
+                            continue;
+                        }
+
+                        for (const auto& instance : sub_key_names(win_emu, *device_key))
                         {
                             auto id = sub_key_path(device_id, instance);
                             if (id.size() < max_device_id_length && is_device_id_part(enumerator) && is_device_id_part(device) &&
                                 is_device_id_part(instance) && utils::string::starts_with_ignore_case(id, prefix))
                             {
-                                ids.push_back(std::move(id));
+                                devices.push_back({.id = std::move(id), .key = win_emu.registry.get_sub_key(*device_key, instance)});
                             }
                         }
                     }
                 }
 
-                return ids;
-            }
-
-            static std::optional<registry_value> registry_value_at(windows_emulator& win_emu, const std::u16string& path,
-                                                                   const std::string_view name)
-            {
-                const auto key = win_emu.registry.get_key({path});
-                return key ? win_emu.registry.get_value(*key, name) : std::nullopt;
+                return devices;
             }
 
             static std::u16string_view value_characters(const registry_value& value)
@@ -852,7 +867,8 @@ namespace sogen
             // PiPnpRtlServiceFilterCallback: the device's function driver, or a filter driver of the device or of its class.
             // The compound filter lists it reads also merge filters declared with INF AddFilter directives, which are not
             // modelled.
-            static bool uses_service(windows_emulator& win_emu, const registry_key& device_key, const std::u16string_view service)
+            static bool uses_service(windows_emulator& win_emu, const registry_key& device_key,
+                                     const std::optional<registry_key>& installer_classes, const std::u16string_view service)
             {
                 if (names_service(win_emu.registry.get_value(device_key, "Service"), service) ||
                     lists_service(win_emu.registry.get_value(device_key, "UpperFilters"), service) ||
@@ -863,24 +879,27 @@ namespace sogen
 
                 const auto class_guid = device_class_guid(win_emu, device_key);
                 const auto installer_class =
-                    class_guid ? win_emu.registry.get_key({sub_key_path(installer_classes_key, *class_guid)}) : std::nullopt;
+                    class_guid && installer_classes ? win_emu.registry.get_sub_key(*installer_classes, *class_guid) : std::nullopt;
                 return installer_class && (lists_service(win_emu.registry.get_value(*installer_class, "UpperFilters"), service) ||
                                            lists_service(win_emu.registry.get_value(*installer_class, "LowerFilters"), service));
             }
 
-            static std::optional<registry_value> device_property(windows_emulator& win_emu, const std::u16string& device_path,
+            static std::optional<registry_value> device_property(windows_emulator& win_emu, const std::optional<registry_key>& device_key,
                                                                  const std::u16string_view property)
             {
-                return registry_value_at(win_emu, sub_key_path(sub_key_path(device_path, u"Properties"), property), "");
+                const auto key =
+                    device_key ? win_emu.registry.get_sub_key(*device_key, sub_key_path(u"Properties", property)) : std::nullopt;
+                return key ? win_emu.registry.get_value(*key, "") : std::nullopt;
             }
 
             // PiPnpRtlApplyMandatoryDeviceFilters: a device stored with another session's DEVPKEY_Device_SessionId, or with a
             // DEVPKEY_Device_RestrictedSD that does not let the caller read it, is left out. PnpGetObjectProperty reads the
             // session into four bytes and PnpValidatePropertyData wants exactly four for a UINT32, and a property that
             // cannot be read leaves the device out too.
-            static bool is_enumerable_for_caller(windows_emulator& win_emu, const std::u16string& device_path, const handle token)
+            static bool is_enumerable_for_caller(windows_emulator& win_emu, const std::optional<registry_key>& device_key,
+                                                 const handle token)
             {
-                if (const auto session = device_property(win_emu, device_path, session_id_property))
+                if (const auto session = device_property(win_emu, device_key, session_id_property))
                 {
                     if (session->data.size() > sizeof(uint32_t))
                     {
@@ -903,7 +922,7 @@ namespace sogen
                     }
                 }
 
-                const auto restricted = device_property(win_emu, device_path, restricted_sd_property);
+                const auto restricted = device_property(win_emu, device_key, restricted_sd_property);
                 return !restricted || (restricted->type & devprop_type_mask) != devprop_type_security_descriptor ||
                        token_grants_access(win_emu, token, restricted->data, enumerate_device_access);
             }
@@ -1002,25 +1021,19 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
-                const auto matches = [&](const std::u16string& path) {
+                const auto installer_classes =
+                    kind == device_list_service ? win_emu.registry.get_key({std::u16string{installer_classes_key}}) : std::nullopt;
+                const auto matches = [&](const std::optional<registry_key>& device_key) {
                     switch (kind)
                     {
-                    case device_list_service: {
-                        if (filter->empty())
-                        {
-                            return true;
-                        }
-
-                        const auto device_key = win_emu.registry.get_key({path});
-                        return device_key && uses_service(win_emu, *device_key, *filter);
-                    }
+                    case device_list_service:
+                        return filter->empty() || (device_key && uses_service(win_emu, *device_key, installer_classes, *filter));
                     case device_list_class: {
                         if (filter->empty())
                         {
                             return false;
                         }
 
-                        const auto device_key = win_emu.registry.get_key({path});
                         const auto class_guid = device_key ? device_class_guid(win_emu, *device_key) : std::nullopt;
                         return class_guid && utils::string::equals_ignore_case(*class_guid, *filter);
                     }
@@ -1031,12 +1044,11 @@ namespace sogen
 
                 const auto token = caller_token(c);
                 const auto unfiltered = (flags & device_list_unfiltered) != 0;
-                for (auto& id : registered_device_ids(win_emu, prefix))
+                for (auto& device : registered_devices(win_emu, prefix))
                 {
-                    const auto path = sub_key_path(enum_key, id);
-                    if (matches(path) && (unfiltered || is_enumerable_for_caller(win_emu, path, token)))
+                    if (matches(device.key) && (unfiltered || is_enumerable_for_caller(win_emu, device.key, token)))
                     {
-                        ids.push_back(std::move(id));
+                        ids.push_back(std::move(device.id));
                     }
                 }
 
