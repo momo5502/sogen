@@ -375,7 +375,14 @@ namespace sogen::utils
         bool joined = false;
         {
             const std::scoped_lock lock{holders};
-            joined = !holders.is_closing() && holders.has_live_holder() && holders.join(current_host_process_id());
+            if (!holders.is_closing() && !holders.has_live_holder())
+            {
+                // Every holder died without releasing it, so nobody is left to unlink the name.
+                holders.mark_closing();
+                ::shm_unlink(name.c_str());
+            }
+
+            joined = !holders.is_closing() && holders.join(current_host_process_id());
         }
 
         if (!joined)
