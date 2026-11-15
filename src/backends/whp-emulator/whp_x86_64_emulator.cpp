@@ -956,6 +956,7 @@ namespace sogen::whp
             const memory_interface& memory() const override;
 
             void start(size_t count) override;
+            void end_own_single_step() override;
 
             void stop() override
             {
@@ -3137,6 +3138,16 @@ namespace sogen::whp
                 return hits != 0;
             }
 
+            // An exception the instruction under a step of sogen's own raises (guest_cpu::end_own_single_step): the step ends
+            // before the exception is dispatched, so the context the guest's handlers get holds the guest's own trap flag and
+            // debug status, and a step an execution hook arms where the exception goes is the only one. A run of one
+            // instruction stops there, at the dispatcher. The caller does not hold partition_mutex_.
+            void end_vcpu_own_single_step(whp_vcpu& vcpu)
+            {
+                std::unique_lock lock(this->partition_mutex_);
+                (void)this->complete_execution_step(vcpu);
+            }
+
             // Assumes partition_mutex_ is held.
             mmio_region* find_mmio_region(const uint64_t address)
             {
@@ -4391,6 +4402,11 @@ namespace sogen::whp
         void whp_vcpu::start(const size_t count)
         {
             this->emulator_.run(*this, count);
+        }
+
+        void whp_vcpu::end_own_single_step()
+        {
+            this->emulator_.end_vcpu_own_single_step(*this);
         }
 
         memory_interface& whp_vcpu::memory()

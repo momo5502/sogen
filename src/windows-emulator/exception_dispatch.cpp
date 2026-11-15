@@ -312,6 +312,8 @@ namespace sogen
         }
 
         auto& cpu = vcpu.x64_cpu();
+        // A step of the backend's own over the raising instruction ends first, so the context holds the guest's own flags.
+        cpu.end_own_single_step();
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;
         cpu_context::save(cpu, ctx);
