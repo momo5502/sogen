@@ -192,16 +192,29 @@ namespace sogen
         process_session_endpoint session{};
     };
 
+    struct managed_process_identity
+    {
+        managed_process handle{};
+        process_identity identity{};
+    };
+
+    struct process_open_result
+    {
+        managed_process_identity process{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
+    };
+
     struct process_create_result
     {
-        managed_process process{};
-        uint32_t process_id{};
+        managed_process_identity process{};
         uint32_t thread_id{};
-        uint64_t native_environment{};
-        uint64_t compatibility_environment{};
         uint64_t native_parameters{};
         uint64_t compatibility_parameters{};
-        uint32_t parent_process_id{};
         process_error error{process_error::none};
 
         explicit operator bool() const
@@ -345,7 +358,7 @@ namespace sogen
     {
         virtual ~process_manager() = default;
 
-        virtual void register_current_process(process_identity)
+        virtual void initialize_current_process(process_identity)
         {
         }
 
@@ -353,7 +366,7 @@ namespace sogen
         {
         }
 
-        virtual process_create_result open_process(uint32_t)
+        virtual process_open_result open_process(uint32_t)
         {
             return {.error = process_error::invalid_process};
         }

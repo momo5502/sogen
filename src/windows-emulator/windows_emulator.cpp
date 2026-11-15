@@ -972,6 +972,18 @@ namespace sogen
         this->process.abandon_shared_mutants();
     }
 
+    void windows_emulator::initialize_process_manager()
+    {
+        if (this->process_manager_ && this->setup_completed_)
+        {
+            this->process_manager_->initialize_current_process(
+                {.process_id = this->process.process_id,
+                 .parent_process_id = this->process.parent_process_id,
+                 .native_environment = this->process.peb64.value(),
+                 .compatibility_environment = this->process.peb32 ? this->process.peb32->value() : 0});
+        }
+    }
+
     void windows_emulator::setup_process_if_necessary()
     {
         if (this->setup_completed_)
@@ -982,6 +994,7 @@ namespace sogen
         this->setup_completed_ = true;
 
         this->setup_process();
+        this->initialize_process_manager();
     }
 
     void windows_emulator::setup_process()
@@ -1960,14 +1973,6 @@ namespace sogen
         this->last_stop_detail_.clear();
         this->setup_process_if_necessary();
 
-        if (this->process_manager_)
-        {
-            this->process_manager_->register_current_process(
-                {.process_id = this->process.process_id,
-                 .parent_process_id = this->process.parent_process_id,
-                 .native_environment = this->process.peb64.value(),
-                 .compatibility_environment = this->process.peb32 ? this->process.peb32->value() : 0});
-        }
         const auto report_exit = utils::finally([this] {
             if (this->process_manager_ && this->process.exit_status)
             {
@@ -3231,6 +3236,7 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->initialize_process_manager();
         this->thread_stacks_committed_in_full_ = false;
         this->commit_thread_stacks_without_guarded_growth();
         // A state saved while vCPU 0 was idle, without prepare_serialization, has no running thread.
@@ -3430,6 +3436,7 @@ namespace sogen
         this->idle_secondary_vcpus();
         this->process.section_views.deserialize(buffer);
         this->process.restore_after_state_restore(*this);
+        this->initialize_process_manager();
         this->thread_stacks_committed_in_full_ = false;
         this->commit_thread_stacks_without_guarded_growth();
         this->apply_cursor_shape();

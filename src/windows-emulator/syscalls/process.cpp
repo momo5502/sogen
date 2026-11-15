@@ -40,6 +40,18 @@ namespace sogen
 
             static_assert(sizeof(process_handle_information) == 8);
 
+            emulator_process make_emulator_process(const managed_process_identity& process)
+            {
+                emulator_process result{};
+                result.process = process.handle;
+                result.id = process.identity.process_id;
+                result.parent_id = process.identity.parent_process_id;
+                result.is_wow64_process = process.identity.compatibility_environment != 0;
+                result.native_environment = process.identity.native_environment;
+                result.compatibility_environment = process.identity.compatibility_environment;
+                return result;
+            }
+
             NTSTATUS probe_output_buffer(const syscall_context& c, const uint64_t buffer, const uint32_t length)
             {
                 return is_writable_range(c.win_emu.memory, buffer, length) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
@@ -460,26 +472,20 @@ namespace sogen
             {
                 return map_process_error(result.error);
             }
-            const auto process_id = result.process_id;
+            const auto process_id = result.process.identity.process_id;
             const auto thread_id = result.thread_id;
 
-            emulator_process child{};
-            child.process = result.process;
-            child.id = process_id;
-            child.parent_id = c.proc.process_id;
-            child.is_wow64_process = child_is_wow64;
-            child.native_environment = result.native_environment;
-            child.compatibility_environment = result.compatibility_environment;
-            const auto child_process_handle = c.proc.processes.store(std::move(child));
+            const auto child_process_handle = c.proc.processes.store(make_emulator_process(result.process));
             (void)c.proc.processes.set_attributes(child_process_handle, get_handle_attributes(process_object_attributes));
 
             if (auto* debugger = c.proc.debug_objects.get(debug_object_handle))
             {
-                debugger->debuggees.push_back({.process = result.process.value, .process_id = process_id, .thread_ids = {thread_id}});
+                debugger->debuggees.push_back(
+                    {.process = result.process.handle.value, .process_id = process_id, .thread_ids = {thread_id}});
             }
 
             managed_process_thread initial_thread{};
-            initial_thread.process = result.process;
+            initial_thread.process = result.process.handle;
             initial_thread.process_id = process_id;
             initial_thread.thread_id = thread_id;
             const auto child_thread_handle = c.proc.managed_threads.store(std::move(initial_thread));
@@ -491,8 +497,8 @@ namespace sogen
             creation.State = PsCreateSuccess;
             creation.SuccessState = {};
             creation.SuccessState.CurrentParameterFlags = parameters.Flags;
-            creation.SuccessState.PebAddressNative = result.native_environment;
-            creation.SuccessState.PebAddressWow64 = static_cast<uint32_t>(result.compatibility_environment);
+            creation.SuccessState.PebAddressNative = result.process.identity.native_environment;
+            creation.SuccessState.PebAddressWow64 = static_cast<uint32_t>(result.process.identity.compatibility_environment);
             creation.SuccessState.UserProcessParametersNative = result.native_parameters;
             creation.SuccessState.UserProcessParametersWow64 = static_cast<uint32_t>(result.compatibility_parameters);
             create_info.write(creation);
@@ -1330,14 +1336,7 @@ namespace sogen
                 const auto result = manager->open_process(static_cast<uint32_t>(id.UniqueProcess));
                 if (result)
                 {
-                    emulator_process process{};
-                    process.process = result.process;
-                    process.id = result.process_id;
-                    process.parent_id = result.parent_process_id;
-                    process.native_environment = result.native_environment;
-                    process.compatibility_environment = result.compatibility_environment;
-                    process.is_wow64_process = result.compatibility_environment != 0;
-                    process_handle.write(c.proc.processes.store(std::move(process)));
+                    process_handle.write(c.proc.processes.store(make_emulator_process(result.process)));
                     return STATUS_SUCCESS;
                 }
                 if (result.error != process_error::invalid_process)
