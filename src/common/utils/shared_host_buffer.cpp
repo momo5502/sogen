@@ -3,9 +3,11 @@
 
 #include <atomic>
 #include <limits>
+#include <mutex>
 #include <new>
 #include <random>
 #include <string>
+#include <thread>
 #include <utility>
 
 // A named buffer needs POSIX shared memory. Emscripten has no second process to share one with, and bionic has no
@@ -75,62 +77,134 @@ namespace sogen::utils
         }
 
 #if !defined(_WIN32) && SOGEN_NAMED_SHARED_MEMORY
-        // POSIX shared memory names outlive their mappings until unlinked, so every process holding the buffer writes
-        // its host process id to a slot in a header page after the data, and the name goes once no live holder is
-        // left. A process that is killed or crashes never releases its slot, so its id is what tells the others its
-        // holding is over, and the slot can be taken over.
+        // POSIX shared memory names outlive their mappings until unlinked, so the last process holding the buffer
+        // unlinks its name. Every holding process has a slot in a header page after the data with its host process id
+        // and how many mappings it holds. A process that is killed or crashes never gives up its slot or the header
+        // lock, so a holder whose process is gone counts as having left. Joining and the final unlink both happen under
+        // the header lock, and the unlink marks the buffer closing, so a process that opened the name just before
+        // cannot join a buffer whose name is already gone.
         constexpr size_t holder_header_size = page_size;
         constexpr size_t max_holders = 64;
 
-        std::atomic_ref<uint32_t> holder_slot(uint8_t* data, const size_t size, const size_t index)
+        class holder_table
         {
-            return std::atomic_ref<uint32_t>{reinterpret_cast<uint32_t*>(data + size)[index]};
-        }
-
-        bool has_live_holder(uint8_t* data, const size_t size)
-        {
-            for (size_t index = 0; index < max_holders; ++index)
+          public:
+            holder_table(uint8_t* data, const size_t size)
+                : words_(reinterpret_cast<uint32_t*>(data + size))
             {
-                const auto holder = holder_slot(data, size, index).load();
-                if (holder != 0 && host_process_alive(holder))
+            }
+
+            void lock()
+            {
+                const auto self = current_host_process_id();
+                auto owner_word = this->word(lock_index);
+                for (;;)
                 {
-                    return true;
+                    auto owner = owner_word.load();
+                    if ((owner == 0 || (owner != self && !host_process_alive(owner))) && owner_word.compare_exchange_weak(owner, self))
+                    {
+                        return;
+                    }
+
+                    std::this_thread::yield();
                 }
             }
 
-            return false;
-        }
-
-        bool join_holders(uint8_t* data, const size_t size)
-        {
-            const auto self = current_host_process_id();
-            for (size_t index = 0; index < max_holders; ++index)
+            void unlock()
             {
-                auto slot = holder_slot(data, size, index);
-                for (auto holder = slot.load(); holder == 0 || !host_process_alive(holder); holder = slot.load())
+                this->word(lock_index).store(0);
+            }
+
+            bool is_closing()
+            {
+                return this->word(closing_index).load() != 0;
+            }
+
+            void mark_closing()
+            {
+                this->word(closing_index).store(1);
+            }
+
+            bool has_live_holder()
+            {
+                for (size_t slot = 0; slot < max_holders; ++slot)
                 {
-                    if (slot.compare_exchange_weak(holder, self))
+                    const auto holder = this->holder(slot).load();
+                    if (holder != 0 && host_process_alive(holder))
                     {
                         return true;
                     }
                 }
+
+                return false;
             }
 
-            return false;
-        }
-
-        void leave_holders(uint8_t* data, const size_t size)
-        {
-            const auto self = current_host_process_id();
-            for (size_t index = 0; index < max_holders; ++index)
+            bool join(const uint32_t self)
             {
-                auto holder = self;
-                if (holder_slot(data, size, index).compare_exchange_strong(holder, 0))
+                std::optional<size_t> free_slot{};
+                for (size_t slot = 0; slot < max_holders; ++slot)
                 {
-                    return;
+                    const auto holder = this->holder(slot).load();
+                    if (holder == self)
+                    {
+                        this->mappings(slot).fetch_add(1);
+                        return true;
+                    }
+
+                    if (!free_slot && (holder == 0 || !host_process_alive(holder)))
+                    {
+                        free_slot = slot;
+                    }
+                }
+
+                if (!free_slot)
+                {
+                    return false;
+                }
+
+                this->holder(*free_slot).store(self);
+                this->mappings(*free_slot).store(1);
+                return true;
+            }
+
+            void leave(const uint32_t self)
+            {
+                for (size_t slot = 0; slot < max_holders; ++slot)
+                {
+                    if (this->holder(slot).load() == self)
+                    {
+                        if (this->mappings(slot).fetch_sub(1) == 1)
+                        {
+                            this->holder(slot).store(0);
+                        }
+                        return;
+                    }
                 }
             }
-        }
+
+          private:
+            static constexpr size_t lock_index = 0;
+            static constexpr size_t closing_index = 1;
+            static constexpr size_t first_slot_index = 2;
+            static_assert((first_slot_index + 2 * max_holders) * sizeof(uint32_t) <= holder_header_size);
+
+            uint32_t* words_{};
+
+            std::atomic_ref<uint32_t> word(const size_t index)
+            {
+                return std::atomic_ref<uint32_t>{this->words_[index]};
+            }
+
+            std::atomic_ref<uint32_t> holder(const size_t slot)
+            {
+                return this->word(first_slot_index + 2 * slot);
+            }
+
+            std::atomic_ref<uint32_t> mappings(const size_t slot)
+            {
+                return this->word(first_slot_index + 2 * slot + 1);
+            }
+        };
 
         uint8_t* map_shared_memory(const int fd, const size_t size)
         {
@@ -244,7 +318,9 @@ namespace sogen::utils
                 throw std::bad_alloc();
             }
 
-            if (!join_holders(buffer.data_, buffer.size_))
+            holder_table holders{buffer.data_, buffer.size_};
+            const std::scoped_lock lock{holders};
+            if (!holders.join(current_host_process_id()))
             {
                 throw std::bad_alloc();
             }
@@ -295,7 +371,14 @@ namespace sogen::utils
             return std::nullopt;
         }
 
-        if (!has_live_holder(buffer.data_, buffer.size_) || !join_holders(buffer.data_, buffer.size_))
+        holder_table holders{buffer.data_, buffer.size_};
+        bool joined = false;
+        {
+            const std::scoped_lock lock{holders};
+            joined = !holders.is_closing() && holders.has_live_holder() && holders.join(current_host_process_id());
+        }
+
+        if (!joined)
         {
             ::munmap(buffer.data_, buffer.size_ + holder_header_size);
             buffer.data_ = nullptr;
@@ -362,13 +445,17 @@ namespace sogen::utils
 #elif SOGEN_NAMED_SHARED_MEMORY
             if (this->data_)
             {
-                leave_holders(this->data_, this->size_);
-                const auto last_holder = !has_live_holder(this->data_, this->size_);
-                ::munmap(this->data_, this->size_ + holder_header_size);
-                if (last_holder)
+                holder_table holders{this->data_, this->size_};
                 {
-                    ::shm_unlink(this->name_.c_str());
+                    const std::scoped_lock lock{holders};
+                    holders.leave(current_host_process_id());
+                    if (!holders.has_live_holder())
+                    {
+                        holders.mark_closing();
+                        ::shm_unlink(this->name_.c_str());
+                    }
                 }
+                ::munmap(this->data_, this->size_ + holder_header_size);
             }
 #endif
         }
