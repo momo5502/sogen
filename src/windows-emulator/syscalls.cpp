@@ -52,6 +52,8 @@ namespace sogen
                                          emulator_object<CONTEXT64> thread_context, BOOLEAN handle_exception);
 
         // syscalls/file.cpp
+        // Validates an I/O completion event, resolving the handle before checking the type of the object it names.
+        NTSTATUS check_completion_event(const syscall_context& c, handle event);
         NTSTATUS handle_NtSetInformationFile(const syscall_context& c, handle file_handle,
                                              emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              uint64_t file_information, ULONG length, FILE_INFORMATION_CLASS info_class);
@@ -1154,19 +1156,6 @@ namespace sogen
                                               const ULONG input_buffer_length, const emulator_pointer output_buffer,
                                               const ULONG output_buffer_length)
         {
-            // ObReferenceObjectByHandle fails a handle with no table entry with STATUS_INVALID_HANDLE before comparing the
-            // type, so resolve first and check the type of the object it names.
-            const auto event_reference = c.proc.reference_of(event);
-            if (event.bits != 0 && !event_reference)
-            {
-                return STATUS_INVALID_HANDLE;
-            }
-
-            if (event.bits != 0 && !event.value.is_pseudo && event_reference.object_type() != handle_types::event)
-            {
-                return STATUS_OBJECT_TYPE_MISMATCH;
-            }
-
             auto resolved_file_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
             if (file_handle == STDIN_HANDLE || file_handle == STDOUT_HANDLE)
             {
@@ -1179,6 +1168,13 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            // IopXxxControlFile references the file handle first and the event second, so an invalid file handle wins over a
+            // bad event. check_completion_event resolves the event before comparing its type.
+            if (const auto status = check_completion_event(c, event); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             if (auto* e = c.proc.events.get(event))
             {
                 e->signaled = false;
@@ -1186,7 +1182,7 @@ namespace sogen
 
             io_device_context context{c.emu};
             context.source_handle = file_handle;
-            context.event = event_reference;
+            context.event = c.proc.reference_of(event);
             context.event_low_bit = (event.bits & 1) != 0;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;

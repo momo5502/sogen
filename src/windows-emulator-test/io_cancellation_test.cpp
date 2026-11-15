@@ -304,5 +304,10 @@ namespace sogen::test
         // A live handle of another type is a type mismatch.
         const auto live_mutant = this->emu->process.mutants.store(mutant{});
         EXPECT_EQ(STATUS_OBJECT_TYPE_MISMATCH, ioctl(live_mutant));
+
+        // The file handle is referenced first (IopReferenceFileObject), so an invalid one is invalid even with a bad event.
+        const auto invalid_file = make_handle(0x1234, handle_types::device, false);
+        EXPECT_EQ(STATUS_INVALID_HANDLE,
+                  syscalls::handle_NtDeviceIoControlFile(context, invalid_file, live_mutant, 0, 0, this->status(0x100), 0, 0, 0, 0, 0));
     }
 }
