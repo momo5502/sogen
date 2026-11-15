@@ -7,6 +7,7 @@
 #ifdef OS_WINDOWS
 #include <system_error>
 #include <utils/nt_handle.hpp>
+#include <utils/nt_thread.hpp>
 #elif !defined(OS_EMSCRIPTEN)
 #include <cerrno>
 #include <cstdio>
@@ -34,8 +35,8 @@ namespace sogen
                 {
                     return true;
                 }
-                const auto canceled =
-                    this->console_reader_ ? CancelIoEx(this->reader_handle_, nullptr) : CancelSynchronousIo(this->reader_.native_handle());
+                const auto canceled = this->console_reader_ ? CancelIoEx(this->reader_handle_, nullptr)
+                                                            : CancelSynchronousIo(utils::nt::get_thread_handle(this->reader_));
                 if (!canceled)
                 {
                     const auto error = GetLastError();
@@ -45,7 +46,7 @@ namespace sogen
                                                 this->console_reader_ ? "CancelIoEx" : "CancelSynchronousIo");
                     }
                 }
-                if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
+                if (WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 0) != WAIT_OBJECT_0)
                 {
                     return false;
                 }
@@ -229,7 +230,7 @@ namespace sogen
             {
                 if (this->reader_.joinable())
                 {
-                    if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
+                    if (WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 0) != WAIT_OBJECT_0)
                     {
                         return;
                     }
@@ -301,7 +302,7 @@ namespace sogen
             {
                 while (!this->cancel_read_input())
                 {
-                    WaitForSingleObject(this->reader_.native_handle(), 1);
+                    WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 1);
                 }
             }
 

@@ -1,5 +1,6 @@
 #include "emulation_test_utils.hpp"
 #include <utils/finally.hpp>
+#include <utils/nt_thread.hpp>
 #include <thread>
 
 #ifdef OS_WINDOWS
@@ -161,7 +162,7 @@ namespace sogen::test
                 DWORD mode{};
                 ASSERT_TRUE(GetConsoleMode(this->input, &mode));
                 ASSERT_TRUE(SetConsoleMode(this->input, mode & ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT)));
-                ASSERT_EQ(FILE_TYPE_CHAR, GetFileType(this->input));
+                ASSERT_EQ(DWORD{FILE_TYPE_CHAR}, GetFileType(this->input));
             }
         };
     }
@@ -227,7 +228,7 @@ namespace sogen::test
             {
                 return;
             }
-            while (WaitForSingleObject(other.native_handle(), 0) != WAIT_OBJECT_0)
+            while (WaitForSingleObject(utils::nt::get_thread_handle(other), 0) != WAIT_OBJECT_0)
             {
                 CancelIoEx(this->input, nullptr);
                 SwitchToThread();
@@ -238,7 +239,7 @@ namespace sogen::test
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         do
         {
-            ASSERT_TRUE(GetThreadIOPendingFlag(other.native_handle(), &pending));
+            ASSERT_TRUE(GetThreadIOPendingFlag(utils::nt::get_thread_handle(other), &pending));
             if (pending)
             {
                 break;
@@ -248,11 +249,11 @@ namespace sogen::test
         ASSERT_TRUE(pending);
         ASSERT_FALSE(this->console->try_read_input(16));
         ASSERT_TRUE(this->cancel_ready());
-        ASSERT_TRUE(GetThreadIOPendingFlag(other.native_handle(), &pending));
+        ASSERT_TRUE(GetThreadIOPendingFlag(utils::nt::get_thread_handle(other), &pending));
         EXPECT_TRUE(pending);
         this->queue(u'q', 'Q');
         this->queue(u'\r', VK_RETURN);
-        ASSERT_EQ(WAIT_OBJECT_0, WaitForSingleObject(other.native_handle(), 5000));
+        ASSERT_EQ(WAIT_OBJECT_0, WaitForSingleObject(utils::nt::get_thread_handle(other), 5000));
         other.join();
         EXPECT_TRUE(read_success);
         EXPECT_EQ(L"q\r\n", std::wstring(text.data(), count));

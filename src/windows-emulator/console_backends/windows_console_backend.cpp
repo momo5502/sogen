@@ -3,6 +3,7 @@
 #include <thread>
 #include <system_error>
 #include <utils/nt_handle.hpp>
+#include <utils/nt_thread.hpp>
 
 #ifdef OS_WINDOWS
 namespace sogen
@@ -65,7 +66,7 @@ namespace sogen
                 }
                 if (this->reader_.joinable())
                 {
-                    if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
+                    if (WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 0) != WAIT_OBJECT_0)
                     {
                         return std::nullopt;
                     }
@@ -114,7 +115,7 @@ namespace sogen
                         throw std::system_error(static_cast<int>(error), std::system_category(), "CancelIoEx");
                     }
                 }
-                if (WaitForSingleObject(this->reader_.native_handle(), 0) != WAIT_OBJECT_0)
+                if (WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 0) != WAIT_OBJECT_0)
                 {
                     return false;
                 }
@@ -247,7 +248,7 @@ namespace sogen
                 while (!this->cancel_read_input())
                 {
                     // Cancellation can race the worker entering ReadConsoleW, so retry until it has actually exited.
-                    WaitForSingleObject(this->reader_.native_handle(), 1);
+                    WaitForSingleObject(utils::nt::get_thread_handle(this->reader_), 1);
                 }
                 this->read_text_.clear();
             }
