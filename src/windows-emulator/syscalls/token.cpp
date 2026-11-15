@@ -203,17 +203,6 @@ namespace sogen
             NTSTATUS write_token_groups(const syscall_context& c, const uint64_t token_information, const ULONG token_information_length,
                                         const emulator_object<ULONG> return_length, const std::span<const token_group> groups)
             {
-                if (groups.empty())
-                {
-                    return_length.write(sizeof(ULONG));
-                    if (token_information_length < sizeof(ULONG))
-                    {
-                        return STATUS_BUFFER_TOO_SMALL;
-                    }
-                    c.emu.write_memory(token_information, ULONG{0});
-                    return STATUS_SUCCESS;
-                }
-
                 const auto entries_size = offsetof(TOKEN_GROUPS64, Groups) + groups.size() * sizeof(SID_AND_ATTRIBUTES64);
                 auto required_size = entries_size;
                 for (const auto& group : groups)
@@ -492,13 +481,7 @@ namespace sogen
 
             if (token_information_class == TokenRestrictedSids)
             {
-                return_length.write(sizeof(ULONG));
-                if (token_information_length < sizeof(ULONG))
-                {
-                    return STATUS_BUFFER_TOO_SMALL;
-                }
-                c.emu.write_memory(token_information, ULONG{0});
-                return STATUS_SUCCESS;
+                return write_token_groups(c, token_information, token_information_length, return_length, {});
             }
 
             if (token_information_class == TokenGroups)
@@ -1171,7 +1154,8 @@ namespace sogen
                     previous.push_back({.luid_low = (*privileges)[index].luid, .attributes = (*privileges)[index].attributes});
                 }
 
-                const auto required_size = sizeof(ULONG) + previous.size() * sizeof(luid_and_attributes);
+                // SepAdjustPrivileges asks for a whole TOKEN_PRIVILEGES, with its one inline entry, even when it reports none.
+                const auto required_size = sizeof(ULONG) + std::max<size_t>(previous.size(), 1) * sizeof(luid_and_attributes);
                 return_length.write(static_cast<ULONG>(required_size));
                 if (buffer_length < required_size)
                 {

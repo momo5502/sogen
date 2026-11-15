@@ -158,7 +158,22 @@ namespace sogen::test
                                                            this->storage + 0x100, 4, {this->emu->memory, this->storage}));
         EXPECT_EQ(SecurityAnonymous, (emulator_object<SECURITY_IMPERSONATION_LEVEL>{this->emu->memory, this->storage + 0x100}.read()));
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryInformationToken(this->context(), CURRENT_THREAD_EFFECTIVE_TOKEN, TokenGroups,
-                                                                           this->storage + 0x100, 4, {this->emu->memory, this->storage}));
+                                                                           this->storage + 0x100, 8, {this->emu->memory, this->storage}));
+        EXPECT_EQ(0u, (emulator_object<ULONG>{this->emu->memory, this->storage + 0x100}.read()));
+    }
+
+    TEST_F(TokenInformationTest, AnEmptyGroupListStillTakesTheWholeTokenGroupsHeader)
+    {
+        // Groups starts at offset 8 in the x64 TOKEN_GROUPS, so NtQueryInformationToken asks for 8 bytes even with no SIDs.
+        const emulator_object<ULONG> return_length{this->emu->memory, this->storage};
+        EXPECT_EQ(STATUS_BUFFER_TOO_SMALL,
+                  syscalls::handle_NtQueryInformationToken(this->context(), CURRENT_PROCESS_TOKEN, TokenRestrictedSids,
+                                                           this->storage + 0x100, 4, return_length));
+        EXPECT_EQ(8u, return_length.read());
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryInformationToken(this->context(), CURRENT_PROCESS_TOKEN, TokenRestrictedSids,
+                                                                           this->storage + 0x100, 8, return_length));
+        EXPECT_EQ(8u, return_length.read());
         EXPECT_EQ(0u, (emulator_object<ULONG>{this->emu->memory, this->storage + 0x100}.read()));
     }
 
@@ -312,11 +327,17 @@ namespace sogen::test
 
         const auto previous_state = this->storage + 0x380;
         const emulator_object<ULONG> return_length{this->emu->memory, this->storage + 0x200};
+        EXPECT_EQ(STATUS_BUFFER_TOO_SMALL,
+                  syscalls::handle_NtAdjustPrivilegesToken(this->context(), CURRENT_PROCESS_TOKEN, false, new_state, sizeof(ULONG),
+                                                           previous_state, return_length));
+        EXPECT_EQ(0x10u, return_length.read());
+        EXPECT_TRUE(std::ranges::any_of(this->privileges(), [](const auto& privilege) { return privilege.first == 23; }));
+
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtAdjustPrivilegesToken(this->context(), CURRENT_PROCESS_TOKEN, false, new_state, 0x10,
                                                                            previous_state, return_length));
 
         // SepAdjustPrivileges reports no previous state for a privilege it removes.
-        EXPECT_EQ(4u, return_length.read());
+        EXPECT_EQ(0x10u, return_length.read());
         EXPECT_EQ(0u, (emulator_object<ULONG>{this->emu->memory, previous_state}.read()));
         EXPECT_TRUE(std::ranges::none_of(this->privileges(), [](const auto& privilege) { return privilege.first == 23; }));
     }
