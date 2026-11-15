@@ -1725,7 +1725,8 @@ namespace sogen
                this->jobs.handle_count() + this->thread_state_changes.handle_count() + this->registry_keys.handle_count() +
                this->mutants.handle_count() + this->timers.handle_count() + this->desktops.handle_count() +
                this->window_stations.handle_count() + this->ports.handle_count() + this->sections.handle_count() +
-               this->private_namespaces.handle_count() + this->deferred_window_position_batches.handle_count();
+               this->private_namespaces.handle_count() + this->deferred_window_position_batches.handle_count() +
+               this->tokens.handle_count();
     }
 
     emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id)

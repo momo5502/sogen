@@ -770,7 +770,7 @@ namespace sogen
                     c.emu, system_information, system_information_length, return_length, [&](SYSTEM_HANDLECOUNT_INFORMATION& info) {
                         info.ProcessCount = 1;
                         info.ThreadCount = static_cast<ULONG>(std::max<size_t>(c.proc.get_live_thread_count(), 1));
-                        info.HandleCount = 0;
+                        info.HandleCount = static_cast<ULONG>(c.proc.handle_count());
                     });
 
             case SystemHypervisorSharedPageInformation:
