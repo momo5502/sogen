@@ -1020,10 +1020,36 @@ namespace sogen
     };
 
 #ifndef OS_WINDOWS
-#define ACL_REVISION            2
-#define ACCESS_ALLOWED_ACE_TYPE 0
-#define ACCESS_DENIED_ACE_TYPE  1
-#define INHERIT_ONLY_ACE        0x8
+#define ACL_REVISION                            2
+#define ACL_REVISION3                           3
+#define ACL_REVISION_DS                         4
+#define MIN_ACL_REVISION                        2
+#define MAX_ACL_REVISION                        4
+#define ACCESS_ALLOWED_ACE_TYPE                 0x0
+#define ACCESS_DENIED_ACE_TYPE                  0x1
+#define SYSTEM_AUDIT_ACE_TYPE                   0x2
+#define SYSTEM_ALARM_ACE_TYPE                   0x3
+#define ACCESS_ALLOWED_COMPOUND_ACE_TYPE        0x4
+#define ACCESS_ALLOWED_OBJECT_ACE_TYPE          0x5
+#define ACCESS_DENIED_OBJECT_ACE_TYPE           0x6
+#define SYSTEM_AUDIT_OBJECT_ACE_TYPE            0x7
+#define SYSTEM_ALARM_OBJECT_ACE_TYPE            0x8
+#define ACCESS_ALLOWED_CALLBACK_ACE_TYPE        0x9
+#define ACCESS_DENIED_CALLBACK_ACE_TYPE         0xA
+#define ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE 0xB
+#define ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE  0xC
+#define SYSTEM_AUDIT_CALLBACK_ACE_TYPE          0xD
+#define SYSTEM_ALARM_CALLBACK_ACE_TYPE          0xE
+#define SYSTEM_AUDIT_CALLBACK_OBJECT_ACE_TYPE   0xF
+#define SYSTEM_ALARM_CALLBACK_OBJECT_ACE_TYPE   0x10
+#define SYSTEM_MANDATORY_LABEL_ACE_TYPE         0x11
+#define SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE      0x12
+#define SYSTEM_SCOPED_POLICY_ID_ACE_TYPE        0x13
+#define SYSTEM_PROCESS_TRUST_LABEL_ACE_TYPE     0x14
+#define SYSTEM_ACCESS_FILTER_ACE_TYPE           0x15
+#define INHERIT_ONLY_ACE                        0x8
+#define ACE_OBJECT_TYPE_PRESENT                 0x1
+#define ACE_INHERITED_OBJECT_TYPE_PRESENT       0x2
 
     struct ACL
     {
@@ -1049,6 +1075,28 @@ namespace sogen
         ACCESS_MASK Mask;
         DWORD SidStart;
     };
+
+    // The SID follows the object type GUIDs that Flags announces.
+    struct ACCESS_ALLOWED_OBJECT_ACE
+    {
+        ACE_HEADER Header;
+        ACCESS_MASK Mask;
+        DWORD Flags;
+        GUID ObjectType;
+        GUID InheritedObjectType;
+        DWORD SidStart;
+    };
+
+#define CLAIM_SECURITY_ATTRIBUTE_TYPE_INVALID      0x00
+#define CLAIM_SECURITY_ATTRIBUTE_TYPE_INT64        0x01
+#define CLAIM_SECURITY_ATTRIBUTE_TYPE_UINT64       0x02
+#define CLAIM_SECURITY_ATTRIBUTE_TYPE_STRING       0x03
+#define CLAIM_SECURITY_ATTRIBUTE_TYPE_FQBN         0x04
+#define CLAIM_SECURITY_ATTRIBUTE_TYPE_SID          0x05
+#define CLAIM_SECURITY_ATTRIBUTE_TYPE_BOOLEAN      0x06
+#define CLAIM_SECURITY_ATTRIBUTE_TYPE_OCTET_STRING 0x10
+#define CLAIM_SECURITY_ATTRIBUTE_VALID_FLAGS       0x3F
+#define CLAIM_SECURITY_ATTRIBUTE_CUSTOM_FLAGS      0xFFFF0000
 #endif
 
     struct TOKEN_DEFAULT_DACL64

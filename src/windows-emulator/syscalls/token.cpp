@@ -259,55 +259,752 @@ namespace sogen
                 }
             }
 
-            // The SID of an ACE that is ace_size bytes long, or none when it does not fit there: SeCaptureSecurityDescriptor's
-            // RtlValidAcl wants every ACE to hold its whole SID and fails the descriptor with STATUS_INVALID_ACL otherwise.
-            std::optional<std::vector<uint8_t>> read_ace_sid(const memory_manager& memory, const uint64_t ace_address,
-                                                             const size_t ace_size)
+            constexpr ACCESS_MASK generic_rights = 0xF0000000; // GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL
+            constexpr ACCESS_MASK maximum_allowed = 0x02000000;
+            constexpr ACCESS_MASK access_system_security = 0x01000000;
+            constexpr ACCESS_MASK owner_implicit_rights = 0x00060000; // READ_CONTROL | WRITE_DAC
+
+            // A PRIVILEGE_SET with room for one LUID_AND_ATTRIBUTES, the least NtAccessCheck takes.
+            constexpr ULONG minimum_privilege_set_size = 20;
+
+            constexpr std::array<uint8_t, 12> owner_rights_sid{1, 1, 0, 0, 0, 0, 0, 3, 4, 0, 0, 0}; // S-1-3-4
+
+            // MM_USER_PROBE_ADDRESS: a probe on behalf of user mode faults on a range that reaches it.
+            constexpr uint64_t user_probe_address = 0x7FFFFFFF0000;
+
+            constexpr size_t sid_header_size = offsetof(SID, SubAuthority);
+
+            // Where most ACE types keep their SID: right after the mask.
+            constexpr size_t ace_sid_offset = offsetof(ACCESS_ALLOWED_ACE, SidStart);
+
+            // COMPOUND_ACCESS_ALLOWED_ACE: its CompoundAceType and Reserved come before the client's SID, which the server's
+            // follows.
+            constexpr size_t compound_ace_sid_offset = ace_sid_offset + (2 * sizeof(uint16_t));
+            constexpr uint16_t compound_ace_impersonation = 1; // COMPOUND_ACE_IMPERSONATION, the only CompoundAceType
+
+            // RtlpValidCompoundAce and RtlpValidObjectAce want room for a SID with a sub-authority, whatever the SID says.
+            constexpr size_t smallest_sid_room = sid_header_size + sizeof(DWORD);
+
+            // CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1 up to its value offsets, which follow it.
+            struct relative_attribute_header
             {
-                constexpr size_t sid_offset = offsetof(ACCESS_ALLOWED_ACE, SidStart);
-                constexpr size_t sid_header_size = offsetof(SID, SubAuthority);
-                if (ace_size < sid_offset + sid_header_size)
-                {
-                    return std::nullopt;
-                }
+                DWORD name;
+                WORD value_type;
+                WORD reserved;
+                DWORD flags;
+                DWORD value_count;
+            };
 
-                SID header{};
-                memory.read_memory(ace_address + sid_offset, &header, sid_header_size);
+            // An attribute with one value offset, the least RtlpValidAttributeAce and RtlpValidRelativeAttribute take, and
+            // room for a name of one character and its NUL.
+            constexpr size_t smallest_relative_attribute = sizeof(relative_attribute_header) + sizeof(DWORD);
+            constexpr size_t smallest_attribute_name = 2 * sizeof(char16_t);
 
-                std::vector<uint8_t> sid(sid_header_size + (header.SubAuthorityCount * sizeof(DWORD)));
-                if (sid.size() > ace_size - sid_offset)
-                {
-                    return std::nullopt;
-                }
+            // A conditional expression starts with "artx"; RtlpValidAccessFilterAce wants 6 bytes of it at least.
+            constexpr uint32_t conditional_expression_signature = 0x78747261;
+            constexpr size_t smallest_access_filter_condition = 6;
 
-                memory.read_memory(ace_address + sid_offset, sid.data(), sid.size());
-                return sid;
+            // A value of a copied buffer at an offset the caller has checked.
+            template <typename T>
+            T read_at(const std::span<const uint8_t> data, const size_t offset)
+            {
+                T value{};
+                memcpy(&value, data.subspan(offset, sizeof(value)).data(), sizeof(value));
+                return value;
             }
 
-            ACCESS_MASK map_generic_access(ACCESS_MASK access, const EMU_GENERIC_MAPPING& mapping)
+            // The SID at an offset of a copied buffer once RtlValidAcl or SeCaptureSecurityDescriptor has taken it.
+            std::span<const uint8_t> sid_at(const std::span<const uint8_t> data, const size_t offset)
             {
-                constexpr ACCESS_MASK generic_read = 0x80000000;
-                constexpr ACCESS_MASK generic_write = 0x40000000;
-                constexpr ACCESS_MASK generic_execute = 0x20000000;
-                constexpr ACCESS_MASK generic_all = 0x10000000;
+                return data.subspan(offset, sid_header_size + (data[offset + offsetof(SID, SubAuthorityCount)] * sizeof(DWORD)));
+            }
 
-                if (access & generic_read)
+            // The length of an ACE's SID at an offset when RtlValidAcl takes it, revision 1 with at most 15 sub-authorities, or
+            // none. The caller has checked that its revision and count lie inside the ACE.
+            std::optional<size_t> valid_sid_length(const std::span<const uint8_t> ace, const size_t offset)
+            {
+                const auto sub_authority_count = ace[offset + offsetof(SID, SubAuthorityCount)];
+                if (ace[offset + offsetof(SID, Revision)] != SID_REVISION || sub_authority_count > SID_MAX_SUB_AUTHORITIES)
                 {
-                    access = (access & ~generic_read) | mapping.GenericRead;
+                    return std::nullopt;
                 }
-                if (access & generic_write)
+
+                return sid_header_size + (sub_authority_count * sizeof(DWORD));
+            }
+
+            // Where the SID after an ACE's mask ends, for the types RtlValidAcl and its helpers check that way: an ACE of whole
+            // DWORDs that holds the SID. None when it does not.
+            std::optional<size_t> mask_sid_end(const std::span<const uint8_t> ace)
+            {
+                if (ace.size() % sizeof(DWORD) != 0 || ace.size() < ace_sid_offset + sid_header_size)
                 {
-                    access = (access & ~generic_write) | mapping.GenericWrite;
+                    return std::nullopt;
                 }
-                if (access & generic_execute)
+
+                const auto sid_length = valid_sid_length(ace, ace_sid_offset);
+                if (!sid_length || ace.size() < ace_sid_offset + *sid_length)
                 {
-                    access = (access & ~generic_execute) | mapping.GenericExecute;
+                    return std::nullopt;
                 }
-                if (access & generic_all)
+
+                return ace_sid_offset + *sid_length;
+            }
+
+            // RtlpValidCompoundAce: an impersonation ACE of whole DWORDs with the client's SID, then the server's.
+            bool is_valid_compound_ace(const std::span<const uint8_t> ace)
+            {
+                if (ace.size() % sizeof(DWORD) != 0 || ace.size() < compound_ace_sid_offset + smallest_sid_room ||
+                    read_at<uint16_t>(ace, ace_sid_offset) != compound_ace_impersonation)
                 {
-                    access = (access & ~generic_all) | mapping.GenericAll;
+                    return false;
                 }
-                return access;
+
+                const auto client = valid_sid_length(ace, compound_ace_sid_offset);
+                if (!client || ace.size() < compound_ace_sid_offset + *client + smallest_sid_room)
+                {
+                    return false;
+                }
+
+                const auto server = valid_sid_length(ace, compound_ace_sid_offset + *client);
+                return server && ace.size() >= compound_ace_sid_offset + *client + *server;
+            }
+
+            // Where an object ACE keeps its SID: after its flags and the object type GUIDs they announce. The caller has checked
+            // that the flags lie inside the ACE.
+            size_t object_ace_sid_offset(const std::span<const uint8_t> ace)
+            {
+                const auto flags = read_at<DWORD>(ace, offsetof(ACCESS_ALLOWED_OBJECT_ACE, Flags));
+                auto offset = offsetof(ACCESS_ALLOWED_OBJECT_ACE, ObjectType);
+                offset += (flags & ACE_OBJECT_TYPE_PRESENT) != 0 ? sizeof(GUID) : 0;
+                offset += (flags & ACE_INHERITED_OBJECT_TYPE_PRESENT) != 0 ? sizeof(GUID) : 0;
+                return offset;
+            }
+
+            // RtlpValidObjectAce: an ACE of whole DWORDs with its SID after the GUIDs.
+            bool is_valid_object_ace(const std::span<const uint8_t> ace)
+            {
+                if (ace.size() % sizeof(DWORD) != 0 || ace.size() < offsetof(ACCESS_ALLOWED_OBJECT_ACE, ObjectType))
+                {
+                    return false;
+                }
+
+                const auto sid_offset = object_ace_sid_offset(ace);
+                if (ace.size() < sid_offset + smallest_sid_room)
+                {
+                    return false;
+                }
+
+                const auto sid_length = valid_sid_length(ace, sid_offset);
+                return sid_length && ace.size() >= sid_offset + *sid_length;
+            }
+
+            // RtlStringCbLengthW: whether a NUL ends a UTF-16 string inside the buffer.
+            bool holds_terminated_string(const std::span<const uint8_t> buffer)
+            {
+                for (size_t offset = 0; offset + sizeof(char16_t) <= buffer.size(); offset += sizeof(char16_t))
+                {
+                    if (read_at<char16_t>(buffer, offset) == 0)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            // Whether RtlpValidRelativeAttribute takes the value at an offset of an attribute of a value type.
+            bool is_valid_attribute_value(const std::span<const uint8_t> attribute, const WORD value_type, const DWORD offset)
+            {
+                if (offset > attribute.size())
+                {
+                    return false;
+                }
+
+                const auto room = attribute.size() - offset;
+                switch (value_type)
+                {
+                case CLAIM_SECURITY_ATTRIBUTE_TYPE_INT64:
+                case CLAIM_SECURITY_ATTRIBUTE_TYPE_UINT64:
+                    return room >= sizeof(uint64_t);
+                case CLAIM_SECURITY_ATTRIBUTE_TYPE_STRING:
+                    return room >= sizeof(char16_t) && holds_terminated_string(attribute.subspan(offset));
+                case CLAIM_SECURITY_ATTRIBUTE_TYPE_BOOLEAN:
+                    return room >= sizeof(uint64_t) && read_at<uint64_t>(attribute, offset) <= 1;
+                case CLAIM_SECURITY_ATTRIBUTE_TYPE_SID:
+                case CLAIM_SECURITY_ATTRIBUTE_TYPE_OCTET_STRING: {
+                    // CLAIM_SECURITY_ATTRIBUTE_OCTET_STRING_RELATIVE: a length and that many bytes, which a SID must have.
+                    if (room < sizeof(DWORD))
+                    {
+                        return false;
+                    }
+
+                    const auto length = read_at<DWORD>(attribute, offset);
+                    return room - sizeof(DWORD) >= length && (length != 0 || value_type == CLAIM_SECURITY_ATTRIBUTE_TYPE_OCTET_STRING);
+                }
+                default: // CLAIM_SECURITY_ATTRIBUTE_TYPE_FQBN among them
+                    return false;
+                }
+            }
+
+            // RtlpValidRelativeAttribute: a CLAIM_SECURITY_ATTRIBUTE_RELATIVE_V1 inside the buffer, with known flags, a
+            // terminated name and one value at least, of a type it knows, each inside the buffer.
+            bool is_valid_relative_attribute(const std::span<const uint8_t> attribute)
+            {
+                if (attribute.size() < smallest_relative_attribute)
+                {
+                    return false;
+                }
+
+                constexpr DWORD known_flags = CLAIM_SECURITY_ATTRIBUTE_VALID_FLAGS | CLAIM_SECURITY_ATTRIBUTE_CUSTOM_FLAGS;
+                const auto header = read_at<relative_attribute_header>(attribute, 0);
+                if (header.reserved != 0 || (header.flags & ~known_flags) != 0 || header.value_count == 0 ||
+                    header.name > attribute.size() || attribute.size() - header.name < smallest_attribute_name ||
+                    !holds_terminated_string(attribute.subspan(header.name)) ||
+                    attribute.size() - sizeof(header) < uint64_t{header.value_count} * sizeof(DWORD) ||
+                    header.value_type == CLAIM_SECURITY_ATTRIBUTE_TYPE_INVALID)
+                {
+                    return false;
+                }
+
+                for (DWORD index = 0; index < header.value_count; ++index)
+                {
+                    const auto offset = read_at<DWORD>(attribute, sizeof(header) + (index * sizeof(DWORD)));
+                    if (!is_valid_attribute_value(attribute, header.value_type, offset))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            // RtlValidAcl's check of an ACE by its type, in an ACL of a revision. 19041 checks no other type further.
+            bool is_valid_ace(const std::span<const uint8_t> ace, const uint8_t type, const uint8_t acl_revision)
+            {
+                switch (type)
+                {
+                case ACCESS_ALLOWED_ACE_TYPE:
+                case ACCESS_DENIED_ACE_TYPE:
+                case SYSTEM_AUDIT_ACE_TYPE:
+                case SYSTEM_ALARM_ACE_TYPE:
+                case ACCESS_ALLOWED_CALLBACK_ACE_TYPE:
+                case ACCESS_DENIED_CALLBACK_ACE_TYPE:
+                case SYSTEM_AUDIT_CALLBACK_ACE_TYPE:
+                case SYSTEM_ALARM_CALLBACK_ACE_TYPE:
+                case SYSTEM_MANDATORY_LABEL_ACE_TYPE:
+                case SYSTEM_SCOPED_POLICY_ID_ACE_TYPE:
+                case SYSTEM_PROCESS_TRUST_LABEL_ACE_TYPE:
+                    return mask_sid_end(ace).has_value();
+                case ACCESS_ALLOWED_COMPOUND_ACE_TYPE:
+                    return acl_revision >= ACL_REVISION3 && is_valid_compound_ace(ace);
+                case ACCESS_ALLOWED_OBJECT_ACE_TYPE:
+                case ACCESS_DENIED_OBJECT_ACE_TYPE:
+                case SYSTEM_AUDIT_OBJECT_ACE_TYPE:
+                case SYSTEM_ALARM_OBJECT_ACE_TYPE:
+                case ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE:
+                case ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE:
+                case SYSTEM_AUDIT_CALLBACK_OBJECT_ACE_TYPE:
+                case SYSTEM_ALARM_CALLBACK_OBJECT_ACE_TYPE:
+                    return acl_revision >= ACL_REVISION_DS && is_valid_object_ace(ace);
+                case SYSTEM_RESOURCE_ATTRIBUTE_ACE_TYPE: {
+                    // RtlpValidAttributeAce: the SID, then the attribute.
+                    const auto attribute = mask_sid_end(ace);
+                    return attribute && ace.size() >= *attribute + smallest_relative_attribute &&
+                           is_valid_relative_attribute(ace.subspan(*attribute));
+                }
+                case SYSTEM_ACCESS_FILTER_ACE_TYPE: {
+                    // RtlpValidAccessFilterAce: the SID, then the conditional expression.
+                    const auto condition = mask_sid_end(ace);
+                    return condition && ace.size() >= *condition + smallest_access_filter_condition &&
+                           read_at<uint32_t>(ace, *condition) == conditional_expression_signature;
+                }
+                default:
+                    return ace.size() >= sizeof(ACE_HEADER);
+                }
+            }
+
+            // RtlValidAcl, on the copy SeCaptureSecurityDescriptor makes of an ACL: AclSize bytes in an aligned buffer, so an
+            // ACE is aligned where its offset is even. Each of the ACEs AceCount names starts at an even offset with a header
+            // that ends before the ACL does, ends inside the ACL and passes its type's check.
+            bool is_valid_acl(const std::span<const uint8_t> acl)
+            {
+                const auto header = read_at<ACL>(acl, 0);
+                if (header.AclRevision < MIN_ACL_REVISION || header.AclRevision > MAX_ACL_REVISION || header.AclSize < sizeof(ACL))
+                {
+                    return false;
+                }
+
+                auto offset = sizeof(ACL);
+                for (USHORT index = 0; index < header.AceCount; ++index)
+                {
+                    if (offset + sizeof(ACE_HEADER) >= acl.size() || offset % sizeof(WORD) != 0)
+                    {
+                        return false;
+                    }
+
+                    const auto ace = read_at<ACE_HEADER>(acl, offset);
+                    if (ace.AceSize > acl.size() - offset ||
+                        !is_valid_ace(acl.subspan(offset, ace.AceSize), ace.AceType, header.AclRevision))
+                    {
+                        return false;
+                    }
+
+                    offset += ace.AceSize;
+                }
+
+                return true;
+            }
+
+            // RtlpOwnerAcesPresent: whether an ACE RtlValidAcl has taken names OWNER RIGHTS where its type keeps the SID, right
+            // after the mask, after a compound ACE's type, or after an object ACE's flags and GUIDs. It reads no SID from ACEs
+            // of other types.
+            bool names_owner_rights(const std::span<const uint8_t> ace, const uint8_t type)
+            {
+                auto sid_offset = ace_sid_offset;
+                switch (type)
+                {
+                case ACCESS_ALLOWED_ACE_TYPE:
+                case ACCESS_DENIED_ACE_TYPE:
+                case SYSTEM_AUDIT_ACE_TYPE:
+                case SYSTEM_ALARM_ACE_TYPE:
+                case ACCESS_ALLOWED_CALLBACK_ACE_TYPE:
+                case ACCESS_DENIED_CALLBACK_ACE_TYPE:
+                case SYSTEM_AUDIT_CALLBACK_ACE_TYPE:
+                case SYSTEM_ALARM_CALLBACK_ACE_TYPE:
+                    break;
+                case ACCESS_ALLOWED_COMPOUND_ACE_TYPE:
+                    sid_offset = compound_ace_sid_offset;
+                    break;
+                case ACCESS_ALLOWED_OBJECT_ACE_TYPE:
+                case ACCESS_DENIED_OBJECT_ACE_TYPE:
+                case SYSTEM_AUDIT_OBJECT_ACE_TYPE:
+                case SYSTEM_ALARM_OBJECT_ACE_TYPE:
+                case ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE:
+                case ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE:
+                case SYSTEM_AUDIT_CALLBACK_OBJECT_ACE_TYPE:
+                case SYSTEM_ALARM_CALLBACK_OBJECT_ACE_TYPE:
+                    sid_offset = object_ace_sid_offset(ace);
+                    break;
+                default:
+                    return false;
+                }
+
+                return std::ranges::equal(sid_at(ace, sid_offset), owner_rights_sid);
+            }
+
+            // SECURITY_DESCRIPTOR as a 64-bit process lays out its absolute form.
+            struct security_descriptor64
+            {
+                BYTE Revision;
+                BYTE Sbz1;
+                SECURITY_DESCRIPTOR_CONTROL Control;
+                uint64_t Owner;
+                uint64_t Group;
+                uint64_t Sacl;
+                uint64_t Dacl;
+            };
+
+            // A read as a probe on behalf of user mode makes it: a range that reaches MM_USER_PROBE_ADDRESS, or memory the
+            // guest may not read, faults.
+            bool read_user_memory(const syscall_context& c, const uint64_t address, void* data, const size_t size)
+            {
+                return address <= user_probe_address && size <= user_probe_address - address &&
+                       is_readable_range(c.win_emu.memory, address, size) && c.emu.try_read_memory(address, data, size);
+            }
+
+            // A DWORD argument probed for writing as SeAccessCheckByTypeWithAdminlessChecks probes one, which reads it and
+            // writes it back: a range that reaches MM_USER_PROBE_ADDRESS, or memory the guest may not write, faults.
+            bool probe_dword_for_write(const syscall_context& c, const uint64_t address)
+            {
+                return address <= user_probe_address - sizeof(DWORD) && is_writable_range(c.win_emu.memory, address, sizeof(DWORD));
+            }
+
+            // ProbeForWrite: nothing for a length of 0, else the alignment, then a range below MM_USER_PROBE_ADDRESS, then a byte
+            // of each of its pages written back, which faults on memory the guest may not write.
+            NTSTATUS probe_for_write(const syscall_context& c, const uint64_t address, const uint64_t length, const uint64_t alignment)
+            {
+                if (length == 0)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                if (address % alignment != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+
+                const auto last = address + length - 1;
+                if (last < address || last >= user_probe_address || !is_writable_range(c.win_emu.memory, address, length))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                return STATUS_SUCCESS;
+            }
+
+            // SeCaptureSecurityDescriptor's probe of an ACL: its AclSize, then, unless that is 0, the ACL's alignment and the
+            // range it spans. The room it takes, AclSize rounded up to DWORDs, is 8 bytes to 64 KB.
+            NTSTATUS probe_acl(const syscall_context& c, const uint64_t address, uint16_t& size)
+            {
+                size = 0;
+                if (address == 0)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                if (!read_user_memory(c, address + offsetof(ACL, AclSize), &size, sizeof(size)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                if (size != 0 && address % sizeof(DWORD) != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+
+                if (size != 0 && (address > user_probe_address || size > user_probe_address - address))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                const auto room = (size_t{size} + sizeof(DWORD) - 1) & ~(sizeof(DWORD) - 1);
+                return room < sizeof(ACL) || room > std::numeric_limits<uint16_t>::max() ? STATUS_INVALID_ACL : STATUS_SUCCESS;
+            }
+
+            // SeCaptureSecurityDescriptor's probe of a SID: its SubAuthorityCount, which sizes it, its alignment and its range.
+            NTSTATUS probe_sid(const syscall_context& c, const uint64_t address, uint8_t& sub_authority_count)
+            {
+                sub_authority_count = 0;
+                if (address == 0)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                if (!read_user_memory(c, address + offsetof(SID, SubAuthorityCount), &sub_authority_count, sizeof(sub_authority_count)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                if (address % sizeof(DWORD) != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+
+                const auto size = sid_header_size + (sub_authority_count * sizeof(DWORD));
+                return address > user_probe_address || size > user_probe_address - address ? STATUS_ACCESS_VIOLATION : STATUS_SUCCESS;
+            }
+
+            // SeCaptureSecurityDescriptor's copy of a probed ACL, which RtlValidAcl must take with its AclSize still the probed
+            // one. None without an address.
+            NTSTATUS copy_acl(const syscall_context& c, const uint64_t address, const uint16_t size,
+                              std::optional<std::vector<uint8_t>>& acl)
+            {
+                if (address == 0)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                auto& copy = acl.emplace(size);
+                if (!read_user_memory(c, address, copy.data(), copy.size()))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                return size < sizeof(ACL) || read_at<ACL>(copy, 0).AclSize != size || !is_valid_acl(copy) ? STATUS_INVALID_ACL
+                                                                                                          : STATUS_SUCCESS;
+            }
+
+            // SeCaptureSecurityDescriptor's copy of a probed SID, as long as the probed count says and keeping that count: it
+            // takes at most 15 sub-authorities and looks at the revision's low nibble alone. Empty without an address.
+            NTSTATUS copy_sid(const syscall_context& c, const uint64_t address, const uint8_t sub_authority_count,
+                              std::vector<uint8_t>& sid)
+            {
+                if (address == 0)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                constexpr uint8_t revision_nibble = 0xF;
+                sid.resize(sid_header_size + (sub_authority_count * sizeof(DWORD)));
+                if (!read_user_memory(c, address, sid.data(), sid.size()))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                sid[offsetof(SID, SubAuthorityCount)] = sub_authority_count;
+                return sub_authority_count > SID_MAX_SUB_AUTHORITIES || (sid[offsetof(SID, Revision)] & revision_nibble) != SID_REVISION
+                           ? STATUS_INVALID_SID
+                           : STATUS_SUCCESS;
+            }
+
+            // A descriptor as SeCaptureSecurityDescriptor copies it: an owner or a group left out is empty, and a DACL that
+            // SE_DACL_PRESENT leaves out or that has no address is none.
+            struct captured_descriptor
+            {
+                std::vector<uint8_t> owner{};
+                std::vector<uint8_t> group{};
+                std::optional<std::vector<uint8_t>> dacl{};
+            };
+
+            // SeCaptureSecurityDescriptor for a caller in user mode: it checks the descriptor's alignment and revision, probes
+            // the SACL and the DACL, then the owner and the group, and copies them in that order, failing an ACL that
+            // RtlValidAcl does not take and a SID that is not valid. No descriptor is captured as none.
+            NTSTATUS capture_security_descriptor(const syscall_context& c, const uint64_t address,
+                                                 std::optional<captured_descriptor>& captured)
+            {
+                captured.reset();
+                if (address == 0)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                if (address % sizeof(DWORD) != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+
+                SECURITY_DESCRIPTOR_RELATIVE header{};
+                if (!read_user_memory(c, address, &header, sizeof(header)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                const auto self_relative = (header.Control & SE_SELF_RELATIVE) != 0;
+                if (!self_relative && address % sizeof(uint64_t) != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+
+                if (header.Revision != SECURITY_DESCRIPTOR_REVISION)
+                {
+                    return STATUS_UNKNOWN_REVISION;
+                }
+
+                // Offsets in the self-relative form, pointers in the absolute one; an ACL its flag leaves out is not looked at.
+                const auto sacl_present = (header.Control & SE_SACL_PRESENT) != 0;
+                const auto dacl_present = (header.Control & SE_DACL_PRESENT) != 0;
+                uint64_t owner{};
+                uint64_t group{};
+                uint64_t sacl{};
+                uint64_t dacl{};
+                if (self_relative)
+                {
+                    const auto at = [&](const DWORD offset) { return offset == 0 ? uint64_t{0} : address + offset; };
+                    owner = at(header.Owner);
+                    group = at(header.Group);
+                    sacl = sacl_present ? at(header.Sacl) : 0;
+                    dacl = dacl_present ? at(header.Dacl) : 0;
+                }
+                else
+                {
+                    const auto read_pointer = [&](const size_t offset, uint64_t& pointer) {
+                        return read_user_memory(c, address + offset, &pointer, sizeof(pointer));
+                    };
+
+                    if (!read_pointer(offsetof(security_descriptor64, Owner), owner) ||
+                        !read_pointer(offsetof(security_descriptor64, Group), group) ||
+                        (sacl_present && !read_pointer(offsetof(security_descriptor64, Sacl), sacl)) ||
+                        (dacl_present && !read_pointer(offsetof(security_descriptor64, Dacl), dacl)))
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+                }
+
+                uint16_t sacl_size{};
+                uint16_t dacl_size{};
+                uint8_t owner_count{};
+                uint8_t group_count{};
+                if (const auto status = probe_acl(c, sacl, sacl_size); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (const auto status = probe_acl(c, dacl, dacl_size); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (const auto status = probe_sid(c, owner, owner_count); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (const auto status = probe_sid(c, group, group_count); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                captured_descriptor copy{};
+                std::optional<std::vector<uint8_t>> sacl_copy{};
+                if (const auto status = copy_acl(c, sacl, sacl_size, sacl_copy); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (const auto status = copy_acl(c, dacl, dacl_size, copy.dacl); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (const auto status = copy_sid(c, owner, owner_count, copy.owner); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                if (const auto status = copy_sid(c, group, group_count, copy.group); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                captured = std::move(copy);
+                return STATUS_SUCCESS;
+            }
+
+            struct dacl_ace
+            {
+                uint8_t type{};
+                uint8_t flags{};
+                ACCESS_MASK mask{};
+                std::vector<uint8_t> sid{};
+                bool owner_rights{}; // RtlpOwnerAcesPresent finds OWNER RIGHTS in it
+            };
+
+            // The ACEs of a DACL RtlValidAcl has taken, with the masks and SIDs of its allow and deny ACEs.
+            std::vector<dacl_ace> read_dacl(const std::span<const uint8_t> acl)
+            {
+                const auto header = read_at<ACL>(acl, 0);
+                std::vector<dacl_ace> aces{};
+                aces.reserve(header.AceCount);
+                auto offset = sizeof(ACL);
+                for (USHORT index = 0; index < header.AceCount; ++index)
+                {
+                    const auto ace_header = read_at<ACE_HEADER>(acl, offset);
+                    const auto ace = acl.subspan(offset, ace_header.AceSize);
+                    auto& entry = aces.emplace_back(dacl_ace{.type = ace_header.AceType,
+                                                             .flags = ace_header.AceFlags,
+                                                             .owner_rights = names_owner_rights(ace, ace_header.AceType)});
+                    if (entry.type == ACCESS_ALLOWED_ACE_TYPE || entry.type == ACCESS_DENIED_ACE_TYPE)
+                    {
+                        entry.mask = read_at<ACCESS_MASK>(ace, offsetof(ACCESS_ALLOWED_ACE, Mask));
+                        const auto sid = sid_at(ace, ace_sid_offset);
+                        entry.sid.assign(sid.begin(), sid.end());
+                    }
+
+                    offset += ace_header.AceSize;
+                }
+
+                return aces;
+            }
+
+            struct access_check_result
+            {
+                NTSTATUS status;
+                ACCESS_MASK granted;
+            };
+
+            // SeAccessCheckByType's owner rights, then SepAccessCheck, for a token that holds no privileges. A missing DACL
+            // grants everything, MAXIMUM_ALLOWED in the mapping's GenericAll.
+            access_check_result check_access(const windows_emulator& win_emu, const handle token,
+                                             const std::optional<std::vector<dacl_ace>>& dacl, const bool is_owner, ACCESS_MASK desired,
+                                             const ACCESS_MASK generic_all)
+            {
+                // SepNormalAccessCheck skips inherit-only ACEs and compares the masks as stored: an ACE's generic bits are
+                // not mapped, so they match no specific right. An OWNER RIGHTS ACE stands for the owner.
+                const auto applies = [&](const dacl_ace& ace) {
+                    return (ace.flags & INHERIT_ONLY_ACE) == 0 && !ace.sid.empty() &&
+                           (token_holds_sid(win_emu, token, ace.sid) || (is_owner && std::ranges::equal(ace.sid, owner_rights_sid)));
+                };
+
+                // RtlpOwnerAcesPresent: an OWNER RIGHTS ACE that is not inherit-only, of any type, replaces the owner's implicit
+                // READ_CONTROL and WRITE_DAC.
+                const auto has_owner_rights_ace = dacl && std::ranges::any_of(*dacl, [](const dacl_ace& ace) {
+                                                      return (ace.flags & INHERIT_ONLY_ACE) == 0 && ace.owner_rights;
+                                                  });
+
+                ACCESS_MASK granted = 0;
+                if (is_owner && !has_owner_rights_ace && (desired & (maximum_allowed | owner_implicit_rights)) != 0)
+                {
+                    granted = (desired & maximum_allowed) != 0 ? owner_implicit_rights : desired & owner_implicit_rights;
+                    desired &= ~owner_implicit_rights;
+                }
+
+                if (desired == 0)
+                {
+                    return {.status = STATUS_SUCCESS, .granted = granted};
+                }
+
+                if (!dacl)
+                {
+                    granted |= desired;
+                    if ((desired & maximum_allowed) != 0)
+                    {
+                        granted = (granted & ~maximum_allowed) | generic_all;
+                    }
+
+                    return {.status = STATUS_SUCCESS, .granted = granted};
+                }
+
+                if ((desired & maximum_allowed) != 0)
+                {
+                    // SepMaximumAccessCheck: each ACE grants or refuses only what the ACEs before it left open.
+                    ACCESS_MASK allowed = 0;
+                    ACCESS_MASK refused = 0;
+                    for (const auto& ace : *dacl)
+                    {
+                        if (!applies(ace))
+                        {
+                            continue;
+                        }
+
+                        if (ace.type == ACCESS_ALLOWED_ACE_TYPE)
+                        {
+                            allowed |= ace.mask & ~refused;
+                        }
+                        else
+                        {
+                            refused |= ace.mask & ~allowed;
+                        }
+                    }
+
+                    granted |= allowed;
+                    if ((desired & ~(allowed | maximum_allowed)) != 0 || granted == 0)
+                    {
+                        return {.status = STATUS_ACCESS_DENIED, .granted = 0};
+                    }
+
+                    return {.status = STATUS_SUCCESS, .granted = granted};
+                }
+
+                auto remaining = desired;
+                for (const auto& ace : *dacl)
+                {
+                    if (remaining == 0)
+                    {
+                        break;
+                    }
+
+                    if (!applies(ace))
+                    {
+                        continue;
+                    }
+
+                    if (ace.type == ACCESS_DENIED_ACE_TYPE && (ace.mask & remaining) != 0)
+                    {
+                        return {.status = STATUS_ACCESS_DENIED, .granted = 0};
+                    }
+
+                    if (ace.type == ACCESS_ALLOWED_ACE_TYPE)
+                    {
+                        remaining &= ~ace.mask;
+                    }
+                }
+
+                if (remaining != 0)
+                {
+                    return {.status = STATUS_ACCESS_DENIED, .granted = 0};
+                }
+
+                return {.status = STATUS_SUCCESS, .granted = granted | desired};
             }
         }
 
@@ -842,9 +1539,49 @@ namespace sogen
 
         NTSTATUS handle_NtAccessCheck(const syscall_context& c, const uint64_t security_descriptor, const handle requested_token,
                                       const ACCESS_MASK desired_access, const emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
-                                      const uint64_t /*privilege_set*/, const emulator_object<ULONG> privilege_set_length,
+                                      const uint64_t privilege_set, const emulator_object<ULONG> privilege_set_length,
                                       const emulator_object<ACCESS_MASK> granted_access, const emulator_object<NTSTATUS> access_status)
         {
+            // SeAccessCheckByType reads the privilege set's length first. For a caller in user mode
+            // SeAccessCheckByTypeWithAdminlessChecks then probes AccessStatus, GrantedAccess and PrivilegeSetLength for
+            // writing and the privilege set for its length, clears a set that has room for one, and copies the GenericMapping,
+            // which must be DWORD-aligned, before it checks anything else. A fault ends the call with its status.
+            ULONG set_length{};
+            if (!read_user_memory(c, privilege_set_length.value(), &set_length, sizeof(set_length)) ||
+                !probe_dword_for_write(c, access_status.value()) || !probe_dword_for_write(c, granted_access.value()) ||
+                !probe_dword_for_write(c, privilege_set_length.value()))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (const auto status = probe_for_write(c, privilege_set, set_length, sizeof(DWORD)); status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            constexpr ULONG no_privileges = 0;
+            if (privilege_set && set_length >= minimum_privilege_set_size &&
+                !c.emu.try_write_memory(privilege_set, &no_privileges, sizeof(no_privileges)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (generic_mapping.value() % sizeof(DWORD) != 0)
+            {
+                return STATUS_DATATYPE_MISALIGNMENT;
+            }
+
+            EMU_GENERIC_MAPPING mapping{};
+            if (!read_user_memory(c, generic_mapping.value(), &mapping, sizeof(mapping)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if ((desired_access & generic_rights) != 0)
+            {
+                return STATUS_GENERIC_NOT_MAPPED;
+            }
+
             const auto client_token = resolve_token(c, requested_token);
             if (client_token != CURRENT_PROCESS_TOKEN && client_token != CURRENT_THREAD_TOKEN &&
                 client_token != CURRENT_THREAD_EFFECTIVE_TOKEN && client_token != DUMMY_IMPERSONATION_TOKEN &&
@@ -853,73 +1590,50 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto control = emulator_object<SECURITY_DESCRIPTOR_CONTROL>{c.emu, security_descriptor + 2}.read();
-            uint64_t dacl_address = 0;
-            if (control & SE_SELF_RELATIVE)
+            // SeCaptureSecurityDescriptor checks and copies the descriptor before SeAccessCheckByType looks at its owner and
+            // group, the privileges or the privilege set's size.
+            std::optional<captured_descriptor> descriptor{};
+            if (const auto status = capture_security_descriptor(c, security_descriptor, descriptor); status != STATUS_SUCCESS)
             {
-                const auto descriptor = emulator_object<SECURITY_DESCRIPTOR_RELATIVE>{c.emu, security_descriptor}.read();
-                dacl_address = descriptor.Dacl == 0 ? 0 : security_descriptor + descriptor.Dacl;
-            }
-            else
-            {
-                dacl_address = emulator_object<uint64_t>{c.emu, security_descriptor + 32}.read();
+                return status;
             }
 
-            const auto mapping = generic_mapping.read();
-            const auto requested = map_generic_access(desired_access, mapping);
-            ACCESS_MASK remaining = requested;
-            ACCESS_MASK granted = 0;
-            bool denied = false;
-
-            if (!(control & SE_DACL_PRESENT) || dacl_address == 0)
+            if (!descriptor || descriptor->owner.empty() || descriptor->group.empty())
             {
-                granted = requested;
-                remaining = 0;
-            }
-            else
-            {
-                const auto acl = emulator_object<ACL>{c.emu, dacl_address}.read();
-                auto ace_address = dacl_address + sizeof(ACL);
-                for (USHORT i = 0; i < acl.AceCount; ++i)
-                {
-                    const auto ace = emulator_object<ACCESS_ALLOWED_ACE>{c.emu, ace_address}.read();
-
-                    // Only allow and deny ACEs take part. An ACE of another kind needs no SID: 19041 passes over one that is
-                    // only a header.
-                    if (ace.Header.AceType != ACCESS_ALLOWED_ACE_TYPE && ace.Header.AceType != ACCESS_DENIED_ACE_TYPE)
-                    {
-                        ace_address += ace.Header.AceSize;
-                        continue;
-                    }
-
-                    const auto ace_sid = read_ace_sid(c.emu.memory(), ace_address, ace.Header.AceSize);
-                    if (!ace_sid)
-                    {
-                        return STATUS_INVALID_ACL;
-                    }
-
-                    // SepNormalAccessCheck skips inherit-only ACEs and compares the masks as stored: an ACE's generic bits are
-                    // not mapped, so they match no specific right.
-                    const auto applies =
-                        (ace.Header.AceFlags & INHERIT_ONLY_ACE) == 0 && token_holds_sid(c.win_emu, client_token, *ace_sid);
-                    if (applies && ace.Header.AceType == ACCESS_DENIED_ACE_TYPE && (ace.Mask & remaining) != 0)
-                    {
-                        denied = true;
-                        break;
-                    }
-                    if (applies && ace.Header.AceType == ACCESS_ALLOWED_ACE_TYPE)
-                    {
-                        const auto allowed = ace.Mask & remaining;
-                        granted |= allowed;
-                        remaining &= ~allowed;
-                    }
-                    ace_address += ace.Header.AceSize;
-                }
+                return STATUS_INVALID_SECURITY_DESCR;
             }
 
-            privilege_set_length.write(0);
-            granted_access.write(granted);
-            access_status.write(!denied && remaining == 0 ? STATUS_SUCCESS : STATUS_ACCESS_DENIED);
+            // SePrivilegePolicyCheck answers ACCESS_SYSTEM_SECURITY, which takes SeSecurityPrivilege, before the privilege set
+            // is sized: the token holds no privileges, so the request is refused and grants nothing.
+            if ((desired_access & access_system_security) != 0)
+            {
+                granted_access.write(0);
+                access_status.write(STATUS_PRIVILEGE_NOT_HELD);
+                return STATUS_SUCCESS;
+            }
+
+            if (set_length < minimum_privilege_set_size)
+            {
+                privilege_set_length.write(minimum_privilege_set_size);
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            constexpr uint64_t empty_privilege_set = 0; // PrivilegeCount and Control
+            if (!c.emu.try_write_memory(privilege_set, &empty_privilege_set, sizeof(empty_privilege_set)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            std::optional<std::vector<dacl_ace>> dacl{};
+            if (descriptor->dacl)
+            {
+                dacl = read_dacl(*descriptor->dacl);
+            }
+
+            const auto is_owner = token_holds_sid(c.win_emu, client_token, descriptor->owner);
+            const auto result = check_access(c.win_emu, client_token, dacl, is_owner, desired_access, mapping.GenericAll);
+            granted_access.write(result.granted);
+            access_status.write(result.status);
             return STATUS_SUCCESS;
         }
 
