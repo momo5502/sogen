@@ -7018,11 +7018,6 @@ namespace sogen
                 return FALSE;
             }
 
-            if (win->system_menu_handle == 0)
-            {
-                return FALSE;
-            }
-
             // TODO: enable or disable system menu items (minimize, restore, size, move, ...) based on the window's state
 
             return TRUE;
