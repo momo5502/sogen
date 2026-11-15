@@ -387,15 +387,15 @@ namespace sogen
             }
 
             auto* store = c.proc.get_handle_store(resolved_source_handle);
-            const auto attributes =
-                duplicate_attributes(store ? store->attributes_of(resolved_source_handle) : sogen::handle_attributes{}, handle_attributes, options);
+            const auto attributes = duplicate_attributes(store ? store->attributes_of(resolved_source_handle) : sogen::handle_attributes{},
+                                                         handle_attributes, options);
 
             if (const auto* source = c.proc.devices.get(resolved_source_handle))
             {
                 if (source->get_internal_device<named_pipe>())
                 {
-                    auto duplicate = source->duplicate((options & duplicate_same_access) ? source->granted_access : desired_access,
-                                                       attributes.inherit);
+                    auto duplicate =
+                        source->duplicate((options & duplicate_same_access) ? source->granted_access : desired_access, attributes.inherit);
                     const auto new_handle = c.proc.devices.store(std::move(duplicate));
                     (void)c.proc.devices.set_attributes(new_handle, attributes);
                     target_handle.write_if_valid(new_handle);

@@ -909,8 +909,7 @@ namespace sogen
             return !this->handles_.contains(id) && !this->internal_handles_.contains(id);
         }
 
-        handle open_index_at(const index_type index, const handle_id_type id, const bool add_reference,
-                             const handle_attributes& attributes)
+        handle open_index_at(const index_type index, const handle_id_type id, const bool add_reference, const handle_attributes& attributes)
         {
             auto* object = this->get_by_index(index);
             if (!object)
