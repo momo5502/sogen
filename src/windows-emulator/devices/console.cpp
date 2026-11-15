@@ -2,7 +2,9 @@
 #include "console.hpp"
 
 #include "../windows_emulator.hpp"
+#include "../io_completion_wait.hpp"
 #include <platform/console_backend.hpp>
+#include <utils/finally.hpp>
 
 namespace sogen
 {
@@ -10,6 +12,8 @@ namespace sogen
     namespace
     {
         constexpr ULONG console_ioctl = 0x500016;
+        constexpr uint16_t console_read_noremove = 0x0001;
+        constexpr uint16_t console_read_nowait = 0x0002;
 
         enum class console_api : uint32_t
         {
@@ -299,6 +303,15 @@ namespace sogen
                 buffer.write(font_info_);
                 buffer.write_string(title_);
                 buffer.write_string(original_title_);
+                buffer.write(static_cast<uint64_t>(pending_reads_.size()));
+                for (const auto& read : pending_reads_)
+                {
+                    buffer.write(read.context);
+                    buffer.write(read.request_address);
+                    buffer.write(read.output_address);
+                    buffer.write(read.request);
+                    buffer.write(read.issuing_thread);
+                }
             }
 
             void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -310,6 +323,69 @@ namespace sogen
                 buffer.read(font_info_);
                 buffer.read_string(title_);
                 buffer.read_string(original_title_);
+                pending_reads_.clear();
+                const auto count = buffer.read<uint64_t>();
+                for (uint64_t i = 0; i < count; ++i)
+                {
+                    pending_read read{.context = buffer.read<io_device_context>()};
+                    buffer.read(read.request_address);
+                    buffer.read(read.output_address);
+                    buffer.read(read.request);
+                    buffer.read(read.issuing_thread);
+                    pending_reads_.push_back(std::move(read));
+                }
+            }
+
+            void work(windows_emulator& win_emu) override
+            {
+                for (auto it = pending_reads_.begin(); it != pending_reads_.end();)
+                {
+                    const auto event = win_emu.console().read_input_event(false, (it->request.flags & console_read_noremove) == 0);
+                    if (!event)
+                    {
+                        break;
+                    }
+                    const auto status = write_read_result(win_emu, *it, *event);
+                    complete_read(win_emu, *it, status);
+                    release_read(win_emu.process, *it);
+                    it = pending_reads_.erase(it);
+                }
+            }
+
+            bool has_pending_io(const uint32_t issuing_thread_id) const override
+            {
+                return std::ranges::any_of(pending_reads_,
+                                           [=](const auto& read) { return read.context.issuing_thread_id == issuing_thread_id; });
+            }
+
+            bool cancel_io(windows_emulator& win_emu, const uint64_t io_status_block,
+                           const std::optional<uint32_t> issuing_thread_id) override
+            {
+                bool cancelled{};
+                for (auto it = pending_reads_.begin(); it != pending_reads_.end();)
+                {
+                    if ((issuing_thread_id && it->context.issuing_thread_id != *issuing_thread_id) ||
+                        (io_status_block && it->context.io_status_block.value() != io_status_block &&
+                         it->context.wow64_io_status_block.value() != io_status_block))
+                    {
+                        ++it;
+                        continue;
+                    }
+                    complete_read(win_emu, *it, STATUS_CANCELLED);
+                    release_read(win_emu.process, *it);
+                    it = pending_reads_.erase(it);
+                    cancelled = true;
+                }
+                return cancelled;
+            }
+
+            void release_references(process_context& process) override
+            {
+                for (auto& read : pending_reads_)
+                {
+                    release_read(process, read);
+                }
+                pending_reads_.clear();
             }
 
             void restore_after_state_restore(windows_emulator& win_emu) override
@@ -508,8 +584,6 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
                 case console_api::read_console_input: {
-                    constexpr uint16_t console_read_noremove = 0x0001;
-                    constexpr uint16_t console_read_nowait = 0x0002;
                     if (!is_input_endpoint(endpoint) || context.input_buffer_length < sizeof(console_ioctl_input_header) ||
                         header.input_count != 1 || header.output_count != 2 || message.data_size != sizeof(read_console_input_request))
                     {
@@ -531,12 +605,16 @@ namespace sogen
 
                     const auto wait = (request.flags & console_read_nowait) == 0;
                     const auto remove = (request.flags & console_read_noremove) == 0;
-                    const auto event = win_emu.console().read_input_event(wait, remove);
+                    const auto event = win_emu.console().read_input_event(false, remove);
                     if (!event)
                     {
+                        if (wait)
+                        {
+                            return queue_read(win_emu, context, header.data, input_header.output_buffer, request);
+                        }
                         request.events_read = 0;
                         win_emu.emu().write_memory(header.data, &request, sizeof(request));
-                        return wait ? STATUS_END_OF_FILE : STATUS_SUCCESS;
+                        return STATUS_SUCCESS;
                     }
 
                     const auto record = make_console_input_record(*event);
@@ -711,6 +789,110 @@ namespace sogen
             }
 
           private:
+            struct pending_read
+            {
+                io_device_context context;
+                uint64_t request_address{};
+                uint64_t output_address{};
+                read_console_input_request request{};
+                handle issuing_thread{};
+            };
+
+            static NTSTATUS write_read_result(windows_emulator& win_emu, pending_read& read, const console_key_event& event)
+            {
+                const auto record = make_console_input_record(event);
+                read.request.events_read = 1;
+                if (!win_emu.memory.try_write_memory(read.output_address, &record, sizeof(record)) ||
+                    !win_emu.memory.try_write_memory(read.request_address, &read.request, sizeof(read.request)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                return STATUS_SUCCESS;
+            }
+
+            static void complete_read(windows_emulator& win_emu, const pending_read& read, const NTSTATUS status)
+            {
+                const auto& context = read.context;
+                context.io_status_block.write({.Status = status, .Information = 0});
+                write_io_status(context, status);
+                if (auto* event = win_emu.process.events.get(context.event))
+                {
+                    event->signaled = true;
+                }
+                if (context.apc_routine)
+                {
+                    if (auto* thread = win_emu.process.threads.get(read.issuing_thread))
+                    {
+                        thread->pending_apcs.push_back({.apc_routine = context.apc_routine,
+                                                        .apc_argument1 = context.apc_context,
+                                                        .apc_argument2 = context.wow64_io_status_block
+                                                                             ? context.wow64_io_status_block.value()
+                                                                             : context.io_status_block.value(),
+                                                        .apc_argument3 = 0});
+                    }
+                }
+                else
+                {
+                    queue_io_completion(win_emu, context);
+                }
+                win_emu.wake_idle_vcpu();
+            }
+
+            static void release_read(process_context& process, pending_read& read)
+            {
+                io_completion_wait::release_handle_reference(process, read.context.event);
+                io_completion_wait::release_handle_reference(process, read.context.completion_port);
+                io_completion_wait::release_handle_reference(process, read.issuing_thread);
+            }
+
+            NTSTATUS queue_read(windows_emulator& win_emu, const io_device_context& context, const uint64_t request_address,
+                                const uint64_t output_address, const read_console_input_request& request)
+            {
+                if (!context.io_status_block || (!context.event.bits && (!context.vcpu || !context.vcpu->active_thread)))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                pending_read read{
+                    .context = context, .request_address = request_address, .output_address = output_address, .request = request};
+                auto* thread = context.vcpu ? context.vcpu->active_thread : nullptr;
+                if (thread)
+                {
+                    read.context.issuing_thread_id = thread->id;
+                    read.issuing_thread = win_emu.process.threads.find_handle(thread);
+                }
+                bool queued{};
+                const auto cleanup = utils::finally([&] {
+                    if (!queued)
+                    {
+                        release_read(win_emu.process, read);
+                    }
+                });
+                const std::array<handle*, 3> references{&read.context.event, &read.context.completion_port, &read.issuing_thread};
+                std::array<handle, 3> sources{};
+                for (size_t i = 0; i < references.size(); ++i)
+                {
+                    sources[i] = std::exchange(*references[i], handle{});
+                }
+                for (size_t i = 0; i < references.size(); ++i)
+                {
+                    if (!io_completion_wait::retain_handle_reference(win_emu.process, thread, sources[i], *references[i]))
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+                }
+                read.context.vcpu = nullptr;
+                pending_reads_.push_back(std::move(read));
+                queued = true;
+                write_io_status(context, STATUS_PENDING, true);
+                if (!context.event.bits)
+                {
+                    context.thread().await_file_io = context.io_status_block.value();
+                    win_emu.yield_thread(*context.vcpu);
+                }
+                return STATUS_PENDING;
+            }
+
+            std::vector<pending_read> pending_reads_{};
             uint16_t text_attributes_{7};
             uint32_t input_mode_{default_input_mode};
             uint32_t output_mode_{default_output_mode};

@@ -6,11 +6,19 @@
 
 #include <backend_selection.hpp>
 #include <io_device.hpp>
+#include <syscall_utils.hpp>
 #include <windows_emulator.hpp>
 #include <utils/finally.hpp>
 
 #include <gtest/gtest.h>
 #include "emulation_test_utils.hpp"
+
+namespace sogen::syscalls
+{
+    NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, handle file_handle,
+                                     emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_request_to_cancel,
+                                     emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
+}
 
 namespace sogen::test
 {
@@ -36,10 +44,12 @@ namespace sogen::test
 
             console_input_mode mode_{};
             console_size size_{};
+            size_t blocking_refills{};
 
           protected:
-            void refill(int) override
+            void refill(const int timeout_ms) override
             {
+                this->blocking_refills += timeout_ms != 0;
             }
         };
 
@@ -201,7 +211,8 @@ namespace sogen::test
             }
 
             template <typename T>
-            NTSTATUS invoke_text(uint32_t api, T& data, uint64_t text_size, bool output = false, handle endpoint = STDOUT_HANDLE)
+            NTSTATUS invoke_text(uint32_t api, T& data, uint64_t text_size, bool output = false, handle endpoint = STDOUT_HANDLE,
+                                 handle completion_event = {})
             {
                 console_mode_request request{};
                 request.target_handle = endpoint.h;
@@ -223,7 +234,10 @@ namespace sogen::test
                 context.input_buffer = this->storage;
                 context.input_buffer_length = 64;
                 context.io_status_block = {this->emu->memory, this->storage + 0x300};
-                const auto status = this->emu->process.devices.get(this->console_handle)->io_control(*this->emu, context);
+                context.event = completion_event;
+                context.vcpu = &this->emu->vcpu(0);
+                const auto status = this->emu->synchronize(
+                    [&] { return this->emu->process.devices.get(this->console_handle)->execute_ioctl(*this->emu, context); });
                 data = this->emu->emu().read_memory<T>(request.message + 8);
                 return status;
             }
@@ -233,6 +247,119 @@ namespace sogen::test
             handle console_handle{};
             uint64_t storage{};
         };
+
+        class CooperativeConsoleReadTest : public ConsoleProtocolTest
+        {
+          protected:
+            void SetUp() override
+            {
+                ConsoleProtocolTest::SetUp();
+                this->emu->process.default_register_set = this->emu->vcpu(0).cpu.save_registers();
+                auto& threads = this->emu->process.threads;
+                this->reader =
+                    threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+                this->worker =
+                    threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+                this->emu->vcpu(0).active_thread = this->reader;
+                this->reader->setup_if_necessary(this->emu->vcpu(0).cpu, this->emu->process);
+            }
+
+            NTSTATUS read(const uint16_t flags = 0, const handle completion_event = {})
+            {
+                console_read_request request{.flags = flags};
+                return this->invoke_text(0x01000004, request, sizeof(console_input_record), true, STDIN_HANDLE, completion_event);
+            }
+
+            NTSTATUS status() const
+            {
+                return this->emu->memory.read_memory<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>(this->storage + 0x300).Status;
+            }
+
+            emulator_thread* reader{};
+            emulator_thread* worker{};
+        };
+    }
+
+    TEST_F(CooperativeConsoleReadTest, WaitingForInputLetsAnotherGuestThreadRun)
+    {
+        ASSERT_EQ(STATUS_PENDING, this->read());
+        EXPECT_EQ(STATUS_PENDING, this->status());
+        ASSERT_EQ(this->storage + 0x300, this->reader->await_file_io);
+        ASSERT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_EQ(this->worker, this->emu->vcpu(0).active_thread);
+        EXPECT_EQ(STATUS_PENDING, this->status());
+
+        this->input->queue("q");
+        ASSERT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_EQ(this->reader, this->emu->vcpu(0).active_thread);
+        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_EQ(STATUS_SUCCESS, this->status());
+        EXPECT_EQ(1u, this->emu->memory.read_memory<console_read_request>(this->storage + 0x108).events_read);
+        EXPECT_EQ(u'q', this->emu->memory.read_memory<console_input_record>(this->storage + 0x200).character);
+        EXPECT_EQ(0u, this->input->blocking_refills);
+    }
+
+    TEST_F(CooperativeConsoleReadTest, PendingPeekSignalsCompletionWithoutConsumingInput)
+    {
+        const auto event = this->emu->process.events.store(sogen::event{});
+        ASSERT_EQ(STATUS_PENDING, this->read(1, event));
+        EXPECT_FALSE(this->emu->process.events.get(event)->signaled);
+        EXPECT_FALSE(this->reader->await_file_io);
+        this->input->queue("q");
+        this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
+        EXPECT_EQ(STATUS_SUCCESS, this->status());
+        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        const auto key = this->input->read_input_event(false, true);
+        ASSERT_TRUE(key);
+        EXPECT_EQ(u'q', key->character);
+        EXPECT_EQ(0u, this->input->blocking_refills);
+    }
+
+    TEST_F(CooperativeConsoleReadTest, PendingReadCanBeCancelledWithoutConsumingInput)
+    {
+        const auto event = this->emu->process.events.store(sogen::event{});
+        ASSERT_EQ(STATUS_PENDING, this->read(0, event));
+        auto* console = this->emu->process.devices.get(this->console_handle);
+        EXPECT_TRUE(console->has_pending_io(this->reader->id));
+        const syscall_context context{
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+        EXPECT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtCancelIoFileEx(context, STDIN_HANDLE, {this->emu->memory, this->storage + 0x300},
+                                                     {this->emu->memory, this->storage + 0x340});
+        }));
+        EXPECT_EQ(STATUS_CANCELLED, this->status());
+        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        EXPECT_FALSE(console->has_pending_io(this->reader->id));
+        this->input->queue("q");
+        this->emu->synchronize([&] { console->work(*this->emu); });
+        EXPECT_TRUE(this->input->input_available());
+    }
+
+    TEST_F(CooperativeConsoleReadTest, NonblockingReadWithNoInputCompletesImmediately)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->read(2));
+        EXPECT_EQ(0u, this->emu->memory.read_memory<console_read_request>(this->storage + 0x108).events_read);
+        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->emu->process.devices.get(this->console_handle)->has_pending_io(this->reader->id));
+        EXPECT_EQ(0u, this->input->blocking_refills);
+    }
+
+    TEST_F(CooperativeConsoleReadTest, PendingReadSurvivesSnapshotRestore)
+    {
+        ASSERT_EQ(STATUS_PENDING, this->read());
+        const auto reader_id = this->reader->id;
+        utils::buffer_serializer snapshot{};
+        this->emu->serialize(snapshot);
+        utils::buffer_deserializer restore{snapshot};
+        this->emu->deserialize(restore);
+        auto* restored_reader = this->emu->process.find_thread_by_id(reader_id);
+        ASSERT_NE(nullptr, restored_reader);
+        EXPECT_TRUE(this->emu->process.devices.get(this->console_handle)->has_pending_io(reader_id));
+        this->input->queue("q");
+        this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
+        EXPECT_EQ(STATUS_SUCCESS, this->status());
+        EXPECT_TRUE(this->emu->synchronize([&] { return restored_reader->is_thread_ready(*this->emu); }));
+        EXPECT_EQ(u'q', this->emu->memory.read_memory<console_input_record>(this->storage + 0x200).character);
     }
 
     TEST_F(ConsoleProtocolTest, PunctuationAndUnicodeDoNotBecomeNavigationKeys)

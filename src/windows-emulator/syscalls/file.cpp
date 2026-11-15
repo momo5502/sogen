@@ -1801,7 +1801,9 @@ namespace sogen
             {
                 return STATUS_INVALID_PARAMETER;
             }
-            const auto resolved = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+            const auto resolved = file_handle == STDIN_HANDLE && c.proc.console_handle.bits
+                                      ? c.proc.console_handle
+                                      : c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
             if (auto* device = c.proc.devices.get(resolved))
             {
                 device->cancel_io(c.win_emu, 0, c.thread().id);
@@ -1834,7 +1836,9 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            const auto resolved_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+            const auto resolved_handle = file_handle == STDIN_HANDLE
+                                             ? c.proc.console_handle
+                                             : c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
             auto* device = c.proc.devices.get(resolved_handle);
             if (!device)
             {
