@@ -518,13 +518,13 @@ namespace sogen
         {
             if (win_emu.process.get_object_as<sogen::io_completion>(io_completion))
             {
+                win_emu.process.post_exited_job_processes(win_emu, io_completion);
                 queue_signaled_wait_packets(win_emu, io_completion);
             }
         }
 
         void materialize_signaled_wait_packets(windows_emulator& win_emu, const handle io_completion_handle)
         {
-            win_emu.process.post_exited_job_processes(win_emu, io_completion_handle);
             const auto reference = win_emu.process.io_completions.reference_of(io_completion_handle);
             if (reference)
             {
@@ -534,7 +534,15 @@ namespace sogen
 
         void materialize_all_signaled_wait_packets(windows_emulator& win_emu)
         {
-            win_emu.process.post_exited_job_processes(win_emu, std::nullopt);
+            auto& process = win_emu.process;
+            for (const auto& [index, completion] : process.io_completions)
+            {
+                if (!completion.waiters.empty())
+                {
+                    process.post_exited_job_processes(win_emu, object_reference{.type = handle_types::io_completion, .index = index});
+                }
+            }
+
             queue_signaled_wait_packets(win_emu, std::nullopt);
         }
 

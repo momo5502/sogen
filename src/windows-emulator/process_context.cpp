@@ -854,8 +854,9 @@ namespace sogen
         port->enqueue(notification);
     }
 
-    // Without a port every job with one is posted to, so the scheduler reaches a thread already parked on it.
-    void process_context::post_exited_job_processes(windows_emulator& win_emu, const std::optional<handle> io_completion_handle)
+    // Asking the process manager for a member's exit costs a host call, so only the jobs posting to a port that a thread
+    // waits on are checked.
+    void process_context::post_exited_job_processes(windows_emulator& win_emu, const object_reference& io_completion)
     {
         constexpr uint32_t job_object_msg_active_process_zero = 4;
         constexpr uint32_t job_object_msg_exit_process = 7;
@@ -867,15 +868,9 @@ namespace sogen
             return;
         }
 
-        const auto port = io_completion_handle ? this->io_completions.reference_of(*io_completion_handle) : std::nullopt;
-        if (io_completion_handle && !port)
-        {
-            return;
-        }
-
         for (auto& job : this->jobs | std::views::values)
         {
-            if (job.processes.empty() || !job.completion_port || (port && job.completion_port != *port))
+            if (job.processes.empty() || job.completion_port != io_completion)
             {
                 continue;
             }

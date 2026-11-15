@@ -736,7 +736,7 @@ namespace sogen
         void abandon_shared_mutants();
         void post_job_notification(job_object& job, uint32_t message, uint32_t member_process_id);
         // Posts the exit notifications of jobs associated with the completion port, whose member processes run elsewhere.
-        void post_exited_job_processes(windows_emulator& win_emu, std::optional<handle> io_completion_handle);
+        void post_exited_job_processes(windows_emulator& win_emu, const object_reference& io_completion);
         void mark_exited(windows_emulator& win_emu, NTSTATUS status);
         std::optional<handle> install_shared_object(const process_shared_object& shared, std::optional<handle> at = std::nullopt);
         // A job that kills its processes on close does so when its last handle is closed, which includes the owning
