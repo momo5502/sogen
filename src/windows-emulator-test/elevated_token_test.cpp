@@ -278,6 +278,18 @@ namespace sogen::test
                                      file_generic_read));
     }
 
+    TEST_P(ElevatedTokenTest, OwnerAndPrimaryGroupAreThoseLsaGivesTheLogon)
+    {
+        this->emu->process.sid = local_user_sid;
+        const sid_bytes administrators{administrators_sid.begin(), administrators_sid.end()};
+        EXPECT_EQ(this->elevated() ? administrators : local_user_sid, this->token_sid(CURRENT_PROCESS_TOKEN, TokenOwner));
+        EXPECT_EQ(local_users_group_sid, this->token_sid(CURRENT_PROCESS_TOKEN, TokenPrimaryGroup));
+
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtImpersonateAnonymousToken(this->context(), CURRENT_THREAD));
+        EXPECT_EQ(anonymous_sid, this->token_sid(CURRENT_THREAD_EFFECTIVE_TOKEN, TokenOwner));
+        EXPECT_EQ(anonymous_sid, this->token_sid(CURRENT_THREAD_EFFECTIVE_TOKEN, TokenPrimaryGroup));
+    }
+
     TEST_P(ElevatedTokenTest, AdministratorsMembershipFollowsTheElevatedFlag)
     {
         const auto expected = this->elevated() ? STATUS_SUCCESS : STATUS_ACCESS_DENIED;

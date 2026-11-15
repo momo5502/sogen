@@ -510,7 +510,9 @@ namespace sogen
 
             if (token_information_class == TokenOwner)
             {
-                const auto required_size = sizeof(TOKEN_OWNER64) + sid.size();
+                // LSA makes Administrators the default owner of an administrator's unfiltered token.
+                const auto owner_sid = !anonymous && c.win_emu.runs_elevated() ? std::span<const uint8_t>{administrators_sid} : sid;
+                const auto required_size = sizeof(TOKEN_OWNER64) + owner_sid.size();
                 return_length.write(static_cast<ULONG>(required_size));
 
                 if (required_size > token_information_length)
@@ -522,7 +524,7 @@ namespace sogen
                 owner.Owner = token_information + sizeof(TOKEN_OWNER64);
 
                 emulator_object<TOKEN_OWNER64>{c.emu, token_information}.write(owner);
-                c.emu.write_memory(token_information + sizeof(TOKEN_OWNER64), sid.data(), sid.size());
+                c.emu.write_memory(token_information + sizeof(TOKEN_OWNER64), owner_sid.data(), owner_sid.size());
                 return STATUS_SUCCESS;
             }
 
