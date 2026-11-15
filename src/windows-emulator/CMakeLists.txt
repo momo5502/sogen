@@ -33,11 +33,11 @@ add_library(windows-emulator ${SRC_FILES})
 
 sogen_assign_source_group(${SRC_FILES})
 
-# vulkan_host.cpp exceeds the COFF section limit in Debug builds without the large-object format.
+# These exceed the COFF section limit in Debug builds without the large-object format.
 if(MSVC)
-  set_source_files_properties(devices/vulkan_host.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
+  set_source_files_properties(devices/vulkan_host.cpp process_context.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
 elseif(MINGW)
-  set_source_files_properties(devices/vulkan_host.cpp PROPERTIES COMPILE_OPTIONS -Wa,-mbig-obj)
+  set_source_files_properties(devices/vulkan_host.cpp process_context.cpp PROPERTIES COMPILE_OPTIONS -Wa,-mbig-obj)
 endif()
 
 if(NOT SOGEN_ENABLE_CLANG_TIDY)
