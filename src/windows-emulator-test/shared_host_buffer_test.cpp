@@ -5,7 +5,7 @@
 #include <cstring>
 #include <vector>
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
@@ -70,7 +70,7 @@ namespace sogen::test
             }
         }
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
         TEST(SharedHostBufferTest, TheNameOfABufferWhoseHoldersAllDiedIsRemoved)
         {
             int name_pipe[2]{};
