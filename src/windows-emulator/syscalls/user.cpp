@@ -3885,7 +3885,7 @@ namespace sogen
         constexpr uint32_t user_call_set_foreground_window = 112;
         constexpr uint32_t user_call_update_window = 115;
         constexpr uint32_t user_call_set_msg_box = 89;
-        constexpr uint32_t user_call_release_dc = 0x39;
+        constexpr uint32_t user_call_message_beep = 0x39;
         constexpr uint32_t user_call_post_quit_message = 0x3B;
         constexpr uint32_t user_call_get_cursor_pos = 0x7F;
 
@@ -3957,9 +3957,9 @@ namespace sogen
         {
             if (c.win_emu.version.is_build_within(19041, 19046))
             {
-                if (routine == user_call_release_dc)
+                if (routine == user_call_message_beep)
                 {
-                    return handle_NtUserReleaseDC(c, static_cast<hdc>(param));
+                    return handle_NtUserMessageBeep();
                 }
 
                 if (routine == user_call_post_quit_message)
