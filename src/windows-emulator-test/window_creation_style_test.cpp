@@ -2,6 +2,7 @@
 #include <syscall_utils.hpp>
 
 #include <set>
+#include <type_traits>
 
 namespace sogen::syscalls
 {
@@ -71,7 +72,7 @@ namespace sogen::test
             // The creation messages run as guest callbacks; the window and its style exist before the first one.
             DWORD style_after_creation(const DWORD style)
             {
-                std::set<decltype(this->emu.process.windows.begin()->first)> existing{};
+                std::set<std::remove_cvref_t<decltype(this->emu.process.windows.begin()->first)>> existing{};
                 for (const auto& [index, win] : this->emu.process.windows)
                 {
                     existing.insert(index);

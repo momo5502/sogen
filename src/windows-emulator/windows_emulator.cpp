@@ -3345,7 +3345,8 @@ namespace sogen
         // reaches the guest then, just as with a hidden cursor.
         const bool hidden = this->process.cursor_show_count < 0 || !this->process.cursor_shape_visible;
         const bool pinned = clip && clip->right - clip->left <= 2 && clip->bottom - clip->top <= 2;
-        const bool raw_mouse_look = hidden && this->process.raw_mouse_registration() != nullptr;
+        const auto* raw_mouse = this->process.raw_mouse_registration();
+        const bool raw_mouse_look = hidden && raw_mouse && (raw_mouse->flags & RIDEV_EXMODEMASK) != RIDEV_EXCLUDE;
         this->ui().set_cursor_clip(this->process.foreground_window, clip, (clip.has_value() && (hidden || pinned)) || raw_mouse_look);
     }
 

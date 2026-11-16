@@ -268,6 +268,7 @@ namespace sogen
 #ifndef OS_WINDOWS
 #define MAXINTATOM                  0xC000
 
+#define WS_OVERLAPPED               0x00000000L
 #define WS_POPUP                    0x80000000L
 #define WS_CHILD                    0x40000000L
 #define WS_VISIBLE                  0x10000000L
@@ -408,6 +409,7 @@ namespace sogen
 
 #define RIDEV_REMOVE                0x00000001
 #define RIDEV_EXCLUDE               0x00000010
+#define RIDEV_EXMODEMASK            0x000000F0
 #define RIDEV_INPUTSINK             0x00000100
 
 #define MOUSE_MOVE_RELATIVE         0x0000
