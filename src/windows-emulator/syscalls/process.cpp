@@ -40,18 +40,6 @@ namespace sogen
 
             static_assert(sizeof(process_handle_information) == 8);
 
-            emulator_process make_emulator_process(const managed_process_identity& process)
-            {
-                emulator_process result{};
-                result.process = process.handle;
-                result.id = process.identity.process_id;
-                result.parent_id = process.identity.parent_process_id;
-                result.is_wow64_process = process.identity.compatibility_environment != 0;
-                result.native_environment = process.identity.native_environment;
-                result.compatibility_environment = process.identity.compatibility_environment;
-                return result;
-            }
-
             NTSTATUS probe_output_buffer(const syscall_context& c, const uint64_t buffer, const uint32_t length)
             {
                 return is_writable_range(c.win_emu.memory, buffer, length) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
@@ -475,13 +463,13 @@ namespace sogen
             const auto process_id = result.process.identity.process_id;
             const auto thread_id = result.thread_id;
 
-            const auto child_process_handle = c.proc.processes.store(make_emulator_process(result.process));
-            (void)c.proc.processes.set_attributes(child_process_handle, get_handle_attributes(process_object_attributes));
+            const auto child_process_handle =
+                c.proc.processes.store(make_emulator_process(result.process), get_handle_attributes(process_object_attributes));
 
             if (auto* debugger = c.proc.debug_objects.get(debug_object_handle))
             {
                 debugger->debuggees.push_back(
-                    {.process = result.process.handle.value, .process_id = process_id, .thread_ids = {thread_id}});
+                    {.process = result.process.handle.value, .identity = result.process.identity, .thread_ids = {thread_id}});
             }
 
             managed_process_thread initial_thread{};
@@ -1322,26 +1310,36 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            for (const auto& [index, process] : c.proc.processes)
-            {
-                if (process.process && process.id == id.UniqueProcess)
-                {
-                    process_handle.write(c.proc.processes.open_by_index(index, get_handle_attributes(object_attributes)));
-                    return STATUS_SUCCESS;
-                }
-            }
-
             if (auto* manager = c.win_emu.processes(); manager && id.UniqueProcess <= std::numeric_limits<uint32_t>::max())
             {
                 const auto result = manager->open_process(static_cast<uint32_t>(id.UniqueProcess));
                 if (result)
                 {
-                    process_handle.write(c.proc.processes.store(make_emulator_process(result.process)));
+                    for (const auto& [index, process] : c.proc.processes)
+                    {
+                        if (process.process == result.process.handle)
+                        {
+                            process_handle.write(c.proc.processes.open_by_index(index, get_handle_attributes(object_attributes)));
+                            return STATUS_SUCCESS;
+                        }
+                    }
+                    const auto opened =
+                        c.proc.processes.store(make_emulator_process(result.process), get_handle_attributes(object_attributes));
+                    process_handle.write(opened);
                     return STATUS_SUCCESS;
                 }
                 if (result.error != process_error::invalid_process)
                 {
                     return map_process_error(result.error);
+                }
+            }
+
+            for (const auto& [index, process] : c.proc.processes)
+            {
+                if (!c.win_emu.processes() && process.process && process.id == id.UniqueProcess)
+                {
+                    process_handle.write(c.proc.processes.open_by_index(index, get_handle_attributes(object_attributes)));
+                    return STATUS_SUCCESS;
                 }
             }
 

@@ -980,7 +980,8 @@ namespace sogen
                 {.process_id = this->process.process_id,
                  .parent_process_id = this->process.parent_process_id,
                  .native_environment = this->process.peb64.value(),
-                 .compatibility_environment = this->process.peb32 ? this->process.peb32->value() : 0});
+                 .compatibility_environment = this->process.peb32 ? this->process.peb32->value() : 0},
+                this->process.initial_thread_id);
         }
     }
 

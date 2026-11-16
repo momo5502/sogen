@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "memory_permission.hpp"
+#include <serialization.hpp>
 
 #include <compare>
 #include <cstdint>
@@ -169,6 +170,22 @@ namespace sogen
         uint32_t parent_process_id{};
         uint64_t native_environment{};
         uint64_t compatibility_environment{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->process_id);
+            buffer.write(this->parent_process_id);
+            buffer.write(this->native_environment);
+            buffer.write(this->compatibility_environment);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->process_id);
+            buffer.read(this->parent_process_id);
+            buffer.read(this->native_environment);
+            buffer.read(this->compatibility_environment);
+        }
     };
 
     struct process_create_request
@@ -358,7 +375,7 @@ namespace sogen
     {
         virtual ~process_manager() = default;
 
-        virtual void initialize_current_process(process_identity)
+        virtual void initialize_current_process(process_identity, uint32_t = 8)
         {
         }
 
@@ -375,6 +392,12 @@ namespace sogen
         virtual process_error resume_process(managed_process process) = 0;
         virtual process_error terminate_process(managed_process process, uint64_t exit_code) = 0;
         virtual process_exit_status_result exit_status(managed_process process) const = 0;
+
+        virtual process_exit_status_result poll_exit_status(managed_process process) const
+        {
+            return this->exit_status(process);
+        }
+
         virtual process_memory_result allocate_memory(managed_process process, uint64_t address, uint64_t size,
                                                       memory_permission permission, bool reserve, bool commit) = 0;
         virtual process_error free_memory(managed_process process, uint64_t address, uint64_t size, bool release) = 0;

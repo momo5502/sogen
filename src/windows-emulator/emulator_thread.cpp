@@ -9,6 +9,18 @@
 
 namespace sogen
 {
+    emulator_process make_emulator_process(const managed_process_identity& process)
+    {
+        emulator_process result{};
+        result.process = process.handle;
+        result.id = process.identity.process_id;
+        result.parent_id = process.identity.parent_process_id;
+        result.is_wow64_process = process.identity.compatibility_environment != 0;
+        result.native_environment = process.identity.native_environment;
+        result.compatibility_environment = process.identity.compatibility_environment;
+        return result;
+    }
+
     namespace
     {
         enum class wait_state
@@ -254,7 +266,7 @@ namespace sogen
 
                 if (const auto* process = c.processes.get_by_index(ref.index); process && process->process && win_emu.processes())
                 {
-                    const auto status = win_emu.processes()->exit_status(process->process);
+                    const auto status = win_emu.processes()->poll_exit_status(process->process);
                     if (status && status.status.has_value())
                     {
                         return wait_state::signaled;
@@ -266,7 +278,7 @@ namespace sogen
             case handle_types::managed_thread:
                 if (const auto* thread = c.managed_threads.get_by_index(ref.index); thread && win_emu.processes())
                 {
-                    const auto status = win_emu.processes()->exit_status(thread->process);
+                    const auto status = win_emu.processes()->poll_exit_status(thread->process);
                     if (status && status.status.has_value())
                     {
                         return wait_state::signaled;
@@ -508,7 +520,7 @@ namespace sogen
                     return std::nullopt;
                 }
 
-                const auto status = win_emu.processes()->exit_status(process->process);
+                const auto status = win_emu.processes()->poll_exit_status(process->process);
                 return status && status.status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
             }
 
@@ -519,7 +531,7 @@ namespace sogen
                     return std::nullopt;
                 }
 
-                const auto status = win_emu.processes()->exit_status(thread->process);
+                const auto status = win_emu.processes()->poll_exit_status(thread->process);
                 return status && status.status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
             }
 

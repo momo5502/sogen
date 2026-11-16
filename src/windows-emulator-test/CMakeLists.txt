@@ -64,6 +64,7 @@ sogen_assign_source_group(${SRC_FILES})
 target_link_libraries(windows-emulator-test PRIVATE
   gtest
   gtest_main
+  flatbuffers
   windows-emulator
   windows-gdb-stub
   backend-selection

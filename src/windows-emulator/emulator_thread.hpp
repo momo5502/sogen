@@ -375,6 +375,8 @@ namespace sogen
         }
     };
 
+    emulator_process make_emulator_process(const managed_process_identity& process);
+
     class managed_process_thread : public ref_counted_object
     {
       public:

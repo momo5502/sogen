@@ -911,9 +911,7 @@ namespace sogen
             }
             manager = std::make_unique<subprocess_process_manager>(
                 get_managed_process_executable(use_sandbox && !options.trace_children),
-                [&](const auto port, const auto& token) {
-                    return create_managed_process_arguments(options, port, token, ++child_counter);
-                },
+                [&](const auto port, const auto& token) { return create_managed_process_arguments(options, port, token, ++child_counter); },
                 create_subprocess_launcher(),
                 options.managed_process ? options.managed_process->request().session : process_session_endpoint{});
 #endif

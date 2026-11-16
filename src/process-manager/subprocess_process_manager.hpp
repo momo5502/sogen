@@ -57,7 +57,9 @@ namespace sogen
 
         subprocess_process_manager(std::filesystem::path executable, argument_factory arguments,
                                    std::unique_ptr<host_process_launcher> launcher = create_subprocess_launcher(),
-                                   process_session_endpoint session = {});
+                                   process_session_endpoint session = {},
+                                   std::chrono::milliseconds session_timeout = std::chrono::seconds(5),
+                                   process_session::clock_source session_clock = std::chrono::steady_clock::now);
         ~subprocess_process_manager() override;
 
         subprocess_process_manager(const subprocess_process_manager&) = delete;
@@ -65,7 +67,7 @@ namespace sogen
         subprocess_process_manager(subprocess_process_manager&&) = delete;
         subprocess_process_manager& operator=(subprocess_process_manager&&) = delete;
 
-        void initialize_current_process(process_identity identity) override;
+        void initialize_current_process(process_identity identity, uint32_t initial_thread_id = 8) override;
         process_session_endpoint session_endpoint() const;
         void notify_current_process_exit(uint64_t exit_code) override;
         process_open_result open_process(uint32_t process_id) override;
@@ -73,6 +75,7 @@ namespace sogen
         process_error resume_process(managed_process process) override;
         process_error terminate_process(managed_process process, uint64_t exit_code) override;
         process_exit_status_result exit_status(managed_process process) const override;
+        process_exit_status_result poll_exit_status(managed_process process) const override;
         void wait_for_processes() override;
 
         // Ends every child process, which also ends a wait for them.
@@ -102,7 +105,7 @@ namespace sogen
 
       private:
         struct child_process;
-        using process_reference = std::variant<std::shared_ptr<child_process>, uint32_t>;
+        using process_reference = std::variant<std::shared_ptr<child_process>, std::shared_ptr<session_process>>;
 
         struct child_process_result
         {
@@ -122,6 +125,7 @@ namespace sogen
         argument_factory arguments_{};
         std::unique_ptr<host_process_launcher> launcher_{};
         mutable std::mutex mutex_{};
+        std::mutex publication_mutex_{};
         process_session session_;
         uint32_t current_process_id_{};
         bool current_process_exited_{};

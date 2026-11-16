@@ -312,16 +312,26 @@ table SessionProcess {
     exited: bool;
     exit_code: ulong;
     exit_kind: ubyte;
+    cycles: ulong;
 }
+
+enum SessionOperation : ubyte { Lookup, Reserve, Publish, Discard, Exit, Refresh }
 
 table SessionRequest {
     token: string (required);
     process_id: uint;
     update: SessionProcess;
+    operation: SessionOperation;
+    process_ids: [uint];
+    initial_thread_id: uint;
 }
 
 table SessionResponse {
     process: SessionProcess;
+    process_id: uint;
+    processes: [SessionProcess];
+    missing_process_ids: [uint];
+    error: ProcessError;
 }
 
 union MessagePayload {
