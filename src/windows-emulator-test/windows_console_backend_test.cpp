@@ -1,5 +1,6 @@
 #include "emulation_test_utils.hpp"
 #include <utils/finally.hpp>
+#include <utils/nt_handle.hpp>
 #include <utils/nt_thread.hpp>
 #include <thread>
 
@@ -13,6 +14,7 @@ namespace sogen::test
           protected:
             void SetUp() override
             {
+                ASSERT_NO_FATAL_FAILURE(this->lock_console());
                 DWORD mode{};
                 this->input = GetStdHandle(STD_INPUT_HANDLE);
                 if (!GetConsoleMode(this->input, &mode))
@@ -25,6 +27,30 @@ namespace sogen::test
                 DWORD raw_mode{};
                 ASSERT_TRUE(GetConsoleMode(this->input, &raw_mode));
                 ASSERT_EQ(0u, raw_mode & (ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT));
+            }
+
+            void TearDown() override
+            {
+                this->console.reset();
+                if (this->owns_console_mutex_)
+                {
+                    EXPECT_TRUE(ReleaseMutex(this->console_mutex_));
+                    this->owns_console_mutex_ = false;
+                }
+            }
+
+            void lock_console()
+            {
+                if (this->owns_console_mutex_)
+                {
+                    return;
+                }
+                // The parallel test runner's child processes inherit the same console input buffer and modes.
+                this->console_mutex_ = CreateMutexW(nullptr, FALSE, L"Local\\SogenConsoleBackendTests");
+                ASSERT_TRUE(this->console_mutex_);
+                const auto result = WaitForSingleObject(this->console_mutex_, INFINITE);
+                this->owns_console_mutex_ = result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
+                ASSERT_TRUE(this->owns_console_mutex_);
             }
 
             void queue(char16_t character, WORD key = 0, DWORD control = 0, WORD repeat = 1, bool down = true)
@@ -43,6 +69,10 @@ namespace sogen::test
 
             HANDLE input{};
             std::unique_ptr<console_backend> console{};
+
+          private:
+            utils::nt::handle<> console_mutex_{};
+            bool owns_console_mutex_{};
         };
 
         class WindowsConsoleTextTest : public WindowsConsoleBackendTest
@@ -50,6 +80,7 @@ namespace sogen::test
           protected:
             void SetUp() override
             {
+                ASSERT_NO_FATAL_FAILURE(this->lock_console());
                 this->original_input = GetStdHandle(STD_INPUT_HANDLE);
                 this->original_output = GetStdHandle(STD_OUTPUT_HANDLE);
                 this->native_input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
@@ -107,6 +138,7 @@ namespace sogen::test
                 {
                     FreeConsole();
                 }
+                WindowsConsoleBackendTest::TearDown();
             }
 
             std::optional<std::string> read_ready(const size_t length)

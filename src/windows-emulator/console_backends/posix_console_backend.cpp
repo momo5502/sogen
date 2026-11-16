@@ -44,19 +44,12 @@ namespace sogen
                 {
                     this->input_closed_ = false;
                 }
-                if (!this->input_.empty())
+                if (!this->input_.empty() || this->input_closed_)
                 {
                     return;
                 }
 
-                pollfd descriptor{.fd = STDIN_FILENO, .events = POLLIN, .revents = 0};
-                int poll_result{};
-                do
-                {
-                    poll_result = poll(&descriptor, 1, timeout_ms);
-                } while (poll_result < 0 && errno == EINTR);
-
-                if (poll_result <= 0 || (descriptor.revents & (POLLIN | POLLHUP)) == 0)
+                if (!this->poll_input(timeout_ms))
                 {
                     return;
                 }
@@ -75,17 +68,14 @@ namespace sogen
                     }
                     else
                     {
-                        this->input_closed_ = bytes_read == 0;
+                        if (bytes_read == 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
+                        {
+                            this->input_closed_ = true;
+                        }
                         return;
                     }
 
-                    pollfd pending{.fd = STDIN_FILENO, .events = POLLIN, .revents = 0};
-                    do
-                    {
-                        poll_result = poll(&pending, 1, 0);
-                    } while (poll_result < 0 && errno == EINTR);
-
-                    if (poll_result <= 0 || (pending.revents & POLLIN) == 0)
+                    if (!this->poll_input(0))
                     {
                         return;
                     }
@@ -93,6 +83,21 @@ namespace sogen
             }
 
           private:
+            bool poll_input(const int timeout_ms)
+            {
+                pollfd descriptor{.fd = STDIN_FILENO, .events = POLLIN, .revents = 0};
+                int result{};
+                do
+                {
+                    result = poll(&descriptor, 1, timeout_ms);
+                } while (result < 0 && errno == EINTR);
+                if (result < 0 || (descriptor.revents & (POLLNVAL | POLLERR)) != 0)
+                {
+                    this->input_closed_ = true;
+                }
+                return result > 0 && (descriptor.revents & (POLLIN | POLLHUP)) != 0;
+            }
+
             void configure_terminal(const console_input_mode& mode)
             {
                 if (!isatty(STDIN_FILENO))

@@ -887,8 +887,13 @@ namespace sogen
                                       const uint64_t information = 0)
             {
                 const auto& context = read.context;
-                context.io_status_block.write({.Status = status, .Information = information});
-                write_io_status(context, status);
+                const IO_STATUS_BLOCK<EmulatorTraits<Emu64>> result{.Status = status, .Information = information};
+                context.io_status_block.try_write(result);
+                if (context.wow64_io_status_block)
+                {
+                    context.wow64_io_status_block.try_write(
+                        {.Status = status, .Information = static_cast<EmulatorTraits<Emu32>::ULONG_PTR>(information)});
+                }
                 if (auto* event = win_emu.process.get_object_as<sogen::event>(context.event))
                 {
                     event->set_signaled(true);
@@ -907,7 +912,7 @@ namespace sogen
                 }
                 else
                 {
-                    queue_io_completion(win_emu, context);
+                    queue_io_completion(win_emu, context, result);
                 }
                 win_emu.wake_idle_vcpu();
             }

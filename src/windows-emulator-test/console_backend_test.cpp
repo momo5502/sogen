@@ -6,6 +6,7 @@
 
 #include <backend_selection.hpp>
 #include <io_device.hpp>
+#include <devices/console.hpp>
 #include <syscall_utils.hpp>
 #include <windows_emulator.hpp>
 #include <utils/finally.hpp>
@@ -312,6 +313,22 @@ namespace sogen::test
                                                        {this->emu->memory, this->storage + 0x300 + offset}, this->storage + 0x200 + offset,
                                                        length, {this->emu->memory}, {this->emu->memory});
                 });
+            }
+
+            NTSTATUS read_with_status_blocks(const uint64_t native_status, const uint64_t wow64_status, const handle completion_event,
+                                             const uint64_t apc = 0)
+            {
+                io_device_context request{this->emu->memory};
+                request.source_handle = STDIN_HANDLE;
+                request.io_status_block.set_address(native_status);
+                request.wow64_io_status_block.set_address(wow64_status);
+                request.event = this->emu->process.reference_of(completion_event);
+                request.apc_routine = apc;
+                request.apc_context = 0x1234;
+                request.output_buffer = this->storage + 0x200;
+                request.output_buffer_length = 16;
+                request.vcpu = &this->emu->vcpu(0);
+                return this->emu->synchronize([&] { return read_console_input(*this->emu, request); });
             }
 
             syscall_context context()
@@ -631,6 +648,86 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, this->status());
         EXPECT_EQ(0u, this->transferred());
         EXPECT_EQ(1u, this->reader->pending_apcs.size());
+    }
+
+    TEST_F(CooperativeConsoleReadTest, UnmappedStatusBlocksDoNotPreventEventAndApcCompletion)
+    {
+        for (const unsigned unmapped : {1u, 2u, 3u})
+        {
+            SCOPED_TRACE(unmapped);
+            const auto native = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            const auto wow64 =
+                this->emu->memory.allocate_memory(0x1000, memory_permission::read_write, false, DEFAULT_ALLOCATION_ADDRESS_32BIT);
+            const auto event = this->emu->process.events.store(sogen::event{});
+            this->reader->pending_apcs.clear();
+            ASSERT_EQ(STATUS_PENDING, this->read_with_status_blocks(native, wow64, event, 0x5678));
+            if (unmapped & 1u)
+            {
+                ASSERT_TRUE(this->emu->memory.release_memory(native, 0));
+            }
+            if (unmapped & 2u)
+            {
+                ASSERT_TRUE(this->emu->memory.release_memory(wow64, 0));
+            }
+            this->input->queue("ab");
+            ASSERT_NO_THROW(this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); }));
+            EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
+            ASSERT_EQ(1u, this->reader->pending_apcs.size());
+            const auto& apc = this->reader->pending_apcs.front();
+            EXPECT_EQ(0x5678u, apc.apc_routine);
+            EXPECT_EQ(0x1234u, apc.apc_argument1);
+            EXPECT_EQ(wow64, apc.apc_argument2);
+            EXPECT_FALSE(this->emu->process.devices.get(this->console_handle)->has_pending_io(this->reader->id));
+            EXPECT_EQ('a', this->emu->memory.read_memory<char>(this->storage + 0x200));
+            EXPECT_EQ('b', this->emu->memory.read_memory<char>(this->storage + 0x201));
+            if (!(unmapped & 1u))
+            {
+                const auto block = this->emu->memory.read_memory<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>(native);
+                EXPECT_EQ(STATUS_SUCCESS, block.Status);
+                EXPECT_EQ(2u, block.Information);
+            }
+            if (!(unmapped & 2u))
+            {
+                const auto block = this->emu->memory.read_memory<IO_STATUS_BLOCK<EmulatorTraits<Emu32>>>(wow64);
+                EXPECT_EQ(STATUS_SUCCESS, block.Status);
+                EXPECT_EQ(2u, block.Information);
+            }
+        }
+    }
+
+    TEST_F(CooperativeConsoleReadTest, CompletionPacketsUseResultAfterStatusBlocksAreUnmapped)
+    {
+        const auto port = this->emu->process.io_completions.store(io_completion{});
+        ASSERT_EQ(STATUS_SUCCESS, this->associate(this->console_handle, port));
+        for (const bool eof : {false, true})
+        {
+            SCOPED_TRACE(eof);
+            const auto native = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            const auto wow64 =
+                this->emu->memory.allocate_memory(0x1000, memory_permission::read_write, false, DEFAULT_ALLOCATION_ADDRESS_32BIT);
+            const auto event = this->emu->process.events.store(sogen::event{});
+            ASSERT_EQ(STATUS_PENDING, this->read_with_status_blocks(native, wow64, event));
+            ASSERT_TRUE(this->emu->memory.release_memory(native, 0));
+            ASSERT_TRUE(this->emu->memory.release_memory(wow64, 0));
+            if (eof)
+            {
+                this->input->close_input();
+            }
+            else
+            {
+                this->input->queue("ab");
+            }
+            ASSERT_NO_THROW(this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); }));
+            EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
+            EXPECT_FALSE(this->emu->process.devices.get(this->console_handle)->has_pending_io(this->reader->id));
+            const auto& queue = this->emu->process.io_completions.get(port)->queue;
+            ASSERT_EQ(eof ? 2u : 1u, queue.size());
+            const auto& packet = queue.back();
+            EXPECT_EQ(0xABCDu, packet.key_context);
+            EXPECT_EQ(0x1234u, packet.apc_context);
+            EXPECT_EQ(STATUS_SUCCESS, packet.io_status_block.Status);
+            EXPECT_EQ(eof ? 0u : 2u, packet.io_status_block.Information);
+        }
     }
 
     TEST_F(CooperativeConsoleReadTest, ByteReadSurvivesSnapshotRestore)

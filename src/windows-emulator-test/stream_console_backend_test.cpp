@@ -1,4 +1,5 @@
 #include "emulation_test_utils.hpp"
+#include <utils/finally.hpp>
 
 #if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)
 #include <cstdio>
@@ -12,7 +13,7 @@ namespace sogen::test
 {
     namespace
     {
-        class ConsoleStreamTest : public testing::Test
+        class ConsolePipeTest : public testing::Test
         {
           protected:
             void SetUp() override
@@ -33,7 +34,7 @@ namespace sogen::test
                 this->output_ = descriptors[1];
                 ASSERT_EQ(STDIN_FILENO, dup2(this->input_, STDIN_FILENO));
 #endif
-                this->console = create_stream_console_backend();
+                this->console = this->create_backend();
             }
 
             void TearDown() override
@@ -91,6 +92,8 @@ namespace sogen::test
 
             std::unique_ptr<console_backend> console{};
 
+            virtual std::unique_ptr<console_backend> create_backend() = 0;
+
 #ifndef OS_WINDOWS
             void use_write_end_as_stdin()
             {
@@ -112,6 +115,26 @@ namespace sogen::test
             std::ios_base::iostate original_stream_state_{};
 #endif
         };
+
+        class ConsoleStreamTest : public ConsolePipeTest
+        {
+          protected:
+            std::unique_ptr<console_backend> create_backend() override
+            {
+                return create_stream_console_backend();
+            }
+        };
+
+#ifndef OS_WINDOWS
+        class PosixConsoleBackendTest : public ConsolePipeTest
+        {
+          protected:
+            std::unique_ptr<console_backend> create_backend() override
+            {
+                return create_posix_console_backend();
+            }
+        };
+#endif
     }
 
     TEST_F(ConsoleStreamTest, PipeDistinguishesPendingInputFromEof)
@@ -149,6 +172,53 @@ namespace sogen::test
     }
 
 #ifndef OS_WINDOWS
+    TEST_F(PosixConsoleBackendTest, ClosedStdinCompletesWithEof)
+    {
+        ASSERT_EQ(0, close(STDIN_FILENO));
+        EXPECT_EQ(std::optional<std::string>{""}, this->console->try_read_input(16));
+        EXPECT_TRUE(this->console->input_closed());
+    }
+
+    TEST_F(PosixConsoleBackendTest, PipeErrorCompletesWithEof)
+    {
+        ASSERT_NO_FATAL_FAILURE(this->use_write_end_as_stdin());
+        EXPECT_EQ(std::optional<std::string>{""}, this->console->try_read_input(16));
+        EXPECT_TRUE(this->console->input_closed());
+    }
+
+#ifdef __linux__
+    TEST_F(PosixConsoleBackendTest, ReadFailureCompletesWithEof)
+    {
+        const auto directory = open("/", O_RDONLY | O_DIRECTORY);
+        ASSERT_GE(directory, 0);
+        const auto cleanup = utils::finally([directory] { close(directory); });
+        ASSERT_EQ(STDIN_FILENO, dup2(directory, STDIN_FILENO));
+        EXPECT_EQ(std::optional<std::string>{""}, this->console->try_read_input(16));
+        EXPECT_TRUE(this->console->input_closed());
+    }
+#endif
+
+    TEST_F(PosixConsoleBackendTest, OpenPipeWaitsForMoreInput)
+    {
+        EXPECT_FALSE(this->console->try_read_input(16));
+        EXPECT_FALSE(this->console->input_closed());
+        ASSERT_NO_FATAL_FAILURE(this->write("q"));
+        EXPECT_EQ(std::optional<std::string>{"q"}, this->console->try_read_input(16));
+        EXPECT_FALSE(this->console->try_read_input(16));
+        EXPECT_FALSE(this->console->input_closed());
+    }
+
+    TEST_F(PosixConsoleBackendTest, PipeDrainsBufferedInputBeforeEof)
+    {
+        ASSERT_NO_FATAL_FAILURE(this->write("abc"));
+        this->close_output();
+        EXPECT_EQ(std::optional<std::string>{"ab"}, this->console->try_read_input(2));
+        EXPECT_FALSE(this->console->input_closed());
+        EXPECT_EQ(std::optional<std::string>{"c"}, this->console->try_read_input(16));
+        EXPECT_EQ(std::optional<std::string>{""}, this->console->try_read_input(16));
+        EXPECT_TRUE(this->console->input_closed());
+    }
+
     TEST_F(ConsoleStreamTest, RuntimeBufferedInputIsDrainedBeforeEof)
     {
         std::string text(512, '\0');
