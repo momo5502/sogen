@@ -108,6 +108,28 @@ namespace sogen::test
         EXPECT_EQ(machine->read_instruction_pointer(), code_address + 17);
     }
 
+    TEST_F(X8664BackendTest, XsaveAndXrstorRestoreSseRegisters)
+    {
+        const std::array<uint64_t, 2> value{0x0123456789ABCDEF, 0xFEDCBA9876543210};
+        machine->write_memory(data_address, value.data(), sizeof(value));
+        machine->reg(x86_register::rbx, data_address);
+        machine->reg(x86_register::rsi, data_address + 0x100);
+        machine->reg(x86_register::rdi, data_address + 0x800);
+        // Read XCR0, save XMM0, clear it, then restore it from the guest's aligned XSAVE area.
+        load_code(std::array<uint8_t, 40>{
+            0x31, 0xC9, 0x0F, 0x01, 0xD0, 0x89, 0x07, 0xF3, 0x0F, 0x6F, 0x03, 0xB8, 0x03, 0x00, 0x00, 0x00, 0x31, 0xD2, 0x0F, 0xAE,
+            0x26, 0x66, 0x0F, 0xEF, 0xC0, 0xB8, 0x03, 0x00, 0x00, 0x00, 0x0F, 0xAE, 0x2E, 0xF3, 0x0F, 0x7F, 0x47, 0x10, 0x0F, 0x05,
+        });
+        stop_on_syscall();
+
+        machine->start();
+
+        EXPECT_EQ(machine->read_instruction_pointer(), code_address + 40);
+        EXPECT_EQ(machine->read_memory<uint32_t>(data_address + 0x800) & 3u, 3u);
+        EXPECT_EQ(machine->read_memory<uint64_t>(data_address + 0x810), value[0]);
+        EXPECT_EQ(machine->read_memory<uint64_t>(data_address + 0x818), value[1]);
+    }
+
     TEST_F(X8664BackendTest, CpuidHookSuppliesTheResult)
     {
         // mov eax, 0x40000000; cpuid; mov [rdi], rax; mov [rdi+8], rbx; syscall

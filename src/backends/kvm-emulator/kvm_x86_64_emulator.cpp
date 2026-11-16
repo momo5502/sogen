@@ -1,6 +1,7 @@
 #define KVM_EMULATOR_IMPL
 #include "kvm_x86_64_emulator.hpp"
 #include "kvm_x86_64_common.hpp"
+#include "kvm_exception_context.hpp"
 
 #include <fcntl.h>
 #include <linux/kvm.h>
@@ -55,6 +56,7 @@ namespace sogen::kvm
         using detail::instruction_hook_entry;
         using detail::internal_page_table_base;
         using detail::is_page_aligned;
+        using detail::make_segment;
         using detail::mapped_page;
         using detail::memory_access_hook_entry;
         using detail::mmio_region;
@@ -408,7 +410,6 @@ namespace sogen::kvm
             uint64_t sfmask{};
         };
 
-        kvm_segment make_segment(uint16_t selector, bool is_code, bool is_user);
         register_mapping map_register(x86_register reg);
 
         class kvm_x86_64_emulator final : public x86_64_emulator
@@ -1460,6 +1461,28 @@ namespace sogen::kvm
                 cpuid->nent = cpuid_entries;
                 check_ioctl_result(::ioctl(this->kvm_fd_.get(), KVM_GET_SUPPORTED_CPUID, cpuid), "KVM_GET_SUPPORTED_CPUID");
                 check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_CPUID2, cpuid), "KVM_SET_CPUID2");
+                for (uint32_t i = 0; i < cpuid->nent; ++i)
+                {
+                    const auto& entry = cpuid->entries[i];
+                    if (entry.function == 0xD && entry.index == 0 && (entry.eax & 3) == 3)
+                    {
+                        // Keep enabled components within the fixed-size register snapshot's x87/SSE/AVX layout.
+                        this->xcr0_mask_ = entry.eax & 7;
+                        break;
+                    }
+                }
+                if (this->xcr0_mask_)
+                {
+                    if (::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_XCRS) <= 0)
+                    {
+                        throw std::runtime_error("KVM does not support the required KVM_CAP_XCRS extension");
+                    }
+                    kvm_xcrs xcrs{};
+                    xcrs.nr_xcrs = 1;
+                    xcrs.xcrs[0].xcr = 0;
+                    xcrs.xcrs[0].value = this->xcr0_mask_;
+                    check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_XCRS, &xcrs), "KVM_SET_XCRS");
+                }
             }
 
             void initialize_virtual_processor_state()
@@ -1471,8 +1494,8 @@ namespace sogen::kvm
                 sregs.es = make_segment(0x2B, false, true);
                 sregs.fs = make_segment(0x53, false, true);
                 sregs.gs = make_segment(0x2B, false, true);
-                sregs.cr0 = 0x80000033ull; // PE | MP | ET | NE | PG
-                sregs.cr4 = 0x620ull;      // PAE | OSFXSR | OSXMMEXCPT
+                sregs.cr0 = 0x80000033ull;                                    // PE | MP | ET | NE | PG
+                sregs.cr4 = 0x620ull | (this->xcr0_mask_ ? (1ull << 18) : 0); // PAE | OSFXSR | OSXMMEXCPT | OSXSAVE
                 sregs.cr3 = this->pml4_gpa_;
                 sregs.efer = (1ull << 0) | (1ull << 8) | (1ull << 10); // SCE | LME | LMA
                 this->set_sregs(sregs);
@@ -2145,90 +2168,20 @@ namespace sogen::kvm
                     frame_address += sizeof(uint64_t);
                 }
 
-                struct exception_frame
-                {
-                    uint64_t rip;
-                    uint64_t cs;
-                    uint64_t rflags;
-                    uint64_t rsp;
-                    uint64_t ss;
-                } frame{};
-
+                detail::exception_frame frame{};
                 this->read_memory(frame_address, &frame, sizeof(frame));
 
-                // A 32-bit compatibility-mode (WOW64) fault must be resumed through a real IRETQ: KVM_SET_SREGS
-                // applies segment descriptors but cannot switch the vCPU out of 64-bit mode. 64-bit contexts
-                // are resumed directly from the reconstructed state below.
-                const bool compat_mode = (static_cast<uint16_t>(frame.cs) | 3u) != 0x33;
-
-                // Undo the exception entry so the emulator's handlers observe the faulting context, and
-                // a resumed instruction re-executes from where it faulted.
-                regs.rip = frame.rip;
-                if (vector == breakpoint_interrupt)
-                {
-                    // int3 is a trap: the CPU pushes the address *after* the 0xCC. The emulator's
-                    // exception dispatch (and Windows) reports the breakpoint at the int3 itself and
-                    // expects RIP to point there (e.g. to recognise the int-2Dh debug-service pattern),
-                    // so rewind one byte. Instruction-precise backends naturally report this address.
-                    regs.rip -= 1;
-                }
-                regs.rsp = frame.rsp;
-                regs.rflags = frame.rflags;
                 this->set_regs(regs);
-
-                auto sregs = this->get_sregs();
-                if (!compat_mode)
+                this->set_sregs(this->get_sregs());
+                // Compatibility selectors are exposed only through the cache while callbacks run.
+                const auto result =
+                    detail::dispatch_exception_context(this->regs_cache_, this->sregs_cache_, frame, vector, frame_address,
+                                                       this->iretq_trampoline_, [&] { return this->handle_exception(vector, error_code); });
+                if (result.return_frame)
                 {
-                    sregs.cs = make_segment(static_cast<uint16_t>(frame.cs), true, (frame.cs & 3) == 3);
-                    sregs.ss = make_segment(static_cast<uint16_t>(frame.ss), false, (frame.ss & 3) == 3);
+                    this->write_memory(frame_address, &*result.return_frame, sizeof(*result.return_frame));
                 }
-                // Refresh DS/ES from their selectors too. A 64-bit `mov ds` on this host can leave a G=0
-                // (1 MB) cached descriptor; once compatibility mode (WOW64) enforces the limit, a data access
-                // above 1 MB faults. The CPU does not save DS/ES in the exception frame, so rebuild them from
-                // the current selectors as flat 4 GB segments, matching what the GDT describes.
-                if (sregs.ds.selector & ~3u)
-                {
-                    sregs.ds = make_segment(sregs.ds.selector, false, (sregs.ds.selector & 3) == 3);
-                }
-                if (sregs.es.selector & ~3u)
-                {
-                    sregs.es = make_segment(sregs.es.selector, false, (sregs.es.selector & 3) == 3);
-                }
-                this->set_sregs(sregs);
-
-                if (!this->handle_exception(vector, error_code))
-                {
-                    return false;
-                }
-
-                if (compat_mode)
-                {
-                    // Re-arm the exception frame with the (possibly handler-adjusted) register state and return
-                    // through the CPL0 IRETQ trampoline, which loads CS from the GDT and switches the vCPU back
-                    // into 32-bit compatibility mode. CS/SS stay at the kernel stub segments so the trampoline
-                    // runs at CPL0; the IRETQ transitions to the CPL3 user context. DS/ES (set above) persist.
-                    const auto resumed = this->get_regs();
-                    const exception_frame iret_frame{
-                        .rip = resumed.rip,
-                        .cs = frame.cs,
-                        .rflags = resumed.rflags,
-                        .rsp = resumed.rsp,
-                        .ss = frame.ss,
-                    };
-                    this->write_memory(frame_address, &iret_frame, sizeof(iret_frame));
-
-                    auto trampoline = resumed;
-                    trampoline.rsp = frame_address;
-                    trampoline.rip = this->iretq_trampoline_;
-                    // Clear TF for the trampoline itself: if the faulting context had single-stepping
-                    // enabled, each trampoline instruction would raise a #DB before IRETQ runs, and since
-                    // every vector shares IST1 that nested trap would overwrite the iret_frame staged
-                    // above. IRETQ still restores the guest's real TF from iret_frame.rflags.
-                    trampoline.rflags &= ~(1ULL << 8);
-                    this->set_regs(trampoline);
-                }
-
-                return true;
+                return result.handled;
             }
 
             void clear_pending_exception_state()
@@ -2607,6 +2560,7 @@ namespace sogen::kvm
             file_descriptor vcpu_fd_{};
             size_t vcpu_mmap_size_ = 0;
             kvm_run* run_ = nullptr;
+            uint64_t xcr0_mask_ = 0;
 
             mutable kvm_regs regs_cache_{};
             mutable kvm_sregs sregs_cache_{};
@@ -2661,30 +2615,6 @@ namespace sogen::kvm
             std::map<uint64_t, mmio_region> mmio_regions_{};
             instruction_hook_entry* syscall_hook_ = nullptr;
         };
-
-        kvm_segment make_segment(const uint16_t selector, const bool is_code, const bool is_user)
-        {
-            // A 64-bit code segment runs in long mode (L=1, D=0); 32-bit compatibility-mode code (the WOW64
-            // selector 0x23) and all data segments use D=1, L=0. Deriving this from the selector is required
-            // when reconstructing a faulting WOW64 context: hardcoding L=1 on a 32-bit code selector re-enters
-            // the 32-bit code in 64-bit mode and misdecodes it. Windows x64 uses 0x33 for 64-bit user code.
-            const bool long_mode_code = is_code && ((selector | 3) == 0x33);
-
-            kvm_segment segment{};
-            segment.base = 0;
-            segment.limit = 0xFFFFF;
-            segment.selector = selector;
-            segment.type = is_code ? 0xB : 0x3;
-            segment.present = 1;
-            segment.dpl = is_user ? 3 : 0;
-            segment.db = long_mode_code ? 0 : 1;
-            segment.s = 1;
-            segment.l = long_mode_code ? 1 : 0;
-            segment.g = 1;
-            segment.avl = 0;
-            segment.unusable = 0;
-            return segment;
-        }
 
         register_mapping map_register(const x86_register reg)
         {

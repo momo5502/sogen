@@ -10,7 +10,25 @@ list(REMOVE_ITEM SRC_FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/arm64_backend_test.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/x86_64_backend_test.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/fex_hvf_spike_test.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/kvm_exception_context_test.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/wow64_emulation_test.cpp"
 )
+
+add_executable(wow64-emulation-test wow64_emulation_test.cpp)
+target_link_libraries(wow64-emulation-test PRIVATE windows-emulator backend-selection gtest gtest_main)
+add_test(NAME wow64-emulation-test COMMAND wow64-emulation-test)
+set_tests_properties(wow64-emulation-test PROPERTIES TIMEOUT 60)
+sogen_targets_set_folder("tests" wow64-emulation-test)
+sogen_enable_hypervisor_entitlement(wow64-emulation-test)
+
+if(TARGET kvm-emulator)
+  add_executable(kvm-exception-context-test kvm_exception_context_test.cpp)
+  target_include_directories(kvm-exception-context-test PRIVATE "${PROJECT_SOURCE_DIR}/src/backends/kvm-emulator")
+  target_link_libraries(kvm-exception-context-test PRIVATE gtest gtest_main)
+  add_test(NAME kvm-exception-context-test COMMAND kvm-exception-context-test)
+  set_tests_properties(kvm-exception-context-test PROPERTIES TIMEOUT 30)
+  sogen_targets_set_folder("tests" kvm-exception-context-test)
+endif()
 
 if(SOGEN_ENABLE_FEX AND SOGEN_ENABLE_HVF)
   add_executable(fex-hvf-spike-test fex_hvf_spike_test.cpp)
