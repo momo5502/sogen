@@ -400,7 +400,9 @@ namespace sogen::gdb_stub
                              ";qXfer:libraries:read+"
                              ";qXfer:exec-file:read+"
                              ";qXfer:threads:read+"
-                             ";binary-upload+");
+                             ";binary-upload+"
+                             ";swbreak+"
+                             ";hwbreak+");
 
                 c.connection.send_reply(reply);
             }
@@ -628,6 +630,27 @@ namespace sogen::gdb_stub
             c.connection.send_reply(res ? "OK" : "E01");
         }
 
+        std::string get_stop_reason(const stop_reason& reason)
+        {
+            const auto address = utils::string::to_hex_number(reason.address);
+
+            switch (reason.type)
+            {
+            case breakpoint_type::software:
+                return "swbreak:;";
+            case breakpoint_type::hardware_exec:
+                return "hwbreak:;";
+            case breakpoint_type::hardware_write:
+                return "watch:" + address + ";";
+            case breakpoint_type::hardware_read:
+                return "rwatch:" + address + ";";
+            case breakpoint_type::hardware_read_write:
+                return "awatch:" + address + ";";
+            default:
+                return {};
+            }
+        }
+
         void signal_stop(const debugging_context& c)
         {
             const auto exit_status = c.handler.get_exit_code();
@@ -641,6 +664,11 @@ namespace sogen::gdb_stub
             const auto hex_id = utils::string::to_hex_number(id);
 
             std::string reply = "T05";
+
+            if (const auto reason = c.handler.consume_stop_reason())
+            {
+                reply += get_stop_reason(*reason);
+            }
 
             if (c.handler.should_signal_library())
             {
