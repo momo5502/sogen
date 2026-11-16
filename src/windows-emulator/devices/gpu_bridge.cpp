@@ -3085,7 +3085,7 @@ namespace sogen
                 }
 
                 uint64_t layout = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_pipeline_layout(request.device, request.push_constant_stages,
+                const int32_t result = this->vulkan_.create_pipeline_layout(request.device, request.flags, request.push_constant_stages,
                                                                             request.push_constant_size, set_layouts, layout);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = layout});
             }
@@ -3212,6 +3212,17 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                const size_t libraries_bytes = static_cast<size_t>(request.library_count) * sizeof(gpu_bridge::object_id);
+                if (libraries_bytes > trailer.size() - spec_cursor)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                std::vector<uint64_t> libraries(request.library_count);
+                if (request.library_count > 0)
+                {
+                    std::memcpy(libraries.data(), trailer.data() + spec_cursor, libraries_bytes);
+                }
+
                 const vulkan_host::depth_state depth{.test_enable = request.depth_test_enable,
                                                      .write_enable = request.depth_write_enable,
                                                      .compare_op = request.depth_compare_op};
@@ -3254,12 +3265,39 @@ namespace sogen
                 };
 
                 uint64_t pipeline = gpu_bridge::null_object;
+                const vulkan_host::graphics_pipeline_desc desc{
+                    .device = request.device,
+                    .pipeline_cache = request.pipeline_cache,
+                    .render_pass = request.render_pass,
+                    .subpass = request.subpass,
+                    .pipeline_layout = request.pipeline_layout,
+                    .vertex_shader = vertex_shader,
+                    .fragment_shader = fragment_shader,
+                    .flags = request.flags,
+                    .library_parts = request.library_parts,
+                    .libraries = libraries,
+                    .width = request.width,
+                    .height = request.height,
+                    .bindings = bindings,
+                    .attributes = attributes,
+                    .divisors = divisors,
+                    .depth = depth,
+                    .color_formats = color_formats,
+                    .depth_format = request.depth_format,
+                    .stencil_format = request.stencil_format,
+                    .rasterization_samples = request.rasterization_samples,
+                    .primitive_topology = request.primitive_topology,
+                    .primitive_restart_enable = request.primitive_restart_enable,
+                    .rasterization_stream = request.rasterization_stream,
+                    .rasterization_stream_flags = request.rasterization_stream_flags,
+                    .dynamic_states = dynamic_states,
+                    .vs_spec = vs_spec,
+                    .fs_spec = fs_spec,
+                    .blend_attachments = blend_attachments,
+                };
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
-                    request.device, request.pipeline_cache, request.render_pass, request.subpass, request.pipeline_layout, vertex_shader,
-                    fragment_shader, request.flags, request.width, request.height, bindings, attributes, divisors, depth, color_formats,
-                    request.depth_format, request.stencil_format, request.rasterization_samples, request.primitive_topology,
-                    request.primitive_restart_enable, request.rasterization_stream, request.rasterization_stream_flags, dynamic_states,
-                    vs_spec, fs_spec, blend_attachments, pipeline);
+                    desc, [&win_emu](const std::function<int32_t()>& compile) { return win_emu.run_without_kernel_lock(compile); },
+                    pipeline);
                 if (result != 0)
                 {
                     win_emu.log.error(
