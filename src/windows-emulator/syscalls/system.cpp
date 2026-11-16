@@ -519,15 +519,19 @@ namespace sogen
                     return STATUS_DATATYPE_MISALIGNMENT;
                 }
 
-                if (!is_writable_range(c.win_emu.memory, system_information, system_information_length))
+                if (const auto status = probe_range(c.win_emu, system_information, system_information_length, memory_permission::write);
+                    status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
                 }
             }
 
-            if (return_length && !is_writable_range(c.win_emu.memory, return_length.value(), sizeof(uint32_t)))
+            if (const auto status = return_length
+                                        ? probe_range(c.win_emu, return_length.value(), sizeof(uint32_t), memory_permission::write)
+                                        : STATUS_SUCCESS;
+                status != STATUS_SUCCESS)
             {
-                return STATUS_ACCESS_VIOLATION;
+                return status;
             }
 
             if (system_information_length < minimum_size)

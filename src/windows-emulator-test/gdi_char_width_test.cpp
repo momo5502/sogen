@@ -220,14 +220,26 @@ namespace sogen::test
         EXPECT_EQ(FALSE, this->abc_widths(5, buffer, chars));
     }
 
+    // Copying the character list faults on the guard page, which loses its guard as on Windows: the next call on the same
+    // list finds an ordinary page (NtGdiGetCharWidthW and NtGdiGetCharABCWidthsW on the host).
     TEST_F(GdiCharWidthTest, CharacterListOnAGuardPageFails)
     {
         const auto buffer = this->first_page_committed(1);
         const auto chars = this->first_page_committed(1);
-        ASSERT_TRUE(this->emu->memory.protect_memory(chars, page_size,
-                                                     nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard)));
+        const auto guard = [&] {
+            return this->emu->memory.protect_memory(chars, page_size,
+                                                    nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard));
+        };
+
+        ASSERT_TRUE(guard());
         EXPECT_EQ(FALSE, this->widths(5, buffer, chars));
-        EXPECT_EQ(FALSE, this->abc_widths(5, buffer, chars));
         EXPECT_TRUE(this->is_untouched(buffer, page_size));
+        EXPECT_FALSE(this->emu->memory.is_guard_page(chars));
+        EXPECT_EQ(TRUE, this->abc_widths(5, buffer, chars));
+
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(FALSE, this->abc_widths(5, buffer, chars));
+        EXPECT_FALSE(this->emu->memory.is_guard_page(chars));
+        EXPECT_EQ(TRUE, this->widths(5, buffer, chars));
     }
 }

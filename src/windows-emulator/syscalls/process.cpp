@@ -42,7 +42,7 @@ namespace sogen
 
             NTSTATUS probe_output_buffer(const syscall_context& c, const uint64_t buffer, const uint32_t length)
             {
-                return is_writable_range(c.win_emu.memory, buffer, length) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
+                return probe_range(c.win_emu, buffer, length, memory_permission::write);
             }
 
             template <typename T, typename Fill>

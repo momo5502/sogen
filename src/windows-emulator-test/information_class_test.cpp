@@ -241,6 +241,24 @@ namespace sogen::test
         EXPECT_EQ(fields.read(0), fields.read(1));
     }
 
+    // The output's probe takes a guard page's guard and fails the query with STATUS_GUARD_PAGE_VIOLATION; the next query
+    // finds an ordinary page (19041 on the host).
+    TEST_F(InformationClassTest, QueryProcessOutputOnAGuardPageFailsWithItsGuard)
+    {
+        constexpr uint32_t io_counters_size = 6 * sizeof(uint64_t);
+        const auto guarded = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto guard = [&] {
+            return this->emu->memory.protect_memory(guarded, 0x1000,
+                                                    nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard));
+        };
+
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION,
+                  this->query_process(CURRENT_PROCESS, ProcessIoCounters, {.address = guarded, .length = io_counters_size}));
+        EXPECT_EQ(STATUS_SUCCESS,
+                  this->query_process(CURRENT_PROCESS, ProcessIoCounters, {.address = guarded, .length = io_counters_size}));
+    }
+
     TEST_F(InformationClassTest, SetProcessRejectsClassesPastTheLastOneBeforeLookingAtTheHandle)
     {
         for (const uint32_t info_class : {0x74u, 0x7FFFu, 0xFFFFFFFFu})

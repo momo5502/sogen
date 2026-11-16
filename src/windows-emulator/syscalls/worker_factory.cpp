@@ -584,8 +584,8 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            if (const auto status =
-                    io_completion_wait::probe_completion_entries(c.win_emu.memory, mini_packets.value(), count, packets_returned.value());
+            if (const auto status = io_completion_wait::probe_completion_entries(c.win_emu.memory, c.win_emu.active_thread(),
+                                                                                 mini_packets.value(), count, packets_returned.value());
                 status != STATUS_SUCCESS)
             {
                 return status;
@@ -611,7 +611,8 @@ namespace sogen
             {
                 // A worker taking work makes sure another one is coming for whatever is still queued, or for what comes next.
                 check_for_more_work(c.win_emu, *factory);
-                return io_completion_wait::write_entries(c.win_emu.memory, mini_packets.value(), packets_returned.value(), messages);
+                return io_completion_wait::write_entries(c.win_emu.memory, c.win_emu.active_thread(), mini_packets.value(),
+                                                         packets_returned.value(), messages);
             }
 
             // NtWaitForWorkViaWorkerFactory keeps the count in a local and stores it only when it succeeds (19041): nothing is

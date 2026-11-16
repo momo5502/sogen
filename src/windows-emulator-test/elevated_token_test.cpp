@@ -1185,6 +1185,24 @@ namespace sogen::test
                   this->call_arguments({.privilege_set = read_only_output}, generic_read, CURRENT_PROCESS_TOKEN, 0));
     }
 
+    // A guard page under a probe or a copy loses its guard and ends the call with STATUS_GUARD_PAGE_VIOLATION, as the kernel's
+    // own access to it does; the next call finds an ordinary page (19041 on the host).
+    TEST_P(ElevatedTokenTest, ProbesAndCopiesTakeTheGuardOfAGuardPage)
+    {
+        const auto guarded = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+        const auto guard = [&] {
+            return this->emu->memory.protect_memory(guarded, 0x1000,
+                                                    nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard));
+        };
+
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION, this->call_arguments({.granted = guarded}, generic_read));
+        EXPECT_EQ(STATUS_GENERIC_NOT_MAPPED, this->call_arguments({.granted = guarded}, generic_read));
+        ASSERT_TRUE(guard());
+        EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION, this->call_arguments({.mapping = guarded}, generic_read));
+        EXPECT_FALSE(this->emu->memory.is_guard_page(guarded));
+    }
+
     INSTANTIATE_TEST_SUITE_P(Elevation, ElevatedTokenTest, testing::Values(false, true),
                              [](const testing::TestParamInfo<bool>& info) { return info.param ? "Elevated" : "Default"; });
 }

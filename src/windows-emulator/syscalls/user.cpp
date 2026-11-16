@@ -2394,7 +2394,7 @@ namespace sogen
 
         bool write_registered_device_count(const syscall_context& c, const emulator_pointer device_count, const uint32_t count)
         {
-            return is_writable_range(c.win_emu.memory, device_count, sizeof(count)) &&
+            return is_writable_range(c.win_emu, device_count, sizeof(count)) &&
                    c.win_emu.memory.try_write_memory(device_count, &count, sizeof(count));
         }
 
@@ -2439,7 +2439,7 @@ namespace sogen
                 return failed;
             }
 
-            if (!is_writable_range(c.win_emu.memory, devices, static_cast<uint64_t>(capacity) * sizeof(RAWINPUTDEVICE64)))
+            if (!is_writable_range(c.win_emu, devices, static_cast<uint64_t>(capacity) * sizeof(RAWINPUTDEVICE64)))
             {
                 set_guest_last_error(c, error_noaccess);
                 return failed;
@@ -3248,7 +3248,7 @@ namespace sogen
                     return true;
                 }
 
-                return is_writable_range(c.win_emu.memory, string.Buffer, (cursor_name_length(string, name) + 1) * sizeof(char16_t));
+                return is_writable_range(c.win_emu, string.Buffer, (cursor_name_length(string, name) + 1) * sizeof(char16_t));
             }
 
             // Length and MaximumLength count characters here: user32 sizes its WCHAR buffers with them.
@@ -7217,7 +7217,7 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             };
 
-            if (!is_writable_range(c.win_emu.memory, num_path_array_elements.value(), sizeof(UINT32)))
+            if (!is_writable_range(c.win_emu, num_path_array_elements.value(), sizeof(UINT32)))
             {
                 return probe_failed();
             }
@@ -7229,7 +7229,7 @@ namespace sogen
             }
 
             if (path_array % (c.proc.is_wow64_process ? 1 : sizeof(ULONG)) != 0 ||
-                !is_writable_range(c.win_emu.memory, path_array, path_size * num_paths))
+                !is_writable_range(c.win_emu, path_array, path_size * num_paths))
             {
                 return probe_failed();
             }
@@ -7239,7 +7239,7 @@ namespace sogen
             if (database_current)
             {
                 if (current_topology_id.value() % sizeof(UINT32) != 0 ||
-                    !is_writable_range(c.win_emu.memory, current_topology_id.value(), sizeof(UINT32)))
+                    !is_writable_range(c.win_emu, current_topology_id.value(), sizeof(UINT32)))
                 {
                     return probe_failed();
                 }

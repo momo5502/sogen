@@ -327,7 +327,7 @@ namespace sogen
                                const uint64_t count)
         {
             constexpr uint64_t module_id_size = 24;
-            if (!is_readable_range(win_emu.memory, read_pointer(win_emu, c, 0x10, false), module_id_size))
+            if (!is_readable_range(win_emu, read_pointer(win_emu, c, 0x10, false), module_id_size))
             {
                 return STATUS_ACCESS_VIOLATION;
             }
@@ -339,7 +339,7 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                if (buffer.address ? !is_writable_range(win_emu.memory, buffer.address, bytes) : bytes != 0)
+                if (buffer.address ? !is_writable_range(win_emu, buffer.address, bytes) : bytes != 0)
                 {
                     return STATUS_ACCESS_VIOLATION;
                 }
@@ -469,8 +469,8 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                if (enumeration ? !is_writable_range(win_emu.memory, c.input_buffer, c.input_buffer_length)
-                                : !is_readable_range(win_emu.memory, c.input_buffer, layout_size))
+                if (enumeration ? !is_writable_range(win_emu, c.input_buffer, c.input_buffer_length)
+                                : !is_readable_range(win_emu, c.input_buffer, layout_size))
                 {
                     return STATUS_ACCESS_VIOLATION;
                 }

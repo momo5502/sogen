@@ -2621,12 +2621,12 @@ namespace sogen
             {
                 return dc != 0 && buffer != 0 && char_count != 0 &&
                        static_cast<uint64_t>(char_count) * entry_size <= max_char_metric_output_size &&
-                       (chars == 0 || is_readable_range(c.win_emu.memory, chars, static_cast<uint64_t>(char_count) * sizeof(char16_t)));
+                       (chars == 0 || is_readable_range(c.win_emu, chars, static_cast<uint64_t>(char_count) * sizeof(char16_t)));
             }
 
             bool write_guest_block(const syscall_context& c, const emulator_pointer address, const void* data, const size_t size)
             {
-                return is_writable_range(c.win_emu.memory, address, size) && c.emu.try_write_memory(address, data, size);
+                return is_writable_range(c.win_emu, address, size) && c.emu.try_write_memory(address, data, size);
             }
 
             bool write_guest_bytes_up_to_fault(const syscall_context& c, const emulator_pointer address, const void* data,
@@ -4266,7 +4266,7 @@ namespace sogen
 
             // Windows reads the whole text before writing anything, although the fixed-width measure does not need it.
             if (dc == 0 || size == 0 || char_count > max_text_extent_chars ||
-                !is_readable_range(c.win_emu.memory, text, static_cast<uint64_t>(char_count) * sizeof(char16_t)))
+                !is_readable_range(c.win_emu, text, static_cast<uint64_t>(char_count) * sizeof(char16_t)))
             {
                 return FALSE;
             }

@@ -1253,12 +1253,28 @@ namespace sogen
 
             // As 19041, the change stamp, the buffer size and the buffer (for that size) are probed for writing before the name
             // is looked up, so an output that cannot be written fails the call before anything is written.
-            auto& memory = c.win_emu.memory;
             const auto size = buffer_size.try_read();
-            if (!size || !is_writable_range(memory, change_stamp.value(), sizeof(ULONG)) ||
-                !is_writable_range(memory, buffer_size.value(), sizeof(ULONG)) || (*size != 0 && !is_writable_range(memory, buffer, *size)))
+            if (!size)
             {
                 return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (const auto status = probe_range(c.win_emu, change_stamp.value(), sizeof(ULONG), memory_permission::write);
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            if (const auto status = probe_range(c.win_emu, buffer_size.value(), sizeof(ULONG), memory_permission::write);
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            if (const auto status = *size != 0 ? probe_range(c.win_emu, buffer, *size, memory_permission::write) : STATUS_SUCCESS;
+                status != STATUS_SUCCESS)
+            {
+                return status;
             }
 
             const auto state = c.proc.wnf_states.find(*name);

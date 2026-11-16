@@ -67,7 +67,7 @@ namespace sogen
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
-                    if (!is_readable_range(win_emu.memory, c.input_buffer, sizeof(input32.size)))
+                    if (!is_readable_range(win_emu, c.input_buffer, sizeof(input32.size)))
                     {
                         return STATUS_ACCESS_VIOLATION;
                     }
@@ -75,7 +75,7 @@ namespace sogen
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
-                    if (!is_readable_range(win_emu.memory, c.input_buffer, sizeof(input32)))
+                    if (!is_readable_range(win_emu, c.input_buffer, sizeof(input32)))
                     {
                         return STATUS_ACCESS_VIOLATION;
                     }
@@ -88,7 +88,7 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                if (!is_readable_range(win_emu.memory, c.input_buffer, sizeof(input)))
+                if (!is_readable_range(win_emu, c.input_buffer, sizeof(input)))
                 {
                     return STATUS_ACCESS_VIOLATION;
                 }
@@ -108,7 +108,7 @@ namespace sogen
                 {
                     return STATUS_DATATYPE_MISALIGNMENT;
                 }
-                if (!is_readable_range(win_emu.memory, address, bytes))
+                if (!is_readable_range(win_emu, address, bytes))
                 {
                     return STATUS_ACCESS_VIOLATION;
                 }
@@ -141,8 +141,7 @@ namespace sogen
                     return STATUS_DATATYPE_MISALIGNMENT;
                 }
 
-                return is_writable_range(win_emu.memory, c.output_buffer, c.output_buffer_length) ? STATUS_SUCCESS
-                                                                                                  : STATUS_ACCESS_VIOLATION;
+                return is_writable_range(win_emu, c.output_buffer, c.output_buffer_length) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
             }
 
             // The interface list request CM_Get_Device_Interface_List and its size query send. WoW64 callers send a 36-byte

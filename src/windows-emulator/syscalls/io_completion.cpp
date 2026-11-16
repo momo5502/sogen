@@ -151,11 +151,22 @@ namespace sogen
         {
             // Probed before the handle is looked at (19041 touches both contexts and the status block's first ULONG), so a
             // bad buffer fails the call before a packet is taken; the packet is written there after the wait.
-            if (!is_writable_range(c.win_emu.memory, key_context.value(), sizeof(emulator_pointer)) ||
-                !is_writable_range(c.win_emu.memory, apc_context.value(), sizeof(emulator_pointer)) ||
-                !is_writable_range(c.win_emu.memory, io_status_block.value(), sizeof(ULONG)))
+            if (const auto status = probe_range(c.win_emu, key_context.value(), sizeof(emulator_pointer), memory_permission::write);
+                status != STATUS_SUCCESS)
             {
-                return STATUS_ACCESS_VIOLATION;
+                return status;
+            }
+
+            if (const auto status = probe_range(c.win_emu, apc_context.value(), sizeof(emulator_pointer), memory_permission::write);
+                status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            if (const auto status = probe_range(c.win_emu, io_status_block.value(), sizeof(ULONG), memory_permission::write);
+                status != STATUS_SUCCESS)
+            {
+                return status;
             }
 
             auto* completion = c.proc.io_completions.get(io_completion_handle);
@@ -167,8 +178,8 @@ namespace sogen
             io_completion_message message{};
             if (io_completion_wait::dequeue_io_completion_message(c.win_emu, io_completion_handle, message))
             {
-                return io_completion_wait::write_message(c.win_emu.memory, key_context.value(), apc_context.value(),
-                                                         io_status_block.value(), message);
+                return io_completion_wait::write_message(c.win_emu.memory, c.win_emu.active_thread(), key_context.value(),
+                                                         apc_context.value(), io_status_block.value(), message);
             }
 
             if (timeout && timeout.read().QuadPart == 0)
@@ -221,8 +232,8 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            if (const auto status = io_completion_wait::probe_completion_entries(c.win_emu.memory, io_completion_information.value(), count,
-                                                                                 num_entries_removed.value());
+            if (const auto status = io_completion_wait::probe_completion_entries(
+                    c.win_emu.memory, c.win_emu.active_thread(), io_completion_information.value(), count, num_entries_removed.value());
                 status != STATUS_SUCCESS)
             {
                 return status;
@@ -237,8 +248,8 @@ namespace sogen
             const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, io_completion_handle, count);
             if (!messages.empty())
             {
-                return io_completion_wait::write_entries(c.win_emu.memory, io_completion_information.value(), num_entries_removed.value(),
-                                                         messages);
+                return io_completion_wait::write_entries(c.win_emu.memory, c.win_emu.active_thread(), io_completion_information.value(),
+                                                         num_entries_removed.value(), messages);
             }
 
             num_entries_removed.write_if_valid(0);

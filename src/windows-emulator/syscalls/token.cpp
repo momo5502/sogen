@@ -604,23 +604,35 @@ namespace sogen
                 uint64_t Dacl;
             };
 
-            // A read as a probe on behalf of user mode makes it: a range that reaches MM_USER_PROBE_ADDRESS, or memory the
-            // guest may not read, faults.
-            bool read_user_memory(const syscall_context& c, const uint64_t address, void* data, const size_t size)
+            // A read as a probe on behalf of user mode makes it: a range that reaches MM_USER_PROBE_ADDRESS faults, and the
+            // memory is found as probe_range finds it.
+            NTSTATUS read_user_memory(const syscall_context& c, const uint64_t address, void* data, const size_t size)
             {
-                return address <= user_probe_address && size <= user_probe_address - address &&
-                       is_readable_range(c.win_emu.memory, address, size) && c.emu.try_read_memory(address, data, size);
+                if (address > user_probe_address || size > user_probe_address - address)
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                if (const auto status = probe_range(c.win_emu, address, size, memory_permission::read); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
+
+                return c.emu.try_read_memory(address, data, size) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
             }
 
             // A DWORD argument probed for writing as SeAccessCheckByTypeWithAdminlessChecks probes one, which reads it and
-            // writes it back: a range that reaches MM_USER_PROBE_ADDRESS, or memory the guest may not write, faults.
-            bool probe_dword_for_write(const syscall_context& c, const uint64_t address)
+            // writes it back: a range that reaches MM_USER_PROBE_ADDRESS faults, and the memory is found as probe_range finds
+            // it.
+            NTSTATUS probe_dword_for_write(const syscall_context& c, const uint64_t address)
             {
-                return address <= user_probe_address - sizeof(DWORD) && is_writable_range(c.win_emu.memory, address, sizeof(DWORD));
+                return address <= user_probe_address - sizeof(DWORD)
+                           ? probe_range(c.win_emu, address, sizeof(DWORD), memory_permission::write)
+                           : STATUS_ACCESS_VIOLATION;
             }
 
             // ProbeForWrite: nothing for a length of 0, else the alignment, then a range below MM_USER_PROBE_ADDRESS, then a byte
-            // of each of its pages written back, which faults on memory the guest may not write.
+            // of each of its pages read and written back, which finds the memory as probe_range finds it.
             NTSTATUS probe_for_write(const syscall_context& c, const uint64_t address, const uint64_t length, const uint64_t alignment)
             {
                 if (length == 0)
@@ -634,12 +646,12 @@ namespace sogen
                 }
 
                 const auto last = address + length - 1;
-                if (last < address || last >= user_probe_address || !is_writable_range(c.win_emu.memory, address, length))
+                if (last < address || last >= user_probe_address)
                 {
                     return STATUS_ACCESS_VIOLATION;
                 }
 
-                return STATUS_SUCCESS;
+                return probe_range(c.win_emu, address, length, memory_permission::write);
             }
 
             // SeCaptureSecurityDescriptor's probe of an ACL: its AclSize, then, unless that is 0, the ACL's alignment and the
@@ -652,9 +664,10 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
-                if (!read_user_memory(c, address + offsetof(ACL, AclSize), &size, sizeof(size)))
+                if (const auto status = read_user_memory(c, address + offsetof(ACL, AclSize), &size, sizeof(size));
+                    status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
                 }
 
                 if (size != 0 && address % sizeof(DWORD) != 0)
@@ -680,9 +693,11 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
-                if (!read_user_memory(c, address + offsetof(SID, SubAuthorityCount), &sub_authority_count, sizeof(sub_authority_count)))
+                if (const auto status =
+                        read_user_memory(c, address + offsetof(SID, SubAuthorityCount), &sub_authority_count, sizeof(sub_authority_count));
+                    status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
                 }
 
                 if (address % sizeof(DWORD) != 0)
@@ -705,9 +720,9 @@ namespace sogen
                 }
 
                 auto& copy = acl.emplace(size);
-                if (!read_user_memory(c, address, copy.data(), copy.size()))
+                if (const auto status = read_user_memory(c, address, copy.data(), copy.size()); status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
                 }
 
                 return size < sizeof(ACL) || read_at<ACL>(copy, 0).AclSize != size || !is_valid_acl(copy) ? STATUS_INVALID_ACL
@@ -726,9 +741,9 @@ namespace sogen
 
                 constexpr uint8_t revision_nibble = 0xF;
                 sid.resize(sid_header_size + (sub_authority_count * sizeof(DWORD)));
-                if (!read_user_memory(c, address, sid.data(), sid.size()))
+                if (const auto status = read_user_memory(c, address, sid.data(), sid.size()); status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
                 }
 
                 sid[offsetof(SID, SubAuthorityCount)] = sub_authority_count;
@@ -764,9 +779,9 @@ namespace sogen
                 }
 
                 SECURITY_DESCRIPTOR_RELATIVE header{};
-                if (!read_user_memory(c, address, &header, sizeof(header)))
+                if (const auto status = read_user_memory(c, address, &header, sizeof(header)); status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
                 }
 
                 const auto self_relative = (header.Control & SE_SELF_RELATIVE) != 0;
@@ -797,8 +812,10 @@ namespace sogen
                 }
                 else
                 {
+                    auto status = STATUS_SUCCESS;
                     const auto read_pointer = [&](const size_t offset, uint64_t& pointer) {
-                        return read_user_memory(c, address + offset, &pointer, sizeof(pointer));
+                        status = read_user_memory(c, address + offset, &pointer, sizeof(pointer));
+                        return status == STATUS_SUCCESS;
                     };
 
                     if (!read_pointer(offsetof(security_descriptor64, Owner), owner) ||
@@ -806,7 +823,7 @@ namespace sogen
                         (sacl_present && !read_pointer(offsetof(security_descriptor64, Sacl), sacl)) ||
                         (dacl_present && !read_pointer(offsetof(security_descriptor64, Dacl), dacl)))
                     {
-                        return STATUS_ACCESS_VIOLATION;
+                        return status;
                     }
                 }
 
@@ -1547,11 +1564,18 @@ namespace sogen
             // writing and the privilege set for its length, clears a set that has room for one, and copies the GenericMapping,
             // which must be DWORD-aligned, before it checks anything else. A fault ends the call with its status.
             ULONG set_length{};
-            if (!read_user_memory(c, privilege_set_length.value(), &set_length, sizeof(set_length)) ||
-                !probe_dword_for_write(c, access_status.value()) || !probe_dword_for_write(c, granted_access.value()) ||
-                !probe_dword_for_write(c, privilege_set_length.value()))
+            if (const auto status = read_user_memory(c, privilege_set_length.value(), &set_length, sizeof(set_length));
+                status != STATUS_SUCCESS)
             {
-                return STATUS_ACCESS_VIOLATION;
+                return status;
+            }
+
+            for (const auto output : {access_status.value(), granted_access.value(), privilege_set_length.value()})
+            {
+                if (const auto status = probe_dword_for_write(c, output); status != STATUS_SUCCESS)
+                {
+                    return status;
+                }
             }
 
             if (const auto status = probe_for_write(c, privilege_set, set_length, sizeof(DWORD)); status != STATUS_SUCCESS)
@@ -1572,9 +1596,9 @@ namespace sogen
             }
 
             EMU_GENERIC_MAPPING mapping{};
-            if (!read_user_memory(c, generic_mapping.value(), &mapping, sizeof(mapping)))
+            if (const auto status = read_user_memory(c, generic_mapping.value(), &mapping, sizeof(mapping)); status != STATUS_SUCCESS)
             {
-                return STATUS_ACCESS_VIOLATION;
+                return status;
             }
 
             if ((desired_access & generic_rights) != 0)
@@ -1666,10 +1690,16 @@ namespace sogen
             // PRIVILEGE_SET declares one entry, so Windows probes that much even for an empty set.
             const auto probed_entries = std::max<uint64_t>(header->privilege_count, 1);
             const auto set_size = sizeof(privilege_set_header) + (probed_entries * sizeof(luid_and_attributes));
-            if (!is_writable_range(c.win_emu.memory, required_privileges, set_size) ||
-                !is_writable_range(c.win_emu.memory, result.value(), sizeof(BOOLEAN)))
+            if (const auto status = probe_range(c.win_emu, required_privileges, set_size, memory_permission::write);
+                status != STATUS_SUCCESS)
             {
-                return STATUS_ACCESS_VIOLATION;
+                return status;
+            }
+
+            if (const auto status = probe_range(c.win_emu, result.value(), sizeof(BOOLEAN), memory_permission::write);
+                status != STATUS_SUCCESS)
+            {
+                return status;
             }
 
             if (header->privilege_count > max_privilege_count)

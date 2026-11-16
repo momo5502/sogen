@@ -154,36 +154,83 @@ namespace sogen
         return highest_address_for_zero_bits(zero_bits) < highest_address_for_zero_bits(21) ? STATUS_INVALID_PARAMETER : STATUS_SUCCESS;
     }
 
-    inline bool is_accessible_range(memory_manager& memory, const uint64_t address, const uint64_t size, const memory_permission required)
+    // [address, address + size) as a kernel access to it from the thread (none: outside every stack) finds it, page by page in address
+    // order (19041's MiAccessCheck, then MiCheckForUserStackOverflow for a guard page): memory that is not committed or does not allow the
+    // access's first touch faults with STATUS_ACCESS_VIOLATION. A guard page then loses its guard and grows the thread's stack, which lets
+    // the access go on, overflows it (STATUS_STACK_OVERFLOW) or, outside its stacks, faults with STATUS_GUARD_PAGE_VIOLATION. The page
+    // must then allow the whole access. The code under try returns that status.
+    inline NTSTATUS access_range(memory_manager& memory, const emulator_thread* thread, const uint64_t address, const uint64_t size,
+                                 const memory_permission touch, const memory_permission access)
     {
         const auto end = address + size;
         if (address == 0 || end < address)
         {
-            return false;
+            return STATUS_ACCESS_VIOLATION;
         }
 
         for (auto current = address; current < end;)
         {
             const auto region = memory.get_region_info(current);
-            if (!region.is_committed || region.permissions.is_guarded() || (region.permissions.common & required) != required)
+            if (!region.is_committed || (region.permissions.common & touch) != touch)
             {
-                return false;
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            if (region.permissions.is_guarded())
+            {
+                const auto page = page_align_down(current);
+                if (!memory.release_guard_page(page))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+
+                const auto fault = thread ? thread->handle_stack_guard_fault(page) : stack_guard_fault::outside_stack;
+                if (fault != stack_guard_fault::grown)
+                {
+                    return fault == stack_guard_fault::overflow ? STATUS_STACK_OVERFLOW : STATUS_GUARD_PAGE_VIOLATION;
+                }
+
+                continue;
+            }
+
+            if ((region.permissions.common & access) != access)
+            {
+                return STATUS_ACCESS_VIOLATION;
             }
 
             current = region.start + region.length;
         }
 
-        return true;
+        return STATUS_SUCCESS;
     }
 
-    inline bool is_readable_range(memory_manager& memory, const uint64_t address, const uint64_t size)
+    // A probe touches each page by reading it, also when it probes for writing, which writes the page back after that.
+    inline NTSTATUS probe_range(memory_manager& memory, const emulator_thread* thread, const uint64_t address, const uint64_t size,
+                                const memory_permission access)
     {
-        return is_accessible_range(memory, address, size, memory_permission::read);
+        return access_range(memory, thread, address, size, memory_permission::read, access);
     }
 
-    inline bool is_writable_range(memory_manager& memory, const uint64_t address, const uint64_t size)
+    // A plain store, as a copy-out under try makes one: a page the thread may not write faults before its guard is looked at.
+    inline NTSTATUS store_range(memory_manager& memory, const emulator_thread* thread, const uint64_t address, const uint64_t size)
     {
-        return is_accessible_range(memory, address, size, memory_permission::write);
+        return access_range(memory, thread, address, size, memory_permission::write, memory_permission::write);
+    }
+
+    // A probe from the calling thread.
+    inline NTSTATUS probe_range(windows_emulator& win_emu, const uint64_t address, const uint64_t size, const memory_permission access)
+    {
+        return probe_range(win_emu.memory, win_emu.active_thread(), address, size, access);
+    }
+
+    inline bool is_readable_range(windows_emulator& win_emu, const uint64_t address, const uint64_t size)
+    {
+        return probe_range(win_emu, address, size, memory_permission::read) == STATUS_SUCCESS;
+    }
+
+    inline bool is_writable_range(windows_emulator& win_emu, const uint64_t address, const uint64_t size)
+    {
+        return probe_range(win_emu, address, size, memory_permission::write) == STATUS_SUCCESS;
     }
 
     inline NTSTATUS check_handle_type(const handle h, const handle_types::type expected_type)
