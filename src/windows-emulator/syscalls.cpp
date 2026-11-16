@@ -2129,9 +2129,13 @@ namespace sogen
         add_handler(NtUserCreateDesktopEx);
         add_handler(NtUserOpenInputDesktop);
         add_handler(NtUserCloseDesktop);
-        add_handler(NtUserCallHwndParam);
-        add_handler(NtUserCallHwndLock);
         add_handler(NtUserCallHwnd);
+        add_handler(NtUserCallHwndLock);
+        add_handler(NtUserCallHwndParam);
+        add_handler(NtUserCallHwndParamLock);
+        add_handler(NtUserCallHwndParamLockSafe);
+        add_handler(NtUserCallHwndSafe);
+        add_handler(NtUserCallNoParam);
         add_handler(NtUserCallOneParam);
         add_handler(NtUserCallTwoParam);
         add_handler(NtUserRegisterClassExWOW);
@@ -2250,7 +2254,6 @@ namespace sogen
         add_handler(NtUserPostQuitMessage);
         add_handler(NtUserGetClassInfoEx);
         add_handler(NtUserGetClassName);
-        add_handler(NtUserCallNoParam);
         add_handler(NtUserGetDisplayConfigBufferSizes);
         add_handler(NtUserQueryDisplayConfig);
         add_handler(NtUserGetWindowContextHelpId);
