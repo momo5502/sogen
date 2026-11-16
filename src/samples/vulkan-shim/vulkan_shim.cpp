@@ -18,6 +18,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
@@ -5128,6 +5129,7 @@ extern "C"
             request.push_constant_size = std::max(request.push_constant_size, r.offset + r.size);
         }
         request.set_layout_count = pCreateInfo->setLayoutCount;
+        request.flags = static_cast<uint32_t>(pCreateInfo->flags);
 
         // The descriptor-set-layout ids trail the header.
         std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(request.set_layout_count) * sizeof(gb::object_id));
@@ -6190,6 +6192,50 @@ namespace
 
 }
 
+namespace
+{
+    struct graphics_pipeline_chain
+    {
+        VkPipelineCreateFlags2KHR flags{};
+        VkGraphicsPipelineLibraryFlagsEXT library_parts{};
+        std::span<const VkPipeline> libraries{};
+    };
+
+    // VkPipelineCreateFlags2CreateInfoKHR replaces the legacy flags. Without a VkGraphicsPipelineLibraryCreateInfoEXT, a
+    // library or a pipeline linking libraries defines no part itself, and any other pipeline is complete.
+    graphics_pipeline_chain read_graphics_pipeline_chain(const VkGraphicsPipelineCreateInfo& ci)
+    {
+        graphics_pipeline_chain chain{.flags = ci.flags};
+        std::optional<VkGraphicsPipelineLibraryFlagsEXT> parts{};
+        for (const auto* base = static_cast<const VkBaseInStructure*>(ci.pNext); base != nullptr; base = base->pNext)
+        {
+            switch (base->sType)
+            {
+            case VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR:
+                chain.flags = reinterpret_cast<const VkPipelineCreateFlags2CreateInfoKHR*>(base)->flags;
+                break;
+            case VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT:
+                parts = reinterpret_cast<const VkGraphicsPipelineLibraryCreateInfoEXT*>(base)->flags;
+                break;
+            case VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR: {
+                const auto* library_info = reinterpret_cast<const VkPipelineLibraryCreateInfoKHR*>(base);
+                chain.libraries = {library_info->pLibraries, library_info->libraryCount};
+                break;
+            }
+            default:
+                break;
+            }
+        }
+
+        constexpr VkGraphicsPipelineLibraryFlagsEXT all_parts =
+            VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT | VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT |
+            VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT | VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT;
+        const bool library_related = (chain.flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR) != 0 || !chain.libraries.empty();
+        chain.library_parts = parts.value_or(library_related ? 0 : all_parts);
+        return chain;
+    }
+}
+
 extern "C"
 {
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache pipelineCache,
@@ -6201,6 +6247,18 @@ extern "C"
         for (uint32_t i = 0; i < createInfoCount; ++i)
         {
             const VkGraphicsPipelineCreateInfo& ci = pCreateInfos[i];
+            const graphics_pipeline_chain chain = read_graphics_pipeline_chain(ci);
+            const bool vertex_input_part = (chain.library_parts & VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT) != 0;
+            const bool pre_rasterization_part = (chain.library_parts & VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT) != 0;
+            const bool fragment_shader_part = (chain.library_parts & VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT) != 0;
+            const bool fragment_output_part = (chain.library_parts & VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT) != 0;
+            const auto* vertex_input_state = vertex_input_part ? ci.pVertexInputState : nullptr;
+            const auto* input_assembly_state = vertex_input_part ? ci.pInputAssemblyState : nullptr;
+            const auto* viewport_state = pre_rasterization_part ? ci.pViewportState : nullptr;
+            const auto* rasterization_state = pre_rasterization_part ? ci.pRasterizationState : nullptr;
+            const auto* depth_stencil_state = fragment_shader_part ? ci.pDepthStencilState : nullptr;
+            const auto* multisample_state = fragment_shader_part || fragment_output_part ? ci.pMultisampleState : nullptr;
+            const auto* color_blend_state = fragment_output_part ? ci.pColorBlendState : nullptr;
 
             resolved_stage_source vertex_shader{};
             resolved_stage_source fragment_shader{};
@@ -6230,7 +6288,7 @@ extern "C"
                     vkDestroyShaderModule(device, source.owned_module, nullptr);
                 }
             }
-            stages_valid = stages_valid && vertex_shader.valid;
+            stages_valid = stages_valid && (vertex_shader.valid || !pre_rasterization_part);
             if (!stages_valid)
             {
                 if (vertex_shader.owned_module != VK_NULL_HANDLE)
@@ -6252,10 +6310,10 @@ extern "C"
 
             uint32_t width = 0;
             uint32_t height = 0;
-            if (ci.pViewportState && ci.pViewportState->pViewports && ci.pViewportState->viewportCount > 0)
+            if (viewport_state && viewport_state->pViewports && viewport_state->viewportCount > 0)
             {
-                width = static_cast<uint32_t>(ci.pViewportState->pViewports[0].width);
-                height = static_cast<uint32_t>(ci.pViewportState->pViewports[0].height);
+                width = static_cast<uint32_t>(viewport_state->pViewports[0].width);
+                height = static_cast<uint32_t>(viewport_state->pViewports[0].height);
             }
 
             // Vertex input state (variable-length): flatten bindings, attributes, and the optional
@@ -6266,14 +6324,14 @@ extern "C"
             const VkVertexInputBindingDescription* vk_bindings = nullptr;
             const VkVertexInputAttributeDescription* vk_attributes = nullptr;
             const VkVertexInputBindingDivisorDescription* vk_divisors = nullptr;
-            if (ci.pVertexInputState)
+            if (vertex_input_state)
             {
-                binding_count = ci.pVertexInputState->vertexBindingDescriptionCount;
-                attribute_count = ci.pVertexInputState->vertexAttributeDescriptionCount;
-                vk_bindings = ci.pVertexInputState->pVertexBindingDescriptions;
-                vk_attributes = ci.pVertexInputState->pVertexAttributeDescriptions;
+                binding_count = vertex_input_state->vertexBindingDescriptionCount;
+                attribute_count = vertex_input_state->vertexAttributeDescriptionCount;
+                vk_bindings = vertex_input_state->pVertexBindingDescriptions;
+                vk_attributes = vertex_input_state->pVertexAttributeDescriptions;
 
-                for (const auto* base = static_cast<const VkBaseInStructure*>(ci.pVertexInputState->pNext); base != nullptr;
+                for (const auto* base = static_cast<const VkBaseInStructure*>(vertex_input_state->pNext); base != nullptr;
                      base = base->pNext)
                 {
                     if (base->sType != VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO)
@@ -6295,28 +6353,30 @@ extern "C"
             request.pipeline_layout = to_object_id(ci.layout);
             request.vertex_shader = vertex_shader.wire;
             request.fragment_shader = fragment_shader.wire;
-            request.flags = static_cast<uint32_t>(ci.flags & ~VK_PIPELINE_CREATE_DERIVATIVE_BIT);
+            request.flags = chain.flags & ~static_cast<VkPipelineCreateFlags2KHR>(VK_PIPELINE_CREATE_2_DERIVATIVE_BIT_KHR);
+            request.library_parts = chain.library_parts;
+            request.library_count = static_cast<uint32_t>(chain.libraries.size());
             request.width = width;
             request.height = height;
-            if (ci.pDepthStencilState && ci.pDepthStencilState->depthTestEnable)
+            if (depth_stencil_state && depth_stencil_state->depthTestEnable)
             {
                 request.depth_test_enable = 1;
-                request.depth_write_enable = ci.pDepthStencilState->depthWriteEnable ? 1 : 0;
-                request.depth_compare_op = static_cast<uint32_t>(ci.pDepthStencilState->depthCompareOp);
+                request.depth_write_enable = depth_stencil_state->depthWriteEnable ? 1 : 0;
+                request.depth_compare_op = static_cast<uint32_t>(depth_stencil_state->depthCompareOp);
             }
             request.binding_count = binding_count;
             request.attribute_count = attribute_count;
             request.divisor_count = divisor_count;
-            request.rasterization_samples = ci.pMultisampleState ? static_cast<uint32_t>(ci.pMultisampleState->rasterizationSamples) : 1u;
+            request.rasterization_samples = multisample_state ? static_cast<uint32_t>(multisample_state->rasterizationSamples) : 1u;
 
             request.primitive_topology = static_cast<uint32_t>(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 
             request.primitive_restart_enable = 0;
             request.rasterization_stream = UINT32_MAX;
 
-            if (ci.pRasterizationState)
+            if (rasterization_state)
             {
-                for (const auto* base = static_cast<const VkBaseInStructure*>(ci.pRasterizationState->pNext); base != nullptr;
+                for (const auto* base = static_cast<const VkBaseInStructure*>(rasterization_state->pNext); base != nullptr;
                      base = base->pNext)
                 {
                     if (base->sType != VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_STREAM_CREATE_INFO_EXT)
@@ -6330,11 +6390,11 @@ extern "C"
                 }
             }
 
-            if (ci.pInputAssemblyState)
+            if (input_assembly_state)
             {
-                request.primitive_topology = static_cast<uint32_t>(ci.pInputAssemblyState->topology);
+                request.primitive_topology = static_cast<uint32_t>(input_assembly_state->topology);
 
-                request.primitive_restart_enable = ci.pInputAssemblyState->primitiveRestartEnable ? 1u : 0u;
+                request.primitive_restart_enable = input_assembly_state->primitiveRestartEnable ? 1u : 0u;
             }
 
             // Forward the dynamic-state list verbatim. DXVK marks vertex-binding stride, cull, topology,
@@ -6349,14 +6409,14 @@ extern "C"
 
             // Per-attachment blend state. DXVK bakes D3D9 alpha blending statically into pColorBlendState; without
             // forwarding it the host defaults to blend-disabled and transparent geometry renders fully opaque.
-            if (ci.pColorBlendState && ci.pColorBlendState->pAttachments)
+            if (color_blend_state && color_blend_state->pAttachments)
             {
-                request.blend_attachment_count = ci.pColorBlendState->attachmentCount < gb::max_color_attachments
-                                                     ? ci.pColorBlendState->attachmentCount
+                request.blend_attachment_count = color_blend_state->attachmentCount < gb::max_color_attachments
+                                                     ? color_blend_state->attachmentCount
                                                      : gb::max_color_attachments;
                 for (uint32_t a = 0; a < request.blend_attachment_count; ++a)
                 {
-                    const VkPipelineColorBlendAttachmentState& src = ci.pColorBlendState->pAttachments[a];
+                    const VkPipelineColorBlendAttachmentState& src = color_blend_state->pAttachments[a];
                     gb::pipeline_blend_attachment& dst = request.blend_attachments[a];
                     dst.blend_enable = src.blendEnable ? 1u : 0u;
                     dst.src_color_blend_factor = static_cast<uint32_t>(src.srcColorBlendFactor);
@@ -6380,9 +6440,9 @@ extern "C"
                 }
 
                 const auto* rendering = reinterpret_cast<const VkPipelineRenderingCreateInfo*>(base);
-                request.color_attachment_count = rendering->colorAttachmentCount < gb::max_color_attachments
-                                                     ? rendering->colorAttachmentCount
-                                                     : gb::max_color_attachments;
+                // Only the fragment output part uses the color formats; the other parts may leave the pointer invalid.
+                const uint32_t color_count = fragment_output_part ? rendering->colorAttachmentCount : 0;
+                request.color_attachment_count = std::min<uint32_t>(color_count, gb::max_color_attachments);
                 for (uint32_t c = 0; c < request.color_attachment_count; ++c)
                 {
                     request.color_formats[c] = static_cast<uint32_t>(rendering->pColorAttachmentFormats[c]);
@@ -6400,7 +6460,7 @@ extern "C"
                                          static_cast<size_t>(divisor_count) * sizeof(gb::vertex_input_divisor) +
                                          static_cast<size_t>(dynamic_state_count) * sizeof(uint32_t) +
                                          spec_block_bytes(vs_spec_entries, vs_spec_bytes) +
-                                         spec_block_bytes(fs_spec_entries, fs_spec_bytes));
+                                         spec_block_bytes(fs_spec_entries, fs_spec_bytes) + chain.libraries.size() * sizeof(gb::object_id));
             std::memcpy(message.data(), &request, sizeof(request));
             size_t cursor = sizeof(request);
             for (uint32_t b = 0; b < binding_count; ++b)
@@ -6454,6 +6514,12 @@ extern "C"
             };
             append_spec(vs_spec, vs_spec_entries, vs_spec_bytes);
             append_spec(fs_spec, fs_spec_entries, fs_spec_bytes);
+            for (const VkPipeline library : chain.libraries)
+            {
+                const gb::object_id id = to_object_id(library);
+                std::memcpy(message.data() + cursor, &id, sizeof(id));
+                cursor += sizeof(id);
+            }
 
             gb::object_response response{};
             const bool ok = bridge_call(gb::ioctl_create_graphics_pipeline, message.data(), static_cast<DWORD>(message.size()), &response,

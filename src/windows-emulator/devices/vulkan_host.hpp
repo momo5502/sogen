@@ -697,7 +697,7 @@ namespace sogen
 
         // Optionally one push-constant range from offset 0 (push_constant_size == 0 means none), plus a
         // list of descriptor-set layouts (empty for none).
-        int32_t create_pipeline_layout(uint64_t device, uint32_t push_constant_stages, uint32_t push_constant_size,
+        int32_t create_pipeline_layout(uint64_t device, uint32_t flags, uint32_t push_constant_stages, uint32_t push_constant_size,
                                        std::span<const uint64_t> set_layouts, uint64_t& out_layout);
         void destroy_pipeline_layout(uint64_t device, uint64_t pipeline_layout);
 
@@ -778,16 +778,42 @@ namespace sogen
         // depth test. Empty vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
         // When render_pass == 0 the pipeline is built for dynamic rendering (VK_KHR_dynamic_rendering) using
         // color_formats/depth_format/stencil_format, with viewport and scissor as dynamic state.
-        int32_t create_graphics_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t render_pass, uint32_t subpass,
-                                         uint64_t pipeline_layout, const shader_stage_source& vertex_shader,
-                                         const shader_stage_source& fragment_shader, uint32_t flags, uint32_t width, uint32_t height,
-                                         std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
-                                         std::span<const vertex_divisor> divisors, const depth_state& depth,
-                                         std::span<const uint32_t> color_formats, uint32_t depth_format, uint32_t stencil_format,
-                                         uint32_t rasterization_samples, uint32_t primitive_topology, uint32_t primitive_restart_enable,
-                                         uint32_t rasterization_stream, uint32_t rasterization_stream_flags,
-                                         std::span<const uint32_t> dynamic_states, const specialization& vs_spec,
-                                         const specialization& fs_spec, std::span<const color_blend_attachment> blend_attachments,
+        struct graphics_pipeline_desc
+        {
+            uint64_t device{};
+            uint64_t pipeline_cache{};
+            uint64_t render_pass{};
+            uint32_t subpass{};
+            uint64_t pipeline_layout{};
+            shader_stage_source vertex_shader{};
+            shader_stage_source fragment_shader{};
+            uint64_t flags{};         // VkPipelineCreateFlags2
+            uint32_t library_parts{}; // VkGraphicsPipelineLibraryFlagsEXT this pipeline defines
+            std::span<const uint64_t> libraries{};
+            uint32_t width{};
+            uint32_t height{};
+            std::span<const vertex_binding> bindings{};
+            std::span<const vertex_attribute> attributes{};
+            std::span<const vertex_divisor> divisors{};
+            depth_state depth{};
+            std::span<const uint32_t> color_formats{};
+            uint32_t depth_format{};
+            uint32_t stencil_format{};
+            uint32_t rasterization_samples{};
+            uint32_t primitive_topology{};
+            uint32_t primitive_restart_enable{};
+            uint32_t rasterization_stream{};
+            uint32_t rasterization_stream_flags{};
+            std::span<const uint32_t> dynamic_states{};
+            specialization vs_spec{};
+            specialization fs_spec{};
+            std::span<const color_blend_attachment> blend_attachments{};
+        };
+
+        // The driver compiles the pipeline through run_unlocked, which may run it without the caller's locks: it touches no
+        // other vulkan_host state, and the device is kept alive until it returns.
+        int32_t create_graphics_pipeline(const graphics_pipeline_desc& desc,
+                                         const std::function<int32_t(const std::function<int32_t()>&)>& run_unlocked,
                                          uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t pipeline_layout,
                                         const shader_stage_source& shader, uint32_t flags, uint64_t& out_pipeline);

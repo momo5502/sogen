@@ -630,7 +630,8 @@ namespace sogen
             device_create_params create{};
             std::vector<VkFence> abandoned_drain_fences{};
             bool maintenance5_enabled{};
-            // Held shared by presents running without the caller's locks, so destroying the device waits for them.
+            // Held shared by presents and pipeline compiles running without the caller's locks, so destroying the device waits
+            // for them.
             std::shared_ptr<std::shared_mutex> presents = std::make_shared<std::shared_mutex>();
             uint64_t instance_id{};
             VkPhysicalDevice physical_device{}; // the device this was created from (for memory queries)
@@ -1741,31 +1742,39 @@ namespace sogen
 
         struct pipeline_layout_params
         {
+            uint32_t flags{};
             uint32_t push_constant_stages{};
             uint32_t push_constant_size{};
+            // A set an independent-sets layout leaves out has id 0 and no parameters.
             std::vector<uint64_t> set_layouts{};
             std::vector<std::shared_ptr<const set_layout_params>> set_layout_creates{};
 
             void serialize(utils::buffer_serializer& buffer) const
             {
+                buffer.write(this->flags);
                 buffer.write(this->push_constant_stages);
                 buffer.write(this->push_constant_size);
                 buffer.write_vector(this->set_layouts);
                 for (const auto& params : this->set_layout_creates)
                 {
-                    buffer.write(*params);
+                    if (params)
+                    {
+                        buffer.write(*params);
+                    }
                 }
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
             {
+                buffer.read(this->flags);
                 buffer.read(this->push_constant_stages);
                 buffer.read(this->push_constant_size);
                 buffer.read_vector(this->set_layouts);
                 this->set_layout_creates.clear();
-                for (size_t i = 0; i < this->set_layouts.size(); ++i)
+                for (const uint64_t set_layout : this->set_layouts)
                 {
-                    this->set_layout_creates.push_back(std::make_shared<const set_layout_params>(buffer.read<set_layout_params>()));
+                    this->set_layout_creates.push_back(
+                        set_layout != 0 ? std::make_shared<const set_layout_params>(buffer.read<set_layout_params>()) : nullptr);
                 }
             }
         };
@@ -1853,7 +1862,11 @@ namespace sogen
             // The compute stage for compute pipelines.
             shader_stage_params vertex{};
             shader_stage_params fragment{};
-            uint32_t flags{};
+            uint64_t flags{};
+            uint32_t library_parts{};
+            std::vector<uint64_t> libraries{};
+            // Kept for a library destroyed after it was linked.
+            std::vector<std::shared_ptr<const pipeline_params>> library_creates{};
             uint32_t width{};
             uint32_t height{};
             std::vector<vertex_binding> bindings{};
@@ -1881,10 +1894,20 @@ namespace sogen
                 buffer.write(this->render_pass_create);
                 buffer.write(this->subpass);
                 buffer.write(this->pipeline_layout);
-                buffer.write(*this->layout_create);
+                buffer.write(this->layout_create != nullptr);
+                if (this->layout_create)
+                {
+                    buffer.write(*this->layout_create);
+                }
                 buffer.write(this->vertex);
                 buffer.write(this->fragment);
                 buffer.write(this->flags);
+                buffer.write(this->library_parts);
+                buffer.write_vector(this->libraries);
+                for (const auto& library : this->library_creates)
+                {
+                    buffer.write(*library);
+                }
                 buffer.write(this->width);
                 buffer.write(this->height);
                 buffer.write_vector(this->bindings);
@@ -1913,10 +1936,18 @@ namespace sogen
                 buffer.read(this->render_pass_create);
                 buffer.read(this->subpass);
                 buffer.read(this->pipeline_layout);
-                this->layout_create = std::make_shared<const pipeline_layout_params>(buffer.read<pipeline_layout_params>());
+                this->layout_create =
+                    buffer.read<bool>() ? std::make_shared<const pipeline_layout_params>(buffer.read<pipeline_layout_params>()) : nullptr;
                 buffer.read(this->vertex);
                 buffer.read(this->fragment);
                 buffer.read(this->flags);
+                buffer.read(this->library_parts);
+                buffer.read_vector(this->libraries);
+                this->library_creates.clear();
+                for (size_t i = 0; i < this->libraries.size(); ++i)
+                {
+                    this->library_creates.push_back(std::make_shared<const pipeline_params>(buffer.read<pipeline_params>()));
+                }
                 buffer.read(this->width);
                 buffer.read(this->height);
                 buffer.read_vector(this->bindings);
@@ -10419,7 +10450,7 @@ namespace sogen
         this->impl_->framebuffers.erase(it);
     }
 
-    int32_t vulkan_host::create_pipeline_layout(uint64_t device, uint32_t push_constant_stages, uint32_t push_constant_size,
+    int32_t vulkan_host::create_pipeline_layout(uint64_t device, uint32_t flags, uint32_t push_constant_stages, uint32_t push_constant_size,
                                                 std::span<const uint64_t> set_layouts, uint64_t& out_layout)
     {
         out_layout = 0;
@@ -10438,6 +10469,11 @@ namespace sogen
         vk_set_layouts.reserve(set_layouts.size());
         for (const uint64_t id : set_layouts)
         {
+            if (id == 0)
+            {
+                vk_set_layouts.push_back(VK_NULL_HANDLE);
+                continue;
+            }
             const auto sl = this->impl_->descriptor_set_layouts.find(id);
             if (sl == this->impl_->descriptor_set_layouts.end() || sl->second.device_id != device)
             {
@@ -10448,6 +10484,7 @@ namespace sogen
 
         VkPipelineLayoutCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        info.flags = static_cast<VkPipelineLayoutCreateFlags>(flags);
         info.setLayoutCount = static_cast<uint32_t>(vk_set_layouts.size());
         info.pSetLayouts = vk_set_layouts.empty() ? nullptr : vk_set_layouts.data();
         if (push_constant_size > 0)
@@ -10465,12 +10502,13 @@ namespace sogen
 
         const uint64_t id = this->impl_->allocate_id();
         auto create = std::make_shared<impl::pipeline_layout_params>();
+        create->flags = flags;
         create->push_constant_stages = push_constant_stages;
         create->push_constant_size = push_constant_size;
         create->set_layouts.assign(set_layouts.begin(), set_layouts.end());
         for (const uint64_t set_layout : set_layouts)
         {
-            create->set_layout_creates.push_back(this->impl_->descriptor_set_layouts.at(set_layout).create);
+            create->set_layout_creates.push_back(set_layout != 0 ? this->impl_->descriptor_set_layouts.at(set_layout).create : nullptr);
         }
 
         this->impl_->pipeline_layouts.emplace(
@@ -11052,25 +11090,49 @@ namespace sogen
                                                  sources.empty() ? nullptr : sources.data());
     }
 
-    int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t render_pass, uint32_t subpass,
-                                                  uint64_t pipeline_layout, const shader_stage_source& vertex_shader,
-                                                  const shader_stage_source& fragment_shader, uint32_t flags, uint32_t width,
-                                                  uint32_t height, std::span<const vertex_binding> bindings,
-                                                  std::span<const vertex_attribute> attributes, std::span<const vertex_divisor> divisors,
-                                                  const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
-                                                  uint32_t stencil_format, uint32_t rasterization_samples, uint32_t primitive_topology,
-                                                  uint32_t primitive_restart_enable, uint32_t rasterization_stream,
-                                                  uint32_t rasterization_stream_flags, std::span<const uint32_t> dynamic_states,
-                                                  const specialization& vs_spec, const specialization& fs_spec,
-                                                  std::span<const color_blend_attachment> blend_attachments_in, uint64_t& out_pipeline)
+    int32_t vulkan_host::create_graphics_pipeline(const graphics_pipeline_desc& desc,
+                                                  const std::function<int32_t(const std::function<int32_t()>&)>& run_unlocked,
+                                                  uint64_t& out_pipeline)
     {
         out_pipeline = 0;
+        const auto device = desc.device;
         const auto dev = this->impl_->devices.find(device);
-        const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
-        if (dev == this->impl_->devices.end() || layout == this->impl_->pipeline_layouts.end() || layout->second.device_id != device ||
-            !dev->second.create_graphics_pipelines)
+        if (dev == this->impl_->devices.end() || !dev->second.create_graphics_pipelines)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const bool vertex_input_part = (desc.library_parts & VK_GRAPHICS_PIPELINE_LIBRARY_VERTEX_INPUT_INTERFACE_BIT_EXT) != 0;
+        const bool pre_rasterization_part = (desc.library_parts & VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT) != 0;
+        const bool fragment_shader_part = (desc.library_parts & VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT) != 0;
+        const bool fragment_output_part = (desc.library_parts & VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_OUTPUT_INTERFACE_BIT_EXT) != 0;
+        const bool library_related = (desc.flags & VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR) != 0 || !desc.libraries.empty();
+
+        // Only the shader parts need a layout; a library of the interface parts and a link of libraries may have none.
+        VkPipelineLayout layout_handle = VK_NULL_HANDLE;
+        std::shared_ptr<const impl::pipeline_layout_params> layout_create{};
+        if (desc.pipeline_layout != 0 || pre_rasterization_part || fragment_shader_part)
+        {
+            const auto layout = this->impl_->pipeline_layouts.find(desc.pipeline_layout);
+            if (layout == this->impl_->pipeline_layouts.end() || layout->second.device_id != device)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            layout_handle = layout->second.handle;
+            layout_create = layout->second.create;
+        }
+
+        std::vector<VkPipeline> library_handles{};
+        std::vector<std::shared_ptr<const impl::pipeline_params>> library_creates{};
+        for (const uint64_t library : desc.libraries)
+        {
+            const auto entry = this->impl_->pipelines.find(library);
+            if (entry == this->impl_->pipelines.end() || entry->second.device_id != device)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            library_handles.push_back(entry->second.handle);
+            library_creates.push_back(std::make_shared<const impl::pipeline_params>(entry->second.create));
         }
 
         const auto resolve_stage = [&](const shader_stage_source& source, VkShaderModule& module) {
@@ -11097,16 +11159,18 @@ namespace sogen
         VkShaderModule vertex_module = VK_NULL_HANDLE;
         VkShaderModule fragment_module = VK_NULL_HANDLE;
         // Depth-only passes (depth prepass, shadows) have no fragment stage.
-        const bool has_fragment_stage = fragment_shader.module != 0 || !fragment_shader.identifier.empty();
-        if (!resolve_stage(vertex_shader, vertex_module) || (has_fragment_stage && !resolve_stage(fragment_shader, fragment_module)))
+        const bool has_fragment_stage =
+            fragment_shader_part && (desc.fragment_shader.module != 0 || !desc.fragment_shader.identifier.empty());
+        if ((pre_rasterization_part && !resolve_stage(desc.vertex_shader, vertex_module)) ||
+            (has_fragment_stage && !resolve_stage(desc.fragment_shader, fragment_module)))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
         VkPipelineCache cache_handle = VK_NULL_HANDLE;
-        if (pipeline_cache != 0)
+        if (desc.pipeline_cache != 0)
         {
-            const auto cache = this->impl_->pipeline_caches.find(pipeline_cache);
+            const auto cache = this->impl_->pipeline_caches.find(desc.pipeline_cache);
             if (cache == this->impl_->pipeline_caches.end() || cache->second.device_id != device)
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
@@ -11117,19 +11181,19 @@ namespace sogen
         // render_pass == 0 means the pipeline targets dynamic rendering (DXVK 2.x): there is no render-pass
         // object; the attachment formats come in via VkPipelineRenderingCreateInfo and viewport/scissor are
         // dynamic. Otherwise resolve the render pass and bake a static viewport as before.
-        const bool dynamic_rendering = (render_pass == 0);
+        const bool dynamic_rendering = (desc.render_pass == 0);
         VkRenderPass rp_handle = VK_NULL_HANDLE;
-        auto color_count = static_cast<uint32_t>(color_formats.size());
+        auto color_count = static_cast<uint32_t>(desc.color_formats.size());
         if (!dynamic_rendering)
         {
-            const auto rp = this->impl_->render_passes.find(render_pass);
+            const auto rp = this->impl_->render_passes.find(desc.render_pass);
             if (rp == this->impl_->render_passes.end() || rp->second.device_id != device ||
-                subpass >= rp->second.create.description.subpasses.size())
+                desc.subpass >= rp->second.create.description.subpasses.size())
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             rp_handle = rp->second.handle;
-            color_count = rp->second.create.description.subpasses[subpass].color_count;
+            color_count = rp->second.create.description.subpasses[desc.subpass].color_count;
         }
 
         // Rebuild a VkSpecializationInfo per stage from the forwarded entries/data. The map-entry vectors and
@@ -11148,7 +11212,7 @@ namespace sogen
             return true;
         };
 
-        if (!valid_spec(vs_spec) || !valid_spec(fs_spec))
+        if (!valid_spec(desc.vs_spec) || !valid_spec(desc.fs_spec))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -11171,8 +11235,6 @@ namespace sogen
             return &spec_infos[idx];
         };
 
-        const specialization fs_effective = fs_spec;
-
         std::array<VkPipelineShaderStageModuleIdentifierCreateInfoEXT, 2> stage_identifiers{};
         const auto initialize_identifier = [&](size_t index, const shader_stage_source& source) -> const void* {
             if (source.identifier.empty())
@@ -11186,43 +11248,52 @@ namespace sogen
             return &identifier;
         };
 
-        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
-        std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-        stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[0].pNext = initialize_identifier(0, vertex_shader);
-        stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-        stages[0].module = vertex_module;
-        stages[0].pName = "main";
-        stages[0].pSpecializationInfo = build_spec(vs_spec, 0);
-        stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[1].pNext = initialize_identifier(1, fragment_shader);
-        stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        stages[1].module = fragment_module;
-        stages[1].pName = "main";
-        stages[1].pSpecializationInfo = build_spec(fs_effective, 1);
+        std::vector<VkPipelineShaderStageCreateInfo> stages{};
+        if (pre_rasterization_part)
+        {
+            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+            VkPipelineShaderStageCreateInfo& stage = stages.emplace_back();
+            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage.pNext = initialize_identifier(0, desc.vertex_shader);
+            stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+            stage.module = vertex_module;
+            stage.pName = "main";
+            stage.pSpecializationInfo = build_spec(desc.vs_spec, 0);
+        }
+        if (has_fragment_stage)
+        {
+            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
+            VkPipelineShaderStageCreateInfo& stage = stages.emplace_back();
+            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage.pNext = initialize_identifier(1, desc.fragment_shader);
+            stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            stage.module = fragment_module;
+            stage.pName = "main";
+            stage.pSpecializationInfo = build_spec(desc.fs_spec, 1);
+        }
 
         std::vector<VkVertexInputBindingDescription> vk_bindings;
-        vk_bindings.reserve(bindings.size());
-        for (const vertex_binding& b : bindings)
+        vk_bindings.reserve(desc.bindings.size());
+        for (const vertex_binding& b : desc.bindings)
         {
             vk_bindings.push_back({.binding = b.binding, .stride = b.stride, .inputRate = static_cast<VkVertexInputRate>(b.input_rate)});
         }
 
         std::vector<VkVertexInputAttributeDescription> vk_attributes;
-        vk_attributes.reserve(attributes.size());
-        for (const vertex_attribute& a : attributes)
+        vk_attributes.reserve(desc.attributes.size());
+        for (const vertex_attribute& a : desc.attributes)
         {
             vk_attributes.push_back(
                 {.location = a.location, .binding = a.binding, .format = static_cast<VkFormat>(a.format), .offset = a.offset});
         }
 
         std::vector<VkVertexInputBindingDivisorDescription> vk_divisors;
-        vk_divisors.reserve(divisors.size());
-        for (const vertex_divisor& divisor : divisors)
+        vk_divisors.reserve(desc.divisors.size());
+        for (const vertex_divisor& divisor : desc.divisors)
         {
             const auto binding =
-                std::ranges::find_if(bindings, [&](const vertex_binding& candidate) { return candidate.binding == divisor.binding; });
-            if (binding == bindings.end() || binding->input_rate != VK_VERTEX_INPUT_RATE_INSTANCE ||
+                std::ranges::find_if(desc.bindings, [&](const vertex_binding& candidate) { return candidate.binding == divisor.binding; });
+            if (binding == desc.bindings.end() || binding->input_rate != VK_VERTEX_INPUT_RATE_INSTANCE ||
                 std::ranges::find_if(vk_divisors, [&](const VkVertexInputBindingDivisorDescription& candidate) {
                     return candidate.binding == divisor.binding;
                 }) != vk_divisors.end())
@@ -11250,24 +11321,25 @@ namespace sogen
 
         VkPipelineInputAssemblyStateCreateInfo input_assembly{};
         input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-        input_assembly.topology = static_cast<VkPrimitiveTopology>(primitive_topology);
-        input_assembly.primitiveRestartEnable = primitive_restart_enable ? VK_TRUE : VK_FALSE;
+        input_assembly.topology = static_cast<VkPrimitiveTopology>(desc.primitive_topology);
+        input_assembly.primitiveRestartEnable = desc.primitive_restart_enable ? VK_TRUE : VK_FALSE;
 
         VkViewport viewport{};
-        viewport.width = static_cast<float>(width);
-        viewport.height = static_cast<float>(height);
+        viewport.width = static_cast<float>(desc.width);
+        viewport.height = static_cast<float>(desc.height);
         viewport.maxDepth = 1.0f;
         VkRect2D scissor{};
-        scissor.extent = {.width = width, .height = height};
+        scissor.extent = {.width = desc.width, .height = desc.height};
 
         // Dynamic rendering pipelines use dynamic viewport/scissor (the static width/height is meaningless,
         // DXVK sets them per-draw); a render-pass pipeline keeps the baked viewport from width/height.
         VkPipelineViewportStateCreateInfo viewport_state{};
         viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         const bool viewport_with_count =
-            std::ranges::find(dynamic_states, static_cast<uint32_t>(VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT)) != dynamic_states.end();
+            std::ranges::find(desc.dynamic_states, static_cast<uint32_t>(VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT)) !=
+            desc.dynamic_states.end();
         const bool scissor_with_count =
-            std::ranges::find(dynamic_states, static_cast<uint32_t>(VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT)) != dynamic_states.end();
+            std::ranges::find(desc.dynamic_states, static_cast<uint32_t>(VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT)) != desc.dynamic_states.end();
         viewport_state.viewportCount = viewport_with_count ? 0 : 1;
         viewport_state.pViewports = dynamic_rendering ? nullptr : &viewport;
         viewport_state.scissorCount = scissor_with_count ? 0 : 1;
@@ -11277,8 +11349,8 @@ namespace sogen
         // topology, depth/stencil etc. dynamic and sets them at draw time; if the pipeline doesn't declare
         // them dynamic the baked defaults (e.g. a 0 vertex stride) win and produce degenerate geometry.
         std::vector<VkDynamicState> dynamic_state_list;
-        dynamic_state_list.reserve(dynamic_states.size() + 2);
-        for (const uint32_t s : dynamic_states)
+        dynamic_state_list.reserve(desc.dynamic_states.size() + 2);
+        for (const uint32_t s : desc.dynamic_states)
         {
             dynamic_state_list.push_back(static_cast<VkDynamicState>(s));
         }
@@ -11293,16 +11365,17 @@ namespace sogen
         dynamic_state.pDynamicStates = dynamic_state_list.data();
 
         VkPipelineRasterizationStateStreamCreateInfoEXT rasterization_stream_info{};
-        if (rasterization_stream != UINT32_MAX)
+        if (desc.rasterization_stream != UINT32_MAX)
         {
             rasterization_stream_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_STREAM_CREATE_INFO_EXT;
-            rasterization_stream_info.flags = static_cast<VkPipelineRasterizationStateStreamCreateFlagsEXT>(rasterization_stream_flags);
-            rasterization_stream_info.rasterizationStream = rasterization_stream;
+            rasterization_stream_info.flags =
+                static_cast<VkPipelineRasterizationStateStreamCreateFlagsEXT>(desc.rasterization_stream_flags);
+            rasterization_stream_info.rasterizationStream = desc.rasterization_stream;
         }
 
         VkPipelineRasterizationStateCreateInfo rasterization{};
         rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterization.pNext = rasterization_stream != UINT32_MAX ? &rasterization_stream_info : nullptr;
+        rasterization.pNext = desc.rasterization_stream != UINT32_MAX ? &rasterization_stream_info : nullptr;
         rasterization.polygonMode = VK_POLYGON_MODE_FILL;
         rasterization.cullMode = VK_CULL_MODE_NONE;
         rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
@@ -11314,16 +11387,16 @@ namespace sogen
         // The pipeline's sample count must match the render target it is used with; DXVK renders the menu
         // into a multisampled backbuffer, so a hardcoded 1x here would mismatch and drop every fragment.
         multisample.rasterizationSamples =
-            rasterization_samples ? static_cast<VkSampleCountFlagBits>(rasterization_samples) : VK_SAMPLE_COUNT_1_BIT;
+            desc.rasterization_samples ? static_cast<VkSampleCountFlagBits>(desc.rasterization_samples) : VK_SAMPLE_COUNT_1_BIT;
         VkPipelineColorBlendAttachmentState blend_template{};
         blend_template.colorWriteMask =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(color_count, blend_template);
         // Honor the per-attachment blend state DXVK baked into the pipeline. Falls back to the opaque default
         // for any attachment the guest did not describe.
-        for (uint32_t i = 0; i < color_count && i < blend_attachments_in.size(); ++i)
+        for (uint32_t i = 0; i < color_count && i < desc.blend_attachments.size(); ++i)
         {
-            const color_blend_attachment& src = blend_attachments_in[i];
+            const color_blend_attachment& src = desc.blend_attachments[i];
             VkPipelineColorBlendAttachmentState& dst = blend_attachments[i];
             dst.blendEnable = src.blend_enable ? VK_TRUE : VK_FALSE;
             dst.srcColorBlendFactor = static_cast<VkBlendFactor>(src.src_color_blend_factor);
@@ -11342,82 +11415,135 @@ namespace sogen
 
         VkPipelineDepthStencilStateCreateInfo depth_stencil{};
         depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depth_stencil.depthTestEnable = depth.test_enable ? VK_TRUE : VK_FALSE;
-        depth_stencil.depthWriteEnable = depth.write_enable ? VK_TRUE : VK_FALSE;
-        depth_stencil.depthCompareOp = static_cast<VkCompareOp>(depth.compare_op);
+        depth_stencil.depthTestEnable = desc.depth.test_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.depthWriteEnable = desc.depth.write_enable ? VK_TRUE : VK_FALSE;
+        depth_stencil.depthCompareOp = static_cast<VkCompareOp>(desc.depth.compare_op);
+
+        const auto* next = static_cast<const void*>(nullptr);
+        const auto chain = [&next](auto& structure) {
+            structure.pNext = next;
+            next = &structure;
+        };
+
         std::vector<VkFormat> vk_color_formats;
         VkPipelineRenderingCreateInfo rendering_info{};
         if (dynamic_rendering)
         {
-            vk_color_formats.reserve(color_formats.size());
-            for (const uint32_t format : color_formats)
+            vk_color_formats.reserve(desc.color_formats.size());
+            for (const uint32_t format : desc.color_formats)
             {
                 vk_color_formats.push_back(static_cast<VkFormat>(format));
             }
             rendering_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
             rendering_info.colorAttachmentCount = static_cast<uint32_t>(vk_color_formats.size());
             rendering_info.pColorAttachmentFormats = vk_color_formats.empty() ? nullptr : vk_color_formats.data();
-            rendering_info.depthAttachmentFormat = static_cast<VkFormat>(depth_format);
-            rendering_info.stencilAttachmentFormat = static_cast<VkFormat>(stencil_format);
+            rendering_info.depthAttachmentFormat = static_cast<VkFormat>(desc.depth_format);
+            rendering_info.stencilAttachmentFormat = static_cast<VkFormat>(desc.stencil_format);
+            chain(rendering_info);
+        }
+
+        VkGraphicsPipelineLibraryCreateInfoEXT library_parts_info{};
+        if (library_related)
+        {
+            library_parts_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT;
+            library_parts_info.flags = desc.library_parts;
+            chain(library_parts_info);
+        }
+
+        VkPipelineLibraryCreateInfoKHR library_info{};
+        if (!library_handles.empty())
+        {
+            library_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LIBRARY_CREATE_INFO_KHR;
+            library_info.libraryCount = static_cast<uint32_t>(library_handles.size());
+            library_info.pLibraries = library_handles.data();
+            chain(library_info);
+        }
+
+        // Flags beyond the legacy 32 bits exist only as VkPipelineCreateFlags2.
+        VkPipelineCreateFlags2CreateInfoKHR flags2_info{};
+        if ((desc.flags >> 32) != 0)
+        {
+            flags2_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR;
+            flags2_info.flags = desc.flags;
+            chain(flags2_info);
         }
 
         VkGraphicsPipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        info.flags = static_cast<VkPipelineCreateFlags>(flags);
-        info.pNext = dynamic_rendering ? &rendering_info : nullptr;
-        info.stageCount = has_fragment_stage ? 2 : 1;
-        info.pStages = stages.data();
-        info.pVertexInputState = &vertex_input;
-        info.pInputAssemblyState = &input_assembly;
-        info.pViewportState = &viewport_state;
-        info.pRasterizationState = &rasterization;
-        info.pMultisampleState = &multisample;
-        info.pColorBlendState = &color_blend;
-        info.pDepthStencilState = depth.test_enable ? &depth_stencil : nullptr;
+        info.flags = (desc.flags >> 32) != 0 ? 0 : static_cast<VkPipelineCreateFlags>(desc.flags);
+        info.pNext = next;
+        info.stageCount = static_cast<uint32_t>(stages.size());
+        info.pStages = stages.empty() ? nullptr : stages.data();
+        info.pVertexInputState = vertex_input_part ? &vertex_input : nullptr;
+        info.pInputAssemblyState = vertex_input_part ? &input_assembly : nullptr;
+        info.pViewportState = pre_rasterization_part ? &viewport_state : nullptr;
+        info.pRasterizationState = pre_rasterization_part ? &rasterization : nullptr;
+        info.pMultisampleState = fragment_shader_part || fragment_output_part ? &multisample : nullptr;
+        info.pColorBlendState = fragment_output_part ? &color_blend : nullptr;
+        info.pDepthStencilState = fragment_shader_part && desc.depth.test_enable ? &depth_stencil : nullptr;
         info.pDynamicState = dynamic_rendering ? &dynamic_state : nullptr;
-        info.layout = layout->second.handle;
+        info.layout = layout_handle;
         info.renderPass = rp_handle;
-        info.subpass = subpass;
+        info.subpass = desc.subpass;
 
+        impl::pipeline_params create{};
+        create.pipeline_cache = desc.pipeline_cache;
+        create.render_pass = desc.render_pass;
+        if (const auto rp = this->impl_->render_passes.find(desc.render_pass); rp != this->impl_->render_passes.end())
+        {
+            create.render_pass_create = rp->second.create;
+        }
+        create.subpass = desc.subpass;
+        create.pipeline_layout = desc.pipeline_layout;
+        create.layout_create = std::move(layout_create);
+        create.vertex = this->impl_->stage_params(desc.vertex_shader);
+        create.fragment = this->impl_->stage_params(desc.fragment_shader);
+        create.flags = desc.flags;
+        create.library_parts = desc.library_parts;
+        create.libraries.assign(desc.libraries.begin(), desc.libraries.end());
+        create.library_creates = std::move(library_creates);
+        create.width = desc.width;
+        create.height = desc.height;
+        create.bindings.assign(desc.bindings.begin(), desc.bindings.end());
+        create.attributes.assign(desc.attributes.begin(), desc.attributes.end());
+        create.divisors.assign(desc.divisors.begin(), desc.divisors.end());
+        create.depth = desc.depth;
+        create.color_formats.assign(desc.color_formats.begin(), desc.color_formats.end());
+        create.depth_format = desc.depth_format;
+        create.stencil_format = desc.stencil_format;
+        create.rasterization_samples = desc.rasterization_samples;
+        create.primitive_topology = desc.primitive_topology;
+        create.primitive_restart_enable = desc.primitive_restart_enable;
+        create.rasterization_stream = desc.rasterization_stream;
+        create.rasterization_stream_flags = desc.rasterization_stream_flags;
+        create.dynamic_states.assign(desc.dynamic_states.begin(), desc.dynamic_states.end());
+        create.vs_spec = {.entries = {desc.vs_spec.entries.begin(), desc.vs_spec.entries.end()},
+                          .data = {desc.vs_spec.data.begin(), desc.vs_spec.data.end()}};
+        create.fs_spec = {.entries = {desc.fs_spec.entries.begin(), desc.fs_spec.entries.end()},
+                          .data = {desc.fs_spec.data.begin(), desc.fs_spec.data.end()}};
+        create.blend_attachments.assign(desc.blend_attachments.begin(), desc.blend_attachments.end());
+
+        // Compiling takes long enough to stall every other vCPU if it held the caller's locks. The device lock is released
+        // before run_unlocked returns, since its caller may then wait for a lock that a thread destroying the device holds.
+        const auto native_create = dev->second.create_graphics_pipelines;
+        auto* const native_device = dev->second.handle;
+        std::shared_lock device_in_use(*dev->second.presents);
         VkPipeline pipeline{};
-        const VkResult result = dev->second.create_graphics_pipelines(dev->second.handle, cache_handle, 1, &info, nullptr, &pipeline);
+        const int32_t result = run_unlocked([&] {
+            const VkResult created = native_create(native_device, cache_handle, 1, &info, nullptr, &pipeline);
+            device_in_use.unlock();
+            return static_cast<int32_t>(created);
+        });
         if (result != VK_SUCCESS)
         {
             return result;
         }
+        if (!this->impl_->devices.contains(device))
+        {
+            return VK_ERROR_DEVICE_LOST;
+        }
 
         const uint64_t id = this->impl_->allocate_id();
-        impl::pipeline_params create{};
-        create.pipeline_cache = pipeline_cache;
-        create.render_pass = render_pass;
-        if (const auto rp = this->impl_->render_passes.find(render_pass); rp != this->impl_->render_passes.end())
-        {
-            create.render_pass_create = rp->second.create;
-        }
-        create.subpass = subpass;
-        create.pipeline_layout = pipeline_layout;
-        create.layout_create = layout->second.create;
-        create.vertex = this->impl_->stage_params(vertex_shader);
-        create.fragment = this->impl_->stage_params(fragment_shader);
-        create.flags = flags;
-        create.width = width;
-        create.height = height;
-        create.bindings.assign(bindings.begin(), bindings.end());
-        create.attributes.assign(attributes.begin(), attributes.end());
-        create.divisors.assign(divisors.begin(), divisors.end());
-        create.depth = depth;
-        create.color_formats.assign(color_formats.begin(), color_formats.end());
-        create.depth_format = depth_format;
-        create.stencil_format = stencil_format;
-        create.rasterization_samples = rasterization_samples;
-        create.primitive_topology = primitive_topology;
-        create.primitive_restart_enable = primitive_restart_enable;
-        create.rasterization_stream = rasterization_stream;
-        create.rasterization_stream_flags = rasterization_stream_flags;
-        create.dynamic_states.assign(dynamic_states.begin(), dynamic_states.end());
-        create.vs_spec = {.entries = {vs_spec.entries.begin(), vs_spec.entries.end()}, .data = {vs_spec.data.begin(), vs_spec.data.end()}};
-        create.fs_spec = {.entries = {fs_spec.entries.begin(), fs_spec.entries.end()}, .data = {fs_spec.data.begin(), fs_spec.data.end()}};
-        create.blend_attachments.assign(blend_attachments_in.begin(), blend_attachments_in.end());
         this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device, .create = std::move(create)});
         out_pipeline = id;
         return VK_SUCCESS;
@@ -14459,7 +14585,8 @@ namespace sogen
             ids.reserve(create.set_layouts.size());
             for (size_t i = 0; i < create.set_layouts.size(); ++i)
             {
-                ids.push_back(ensure_set_layout(device, create.set_layouts[i], *create.set_layout_creates[i]));
+                const auto& set_layout_create = create.set_layout_creates[i];
+                ids.push_back(set_layout_create ? ensure_set_layout(device, create.set_layouts[i], *set_layout_create) : 0);
             }
             return ids;
         };
@@ -14471,8 +14598,8 @@ namespace sogen
             }
 
             uint64_t layout{};
-            if (this->create_pipeline_layout(device, create.push_constant_stages, create.push_constant_size, set_layout_ids(device, create),
-                                             layout) != VK_SUCCESS)
+            if (this->create_pipeline_layout(device, create.flags, create.push_constant_stages, create.push_constant_size,
+                                             set_layout_ids(device, create), layout) != VK_SUCCESS)
             {
                 throw std::runtime_error("Re-creating a destroyed Vulkan pipeline layout failed");
             }
@@ -15052,8 +15179,8 @@ namespace sogen
             const auto set_layouts = set_layout_ids(device, create);
             uint64_t layout{};
             impl.forced_ids = {id};
-            const auto result =
-                this->create_pipeline_layout(device, create.push_constant_stages, create.push_constant_size, set_layouts, layout);
+            const auto result = this->create_pipeline_layout(device, create.flags, create.push_constant_stages, create.push_constant_size,
+                                                             set_layouts, layout);
             expect_restored(result, layout, id, "pipeline layout");
         }
 
@@ -15082,35 +15209,88 @@ namespace sogen
             expect_restored(result, cache, id, "pipeline cache");
         }
 
+        const auto pass_through = [](const std::function<int32_t()>& create) { return create(); };
+        std::function<uint64_t(uint64_t, uint64_t, const impl::pipeline_params&)> ensure_graphics_pipeline{};
+        const auto create_graphics_pipeline = [&](const uint64_t device, const impl::pipeline_params& create,
+                                                  const std::optional<uint64_t> forced_id, uint64_t& pipeline) {
+            std::vector<uint64_t> libraries{};
+            libraries.reserve(create.libraries.size());
+            for (size_t i = 0; i < create.libraries.size(); ++i)
+            {
+                libraries.push_back(ensure_graphics_pipeline(device, create.libraries[i], *create.library_creates[i]));
+            }
+
+            const graphics_pipeline_desc desc{
+                .device = device,
+                .pipeline_cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0,
+                .render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create),
+                .subpass = create.subpass,
+                .pipeline_layout = create.layout_create ? ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create) : 0,
+                .vertex_shader = stage_source(device, create.vertex),
+                .fragment_shader = stage_source(device, create.fragment),
+                .flags = create.flags,
+                .library_parts = create.library_parts,
+                .libraries = libraries,
+                .width = create.width,
+                .height = create.height,
+                .bindings = create.bindings,
+                .attributes = create.attributes,
+                .divisors = create.divisors,
+                .depth = create.depth,
+                .color_formats = create.color_formats,
+                .depth_format = create.depth_format,
+                .stencil_format = create.stencil_format,
+                .rasterization_samples = create.rasterization_samples,
+                .primitive_topology = create.primitive_topology,
+                .primitive_restart_enable = create.primitive_restart_enable,
+                .rasterization_stream = create.rasterization_stream,
+                .rasterization_stream_flags = create.rasterization_stream_flags,
+                .dynamic_states = create.dynamic_states,
+                .vs_spec = {.entries = create.vs_spec.entries, .data = create.vs_spec.data},
+                .fs_spec = {.entries = create.fs_spec.entries, .data = create.fs_spec.data},
+                .blend_attachments = create.blend_attachments,
+            };
+            if (forced_id)
+            {
+                impl.forced_ids = {*forced_id};
+            }
+            return this->create_graphics_pipeline(desc, pass_through, pipeline);
+        };
+
+        ensure_graphics_pipeline = [&](const uint64_t device, const uint64_t id, const impl::pipeline_params& create) {
+            if (impl.pipelines.contains(id))
+            {
+                return id;
+            }
+
+            uint64_t pipeline{};
+            if (create_graphics_pipeline(device, create, std::nullopt, pipeline) != VK_SUCCESS)
+            {
+                throw std::runtime_error("Re-creating a destroyed Vulkan pipeline library failed");
+            }
+            temporaries.emplace_back([this, device, pipeline] { this->destroy_pipeline(device, pipeline); });
+            return pipeline;
+        };
+
         for (auto count = buffer.read<uint64_t>(); count > 0; --count)
         {
             const auto id = buffer.read<uint64_t>();
             const auto device = buffer.read<uint64_t>();
             const auto create = buffer.read<impl::pipeline_params>();
 
-            const auto cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0;
-            const auto layout = ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create);
-            const auto vertex = stage_source(device, create.vertex);
-
             uint64_t pipeline{};
             int32_t result{};
             if (create.compute)
             {
+                const auto cache = impl.pipeline_caches.contains(create.pipeline_cache) ? create.pipeline_cache : 0;
+                const auto layout = ensure_pipeline_layout(device, create.pipeline_layout, *create.layout_create);
+                const auto shader = stage_source(device, create.vertex);
                 impl.forced_ids = {id};
-                result = this->create_compute_pipeline(device, cache, layout, vertex, create.flags, pipeline);
+                result = this->create_compute_pipeline(device, cache, layout, shader, static_cast<uint32_t>(create.flags), pipeline);
             }
             else
             {
-                const auto render_pass = ensure_render_pass(device, create.render_pass, create.render_pass_create);
-                const auto fragment = stage_source(device, create.fragment);
-                impl.forced_ids = {id};
-                result = this->create_graphics_pipeline(
-                    device, cache, render_pass, create.subpass, layout, vertex, fragment, create.flags, create.width, create.height,
-                    create.bindings, create.attributes, create.divisors, create.depth, create.color_formats, create.depth_format,
-                    create.stencil_format, create.rasterization_samples, create.primitive_topology, create.primitive_restart_enable,
-                    create.rasterization_stream, create.rasterization_stream_flags, create.dynamic_states,
-                    specialization{.entries = create.vs_spec.entries, .data = create.vs_spec.data},
-                    specialization{.entries = create.fs_spec.entries, .data = create.fs_spec.data}, create.blend_attachments, pipeline);
+                result = create_graphics_pipeline(device, create, id, pipeline);
             }
             expect_restored(result, pipeline, id, "pipeline");
         }

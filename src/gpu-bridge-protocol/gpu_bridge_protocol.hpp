@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 45;
+    inline constexpr uint32_t protocol_version = 46;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1895,8 +1895,8 @@ namespace sogen::gpu_bridge
         uint32_t push_constant_stages; // VkShaderStageFlags (0 = no push constants)
         uint32_t push_constant_size;   // bytes, from offset 0
         uint32_t set_layout_count;     // number of object_id set-layout ids that follow
-        uint32_t reserved;
-        // object_id set_layouts[set_layout_count];
+        uint32_t flags;                // VkPipelineLayoutCreateFlags
+        // object_id set_layouts[set_layout_count]; null_object where an independent-sets layout leaves a set out
     };
 
     // A VkVertexInputBindingDescription flattened to plain integers.
@@ -1989,7 +1989,7 @@ namespace sogen::gpu_bridge
         object_id pipeline_layout;
         shader_stage_source vertex_shader;
         shader_stage_source fragment_shader;
-        uint32_t flags; // VkPipelineCreateFlags
+        uint32_t library_parts; // VkGraphicsPipelineLibraryFlagsEXT this call defines; all of them for a complete pipeline
         uint32_t width;
         uint32_t height;
         uint32_t depth_test_enable;  // VkBool32 (0 => no depth-stencil state, as before)
@@ -2022,6 +2022,9 @@ namespace sogen::gpu_bridge
         uint32_t subpass;
         uint32_t reserved_subpass;
         std::array<pipeline_blend_attachment, max_color_attachments> blend_attachments{};
+        uint64_t flags;         // VkPipelineCreateFlags2
+        uint32_t library_count; // number of object_id pipeline libraries that trail the specialization data
+        uint32_t reserved_library_count;
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
         // vertex_input_divisor divisors[divisor_count];
@@ -2030,6 +2033,7 @@ namespace sogen::gpu_bridge
         // uint8_t vs_spec_data[vs_spec_data_size];
         // specialization_map_entry fs_spec_entries[fs_spec_entry_count];
         // uint8_t fs_spec_data[fs_spec_data_size];
+        // object_id libraries[library_count];
     };
 
     struct create_compute_pipeline_request
@@ -2674,7 +2678,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_pipeline_cache_data_response) == 16, "wire layout drift");
     static_assert(sizeof(merge_pipeline_caches_request) == 24, "wire layout drift");
     static_assert(sizeof(create_compute_pipeline_request) == 80, "wire layout drift");
-    static_assert(sizeof(create_graphics_pipeline_request) == 520, "wire layout drift");
+    static_assert(sizeof(create_graphics_pipeline_request) == 536, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");

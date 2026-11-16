@@ -56,6 +56,8 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceMaintenance9FeaturesKHR);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES:
             return sizeof(VkPhysicalDeviceVertexAttributeDivisorFeatures);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT:
+            return sizeof(VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT);
         default:
             return 0;
         }
@@ -111,6 +113,8 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceVertexAttributeDivisorProperties);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT:
             return sizeof(VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_PROPERTIES_EXT:
+            return sizeof(VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT);
         default:
             return 0;
         }
