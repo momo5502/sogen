@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <windows_emulator.hpp>
+#include <thread_context.hpp>
 #include <utils/function.hpp>
 #include <utils/string.hpp>
 
@@ -28,7 +29,12 @@ namespace sogen
               windows_filesystem_(win_emu),
               target_architecture_(target_architecture)
         {
-            auto hook = [this](mapped_module&) {
+            auto hook = [this](mapped_module& mod) {
+                if (!this->is_visible_module(mod))
+                {
+                    return;
+                }
+
                 library_stop_pending_ = true;
                 win_emu_->stop();
             };
@@ -87,7 +93,26 @@ namespace sogen
                 // receive a T05 for an unexpected tid → SIGTRAP error.
                 vcpu.switch_thread = false;
                 vcpu.thread().setup_if_necessary(vcpu.cpu, this->win_emu_->process);
-                vcpu.cpu.start(1);
+
+                if (!this->is_wow64_view())
+                {
+                    vcpu.cpu.start(1);
+                    return action;
+                }
+
+                // A 32-bit debugger does not see the 64-bit code of WOW64, so one step runs that code with one 32-bit instruction.
+                bool ran_32bit_instruction = false;
+                for (size_t i = 0; i < max_instructions_per_step; ++i)
+                {
+                    ran_32bit_instruction |= !this->shows_saved_wow64_state();
+                    vcpu.cpu.start(1);
+
+                    const bool thread_ended = vcpu.thread().is_terminated() || this->win_emu_->process.exit_status.has_value();
+                    if (action != gdb_stub::action::resume || thread_ended || (ran_32bit_instruction && !this->shows_saved_wow64_state()))
+                    {
+                        break;
+                    }
+                }
             }
             catch (const std::exception& e)
             {
@@ -143,7 +168,7 @@ namespace sogen
             libs.reserve(this->win_emu_->mod_manager.modules().size());
             for (const auto& [base_addr, mod] : mod_manager.modules())
             {
-                if (!mod.module_path.empty())
+                if (!mod.module_path.empty() && this->is_visible_module(mod))
                 {
                     libs.push_back({.name = mod.module_path.string(), .segment_address = base_addr + 0x1000});
                 }
@@ -191,6 +216,11 @@ namespace sogen
             {
                 if (t.id == id)
                 {
+                    if (!t.is_terminated() && this->is_wow64_view() && t.teb32)
+                    {
+                        return t.teb32->value();
+                    }
+
                     if (!t.is_terminated() && t.teb64)
                     {
                         return t.teb64->value();
@@ -234,7 +264,199 @@ namespace sogen
             return &windows_filesystem_;
         }
 
+        size_t read_register(const size_t reg, void* data, const size_t max_length) override
+        {
+            if (this->shows_saved_wow64_state())
+            {
+                return this->read_saved_wow64_register(reg, data, max_length);
+            }
+
+            return cpu_gdb_stub_handler::read_register(reg, data, max_length);
+        }
+
+        size_t write_register(const size_t reg, const void* data, const size_t size) override
+        {
+            if (this->shows_saved_wow64_state())
+            {
+                return this->write_saved_wow64_register(reg, data, size);
+            }
+
+            return cpu_gdb_stub_handler::write_register(reg, data, size);
+        }
+
       private:
+        static constexpr size_t max_instructions_per_step = 1'000'000;
+
+        static uint32_t* wow64_context_field(WOW64_CONTEXT& c, const x86_register reg)
+        {
+            switch (reg)
+            {
+            case x86_register::eax:
+                return &c.Eax;
+            case x86_register::ecx:
+                return &c.Ecx;
+            case x86_register::edx:
+                return &c.Edx;
+            case x86_register::ebx:
+                return &c.Ebx;
+            case x86_register::esp:
+                return &c.Esp;
+            case x86_register::ebp:
+                return &c.Ebp;
+            case x86_register::esi:
+                return &c.Esi;
+            case x86_register::edi:
+                return &c.Edi;
+            case x86_register::eip:
+                return &c.Eip;
+            case x86_register::eflags:
+                return &c.EFlags;
+            case x86_register::cs:
+                return &c.SegCs;
+            case x86_register::ss:
+                return &c.SegSs;
+            case x86_register::ds:
+                return &c.SegDs;
+            case x86_register::es:
+                return &c.SegEs;
+            case x86_register::fs:
+                return &c.SegFs;
+            case x86_register::gs:
+                return &c.SegGs;
+            default:
+                return nullptr;
+            }
+        }
+
+        static bool is_segment_register(const x86_register reg)
+        {
+            return reg == x86_register::cs || reg == x86_register::ss || reg == x86_register::ds || reg == x86_register::es ||
+                   reg == x86_register::fs || reg == x86_register::gs;
+        }
+
+        x86_register get_x86_register(const size_t reg) const
+        {
+            const auto registers = this->get_register_mapping();
+            return reg < registers.size() ? static_cast<x86_register>(registers[reg].reg) : x86_register::invalid;
+        }
+
+        bool shows_saved_wow64_state() const
+        {
+            return this->is_wow64_view() && !is_32bit_code_segment(this->win_emu_->vcpu(0).x64_cpu());
+        }
+
+        // In the WOW64 view, the client debugs a WOW64 process with the i386 target, so it sees only the 32-bit part of the
+        // process: the I386 modules and the 32-bit code. While the thread runs 64-bit WOW64 code, the stub gives the saved
+        // 32-bit context and not the CPU registers.
+        bool is_wow64_view() const
+        {
+            return this->is_32_bit() && this->win_emu_->process.is_wow64_process;
+        }
+
+        // The client of the WOW64 view does not see the 64-bit modules, for example 64-bit ntdll and wow64cpu.
+        bool is_visible_module(const mapped_module& mod) const
+        {
+            return !this->is_wow64_view() || mod.machine == static_cast<uint16_t>(PEMachineType::I386);
+        }
+
+        size_t read_saved_wow64_register(const size_t reg, void* data, const size_t max_length)
+        {
+            const auto x86_reg = this->get_x86_register(reg);
+            if (x86_reg == x86_register::fs_base)
+            {
+                return this->read_teb32_base(data, max_length);
+            }
+
+            auto context = this->read_wow64_context();
+            const auto* field = context ? wow64_context_field(*context, x86_reg) : nullptr;
+            if (!field)
+            {
+                // The WOW64 context has no x87 or XMM registers, so these come from the live CPU.
+                return cpu_gdb_stub_handler::read_register(reg, data, max_length);
+            }
+
+            if (max_length < sizeof(*field))
+            {
+                return 0;
+            }
+
+            auto value = *field;
+            if (is_segment_register(x86_reg))
+            {
+                // 32-bit code stores selectors into a CONTEXT with 16-bit moves, which leave the upper bits undefined.
+                value &= 0xFFFF;
+            }
+
+            memcpy(data, &value, sizeof(value));
+            return sizeof(value);
+        }
+
+        size_t write_saved_wow64_register(const size_t reg, const void* data, const size_t size)
+        {
+            const auto x86_reg = this->get_x86_register(reg);
+            if (x86_reg == x86_register::fs_base)
+            {
+                return this->write_teb32_base(data, size);
+            }
+
+            auto context = this->read_wow64_context();
+            auto* field = context ? wow64_context_field(*context, x86_reg) : nullptr;
+            if (!field)
+            {
+                // The WOW64 context has no x87 or XMM registers, so these go to the live CPU.
+                return cpu_gdb_stub_handler::write_register(reg, data, size);
+            }
+
+            if (size < sizeof(*field))
+            {
+                return 0;
+            }
+
+            memcpy(field, data, sizeof(*field));
+            context->ContextFlags = CONTEXT32_FULL;
+
+            auto& vcpu = this->win_emu_->vcpu(0);
+            const auto* bytes = reinterpret_cast<const uint8_t*>(&*context);
+            if (!apply_wow64_thread_context(*this->win_emu_, vcpu, vcpu.thread(), {bytes, sizeof(WOW64_CONTEXT)}))
+            {
+                return 0;
+            }
+
+            return sizeof(*field);
+        }
+
+        size_t read_teb32_base(void* data, const size_t max_length)
+        {
+            const uint64_t teb32 = this->get_thread_teb_addr(this->get_current_thread_id());
+            if (max_length < sizeof(teb32))
+            {
+                return 0;
+            }
+
+            memcpy(data, &teb32, sizeof(teb32));
+            return sizeof(teb32);
+        }
+
+        size_t write_teb32_base(const void* data, const size_t size)
+        {
+            const uint64_t teb32 = this->get_thread_teb_addr(this->get_current_thread_id());
+            return size >= sizeof(teb32) && memcmp(data, &teb32, sizeof(teb32)) == 0 ? sizeof(teb32) : 0;
+        }
+
+        std::optional<WOW64_CONTEXT> read_wow64_context() const
+        {
+            auto& vcpu = this->win_emu_->vcpu(0);
+            const auto bytes = capture_wow64_thread_context(*this->win_emu_, vcpu, vcpu.thread());
+            if (bytes.size() < sizeof(WOW64_CONTEXT))
+            {
+                return std::nullopt;
+            }
+
+            WOW64_CONTEXT context{};
+            memcpy(&context, bytes.data(), sizeof(context));
+            return context;
+        }
+
         windows_emulator* win_emu_{};
         utils::optional_function<bool()> should_stop_{};
         windows_filesystem windows_filesystem_;
