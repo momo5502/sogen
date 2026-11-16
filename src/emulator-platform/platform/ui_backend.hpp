@@ -205,7 +205,8 @@ namespace sogen
 
         // Confine the host cursor to a guest ClipCursor rectangle (emulated screen coordinates), or release it.
         // With relative set, the host reports raw motion instead, which a hidden cursor needs: mouse-look keeps
-        // receiving deltas at the edge of the clip rectangle, as raw input does on Windows.
+        // receiving deltas at the edge of the clip rectangle, as raw input does on Windows. Relative without a
+        // rectangle captures the cursor in the window.
         virtual void set_cursor_clip(const hwnd /*window*/, const std::optional<ui_rect>& /*screen_rect*/, const bool /*relative*/)
         {
         }

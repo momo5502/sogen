@@ -2389,6 +2389,7 @@ namespace sogen
                 register_raw_input_device(c.proc.raw_input_registrations, device);
             }
 
+            c.win_emu.apply_cursor_capture();
             return TRUE;
         }
 
@@ -4250,12 +4251,27 @@ namespace sogen
             return 0;
         }
 
+        // Windows clips every window that is not a child against its siblings and gives every overlapped one a caption.
+        DWORD created_window_style(DWORD style)
+        {
+            if ((style & (WS_CHILD | WS_POPUP)) != WS_CHILD)
+            {
+                style |= WS_CLIPSIBLINGS;
+                if ((style & WS_POPUP) == 0)
+                {
+                    style |= WS_CAPTION;
+                }
+            }
+            return style;
+        }
+
         hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style, const emulator_object<LARGE_STRING> class_name,
                                          const emulator_object<LARGE_STRING> /*cls_version*/,
-                                         const emulator_object<LARGE_STRING> window_name, const DWORD style, int x, int y, int width,
-                                         int height, const hwnd parent, const hmenu menu, const hinstance instance, const pointer l_param,
-                                         const DWORD /*flags*/, const pointer /*acbi_buffer*/)
+                                         const emulator_object<LARGE_STRING> window_name, const DWORD requested_style, int x, int y,
+                                         int width, int height, const hwnd parent, const hmenu menu, const hinstance instance,
+                                         const pointer l_param, const DWORD /*flags*/, const pointer /*acbi_buffer*/)
         {
+            const auto style = created_window_style(requested_style);
             constexpr int cw_usedefault = static_cast<int>(0x80000000);
             if (x == cw_usedefault)
             {
@@ -4279,7 +4295,7 @@ namespace sogen
             const auto cls_name = read_large_string_or_atom(c, class_name);
             if (c.win_emu.callbacks.on_generic_activity)
             {
-                auto style_string = utils::string::to_hex_number(style);
+                auto style_string = utils::string::to_hex_number(requested_style);
                 style_string.insert(style_string.begin(), std::max(0, 8 - static_cast<int>(style_string.size())), '0');
                 c.win_emu.callbacks.on_generic_activity("CreateWindowEx class='" + u16_to_u8(cls_name) + "' style=0x" + style_string);
             }
