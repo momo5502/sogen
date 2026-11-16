@@ -5,37 +5,44 @@
 namespace sogen
 {
 #ifndef OS_WINDOWS
-#define ANSI_CHARSET       0
-#define DEFAULT_CHARSET    1
-#define SHIFTJIS_CHARSET   128
-#define GREEK_CHARSET      161
-#define TURKISH_CHARSET    162
-#define VIETNAMESE_CHARSET 163
-#define HEBREW_CHARSET     177
-#define ARABIC_CHARSET     178
-#define BALTIC_CHARSET     186
-#define RUSSIAN_CHARSET    204
-#define EASTEUROPE_CHARSET 238
+#define ANSI_CHARSET        0
+#define DEFAULT_CHARSET     1
+#define SYMBOL_CHARSET      2
+#define SHIFTJIS_CHARSET    128
+#define HANGEUL_CHARSET     129
+#define JOHAB_CHARSET       130
+#define GB2312_CHARSET      134
+#define CHINESEBIG5_CHARSET 136
+#define GREEK_CHARSET       161
+#define TURKISH_CHARSET     162
+#define VIETNAMESE_CHARSET  163
+#define HEBREW_CHARSET      177
+#define ARABIC_CHARSET      178
+#define BALTIC_CHARSET      186
+#define RUSSIAN_CHARSET     204
+#define THAI_CHARSET        222
+#define EASTEUROPE_CHARSET  238
+#define OEM_CHARSET         255
 
-#define DEFAULT_PITCH      0
-#define VARIABLE_PITCH     2
-#define FF_SWISS           0x20
-#define FW_NORMAL          400
-#define FW_BOLD            700
-#define NTM_ITALIC         0x00000001
-#define NTM_BOLD           0x00000020
-#define NTM_REGULAR        0x00000040
-#define TRUETYPE_FONTTYPE  0x00000004
-#define RDH_RECTANGLES     1
-#define RGN_ERROR          0
-#define NULLREGION         1
-#define SIMPLEREGION       2
-#define COMPLEXREGION      3
-#define RGN_AND            1
-#define RGN_OR             2
-#define RGN_XOR            3
-#define RGN_DIFF           4
-#define RGN_COPY           5
+#define DEFAULT_PITCH       0
+#define VARIABLE_PITCH      2
+#define FF_SWISS            0x20
+#define FW_NORMAL           400
+#define FW_BOLD             700
+#define NTM_ITALIC          0x00000001
+#define NTM_BOLD            0x00000020
+#define NTM_REGULAR         0x00000040
+#define TRUETYPE_FONTTYPE   0x00000004
+#define RDH_RECTANGLES      1
+#define RGN_ERROR           0
+#define NULLREGION          1
+#define SIMPLEREGION        2
+#define COMPLEXREGION       3
+#define RGN_AND             1
+#define RGN_OR              2
+#define RGN_XOR             3
+#define RGN_DIFF            4
+#define RGN_COPY            5
 
     struct ABC
     {

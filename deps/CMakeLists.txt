@@ -152,6 +152,7 @@ add_subdirectory(capstone)
 
 include(googletest.cmake)
 include(zstd.cmake)
+include(freetype.cmake)
 
 ##########################################
 

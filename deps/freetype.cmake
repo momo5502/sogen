@@ -1,0 +1,18 @@
+if(NOT EXISTS "${CMAKE_CURRENT_LIST_DIR}/freetype/CMakeLists.txt")
+  message(FATAL_ERROR "The FreeType submodule is required; run git submodule update --init --recursive deps/freetype")
+endif()
+
+block()
+  set(BUILD_SHARED_LIBS OFF)
+  set(BUILD_FRAMEWORK OFF)
+  set(SKIP_INSTALL_ALL ON)
+  set(FT_DISABLE_ZLIB ON)
+  set(FT_DISABLE_BZIP2 ON)
+  set(FT_DISABLE_PNG ON)
+  set(FT_DISABLE_HARFBUZZ ON)
+  set(FT_DISABLE_BROTLI ON)
+  set(FT_DISABLE_HVF ON)
+
+  add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/freetype" "${CMAKE_CURRENT_BINARY_DIR}/freetype" EXCLUDE_FROM_ALL)
+  add_library(Freetype::Freetype ALIAS freetype-interface)
+endblock()

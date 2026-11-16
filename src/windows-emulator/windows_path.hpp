@@ -3,6 +3,7 @@
 #include <list>
 #include <optional>
 #include <filesystem>
+#include <platform/unicode.hpp>
 #include <utils/string.hpp>
 
 #include <serialization.hpp>

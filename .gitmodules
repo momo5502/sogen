@@ -69,3 +69,7 @@
 [submodule "deps/libadrenotools"]
 	path = deps/libadrenotools
 	url = https://github.com/bylaws/libadrenotools.git
+[submodule "deps/freetype"]
+	path = deps/freetype
+	url = https://github.com/freetype/freetype.git
+	shallow = true

@@ -140,6 +140,23 @@ namespace sogen
                 return c.win_emu.version.get_system_root() / "System32" / file_name;
             }
 
+            NTSTATUS map_nls_bytes(const syscall_context& c, const std::span<const std::byte> data,
+                                   const emulator_object<uint64_t> section_pointer, const emulator_object<ULONG> section_size)
+            {
+                if (data.size() > std::numeric_limits<ULONG>::max() - 0xFFF)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const auto section_memory = map_nls_data(c.win_emu, data);
+                if (section_memory == 0)
+                {
+                    return STATUS_NO_MEMORY;
+                }
+                section_pointer.write_if_valid(section_memory);
+                section_size.write_if_valid(static_cast<ULONG>(page_align_up(data.size())));
+                return STATUS_SUCCESS;
+            }
+
             NTSTATUS map_nls_file(const syscall_context& c, const std::string_view file_name,
                                   const emulator_object<uint64_t> section_pointer, const emulator_object<ULONG> section_size)
             {
@@ -148,15 +165,7 @@ namespace sogen
                 {
                     return STATUS_OBJECT_NAME_NOT_FOUND;
                 }
-
-                const auto size = static_cast<size_t>(page_align_up(nls_file.size()));
-                const auto section_memory = c.win_emu.memory.allocate_memory(size, memory_permission::read);
-                c.emu.write_memory(section_memory, nls_file.data(), nls_file.size());
-
-                section_pointer.write_if_valid(section_memory);
-                section_size.write_if_valid(static_cast<ULONG>(size));
-
-                return STATUS_SUCCESS;
+                return map_nls_bytes(c, nls_file, section_pointer, section_size);
             }
         }
 
@@ -193,6 +202,16 @@ namespace sogen
         {
             if (section_type == 11)
             {
+                const auto& ansi = c.proc.ansi_code_page;
+                const auto& oem = c.proc.oem_code_page;
+                if (section_data == ansi.id() && !ansi.data().empty())
+                {
+                    return map_nls_bytes(c, ansi.data(), section_pointer, section_size);
+                }
+                if (oem && section_data == oem->id())
+                {
+                    return map_nls_bytes(c, oem->data(), section_pointer, section_size);
+                }
                 return map_nls_file(c, "C_" + std::to_string(section_data) + ".NLS", section_pointer, section_size);
             }
 
