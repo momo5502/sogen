@@ -55,8 +55,8 @@ namespace sogen
                                uint64_t io_status_block, const io_completion_message& message);
         NTSTATUS write_entries(memory_manager& memory, const emulator_thread* thread, uint64_t entries, uint64_t entries_removed,
                                std::span<const io_completion_message> messages);
-        // KeRemoveQueueEx ends a wait that takes no packet (a timeout, a user APC) with one entry, the wait's status, which
-        // IoRemoveIoCompletion counts without copying it. NtRemoveIoCompletionEx stores that count of 1 under try, as it
+        // KeRemoveQueueEx ends a wait that takes no packet (a timeout, a user APC, an alert) with one entry, the wait's status,
+        // which IoRemoveIoCompletion counts without copying it. NtRemoveIoCompletionEx stores that count of 1 under try, as it
         // stores the count of every wait that did not fail (19041); the entries stay as they were.
         NTSTATUS write_status_entry_count(memory_manager& memory, const emulator_thread* thread, uint64_t entries_removed);
     }

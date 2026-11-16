@@ -1066,6 +1066,7 @@ namespace sogen
     {
         ++this->ended_waits;
         this->pending_status = status;
+        this->user_apc_ended_wait = false;
         this->message_wait_return_register.reset();
         this->await_time = {};
         this->await_objects = {};
@@ -1086,6 +1087,17 @@ namespace sogen
         }
 
         this->waiting_for_alert = false;
+    }
+
+    void emulator_thread::end_wait_with_alert()
+    {
+        // KeRemoveQueueEx ends the wait with one entry, the alert's status, whose count NtRemoveIoCompletionEx stores under
+        // try: a count it cannot store ends the call with the store's fault instead.
+        const auto& wait = this->await_io_completion;
+        const auto stored = wait && wait->type == io_completion_wait_type::remove_multiple && !wait->worker_factory
+                                ? io_completion_wait::write_status_entry_count(*this->memory_ptr, this, wait->entries_removed_ptr)
+                                : STATUS_SUCCESS;
+        this->mark_as_ready(stored == STATUS_SUCCESS ? STATUS_ALERTED : stored);
     }
 
     user_timer* emulator_thread::find_user_timer(const hwnd hwnd, const uint64_t timer_id)
@@ -1582,6 +1594,16 @@ namespace sogen
         if (const auto* wait = this->current_sent_message_wait())
         {
             return wait->result.has_value() || !this->pending_sent_messages.empty();
+        }
+
+        // An alertable wait takes a pending user-mode alert before it looks at anything else, a queued user APC included: one
+        // that starts with the alert pending, or that starts over once its thread resumes from a suspension
+        // (KeWaitForSingleObject, KeRemoveQueueEx; 19041 on the host). A user APC queued during the wait ended it first.
+        if (this->user_alerted && !this->user_apc_ended_wait && this->is_in_alertable_wait())
+        {
+            this->user_alerted = false;
+            this->end_wait_with_alert();
+            return true;
         }
 
         auto& process = win_emu.process;

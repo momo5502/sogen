@@ -35,6 +35,8 @@ namespace sogen::syscalls
                                       LONG maximum_count);
     NTSTATUS handle_NtTerminateThread(const syscall_context& c, handle thread_handle, NTSTATUS exit_status);
     NTSTATUS handle_NtTerminateProcess(const syscall_context& c, handle process_handle, NTSTATUS exit_status);
+    NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, handle h, BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
+    NTSTATUS handle_NtAlertThread(const syscall_context& c, handle thread_handle);
 }
 
 namespace sogen::test
@@ -315,6 +317,29 @@ namespace sogen::test
         EXPECT_EQ(apcs[0].apc_argument1, apc_context);
         EXPECT_EQ(apcs[0].apc_argument2, block.value());
         EXPECT_EQ(apcs[0].apc_argument3, 0u);
+    }
+
+    // CmpPostNotify queues the APC with KeInsertQueueApc, whose KiSignalThreadForApc ends the requester's alertable wait at
+    // once: an alert right after the change finds the thread no longer waiting and stays pending (KeAlertThread), and the
+    // wait returns STATUS_USER_APC once the APC runs.
+    TEST_F(RegistryChangeNotificationTest, TheApcEndsTheRequestersAlertableWaitBeforeALaterAlert)
+    {
+        const auto block = this->status_block();
+        ASSERT_EQ(STATUS_PENDING, this->notify(this->watched, {}, block, change_last_set, FALSE, TRUE, apc_routine));
+        const auto wait_event = this->create_event();
+        const emulator_object<LARGE_INTEGER> no_timeout{this->emu->memory};
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtWaitForSingleObject(this->context(), wait_event, TRUE, no_timeout);
+        }));
+
+        this->activate(this->other_thread);
+        this->set_value(this->watched, u"A");
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] { return syscalls::handle_NtAlertThread(this->context(), this->requester); }));
+
+        const auto& waiter = this->thread_object(this->requester);
+        EXPECT_FALSE(waiter.pending_status.has_value()) << "the APC ended the wait, not the alert";
+        EXPECT_TRUE(waiter.user_alerted);
+        EXPECT_TRUE(waiter.has_pending_alertable_apc());
     }
 
     TEST_F(RegistryChangeNotificationTest, ClosingTheLastHandleCompletesEveryPendingRequestWithCleanup)

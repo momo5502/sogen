@@ -1587,7 +1587,7 @@ namespace sogen
 
             if (apc_routine)
             {
-                c.thread().pending_apcs.push_back({
+                c.thread().queue_user_apc({
                     .flags = 0,
                     .apc_routine = apc_routine,
                     .apc_argument1 = apc_context,

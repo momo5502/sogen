@@ -4,6 +4,13 @@
 
 namespace sogen::syscalls
 {
+    NTSTATUS handle_NtAlertThread(const syscall_context& c, handle thread_handle);
+    NTSTATUS handle_NtQueueApcThread(const syscall_context& c, handle thread_handle, uint64_t apc_routine, uint64_t apc_argument1,
+                                     uint64_t apc_argument2, uint64_t apc_argument3);
+    NTSTATUS handle_NtTestAlert(const syscall_context& c);
+    NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, handle h, BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
+    NTSTATUS handle_NtDelayExecution(const syscall_context& c, BOOLEAN alertable, emulator_object<LARGE_INTEGER> delay_interval);
+    NTSTATUS handle_NtContinueEx(const syscall_context& c, uint64_t thread_context, uint64_t continue_argument);
     NTSTATUS handle_NtAssociateWaitCompletionPacket(const syscall_context& c, handle wait_completion_packet_handle,
                                                     handle io_completion_handle, handle target_object_handle, emulator_pointer key_context,
                                                     emulator_pointer apc_context, NTSTATUS io_status,
@@ -929,5 +936,364 @@ namespace sogen::test
 
         EXPECT_EQ(0u, this->queued());
         EXPECT_EQ(nullptr, this->emu->process.wait_completion_packets.get(this->packet)->target_object);
+    }
+
+    class ThreadAlertTest : public IoCompletionWaiterTest
+    {
+      protected:
+        using entry_type = FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>;
+        static constexpr uint64_t sentinel_key = 0xAB;
+        static constexpr ULONG unwritten_count = 0xDEADBEEF;
+
+        void SetUp() override
+        {
+            IoCompletionWaiterTest::SetUp();
+            this->count_address = this->storage + 0x20;
+        }
+
+        NTSTATUS alert(emulator_thread& alerter, emulator_thread& target)
+        {
+            const auto target_handle = this->emu->process.threads.find_handle(&target);
+            return this->emu->synchronize([&] { return syscalls::handle_NtAlertThread(this->context_of(alerter), target_handle); });
+        }
+
+        bool ready(emulator_thread& thread)
+        {
+            return this->emu->synchronize([&] { return thread.is_thread_ready(*this->emu); });
+        }
+
+        emulator_object<entry_type> entries() const
+        {
+            return {this->emu->memory, this->storage + 0x100};
+        }
+
+        emulator_object<ULONG> removed() const
+        {
+            return {this->emu->memory, this->count_address};
+        }
+
+        uint64_t first_key() const
+        {
+            return this->entries().read().KeyContext;
+        }
+
+        // NtRemoveIoCompletionEx for up to two entries, with the first entry's KeyContext set to sentinel_key and the count
+        // to unwritten_count beforehand.
+        NTSTATUS remove_ex(emulator_thread& waiter, const BOOLEAN alertable, const std::optional<handle> other_port = {})
+        {
+            entry_type sentinel{};
+            sentinel.KeyContext = sentinel_key;
+            this->entries().write(sentinel);
+            this->removed().write(unwritten_count);
+            return this->emu->synchronize([&] {
+                return syscalls::handle_NtRemoveIoCompletionEx(this->context_of(waiter), other_port.value_or(this->port), this->entries(),
+                                                               2, this->removed(), {this->emu->memory}, alertable);
+            });
+        }
+
+        uint64_t count_address{};
+    };
+
+    // NtAlertThread alerts in user mode (KeAlertThread): it ends an alertable wait with STATUS_ALERTED, leaves a wait that is
+    // not alertable alone, and an alertable wait that starts with the alert pending takes it before it looks at its object,
+    // a signaled one included (19041 on the host).
+    TEST_F(ThreadAlertTest, AnAlertEndsAnAlertableWaitOrWaitsForTheNextOne)
+    {
+        auto& waiter = this->new_thread();
+        auto& alerter = this->new_thread();
+        const auto event_handle = this->emu->process.events.store(event{});
+        const emulator_object<LARGE_INTEGER> no_timeout{this->emu->memory};
+        const auto wait = [&](const BOOLEAN alertable) {
+            return this->emu->synchronize(
+                [&] { return syscalls::handle_NtWaitForSingleObject(this->context_of(waiter), event_handle, alertable, no_timeout); });
+        };
+
+        ASSERT_EQ(STATUS_SUCCESS, wait(TRUE));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(alerter, waiter));
+        EXPECT_TRUE(this->ready(waiter));
+        EXPECT_EQ(STATUS_ALERTED, waiter.pending_status);
+        EXPECT_FALSE(waiter.user_alerted);
+
+        waiter.pending_status = {};
+        ASSERT_EQ(STATUS_SUCCESS, wait(FALSE));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(alerter, waiter));
+        EXPECT_FALSE(this->ready(waiter));
+        this->emu->process.events.get(event_handle)->set_signaled(true);
+        EXPECT_TRUE(this->ready(waiter));
+        EXPECT_EQ(STATUS_SUCCESS, waiter.pending_status);
+
+        waiter.pending_status = {};
+        EXPECT_EQ(STATUS_ALERTED, wait(TRUE));
+        EXPECT_EQ(STATUS_SUCCESS, wait(TRUE));
+    }
+
+    // An alert ends an alertable NtDelayExecution with STATUS_ALERTED (19041 on the host).
+    TEST_F(ThreadAlertTest, AnAlertEndsAnAlertableDelay)
+    {
+        constexpr int64_t ten_seconds = -100'000'000;
+        auto& waiter = this->new_thread();
+        auto& alerter = this->new_thread();
+        const emulator_object<LARGE_INTEGER> delay{this->emu->memory, this->storage + 0x900};
+        LARGE_INTEGER interval{};
+        interval.QuadPart = ten_seconds;
+        delay.write(interval);
+
+        ASSERT_EQ(STATUS_SUCCESS,
+                  this->emu->synchronize([&] { return syscalls::handle_NtDelayExecution(this->context_of(waiter), TRUE, delay); }));
+        EXPECT_FALSE(this->ready(waiter));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(alerter, waiter));
+        EXPECT_TRUE(this->ready(waiter));
+        EXPECT_EQ(STATUS_ALERTED, waiter.pending_status);
+    }
+
+    // NtTestAlert takes a pending user-mode alert and finds none the next time (KeTestAlertThread; 19041 on the host).
+    TEST_F(ThreadAlertTest, TestAlertTakesAPendingAlertOnce)
+    {
+        auto& thread = this->new_thread();
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(thread, thread));
+        EXPECT_EQ(STATUS_ALERTED, this->emu->synchronize([&] { return syscalls::handle_NtTestAlert(this->context_of(thread)); }));
+        EXPECT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] { return syscalls::handle_NtTestAlert(this->context_of(thread)); }));
+    }
+
+    // KeAlertThread ends an alertable NtRemoveIoCompletionEx at once (KiSignalThread): KeRemoveQueueEx returns one entry,
+    // STATUS_ALERTED, whose count NtRemoveIoCompletionEx stores, the entries untouched, and a packet posted right after the
+    // alert stays queued. A wait that is not alertable goes on and keeps the alert pending (19041 on the host).
+    TEST_F(ThreadAlertTest, AnAlertEndsAnAlertableExWaitAtOnceWithACountOfOne)
+    {
+        auto& waiter = this->new_thread();
+        auto& poster = this->new_thread();
+
+        ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(waiter, TRUE));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(poster, waiter));
+        ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x11));
+        EXPECT_EQ(STATUS_ALERTED, waiter.pending_status);
+        EXPECT_FALSE(waiter.user_alerted);
+        EXPECT_EQ(1u, this->removed().read());
+        EXPECT_EQ(sentinel_key, this->first_key());
+        EXPECT_EQ(1u, this->completion().queue.size());
+
+        waiter.pending_status = {};
+        ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(waiter, FALSE));
+        EXPECT_EQ(0x11u, this->first_key());
+        ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(waiter, FALSE));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(poster, waiter));
+        EXPECT_FALSE(this->ready(waiter));
+        EXPECT_TRUE(waiter.user_alerted);
+    }
+
+    // KeRemoveQueueEx: a thread the port already has (KTHREAD.Queue, from an earlier call that got past the alert test,
+    // here one that took a packet) takes what is queued before it tests for an alert, which stays pending, and with nothing
+    // queued it takes the alert. A thread the port does not have tests first: the alert, a count of 1 and the packet left
+    // queued, and a call that the alert ended does not join the port. Nor does the port keep a thread that joined another
+    // one (19041 on the host).
+    TEST_F(ThreadAlertTest, AThreadThePortHasTakesQueuedPacketsBeforeTheAlert)
+    {
+        auto& member = this->new_thread();
+        auto& stranger = this->new_thread();
+        auto& poster = this->new_thread();
+
+        ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x11));
+        ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(member, FALSE));
+        ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x22));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(poster, member));
+        EXPECT_EQ(STATUS_SUCCESS, this->remove_ex(member, TRUE));
+        EXPECT_EQ(0x22u, this->first_key());
+        EXPECT_EQ(1u, this->removed().read());
+        EXPECT_TRUE(member.user_alerted);
+        EXPECT_EQ(STATUS_ALERTED, this->remove_ex(member, TRUE));
+        EXPECT_EQ(1u, this->removed().read());
+        EXPECT_FALSE(member.user_alerted);
+
+        ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x33));
+        for (int i = 0; i < 2; ++i)
+        {
+            ASSERT_EQ(STATUS_SUCCESS, this->alert(poster, stranger));
+            EXPECT_EQ(STATUS_ALERTED, this->remove_ex(stranger, TRUE)) << i;
+            EXPECT_EQ(1u, this->removed().read()) << i;
+            EXPECT_EQ(sentinel_key, this->first_key()) << i;
+        }
+        EXPECT_EQ(1u, this->completion().queue.size());
+
+        const auto other_port = this->emu->process.io_completions.store(io_completion{});
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtSetIoCompletion(this->context_of(poster), other_port, 0x44, 0, STATUS_SUCCESS, 0);
+        }));
+        ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(member, FALSE, other_port));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(poster, member));
+        EXPECT_EQ(STATUS_ALERTED, this->remove_ex(member, TRUE));
+        EXPECT_EQ(1u, this->completion().queue.size());
+    }
+
+    // NtRemoveIoCompletionEx stores the count under try (19041): a count it can no longer write, its page freed during the
+    // wait, ends the alerted wait with STATUS_ACCESS_VIOLATION instead of failing the emulator, whether the alert ends the
+    // wait at once or once the waiter resumes from a suspension (19041 on the host).
+    TEST_F(ThreadAlertTest, ACountThatCannotBeStoredEndsTheAlertedWaitWithTheFault)
+    {
+        auto& waiter = this->new_thread();
+        auto& alerter = this->new_thread();
+        for (const uint32_t suspended : {0u, 1u})
+        {
+            this->count_address = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(waiter, TRUE));
+            ASSERT_TRUE(this->emu->memory.release_memory(this->count_address, 0));
+            waiter.suspended = suspended;
+            ASSERT_EQ(STATUS_SUCCESS, this->alert(alerter, waiter));
+            waiter.suspended = 0;
+            EXPECT_TRUE(this->ready(waiter));
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION, waiter.pending_status) << suspended;
+            EXPECT_FALSE(waiter.user_alerted) << suspended;
+            waiter.pending_status = {};
+        }
+    }
+
+    // The count is a plain store under try, as a copy-out makes one (MiAccessCheck): on a writable guard page outside the
+    // stacks it ends the alerted wait with STATUS_GUARD_PAGE_VIOLATION and the page loses its guard, and on a guard page the
+    // waiter may not write it ends it with STATUS_ACCESS_VIOLATION and the guard stays (19041 on the host).
+    TEST_F(ThreadAlertTest, ACountOnAGuardPageEndsTheAlertedWaitWithTheStoresFault)
+    {
+        auto& waiter = this->new_thread();
+        auto& alerter = this->new_thread();
+        for (const auto& [permission, status, guard_stays] : {std::tuple{memory_permission::read_write, STATUS_GUARD_PAGE_VIOLATION, false},
+                                                              std::tuple{memory_permission::read, STATUS_ACCESS_VIOLATION, true}})
+        {
+            this->count_address = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(waiter, TRUE));
+            ASSERT_TRUE(this->emu->memory.protect_memory(this->count_address, 0x1000,
+                                                         nt_memory_permission(permission, memory_permission_ext::guard)));
+            ASSERT_EQ(STATUS_SUCCESS, this->alert(alerter, waiter));
+            EXPECT_EQ(status, waiter.pending_status);
+            EXPECT_EQ(guard_stays, this->emu->memory.is_guard_page(this->count_address));
+            waiter.pending_status = {};
+        }
+    }
+
+    // A user APC queued to a thread in an alertable wait ends the wait at once (KiSignalThreadForApc), so an alert after it
+    // finds the thread no longer waiting and stays pending (KeAlertThread): the wait returns STATUS_USER_APC once the APC
+    // runs, and the alert is for the next alertable wait (19041 on the host).
+    TEST_F(ThreadAlertTest, AUserApcQueuedBeforeTheAlertEndsTheWaitAndTheAlertStaysPending)
+    {
+        constexpr uint64_t apc_routine = 0x10000; // never run here
+        auto& waiter = this->new_thread();
+        auto& alerter = this->new_thread();
+        const auto event_handle = this->emu->process.events.store(event{});
+        const emulator_object<LARGE_INTEGER> no_timeout{this->emu->memory};
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtWaitForSingleObject(this->context_of(waiter), event_handle, TRUE, no_timeout);
+        }));
+
+        const auto waiter_handle = this->emu->process.threads.find_handle(&waiter);
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtQueueApcThread(this->context_of(alerter), waiter_handle, apc_routine, 0, 0, 0);
+        }));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(alerter, waiter));
+
+        EXPECT_FALSE(waiter.pending_status.has_value()) << "the APC ended the wait, not the alert";
+        EXPECT_TRUE(waiter.user_alerted);
+        EXPECT_FALSE(this->ready(waiter)) << "the alert-first check leaves the wait to the APC";
+        EXPECT_TRUE(waiter.has_pending_alertable_apc());
+    }
+
+    // NtWaitForWorkViaWorkerFactory takes its work through KeRemoveQueueEx, which joins the factory's port (KiSwitchQueue): a
+    // worker back from work it took there, and alerted meanwhile, takes a packet queued on that port before the alert,
+    // which stays pending (19041 on the host).
+    TEST_F(ThreadAlertTest, AWorkerJoinsItsFactorysPort)
+    {
+        auto& worker = this->new_thread();
+        auto& poster = this->new_thread();
+        worker_factory factory{};
+        factory.io_completion = this->emu->process.io_completions.reference_of(this->port).value_or(object_reference{});
+        const auto factory_handle = this->emu->process.worker_factories.store(std::move(factory));
+
+        ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x11));
+        const emulator_object<entry_type> packets{this->emu->memory, this->storage + 0x200};
+        const emulator_object<ULONG> returned{this->emu->memory, this->storage + 0x300};
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtWaitForWorkViaWorkerFactory(this->context_of(worker), factory_handle, packets, 1, returned, 0);
+        }));
+        ASSERT_EQ(1u, returned.read());
+
+        ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x22));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(poster, worker));
+        EXPECT_EQ(STATUS_SUCCESS, this->remove_ex(worker, TRUE));
+        EXPECT_EQ(0x22u, this->first_key());
+        EXPECT_TRUE(worker.user_alerted);
+    }
+
+    // KeAlertThread ends only a wait still in progress. A wait that a packet or its object's signal ended before the
+    // alert has ended on Windows, even when the scheduler has not looked at it yet, so the alert stays pending (19041 on
+    // the host).
+    TEST_F(ThreadAlertTest, AnAlertAfterTheWaitEndedStaysPending)
+    {
+        auto& waiter = this->new_thread();
+        auto& alerter = this->new_thread();
+        ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(waiter, TRUE));
+        ASSERT_EQ(STATUS_SUCCESS, this->post(alerter, 0x55));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(alerter, waiter));
+        EXPECT_EQ(STATUS_SUCCESS, waiter.pending_status);
+        EXPECT_EQ(0x55u, this->first_key());
+        EXPECT_TRUE(waiter.user_alerted);
+
+        waiter.pending_status = {};
+        waiter.user_alerted = false;
+        const auto event_handle = this->emu->process.events.store(event{});
+        const emulator_object<LARGE_INTEGER> no_timeout{this->emu->memory};
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtWaitForSingleObject(this->context_of(waiter), event_handle, TRUE, no_timeout);
+        }));
+        this->emu->process.events.get(event_handle)->set_signaled(true);
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(alerter, waiter));
+        EXPECT_EQ(STATUS_SUCCESS, waiter.pending_status);
+        EXPECT_TRUE(waiter.user_alerted);
+    }
+
+    // A suspended waiter is not in its alertable wait: KeAlertThread keeps the alert, and once the thread resumes, its wait
+    // starts over and takes the alert first, ahead of a packet queued meanwhile, with a count of 1 (19041 on the host).
+    TEST_F(ThreadAlertTest, ASuspendedWaiterTakesTheAlertOnceItResumes)
+    {
+        auto& waiter = this->new_thread();
+        auto& poster = this->new_thread();
+        ASSERT_EQ(STATUS_SUCCESS, this->remove_ex(waiter, TRUE));
+        waiter.suspended = 1;
+        ASSERT_EQ(STATUS_SUCCESS, this->post(poster, 0x66));
+        ASSERT_EQ(STATUS_SUCCESS, this->alert(poster, waiter));
+        EXPECT_FALSE(waiter.pending_status.has_value());
+        EXPECT_TRUE(waiter.user_alerted);
+
+        waiter.suspended = 0;
+        EXPECT_TRUE(this->ready(waiter));
+        EXPECT_EQ(STATUS_ALERTED, waiter.pending_status);
+        EXPECT_FALSE(waiter.user_alerted);
+        EXPECT_EQ(1u, this->removed().read());
+        EXPECT_EQ(sentinel_key, this->first_key());
+        EXPECT_EQ(1u, this->completion().queue.size());
+    }
+
+    // KiContinueEx tests for an alert only for a nonzero inline argument, as NtContinue(context, TRUE) passes.
+    // KeTestAlertThread then takes a pending user-mode alert, and only without one are queued user APCs delivered (19041 on
+    // the host). The context's flags are 0, so continuing to it changes no register.
+    TEST_F(ThreadAlertTest, ContinueTestsTheAlertOnlyForANonzeroArgument)
+    {
+        auto& thread = this->new_thread();
+        auto& vcpu = this->emu->vcpu(0);
+        const auto context =
+            this->emu->memory.allocate_memory(static_cast<size_t>(page_align_up(sizeof(CONTEXT64))), memory_permission::read_write);
+        const auto continue_with = [&](const uint64_t argument) {
+            vcpu.switch_thread = false;
+            thread.apc_alertable = false;
+            return this->emu->synchronize([&] { return syscalls::handle_NtContinueEx(this->context_of(thread), context, argument); });
+        };
+
+        thread.user_alerted = true;
+        EXPECT_EQ(STATUS_SUCCESS, continue_with(FALSE));
+        EXPECT_TRUE(thread.user_alerted);
+        EXPECT_FALSE(vcpu.switch_thread);
+
+        EXPECT_EQ(STATUS_SUCCESS, continue_with(TRUE));
+        EXPECT_FALSE(thread.user_alerted);
+        EXPECT_FALSE(vcpu.switch_thread);
+
+        EXPECT_EQ(STATUS_SUCCESS, continue_with(TRUE));
+        EXPECT_TRUE(vcpu.switch_thread);
+        EXPECT_TRUE(thread.apc_alertable);
     }
 }

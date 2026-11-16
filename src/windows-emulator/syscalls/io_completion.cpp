@@ -175,6 +175,13 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            // KeRemoveQueueEx: the thread joins the port (KiSwitchQueue), which it stays with after the call.
+            const auto io_completion_reference = c.proc.io_completions.reference_of(io_completion_handle).value_or(object_reference{});
+            if (auto* thread = c.vcpu.active_thread)
+            {
+                thread->associated_io_completion = io_completion_reference;
+            }
+
             io_completion_message message{};
             if (io_completion_wait::dequeue_io_completion_message(c.win_emu, io_completion_handle, message))
             {
@@ -197,7 +204,7 @@ namespace sogen
 
             auto& wait = *t.await_io_completion;
             wait.type = io_completion_wait_type::remove_single;
-            wait.io_completion = c.proc.io_completions.reference_of(io_completion_handle).value_or(object_reference{});
+            wait.io_completion = io_completion_reference;
             wait.key_context_ptr = key_context.value();
             wait.apc_context_ptr = apc_context.value();
             wait.io_status_block_ptr = io_status_block.value();
@@ -245,6 +252,28 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            // KeRemoveQueueEx: a thread the port already has (KTHREAD.Queue) takes what is queued before it tests for an alert;
+            // any other tests first, and only a call that gets past the test joins the port (KiSwitchQueue). A pending user-mode
+            // alert ends the call with one entry, STATUS_ALERTED, whose count NtRemoveIoCompletionEx stores, and the packets stay
+            // queued.
+            const auto io_completion_reference = c.proc.io_completions.reference_of(io_completion_handle).value_or(object_reference{});
+            if (auto* thread = c.vcpu.active_thread)
+            {
+                if (alertable && thread->user_alerted)
+                {
+                    io_completion_wait::materialize_signaled_wait_packets(c.win_emu, io_completion_reference);
+                    if (thread->associated_io_completion != io_completion_reference || completion->queue.empty())
+                    {
+                        thread->user_alerted = false;
+                        const auto status =
+                            io_completion_wait::write_status_entry_count(c.win_emu.memory, thread, num_entries_removed.value());
+                        return status == STATUS_SUCCESS ? STATUS_ALERTED : status;
+                    }
+                }
+
+                thread->associated_io_completion = io_completion_reference;
+            }
+
             const auto messages = io_completion_wait::dequeue_io_completion_entries(c.win_emu, io_completion_handle, count);
             if (!messages.empty())
             {
@@ -271,7 +300,7 @@ namespace sogen
 
             auto& wait = *t.await_io_completion;
             wait.type = io_completion_wait_type::remove_multiple;
-            wait.io_completion = c.proc.io_completions.reference_of(io_completion_handle).value_or(object_reference{});
+            wait.io_completion = io_completion_reference;
             wait.completion_entries_ptr = io_completion_information.value();
             wait.entries_removed_ptr = num_entries_removed.value();
             wait.max_entries = count;

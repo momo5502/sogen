@@ -1070,6 +1070,38 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        // KeAlertThread in user mode: a thread in an alertable wait has it ended with STATUS_ALERTED at once (KiSignalThread);
+        // any other, a suspended one included, keeps the alert for its next alertable wait, NtTestAlert or NtContinue's
+        // test-alert (emulator_thread::user_alerted), and an alert already pending stays as it is.
+        NTSTATUS handle_NtAlertThread(const syscall_context& c, const handle thread_handle)
+        {
+            auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            if (!thread)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            if (thread->user_alerted)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            // The scheduler looks at a wait only when it passes it. A wait that its object's signal, its timeout or a user APC
+            // queued meanwhile (KiSignalThreadForApc) ended before the alert has ended on Windows, so it ends that way here
+            // first (as NtPulseEvent wakes its waiters), and the alert stays pending.
+            if (thread->is_in_alertable_wait() && !thread->user_apc_ended_wait && !thread->is_thread_ready(c.win_emu))
+            {
+                thread->end_wait_with_alert();
+            }
+            else
+            {
+                thread->user_alerted = true;
+            }
+
+            c.win_emu.wake_idle_vcpu();
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtAlertThreadByThreadId(const syscall_context& c, const uint64_t thread_id)
         {
             for (auto& t : c.proc.threads | std::views::values)
@@ -1309,7 +1341,9 @@ namespace sogen
             KCONTINUE_ARGUMENT argument{};
             if (continue_argument <= 0xFF)
             {
-                argument.ContinueFlags = KCONTINUE_FLAG_TEST_ALERT;
+                // An inline TestAlert: KiContinueEx tests for an alert only when it is nonzero, so NtContinue(context, FALSE),
+                // which exception dispatch uses, neither takes a pending alert nor delivers queued user APCs.
+                argument.ContinueFlags = continue_argument != 0 ? KCONTINUE_FLAG_TEST_ALERT : 0;
             }
             else
             {
@@ -1327,7 +1361,8 @@ namespace sogen
                 cpu_context::restore(c.x64_cpu(), c.emu.read_memory<CONTEXT64>(thread_context));
             }
 
-            if (argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT)
+            // KeTestAlertThread takes a pending user-mode alert; only without one does it have queued user APCs delivered.
+            if ((argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT) && !std::exchange(c.thread().user_alerted, false))
             {
                 c.win_emu.yield_thread(c.vcpu, true);
             }
@@ -1812,7 +1847,7 @@ namespace sogen
                 // return STATUS_NOT_SUPPORTED;
             }
 
-            thread->pending_apcs.push_back({
+            thread->queue_user_apc({
                 .flags = apc_flags,
                 .apc_routine = apc_routine,
                 .apc_argument1 = apc_argument1,
