@@ -889,11 +889,11 @@ namespace sogen::sxs
             return decode_manifest_text(manifest);
         }
 
-        std::optional<std::string> read_embedded_manifest(const file_system& file_system, const windows_path& path,
+        std::optional<std::string> read_embedded_manifest(const image_reader& read_image, const windows_path& path,
                                                           const uint16_t resource_id = 1)
         {
             std::vector<std::byte> image{};
-            if (!file_system.read_file(path, &image))
+            if (!read_image(path, image))
             {
                 return std::nullopt;
             }
@@ -915,9 +915,10 @@ namespace sogen::sxs
             return windows_path{path.u16string() + std::u16string{suffix}};
         }
 
-        std::optional<source_document> read_application_manifest(const file_system& file_system, const mapped_module& executable)
+        std::optional<source_document> read_application_manifest(const file_system& file_system, const image_reader& read_image,
+                                                                 const mapped_module& executable)
         {
-            if (auto embedded = read_embedded_manifest(file_system, executable.module_path))
+            if (auto embedded = read_embedded_manifest(read_image, executable.module_path))
             {
                 return source_document{.contents = std::move(*embedded), .path = executable.module_path.u16string()};
             }
@@ -1143,8 +1144,8 @@ namespace sogen::sxs
             return !name.empty() && name != u"." && name != u".." && name.find_first_of(u"\\/:") == std::u16string_view::npos;
         }
 
-        std::optional<resolved_assembly> resolve_private_assembly(const file_system& file_system, const mapped_module& executable,
-                                                                  const assembly_identity& identity)
+        std::optional<resolved_assembly> resolve_private_assembly(const file_system& file_system, const image_reader& read_image,
+                                                                  const mapped_module& executable, const assembly_identity& identity)
         {
             const auto identity_name = u8_to_u16(identity.name);
             if (!is_plain_file_name(identity_name))
@@ -1196,7 +1197,7 @@ namespace sogen::sxs
 
             for (const auto& entry : make_candidates(u".dll"))
             {
-                const auto xml = read_embedded_manifest(file_system, application_directory / entry.relative_path, 2);
+                const auto xml = read_embedded_manifest(read_image, application_directory / entry.relative_path, 2);
                 if (!xml)
                 {
                     continue;
@@ -1616,7 +1617,8 @@ namespace sogen::sxs
             return result.release();
         }
 
-        std::vector<std::byte> build_activation_context_from_documents(const file_system& file_system, const mapped_module& executable,
+        std::vector<std::byte> build_activation_context_from_documents(const file_system& file_system, const image_reader& read_image,
+                                                                       const mapped_module& executable,
                                                                        const source_document& manifest_source,
                                                                        const std::optional<source_document>& config,
                                                                        const windows_path& system_root,
@@ -1662,7 +1664,7 @@ namespace sogen::sxs
                     apply_binding_redirects(config->contents, identity);
                 }
 
-                auto resolved = resolve_private_assembly(file_system, executable, identity);
+                auto resolved = resolve_private_assembly(file_system, read_image, executable, identity);
                 if (!resolved)
                 {
                     resolved = resolve_winsxs_assembly(file_system, manifests_path, winsxs_path, identity, executable, preferred_language,
@@ -1706,20 +1708,21 @@ namespace sogen::sxs
         }
     }
 
-    std::vector<std::byte> build_process_activation_context(const file_system& file_system, const mapped_module& executable,
-                                                            const windows_path& system_root, const std::string_view preferred_language)
+    std::vector<std::byte> build_process_activation_context(const file_system& file_system, const image_reader& read_image,
+                                                            const mapped_module& executable, const windows_path& system_root,
+                                                            const std::string_view preferred_language)
     {
-        const auto manifest = read_application_manifest(file_system, executable);
+        const auto manifest = read_application_manifest(file_system, read_image, executable);
         if (!manifest)
         {
             return {};
         }
-        return build_activation_context_from_documents(file_system, executable, *manifest, read_application_config(file_system, executable),
-                                                       system_root, preferred_language);
+        return build_activation_context_from_documents(file_system, read_image, executable, *manifest,
+                                                       read_application_config(file_system, executable), system_root, preferred_language);
     }
 
-    std::vector<std::byte> build_activation_context(const file_system& file_system, const mapped_module& executable,
-                                                    const activation_context_source& manifest,
+    std::vector<std::byte> build_activation_context(const file_system& file_system, const image_reader& read_image,
+                                                    const mapped_module& executable, const activation_context_source& manifest,
                                                     const std::optional<activation_context_source>& config, const windows_path& system_root,
                                                     const std::string_view preferred_language)
     {
@@ -1729,7 +1732,7 @@ namespace sogen::sxs
         {
             config_document = source_document{.contents = decode_manifest_text(config->contents), .path = config->path.u16string()};
         }
-        return build_activation_context_from_documents(file_system, executable, manifest_document, config_document, system_root,
+        return build_activation_context_from_documents(file_system, read_image, executable, manifest_document, config_document, system_root,
                                                        preferred_language);
     }
 }

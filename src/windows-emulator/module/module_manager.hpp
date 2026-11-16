@@ -94,6 +94,13 @@ namespace sogen
         static execution_mode determine_execution_mode(winpe::pe_format format);
     };
 
+    // Maps an image with the contents of another file while the guest still sees the image it asked for.
+    struct image_override
+    {
+        windows_path image{};
+        std::filesystem::path replacement{};
+    };
+
     class module_manager
     {
       public:
@@ -117,6 +124,16 @@ namespace sogen
         mapped_module* map_module_or_throw(const windows_path& file, const logger& logger, bool is_static = false,
                                            bool allow_duplicate = false);
         static std::filesystem::path module_identity(const windows_path& path);
+
+        void set_image_overrides(std::vector<image_override> overrides);
+        bool read_image(const windows_path& file, std::vector<std::byte>& data) const;
+        pe_detection_result detect_image(const windows_path& file) const;
+
+        auto image_reader() const
+        {
+            return [this](const windows_path& file, std::vector<std::byte>& data) { return this->read_image(file, data); };
+        }
+
         mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,
                                          bool is_static = false, bool allow_duplicate = false);
 
@@ -205,6 +222,7 @@ namespace sogen
 
         mapping_strategy_factory strategy_factory_;
         execution_mode current_execution_mode_ = execution_mode::unknown;
+        std::vector<image_override> image_overrides_{};
 
         mapped_module* map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
                                        const logger& logger, bool is_static, NTSTATUS* status = nullptr);
@@ -212,6 +230,7 @@ namespace sogen
         bool supports_image(const pe_detection_result& detection_result) const;
 
         execution_mode detect_execution_mode(const windows_path& executable_path, const logger& logger);
+        const image_override* find_image_override(const windows_path& image) const;
 
         void load_native_64bit_modules(const windows_path& executable_path, const windows_path& ntdll_path, const windows_path& win32u_path,
                                        const logger& logger);

@@ -149,8 +149,8 @@ namespace sogen::sxs
         std::vector<std::byte> blob{};
         try
         {
-            blob = build_activation_context(win_emu.file_sys, executable, manifest, config, windows_path(win_emu.version.get_system_root()),
-                                            u16_to_u8(language));
+            blob = build_activation_context(win_emu.file_sys, win_emu.mod_manager.image_reader(), executable, manifest, config,
+                                            windows_path(win_emu.version.get_system_root()), u16_to_u8(language));
         }
         catch (const std::runtime_error& error)
         {
