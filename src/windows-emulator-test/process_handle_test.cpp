@@ -124,9 +124,14 @@ namespace sogen::test
             handle open(const ULONG attributes = 0)
             {
                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes{this->emu->memory, this->storage};
-                object_attributes.write({.Length = sizeof(OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>), .Attributes = attributes});
+                OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>> attribute_values{};
+                attribute_values.Length = sizeof(attribute_values);
+                attribute_values.Attributes = attributes;
+                object_attributes.write(attribute_values);
                 const emulator_object<CLIENT_ID64> client{this->emu->memory, this->storage + 0x100};
-                client.write({.UniqueProcess = this->manager.identity.process_id});
+                CLIENT_ID64 client_id{};
+                client_id.UniqueProcess = this->manager.identity.process_id;
+                client.write(client_id);
                 const emulator_object<handle> output{this->emu->memory, this->storage + 0x200};
                 EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtOpenProcess(this->context(), output, 0, object_attributes, client));
                 return output.read();
