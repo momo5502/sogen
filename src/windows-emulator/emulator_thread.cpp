@@ -1676,9 +1676,10 @@ namespace sogen
             {
                 if (timeout_expired(wait) && !this->has_pending_alertable_apc())
                 {
-                    // NtRemoveIoCompletionEx stores its count of 0 under try as well.
+                    // NtRemoveIoCompletionEx stores its count of 0 under try as well. NtWaitForWorkViaWorkerFactory stores its
+                    // count only when it succeeds (19041).
                     const auto status =
-                        wait.type == io_completion_wait_type::remove_multiple
+                        wait.type == io_completion_wait_type::remove_multiple && !wait.worker_factory
                             ? io_completion_wait::write_entries(win_emu.memory, wait.completion_entries_ptr, wait.entries_removed_ptr, {})
                             : STATUS_SUCCESS;
                     this->mark_as_ready(status == STATUS_SUCCESS ? STATUS_TIMEOUT : status);

@@ -500,6 +500,55 @@ namespace sogen::test
         EXPECT_TRUE(this->completion().queue.empty());
     }
 
+    // NtWaitForWorkViaWorkerFactory keeps its count to itself until it succeeds (19041 on the host): a worker's wait writes
+    // nothing to PacketsReturned when it starts, nor when it ends without work, as the factory's timeout ends it here.
+    TEST_F(IoCompletionWaiterTest, WorkerWaitStoresItsCountOnlyWhenItTakesWork)
+    {
+        constexpr ULONG sentinel = 0xDEADBEEF;
+        constexpr int64_t one_second = -10'000'000;
+        auto& worker = this->new_thread();
+        worker_factory factory{};
+        factory.io_completion = this->emu->process.io_completions.reference_of(this->port).value_or(object_reference{});
+        factory.timeout = one_second;
+        const auto factory_handle = this->emu->process.worker_factories.store(std::move(factory));
+
+        const emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> packets{this->emu->memory, this->storage};
+        const emulator_object<ULONG> returned{this->emu->memory, this->storage + 0x100};
+        returned.write(sentinel);
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->synchronize([&] {
+            return syscalls::handle_NtWaitForWorkViaWorkerFactory(this->context_of(worker), factory_handle, packets, 1, returned, 0);
+        }));
+        EXPECT_EQ(sentinel, returned.read());
+
+        auto& clock = this->emu->scheduling_clock();
+        clock.continue_time_at(clock.steady_now() + std::chrono::seconds(2), clock.timestamp_counter());
+        EXPECT_TRUE(this->emu->synchronize([&] { return worker.is_thread_ready(*this->emu); }));
+        EXPECT_EQ(STATUS_TIMEOUT, worker.pending_status);
+        EXPECT_EQ(sentinel, returned.read());
+    }
+
+    // A worker whose factory timeout passed before it waits gets STATUS_TIMEOUT at once, and its count is not stored either.
+    TEST_F(IoCompletionWaiterTest, WorkerWaitPastItsTimeoutStoresNoCount)
+    {
+        constexpr ULONG sentinel = 0xDEADBEEF;
+        constexpr int64_t seconds_ago = 10;
+        auto& worker = this->new_thread();
+        worker_factory factory{};
+        factory.io_completion = this->emu->process.io_completions.reference_of(this->port).value_or(object_reference{});
+        factory.timeout =
+            utils::convert_unix_to_windows_time(std::chrono::system_clock::to_time_t(this->emu->clock().system_now()) - seconds_ago)
+                .QuadPart;
+        const auto factory_handle = this->emu->process.worker_factories.store(std::move(factory));
+
+        const emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> packets{this->emu->memory, this->storage};
+        const emulator_object<ULONG> returned{this->emu->memory, this->storage + 0x100};
+        returned.write(sentinel);
+        EXPECT_EQ(STATUS_TIMEOUT, this->emu->synchronize([&] {
+            return syscalls::handle_NtWaitForWorkViaWorkerFactory(this->context_of(worker), factory_handle, packets, 1, returned, 0);
+        }));
+        EXPECT_EQ(sentinel, returned.read());
+    }
+
     // The resumed waiter takes the queued packet before it is back in the wait list, so the next worker factory release,
     // which taking the first one queues, stays queued for another wait instead of reaching the same one and being lost.
     TEST_F(IoCompletionWaiterTest, ResumedWorkerTakesOneReleaseAndLeavesTheNextQueued)

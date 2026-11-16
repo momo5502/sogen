@@ -614,8 +614,8 @@ namespace sogen
                 return io_completion_wait::write_entries(c.win_emu.memory, mini_packets.value(), packets_returned.value(), messages);
             }
 
-            packets_returned.write_if_valid(0);
-
+            // NtWaitForWorkViaWorkerFactory keeps the count in a local and stores it only when it succeeds (19041): nothing is
+            // written before the wait, nor when it ends without work.
             auto& t = c.thread();
             t.await_objects = {};
             t.await_any = false;
@@ -642,7 +642,6 @@ namespace sogen
                 constexpr auto infinite = std::chrono::steady_clock::time_point::min();
                 if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < c.win_emu.clock().steady_now())
                 {
-                    packets_returned.write_if_valid(0);
                     t.await_io_completion = {};
                     return STATUS_TIMEOUT;
                 }
