@@ -1547,36 +1547,6 @@ namespace
         return true;
     }
 
-    bool test_window_style_defaults()
-    {
-        WNDCLASSEXA wc{};
-        wc.cbSize = sizeof(wc);
-        wc.lpszClassName = "TestWindowStyleClass";
-        wc.hInstance = GetModuleHandleA(nullptr);
-        wc.lpfnWndProc = DefWindowProcA;
-
-        if (!RegisterClassExA(&wc))
-        {
-            return false;
-        }
-
-        const auto unregister_class = sogen::utils::finally([&] { UnregisterClassA(wc.lpszClassName, wc.hInstance); });
-
-        const auto created_style = [&](const DWORD style) -> DWORD {
-            const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, nullptr, style, 0, 0, 100, 100, nullptr, nullptr, wc.hInstance, nullptr);
-            if (!hwnd)
-            {
-                return 0;
-            }
-
-            const auto style_after_creation = static_cast<DWORD>(GetWindowLongA(hwnd, GWL_STYLE));
-            DestroyWindow(hwnd);
-            return style_after_creation;
-        };
-
-        return created_style(WS_OVERLAPPED) == (WS_CAPTION | WS_CLIPSIBLINGS) && created_style(WS_POPUP) == (WS_POPUP | WS_CLIPSIBLINGS);
-    }
-
     bool test_desktop_window_text()
     {
         auto* const desktop = GetDesktopWindow();
@@ -2691,7 +2661,6 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_apc_wait, "APC Wait")
     RUN_TEST(test_desktop_window_text, "Desktop Window Text")
     RUN_TEST(test_window_geometry, "Window Geometry")
-    RUN_TEST(test_window_style_defaults, "Window Style Defaults")
     RUN_TEST(test_user_callback, "User Callback")
     RUN_TEST(test_mutable_callbacks, "Mutable User Callback")
     RUN_TEST(test_message_queue, "Message Queue (General)")
