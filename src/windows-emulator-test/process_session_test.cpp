@@ -68,7 +68,7 @@ namespace sogen::test
                       }
                       ProcessProtocol::ProcessStartedT started{};
                       started.native_environment = 0x180000;
-                      if (!process_protocol::send_message(socket, std::move(started), deadline))
+                      if (!process_protocol::send_message(socket, started, deadline))
                       {
                           this->kill();
                           return;
@@ -81,8 +81,7 @@ namespace sogen::test
                           exited.exit_code = *this->child_->guest_exit;
                           exited.cycles = 1234;
                           lock.unlock();
-                          (void)process_protocol::send_message(socket, std::move(exited),
-                                                               std::chrono::steady_clock::now() + std::chrono::seconds(5));
+                          (void)process_protocol::send_message(socket, exited, std::chrono::steady_clock::now() + std::chrono::seconds(5));
                           lock.lock();
                       }
                       this->child_->changed.wait(lock, [this] { return this->child_->host_exited; });
@@ -439,6 +438,7 @@ namespace sogen::test
             }
         });
         std::vector<process_session_reservation_result> children;
+        children.reserve(16);
         for (size_t i = 0; i < 16; ++i)
         {
             children.push_back(registry.reserve_process());

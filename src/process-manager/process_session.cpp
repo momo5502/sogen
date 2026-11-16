@@ -11,7 +11,7 @@
 
 namespace sogen
 {
-    using namespace process_protocol;
+    using namespace process_protocol; // NOLINT(google-build-using-namespace)
 
     namespace
     {
@@ -42,7 +42,7 @@ namespace sogen
         }
         if (!this->status_.status)
         {
-            this->status_ = std::move(status);
+            this->status_ = status;
         }
     }
 

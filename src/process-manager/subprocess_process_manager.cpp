@@ -31,7 +31,7 @@ namespace sogen
 {
     namespace
     {
-        using namespace process_protocol;
+        using namespace process_protocol; // NOLINT(google-build-using-namespace)
         constexpr auto exit_notification_timeout = std::chrono::milliseconds(250);
 
         void encode_token(const process_token& token, uint64_t& identity, bool& has_privileges,
