@@ -6440,9 +6440,9 @@ extern "C"
                 }
 
                 const auto* rendering = reinterpret_cast<const VkPipelineRenderingCreateInfo*>(base);
-                request.color_attachment_count = rendering->colorAttachmentCount < gb::max_color_attachments
-                                                     ? rendering->colorAttachmentCount
-                                                     : gb::max_color_attachments;
+                // Only the fragment output part uses the color formats; the other parts may leave the pointer invalid.
+                const uint32_t color_count = fragment_output_part ? rendering->colorAttachmentCount : 0;
+                request.color_attachment_count = std::min<uint32_t>(color_count, gb::max_color_attachments);
                 for (uint32_t c = 0; c < request.color_attachment_count; ++c)
                 {
                     request.color_formats[c] = static_cast<uint32_t>(rendering->pColorAttachmentFormats[c]);
