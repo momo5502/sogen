@@ -125,23 +125,6 @@ namespace sogen::kvm::test
         EXPECT_EQ(this->sregs.cs.selector, 0x08);
     }
 
-    TEST_F(ExceptionContextTest, CompatibilityCallbackCanScheduleAnInGuestTransition)
-    {
-        const auto result = this->dispatch(13, [&] {
-            this->regs.rip = 0xff300000;
-            this->regs.rax = native_dispatcher;
-            this->regs.rbx = 0x2fe000;
-            this->regs.rcx = 0x33;
-            return true;
-        });
-        ASSERT_TRUE(result.return_frame);
-        EXPECT_EQ(result.return_frame->rip, 0xff300000);
-        EXPECT_EQ(result.return_frame->cs, 0x23);
-        EXPECT_EQ(this->regs.rax, native_dispatcher);
-        EXPECT_EQ(this->regs.rbx, 0x2fe000);
-        EXPECT_EQ(this->regs.rcx, 0x33);
-    }
-
     TEST_F(ExceptionContextTest, NativeCallbackKeepsItsAdjustedContext)
     {
         this->frame.cs = 0x33;

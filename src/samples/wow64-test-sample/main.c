@@ -50,7 +50,6 @@ static DWORD WINAPI worker(void* unused)
     {
         return 72;
     }
-    Sleep(1);
     return 35;
 }
 
