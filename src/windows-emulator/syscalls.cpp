@@ -569,6 +569,7 @@ namespace sogen
                                                         emulator_pointer hmod_user);
         uint64_t handle_NtUserRemoteConnectState(const syscall_context& c);
         hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, ULONG thread_id);
+        NTSTATUS handle_NtUserCitSetInfo();
         hdc handle_NtUserGetDCEx(const syscall_context& c, hwnd window, uint64_t clip_region, ULONG flags);
         hdc handle_NtUserGetDC(const syscall_context& c, hwnd window);
         hdc handle_NtUserGetWindowDC(const syscall_context& c, hwnd window);
@@ -655,9 +656,13 @@ namespace sogen
                                               ULONG heap_size);
         hdesk handle_NtUserOpenInputDesktop(const syscall_context& c, DWORD flags, BOOL inherit, ACCESS_MASK desired_access);
         BOOL handle_NtUserCloseDesktop(const syscall_context& c, handle desktop_handle);
-        uint64_t handle_NtUserCallHwndParam(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
-        BOOL handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
         uint64_t handle_NtUserCallHwnd(const syscall_context& c, hwnd hwnd, uint32_t routine);
+        uint64_t handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
+        uint64_t handle_NtUserCallHwndParam(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
+        uint64_t handle_NtUserCallHwndParamLock(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
+        uint64_t handle_NtUserCallHwndParamLockSafe(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
+        uint64_t handle_NtUserCallHwndSafe(const syscall_context& c, hwnd hwnd, uint32_t routine);
+        uint64_t handle_NtUserCallNoParam(const syscall_context& c, uint32_t routine);
         uint64_t handle_NtUserCallOneParam(const syscall_context& c, uint64_t param, uint32_t routine);
         uint64_t handle_NtUserCallTwoParam(const syscall_context& c, uint64_t param1, uint64_t param2, uint32_t routine);
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
@@ -727,6 +732,7 @@ namespace sogen
         BOOL handle_NtUserPostMessage(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t wParam, uint64_t lParam);
         BOOL handle_NtUserPostThreadMessage(const syscall_context& c, DWORD id_thread, UINT msg, uint64_t wParam, uint64_t lParam);
         BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code);
+        ULONG handle_NtUserGetKeyboardType();
         NTSTATUS handle_NtUserEnumDisplayDevices(const syscall_context& c,
                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str_device, DWORD dev_num,
                                                  emulator_object<EMU_DISPLAY_DEVICEW> display_device, DWORD flags);
@@ -1617,13 +1623,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        // win32k client-interactivity-tracking telemetry hook; audioses pokes it while starting/stopping a
-        // stream. There is nothing to track in the emulator, so acknowledge it.
-        NTSTATUS handle_NtUserCitSetInfo()
-        {
-            return STATUS_SUCCESS;
-        }
-
         NTSTATUS handle_NtSystemDebugControl()
         {
             return STATUS_DEBUGGER_INACTIVE;
@@ -1637,11 +1636,6 @@ namespace sogen
         NTSTATUS handle_NtUserGetProcessUIContextInformation()
         {
             return STATUS_NOT_SUPPORTED;
-        }
-
-        ULONG handle_NtUserGetKeyboardType()
-        {
-            return 0;
         }
 
         NTSTATUS handle_NtSubscribeWnfStateChange()
@@ -1662,11 +1656,6 @@ namespace sogen
         NTSTATUS handle_NtNotifyChangeDirectoryFileEx()
         {
             return STATUS_NOT_SUPPORTED;
-        }
-
-        uint64_t handle_NtUserCallNoParam()
-        {
-            return 0;
         }
 
         NTSTATUS handle_NtAllocateLocallyUniqueId(const syscall_context& c, const emulator_object<LUID> luid)

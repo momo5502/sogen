@@ -3,7 +3,7 @@
 
 namespace sogen::syscalls
 {
-    BOOL handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
+    uint64_t handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
 }
 
 namespace sogen::test

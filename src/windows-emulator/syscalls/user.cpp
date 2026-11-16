@@ -3879,32 +3879,6 @@ namespace sogen
             return c.proc.desktops.erase(desktop_handle) ? TRUE : FALSE;
         }
 
-        // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
-        // versions use different numbers, so the table is gated by guest build below.
-        constexpr uint32_t user_call_set_dialog_pointer = 99;
-        constexpr uint32_t user_call_set_dialog_system_menu = 111;
-        constexpr uint32_t user_call_set_foreground_window = 112;
-        constexpr uint32_t user_call_update_window = 115;
-        constexpr uint32_t user_call_set_msg_box = 89;
-        constexpr uint32_t user_call_message_beep = 0x39;
-        constexpr uint32_t user_call_post_quit_message = 0x3B;
-        constexpr uint32_t user_call_get_cursor_pos = 0x7F;
-
-        uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046) && code == user_call_set_dialog_pointer)
-            {
-                return handle_NtUserSetDialogPointer(c, hwnd, param);
-            }
-
-            if (c.win_emu.callbacks.on_generic_activity)
-            {
-                c.win_emu.callbacks.on_generic_activity("NtUserCallHwndParam code=" + std::to_string(code));
-            }
-
-            return 0;
-        }
-
         BOOL set_foreground_window(const syscall_context& c, const hwnd hwnd)
         {
             if (!c.proc.windows.get(hwnd))
@@ -3915,79 +3889,6 @@ namespace sogen
 
             c.win_emu.set_foreground_window(hwnd);
             return TRUE;
-        }
-
-        BOOL handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046))
-            {
-                if (routine == user_call_set_dialog_system_menu)
-                {
-                    return handle_NtUserSetDialogSystemMenu(c, hwnd);
-                }
-
-                if (routine == user_call_set_foreground_window)
-                {
-                    // user32!SetForegroundWindow is dispatched through NtUserCallHwndLock(112) on Win10.
-                    return set_foreground_window(c, hwnd);
-                }
-
-                if (routine == user_call_update_window)
-                {
-                    // user32!UpdateWindow is dispatched through NtUserCallHwndLock(115) on Win10.
-                    return handle_NtUserUpdateWindow(c, hwnd);
-                }
-            }
-
-            c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
-            return FALSE;
-        }
-
-        uint64_t handle_NtUserCallHwnd(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_set_msg_box)
-            {
-                return handle_NtUserSetMsgBox(c, hwnd);
-            }
-
-            c.win_emu.log.error("Unimplemented NtUserCallHwnd routine: 0x%X\n", routine);
-            return 0;
-        }
-
-        uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046))
-            {
-                if (routine == user_call_message_beep)
-                {
-                    return handle_NtUserMessageBeep();
-                }
-
-                if (routine == user_call_post_quit_message)
-                {
-                    return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
-                }
-            }
-
-            c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
-            return 0;
-        }
-
-        uint64_t handle_NtUserCallTwoParam(const syscall_context& c, const uint64_t param1, const uint64_t param2, const uint32_t routine)
-        {
-            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_get_cursor_pos)
-            {
-                // win32kfull!xxxGetCursorPos only accepts the logical (1) and per-monitor DPI (2) cursor modes.
-                if (param2 != 1 && param2 != 2)
-                {
-                    return FALSE;
-                }
-
-                return handle_NtUserGetCursorPos(c, param1);
-            }
-
-            c.win_emu.log.error("Unimplemented NtUserCallTwoParam routine: 0x%X\n", routine);
-            return 0;
         }
 
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, const emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
@@ -9673,6 +9574,351 @@ namespace sogen
         BOOL handle_NtUserIsChildWindowDpiMessageEnabled()
         {
             return FALSE;
+        }
+
+        ULONG handle_NtUserGetKeyboardType()
+        {
+            return 0;
+        }
+
+        // win32k client-interactivity-tracking telemetry hook; audioses pokes it while starting/stopping a
+        // stream. There is nothing to track in the emulator, so acknowledge it.
+        NTSTATUS handle_NtUserCitSetInfo()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
+        // versions use different numbers, so the table is gated by guest build below.
+        constexpr uint32_t user_call_create_menu = 0;
+        constexpr uint32_t user_call_create_popup_menu = 1;
+        constexpr uint32_t user_call_destroy_caret = 6;
+        constexpr uint32_t user_call_disable_process_windows_ghosting = 7;
+        constexpr uint32_t user_call_get_message_pos = 12;
+        constexpr uint32_t user_call_hide_cursor_no_capture = 16;
+        constexpr uint32_t user_call_release_capture = 22;
+        constexpr uint32_t user_call_zap_active_and_focus = 25;
+        constexpr uint32_t user_call_remote_connect_state = 34;
+        constexpr uint32_t user_call_trace_logging_send_mixed_mode_telemetry = 35;
+        constexpr uint32_t user_call_begin_defer_window_pos = 44;
+        constexpr uint32_t user_call_allow_set_foreground_window = 46;
+        constexpr uint32_t user_call_get_keyboard_type = 51;
+        constexpr uint32_t user_call_map_desktop_object = 56;
+        constexpr uint32_t user_call_message_beep = 57;
+        constexpr uint32_t user_call_post_quit_message = 59;
+        constexpr uint32_t user_call_swap_mouse_button = 73;
+        constexpr uint32_t user_call_thread_message_queue_attached = 78;
+        constexpr uint32_t user_call_get_window_context_help_id = 87;
+        constexpr uint32_t user_call_set_msg_box = 89;
+        constexpr uint32_t user_call_schedule_dispatch_notification = 91;
+        constexpr uint32_t user_call_clear_window_state = 95;
+        constexpr uint32_t user_call_set_dialog_pointer = 99;
+        constexpr uint32_t user_call_set_window_context_help_id = 101;
+        constexpr uint32_t user_call_set_window_state = 102;
+        constexpr uint32_t user_call_draw_menu_bar = 106;
+        constexpr uint32_t user_call_redraw_frame = 109;
+        constexpr uint32_t user_call_set_dialog_system_menu = 111;
+        constexpr uint32_t user_call_set_foreground_window = 112;
+        constexpr uint32_t user_call_set_sys_menu = 113;
+        constexpr uint32_t user_call_update_client_rect = 114;
+        constexpr uint32_t user_call_update_window = 115;
+        constexpr uint32_t user_call_show_owned_popups = 121;
+        constexpr uint32_t user_call_enable_window = 125;
+        constexpr uint32_t user_call_change_window_message_filter = 126;
+        constexpr uint32_t user_call_get_cursor_pos = 127;
+        constexpr uint32_t user_call_set_caret_pos = 136;
+        constexpr uint32_t user_call_cit_set_info = 140;
+
+        uint64_t handle_NtUserCallHwnd(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_get_window_context_help_id)
+                {
+                    return handle_NtUserGetWindowContextHelpId(c, hwnd);
+                }
+
+                if (routine == user_call_set_msg_box)
+                {
+                    return handle_NtUserSetMsgBox(c, hwnd);
+                }
+
+                if (routine == user_call_schedule_dispatch_notification)
+                {
+                    return handle_NtUserScheduleDispatchNotification(c, hwnd);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwnd routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_draw_menu_bar)
+                {
+                    return handle_NtUserDrawMenuBar(c, hwnd);
+                }
+
+                if (routine == user_call_redraw_frame)
+                {
+                    return handle_NtUserRedrawFrame(c, hwnd);
+                }
+
+                if (routine == user_call_set_dialog_system_menu)
+                {
+                    return handle_NtUserSetDialogSystemMenu(c, hwnd);
+                }
+
+                if (routine == user_call_set_foreground_window)
+                {
+                    return set_foreground_window(c, hwnd);
+                }
+
+                if (routine == user_call_set_sys_menu)
+                {
+                    return handle_NtUserSetSysMenu(c, hwnd);
+                }
+
+                if (routine == user_call_update_client_rect)
+                {
+                    return handle_NtUserUpdateClientRect(c, hwnd);
+                }
+
+                if (routine == user_call_update_window)
+                {
+                    return handle_NtUserUpdateWindow(c, hwnd);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
+            return FALSE;
+        }
+
+        uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                const auto dword_param = static_cast<uint32_t>(param);
+
+                if (routine == user_call_clear_window_state)
+                {
+                    return handle_NtUserClearWindowState(c, hwnd, dword_param);
+                }
+
+                if (routine == user_call_set_dialog_pointer)
+                {
+                    return handle_NtUserSetDialogPointer(c, hwnd, param);
+                }
+
+                if (routine == user_call_set_window_context_help_id)
+                {
+                    return handle_NtUserSetWindowContextHelpId(c, hwnd, dword_param);
+                }
+
+                if (routine == user_call_set_window_state)
+                {
+                    return handle_NtUserSetWindowState(c, hwnd, dword_param);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndParam routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallHwndParamLock(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                const auto dword_param = static_cast<int32_t>(param);
+
+                if (routine == user_call_show_owned_popups)
+                {
+                    return handle_NtUserShowOwnedPopups(c, hwnd, dword_param);
+                }
+
+                if (routine == user_call_enable_window)
+                {
+                    return handle_NtUserEnableWindow(c, hwnd, dword_param);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndParamLock routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallHwndParamLockSafe(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_enable_window)
+                {
+                    return handle_NtUserEnableWindow(c, hwnd, static_cast<int32_t>(param));
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndParamLockSafe routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallHwndSafe(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_schedule_dispatch_notification)
+                {
+                    return handle_NtUserScheduleDispatchNotification(c, hwnd);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndSafe routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallNoParam(const syscall_context& c, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_create_menu)
+                {
+                    return handle_NtUserCreateMenu(c);
+                }
+
+                if (routine == user_call_create_popup_menu)
+                {
+                    return handle_NtUserCreatePopupMenu(c);
+                }
+
+                if (routine == user_call_destroy_caret)
+                {
+                    return handle_NtUserDestroyCaret();
+                }
+
+                if (routine == user_call_disable_process_windows_ghosting)
+                {
+                    return handle_NtUserDisableProcessWindowsGhosting(c);
+                }
+
+                if (routine == user_call_get_message_pos)
+                {
+                    return handle_NtUserGetMessagePos(c);
+                }
+
+                if (routine == user_call_hide_cursor_no_capture)
+                {
+                    return handle_NtUserHideCursorNoCapture();
+                }
+
+                if (routine == user_call_release_capture)
+                {
+                    return handle_NtUserReleaseCapture(c);
+                }
+
+                if (routine == user_call_zap_active_and_focus)
+                {
+                    return handle_NtUserZapActiveAndFocus(c);
+                }
+
+                if (routine == user_call_remote_connect_state)
+                {
+                    return handle_NtUserRemoteConnectState(c);
+                }
+
+                if (routine == user_call_trace_logging_send_mixed_mode_telemetry)
+                {
+                    return handle_NtUserTraceLoggingSendMixedModeTelemetry();
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallNoParam routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_begin_defer_window_pos)
+                {
+                    return handle_NtUserBeginDeferWindowPos(c, static_cast<int>(param));
+                }
+
+                if (routine == user_call_allow_set_foreground_window)
+                {
+                    return handle_NtUserAllowSetForegroundWindow();
+                }
+
+                if (routine == user_call_get_keyboard_type)
+                {
+                    return handle_NtUserGetKeyboardType();
+                }
+
+                if (routine == user_call_map_desktop_object)
+                {
+                    const handle handle{.h = param};
+                    return handle_NtUserMapDesktopObject(c, handle);
+                }
+
+                if (routine == user_call_message_beep)
+                {
+                    return handle_NtUserMessageBeep();
+                }
+
+                if (routine == user_call_post_quit_message)
+                {
+                    return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
+                }
+
+                if (routine == user_call_swap_mouse_button)
+                {
+                    return handle_NtUserSwapMouseButton();
+                }
+
+                if (routine == user_call_thread_message_queue_attached)
+                {
+                    return handle_NtUserThreadMessageQueueAttached(c, static_cast<int>(param));
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallTwoParam(const syscall_context& c, const uint64_t param1, const uint64_t param2, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_change_window_message_filter)
+                {
+                    return handle_NtUserChangeWindowMessageFilter();
+                }
+
+                if (routine == user_call_get_cursor_pos)
+                {
+                    // win32kfull!xxxGetCursorPos only accepts the logical (1) and per-monitor DPI (2) cursor modes.
+                    if (param2 != 1 && param2 != 2)
+                    {
+                        return FALSE;
+                    }
+
+                    return handle_NtUserGetCursorPos(c, param1);
+                }
+
+                if (routine == user_call_set_caret_pos)
+                {
+                    return handle_NtUserSetCaretPos();
+                }
+
+                if (routine == user_call_cit_set_info)
+                {
+                    return handle_NtUserCitSetInfo();
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallTwoParam routine: 0x%X\n", routine);
+            return 0;
         }
     }
 
