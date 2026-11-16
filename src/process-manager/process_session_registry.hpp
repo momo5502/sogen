@@ -1,6 +1,6 @@
 #pragma once
 #include "process_session.hpp"
-#include "process_protocol_generated.hxx"
+#include "process_protocol.hpp"
 #include <list>
 #include <unordered_map>
 

@@ -6,7 +6,6 @@
 
 #undef exception_code
 #undef exception_info
-#include <process_protocol_generated.hxx>
 #include <process_protocol_utils.hpp>
 #include <process_session_registry.hpp>
 #include <future>

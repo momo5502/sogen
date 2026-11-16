@@ -1,17 +1,6 @@
 #include "subprocess_process_manager.hpp"
 #include "process_protocol_utils.hpp"
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4244)
-#endif
-
-#include "process_protocol_generated.hxx"
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-
 #include <network/address.hpp>
 #include <network/tcp_server_socket.hpp>
 #include <utils/host_pipe.hpp>

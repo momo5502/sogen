@@ -1,5 +1,5 @@
 #pragma once
-#include "process_protocol_generated.hxx"
+#include "process_protocol.hpp"
 #include <network/tcp_client_socket.hpp>
 #include <array>
 #include <atomic>
