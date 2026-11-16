@@ -2,6 +2,7 @@
 #include <utils/finally.hpp>
 
 #if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)
+#include <array>
 #include <cstdio>
 #include <fcntl.h>
 #include <iostream>
@@ -28,8 +29,8 @@ namespace sogen::test
                 std::clearerr(stdin);
                 this->original_input_ = dup(STDIN_FILENO);
                 ASSERT_GE(this->original_input_, 0);
-                int descriptors[2]{};
-                ASSERT_EQ(0, pipe(descriptors));
+                std::array<int, 2> descriptors{};
+                ASSERT_EQ(0, pipe(descriptors.data()));
                 this->input_ = descriptors[0];
                 this->output_ = descriptors[1];
                 ASSERT_EQ(STDIN_FILENO, dup2(this->input_, STDIN_FILENO));
@@ -39,7 +40,7 @@ namespace sogen::test
 
             void TearDown() override
             {
-                this->console.reset();
+                this->console = nullptr;
 #ifdef OS_WINDOWS
                 SetStdHandle(STD_INPUT_HANDLE, this->original_input_);
                 if (this->input_)
@@ -62,7 +63,7 @@ namespace sogen::test
                 this->close_output();
             }
 
-            void write(const std::string_view text)
+            void write(const std::string_view text) const
             {
 #ifdef OS_WINDOWS
                 DWORD written{};

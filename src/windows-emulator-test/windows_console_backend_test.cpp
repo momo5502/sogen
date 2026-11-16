@@ -14,8 +14,8 @@ namespace sogen::test
           public:
             console_test_session()
             {
-                const auto output = GetStdHandle(STD_OUTPUT_HANDLE);
-                const auto error = GetStdHandle(STD_ERROR_HANDLE);
+                auto* const output = GetStdHandle(STD_OUTPUT_HANDLE);
+                auto* const error = GetStdHandle(STD_ERROR_HANDLE);
                 DWORD mode{};
                 const auto console_output = GetConsoleMode(output, &mode) != FALSE;
                 const auto console_error = GetConsoleMode(error, &mode) != FALSE;
@@ -125,7 +125,7 @@ namespace sogen::test
 
             void TearDown() override
             {
-                this->console.reset();
+                this->console = nullptr;
                 if (this->original_mode)
                 {
                     SetConsoleMode(this->native_input, *this->original_mode);
@@ -321,7 +321,7 @@ namespace sogen::test
     {
         this->console->set_input_mode({.processed = true, .line = true, .echo = false});
         ASSERT_FALSE(this->console->try_read_input(16));
-        this->console->reset();
+        (*this->console).reset();
         this->console->set_input_mode({.processed = true, .line = true, .echo = false});
         ASSERT_FALSE(this->console->try_read_input(16));
         this->queue(u'q', 'Q');
@@ -368,7 +368,7 @@ namespace sogen::test
     TEST_F(WindowsConsoleStreamCharacterTest, ResetStopsActiveCharacterReader)
     {
         ASSERT_FALSE(this->console->try_read_input(16));
-        this->console->reset();
+        (*this->console).reset();
         ASSERT_FALSE(this->console->try_read_input(16));
         this->queue(u'q', 'Q');
         EXPECT_EQ(std::optional<std::string>{"q"}, this->read_ready(16));
@@ -426,7 +426,8 @@ namespace sogen::test
         ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, output));
         for (const auto size : {console_size{.width = 79, .height = 17}, console_size{.width = 61, .height = 13}})
         {
-            const SMALL_RECT window{0, 0, static_cast<SHORT>(size.width - 1), static_cast<SHORT>(size.height - 1)};
+            const SMALL_RECT window{
+                .Left = 0, .Top = 0, .Right = static_cast<SHORT>(size.width - 1), .Bottom = static_cast<SHORT>(size.height - 1)};
             ASSERT_TRUE(SetConsoleWindowInfo(output, TRUE, &window));
             ASSERT_TRUE(SetConsoleScreenBufferSize(output, {size.width, size.height}));
             const auto reported = this->console->get_size();
