@@ -914,6 +914,14 @@ namespace sogen
                 {
                     queue_io_completion(win_emu, context, result);
                 }
+                if (!context.event && !context.apc_routine && !context.completion_port)
+                {
+                    if (auto* thread = win_emu.process.get_object_as<emulator_thread>(read.issuing_thread);
+                        thread && thread->await_console_io)
+                    {
+                        thread->mark_as_ready(status);
+                    }
+                }
                 win_emu.wake_idle_vcpu();
             }
 
@@ -986,7 +994,7 @@ namespace sogen
                 const auto status = context.io_status_block.read().Status;
                 if (status == STATUS_PENDING && !context.event && !context.apc_routine && !context.completion_port)
                 {
-                    context.thread().await_file_io = context.io_status_block.value();
+                    context.thread().await_console_io = true;
                     win_emu.yield_thread(*context.vcpu);
                 }
                 return status;

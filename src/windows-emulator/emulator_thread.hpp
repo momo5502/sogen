@@ -485,6 +485,7 @@ namespace sogen
         std::optional<pending_io_completion_wait> await_io_completion{};
         std::optional<pending_debug_event_wait> await_debug_event{};
         std::optional<emulator_pointer> await_file_io{};
+        bool await_console_io{};
         uint64_t ended_waits{};
 
         // When set, the thread is parked until this host-side predicate returns true. Used by the GPU
@@ -682,6 +683,7 @@ namespace sogen
             buffer.write_optional(this->await_io_completion);
             buffer.write_optional(this->await_debug_event);
             buffer.write_optional(this->await_file_io);
+            buffer.write(this->await_console_io);
             buffer.write(this->ended_waits);
             buffer.write(this->await_host_condition || this->awaits_restored_host_condition);
 
@@ -769,6 +771,7 @@ namespace sogen
             buffer.read_optional(this->await_io_completion, [] { return pending_io_completion_wait{}; });
             buffer.read_optional(this->await_debug_event, [] { return pending_debug_event_wait{}; });
             buffer.read_optional(this->await_file_io);
+            buffer.read(this->await_console_io);
             buffer.read(this->ended_waits);
             buffer.read(this->awaits_restored_host_condition);
             this->await_host_condition = {};

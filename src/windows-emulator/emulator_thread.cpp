@@ -1045,6 +1045,7 @@ namespace sogen
         this->await_io_completion = {};
         this->await_debug_event = {};
         this->await_file_io = {};
+        this->await_console_io = false;
         this->await_host_condition = {};
         this->awaits_restored_host_condition = false;
 
@@ -1598,6 +1599,11 @@ namespace sogen
             }
 
             return complete_if_timed_out(STATUS_TIMEOUT);
+        }
+
+        if (this->await_console_io)
+        {
+            return false;
         }
 
         if (this->await_file_io)

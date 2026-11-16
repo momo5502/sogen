@@ -287,7 +287,7 @@ namespace sogen::test
                 this->reader =
                     threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
                 this->worker =
-                    threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+                    threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 12, true}));
                 this->emu->vcpu(0).active_thread = this->reader;
                 this->reader->setup_if_necessary(this->emu->vcpu(0).cpu, this->emu->process);
             }
@@ -360,7 +360,7 @@ namespace sogen::test
     {
         ASSERT_EQ(STATUS_PENDING, this->read());
         EXPECT_EQ(STATUS_PENDING, this->status());
-        ASSERT_EQ(this->storage + 0x300, this->reader->await_file_io);
+        ASSERT_TRUE(this->reader->await_console_io);
         ASSERT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
         EXPECT_EQ(this->worker, this->emu->vcpu(0).active_thread);
         EXPECT_EQ(STATUS_PENDING, this->status());
@@ -368,7 +368,7 @@ namespace sogen::test
         this->input->queue("q");
         ASSERT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
         EXPECT_EQ(this->reader, this->emu->vcpu(0).active_thread);
-        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->reader->await_console_io);
         EXPECT_EQ(STATUS_SUCCESS, this->status());
         EXPECT_EQ(1u, this->emu->memory.read_memory<console_read_request>(this->storage + 0x108).events_read);
         EXPECT_EQ(u'q', this->emu->memory.read_memory<console_input_record>(this->storage + 0x200).character);
@@ -380,7 +380,7 @@ namespace sogen::test
         const auto event = this->emu->process.events.store(sogen::event{});
         ASSERT_EQ(STATUS_PENDING, this->read(1, event));
         EXPECT_FALSE(this->emu->process.events.get(event)->is_signaled());
-        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->reader->await_console_io);
         this->input->queue("q");
         this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
         EXPECT_EQ(STATUS_SUCCESS, this->status());
@@ -415,7 +415,7 @@ namespace sogen::test
     {
         ASSERT_EQ(STATUS_SUCCESS, this->read(2));
         EXPECT_EQ(0u, this->emu->memory.read_memory<console_read_request>(this->storage + 0x108).events_read);
-        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->reader->await_console_io);
         EXPECT_FALSE(this->emu->process.devices.get(this->console_handle)->has_pending_io(this->reader->id));
         EXPECT_EQ(0u, this->input->blocking_refills);
     }
@@ -431,6 +431,7 @@ namespace sogen::test
         auto* restored_reader = this->emu->process.find_thread_by_id(reader_id);
         ASSERT_NE(nullptr, restored_reader);
         EXPECT_TRUE(this->emu->process.devices.get(this->console_handle)->has_pending_io(reader_id));
+        EXPECT_FALSE(this->emu->synchronize([&] { return restored_reader->is_thread_ready(*this->emu); }));
         this->input->queue("q");
         this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
         EXPECT_EQ(STATUS_SUCCESS, this->status());
@@ -466,7 +467,7 @@ namespace sogen::test
         EXPECT_EQ(STATUS_END_OF_FILE, this->read());
         EXPECT_EQ(STATUS_SUCCESS, this->read(2));
         EXPECT_EQ(0u, this->emu->memory.read_memory<console_read_request>(this->storage + 0x108).events_read);
-        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->reader->await_console_io);
         EXPECT_FALSE(this->emu->process.devices.get(this->console_handle)->has_pending_io(this->reader->id));
     }
 
@@ -478,7 +479,7 @@ namespace sogen::test
         for (const bool text : {false, true})
         {
             ASSERT_EQ(STATUS_PENDING, text ? this->read_bytes() : this->read());
-            EXPECT_FALSE(this->reader->await_file_io);
+            EXPECT_FALSE(this->reader->await_console_io);
             EXPECT_TRUE(this->emu->synchronize([&] { return this->reader->is_thread_ready(*this->emu); }));
             this->input->queue("q");
             this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
@@ -508,7 +509,7 @@ namespace sogen::test
         for (const bool text : {false, true})
         {
             ASSERT_EQ(STATUS_INVALID_PARAMETER, text ? this->read_bytes(16, {}, 0x5678) : this->read(0, {}, 0x5678));
-            EXPECT_FALSE(this->reader->await_file_io);
+            EXPECT_FALSE(this->reader->await_console_io);
             EXPECT_TRUE(this->reader->pending_apcs.empty());
             EXPECT_TRUE(this->emu->process.io_completions.get(port)->queue.empty());
             EXPECT_FALSE(this->emu->process.devices.get(source)->has_pending_io(this->reader->id));
@@ -592,14 +593,14 @@ namespace sogen::test
         EXPECT_EQ('b', this->emu->memory.read_memory<char>(this->storage + 0x200));
         ASSERT_EQ(STATUS_SUCCESS, this->read_bytes());
         EXPECT_EQ(0u, this->transferred());
-        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->reader->await_console_io);
     }
 
     TEST_F(CooperativeConsoleReadTest, ZeroLengthByteReadDoesNotWaitForInput)
     {
         ASSERT_EQ(STATUS_SUCCESS, this->read_bytes(0));
         EXPECT_EQ(0u, this->transferred());
-        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->reader->await_console_io);
         EXPECT_EQ(0u, this->input->blocking_refills);
     }
 
@@ -625,7 +626,7 @@ namespace sogen::test
     {
         const auto completion = this->emu->process.events.store(sogen::event{});
         ASSERT_EQ(STATUS_PENDING, this->read_bytes(16, completion, 0x5678));
-        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->reader->await_console_io);
         EXPECT_FALSE(this->emu->process.events.get(completion)->is_signaled());
         this->input->queue("ab");
         this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
@@ -642,12 +643,99 @@ namespace sogen::test
     TEST_F(CooperativeConsoleReadTest, ByteReadWithApcDoesNotParkItsIssuingThread)
     {
         ASSERT_EQ(STATUS_PENDING, this->read_bytes(16, {}, 0x5678));
-        EXPECT_FALSE(this->reader->await_file_io);
+        EXPECT_FALSE(this->reader->await_console_io);
         this->input->close_input();
         this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
         EXPECT_EQ(STATUS_SUCCESS, this->status());
         EXPECT_EQ(0u, this->transferred());
         EXPECT_EQ(1u, this->reader->pending_apcs.size());
+    }
+
+    TEST_F(CooperativeConsoleReadTest, GuestStatusWritesDoNotCompleteSynchronousReads)
+    {
+        for (const bool text : {false, true})
+        {
+            SCOPED_TRACE(text);
+            ASSERT_EQ(STATUS_PENDING, text ? this->read_bytes() : this->read());
+            this->emu->memory.write_memory(this->storage + 0x300, NTSTATUS{STATUS_SUCCESS});
+            EXPECT_FALSE(this->emu->synchronize([&] { return this->reader->is_thread_ready(*this->emu); }));
+            this->input->queue("q");
+            this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
+            EXPECT_TRUE(this->emu->synchronize([&] { return this->reader->is_thread_ready(*this->emu); }));
+            EXPECT_EQ(STATUS_SUCCESS, this->reader->pending_status);
+            this->reader->pending_status.reset();
+        }
+    }
+
+    TEST_F(CooperativeConsoleReadTest, AsyncCompletionDoesNotReleaseSynchronousRead)
+    {
+        const auto event = this->emu->process.events.store(sogen::event{});
+        ASSERT_EQ(STATUS_PENDING, this->read_bytes(16, event));
+        ASSERT_EQ(STATUS_PENDING, this->read_bytes(16, {}, 0, 0x100));
+        this->input->queue("a");
+        this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
+        EXPECT_TRUE(this->emu->process.events.get(event)->is_signaled());
+        EXPECT_FALSE(this->emu->synchronize([&] { return this->reader->is_thread_ready(*this->emu); }));
+        this->input->queue("b");
+        this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
+        EXPECT_TRUE(this->emu->synchronize([&] { return this->reader->is_thread_ready(*this->emu); }));
+        EXPECT_EQ(STATUS_SUCCESS, this->reader->pending_status);
+        EXPECT_EQ('a', this->emu->memory.read_memory<char>(this->storage + 0x200));
+        EXPECT_EQ('b', this->emu->memory.read_memory<char>(this->storage + 0x300));
+    }
+
+    TEST_F(CooperativeConsoleReadTest, SynchronousReadsCompleteAfterStatusBlocksAreUnmapped)
+    {
+        enum class completion
+        {
+            cancellation,
+            data,
+            eof,
+        };
+        for (const auto result : {completion::cancellation, completion::data, completion::eof})
+        {
+            SCOPED_TRACE(static_cast<int>(result));
+            const auto native = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            const auto wow64 =
+                this->emu->memory.allocate_memory(0x1000, memory_permission::read_write, false, DEFAULT_ALLOCATION_ADDRESS_32BIT);
+            ASSERT_EQ(STATUS_PENDING, this->read_with_status_blocks(native, wow64, {}));
+            ASSERT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+            ASSERT_EQ(this->worker, this->emu->vcpu(0).active_thread);
+            ASSERT_TRUE(this->emu->memory.release_memory(native, 0));
+            ASSERT_TRUE(this->emu->memory.release_memory(wow64, 0));
+            auto* console = this->emu->process.devices.get(this->console_handle);
+            ASSERT_NO_THROW(this->emu->synchronize([&] { console->work(*this->emu); }));
+            EXPECT_FALSE(this->emu->synchronize([&] { return this->reader->is_thread_ready(*this->emu); }));
+            ASSERT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+            EXPECT_EQ(this->worker, this->emu->vcpu(0).active_thread);
+            if (result == completion::cancellation)
+            {
+                ASSERT_TRUE(this->emu->synchronize([&] { return console->cancel_io(*this->emu, native); }));
+            }
+            else
+            {
+                if (result == completion::eof)
+                {
+                    this->input->close_input();
+                }
+                else
+                {
+                    this->input->queue("ab");
+                }
+                ASSERT_NO_THROW(this->emu->synchronize([&] { console->work(*this->emu); }));
+                if (result == completion::data)
+                {
+                    EXPECT_EQ('a', this->emu->memory.read_memory<char>(this->storage + 0x200));
+                    EXPECT_EQ('b', this->emu->memory.read_memory<char>(this->storage + 0x201));
+                }
+            }
+            EXPECT_FALSE(console->has_pending_io(this->reader->id));
+            EXPECT_FALSE(this->reader->await_console_io);
+            EXPECT_TRUE(this->emu->synchronize([&] { return this->reader->is_thread_ready(*this->emu); }));
+            EXPECT_EQ(result == completion::cancellation ? STATUS_CANCELLED : STATUS_SUCCESS, this->reader->pending_status);
+            ASSERT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+            EXPECT_EQ(this->reader, this->emu->vcpu(0).active_thread);
+        }
     }
 
     TEST_F(CooperativeConsoleReadTest, UnmappedStatusBlocksDoNotPreventEventAndApcCompletion)
@@ -733,14 +821,19 @@ namespace sogen::test
     TEST_F(CooperativeConsoleReadTest, ByteReadSurvivesSnapshotRestore)
     {
         ASSERT_EQ(STATUS_PENDING, this->read_bytes());
+        const auto reader_id = this->reader->id;
         utils::buffer_serializer snapshot{};
         this->emu->serialize(snapshot);
         utils::buffer_deserializer restore{snapshot};
         this->emu->deserialize(restore);
+        auto* restored_reader = this->emu->process.find_thread_by_id(reader_id);
+        ASSERT_NE(nullptr, restored_reader);
+        EXPECT_FALSE(this->emu->synchronize([&] { return restored_reader->is_thread_ready(*this->emu); }));
         this->input->queue("q");
         this->emu->synchronize([&] { this->emu->process.devices.get(this->console_handle)->work(*this->emu); });
         EXPECT_EQ(STATUS_SUCCESS, this->status());
         EXPECT_EQ(1u, this->transferred());
+        EXPECT_TRUE(this->emu->synchronize([&] { return restored_reader->is_thread_ready(*this->emu); }));
         EXPECT_EQ('q', this->emu->memory.read_memory<char>(this->storage + 0x200));
     }
 
