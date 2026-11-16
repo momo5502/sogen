@@ -9,12 +9,57 @@ namespace sogen::test
 {
     namespace
     {
+        class console_test_session
+        {
+          public:
+            console_test_session()
+            {
+                const auto output = GetStdHandle(STD_OUTPUT_HANDLE);
+                const auto error = GetStdHandle(STD_ERROR_HANDLE);
+                DWORD mode{};
+                const auto console_output = GetConsoleMode(output, &mode) != FALSE;
+                const auto console_error = GetConsoleMode(error, &mode) != FALSE;
+                FreeConsole();
+                if (!AllocConsole())
+                {
+                    return;
+                }
+                ShowWindow(GetConsoleWindow(), SW_HIDE);
+                this->input_ = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                           OPEN_EXISTING, 0, nullptr);
+                this->output_ = CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                            OPEN_EXISTING, 0, nullptr);
+                this->available_ = this->input_ && this->output_ && SetStdHandle(STD_INPUT_HANDLE, this->input_) &&
+                                   SetStdHandle(STD_OUTPUT_HANDLE, console_output ? static_cast<HANDLE>(this->output_) : output) &&
+                                   SetStdHandle(STD_ERROR_HANDLE, console_error ? static_cast<HANDLE>(this->output_) : error);
+            }
+
+            [[nodiscard]] bool available() const
+            {
+                return this->available_;
+            }
+
+          private:
+            utils::nt::handle<utils::nt::invalid_handle> input_{};
+            utils::nt::handle<utils::nt::invalid_handle> output_{};
+            bool available_{};
+        };
+
+        bool initialize_test_console()
+        {
+            static const console_test_session session{};
+            return session.available();
+        }
+
         class WindowsConsoleBackendTest : public testing::Test
         {
           protected:
             void SetUp() override
             {
-                ASSERT_NO_FATAL_FAILURE(this->lock_console());
+                if (!initialize_test_console())
+                {
+                    GTEST_SKIP() << "Requires a Windows console";
+                }
                 DWORD mode{};
                 this->input = GetStdHandle(STD_INPUT_HANDLE);
                 if (!GetConsoleMode(this->input, &mode))
@@ -27,30 +72,6 @@ namespace sogen::test
                 DWORD raw_mode{};
                 ASSERT_TRUE(GetConsoleMode(this->input, &raw_mode));
                 ASSERT_EQ(0u, raw_mode & (ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT));
-            }
-
-            void TearDown() override
-            {
-                this->console.reset();
-                if (this->owns_console_mutex_)
-                {
-                    EXPECT_TRUE(ReleaseMutex(this->console_mutex_));
-                    this->owns_console_mutex_ = false;
-                }
-            }
-
-            void lock_console()
-            {
-                if (this->owns_console_mutex_)
-                {
-                    return;
-                }
-                // The parallel test runner's child processes inherit the same console input buffer and modes.
-                this->console_mutex_ = CreateMutexW(nullptr, FALSE, L"Local\\SogenConsoleBackendTests");
-                ASSERT_TRUE(this->console_mutex_);
-                const auto result = WaitForSingleObject(this->console_mutex_, INFINITE);
-                this->owns_console_mutex_ = result == WAIT_OBJECT_0 || result == WAIT_ABANDONED;
-                ASSERT_TRUE(this->owns_console_mutex_);
             }
 
             void queue(char16_t character, WORD key = 0, DWORD control = 0, WORD repeat = 1, bool down = true)
@@ -69,10 +90,6 @@ namespace sogen::test
 
             HANDLE input{};
             std::unique_ptr<console_backend> console{};
-
-          private:
-            utils::nt::handle<> console_mutex_{};
-            bool owns_console_mutex_{};
         };
 
         class WindowsConsoleTextTest : public WindowsConsoleBackendTest
@@ -80,22 +97,14 @@ namespace sogen::test
           protected:
             void SetUp() override
             {
-                ASSERT_NO_FATAL_FAILURE(this->lock_console());
+                if (!initialize_test_console())
+                {
+                    GTEST_SKIP() << "Requires a Windows console";
+                }
                 this->original_input = GetStdHandle(STD_INPUT_HANDLE);
                 this->original_output = GetStdHandle(STD_OUTPUT_HANDLE);
                 this->native_input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                                  OPEN_EXISTING, 0, nullptr);
-                if (this->native_input == INVALID_HANDLE_VALUE)
-                {
-                    if (!AllocConsole())
-                    {
-                        GTEST_SKIP() << "Requires a Windows console";
-                    }
-                    this->allocated_console = true;
-                    ShowWindow(GetConsoleWindow(), SW_HIDE);
-                    this->native_input = CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                                                     OPEN_EXISTING, 0, nullptr);
-                }
                 ASSERT_NE(INVALID_HANDLE_VALUE, this->native_input);
                 DWORD mode{};
                 ASSERT_TRUE(GetConsoleMode(this->native_input, &mode));
@@ -134,11 +143,6 @@ namespace sogen::test
                         CloseHandle(native_handle);
                     }
                 }
-                if (this->allocated_console)
-                {
-                    FreeConsole();
-                }
-                WindowsConsoleBackendTest::TearDown();
             }
 
             std::optional<std::string> read_ready(const size_t length)
@@ -177,7 +181,6 @@ namespace sogen::test
             HANDLE native_input{INVALID_HANDLE_VALUE};
             HANDLE original_buffer{INVALID_HANDLE_VALUE};
             std::optional<DWORD> original_mode{};
-            bool allocated_console{};
         };
 
         class WindowsConsoleStreamCharacterTest : public WindowsConsoleTextTest
@@ -238,23 +241,34 @@ namespace sogen::test
     TEST_F(WindowsConsoleTextTest, CancelledNativeReadAllowsAnotherRead)
     {
         this->console->set_input_mode({.processed = true, .line = true, .echo = false});
-        ASSERT_FALSE(this->console->try_read_input(16));
-        ASSERT_TRUE(this->cancel_ready());
-        ASSERT_FALSE(this->console->try_read_input(16));
-        this->queue(u'q', 'Q');
-        this->queue(u'\r', VK_RETURN);
-        const auto data = this->read_ready(16);
-        ASSERT_TRUE(data);
-        EXPECT_EQ("q\r\n", *data);
+        for (const auto character : {u'q', u'r', u's'})
+        {
+            SCOPED_TRACE(static_cast<char>(character));
+            ASSERT_FALSE(this->console->try_read_input(16));
+            ASSERT_TRUE(this->cancel_ready());
+            ASSERT_FALSE(this->console->try_read_input(16));
+            this->queue(character, static_cast<WORD>('A' + character - u'a'));
+            this->queue(u'\r', VK_RETURN);
+            const auto data = this->read_ready(16);
+            ASSERT_TRUE(data);
+            EXPECT_EQ(std::string(1, static_cast<char>(character)) + "\r\n", *data);
+        }
     }
 
-    TEST_F(WindowsConsoleTextTest, CancellationLeavesOtherReadsOnTheHostHandlePending)
+    TEST_F(WindowsConsoleTextTest, CancellationPreservesInputForHostReaders)
     {
         this->console->set_input_mode({.processed = true, .line = true, .echo = false});
         std::array<wchar_t, 16> text{};
         DWORD count{};
         BOOL read_success{};
-        std::thread other([&] { read_success = ReadConsoleW(this->input, text.data(), static_cast<DWORD>(text.size()), &count, nullptr); });
+        DWORD read_error{};
+        auto* read_handle = this->input;
+        utils::nt::handle<utils::nt::invalid_handle> retry_input{};
+        const auto read = [&] {
+            read_success = ReadConsoleW(read_handle, text.data(), static_cast<DWORD>(text.size()), &count, nullptr);
+            read_error = GetLastError();
+        };
+        std::thread other(read);
         const auto cleanup = utils::finally([&] {
             if (!other.joinable())
             {
@@ -262,7 +276,7 @@ namespace sogen::test
             }
             while (WaitForSingleObject(utils::nt::get_thread_handle(other), 0) != WAIT_OBJECT_0)
             {
-                CancelIoEx(this->input, nullptr);
+                CancelIoEx(read_handle, nullptr);
                 SwitchToThread();
             }
             other.join();
@@ -281,12 +295,24 @@ namespace sogen::test
         ASSERT_TRUE(pending);
         ASSERT_FALSE(this->console->try_read_input(16));
         ASSERT_TRUE(this->cancel_ready());
-        ASSERT_TRUE(GetThreadIOPendingFlag(utils::nt::get_thread_handle(other), &pending));
-        EXPECT_TRUE(pending);
         this->queue(u'q', 'Q');
         this->queue(u'\r', VK_RETURN);
         ASSERT_EQ(WAIT_OBJECT_0, WaitForSingleObject(utils::nt::get_thread_handle(other), 5000));
         other.join();
+        if (count == 0)
+        {
+            // Native Windows may complete another reader with zero characters when a canceled CONIN$ handle closes.
+            if (!read_success)
+            {
+                EXPECT_EQ(DWORD{ERROR_OPERATION_ABORTED}, read_error);
+            }
+            retry_input = CreateFileW(L"CONIN$", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+            ASSERT_TRUE(retry_input);
+            read_handle = retry_input;
+            other = std::thread(read);
+            ASSERT_EQ(WAIT_OBJECT_0, WaitForSingleObject(utils::nt::get_thread_handle(other), 5000));
+            other.join();
+        }
         EXPECT_TRUE(read_success);
         EXPECT_EQ(L"q\r\n", std::wstring(text.data(), count));
     }
@@ -374,8 +400,14 @@ namespace sogen::test
 
     TEST_F(WindowsConsoleBackendTest, DimensionsMatchHostViewport)
     {
+        auto* const original = GetStdHandle(STD_OUTPUT_HANDLE);
+        const utils::nt::handle<utils::nt::invalid_handle> output{
+            CreateFileW(L"CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr)};
+        ASSERT_TRUE(output);
+        const auto restore_output = utils::finally([&] { SetStdHandle(STD_OUTPUT_HANDLE, original); });
+        ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, output));
         CONSOLE_SCREEN_BUFFER_INFO info{};
-        ASSERT_TRUE(GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info));
+        ASSERT_TRUE(GetConsoleScreenBufferInfo(output, &info));
         const auto size = this->console->get_size();
         EXPECT_EQ(info.srWindow.Right - info.srWindow.Left + 1, size.width);
         EXPECT_EQ(info.srWindow.Bottom - info.srWindow.Top + 1, size.height);

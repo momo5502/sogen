@@ -120,6 +120,7 @@ namespace sogen
                     return false;
                 }
                 this->reader_.join();
+                this->reader_handle_ = INVALID_HANDLE_VALUE;
                 return true;
             }
 
