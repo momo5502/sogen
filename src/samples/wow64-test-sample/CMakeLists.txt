@@ -1,0 +1,8 @@
+add_executable(wow64-test-sample main.c)
+target_compile_features(wow64-test-sample PRIVATE c_std_11)
+if(MSVC)
+  target_compile_options(wow64-test-sample PRIVATE /arch:SSE2)
+else()
+  target_compile_options(wow64-test-sample PRIVATE -msse2)
+endif()
+sogen_target_skip_clang_tidy(wow64-test-sample)
