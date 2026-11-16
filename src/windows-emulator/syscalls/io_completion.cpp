@@ -252,10 +252,13 @@ namespace sogen
                                                          num_entries_removed.value(), messages);
             }
 
-            num_entries_removed.write_if_valid(0);
+            // Nothing is written before the wait. One that times out at once ends with KeRemoveQueueEx's status entry, whose
+            // count NtRemoveIoCompletionEx stores (io_completion_wait::write_status_entry_count).
             if (timeout && timeout.read().QuadPart == 0)
             {
-                return STATUS_TIMEOUT;
+                const auto status =
+                    io_completion_wait::write_status_entry_count(c.win_emu.memory, c.win_emu.active_thread(), num_entries_removed.value());
+                return status == STATUS_SUCCESS ? STATUS_TIMEOUT : status;
             }
 
             auto& t = c.thread();
@@ -282,9 +285,10 @@ namespace sogen
                 constexpr auto infinite = std::chrono::steady_clock::time_point::min();
                 if (wait.timeout.has_value() && wait.timeout.value() != infinite && wait.timeout.value() < c.win_emu.clock().steady_now())
                 {
-                    num_entries_removed.write_if_valid(0);
                     t.await_io_completion = {};
-                    return STATUS_TIMEOUT;
+                    const auto status = io_completion_wait::write_status_entry_count(c.win_emu.memory, c.win_emu.active_thread(),
+                                                                                     num_entries_removed.value());
+                    return status == STATUS_SUCCESS ? STATUS_TIMEOUT : status;
                 }
             }
 

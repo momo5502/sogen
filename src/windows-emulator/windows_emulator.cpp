@@ -640,7 +640,21 @@ namespace sogen
 
             if (can_dispatch_apcs && !has_pending_status)
             {
-                thread.mark_as_ready(STATUS_USER_APC);
+                // An APC ends NtRemoveIoCompletionEx's alertable wait with KeRemoveQueueEx's one entry, STATUS_USER_APC, whose
+                // count the call stores under try.
+                auto status = STATUS_USER_APC;
+                if (const auto& wait = thread.await_io_completion;
+                    wait && wait->type == io_completion_wait_type::remove_multiple && !wait->worker_factory)
+                {
+                    if (const auto stored =
+                            io_completion_wait::write_status_entry_count(win_emu.memory, &thread, wait->entries_removed_ptr);
+                        stored != STATUS_SUCCESS)
+                    {
+                        status = stored;
+                    }
+                }
+
+                thread.mark_as_ready(status);
                 dispatch_next_apc(win_emu, vcpu, thread);
             }
             else if (can_run_message_hook)
