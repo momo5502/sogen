@@ -1671,10 +1671,18 @@ namespace sogen
 
             if (file_handle == STDIN_HANDLE)
             {
-                if (!is_writable_range(c.win_emu.memory, io_status_block.value(), sizeof(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>)) ||
-                    (length != 0 && !is_writable_range(c.win_emu.memory, buffer, length)))
+                if (const auto status = probe_range(c.win_emu, io_status_block.value(), sizeof(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>),
+                                                    memory_permission::write);
+                    status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_VIOLATION;
+                    return status;
+                }
+                if (length != 0)
+                {
+                    if (const auto status = probe_range(c.win_emu, buffer, length, memory_permission::write); status != STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
                 }
                 if (const auto status = check_completion_event(c, make_handle(event)); status != STATUS_SUCCESS)
                 {

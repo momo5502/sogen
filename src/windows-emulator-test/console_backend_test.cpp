@@ -604,6 +604,32 @@ namespace sogen::test
         EXPECT_EQ(0u, this->input->blocking_refills);
     }
 
+    TEST_F(CooperativeConsoleReadTest, ByteReadsPreserveGuardPageProbeStatus)
+    {
+        for (const bool guarded_status : {false, true})
+        {
+            SCOPED_TRACE(guarded_status);
+            const auto guarded = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            ASSERT_TRUE(this->emu->memory.protect_memory(
+                guarded, 0x1000, nt_memory_permission(memory_permission::read_write, memory_permission_ext::guard)));
+            const auto status_address = guarded_status ? guarded : this->storage + 0x300;
+            const auto output_address = guarded_status ? this->storage + 0x200 : guarded;
+            const auto read = [&] {
+                return this->emu->synchronize([&] {
+                    return syscalls::handle_NtReadFile(this->context(), STDIN_HANDLE, 0, 0, 0, {this->emu->memory, status_address},
+                                                       output_address, 16, {this->emu->memory}, {this->emu->memory});
+                });
+            };
+            EXPECT_EQ(STATUS_GUARD_PAGE_VIOLATION, read());
+            EXPECT_FALSE(this->emu->memory.get_region_info(guarded).permissions.is_guarded());
+            EXPECT_FALSE(this->reader->await_console_io);
+            EXPECT_FALSE(this->emu->process.devices.get(this->console_handle)->has_pending_io(this->reader->id));
+            this->input->queue("q");
+            ASSERT_EQ(STATUS_SUCCESS, read());
+            EXPECT_EQ('q', this->emu->memory.read_memory<char>(output_address));
+        }
+    }
+
     TEST_F(CooperativeConsoleReadTest, CancelledByteReadDoesNotConsumeLaterInput)
     {
         ASSERT_EQ(STATUS_PENDING, this->read_bytes());
