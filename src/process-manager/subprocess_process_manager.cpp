@@ -826,6 +826,11 @@ namespace sogen
         this->current_process_exited_ = false;
     }
 
+    std::optional<guest_id_result> subprocess_process_manager::allocate_thread_id(const uint32_t requested_id)
+    {
+        return this->session_.allocate_thread_id(this->current_process_id_, requested_id);
+    }
+
     void subprocess_process_manager::notify_current_process_exit(const uint64_t exit_code)
     {
         if (this->session_.mark_exit(this->current_process_id_, {.kind = process_exit_kind::exited, .code = exit_code}) ==
@@ -914,7 +919,7 @@ namespace sogen
             return {.error = reservation.error};
         }
         request.process_id = reservation.process_id;
-        request.thread_id = request.process_id + 4;
+        request.thread_id = reservation.thread_id;
         auto discard_reservation = utils::finally([&] { (void)this->session_.discard_process(request.process_id); });
         const auto entry = std::make_shared<child_process>();
         auto launched = this->launcher_->launch(command);

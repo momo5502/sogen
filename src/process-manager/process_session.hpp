@@ -40,6 +40,7 @@ namespace sogen
     struct process_session_reservation_result
     {
         uint32_t process_id{};
+        uint32_t thread_id{};
         process_error error{process_error::none};
 
         explicit operator bool() const
@@ -66,6 +67,7 @@ namespace sogen
         process_session_endpoint endpoint() const;
         bool owns_registry() const;
         process_session_reservation_result reserve_process(uint32_t process_id = {}, uint32_t initial_thread_id = {});
+        guest_id_result allocate_thread_id(uint32_t process_id, uint32_t requested_id = {});
         process_error discard_process(uint32_t process_id);
         process_exit_status_result exit_status(const std::shared_ptr<session_process>& process) const;
         process_exit_status_result poll_exit_status(const std::shared_ptr<session_process>& process) const;

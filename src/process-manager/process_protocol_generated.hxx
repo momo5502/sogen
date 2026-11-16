@@ -399,37 +399,40 @@ enum SessionOperation : uint8_t {
   SessionOperation_Discard = 3,
   SessionOperation_Exit = 4,
   SessionOperation_Refresh = 5,
+  SessionOperation_AllocateThread = 6,
   SessionOperation_MIN = SessionOperation_Lookup,
-  SessionOperation_MAX = SessionOperation_Refresh
+  SessionOperation_MAX = SessionOperation_AllocateThread
 };
 
-inline const SessionOperation (&EnumValuesSessionOperation())[6] {
+inline const SessionOperation (&EnumValuesSessionOperation())[7] {
   static const SessionOperation values[] = {
     SessionOperation_Lookup,
     SessionOperation_Reserve,
     SessionOperation_Publish,
     SessionOperation_Discard,
     SessionOperation_Exit,
-    SessionOperation_Refresh
+    SessionOperation_Refresh,
+    SessionOperation_AllocateThread
   };
   return values;
 }
 
 inline const char * const *EnumNamesSessionOperation() {
-  static const char * const names[7] = {
+  static const char * const names[8] = {
     "Lookup",
     "Reserve",
     "Publish",
     "Discard",
     "Exit",
     "Refresh",
+    "AllocateThread",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameSessionOperation(SessionOperation e) {
-  if (::flatbuffers::IsOutRange(e, SessionOperation_Lookup, SessionOperation_Refresh)) return "";
+  if (::flatbuffers::IsOutRange(e, SessionOperation_Lookup, SessionOperation_AllocateThread)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesSessionOperation()[index];
 }
@@ -4861,7 +4864,7 @@ struct SessionRequestT : public ::flatbuffers::NativeTable {
   std::unique_ptr<ProcessProtocol::SessionProcessT> update{};
   ProcessProtocol::SessionOperation operation = ProcessProtocol::SessionOperation_Lookup;
   std::vector<uint32_t> process_ids{};
-  uint32_t initial_thread_id = 0;
+  uint32_t thread_id = 0;
   SessionRequestT() = default;
   SessionRequestT(const SessionRequestT &o);
   SessionRequestT(SessionRequestT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -4877,7 +4880,7 @@ struct SessionRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_UPDATE = 8,
     VT_OPERATION = 10,
     VT_PROCESS_IDS = 12,
-    VT_INITIAL_THREAD_ID = 14
+    VT_THREAD_ID = 14
   };
   const ::flatbuffers::String *token() const {
     return GetPointer<const ::flatbuffers::String *>(VT_TOKEN);
@@ -4894,8 +4897,8 @@ struct SessionRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint32_t> *process_ids() const {
     return GetPointer<const ::flatbuffers::Vector<uint32_t> *>(VT_PROCESS_IDS);
   }
-  uint32_t initial_thread_id() const {
-    return GetField<uint32_t>(VT_INITIAL_THREAD_ID, 0);
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
   }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
@@ -4908,7 +4911,7 @@ struct SessionRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint8_t>(verifier, VT_OPERATION, 1) &&
            VerifyOffset(verifier, VT_PROCESS_IDS) &&
            verifier.VerifyVector(process_ids()) &&
-           VerifyField<uint32_t>(verifier, VT_INITIAL_THREAD_ID, 4) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
            verifier.EndTable();
   }
   SessionRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -4935,8 +4938,8 @@ struct SessionRequestBuilder {
   void add_process_ids(::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> process_ids) {
     fbb_.AddOffset(SessionRequest::VT_PROCESS_IDS, process_ids);
   }
-  void add_initial_thread_id(uint32_t initial_thread_id) {
-    fbb_.AddElement<uint32_t>(SessionRequest::VT_INITIAL_THREAD_ID, initial_thread_id, 0);
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(SessionRequest::VT_THREAD_ID, thread_id, 0);
   }
   explicit SessionRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
@@ -4957,9 +4960,9 @@ inline ::flatbuffers::Offset<SessionRequest> CreateSessionRequest(
     ::flatbuffers::Offset<ProcessProtocol::SessionProcess> update = 0,
     ProcessProtocol::SessionOperation operation = ProcessProtocol::SessionOperation_Lookup,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> process_ids = 0,
-    uint32_t initial_thread_id = 0) {
+    uint32_t thread_id = 0) {
   SessionRequestBuilder builder_(_fbb);
-  builder_.add_initial_thread_id(initial_thread_id);
+  builder_.add_thread_id(thread_id);
   builder_.add_process_ids(process_ids);
   builder_.add_update(update);
   builder_.add_process_id(process_id);
@@ -4975,7 +4978,7 @@ inline ::flatbuffers::Offset<SessionRequest> CreateSessionRequestDirect(
     ::flatbuffers::Offset<ProcessProtocol::SessionProcess> update = 0,
     ProcessProtocol::SessionOperation operation = ProcessProtocol::SessionOperation_Lookup,
     const std::vector<uint32_t> *process_ids = nullptr,
-    uint32_t initial_thread_id = 0) {
+    uint32_t thread_id = 0) {
   auto token__ = token ? _fbb.CreateString(token) : 0;
   auto process_ids__ = process_ids ? _fbb.CreateVector<uint32_t>(*process_ids) : 0;
   return ProcessProtocol::CreateSessionRequest(
@@ -4985,7 +4988,7 @@ inline ::flatbuffers::Offset<SessionRequest> CreateSessionRequestDirect(
       update,
       operation,
       process_ids__,
-      initial_thread_id);
+      thread_id);
 }
 
 ::flatbuffers::Offset<SessionRequest> CreateSessionRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SessionRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -4994,6 +4997,7 @@ struct SessionResponseT : public ::flatbuffers::NativeTable {
   typedef SessionResponse TableType;
   std::unique_ptr<ProcessProtocol::SessionProcessT> process{};
   uint32_t process_id = 0;
+  uint32_t thread_id = 0;
   std::vector<std::unique_ptr<ProcessProtocol::SessionProcessT>> processes{};
   std::vector<uint32_t> missing_process_ids{};
   ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None;
@@ -5009,15 +5013,19 @@ struct SessionResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_PROCESS = 4,
     VT_PROCESS_ID = 6,
-    VT_PROCESSES = 8,
-    VT_MISSING_PROCESS_IDS = 10,
-    VT_ERROR = 12
+    VT_THREAD_ID = 8,
+    VT_PROCESSES = 10,
+    VT_MISSING_PROCESS_IDS = 12,
+    VT_ERROR = 14
   };
   const ProcessProtocol::SessionProcess *process() const {
     return GetPointer<const ProcessProtocol::SessionProcess *>(VT_PROCESS);
   }
   uint32_t process_id() const {
     return GetField<uint32_t>(VT_PROCESS_ID, 0);
+  }
+  uint32_t thread_id() const {
+    return GetField<uint32_t>(VT_THREAD_ID, 0);
   }
   const ::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::SessionProcess>> *processes() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::SessionProcess>> *>(VT_PROCESSES);
@@ -5034,6 +5042,7 @@ struct SessionResponse FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyOffset(verifier, VT_PROCESS) &&
            verifier.VerifyTable(process()) &&
            VerifyField<uint32_t>(verifier, VT_PROCESS_ID, 4) &&
+           VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
            VerifyOffset(verifier, VT_PROCESSES) &&
            verifier.VerifyVector(processes()) &&
            verifier.VerifyVectorOfTables(processes()) &&
@@ -5056,6 +5065,9 @@ struct SessionResponseBuilder {
   }
   void add_process_id(uint32_t process_id) {
     fbb_.AddElement<uint32_t>(SessionResponse::VT_PROCESS_ID, process_id, 0);
+  }
+  void add_thread_id(uint32_t thread_id) {
+    fbb_.AddElement<uint32_t>(SessionResponse::VT_THREAD_ID, thread_id, 0);
   }
   void add_processes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::SessionProcess>>> processes) {
     fbb_.AddOffset(SessionResponse::VT_PROCESSES, processes);
@@ -5081,12 +5093,14 @@ inline ::flatbuffers::Offset<SessionResponse> CreateSessionResponse(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<ProcessProtocol::SessionProcess> process = 0,
     uint32_t process_id = 0,
+    uint32_t thread_id = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::SessionProcess>>> processes = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<uint32_t>> missing_process_ids = 0,
     ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None) {
   SessionResponseBuilder builder_(_fbb);
   builder_.add_missing_process_ids(missing_process_ids);
   builder_.add_processes(processes);
+  builder_.add_thread_id(thread_id);
   builder_.add_process_id(process_id);
   builder_.add_process(process);
   builder_.add_error(error);
@@ -5097,6 +5111,7 @@ inline ::flatbuffers::Offset<SessionResponse> CreateSessionResponseDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     ::flatbuffers::Offset<ProcessProtocol::SessionProcess> process = 0,
     uint32_t process_id = 0,
+    uint32_t thread_id = 0,
     const std::vector<::flatbuffers::Offset<ProcessProtocol::SessionProcess>> *processes = nullptr,
     const std::vector<uint32_t> *missing_process_ids = nullptr,
     ProcessProtocol::ProcessError error = ProcessProtocol::ProcessError_None) {
@@ -5106,6 +5121,7 @@ inline ::flatbuffers::Offset<SessionResponse> CreateSessionResponseDirect(
       _fbb,
       process,
       process_id,
+      thread_id,
       processes__,
       missing_process_ids__,
       error);
@@ -6911,7 +6927,7 @@ inline SessionRequestT::SessionRequestT(const SessionRequestT &o)
         update((o.update) ? new ProcessProtocol::SessionProcessT(*o.update) : nullptr),
         operation(o.operation),
         process_ids(o.process_ids),
-        initial_thread_id(o.initial_thread_id) {
+        thread_id(o.thread_id) {
 }
 
 inline SessionRequestT &SessionRequestT::operator=(SessionRequestT o) FLATBUFFERS_NOEXCEPT {
@@ -6920,7 +6936,7 @@ inline SessionRequestT &SessionRequestT::operator=(SessionRequestT o) FLATBUFFER
   std::swap(update, o.update);
   std::swap(operation, o.operation);
   std::swap(process_ids, o.process_ids);
-  std::swap(initial_thread_id, o.initial_thread_id);
+  std::swap(thread_id, o.thread_id);
   return *this;
 }
 
@@ -6938,7 +6954,7 @@ inline void SessionRequest::UnPackTo(SessionRequestT *_o, const ::flatbuffers::r
   { auto _e = update(); if (_e) { if(_o->update) { _e->UnPackTo(_o->update.get(), _resolver); } else { _o->update = std::unique_ptr<ProcessProtocol::SessionProcessT>(_e->UnPack(_resolver)); } } else if (_o->update) { _o->update.reset(); } }
   { auto _e = operation(); _o->operation = _e; }
   { auto _e = process_ids(); if (_e) { _o->process_ids.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->process_ids[_i] = _e->Get(_i); } } else { _o->process_ids.resize(0); } }
-  { auto _e = initial_thread_id(); _o->initial_thread_id = _e; }
+  { auto _e = thread_id(); _o->thread_id = _e; }
 }
 
 inline ::flatbuffers::Offset<SessionRequest> CreateSessionRequest(::flatbuffers::FlatBufferBuilder &_fbb, const SessionRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -6954,7 +6970,7 @@ inline ::flatbuffers::Offset<SessionRequest> SessionRequest::Pack(::flatbuffers:
   auto _update = _o->update ? ProcessProtocol::CreateSessionProcess(_fbb, _o->update.get(), _rehasher) : 0;
   auto _operation = _o->operation;
   auto _process_ids = _o->process_ids.size() ? _fbb.CreateVector(_o->process_ids) : 0;
-  auto _initial_thread_id = _o->initial_thread_id;
+  auto _thread_id = _o->thread_id;
   return ProcessProtocol::CreateSessionRequest(
       _fbb,
       _token,
@@ -6962,12 +6978,13 @@ inline ::flatbuffers::Offset<SessionRequest> SessionRequest::Pack(::flatbuffers:
       _update,
       _operation,
       _process_ids,
-      _initial_thread_id);
+      _thread_id);
 }
 
 inline SessionResponseT::SessionResponseT(const SessionResponseT &o)
       : process((o.process) ? new ProcessProtocol::SessionProcessT(*o.process) : nullptr),
         process_id(o.process_id),
+        thread_id(o.thread_id),
         missing_process_ids(o.missing_process_ids),
         error(o.error) {
   processes.reserve(o.processes.size());
@@ -6977,6 +6994,7 @@ inline SessionResponseT::SessionResponseT(const SessionResponseT &o)
 inline SessionResponseT &SessionResponseT::operator=(SessionResponseT o) FLATBUFFERS_NOEXCEPT {
   std::swap(process, o.process);
   std::swap(process_id, o.process_id);
+  std::swap(thread_id, o.thread_id);
   std::swap(processes, o.processes);
   std::swap(missing_process_ids, o.missing_process_ids);
   std::swap(error, o.error);
@@ -6994,6 +7012,7 @@ inline void SessionResponse::UnPackTo(SessionResponseT *_o, const ::flatbuffers:
   (void)_resolver;
   { auto _e = process(); if (_e) { if(_o->process) { _e->UnPackTo(_o->process.get(), _resolver); } else { _o->process = std::unique_ptr<ProcessProtocol::SessionProcessT>(_e->UnPack(_resolver)); } } else if (_o->process) { _o->process.reset(); } }
   { auto _e = process_id(); _o->process_id = _e; }
+  { auto _e = thread_id(); _o->thread_id = _e; }
   { auto _e = processes(); if (_e) { _o->processes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->processes[_i]) { _e->Get(_i)->UnPackTo(_o->processes[_i].get(), _resolver); } else { _o->processes[_i] = std::unique_ptr<ProcessProtocol::SessionProcessT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->processes.resize(0); } }
   { auto _e = missing_process_ids(); if (_e) { _o->missing_process_ids.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { _o->missing_process_ids[_i] = _e->Get(_i); } } else { _o->missing_process_ids.resize(0); } }
   { auto _e = error(); _o->error = _e; }
@@ -7009,6 +7028,7 @@ inline ::flatbuffers::Offset<SessionResponse> SessionResponse::Pack(::flatbuffer
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const SessionResponseT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _process = _o->process ? ProcessProtocol::CreateSessionProcess(_fbb, _o->process.get(), _rehasher) : 0;
   auto _process_id = _o->process_id;
+  auto _thread_id = _o->thread_id;
   auto _processes = _o->processes.size() ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::SessionProcess>> (_o->processes.size(), [](size_t i, _VectorArgs *__va) { return ProcessProtocol::CreateSessionProcess(*__va->__fbb, __va->__o->processes[i].get(), __va->__rehasher); }, &_va ) : 0;
   auto _missing_process_ids = _o->missing_process_ids.size() ? _fbb.CreateVector(_o->missing_process_ids) : 0;
   auto _error = _o->error;
@@ -7016,6 +7036,7 @@ inline ::flatbuffers::Offset<SessionResponse> SessionResponse::Pack(::flatbuffer
       _fbb,
       _process,
       _process_id,
+      _thread_id,
       _processes,
       _missing_process_ids,
       _error);

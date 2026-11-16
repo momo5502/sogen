@@ -1937,7 +1937,29 @@ namespace sogen
                                           const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread,
                                           const uint64_t stack_commit_size)
     {
-        const uint32_t thread_id = this->initial_thread_id + this->spawned_thread_count++ * 4;
+        uint32_t thread_id = this->initial_thread_id;
+        if (!initial_thread)
+        {
+            const auto allocated = this->process_manager_ ? this->process_manager_->allocate_thread_id() : std::nullopt;
+            if (allocated)
+            {
+                if (!*allocated)
+                {
+                    return {};
+                }
+                thread_id = allocated->id;
+            }
+            else
+            {
+                const auto next_id = static_cast<uint64_t>(this->initial_thread_id) + static_cast<uint64_t>(this->spawned_thread_count) * 4;
+                if (next_id > UINT32_MAX)
+                {
+                    return {};
+                }
+                thread_id = static_cast<uint32_t>(next_id);
+            }
+        }
+        ++this->spawned_thread_count;
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread, stack_commit_size};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;

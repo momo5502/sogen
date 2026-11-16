@@ -405,14 +405,28 @@ namespace sogen
     {
         ProcessProtocol::SessionRequestT request{};
         request.operation = ProcessProtocol::SessionOperation_Reserve;
-        request.initial_thread_id = initial_thread_id;
+        request.thread_id = initial_thread_id;
         request.process_id = process_id;
         auto response = this->implementation_->exchange(std::move(request));
-        if (response.error == ProcessProtocol::ProcessError_None && response.process_id == 0)
+        if (response.error == ProcessProtocol::ProcessError_None && (response.process_id == 0 || response.thread_id == 0))
         {
             return {.error = process_error::communication_failure};
         }
-        return {.process_id = response.process_id, .error = decode_error(response.error)};
+        return {.process_id = response.process_id, .thread_id = response.thread_id, .error = decode_error(response.error)};
+    }
+
+    guest_id_result process_session::allocate_thread_id(const uint32_t process_id, const uint32_t requested_id)
+    {
+        ProcessProtocol::SessionRequestT request{};
+        request.operation = ProcessProtocol::SessionOperation_AllocateThread;
+        request.process_id = process_id;
+        request.thread_id = requested_id;
+        const auto response = this->implementation_->exchange(std::move(request));
+        if (response.error == ProcessProtocol::ProcessError_None && response.thread_id == 0)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        return {.id = response.thread_id, .error = decode_error(response.error)};
     }
 
     process_error process_session::discard_process(const uint32_t process_id)

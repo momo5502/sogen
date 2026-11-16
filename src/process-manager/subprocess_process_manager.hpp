@@ -69,6 +69,7 @@ namespace sogen
 
         void initialize_current_process(process_identity identity, uint32_t initial_thread_id = 8) override;
         process_session_endpoint session_endpoint() const;
+        std::optional<guest_id_result> allocate_thread_id(uint32_t requested_id = {}) override;
         void notify_current_process_exit(uint64_t exit_code) override;
         process_open_result open_process(uint32_t process_id) override;
         process_create_result create_process(process_create_request request) override;

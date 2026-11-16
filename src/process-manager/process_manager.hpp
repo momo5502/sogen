@@ -46,6 +46,17 @@ namespace sogen
         internal_failure,
     };
 
+    struct guest_id_result
+    {
+        uint32_t id{};
+        process_error error{process_error::none};
+
+        explicit operator bool() const
+        {
+            return this->error == process_error::none;
+        }
+    };
+
     struct process_memory_result
     {
         uint64_t address{};
@@ -377,6 +388,11 @@ namespace sogen
 
         virtual void initialize_current_process(process_identity, uint32_t = 8)
         {
+        }
+
+        virtual std::optional<guest_id_result> allocate_thread_id(uint32_t = 0)
+        {
+            return std::nullopt;
         }
 
         virtual void notify_current_process_exit(uint64_t)

@@ -8,6 +8,7 @@
 #include <process_session_registry.hpp>
 
 #include <array>
+#include <set>
 #include <atomic>
 #include <chrono>
 #include <gtest/gtest.h>
@@ -276,8 +277,9 @@ namespace sogen::test
         const auto first = owner.create_process({.parent_process_id = default_guest_process_id});
         ASSERT_TRUE(first);
         const auto first_id = first.process.identity.process_id;
-        EXPECT_EQ(0u, first_id % 8);
-        EXPECT_EQ(first_id + 4, first.thread_id);
+        EXPECT_EQ(0u, first_id % 4);
+        EXPECT_NE(first_id, first.thread_id);
+        EXPECT_EQ(0u, first.thread_id % 4);
         const auto old_opened = observer.open_process(first_id);
         ASSERT_TRUE(old_opened);
         const auto reopened_owned = owner.open_process(first_id);
@@ -349,17 +351,17 @@ namespace sogen::test
         ASSERT_TRUE(child);
         EXPECT_NE(default_guest_process_id, child.process_id);
         EXPECT_NE(8u, child.process_id);
-        EXPECT_NE(8u, child.process_id + 4);
-        EXPECT_EQ(0u, child.process_id % 8);
+        EXPECT_NE(8u, child.thread_id);
+        EXPECT_EQ(0u, child.process_id % 4);
     }
 
     TEST(ProcessSession, ExplicitReservationsRespectProcessAndInitialThreadIds)
     {
         process_session session{};
-        ASSERT_TRUE(session.reserve_process(100));
+        ASSERT_TRUE(session.reserve_process(100, 104));
         EXPECT_EQ(process_error::unavailable, session.reserve_process(101).error);
         EXPECT_EQ(process_error::unavailable, session.reserve_process(104).error);
-        EXPECT_EQ(process_error::unavailable, session.reserve_process(96).error);
+        EXPECT_EQ(process_error::unavailable, session.reserve_process(96, 100).error);
         EXPECT_EQ(process_error::unavailable, session.reserve_process(200, 100).error);
         EXPECT_EQ(process_error::unavailable, session.reserve_process(200, 201).error);
         EXPECT_TRUE(session.reserve_process(200, 12));
@@ -369,9 +371,9 @@ namespace sogen::test
             ASSERT_TRUE(reserved);
             EXPECT_NE(100u, reserved.process_id);
             EXPECT_NE(104u, reserved.process_id);
-            EXPECT_NE(100u, reserved.process_id + 4);
-            EXPECT_NE(104u, reserved.process_id + 4);
-            EXPECT_NE(12u, reserved.process_id + 4);
+            EXPECT_NE(100u, reserved.thread_id);
+            EXPECT_NE(104u, reserved.thread_id);
+            EXPECT_NE(12u, reserved.thread_id);
         }
     }
 
@@ -397,7 +399,7 @@ namespace sogen::test
         ASSERT_TRUE(first);
         const auto first_id = first.process->identity().process_id;
         EXPECT_NE(8u, first_id);
-        EXPECT_EQ(0u, first_id % 8);
+        EXPECT_EQ(0u, first_id % 4);
         ASSERT_EQ(process_error::none, registry.mark_exit(first_id, {.kind = process_exit_kind::exited, .code = 37}));
         const auto abandoned = registry.reserve_process();
         ASSERT_TRUE(abandoned);
@@ -407,10 +409,73 @@ namespace sogen::test
         const auto second_id = second.process->identity().process_id;
         EXPECT_NE(first_id, second_id);
         EXPECT_NE(abandoned.process_id, second_id);
-        EXPECT_EQ(0u, second_id % 8);
+        EXPECT_EQ(0u, second_id % 4);
         EXPECT_FALSE(second.process->exit_status().status);
         ASSERT_TRUE(first.process->exit_status().status);
         EXPECT_EQ(37u, first.process->exit_status().status->code);
+    }
+
+    TEST(ProcessSession, ConcurrentProcessAndThreadAllocationSharesOneNamespace)
+    {
+        process_session registry{};
+        ASSERT_TRUE(registry.register_process({.process_id = default_guest_process_id}, 8));
+        const auto child = registry.reserve_process();
+        ASSERT_TRUE(child);
+        ASSERT_TRUE(registry.publish_process({.process_id = child.process_id}));
+        process_session root_client{registry.endpoint()};
+        process_session child_client{registry.endpoint()};
+        std::vector<guest_id_result> root_threads;
+        std::vector<guest_id_result> child_threads;
+        std::thread root_worker([&] {
+            for (size_t i = 0; i < 32; ++i)
+            {
+                root_threads.push_back(root_client.allocate_thread_id(default_guest_process_id));
+            }
+        });
+        std::thread child_worker([&] {
+            for (size_t i = 0; i < 32; ++i)
+            {
+                child_threads.push_back(child_client.allocate_thread_id(child.process_id));
+            }
+        });
+        std::vector<process_session_reservation_result> children;
+        for (size_t i = 0; i < 16; ++i)
+        {
+            children.push_back(registry.reserve_process());
+        }
+        root_worker.join();
+        child_worker.join();
+
+        std::set<uint32_t> ids{default_guest_process_id, 8, child.process_id, child.thread_id};
+        ASSERT_EQ(4u, ids.size());
+        for (const auto& threads : {root_threads, child_threads})
+        {
+            for (const auto& thread : threads)
+            {
+                ASSERT_TRUE(thread);
+                EXPECT_EQ(0u, thread.id % 4);
+                EXPECT_TRUE(ids.insert(thread.id).second);
+            }
+        }
+        for (const auto& process : children)
+        {
+            ASSERT_TRUE(process);
+            EXPECT_EQ(0u, process.process_id % 4);
+            EXPECT_EQ(0u, process.thread_id % 4);
+            EXPECT_TRUE(ids.insert(process.process_id).second);
+            EXPECT_TRUE(ids.insert(process.thread_id).second);
+        }
+        const auto restored = root_client.allocate_thread_id(default_guest_process_id, root_threads.front().id);
+        ASSERT_TRUE(restored);
+        EXPECT_EQ(root_threads.front().id, restored.id);
+        EXPECT_EQ(process_error::unavailable, child_client.allocate_thread_id(child.process_id, root_threads.front().id).error);
+        EXPECT_EQ(process_error::unavailable, root_client.allocate_thread_id(default_guest_process_id, child.process_id).error);
+        EXPECT_EQ(process_error::unavailable, root_client.allocate_thread_id(default_guest_process_id, default_guest_process_id).error);
+        ASSERT_EQ(process_error::none, registry.discard_process(children.front().process_id));
+        const auto replacement = registry.reserve_process();
+        ASSERT_TRUE(replacement);
+        EXPECT_TRUE(ids.insert(replacement.process_id).second);
+        EXPECT_TRUE(ids.insert(replacement.thread_id).second);
     }
 
     TEST(ProcessSession, CachedExitStatusSurvivesTheRegistryConnection)

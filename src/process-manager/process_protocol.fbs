@@ -315,7 +315,7 @@ table SessionProcess {
     cycles: ulong;
 }
 
-enum SessionOperation : ubyte { Lookup, Reserve, Publish, Discard, Exit, Refresh }
+enum SessionOperation : ubyte { Lookup, Reserve, Publish, Discard, Exit, Refresh, AllocateThread }
 
 table SessionRequest {
     token: string (required);
@@ -323,12 +323,13 @@ table SessionRequest {
     update: SessionProcess;
     operation: SessionOperation;
     process_ids: [uint];
-    initial_thread_id: uint;
+    thread_id: uint;
 }
 
 table SessionResponse {
     process: SessionProcess;
     process_id: uint;
+    thread_id: uint;
     processes: [SessionProcess];
     missing_process_ids: [uint];
     error: ProcessError;

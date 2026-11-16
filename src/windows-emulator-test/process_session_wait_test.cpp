@@ -360,6 +360,47 @@ namespace sogen::test
         }
     }
 
+    TEST(ProcessSession, CreatedThreadsUseSessionIdsAndAllocationFailureCreatesNoThread)
+    {
+        auto registry = std::make_unique<process_session>();
+        ASSERT_TRUE(registry->register_process({.process_id = default_guest_process_id}, 8));
+        subprocess_process_manager manager{"unused", unused_wait_arguments, create_subprocess_launcher(), registry->endpoint()};
+        manager.initialize_current_process({.process_id = default_guest_process_id}, 8);
+        emulator_interfaces interfaces{.ui = std::make_unique<null_ui_backend>(),
+                                       .audio = std::make_unique<null_audio_backend>(),
+                                       .processes = &manager,
+                                       .console = std::make_unique<null_console_backend>()};
+        windows_emulator emu{create_x86_64_emulator_from_environment(),
+                             emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                             emulator_callbacks{}, std::move(interfaces)};
+        emu.process.user_handles.setup(false);
+        const auto initial = emu.process.create_thread(emu.memory, 0, 0, 0x100000, 0, true);
+        ASSERT_NE(initial, 0);
+        ASSERT_EQ(8u, emu.process.threads.get(initial)->id);
+        std::set<uint32_t> ids{default_guest_process_id, 8};
+        for (size_t i = 0; i < 4; ++i)
+        {
+            const auto child = registry->reserve_process();
+            ASSERT_TRUE(child);
+            ASSERT_TRUE(ids.insert(child.process_id).second);
+            ASSERT_TRUE(ids.insert(child.thread_id).second);
+            const auto handle = emu.process.create_thread(emu.memory, 0, 0, 0x100000, 0);
+            ASSERT_NE(handle, 0);
+            const auto* thread = emu.process.threads.get(handle);
+            ASSERT_NE(nullptr, thread);
+            EXPECT_TRUE(ids.insert(thread->id).second);
+            EXPECT_EQ(0u, thread->id % 4);
+            ASSERT_TRUE(thread->teb64);
+            const auto teb = thread->teb64->read();
+            EXPECT_EQ(thread->id, teb.ClientId.UniqueThread);
+            EXPECT_EQ(default_guest_process_id, teb.ClientId.UniqueProcess);
+        }
+        const auto count = emu.process.spawned_thread_count;
+        registry.reset();
+        EXPECT_EQ(emu.process.create_thread(emu.memory, 0, 0, 0x100000, 0), 0);
+        EXPECT_EQ(count, emu.process.spawned_thread_count);
+    }
+
     TEST(ProcessSession, SchedulerWaitsStayLocalWhileABatchedRefreshIsBlocked)
     {
         gated_session_registry registry{};

@@ -3,7 +3,6 @@
 #include "process_protocol_generated.hxx"
 #include <list>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace sogen
 {
@@ -29,8 +28,9 @@ namespace sogen
         std::list<uint32_t> reservations{};
         std::mutex mutex{};
         std::unordered_map<uint32_t, registry_record> processes{};
-        std::unordered_set<uint32_t> allocated_ids{};
-        uint64_t next_process_id{8};
+        std::unordered_map<uint32_t, uint32_t> allocated_ids{};
+        uint64_t next_id{4};
+        guest_id_result allocate_id(uint32_t owner, uint32_t requested = {}, uint32_t excluded = {});
         void expire_reservations();
     };
 }

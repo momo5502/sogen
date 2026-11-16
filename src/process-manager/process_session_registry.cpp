@@ -23,6 +23,34 @@ namespace sogen
         }
     }
 
+    guest_id_result process_session_registry::allocate_id(const uint32_t owner, uint32_t requested, const uint32_t excluded)
+    {
+        if (requested == 0)
+        {
+            while (this->next_id <= UINT32_MAX &&
+                   (this->allocated_ids.contains(static_cast<uint32_t>(this->next_id)) || this->next_id == excluded))
+            {
+                this->next_id += 4;
+            }
+            if (this->next_id > UINT32_MAX)
+            {
+                return {.error = process_error::resource_limit};
+            }
+            requested = static_cast<uint32_t>(this->next_id);
+            this->next_id += 4;
+        }
+        if (requested % 4 != 0 || requested == excluded || requested == owner)
+        {
+            return {.error = process_error::unavailable};
+        }
+        const auto [entry, inserted] = this->allocated_ids.emplace(requested, owner ? owner : requested);
+        if (!inserted && (owner == 0 || entry->second != owner))
+        {
+            return {.error = process_error::unavailable};
+        }
+        return {.id = requested};
+    }
+
     ProcessProtocol::SessionResponseT process_session_registry::handle(const ProcessProtocol::SessionRequestT& request)
     {
         const std::scoped_lock lock(this->mutex);
@@ -35,40 +63,28 @@ namespace sogen
                 response.error = ProcessProtocol::ProcessError_ResourceLimit;
                 return response;
             }
-            // Automatically assigned process IDs leave PID + 4 for the initial thread.
-            auto process_id = request.process_id;
-            if (process_id == 0)
-            {
-                while (this->next_process_id <= UINT32_MAX - 4 &&
-                       (this->allocated_ids.contains(static_cast<uint32_t>(this->next_process_id)) ||
-                        this->allocated_ids.contains(static_cast<uint32_t>(this->next_process_id + 4)) ||
-                        this->next_process_id == request.initial_thread_id))
-                {
-                    this->next_process_id += 8;
-                }
-                if (this->next_process_id > UINT32_MAX - 4)
-                {
-                    response.error = ProcessProtocol::ProcessError_ResourceLimit;
-                    return response;
-                }
-                process_id = static_cast<uint32_t>(this->next_process_id);
-                this->next_process_id += 8;
-            }
-            if (process_id % 4 != 0 || (!request.initial_thread_id && process_id > UINT32_MAX - 4))
+            if ((request.process_id && (request.process_id % 4 != 0 || this->allocated_ids.contains(request.process_id))) ||
+                (request.thread_id && (request.thread_id % 4 != 0 || request.thread_id == request.process_id ||
+                                       this->allocated_ids.contains(request.thread_id))))
             {
                 response.error = ProcessProtocol::ProcessError_Unavailable;
                 return response;
             }
-            const auto thread_id = request.initial_thread_id ? request.initial_thread_id : process_id + 4;
-            if (thread_id % 4 != 0 || thread_id == process_id || this->allocated_ids.contains(process_id) ||
-                this->allocated_ids.contains(thread_id))
+            const auto process = this->allocate_id(0, request.process_id, request.thread_id);
+            if (!process)
             {
-                response.error = ProcessProtocol::ProcessError_Unavailable;
+                response.error = static_cast<ProcessProtocol::ProcessError>(process.error);
                 return response;
             }
-            this->allocated_ids.insert(process_id);
-            this->allocated_ids.insert(thread_id);
+            const auto thread = this->allocate_id(process.id, request.thread_id);
+            if (!thread)
+            {
+                response.error = static_cast<ProcessProtocol::ProcessError>(thread.error);
+                return response;
+            }
+            const auto process_id = process.id;
             response.process_id = process_id;
+            response.thread_id = thread.id;
             auto& record = this->processes[process_id];
             record.process.process_id = process_id;
             // The launch handshake has a 30-second deadline; this lease also allows time for registry exchanges.
@@ -98,6 +114,18 @@ namespace sogen
             {
                 response.error = ProcessProtocol::ProcessError_InvalidProcess;
             }
+            return response;
+        }
+        if (request.operation == ProcessProtocol::SessionOperation_AllocateThread)
+        {
+            if (!entry->second.published || entry->second.discarded)
+            {
+                response.error = ProcessProtocol::ProcessError_InvalidProcess;
+                return response;
+            }
+            const auto thread = this->allocate_id(request.process_id, request.thread_id);
+            response.thread_id = thread.id;
+            response.error = static_cast<ProcessProtocol::ProcessError>(thread.error);
             return response;
         }
         auto& record = entry->second;

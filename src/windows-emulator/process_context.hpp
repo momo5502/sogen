@@ -396,8 +396,9 @@ namespace sogen
 
         process_context(memory_interface& emu, memory_manager& memory, utils::clock& clock, callbacks& cb, const bool intercept_kusd,
                         const windows_guest_architecture architecture = windows_guest_architecture::x86_64,
-                        std::function<std::optional<native_tsc>()> read_tsc = {})
+                        std::function<std::optional<native_tsc>()> read_tsc = {}, process_manager* manager = nullptr)
             : callbacks_(&cb),
+              process_manager_(manager),
               base_allocator(emu),
               peb64(emu),
               process_params64(emu),
@@ -512,6 +513,7 @@ namespace sogen
         uint32_t hard_error_mode{0};
 
         callbacks* callbacks_{};
+        process_manager* process_manager_{};
 
         std::vector<uint8_t> sid{};
 
