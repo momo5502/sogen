@@ -478,10 +478,8 @@ namespace sogen
                     if (factory->pending_worker_count == 0 && factory->worker_threads.size() < factory->thread_maximum)
                     {
                         leave_away_mode(*factory);
-                        if (!create_worker_factory_thread(c.win_emu, *factory))
-                        {
-                            return STATUS_INSUFFICIENT_RESOURCES;
-                        }
+                        // Windows 10 19041 accepts the maximum even when worker creation fails.
+                        (void)create_worker_factory_thread(c.win_emu, *factory);
                     }
                     break;
                 }

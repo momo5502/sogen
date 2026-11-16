@@ -180,7 +180,7 @@ namespace sogen::test
         this->make_pool(0);
         ASSERT_EQ(STATUS_SUCCESS, this->release());
         this->fail_thread_allocation();
-        EXPECT_EQ(STATUS_INSUFFICIENT_RESOURCES, this->set_limit(WorkerFactoryThreadMaximum, 1));
+        EXPECT_EQ(STATUS_SUCCESS, this->set_limit(WorkerFactoryThreadMaximum, 1));
         EXPECT_TRUE(this->pool().worker_threads.empty());
         EXPECT_EQ(0u, this->pool().pending_worker_count);
 
