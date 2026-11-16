@@ -2333,7 +2333,8 @@ namespace sogen
             void apply_cursor_capture()
             {
                 auto* state = this->resolve_window(this->get_top_level_ancestor(this->cursor_capture_.window));
-                auto* target = (state && state->window && this->cursor_capture_.screen_rect) ? state->window : nullptr;
+                const bool captured = this->cursor_capture_.screen_rect.has_value() || this->cursor_capture_.relative;
+                auto* target = (state && state->window && captured) ? state->window : nullptr;
 
                 if (auto* previous = SDL_GetWindowFromID(this->captured_window_id_); previous && previous != target)
                 {
@@ -2344,6 +2345,13 @@ namespace sogen
                 this->captured_window_id_ = target ? SDL_GetWindowID(target) : 0;
                 if (!target)
                 {
+                    return;
+                }
+
+                if (!this->cursor_capture_.screen_rect)
+                {
+                    SDL_SetWindowMouseRect(target, nullptr);
+                    SDL_SetWindowRelativeMouseMode(target, true);
                     return;
                 }
 

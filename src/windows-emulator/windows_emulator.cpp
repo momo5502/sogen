@@ -2493,6 +2493,11 @@ namespace sogen
                 cursor_x = std::clamp(cursor_x, left, std::max(left, static_cast<int32_t>(clip->right) - 1));
                 cursor_y = std::clamp(cursor_y, top, std::max(top, static_cast<int32_t>(clip->bottom) - 1));
             }
+            else if (!event.cursor_target)
+            {
+                cursor_x = std::clamp(cursor_x, 0, std::max(0, static_cast<int32_t>(this->process.display_width) - 1));
+                cursor_y = std::clamp(cursor_y, 0, std::max(0, static_cast<int32_t>(this->process.display_height) - 1));
+            }
         }
         else if (const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0))
         {
@@ -3326,7 +3331,8 @@ namespace sogen
     }
 
     // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while
-    // the guest cursor is hidden.
+    // the guest cursor is hidden. Raw mouse input reports device motion wherever the cursor is, but the host only reports
+    // motion while its cursor is over the window, so a hidden cursor read through raw input is captured as well.
     void windows_emulator::apply_cursor_capture()
     {
         std::optional<ui_rect> clip{};
@@ -3339,7 +3345,8 @@ namespace sogen
         // reaches the guest then, just as with a hidden cursor.
         const bool hidden = this->process.cursor_show_count < 0 || !this->process.cursor_shape_visible;
         const bool pinned = clip && clip->right - clip->left <= 2 && clip->bottom - clip->top <= 2;
-        this->ui().set_cursor_clip(this->process.foreground_window, clip, clip.has_value() && (hidden || pinned));
+        const bool raw_mouse_look = hidden && this->process.raw_mouse_registration() != nullptr;
+        this->ui().set_cursor_clip(this->process.foreground_window, clip, (clip.has_value() && (hidden || pinned)) || raw_mouse_look);
     }
 
     void windows_emulator::save_snapshot()
