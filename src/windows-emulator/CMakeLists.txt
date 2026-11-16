@@ -46,6 +46,7 @@ endif()
 
 target_link_libraries(windows-emulator PUBLIC emulator minidump process-manager)
 target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol sogen_mbedtls sogen-version)
+target_link_libraries(windows-emulator PRIVATE ${CMAKE_DL_LIBS})
 if(WIN32)
   target_link_libraries(windows-emulator PRIVATE crypt32)
 endif()
