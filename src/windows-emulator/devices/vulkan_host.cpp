@@ -15214,6 +15214,7 @@ namespace sogen
         const auto create_graphics_pipeline = [&](const uint64_t device, const impl::pipeline_params& create,
                                                   const std::optional<uint64_t> forced_id, uint64_t& pipeline) {
             std::vector<uint64_t> libraries{};
+            libraries.reserve(create.libraries.size());
             for (size_t i = 0; i < create.libraries.size(); ++i)
             {
                 libraries.push_back(ensure_graphics_pipeline(device, create.libraries[i], *create.library_creates[i]));
